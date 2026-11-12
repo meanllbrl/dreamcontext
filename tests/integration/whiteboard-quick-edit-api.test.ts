@@ -237,6 +237,29 @@ describe('quick edit routes', () => {
     expect(last).toBe(429);
   });
 
+  it('review r1: a follow-up queued on the same selection still writes; a change that cannot be made is not a success', async () => {
+    const slug = await boardWith([rect('A')]);
+    const seen = identitiesOf(slug, ['A']);
+    const lock = join(roots.a, 'whiteboards', '.locks', `${slug}.lock`);
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, at: Date.now() }));
+    auto = () => ({ reply: 'sağa', notBoard: false, move: [5, 0] });
+    const first = await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'sağa', scope: { ids: ['A'], identities: seen } });
+    // The page has not got the first edit's elements yet: it sends the same identities again.
+    const second = await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'yine sağa', scope: { ids: ['A'], identities: seen } });
+    rmSync(lock);
+    expect((await settle(slug, first.body.job)).state).toBe('done');
+    const v2 = await settle(slug, second.body.job);
+    expect(v2.edit?.changed).toBe(1);
+    expect(v2.skipped ?? []).toEqual([]);
+    expect(readWhiteboard(roots.a, slug).board.elements[0].x).toBe(10);
+
+    auto = () => ({ reply: "Kutuya 'Ödeme' yazıldı.", notBoard: false, update: [{ id: 'A', text: 'Ödeme' }] });
+    const third = await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: "kutuya Ödeme yaz", scope: { ids: ['A'], identities: identitiesOf(slug, ['A']) } });
+    const v3 = await settle(slug, third.body.job);
+    expect(v3).toMatchObject({ state: 'done', nothing: true });
+    expect(v3.edit).toBeUndefined();
+  });
+
   it('a job on another board or another vault is 404', async () => {
     auto = () => ({ reply: 'x', notBoard: true });
     const slug = await boardWith([rect('A')]);

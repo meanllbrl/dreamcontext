@@ -138,7 +138,24 @@ export interface QuickJobView {
   edit?: { id: string; added: number; changed: number; skipped: string[] };
   skipped?: string[];
   elements?: Array<{ id: string } & Record<string, unknown>>;
+  /** A failed job's reason; worded here, never the server's prose (review r1). */
+  code?: string;
   error?: string;
+  /** The answer asked for changes and none could be made. */
+  nothing?: boolean;
+  /** Asked-for changes that could not be made beside the ones that were. */
+  dropped?: number;
+}
+
+/** The server's failure codes the field words itself; any other code reads as the generic line. */
+const FAIL_CODES = new Set(['spawn', 'timeout', 'limit', 'unreadable', 'too_big', 'refused', 'write']);
+export const failKey = (code: string | undefined): string => (code && FAIL_CODES.has(code) ? `whiteboard.quick.err.${code}` : 'whiteboard.quick.failed');
+
+/** An undo refusal, in the owner's words (key under whiteboard.quick.*). */
+export function undoRefusalKey(code: string): string {
+  if (code === 'not_latest') return 'whiteboard.quick.undoNotLatest';
+  if (code === 'not_found') return 'whiteboard.quick.undoGone';
+  return 'whiteboard.quick.failed';
 }
 
 export const isTerminal = (s: QuickJobState): boolean => s === 'done' || s === 'failed' || s === 'stopped';
@@ -146,7 +163,8 @@ export const isTerminal = (s: QuickJobState): boolean => s === 'done' || s === '
 /** What the field's bottom line shows. */
 export type QuickLine =
   | { kind: 'running'; seconds: number }
-  | { kind: 'done'; reply: string; editId: string | null; skipped: number }
+  | { kind: 'done'; reply: string; editId: string | null; skipped: number; dropped: number }
+  | { kind: 'nothing'; reply: string }
   | { kind: 'notBoard'; reply: string }
   | { kind: 'outOfScope'; reply: string }
   | { kind: 'failed'; text: string }
@@ -157,11 +175,12 @@ export type QuickLine =
  *  no Geri al. */
 export function lineOfJob(job: QuickJobView, t: (key: string) => string): QuickLine {
   if (job.state === 'stopped') return { kind: 'stopped' };
-  if (job.state === 'failed') return { kind: 'failed', text: job.error || t('whiteboard.quick.failed') };
+  if (job.state === 'failed') return { kind: 'failed', text: t(failKey(job.code)) };
   const reply = (job.reply ?? '').trim();
   if (job.notBoard) return { kind: 'notBoard', reply: reply || t('whiteboard.quick.notBoard') };
   if (job.outOfScope) return { kind: 'outOfScope', reply: reply || t('whiteboard.quick.outOfScope') };
-  return { kind: 'done', reply: reply || t('whiteboard.quick.doneDefault'), editId: job.edit?.id ?? null, skipped: (job.edit?.skipped ?? job.skipped ?? []).length };
+  if (job.nothing) return { kind: 'nothing', reply: t('whiteboard.quick.nothing') };
+  return { kind: 'done', reply: reply || t('whiteboard.quick.doneDefault'), editId: job.edit?.id ?? null, skipped: (job.edit?.skipped ?? job.skipped ?? []).length, dropped: job.dropped ?? 0 };
 }
 
 /** The ids an applied edit ADDED: what it wrote that the scene did not hold before. */

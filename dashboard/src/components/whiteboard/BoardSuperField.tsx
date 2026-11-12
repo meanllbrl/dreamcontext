@@ -24,7 +24,7 @@ import {
   type CanvasBox, type SaveKind,
 } from './superFieldLogic';
 import {
-  QUICK_SCOPE_MAX, addedIds, areaOf, effectiveMode, lineOfJob, readFieldMode, regionChipText, startRefusalKey, writeFieldMode,
+  QUICK_SCOPE_MAX, addedIds, areaOf, effectiveMode, lineOfJob, readFieldMode, regionChipText, startRefusalKey, undoRefusalKey, writeFieldMode,
   type FieldMode, type QuickJobView, type QuickLine, type Region,
 } from './quickEditLogic';
 import { useQuickEdit } from '../../hooks/useQuickEdit';
@@ -111,7 +111,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   useEffect(() => {
     let live = true;
     void quick.last().then((edit) => {
-      if (live && edit) setLine((cur) => cur ?? { kind: 'done', reply: edit.reply, editId: edit.id, skipped: 0 });
+      if (live && edit) setLine((cur) => cur ?? { kind: 'done', reply: edit.reply, editId: edit.id, skipped: 0, dropped: 0 });
     });
     return () => { live = false; };
   }, [board]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -213,7 +213,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       const r = await quick.start({ text: words, scope, area: areaOf(area) });
       if (!r.ok) {
         // Refused in band: nothing started, the words stay in the field.
-        setNote({ text: r.code === 'busy' || r.code === 'rate' ? r.message : t(startRefusalKey(r.status, r.code)), bad: true });
+        setNote({ text: t(startRefusalKey(r.status, r.code)), bad: true });
         if (r.code === 'no_claude') void quick.refreshStatus();
         return;
       }
@@ -234,9 +234,12 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
     const view = await quick.follow(job, () => {}, signal);
     followers.current = followers.current.filter((f) => f !== signal);
     if (signal.stopped) return;
-    const left = runsRef.current.filter((x) => x.job !== job);
-    setRuns(left);
-    if (left.length === 0) onQuickBoxRef.current(null);
+    // Functional: two followers can end before a render (review r1), and a stale list would bring one back.
+    setRuns((cur) => {
+      const left = cur.filter((x) => x.job !== job);
+      if (left.length === 0) onQuickBoxRef.current(null);
+      return left;
+    });
     if (!view) { setLine({ kind: 'failed', text: t('whiteboard.quick.failed') }); return; }
     landJob(view, before);
   }, [draft, region, selection, flush, canvasApi, quick, t]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -261,10 +264,10 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
 
   const undo = useCallback(async (editId: string) => {
     const r = await quick.undo(editId);
-    if (!r.ok) { setNote({ text: r.message, bad: true }); return; }
+    if (!r.ok) { setNote({ text: t(undoRefusalKey(r.code)), bad: true }); return; }
     if (r.elements.length) canvasApi()?.applyRemoteElements(r.elements);
     setLine({ kind: 'undone', skipped: r.skipped.length });
-  }, [quick, canvasApi]);
+  }, [quick, canvasApi, t]);
 
   const send = () => (mode === 'quick' ? sendQuick() : sendSuper());
 
@@ -293,9 +296,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   const canSend = typed && !sending && modeUsable;
   const running = runs.length > 0;
   const runSeconds = running ? Math.max(0, Math.floor((now - runs[0].startedAt) / 1000)) : 0;
-  const offReason = !quickOk && !superOn
-    ? (quick.status && !quick.status.ok ? quick.status.text : t('whiteboard.quick.noClaude'))
-    : null;
+  const offReason = !quickOk && !superOn ? t('whiteboard.quick.noClaude') : null;
 
   return (
     <div
@@ -340,7 +341,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
               className="bsf-mode"
               aria-pressed={mode === 'quick'}
               disabled={!quickOk}
-              title={!quickOk && quick.status && !quick.status.ok ? quick.status.text : t('whiteboard.quick.modeQuick')}
+              title={!quickOk ? t('whiteboard.quick.noClaude') : t('whiteboard.quick.modeQuick')}
               onClick={() => pick('quick')}
               data-testid="board-mode-quick"
             >
@@ -360,7 +361,9 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
           </span>
         </div>
         <div className="bsf-row">
-          <button
+          {/* The mark opens the Super's window: with Super off there is nothing to open, so it is
+              not drawn (review r1); the mode switch says "Super kapalı". */}
+          {superOn && <button
             type="button"
             className="bsf-mark"
             data-testid="board-super-mark"
@@ -372,7 +375,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
             <BrandMark size={18} title="" />
             {markState === 'asking' && <span className="bsf-mark-q" aria-hidden>?</span>}
             {(markState === 'working' || markState === 'news') && <span className="bsf-mark-dot" aria-hidden />}
-          </button>
+          </button>}
           <textarea
             ref={inputRef}
             className="bsf-input"
@@ -457,14 +460,16 @@ function QuickLineView({ line, t, superOn, onUndo, onAskSuper }: {
         <span className="bsf-line-text">
           {line.reply}
           {line.skipped > 0 && <>{' '}{skippedText(line.skipped)}</>}
+          {line.dropped > 0 && <>{' '}{t('whiteboard.quick.dropped').replace('{n}', String(line.dropped))}</>}
         </span>
         {line.editId && <button type="button" className="bsf-btn" onClick={() => onUndo(line.editId as string)} data-testid="board-quick-undo">{t('whiteboard.quick.undo')}</button>}
       </div>
     );
   }
-  if (line.kind === 'notBoard' || line.kind === 'outOfScope') {
+  if (line.kind === 'notBoard' || line.kind === 'outOfScope' || line.kind === 'nothing') {
+    const id = line.kind === 'notBoard' ? 'board-quick-notboard' : line.kind === 'outOfScope' ? 'board-quick-outofscope' : 'board-quick-nothing';
     return (
-      <div className="bsf-line" role="status" data-testid={line.kind === 'notBoard' ? 'board-quick-notboard' : 'board-quick-outofscope'}>
+      <div className="bsf-line" role="status" data-testid={id}>
         <span className="bsf-line-text">{line.reply}</span>
         {ask}
       </div>

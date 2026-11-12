@@ -6,12 +6,14 @@ import { tmpdir } from 'node:os';
 import {
   applyQuickEdit, expandScope, fitInto, LOSING_NONCE, parseQuickEditAnswer, QUICK_INPUT_CAP, quickEditArgs,
   quickEditInput, quickEditSystemPrompt, quickEditUserMessage, QuickEditRefusal, readAnswer, readJournal, writeJournal,
+  scopeTextLimit, specProblem, SPEC_NUMBER_MAX,
   type QuickEditAnswer, type QuickJournalRecord,
 } from '../../src/lib/whiteboards/quick-edit.js';
 import { createWhiteboard, identityKey, mutateWhiteboard, quickJournalPath, readWhiteboard, trashWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { mergeElements } from '../../src/lib/whiteboards/merge.js';
 import { elementBBox, unionBBox } from '../../src/lib/whiteboards/ops.js';
 import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
+import { untouchedIdentity } from '../../src/lib/whiteboards/quick-edit-jobs.js';
 
 let root: string;
 beforeEach(() => {
@@ -273,5 +275,57 @@ describe('quick edit: the journal', () => {
     await trashWhiteboard(root, slug);
     expect(existsSync(join(root, 'whiteboards', '.locks', 'quick', `${slug}.jsonl`))).toBe(false);
     expect(readFileSync(join(root, 'whiteboards', '.locks', 'quick', '.gitignore'), 'utf-8')).toBe('*\n');
+  });
+});
+
+describe('quick edit: end review r1', () => {
+  it('security: a model spec past the bounds is refused BEFORE the in-process build, in milliseconds', () => {
+    let built = 0;
+    const build = (() => { built += 1; return { elements: [], audit: {}, pictures: [] }; }) as never;
+    const t0 = Date.now();
+    for (const spec of [
+      { elements: [{ type: 'textRows', rows: 200_000 }] },
+      { elements: [{ type: 'rectangle', x: 0, y: 0, width: SPEC_NUMBER_MAX + 1, height: 10 }] },
+      { elements: Array.from({ length: 401 }, () => ({ type: 'rectangle' })) },
+      { elements: [{ type: 'line', points: [[0, Number.POSITIVE_INFINITY]] }] },
+    ]) {
+      const ans: QuickEditAnswer = { reply: 'x', notBoard: false, add: [{ at: [0, 0], spec }] };
+      expect(() => applyQuickEdit({ elements: [] }, ans, { scope: [], identities: {}, area: null, build })).toThrow(QuickEditRefusal);
+    }
+    expect(built).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(specProblem({ elements: [{ type: 'textRows', rows: 3, path: 'x' }] })).toBe('path');
+    expect(specProblem({ elements: [{ type: 'ellipse', x: 10, y: 40, width: 160, height: 140 }] })).toBeNull();
+  });
+
+  it('edge-cases: a queued edit counts a shape an earlier quick edit rewrote as untouched; a hand edit stays skipped', () => {
+    const before = rect('A', 0, 0, { version: 3, versionNonce: 500 });
+    const rec = { id: 'r'.repeat(16), at: '', text: '', reply: '', added: [], changed: ['A'], before: { A: before }, after: { A: `4:${LOSING_NONCE}` }, costUsd: null, model: 'sonnet', undone: false } as QuickJournalRecord;
+    expect(untouchedIdentity('3:500', `4:${LOSING_NONCE}`, 'A', [rec])).toBe(`4:${LOSING_NONCE}`);
+    // Disk moved on past the edit (the owner's hand): the page's identity stands, so the apply skips it.
+    expect(untouchedIdentity('3:500', '5:77', 'A', [rec])).toBe('3:500');
+    expect(untouchedIdentity('3:500', `4:${LOSING_NONCE}`, 'A', [{ ...rec, undone: true }])).toBe('3:500');
+  });
+
+  it('edge-cases: a text the model saw cut is never overwritten whole; a short one is shown and changed whole', () => {
+    const long = 'Uzun bir paragraf. '.repeat(150); // 2850 chars, past the 2000 a lone text is shown
+    const t = { ...label('T', 'none', long), containerId: null } as WhiteboardElement;
+    const els = [t];
+    expect(scopeTextLimit(els, ['T'])).toBe(2000);
+    const o = applyQuickEdit({ elements: els }, { reply: 'Kısalttım.', notBoard: false, update: [{ id: 'T', text: 'Kısa' }] }, { scope: ['T'], identities: ids(els, ['T']), area: null });
+    expect(o.changed).toEqual([]);
+    expect(o.dropped).toBe(1);
+    expect(els[0].originalText).toBe(long);
+    const mid = 'a'.repeat(300);
+    const t2 = { ...label('M', 'none', mid), containerId: null } as WhiteboardElement;
+    expect(JSON.parse(quickEditInput([t2], ['M'], null)).scope[0].text).toBe(mid);
+  });
+
+  it('edge-cases: asked-for changes that cannot be made are counted, never silently dropped', () => {
+    const els = [rect('B')]; // no bound label
+    const ans: QuickEditAnswer = { reply: "Kutuya 'Ödeme' yazıldı.", notBoard: false, update: [{ id: 'B', text: 'Ödeme', fill: 'lightblue' }] };
+    const o = applyQuickEdit({ elements: els }, ans, { scope: ['B'], identities: ids(els, ['B']), area: null });
+    expect(o.changed).toEqual([]);
+    expect(o.dropped).toBe(2);
   });
 });

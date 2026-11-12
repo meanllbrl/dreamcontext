@@ -15,7 +15,7 @@ import { PAGE_CONTEXT_RE, splitPageContext } from '../../dashboard/src/lib/super
 import type { SelectionRef } from '../../dashboard/src/components/whiteboard/agentDrop.js';
 import { nextNeed, rowOverflow } from '../../dashboard/src/pages/whiteboards/useTopRowFit.js';
 import {
-  CLICK_SLOP_PX, FIELD_MODE_KEY, QUICK_SCOPE_MAX, REGION_MIN_PX, addedIds, areaOf, dragOutcome, effectiveMode, lineOfJob,
+  CLICK_SLOP_PX, FIELD_MODE_KEY, QUICK_SCOPE_MAX, REGION_MIN_PX, addedIds, areaOf, dragOutcome, effectiveMode, failKey, lineOfJob, undoRefusalKey,
   quickEditScope, readFieldMode, regionChipText, startRefusalKey, writeFieldMode, type ScopeElement,
 } from '../../dashboard/src/components/whiteboard/quickEditLogic.js';
 
@@ -419,15 +419,30 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
   const job = (over: Record<string, unknown>) => ({ state: 'done', startedAt: '2026-11-12T00:00:00Z', ...over }) as never;
 
   it('done: the reply and Geri al for the edit; skipped owner changes are counted', () => {
-    expect(lineOfJob(job({ reply: 'Elma eklendi.', edit: { id: 'q1', added: 3, changed: 0, skipped: [] } }), tq)).toEqual({ kind: 'done', reply: 'Elma eklendi.', editId: 'q1', skipped: 0 });
+    expect(lineOfJob(job({ reply: 'Elma eklendi.', edit: { id: 'q1', added: 3, changed: 0, skipped: [] } }), tq)).toEqual({ kind: 'done', reply: 'Elma eklendi.', editId: 'q1', skipped: 0, dropped: 0 });
     expect(lineOfJob(job({ reply: 'Yeşil yapıldı.', edit: { id: 'q2', added: 0, changed: 2, skipped: ['x'] } }), tq)).toMatchObject({ editId: 'q2', skipped: 1 });
-    expect(lineOfJob(job({ reply: '' }), tq)).toEqual({ kind: 'done', reply: 'Güncellendi', editId: null, skipped: 0 });
+    expect(lineOfJob(job({ reply: '' }), tq)).toEqual({ kind: 'done', reply: 'Güncellendi', editId: null, skipped: 0, dropped: 0 });
+    expect(lineOfJob(job({ reply: 'Yeşil.', dropped: 2, edit: { id: 'q3', added: 0, changed: 1, skipped: [] } }), tq)).toMatchObject({ kind: 'done', dropped: 2 });
+  });
+
+  it('review r1: an edit that wrote nothing is never a success; the line follows what was written', () => {
+    expect(lineOfJob(job({ reply: "Kutuya 'Ödeme' yazıldı.", nothing: true }), tq)).toEqual({ kind: 'nothing', reply: tq('whiteboard.quick.nothing') });
+  });
+
+  it('review r1: a failure is worded from its code in the owner\'s language, never the server\'s prose', () => {
+    expect(lineOfJob(job({ state: 'failed', code: 'timeout', error: 'no answer in 60 s' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.err.timeout') });
+    expect(lineOfJob(job({ state: 'failed', code: 'surprise', error: 'Zaman aşımı' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.failed') });
+    expect(failKey(undefined)).toBe('whiteboard.quick.failed');
+    expect(undoRefusalKey('not_latest')).toBe('whiteboard.quick.undoNotLatest');
+    expect(undoRefusalKey('not_found')).toBe('whiteboard.quick.undoGone');
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
+    expect(src).not.toMatch(/r\.message|status\.text|job\.error/);
   });
 
   it('not a board change and out of scope write nothing and offer Super\'e sor; failed and stopped say so', () => {
     expect(lineOfJob(job({ notBoard: true, reply: 'Bu bir tahta değişikliği değil.' }), tq)).toEqual({ kind: 'notBoard', reply: 'Bu bir tahta değişikliği değil.' });
     expect(lineOfJob(job({ outOfScope: true, reply: 'Önce Seçenek D şeklini seç.' }), tq)).toEqual({ kind: 'outOfScope', reply: 'Önce Seçenek D şeklini seç.' });
-    expect(lineOfJob(job({ state: 'failed', error: 'anlaşılamadı' }), tq)).toEqual({ kind: 'failed', text: 'anlaşılamadı' });
+    expect(lineOfJob(job({ state: 'failed', code: 'unreadable', error: 'answer not readable' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.err.unreadable') });
     expect(lineOfJob(job({ state: 'stopped' }), tq)).toEqual({ kind: 'stopped' });
   });
 

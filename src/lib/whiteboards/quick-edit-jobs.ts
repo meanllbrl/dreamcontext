@@ -33,6 +33,8 @@ export const QUICK_MAX_PER_MINUTE = 30;
 export const QUICK_JOB_TTL_MS = 10 * 60_000;
 
 export type QuickJobState = 'queued' | 'running' | 'applying' | 'done' | 'failed' | 'stopped';
+/** Why a job failed, as a code: the page words it in the owner's language (review r1). */
+export type QuickFailCode = 'spawn' | 'timeout' | 'limit' | 'unreadable' | 'too_big' | 'refused' | 'write';
 
 export interface QuickJobView {
   state: QuickJobState;
@@ -45,7 +47,13 @@ export interface QuickJobView {
   /** Scope elements the owner changed while the edit ran: left as he made them. */
   skipped?: string[];
   elements?: WhiteboardElement[];
+  /** A failed job's reason: `code` for the page, `error` a log line (never shown as is). */
+  code?: QuickFailCode;
   error?: string;
+  /** The answer asked for changes and none could be made: not a success. */
+  nothing?: boolean;
+  /** Asked-for changes that could not be made beside the ones that were. */
+  dropped?: number;
   /** Measured, for the speed criterion: spawn → answer, and the whole job. */
   timing?: { modelMs: number; totalMs: number };
   costUsd?: number | null;
@@ -213,8 +221,24 @@ function settle(job: Job, patch: Partial<QuickJobView> & { state: QuickJobState 
   }
 }
 
-function failed(job: Job, error: string): void {
-  settle(job, { state: 'failed', error });
+function failed(job: Job, code: QuickFailCode, error: string): void {
+  settle(job, { state: 'failed', code, error });
+}
+
+/**
+ * The identity a scope element counts as untouched at. The page sends what it saw; an earlier
+ * quick edit on this board (the one a queued send waited for) may have rewritten it since. When
+ * the journal's chain of edits leads from what the page saw to what is on disk, nobody's hand
+ * did it, and the disk's identity stands (review r1, edge-cases).
+ */
+export function untouchedIdentity(given: string, disk: string, id: string, records: readonly QuickJournalRecord[]): string {
+  let cur = given;
+  for (let hop = 0; hop < records.length && cur !== disk; hop++) {
+    const next = records.find((r) => !r.undone && r.before[id] && identityKey(r.before[id]) === cur && typeof r.after[id] === 'string');
+    if (!next) break;
+    cur = next.after[id];
+  }
+  return cur === disk ? disk : given;
 }
 
 async function run(job: Job): Promise<void> {
@@ -228,9 +252,13 @@ async function run(job: Job): Promise<void> {
     const scope = expandScope(board.elements, pageIds);
     const identities: Record<string, string> = {};
     const byId = new Map(board.elements.map((e) => [e.id, e]));
+    let records: QuickJournalRecord[] | null = null;
     for (const id of scope) {
       const given = job.req.scope?.identities[id];
-      identities[id] = typeof given === 'string' ? given : identityKey(byId.get(id)!);
+      const disk = identityKey(byId.get(id)!);
+      if (typeof given !== 'string' || given === disk) { identities[id] = disk; continue; }
+      records ??= readJournal(job.root, job.slug, job.req.selfOrigin);
+      identities[id] = untouchedIdentity(given, disk, id, records);
     }
     const input = quickEditInput(board.elements, scope, job.req.area);
     const args = quickEditArgs(systemPrompt(), quickEditUserMessage(job.req.text, input));
@@ -254,11 +282,11 @@ async function run(job: Job): Promise<void> {
     });
     const modelMs = (deps.now ?? Date.now)() - tModel;
     if (job.stopRequested) return;
-    if (!r.spawned) { failed(job, 'Claude başlatılamadı.'); return; }
-    if (r.timedOut) { failed(job, 'Zaman aşımı: model 60 sn içinde cevap vermedi.'); return; }
+    if (!r.spawned) { failed(job, 'spawn', 'claude did not start'); return; }
+    if (r.timedOut) { failed(job, 'timeout', `no answer in ${QUICK_TIMEOUT_MS / 1000} s`); return; }
     const parsed = parseQuickEditAnswer(r.stdout);
     if (!parsed.ok) {
-      failed(job, parsed.reason === 'limit' ? 'Claude hesap sınırına takıldı; biraz sonra tekrar dene.' : 'Cevap anlaşılamadı; tahtada bir şey değişmedi.');
+      failed(job, parsed.reason === 'limit' ? 'limit' : 'unreadable', parsed.reason === 'limit' ? 'account limit' : 'answer not readable');
       job.view.costUsd = parsed.costUsd;
       return;
     }
@@ -271,8 +299,8 @@ async function run(job: Job): Promise<void> {
     await apply(job, answer, scope, identities, parsed.costUsd, { modelMs, t0 });
   } catch (err) {
     if (job.stopRequested) return;
-    const msg = err instanceof QuickEditRefusal || err instanceof WhiteboardError ? err.message : 'Düzenleme yazılamadı.';
-    failed(job, msg);
+    if (err instanceof QuickEditRefusal) failed(job, err.code === 'too_big' ? 'too_big' : 'refused', err.message);
+    else failed(job, err instanceof WhiteboardError ? 'refused' : 'write', 'the edit was not written');
   } finally {
     if (cwd) rmSync(cwd, { recursive: true, force: true });
   }
@@ -307,12 +335,17 @@ async function apply(
   });
   const o = outcome as ReturnType<typeof applyQuickEdit> | null;
   const timing = { modelMs: t.modelMs, totalMs: (deps.now ?? Date.now)() - t.t0 };
-  if (!o) { failed(job, 'Düzenleme yazılamadı.'); return; }
+  if (!o) { failed(job, 'write', 'the edit was not written'); return; }
   if (o.outOfScope) {
     settle(job, { state: 'done', reply: answer.reply, outOfScope: true, costUsd, timing });
     return;
   }
   const wroteSomething = o.added.length + o.changed.length > 0;
+  // The line follows what was written, not the model's sentence (review r1, edge-cases).
+  if (!wroteSomething && o.skipped.length === 0) {
+    settle(job, { state: 'done', reply: answer.reply, nothing: true, costUsd, timing });
+    return;
+  }
   // What the page reconciles at once: every element the edit wrote, as it landed on disk.
   const fresh = readWhiteboard(job.root, job.slug).board.elements;
   const ids = new Set(o.written.map((e) => e.id));
@@ -323,6 +356,7 @@ async function apply(
     timing,
     ...(wroteSomething ? { edit: { id: recordId, added: o.added.length, changed: o.changed.length, skipped: o.skipped } } : {}),
     ...(o.skipped.length ? { skipped: o.skipped } : {}),
+    ...(o.dropped ? { dropped: o.dropped } : {}),
     elements: fresh.filter((e) => ids.has(e.id)),
   });
 }

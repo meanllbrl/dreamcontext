@@ -236,6 +236,15 @@ const r = (v: unknown) => (finite(v) ? Math.round(v) : 0);
 const textOf = (el: WhiteboardElement): string => (typeof el.originalText === 'string' ? el.originalText : typeof el.text === 'string' ? el.text : '');
 const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
+/** Characters of scope text the model is shown per element: whole up to {@link QUICK_TEXT_MAX}
+ *  when few elements carry text, never below {@link QUICK_SCOPE_TEXT} (150 always fit the cap). */
+const SCOPE_TEXT_BUDGET = 6000;
+export function scopeTextLimit(elements: readonly WhiteboardElement[], scope: readonly string[]): number {
+  const byId = new Map(elements.map((e) => [e.id, e]));
+  const n = scope.filter((id) => { const el = byId.get(id); return !!el && textOf(el).length > 0; }).length;
+  return Math.min(QUICK_TEXT_MAX, Math.max(QUICK_SCOPE_TEXT, Math.floor(SCOPE_TEXT_BUDGET / Math.max(1, n))));
+}
+
 function boxMeets(a: BBox, b: BBox): boolean {
   return a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
 }
@@ -249,6 +258,7 @@ export function quickEditInput(elements: readonly WhiteboardElement[], scope: re
   const live = liveElements(elements);
   const byId = new Map(live.map((e) => [e.id, e]));
   const inScope = new Set(scope);
+  const textLimit = scopeTextLimit(live, scope);
   const scopeOut = scope.flatMap((id) => {
     const el = byId.get(id);
     if (!el) return [];
@@ -259,7 +269,7 @@ export function quickEditInput(elements: readonly WhiteboardElement[], scope: re
       id, type: el.type, x: r(b.x), y: r(b.y), w: r(b.w), h: r(b.h),
       stroke: typeof el.strokeColor === 'string' ? el.strokeColor : undefined,
       fill: typeof el.backgroundColor === 'string' ? el.backgroundColor : undefined,
-      ...(t ? { text: cut(t, QUICK_SCOPE_TEXT) } : {}),
+      ...(t ? { text: cut(t, textLimit) } : {}),
       ...(typeof el.containerId === 'string' ? { containerId: el.containerId } : {}),
       ...(groupIds ? { groupIds } : {}),
       ...(widgetPayloadOf(el) ? { widget: widgetPayloadOf(el)!.kind } : {}),
@@ -344,6 +354,7 @@ export function quickEditSystemPrompt(kitReference: string = safeKitReference())
     '- When the request is about a shape that is NOT in `scope`, still name it in `update` or `remove` by its id from `near`, and say in `reply` that the owner should select it first ("Önce Seçenek D şeklini seç."). The server then writes nothing.',
     '- A recolor goes to `fill` for a filled shape ("yeşil yap" = fill green). A rename of a labelled shape is `text` on the shape.',
     '- Never a picture, a link, a `path` or a widget. Keep labels short (1 to 4 words).',
+    '- A `text` that ends in "…" was cut for you: never send `update.text` for it (the server refuses it); say in `reply` that the owner should ask Super.',
     '',
     PRIMITIVES,
     '',
@@ -462,15 +473,35 @@ function scaleAbout(el: WhiteboardElement, s: number, ox: number, oy: number): v
   if (el.type === 'text' && finite(el.fontSize)) el.fontSize = Math.max(4, el.fontSize * s);
 }
 
-/** Does a spec name a `path` anywhere (a picture or a lane/grid helper reading a file)? */
-function specHasPath(v: unknown, depth = 0): boolean {
-  if (depth > 40 || !v || typeof v !== 'object') return false;
-  if (Array.isArray(v)) return v.some((x) => specHasPath(x, depth + 1));
-  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-    if (k === 'path') return true;
-    if (specHasPath(x, depth + 1)) return true;
-  }
-  return false;
+/** A spec's numbers drive the kit's loops (rows, seg, teeth…) and the kit runs IN the server
+ *  process: every value is bounded BEFORE the build (review r1, security). A quick drawing is
+ *  small; nothing a real one needs comes near these. */
+export const SPEC_NUMBER_MAX = 2000;
+export const SPEC_ARRAY_MAX = 400;
+export const SPEC_NODES_MAX = 4000;
+const SPEC_DEPTH_MAX = 24;
+
+/** Why a model-written spec may not be built: a `path` (a file read), or a size past the bounds. */
+export function specProblem(spec: unknown): 'path' | 'too_big' | null {
+  let nodes = 0;
+  const walk = (v: unknown, depth: number): 'path' | 'too_big' | null => {
+    if (++nodes > SPEC_NODES_MAX || depth > SPEC_DEPTH_MAX) return 'too_big';
+    if (typeof v === 'number') return Number.isFinite(v) && Math.abs(v) <= SPEC_NUMBER_MAX ? null : 'too_big';
+    if (typeof v === 'string') return v.length > QUICK_TEXT_MAX ? 'too_big' : null;
+    if (!v || typeof v !== 'object') return null;
+    if (Array.isArray(v)) {
+      if (v.length > SPEC_ARRAY_MAX) return 'too_big';
+      for (const x of v) { const p = walk(x, depth + 1); if (p) return p; }
+      return null;
+    }
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (k === 'path') return 'path';
+      const p = walk(x, depth + 1);
+      if (p) return p;
+    }
+    return null;
+  };
+  return walk(spec, 0);
 }
 
 export interface QuickEditContext {
@@ -493,9 +524,12 @@ export interface QuickEditOutcome {
   before: Record<string, WhiteboardElement>;
   /** Every element the edit wrote (added, changed, tombstoned). */
   written: WhiteboardElement[];
+  /** Asked-for changes that could not be made (no label to rename, an unknown colour, a cut text,
+   *  a widget): the line the owner sees says so, never only the model's sentence. */
+  dropped: number;
 }
 
-const empty = (outOfScope = false): QuickEditOutcome => ({ outOfScope, added: [], changed: [], skipped: [], before: {}, written: [] });
+const empty = (outOfScope = false): QuickEditOutcome => ({ outOfScope, added: [], changed: [], skipped: [], before: {}, written: [], dropped: 0 });
 
 /**
  * Apply an answer to a board's element list IN PLACE (the `mutateWhiteboard` draft). All or
@@ -514,6 +548,10 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
   const work = new Map<string, WhiteboardElement>();
   const skipped = new Set<string>();
   const removed = new Set<string>();
+  let dropped = 0;
+  const textLimit = scopeTextLimit(elements, ctx.scope);
+  /** Words the model saw whole, or a cut text it must not overwrite. */
+  const whole = (el: WhiteboardElement) => textOf(el).length <= textLimit;
 
   /** The working copy of a scope element we may touch, or null (gone, or the owner changed it). */
   const take = (id: string): WhiteboardElement | null => {
@@ -542,23 +580,24 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
     const el = take(u.id);
     if (!el) continue;
     const isWidget = !!widgetPayloadOf(el);
-    if (u.text !== undefined && !isWidget) {
-      if (el.type === 'text') {
-        const container = typeof el.containerId === 'string' ? peek(el.containerId) : null;
-        setText(el, u.text, container);
-      } else {
-        const tid = boundTextOf(el);
-        const label = tid ? take(tid) : null;
-        if (label) setText(label, u.text, el);
-      }
+    if (u.text !== undefined) {
+      let target: WhiteboardElement | null = null;
+      let container: WhiteboardElement | null = null;
+      if (isWidget) target = null;
+      else if (el.type === 'text') { target = el; container = typeof el.containerId === 'string' ? peek(el.containerId) : null; }
+      else { const tid = boundTextOf(el); target = tid ? take(tid) : null; container = el; }
+      const labelSkipped = !target && el.type !== 'text' && !!boundTextOf(el) && skipped.has(boundTextOf(el)!);
+      if (target && whole(target)) setText(target, u.text, container);
+      else if (!labelSkipped) dropped += 1;
     }
     const stroke = isWidget ? null : readColor(u.stroke, 'stroke');
     if (stroke) el.strokeColor = stroke;
+    else if (u.stroke !== undefined) dropped += 1;
     const fill = isWidget || el.type === 'text' ? null : readColor(u.fill, 'fill');
     if (fill) {
       el.backgroundColor = fill;
       if (typeof el.fillStyle !== 'string' || el.fillStyle === 'hachure') el.fillStyle = 'solid';
-    }
+    } else if (u.fill !== undefined) dropped += 1;
     if (u.size) {
       const [w, h] = u.size;
       if ((el.type === 'line' || el.type === 'arrow') && Array.isArray(el.points)) {
@@ -614,7 +653,9 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
   const added: WhiteboardElement[] = [];
   const build = ctx.build ?? buildSpecDrawing;
   for (const a of answer.add ?? []) {
-    if (specHasPath(a.spec)) throw new QuickEditRefusal('refused', 'a quick edit draws shapes only, never a file or a picture');
+    const problem = specProblem(a.spec);
+    if (problem === 'path') throw new QuickEditRefusal('refused', 'a quick edit draws shapes only, never a file or a picture');
+    if (problem) throw new QuickEditRefusal('too_big', 'a quick edit drawing past the size bounds');
     const { elements: built } = build(JSON.stringify(a.spec), 'quick-edit', {
       checkPicture: () => { throw new QuickEditRefusal('refused', 'a quick edit never places a picture'); },
     });
@@ -651,7 +692,7 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
     written.push(el);
   }
   for (const el of added) { elements.push(el); written.push(el); }
-  return { outOfScope: false, added: added.map((e) => e.id), changed, skipped: [...skipped], before, written };
+  return { outOfScope: false, added: added.map((e) => e.id), changed, skipped: [...skipped], before, written, dropped };
 }
 
 /** Fit placed elements into the area (critic r3): scale down to fit, then move wholly inside. */
