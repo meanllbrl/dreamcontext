@@ -1,23 +1,7 @@
 ---
 name: council-synthesizer
 description: >
-  Reads every report, persona, research file, and verdict in a council debate and
-  writes the final decision report. Runs once at the end of a debate, after all
-  rounds are complete, always as a clean sub-agent. Produces `final-report.md` with
-  a verdict + vote tally, decision card, traced Whys, the embedded position
-  timeline, minority view with observable revisit conditions, and open risks.
-
-  <example>
-  Context: A council debate has finished round 2 and the main agent has called
-  `council synthesize`.
-  user: "Write the final report"
-  assistant: "Dispatching the council-synthesizer agent..."
-  <commentary>
-  The synthesizer is the ONLY agent (besides user) that reads full sub-agent reports.
-  It is always dispatched clean, never forked or resumed from a debate session, so
-  its judgment is independent of the debate's framing.
-  </commentary>
-  </example>
+  Writes a council debate's final decision report from every report, persona and verdict; runs once, as a clean sub-agent, after the last round.
 model: opus
 color: yellow
 tools:

@@ -1,22 +1,7 @@
 ---
 name: initializer-verifier
 description: >
-  Verification gate for the initializer skill. After ingestion, proves the brain is genuinely
-  initialized — or proves it isn't — and returns PASS or FAIL with evidence. Checks for template
-  placeholders, runs `dreamcontext doctor`, confirms recall returns real hits, the knowledge index
-  built, no feature/knowledge duplication of the same topic, and a sane hierarchy. Read-only — it
-  does not fix the corpus. Dispatched at Phase 6.
-
-  <example>
-  Context: Ingestion finished; the orchestrator dispatches the verifier before reporting done.
-  user: (dispatched after Phases 4–5)
-  assistant: "Grepping for placeholders, running doctor, probing recall, checking for feature/knowledge dupes..."
-  <commentary>
-  The verifier runs the ACTUAL checks (not a reasoned guess), treats any unreplaced {{TOKEN}} or a
-  failing doctor as FAIL, and reports the exact command + output as evidence. It never marks PASS
-  on a hunch.
-  </commentary>
-  </example>
+  Read-only initializer gate: proves the new brain has no placeholders, a clean doctor, real recall hits and no duplicate topics; returns PASS or FAIL with evidence.
 model: sonnet
 tools:
   - Read

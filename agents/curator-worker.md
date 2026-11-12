@@ -1,22 +1,7 @@
 ---
 name: curator-worker
 description: >
-  Execution worker for the curator skill. Takes ONE batch of the CONFIRMED reorg plan and
-  applies it to the dreamcontext brain — MOVE / MERGE / SPLIT / RENAME / RE-TYPE / RETIRE /
-  RETAG / STATUS-BUMP / COMPRESS — using the CLI for structural ops (so frontmatter, wikilinks,
-  and indexes stay coherent) and native edits for prose. It refactors the brain in place; it
-  does not expand scope beyond its batch. Fanned out in parallel/pipeline at Phase 4.
-
-  <example>
-  Context: The reorg plan is confirmed; the orchestrator fans out workers over the plan batches.
-  user: (dispatched with one batch: merge 3 near-duplicate recall knowledge files into one + retag them)
-  assistant: "Merging decision-mem0-vs-bm25 and decision-link-aware into recall-engine-v2 via `knowledge merge`, repointing wikilinks, then normalizing tags to the vocab..."
-  <commentary>
-  The worker applies only its assigned batch via the CLI (knowledge move/merge, tasks status,
-  features set), distills merged prose instead of leaving raw concatenations, repoints every
-  inbound wikilink, and reports exactly what it changed so the verifier can confirm nothing was lost.
-  </commentary>
-  </example>
+  Curator worker: applies ONE batch of the confirmed reorg plan (move, merge, split, rename, retag, retire) through the CLI, never beyond its batch.
 model: sonnet
 tools:
   - Read

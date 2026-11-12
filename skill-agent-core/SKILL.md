@@ -4,8 +4,8 @@ description: >
   Preloaded into dreamcontext's own sub-agents (sleep specialists, explore,
   initializer and curator workers, goal, review and council agents). The operating
   minimum for working inside a `_dream_context/` brain: CLI over hand-editing,
-  recall, where things live, path safety. The main session already carries the full
-  `dreamcontext` skill; do not load this one there.
+  recall, where things live, path safety. The main session uses the full
+  `dreamcontext` skill instead; do not load this one there.
 user-invocable: false
 ---
 
@@ -32,8 +32,8 @@ task needs.
 
 RECALL: before Glob/Grep on any "where / why / what do we know about X" question, run `dreamcontext memory recall "<keywords>"`. It ranks knowledge, features, tasks, memory, changelog, objectives, insights, theses and automations, plus connected projects. Narrow with `--types <csv>` or `--level 2|3`.
 
-Your SubagentStart briefing lists features and knowledge by name; read the matching
-file before searching code.
+When your briefing or a recall hit names a knowledge or feature file that matches your
+task, read it before searching code.
 
 ## Where things live
 
@@ -66,7 +66,7 @@ _dream_context/
 - Automation (runs on a schedule): `dreamcontext automations create <slug> --agent <agent>`.
 - Release or version: `dreamcontext core releases add`.
 - Person: `dreamcontext people add "<Name>" --email <address>`.
-- Report over tracked insights: `dreamcontext lab report create <slug>`.
+- Board over tracked insights: `dreamcontext lab board create <slug> --title "<title>"`.
 
 If you cannot tell which entity something is, report the ambiguity instead of
 guessing. One fact lives in one place: recall before you create, update over duplicate.

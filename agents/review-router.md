@@ -1,22 +1,7 @@
 ---
 name: review-router
 description: >
-  Classifies a code diff for the multi-reviewer system. Reads the diff,
-  categorizes it by size tier (Trivial/Lite/Full), tags affected domains
-  (security / cloud-functions / frontend / edge-cases), and outputs a JSON
-  dispatch plan telling the main agent which specialists to invoke and which
-  files to scope to each. Always runs first in the multi-reviewer flow.
-
-  <example>
-  Context: User invoked /multi-review on a PR that touches Cloud Functions and a React component.
-  user: "Review this PR with the team"
-  assistant: "Dispatching review-router to classify the diff..."
-  <commentary>
-  The router reads the diff, sees functions/ and web/ paths, sees ~200 lines
-  changed, classifies as "lite", picks specialists [cloud-functions, frontend,
-  edge-cases], scopes each one to its files, and returns the dispatch plan.
-  </commentary>
-  </example>
+  Runs first in a multi-review: classifies the diff by size tier and domain and returns the JSON plan of which specialists review which files.
 model: sonnet
 effort: low
 color: cyan

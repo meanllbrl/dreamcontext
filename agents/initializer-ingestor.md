@@ -1,23 +1,7 @@
 ---
 name: initializer-ingestor
 description: >
-  Ingestion worker for the initializer skill. Takes ONE batch of the confirmed ingestion
-  manifest (a knowledge context, a product, or a feature cluster) plus its source material,
-  and writes it into the dreamcontext hierarchy — distilling (never dumping) source docs into
-  knowledge files, scaffolding candidate feature PRDs, seeding tasks for open work, capturing
-  real schemas, and laying bookmarks. Fanned out in parallel/pipeline at Phase 4, one batch
-  per agent so each fits in context.
-
-  <example>
-  Context: The map is confirmed; the orchestrator fans out ingestors over the manifest batches.
-  user: (dispatched with one batch: the "architecture" knowledge context + its source paths)
-  assistant: "Distilling the 4 architecture docs into knowledge/architecture/*.md with wikilinks + bookmarks..."
-  <commentary>
-  The ingestor writes only its batch via the CLI, distills rather than copying verbatim, links back
-  to the source path, never duplicates a topic that's already a feature, and reports coverage so the
-  orchestrator knows nothing was dropped.
-  </commentary>
-  </example>
+  Initializer worker: writes ONE batch of the confirmed ingestion manifest into the brain, distilling sources into knowledge, feature PRDs, tasks and bookmarks.
 model: sonnet
 tools:
   - Read

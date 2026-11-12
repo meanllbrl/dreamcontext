@@ -8,9 +8,9 @@
  * uncalibrated severity. These texts carry the answer to each:
  *
  *   PLAN_REVIEW_RULES     what every lens is told, every round, by `dreamcontext plan packet`.
- *                         Mirrored verbatim into agents/goal-plan-reviewer.md
- *                         (tests/unit/plan-review-rules.test.ts holds them equal), so a lens
- *                         dispatched without a packet still knows the format the ledger parses.
+ *                         The packet is their only home: agents/goal-plan-reviewer.md points
+ *                         at it and tells a lens with no packet to ask for one (a second copy
+ *                         cost every dispatch ~550 tokens; tests/unit/plan-review-rules.test.ts).
  *   PLAN_REVISION_RECIPE  what `plan status` prints to the planner before a revision: fix the
  *                         class, not the sentence, and rewrite the plan whole.
  *   PLAN_STOP_CARD        the three options of a stop card, in the owner's language. The lead

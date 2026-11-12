@@ -3,15 +3,18 @@ import { readFileSync } from 'node:fs';
 import { PLAN_REVIEW_RULES, PLAN_REVISION_RECIPE, PLAN_STOP_CARD } from '../../src/lib/plan-review-rules.js';
 
 /**
- * PLAN_REVIEW_RULES rides every packet AND lives in the reviewer agent file, so a lens
- * dispatched without a packet answers in the same format the ledger parses. One text, two
- * homes: this drift test holds them equal (pattern mirror-with-drift-test).
+ * PLAN_REVIEW_RULES rides every packet, and only the packet: a verbatim copy in the reviewer
+ * agent cost every dispatch ~550 tokens (audit IN-7, 2026-11-12). The agent points at the
+ * packet and tells a lens dispatched without one to ask for it.
  */
 const REVIEWER = readFileSync('agents/goal-plan-reviewer.md', 'utf-8');
 
 describe('plan review rules', () => {
-  it('the reviewer agent carries PLAN_REVIEW_RULES verbatim under its marker', () => {
-    expect(REVIEWER).toContain(`<!-- Verbatim copy of PLAN_REVIEW_RULES (src/lib/plan-review-rules.ts); a drift test holds them equal. -->\n${PLAN_REVIEW_RULES}`);
+  it('the reviewer agent points at the packet instead of carrying a copy', () => {
+    expect(REVIEWER).not.toContain(PLAN_REVIEW_RULES);
+    expect(REVIEWER).not.toContain('<!-- Verbatim copy of PLAN_REVIEW_RULES');
+    expect(REVIEWER).toContain('The packet carries the **plan review rules** (`## Plan review rules`)');
+    expect(REVIEWER).toMatch(/Dispatched without a\s+packet\? Stop and ask the lead for one \(`dreamcontext plan packet <plan> --lens <lens>`\)/);
   });
 
   it('the rules carry the full-list format, closing lines, classes and the Major calibration', () => {

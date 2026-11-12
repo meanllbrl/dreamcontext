@@ -1,25 +1,7 @@
 ---
 name: review-frontend
 description: >
-  Frontend specialist in the multi-reviewer team. Reviews ONLY frontend
-  changes (React/Vue/Svelte/Next/web components/CSS) — file-size scalability,
-  hook correctness, accessibility, bundle bloat, render perf, state
-  management, design-token discipline, i18n, and frontend-specific security
-  (XSS sinks, token storage). Does not review backend, Cloud Functions, or
-  unrelated server code.
-
-  <example>
-  Context: Router scoped web/src/components/Login.tsx and web/src/hooks/useAuth.ts
-  to this specialist.
-  user: (router assigned these files to frontend)
-  assistant: "Dispatching review-frontend on the Login component and useAuth hook..."
-  <commentary>
-  Looks for: file/component over a sustainability threshold, hooks in
-  conditionals, missing dep arrays, hardcoded design values, missing a11y
-  attributes, XSS via dangerouslySetInnerHTML, tokens in localStorage,
-  unbounded re-renders.
-  </commentary>
-  </example>
+  Multi-review specialist for frontend code only: hooks, accessibility, render cost, bundle size, design tokens, i18n, and XSS or token-storage risks.
 model: opus
 effort: high
 color: green

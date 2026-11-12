@@ -299,8 +299,11 @@ describe('safety and the plan loop', () => {
     }
   });
 
-  it('CODE_REVIEW_RULES is mirrored verbatim in the reviewer agent', () => {
+  // The packet is the rules' only home (audit IN-7): a copy in the agent cost every dispatch ~600 tokens.
+  it('the reviewer agent points at the packet instead of carrying CODE_REVIEW_RULES', () => {
     const agent = readFileSync(join(__dirname, '..', '..', 'agents', 'reviewer.md'), 'utf-8');
-    expect(agent).toContain(CODE_REVIEW_RULES);
+    expect(agent).not.toContain(CODE_REVIEW_RULES);
+    expect(agent).toContain('The packet carries the **code review rules** (`## Code review rules`)');
+    expect(agent).toMatch(/without a packet\? Stop and ask the lead for one \(`dreamcontext builder review packet`\)/);
   });
 });

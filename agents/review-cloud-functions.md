@@ -1,24 +1,7 @@
 ---
 name: review-cloud-functions
 description: >
-  Cloud Functions specialist in the multi-reviewer team. Reviews ONLY Firebase
-  Cloud Functions and serverless function changes — idempotency, infinite-loop
-  risk, scaling/concurrency, cold-start cost, retry semantics, secrets handling,
-  unbounded fan-out, billing footguns, trigger-loop hazards. Does not review
-  frontend, general security beyond function context, or unrelated backend code.
-  Outputs a bounded greptile-style report.
-
-  <example>
-  Context: Router scoped functions/triggers/onUserCreate.ts and functions/util/db.ts
-  to this specialist.
-  user: (router assigned these files to cloud-functions)
-  assistant: "Dispatching review-cloud-functions on the trigger and its dependencies..."
-  <commentary>
-  Looks for: writes to the trigger's own collection (infinite loop), missing
-  idempotency keys for retried events, unbounded fan-out, secrets read at module
-  scope vs runtime, billing-runaway patterns.
-  </commentary>
-  </example>
+  Multi-review specialist for Cloud Functions and serverless code only: idempotency, trigger loops, retries, fan-out, secrets, scaling and billing risks.
 model: opus
 effort: high
 color: blue

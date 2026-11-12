@@ -1,0 +1,23 @@
+[
+  {
+    "match": "Verbatim copy of CODE_REVIEW_RULES (src/lib/code-review-rules.ts)",
+    "disposition": "corrected-stale-fact",
+    "reason": "Audit IN-7: the rules ride only in the packet now; the agent points at it and asks for one when a loop review arrives without it.",
+    "home": "agents/reviewer.md",
+    "anchor": "The packet carries the **code review rules** (`## Code review rules`)"
+  },
+  {
+    "match": "A lens dispatched without a packet still answers in the format below",
+    "disposition": "corrected-stale-fact",
+    "reason": "Audit IN-7: the plan review rules ride only in the packet now; a lens without one asks for it instead of answering from a copy.",
+    "home": "agents/goal-plan-reviewer.md",
+    "anchor": "Stop and ask the lead for one (`dreamcontext plan packet <plan> --lens <lens>`)"
+  },
+  {
+    "match": "Your SubagentStart briefing lists features and knowledge by name",
+    "disposition": "corrected-stale-fact",
+    "reason": "The lean sub-agent briefing (audit MM-11) no longer lists features by name; the rule now keys on whatever the briefing or a recall hit names.",
+    "home": "skill-agent-core/SKILL.md",
+    "anchor": "When your briefing or a recall hit names a knowledge or feature file that matches your task, read it before searching code."
+  }
+]
