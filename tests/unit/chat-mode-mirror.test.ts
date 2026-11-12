@@ -121,7 +121,7 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     // fingerprint here under the new version.
     const PINNED: Record<string, [version: string, fingerprint: string]> = {
       basic: ['1.0', '7c497717dfe1'],
-      plan: ['1.9', '175bfc43784e'], // 2026-11-12 (gece B7 + B15 + the owner's task-filing standard, one bump past 0.41.16's 1.8).
+      plan: ['2.0', 'ba2414150b30'], // 2026-11-12 (plan-soru-ozet: every card a Plan chat asks carries the plan; 1.9 was gece B7 + B15 + the task-filing standard).
       develop: ['1.8', '249c05398601'], // 2026-11-12 (gece B7 no-task path + the owner's task-filing standard, one bump past 0.41.16's 1.7).
       train: ['0.1', 'f613cadc20e7'],
     };

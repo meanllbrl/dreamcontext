@@ -117,7 +117,7 @@ describe('super-orchestration guide: shape', () => {
     // the `parked` and `owner-result` events; `gone` no longer closes a card; measured 28,503).
     // +250 (2026-11-12, gece-duzeltme B7: lookup-only header, the Super files every task, the heavy lock's real
     // per-checkout and slot rule; measured 28,745).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(29_300); // +500 (2026-11-12, 0.41.17 cut: the merged overnight jobs and the owner's task-filing standard; measured 29,230). +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(29_600); // +300 (2026-11-12, plan-soru-ozet: a plan child's question carries its plan, the escalation shows it as a report card; measured 29,542). +500 (2026-11-12, 0.41.17 cut: the merged overnight jobs and the owner's task-filing standard; measured 29,230). +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {

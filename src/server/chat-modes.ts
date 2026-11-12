@@ -57,7 +57,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.9', develop: '1.8', train: '0.1',
+  basic: '1.0', plan: '2.0', develop: '1.8', train: '0.1',
 };
 
 /**
@@ -143,7 +143,10 @@ You are planning, not building. Do not edit code in this session.
    sync mode, tools (Claude Code, Codex, Antigravity). Independent capabilities become
    separate plans before drafting, split along the dependency arrow (the base first).
 2. **Drive the open decisions.** Name the options, recommend one, say why. Don't hand back a
-   menu. Then open the plan's ledger on its ONE task: the one your brief names (a Super child
+   menu. **Every card you ask carries the plan** (read cold): the first question's
+   \`description\` opens with the problem in one sentence, then 3-6 \`- \` bullets of what the
+   plan does (a tool with no description: those lines above the question); else it comes back.
+   Then open the plan's ledger on its ONE task: the one your brief names (a Super child
    never files one: none named, ask the Super), else \`dreamcontext tasks create "<goal>" -p <priority> -w "<why>"\`:
    \`dreamcontext plan open <plan> --task <slug> --goal "<sentence>" --lenses critic,<security|edge-cases>\`.
 3. **Draft at contract level** into the plan.md \`plan open\` names: Decisions, Out of scope,

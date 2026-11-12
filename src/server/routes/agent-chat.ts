@@ -81,6 +81,7 @@ import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
 import { offCardQuestionFrame } from '../../lib/card-standalone.js';
+import { planQuestionFrame } from '../../lib/plan-question.js';
 import { removeMcpHealth, writeMcpHealth } from '../../lib/mcp-health.js';
 import { isUsableServerName, type McpLiveServer } from '../../lib/mcp-wire.js';
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
@@ -4120,7 +4121,9 @@ export function startChatSession(
               return true;
             }
           }
-          const off = offCardQuestionFrame(o);
+          // A Plan chat's question carries the plan it asks about (owner 2026-11-12): else it
+          // goes back too, with what to add (plan-question.ts).
+          const off = offCardQuestionFrame(o) ?? planQuestionFrame(o, mode);
           if (!off) return false;
           writeStdin({ type: 'control_response', response: { subtype: 'success', request_id: off.requestId, response: { behavior: 'deny', message: off.message } } });
           return true;
