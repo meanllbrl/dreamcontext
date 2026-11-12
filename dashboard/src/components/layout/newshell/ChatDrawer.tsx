@@ -488,17 +488,12 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 {/* Folded, the ONE mark of everything it hides (option A); open, the rows carry theirs. */}
                 <ProjectMark row={row} />
               </button>
-              {/* Over the row's end on hover or keyboard focus (always on a finger): "+" is the same
-                  picker as New window (Claude or a member), "⋯" the project's menu. */}
+              {/* Over the row's end on hover or keyboard focus (always on a finger): "+" opens a new Claude
+                  window at once (a member's window: the chevron on New chat, or the Team rows), "⋯" the project's menu. */}
               <span className="ns-dr-acts">
                 <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`} title={t('shell.drawer.newWindow')}
-                  data-testid="drawer-project-add" aria-haspopup={newChatMembers(row).length > 0 ? 'menu' : undefined}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (newChatMembers(row).length === 0) { pick(row.name, { kind: 'new-window' }); return; }
-                    const r = e.currentTarget.getBoundingClientRect();
-                    openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 });
-                  }}>
+                  data-testid="drawer-project-add"
+                  onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>
                   <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
                 </button>
                 <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
