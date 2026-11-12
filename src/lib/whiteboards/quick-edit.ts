@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildSpecDrawing, kitDir, readKitReference } from './spec-draw.js';
+import { buildSpecDrawingBounded, kitDir, readKitReference, SpecBuildTimeout } from './spec-draw.js';
 import { elementBBox, liveElements, prepareImport, unionBBox, type BBox } from './ops.js';
 import { identityKey, quickJournalPath } from './store.js';
 import { validateElement } from './validate.js';
@@ -473,10 +473,13 @@ function scaleAbout(el: WhiteboardElement, s: number, ox: number, oy: number): v
   if (el.type === 'text' && finite(el.fontSize)) el.fontSize = Math.max(4, el.fontSize * s);
 }
 
-/** A spec's numbers drive the kit's loops (rows, seg, teeth…) and the kit runs IN the server
- *  process: every value is bounded BEFORE the build (review r1, security). A quick drawing is
- *  small; nothing a real one needs comes near these. */
-export const SPEC_NUMBER_MAX = 2000;
+/**
+ * A model-written spec's SHAPE is bounded before the build (arrays, nodes, depth, string length,
+ * finite numbers inside the board's bounds). Its WORK is bounded by time: the kit runs in a worker
+ * under {@link QUICK_BUILD_MS} (review r2: per-value caps could not bound what the counts add up
+ * to, and a cap on coordinates refused the large regions the prompt asks the model to fill).
+ */
+export const QUICK_BUILD_MS = 4000;
 export const SPEC_ARRAY_MAX = 400;
 export const SPEC_NODES_MAX = 4000;
 const SPEC_DEPTH_MAX = 24;
@@ -486,7 +489,7 @@ export function specProblem(spec: unknown): 'path' | 'too_big' | null {
   let nodes = 0;
   const walk = (v: unknown, depth: number): 'path' | 'too_big' | null => {
     if (++nodes > SPEC_NODES_MAX || depth > SPEC_DEPTH_MAX) return 'too_big';
-    if (typeof v === 'number') return Number.isFinite(v) && Math.abs(v) <= SPEC_NUMBER_MAX ? null : 'too_big';
+    if (typeof v === 'number') return Number.isFinite(v) && Math.abs(v) <= COORD_MAX ? null : 'too_big';
     if (typeof v === 'string') return v.length > QUICK_TEXT_MAX ? 'too_big' : null;
     if (!v || typeof v !== 'object') return null;
     if (Array.isArray(v)) {
@@ -511,8 +514,53 @@ export interface QuickEditContext {
   identities: Readonly<Record<string, string>>;
   area: QuickArea | null;
   now?: number;
-  /** Tests inject the builder. */
-  build?: typeof buildSpecDrawing;
+  /** The scope text limit the model was shown under (else recomputed from the board). */
+  textLimit?: number;
+  /** Every `add`'s elements, built by {@link buildAdds} BEFORE the board's lock: the apply only
+   *  places them. An answer with adds and no `built` is refused (the build never runs here). */
+  built?: readonly WhiteboardElement[][];
+}
+
+/**
+ * Build an answer's adds (C3, the security gate's first half): the spec's shape checked, the kit
+ * run in a worker under one deadline for all adds together, and what it built checked (no
+ * picture, widget, link or payload; at most {@link QUICK_BUILT_MAX}). Runs outside any lock.
+ */
+export async function buildAdds(
+  answer: QuickEditAnswer,
+  opts: { timeoutMs?: number; build?: typeof buildSpecDrawingBounded; now?: () => number } = {},
+): Promise<WhiteboardElement[][]> {
+  const build = opts.build ?? buildSpecDrawingBounded;
+  const clock = opts.now ?? Date.now;
+  const deadline = clock() + (opts.timeoutMs ?? QUICK_BUILD_MS);
+  const out: WhiteboardElement[][] = [];
+  let total = 0;
+  for (const a of answer.add ?? []) {
+    const problem = specProblem(a.spec);
+    if (problem === 'path') throw new QuickEditRefusal('refused', 'a quick edit draws shapes only, never a file or a picture');
+    if (problem) throw new QuickEditRefusal('too_big', 'a quick edit drawing past the size bounds');
+    const left = deadline - clock();
+    if (left <= 0) throw new QuickEditRefusal('too_big', 'the drawings did not build in time');
+    let built: WhiteboardElement[];
+    try {
+      ({ elements: built } = await build(JSON.stringify(a.spec), 'quick-edit', {
+        timeoutMs: left,
+        checkPicture: () => { throw new QuickEditRefusal('refused', 'a quick edit never places a picture'); },
+      }));
+    } catch (err) {
+      if (err instanceof SpecBuildTimeout) throw new QuickEditRefusal('too_big', 'the drawing did not build in time');
+      throw err;
+    }
+    for (const el of built) {
+      if (el.type === 'image' || el.type === 'embeddable' || el.type === 'iframe') throw new QuickEditRefusal('refused', 'a quick edit never places a picture or a widget');
+      if (el.link !== undefined && el.link !== null) throw new QuickEditRefusal('refused', 'a quick edit never places a link');
+      if (el.customData !== undefined && el.customData !== null) throw new QuickEditRefusal('refused', 'a quick edit never places a widget payload');
+    }
+    total += built.length;
+    if (total > QUICK_BUILT_MAX) throw new QuickEditRefusal('too_big', `a quick edit draws at most ${QUICK_BUILT_MAX} elements`);
+    out.push(built);
+  }
+  return out;
 }
 
 export interface QuickEditOutcome {
@@ -549,7 +597,7 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
   const skipped = new Set<string>();
   const removed = new Set<string>();
   let dropped = 0;
-  const textLimit = scopeTextLimit(elements, ctx.scope);
+  const textLimit = ctx.textLimit ?? scopeTextLimit(elements, ctx.scope);
   /** Words the model saw whole, or a cut text it must not overwrite. */
   const whole = (el: WhiteboardElement) => textOf(el).length <= textLimit;
 
@@ -649,26 +697,16 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
     }
   }
 
-  // ── add: build, place, fit into the area, check what was built ──
+  // ── add: place what buildAdds built (never built here), fit into the area ──
   const added: WhiteboardElement[] = [];
-  const build = ctx.build ?? buildSpecDrawing;
-  for (const a of answer.add ?? []) {
-    const problem = specProblem(a.spec);
-    if (problem === 'path') throw new QuickEditRefusal('refused', 'a quick edit draws shapes only, never a file or a picture');
-    if (problem) throw new QuickEditRefusal('too_big', 'a quick edit drawing past the size bounds');
-    const { elements: built } = build(JSON.stringify(a.spec), 'quick-edit', {
-      checkPicture: () => { throw new QuickEditRefusal('refused', 'a quick edit never places a picture'); },
-    });
-    for (const el of built) {
-      if (el.type === 'image' || el.type === 'embeddable' || el.type === 'iframe') throw new QuickEditRefusal('refused', 'a quick edit never places a picture or a widget');
-      if (el.link !== undefined && el.link !== null) throw new QuickEditRefusal('refused', 'a quick edit never places a link');
-      if (el.customData !== undefined && el.customData !== null) throw new QuickEditRefusal('refused', 'a quick edit never places a widget payload');
-    }
-    const { elements: placed } = prepareImport(built, [...elements, ...added], { at: { x: a.at[0], y: a.at[1] }, now });
+  const adds = answer.add ?? [];
+  if (adds.length && (!ctx.built || ctx.built.length !== adds.length)) throw new QuickEditRefusal('refused', 'a quick edit\'s drawings are built before the apply');
+  adds.forEach((a, i) => {
+    const { elements: placed } = prepareImport(structuredClone(ctx.built![i]) as WhiteboardElement[], [...elements, ...added], { at: { x: a.at[0], y: a.at[1] }, now });
     if (ctx.area && placed.length) fitInto(placed, ctx.area);
     added.push(...placed);
-    if (added.length > QUICK_BUILT_MAX) throw new QuickEditRefusal('too_big', `a quick edit draws at most ${QUICK_BUILT_MAX} elements`);
-  }
+  });
+  if (added.length > QUICK_BUILT_MAX) throw new QuickEditRefusal('too_big', `a quick edit draws at most ${QUICK_BUILT_MAX} elements`);
   for (const el of added) {
     const b = elementBBox(el);
     if (![b.x, b.y, b.w, b.h].every((v) => Number.isFinite(v) && Math.abs(v) <= COORD_MAX)) {

@@ -12,10 +12,10 @@ function label(id: string, container: string, text: string): WhiteboardElement {
 }
 
 /** Apply an answer and build the journal record the jobs module writes from it. */
-function edit(els: WhiteboardElement[], answer: Parameters<typeof applyQuickEdit>[1], pick: string[]): QuickJournalRecord {
+function edit(els: WhiteboardElement[], answer: Parameters<typeof applyQuickEdit>[1], pick: string[], built?: WhiteboardElement[][]): QuickJournalRecord {
   const scope = expandScope(els, pick);
   const identities = Object.fromEntries(scope.map((id) => [id, identityKey(els.find((e) => e.id === id)!)]));
-  const o = applyQuickEdit({ elements: els }, answer, { scope, identities, area: null });
+  const o = applyQuickEdit({ elements: els }, answer, { scope, identities, area: null, built });
   const stripped = stripTombstones(els);
   els.splice(0, els.length, ...stripped);
   const after = Object.fromEntries([...o.added, ...o.changed].map((id) => [id, identityKey(els.find((e) => e.id === id)!)]));
@@ -50,7 +50,7 @@ describe('quick edit undo (C4)', () => {
 
   it('an added shape is tombstoned', () => {
     const els = [rect('A')];
-    const rec = edit(els, { reply: '', notBoard: false, add: [{ at: [300, 0], spec: { elements: [{ type: 'ellipse', width: 50, height: 50 }] } }] }, []);
+    const rec = edit(els, { reply: '', notBoard: false, add: [{ at: [300, 0], spec: { elements: [{ type: 'ellipse', width: 50, height: 50 }] } }] }, [], [[{ ...rect('E'), type: 'ellipse', width: 50, height: 50 } as WhiteboardElement]]);
     expect(rec.added).toHaveLength(1);
     undoQuickEdit({ elements: els }, rec);
     expect(els.find((e) => e.id === rec.added[0])!.isDeleted).toBe(true);

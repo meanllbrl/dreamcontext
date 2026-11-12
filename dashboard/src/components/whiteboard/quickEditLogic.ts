@@ -148,7 +148,7 @@ export interface QuickJobView {
 }
 
 /** The server's failure codes the field words itself; any other code reads as the generic line. */
-const FAIL_CODES = new Set(['spawn', 'timeout', 'limit', 'unreadable', 'too_big', 'refused', 'write']);
+const FAIL_CODES = new Set(['spawn', 'timeout', 'limit', 'unreadable', 'too_big', 'refused', 'write', 'unrecorded']);
 export const failKey = (code: string | undefined): string => (code && FAIL_CODES.has(code) ? `whiteboard.quick.err.${code}` : 'whiteboard.quick.failed');
 
 /** An undo refusal, in the owner's words (key under whiteboard.quick.*). */

@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { WhiteboardValidationError } from './errors.js';
 import { readImportSource } from './ops.js';
 import type { WhiteboardElement } from './widgets.js';
@@ -172,6 +173,56 @@ export function buildSpecDrawing(
     const elements = readImportSource(readFileSync(out, 'utf-8'), 'drawing.excalidraw.md');
     const { overlaps, buriedText, longLines, wallOfText } = result;
     return { elements, audit: { overlaps, buriedText, longLines, wallOfText }, pictures };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** A bounded build ran out of time: the drawing asked for more work than it may do. */
+export class SpecBuildTimeout extends Error {
+  constructor(readonly ms: number) { super(`the drawing did not build within ${ms} ms`); }
+}
+
+/** The kit build, run in a worker so the caller's event loop never waits on it. */
+const WORKER_SRC = `
+const { parentPort, workerData } = require('node:worker_threads');
+try {
+  const b = require(workerData.builderPath);
+  const r = b.buildExcalidraw(workerData.spec);
+  parentPort.postMessage({ ok: true });
+} catch (err) {
+  parentPort.postMessage({ ok: false, message: String((err && err.message) || err) });
+}
+`;
+
+/**
+ * {@link buildSpecDrawing} for a spec nobody on this Mac wrote (a model's answer): the kit's code
+ * runs in a WORKER THREAD under a time limit, never on the server's event loop, so no count in
+ * the spec (rows, seg, teeth, items that multiply) can freeze the process. Past `timeoutMs` the
+ * worker is terminated and {@link SpecBuildTimeout} is thrown. Same checks and output otherwise.
+ */
+export async function buildSpecDrawingBounded(
+  text: string,
+  filename: string,
+  opts: { checkPicture?: (path: string) => void; timeoutMs: number; dir?: string | null },
+): Promise<{ elements: WhiteboardElement[] }> {
+  const kit = opts.dir === undefined ? kitDir() : opts.dir;
+  const builder = loadBuilder(kit);
+  const { spec, pictures } = parseSpec(text, filename, builder.SPEC_TYPES, builder.LAYOUT_TYPES);
+  for (const p of pictures) opts.checkPicture?.(p);
+  const dir = mkdtempSync(join(tmpdir(), 'dc-wb-spec-'));
+  try {
+    const out = join(dir, 'drawing.excalidraw.md');
+    const builderPath = join(kit as string, 'scripts', 'build_excalidraw.js');
+    const answer = await new Promise<{ ok: boolean; message?: string }>((done, fail) => {
+      const worker = new Worker(WORKER_SRC, { eval: true, workerData: { builderPath, spec: { ...spec, out } } });
+      const timer = setTimeout(() => { void worker.terminate(); fail(new SpecBuildTimeout(opts.timeoutMs)); }, opts.timeoutMs);
+      worker.once('message', (m: { ok: boolean; message?: string }) => { clearTimeout(timer); void worker.terminate(); done(m); });
+      worker.once('error', (err) => { clearTimeout(timer); fail(new WhiteboardValidationError(`${filename} did not build: ${err.message}; ${KIT_HINT}`)); });
+      worker.once('exit', () => { clearTimeout(timer); done({ ok: false, message: 'the build stopped' }); });
+    });
+    if (!answer.ok) throw new WhiteboardValidationError(`${filename} did not build: ${answer.message}; ${KIT_HINT}`);
+    return { elements: readImportSource(readFileSync(out, 'utf-8'), 'drawing.excalidraw.md') };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

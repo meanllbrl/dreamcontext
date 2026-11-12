@@ -20,12 +20,12 @@ import { findClaudeBin } from '../claude-path.js';
 import { killPortable } from '../proc.js';
 import { identityKey, mutateWhiteboard, readWhiteboard } from './store.js';
 import {
-  applyQuickEdit, expandScope, parseQuickEditAnswer, quickEditArgs, quickEditInput, quickEditSystemPrompt,
+  applyQuickEdit, buildAdds, expandScope, scopeTextLimit, parseQuickEditAnswer, quickEditArgs, quickEditInput, quickEditSystemPrompt,
   quickEditUserMessage, QuickEditRefusal, readJournal, writeJournal, QUICK_MODEL,
   type QuickArea, type QuickEditAnswer, type QuickJournalRecord,
 } from './quick-edit.js';
 import type { WhiteboardElement } from './widgets.js';
-import { WhiteboardError } from './errors.js';
+import { WhiteboardValidationError } from './errors.js';
 
 export const QUICK_TIMEOUT_MS = 60_000;
 export const QUICK_MAX_RUNNING = 3;
@@ -34,7 +34,7 @@ export const QUICK_JOB_TTL_MS = 10 * 60_000;
 
 export type QuickJobState = 'queued' | 'running' | 'applying' | 'done' | 'failed' | 'stopped';
 /** Why a job failed, as a code: the page words it in the owner's language (review r1). */
-export type QuickFailCode = 'spawn' | 'timeout' | 'limit' | 'unreadable' | 'too_big' | 'refused' | 'write';
+export type QuickFailCode = 'spawn' | 'timeout' | 'limit' | 'unreadable' | 'too_big' | 'refused' | 'write' | 'unrecorded';
 
 export interface QuickJobView {
   state: QuickJobState;
@@ -76,6 +76,8 @@ interface Job {
   view: QuickJobView;
   child: ChildProcess | null;
   stopRequested: boolean;
+  /** The board was written: a later failure must not say nothing changed. */
+  committed: boolean;
   timer: NodeJS.Timeout | null;
   queuedAt: number;
 }
@@ -158,7 +160,7 @@ export function startQuickEdit(root: string, slug: string, req: QuickJobRequest)
   const id = randomBytes(16).toString('base64url');
   const key = jobKeyOf(root, slug, id);
   const job: Job = {
-    key, boardKey, root, slug, id, req, child: null, stopRequested: false, timer: null, queuedAt: now,
+    key, boardKey, root, slug, id, req, child: null, stopRequested: false, committed: false, timer: null, queuedAt: now,
     view: { state: 'queued', startedAt: new Date(now).toISOString() },
   };
   jobs.set(key, job);
@@ -261,6 +263,7 @@ async function run(job: Job): Promise<void> {
       identities[id] = untouchedIdentity(given, disk, id, records);
     }
     const input = quickEditInput(board.elements, scope, job.req.area);
+    const textLimit = scopeTextLimit(board.elements, scope);
     const args = quickEditArgs(systemPrompt(), quickEditUserMessage(job.req.text, input));
     cwd = mkdtempSync(join(tmpdir(), 'dc-quick-'));
     const exec = deps.exec ?? executeClaudeDetached;
@@ -295,12 +298,16 @@ async function run(job: Job): Promise<void> {
       settle(job, { state: 'done', reply: answer.reply, notBoard: true, costUsd: parsed.costUsd, timing: { modelMs, totalMs: (deps.now ?? Date.now)() - t0 } });
       return;
     }
+    // The drawings are built here, in a worker under a deadline, outside the board's lock.
+    const built = await buildAdds(answer);
+    if (job.stopRequested) return;
     job.view = { ...job.view, state: 'applying' };
-    await apply(job, answer, scope, identities, parsed.costUsd, { modelMs, t0 });
+    await apply(job, answer, scope, identities, built, textLimit, parsed.costUsd, { modelMs, t0 });
   } catch (err) {
     if (job.stopRequested) return;
-    if (err instanceof QuickEditRefusal) failed(job, err.code === 'too_big' ? 'too_big' : 'refused', err.message);
-    else failed(job, err instanceof WhiteboardError ? 'refused' : 'write', 'the edit was not written');
+    if (job.committed) failed(job, 'unrecorded', 'the board was written; its record was not');
+    else if (err instanceof QuickEditRefusal) failed(job, err.code === 'too_big' ? 'too_big' : 'refused', err.message);
+    else failed(job, err instanceof WhiteboardValidationError ? 'refused' : 'write', 'the edit was not written');
   } finally {
     if (cwd) rmSync(cwd, { recursive: true, force: true });
   }
@@ -311,17 +318,20 @@ async function apply(
   answer: QuickEditAnswer,
   scope: string[],
   identities: Record<string, string>,
+  built: WhiteboardElement[][],
+  textLimit: number,
   costUsd: number | null,
   t: { modelMs: number; t0: number },
 ): Promise<void> {
   let outcome: ReturnType<typeof applyQuickEdit> | null = null;
   const recordId = randomBytes(16).toString('base64url');
   await mutateWhiteboard(job.root, job.slug, (board) => {
-    outcome = applyQuickEdit(board, answer, { scope, identities, area: job.req.area });
+    outcome = applyQuickEdit(board, answer, { scope, identities, area: job.req.area, built, textLimit });
   }, {
     selfOrigin: job.req.selfOrigin,
     onCommitted: (res) => {
       if (!res.changed || !outcome || outcome.outOfScope) return;
+      job.committed = true;
       const o = outcome;
       const written = new Map(res.board.elements.map((e) => [e.id, e]));
       const after: Record<string, string> = {};

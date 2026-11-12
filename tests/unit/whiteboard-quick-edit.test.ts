@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   applyQuickEdit, expandScope, fitInto, LOSING_NONCE, parseQuickEditAnswer, QUICK_INPUT_CAP, quickEditArgs,
   quickEditInput, quickEditSystemPrompt, quickEditUserMessage, QuickEditRefusal, readAnswer, readJournal, writeJournal,
-  scopeTextLimit, specProblem, SPEC_NUMBER_MAX,
+  buildAdds, scopeTextLimit, specProblem,
   type QuickEditAnswer, type QuickJournalRecord,
 } from '../../src/lib/whiteboards/quick-edit.js';
 import { createWhiteboard, identityKey, mutateWhiteboard, quickJournalPath, readWhiteboard, trashWhiteboard } from '../../src/lib/whiteboards/store.js';
@@ -162,27 +162,29 @@ describe('quick edit: apply (C3)', () => {
     expect(els[0].x).toBe(10);
   });
 
-  it('refuses a picture, a link, a widget payload, a path and an over-cap drawing', () => {
-    const base = () => ({ elements: [rect('A')] });
-    const fake = (els: Partial<WhiteboardElement>[]) => () => ({ elements: els.map((e, i) => ({ ...rect(`z${i}`), ...e }) as WhiteboardElement), audit: { overlaps: 0, buriedText: 0, longLines: 0, wallOfText: 0 }, pictures: [] });
+  it('refuses a picture, a link, a widget payload, a path and an over-cap drawing', async () => {
+    const fake = (els: Partial<WhiteboardElement>[]) => async () => ({ elements: els.map((e, i) => ({ ...rect(`z${i}`), ...e }) as WhiteboardElement) });
     const add = (build: ReturnType<typeof fake>, spec: unknown = { elements: [{ type: 'rectangle' }] }) =>
-      () => applyQuickEdit(base(), { reply: '', notBoard: false, add: [{ at: [0, 0], spec: spec as { elements: unknown[] } }] }, { scope: [], identities: {}, area: null, build: build as never });
-    expect(add(fake([{ type: 'image' }]))).toThrow(QuickEditRefusal);
-    expect(add(fake([{ link: 'https://x.test' }]))).toThrow(QuickEditRefusal);
-    expect(add(fake([{ customData: { dc: { kind: 'note' } } }]))).toThrow(QuickEditRefusal);
-    expect(add(fake([{}]), { elements: [{ type: 'row', items: [{ type: 'image', path: '/etc/passwd' }] }] })).toThrow(QuickEditRefusal);
-    expect(add(fake(Array.from({ length: 301 }, () => ({}))))).toThrow(QuickEditRefusal);
+      buildAdds({ reply: '', notBoard: false, add: [{ at: [0, 0], spec: spec as { elements: unknown[] } }] }, { build: build as never });
+    await expect(add(fake([{ type: 'image' }]))).rejects.toThrow(QuickEditRefusal);
+    await expect(add(fake([{ link: 'https://x.test' }]))).rejects.toThrow(QuickEditRefusal);
+    await expect(add(fake([{ customData: { dc: { kind: 'note' } } }]))).rejects.toThrow(QuickEditRefusal);
+    await expect(add(fake([{}]), { elements: [{ type: 'row', items: [{ type: 'image', path: '/etc/passwd' }] }] })).rejects.toThrow(QuickEditRefusal);
+    await expect(add(fake(Array.from({ length: 301 }, () => ({}))))).rejects.toThrow(QuickEditRefusal);
     // The real builder: a picture path is refused before it is read.
-    expect(() => applyQuickEdit(base(), { reply: '', notBoard: false, add: [{ at: [0, 0], spec: { elements: [{ type: 'image', path: '/etc/hosts', width: 10 }] } }] }, { scope: [], identities: {}, area: null })).toThrow(QuickEditRefusal);
+    await expect(buildAdds({ reply: '', notBoard: false, add: [{ at: [0, 0], spec: { elements: [{ type: 'image', path: '/etc/hosts', width: 10 }] } }] })).rejects.toThrow(QuickEditRefusal);
+    // The apply never builds: adds without their built elements are refused.
+    expect(() => applyQuickEdit({ elements: [rect('A')] }, { reply: '', notBoard: false, add: [{ at: [0, 0], spec: { elements: [{ type: 'ellipse' }] } }] }, { scope: [], identities: {}, area: null })).toThrow(QuickEditRefusal);
   });
 
-  it('an add with a region lands wholly inside it, even an oversized drawing at an off spot (criterion 19)', () => {
+  it('an add with a region lands wholly inside it, even an oversized drawing at an off spot (criterion 19)', async () => {
     const els = [rect('A')];
     const area = { x: 1000, y: 500, w: 210, h: 190 };
-    const o = applyQuickEdit({ elements: els }, {
+    const apple: QuickEditAnswer = {
       reply: 'Elma eklendi.', notBoard: false,
       add: [{ at: [5000, -3000], spec: { elements: [{ type: 'ellipse', width: 600, height: 500, backgroundColor: '#ff6b6b' }, { type: 'rectangle', x: 280, y: -60, width: 40, height: 80 }] } }],
-    }, { scope: [], identities: {}, area });
+    };
+    const o = applyQuickEdit({ elements: els }, apple, { scope: [], identities: {}, area, built: await buildAdds(apple) });
     expect(o.added.length).toBe(2);
     const box = unionBBox(els.filter((e) => o.added.includes(e.id)).map(elementBBox))!;
     expect(box.x).toBeGreaterThanOrEqual(area.x - 0.001);
@@ -190,7 +192,8 @@ describe('quick edit: apply (C3)', () => {
     expect(box.x + box.w).toBeLessThanOrEqual(area.x + area.w + 0.001);
     expect(box.y + box.h).toBeLessThanOrEqual(area.y + area.h + 0.001);
     // Fresh ids above the board's indices: a repeated add never collides.
-    const again = applyQuickEdit({ elements: els }, { reply: '', notBoard: false, add: [{ at: [0, 0], spec: { elements: [{ type: 'ellipse', width: 50, height: 50 }] } }] }, { scope: [], identities: {}, area: null });
+    const small: QuickEditAnswer = { reply: '', notBoard: false, add: [{ at: [0, 0], spec: { elements: [{ type: 'ellipse', width: 50, height: 50 }] } }] };
+    const again = applyQuickEdit({ elements: els }, small, { scope: [], identities: {}, area: null, built: await buildAdds(small) });
     expect(new Set(els.map((e) => e.id)).size).toBe(els.length);
     expect(again.added).toHaveLength(1);
   });
@@ -279,24 +282,22 @@ describe('quick edit: the journal', () => {
 });
 
 describe('quick edit: end review r1', () => {
-  it('security: a model spec past the bounds is refused BEFORE the in-process build, in milliseconds', () => {
-    let built = 0;
-    const build = (() => { built += 1; return { elements: [], audit: {}, pictures: [] }; }) as never;
+  it('security r2: the build runs in a worker under a deadline; the server event loop keeps answering', async () => {
+    // 20 textRows of 2000 rows each: every value small, the total work large (r2's measurement: 31 s in-process).
+    const heavy: QuickEditAnswer = { reply: 'x', notBoard: false, add: [{ at: [0, 0], spec: { elements: Array.from({ length: 20 }, (_, i) => ({ type: 'textRows', x: i * 40, rows: 2000 })) } }] };
+    let ticks = 0;
+    const beat = setInterval(() => { ticks += 1; }, 50);
     const t0 = Date.now();
-    for (const spec of [
-      { elements: [{ type: 'textRows', rows: 200_000 }] },
-      { elements: [{ type: 'rectangle', x: 0, y: 0, width: SPEC_NUMBER_MAX + 1, height: 10 }] },
-      { elements: Array.from({ length: 401 }, () => ({ type: 'rectangle' })) },
-      { elements: [{ type: 'line', points: [[0, Number.POSITIVE_INFINITY]] }] },
-    ]) {
-      const ans: QuickEditAnswer = { reply: 'x', notBoard: false, add: [{ at: [0, 0], spec }] };
-      expect(() => applyQuickEdit({ elements: [] }, ans, { scope: [], identities: {}, area: null, build })).toThrow(QuickEditRefusal);
-    }
-    expect(built).toBe(0);
-    expect(Date.now() - t0).toBeLessThan(500);
+    await expect(buildAdds(heavy, { timeoutMs: 600 })).rejects.toThrow(QuickEditRefusal);
+    clearInterval(beat);
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(ticks).toBeGreaterThanOrEqual(5); // the loop ran beside the build
+    // A large region's coordinates are fine (r2: the prompt asks for them); fitInto scales.
+    expect(specProblem({ elements: [{ type: 'rectangle', x: 0, y: 0, width: 4800, height: 2700 }] })).toBeNull();
+    expect(specProblem({ elements: [{ type: 'line', points: [[0, Number.POSITIVE_INFINITY]] }] })).toBe('too_big');
+    expect(specProblem({ elements: Array.from({ length: 401 }, () => ({ type: 'rectangle' })) })).toBe('too_big');
     expect(specProblem({ elements: [{ type: 'textRows', rows: 3, path: 'x' }] })).toBe('path');
-    expect(specProblem({ elements: [{ type: 'ellipse', x: 10, y: 40, width: 160, height: 140 }] })).toBeNull();
-  });
+  }, 15_000);
 
   it('edge-cases: a queued edit counts a shape an earlier quick edit rewrote as untouched; a hand edit stays skipped', () => {
     const before = rect('A', 0, 0, { version: 3, versionNonce: 500 });
