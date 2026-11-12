@@ -13,6 +13,12 @@
  *
  * Nothing touches your machine: a fake HOME, a scratch project, a stand-in `claude` first on its
  * PATH, and no session variables of the agent that runs it.
+ *
+ * Preflight (audit OR-5): before the check's own steps, openApp proves the harness reaches the
+ * product: `build: true` refuses a `dist/` older than the code, the servers answer, and the app
+ * shell draws at `target`. Any of those failing ends the process with HARNESS_EXIT (78) and a
+ * HARNESS line (./preflight.mjs), which `builder heavy` does not count against the repeat limit.
+ * `onHarness: 'throw'` hands the HarnessError to the caller instead.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -21,6 +27,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, webkit } from 'playwright';
 import { distIndex, markAnnouncementsSeen, scratchDir, shotsDir } from './measure.mjs';
+import { HarnessError, OLD_BUILD_ON_PURPOSE, reportHarness, staleDist } from './preflight.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const WIDTHS = [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop', width: 1440, height: 900 }];
@@ -34,11 +41,37 @@ const freePort = () => new Promise((done, fail) => {
 async function waitFor(url, label, proc, timeoutMs = 90_000) {
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
-    if (proc.exitCode != null) throw new Error(`${label} exited with ${proc.exitCode}`);
+    if (proc.exitCode != null) throw new HarnessError('start', `${label} exited with ${proc.exitCode} before it answered`);
     try { const r = await fetch(url); if (r.status < 500) return; } catch { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 300));
   }
-  throw new Error(`${label} did not answer ${url} in ${timeoutMs / 1000}s`);
+  throw new HarnessError('start', `${label} did not answer ${url} in ${timeoutMs / 1000}s`);
+}
+
+/** The app shell drew at `path`: React mounted something into #root, and no Vite error overlay. */
+async function preflightShell(browser, base, path, shots, timeoutMs) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  try {
+    await markAnnouncementsSeen(context, base);
+    const page = await context.newPage();
+    let crash = null;
+    page.on('pageerror', (e) => { crash = crash ?? String(e.message).slice(0, 200); });
+    try {
+      await page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    } catch (err) {
+      throw new HarnessError('shell', `could not open ${path}: ${err instanceof Error ? err.message.split('\n')[0] : err}`);
+    }
+    const drew = await page.waitForSelector('#root > *', { state: 'attached', timeout: timeoutMs }).then(() => true, () => false);
+    const overlay = await page.locator('vite-error-overlay').count().catch(() => 0);
+    if (!drew || overlay) {
+      const shot = join(shots, 'preflight.png');
+      await page.screenshot({ path: shot }).catch(() => {});
+      const why = overlay ? 'the Vite error overlay is up (the dashboard does not compile)' : `the app shell did not draw in ${timeoutMs / 1000}s`;
+      throw new HarnessError('shell', `${why} at ${path}${crash ? `; page error: ${crash}` : ''} (screenshot: ${shot})`);
+    }
+  } finally {
+    await context.close().catch(() => {});
+  }
 }
 
 const pathOf = (url) => { try { const u = new URL(url); return u.pathname + u.search; } catch { return url; } };
@@ -46,7 +79,21 @@ const pathOf = (url) => { try { const u = new URL(url); return u.pathname + u.se
 /** Requests a dev server makes that are no finding about the app. */
 const NOISE = /\/@vite\/|\/__vite_ping|favicon\.ico|\/api\/.*\/ws\b/;
 
-export async function openApp({ suite = 'look', build = false, desktop = false } = {}) {
+export async function openApp(opts = {}) {
+  try {
+    return await openAppInner(opts);
+  } catch (err) {
+    if (!(err instanceof HarnessError) || opts.onHarness === 'throw') throw err;
+    process.exit(reportHarness(err));
+  }
+}
+
+async function openAppInner({ suite = 'look', build = false, desktop = false, target = '/?vault=proj', preflight = true } = {}) {
+  // DC_VERIFY_DIST points at another build on purpose (a before run): its age is the point.
+  if (build && !process.env.DC_VERIFY_DIST) {
+    const stale = staleDist(REPO);
+    if (stale) throw new HarnessError('stale build', `${stale.why}. Build first: dreamcontext builder heavy -- ${stale.build}. An older build on purpose: put ${OLD_BUILD_ON_PURPOSE} in front of the command`);
+  }
   const scratch = scratchDir(`dc-verify-${suite}-${process.pid}`); // two runs can overlap in the fast line
   rmSync(scratch, { recursive: true, force: true });
   const home = join(scratch, 'home');
@@ -83,7 +130,11 @@ export async function openApp({ suite = 'look', build = false, desktop = false }
     ? ['node', [distIndex(REPO)]]
     : ['npx', ['--yes', 'tsx', join(REPO, 'src', 'cli', 'index.ts')]];
 
-    spawnSync(cli[0], [...cli[1], 'vaults', 'add', 'proj', proj], { cwd: proj, env, stdio: 'ignore' });
+  const added = spawnSync(cli[0], [...cli[1], 'vaults', 'add', 'proj', proj], { cwd: proj, env, encoding: 'utf-8' });
+  if (added.status !== 0) {
+    const said = `${added.stderr ?? ''}${added.stdout ?? ''}`.trim().split('\n').slice(-2).join(' ');
+    throw new HarnessError('start', `the CLI could not register the scratch vault (exit ${added.status ?? added.error?.message}): ${said.slice(0, 300)}`);
+  }
 
   let base = `http://127.0.0.1:${apiPort}`;
   let browser;
@@ -100,8 +151,11 @@ export async function openApp({ suite = 'look', build = false, desktop = false }
       await waitFor(base, 'the Vite dev server', vite);
     }
     // DC_VERIFY_ENGINE=webkit: the engine the Mac app runner draws with.
-    browser = await (process.env.DC_VERIFY_ENGINE === 'webkit' ? webkit : chromium).launch();
+    browser = await (process.env.DC_VERIFY_ENGINE === 'webkit' ? webkit : chromium).launch()
+      .catch((err) => { throw new HarnessError('start', `the browser did not launch: ${err instanceof Error ? err.message.split('\n')[0] : err}`); });
+    if (preflight) await preflightShell(browser, base, target, shots, build ? 20_000 : 60_000);
   } catch (err) {
+    await browser?.close().catch(() => {});
     killAll();
     throw err;
   }

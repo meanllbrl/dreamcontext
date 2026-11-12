@@ -5,7 +5,9 @@
  *   dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/look.mjs '/?vault=proj' --expect 'Tasks'
  *
  * Opens each path at 390 and 1440 px on the Vite dev server against a scratch vault, takes the
- * screenshots, and reports console errors, failed requests and sideways overflow. Exit 0 = clean.
+ * screenshots, and reports console errors, failed requests and sideways overflow. Exit 0 = clean,
+ * 1 = findings, 78 = HARNESS: the servers, the build or the first path's shell never came up, so
+ * nothing of the product was looked at (and builder heavy does not count the run).
  * --expect <text> must be on the page; --click <text> clicks it first; --build uses dist/ (live
  * chat streaming, which the dev proxy does not carry). See ./lib/app.mjs for a longer check.
  */
@@ -22,9 +24,10 @@ const { values, positionals } = parseArgs({
   },
 });
 
-const app = await openApp({ suite: values.name, build: values.build });
+const paths = positionals.length ? positionals : ['/?vault=proj'];
+const app = await openApp({ suite: values.name, build: values.build, target: paths[0] });
 try {
-  for (const [i, path] of (positionals.length ? positionals : ['/?vault=proj']).entries()) {
+  for (const [i, path] of paths.entries()) {
     await app.look(path, async (page, w) => {
       for (const text of values.click) await page.getByText(text, { exact: false }).first().click({ timeout: 10_000 });
       for (const text of values.expect) {
