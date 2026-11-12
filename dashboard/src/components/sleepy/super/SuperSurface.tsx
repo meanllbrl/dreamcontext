@@ -226,6 +226,15 @@ const ADD_NOTE_MS = 4000;
 const BACK_TO_GROUP_MS = 3000;
 
 /**
+ * The cards the owner dropped this window session, last on top, per stage (`vault|super`). Kept
+ * out of the component (owner 2026-11-11, "window'a git gel yaptığında"): the stage unmounts when
+ * he opens a chat window or another project, and a fresh mount that forgot his last drop planned
+ * a different stage when he came back. Its keys die with their stage's last card: an empty list
+ * is deleted, and a read keeps only cards still on the record.
+ */
+const TOPPED = new Map<string, string[]>();
+
+/**
  * The hand-over screen (plan-r8, owner decisions O1-O11): Claude in the cape EXACTLY in the
  * centre — the Super Agent's own chat, homed into `[data-super-slot="centre"]` by AgentSurface's
  * placement, as a pane homes a session — every other card floating around it, the queue pill
@@ -326,7 +335,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const { drag, hot, target, panelDrag, onPressCard, onPressPanelItem, onPressResize } = useStageDrag(dragDeps);
   // The card dropped last paints on top of the other dropped cards, for this window's session.
   // (A drop never reorders the record: that would move every other card to the other side.)
-  const [topped, setTopped] = useState<string[]>([]);
+  const toppedKey = `${props.vault}|${member?.slug ?? 'main'}`;
+  const [topped, setTopped] = useState<string[]>(() => {
+    const ids = new Set(state.containers.map((c) => c.id));
+    return (TOPPED.get(toppedKey) ?? []).filter((id) => ids.has(id));
+  });
+  useEffect(() => {
+    if (topped.length) TOPPED.set(toppedKey, topped);
+    else TOPPED.delete(toppedKey);
+  }, [toppedKey, topped]);
   const liftOnTop = (id: string) => setTopped((prev) => [...prev.filter((x) => x !== id), id]);
   const pinned = useMemo(
     () => (drag && !drag.fromOthers && state.containers !== drag.base ? { id: drag.id, rect: drag.rect } : null),
