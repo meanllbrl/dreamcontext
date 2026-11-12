@@ -272,10 +272,10 @@ describe('the ledger in the running inbox', () => {
   it('a tapped card answer is owed in his own words, never the internal [super answer] line', async () => {
     await boot();
     const text = '[super answer] item=q_ab12\nUser has answered your questions: "Which colour?"="Mor", "Ship it?"="Evet" notes: "bugün". You can now continue with the user\'s answers in mind.';
-    expect(ownerGist(text)).toBe('Mor, Evet (bugün)');
+    expect(ownerGist(text)).toBe('Which colour? → Mor; Ship it? → Evet (bugün)');
     await superOwnerOwes(SUPER, text);
     const d = openDebts(await readSuperState(root))[0];
-    expect(d.gist).toBe('Mor, Evet (bugün)');
+    expect(d.gist).toBe('Which colour? → Mor; Ship it? → Evet (bugün)');
     expect(d.gist).not.toContain('[super answer]');
   });
 

@@ -1606,14 +1606,20 @@ export function ownerGist(text: string): string {
   // internal text the owner never reads. Its gist is what HE picked or wrote, nothing else.
   if (/^\[super answer\] item=/.test(text)) {
     const picks: string[] = [];
-    for (const m of text.matchAll(/"=("(?:[^"\\]|\\.)*")(?: notes: ("(?:[^"\\]|\\.)*"))?/g)) {
+    // The question stays beside its pick: the gist also feeds the push/deploy grant's "his words"
+    // and the Super's owed blocks, where a bare "Evet" would answer nothing.
+    for (const m of text.matchAll(/("(?:[^"\\]|\\.)*")=("(?:[^"\\]|\\.)*")(?: notes: ("(?:[^"\\]|\\.)*"))?/g)) {
       try {
-        const pick = String(JSON.parse(m[1])).trim();
-        const note = m[2] ? String(JSON.parse(m[2])).trim() : '';
-        if (pick && pick !== '(no answer)') picks.push(note ? `${pick} (${note})` : pick);
+        const q = String(JSON.parse(m[1])).trim();
+        const pick = String(JSON.parse(m[2])).trim();
+        const note = m[3] ? String(JSON.parse(m[3])).trim() : '';
+        if (pick && pick !== '(no answer)') {
+          const a = note ? `${pick} (${note})` : pick;
+          picks.push(q && q !== 'answer' ? `${q} → ${a}` : a);
+        }
       } catch { /* unreadable pick: skipped */ }
     }
-    return cutGist(picks.join(', ') || '…', MAX_OWED_MSG_GIST);
+    return cutGist(picks.join('; ') || '…', MAX_OWED_MSG_GIST);
   }
   const { text: body } = splitPageContext(text);
   let out = '';
