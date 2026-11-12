@@ -11,7 +11,9 @@ import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn, info } from '../../lib/format.js';
 import { checkCloseGate } from '../../lib/sleep-eval/report.js';
 import { readTombstones } from '../../lib/task-tombstones.js';
-import { assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
+import { assertAgentNeighbor, assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
+import { agentSessionOf, agentTasksFiledOn, checkAgentFiling, resolveAgentTaskBudget } from '../../lib/agent-filing-guard.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 import { decideFiling, filingFields } from '../../lib/filing-basis.js';
 import {
   OBJECTION_KINDS,
@@ -768,7 +770,8 @@ export function registerTasksCommand(program: Command): void {
     .option('--evidence <text>', 'The failing output, verbatim (defect)')
     .option('--neighbor-checked <slug>', 'The nearest existing task you looked at and judged a separate concern (lifts a review-band filing-bar refusal)')
     .option('--declined-checked <key>', 'The declined idea you read and judged different from this task (lifts a semantic declined-match refusal)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; parent?: string; basis?: string; quote?: string; evidence?: string; neighborChecked?: string; declinedChecked?: string }) => {
+    .option('--owner-asked <words>', "The owner's own words asking for this task. Inside an agent's session it is the only way past the agent guard (a Super child, a sub-task, the daily budget); records an ask basis")
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean; by?: string; parent?: string; basis?: string; quote?: string; evidence?: string; neighborChecked?: string; declinedChecked?: string; ownerAsked?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -797,15 +800,23 @@ export function registerTasksCommand(program: Command): void {
       const inherited = parent ? inheritFromParent(parent) : null;
       const givenWhy = (opts.why ?? '').trim() || inherited?.why || '';
 
+      // Inside an agent's session (lib/agent-filing-guard.ts) `--by human` is not the owner: the
+      // task is recorded as the agent's, so the guard and the board's count see it. The owner's
+      // words ride in --owner-asked, which also records an ask basis when none was given.
+      const agentSession = agentSessionOf(process.env);
+      const ownerAsked = (opts.ownerAsked ?? '').trim() || null;
+      const byArg = agentSession && (opts.by ?? '').trim() === 'human' ? 'agent' : opts.by;
+      const askFromOwner = ownerAsked !== null && !(opts.basis ?? '').trim();
+
       // Who is filing, and on what basis (lib/filing-basis.ts). A caller with no --by during a
       // live cycle IS sleep: it needs a basis, and a new top-level task only for an owner ask
       // or a defect.
       const filing = decideFiling({
         contextRoot,
         surface: 'cli',
-        by: opts.by,
-        basis: opts.basis,
-        quote: opts.quote,
+        by: byArg,
+        basis: askFromOwner ? 'ask' : opts.basis,
+        quote: askFromOwner ? ownerAsked : opts.quote,
         evidence: opts.evidence,
         parent: parent?.slug ?? null,
         parentTechnicalDetails: parent?.technical_details ?? null,
@@ -816,6 +827,35 @@ export function registerTasksCommand(program: Command): void {
         error(filing.message);
         process.exitCode = 1;
         return;
+      }
+
+      // The awake-agent guard (audit TK-1, TK-2): no Super child files, no agent opens a
+      // sub-task, agents share a daily budget; each refusal names the way out.
+      if (agentSession && (filing.filedBy === 'agent' || filing.filedBy === 'plan')) {
+        const guard = checkAgentFiling({
+          filedBy: filing.filedBy,
+          parent: parent?.slug ?? null,
+          ownerAsked,
+          superChild: superChildContext(contextRoot, [process.env.DREAMCONTEXT_TAB_SESSION, process.env.CLAUDE_CODE_SESSION_ID, process.env.CODEX_THREAD_ID]) !== null,
+          filedToday: agentTasksFiledOn(await backend.list(), today()),
+          budget: resolveAgentTaskBudget(readSetupConfig(join(contextRoot, '..'))?.agentTaskBudget),
+        });
+        if (!guard.ok) {
+          error(guard.message);
+          process.exitCode = 1;
+          return;
+        }
+        // Gate 5 of the sleep bar, for an agent: a slice of an open task goes onto that task.
+        if (!guard.ownerAsked) {
+          const twin = await assertAgentNeighbor({
+            contextRoot, why: givenWhy, slug, name, description: opts.description, neighborChecked: opts.neighborChecked,
+          });
+          if (!twin.allowed) {
+            error(twin.reason ?? 'Refused: a near-twin task is already open.');
+            process.exitCode = 1;
+            return;
+          }
+        }
       }
 
       // The filing bar. Applies whenever a sleep cycle is live (or under

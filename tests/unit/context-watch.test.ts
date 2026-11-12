@@ -351,10 +351,13 @@ describe('renderNudge', () => {
     expect(text).toContain('dreamcontext tasks handoff my-task --done');
   });
 
-  it('tells the agent to create a task first when none is in progress', () => {
+  // Audit TK-3: no task is small work, which needs none (owner, 2026-11-09). The nudge no longer
+  // tells a plain chat to create one; it may skip the handoff or ask the owner.
+  it('with no task in progress, says skip or ask the owner, never "create one first"', () => {
     const text = renderNudge(240_000, LADDER, null);
     expect(text).toContain('<task-slug>');
-    expect(text).toContain('dreamcontext tasks create');
+    expect(text).not.toContain('tasks create');
+    expect(text).toContain('skip the handoff and keep going, or ask the owner');
   });
 });
 
