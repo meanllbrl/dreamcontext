@@ -2031,9 +2031,19 @@ export function measureSnapshot(
         // went out inside it (or never will): not upcoming. Fourteen of them
         // listed 0.41.1-0.41.12 under a released 0.41.13 (audit MM-9). They
         // leave the list but stay counted, so nothing disappears silently.
-        const planning = latestReleased
-          ? allPlanning.filter((p) =>
-            compareVersions(String(p.version ?? ''), String(latestReleased.version ?? '')) > 0)
+        // Only a numeric version can be "past": a sprint or milestone name
+        // (`sprint-12`, `next`) has no order against a release, and
+        // compareVersions reads its non-numeric parts as 0.
+        const numericVersion = (v: unknown): string | null => {
+          const m = /^v?(\d+(?:\.\d+)*)$/i.exec(String(v ?? '').trim());
+          return m ? m[1] : null;
+        };
+        const latestNumeric = latestReleased ? numericVersion(latestReleased.version) : null;
+        const planning = latestNumeric
+          ? allPlanning.filter((p) => {
+            const v = numericVersion(p.version);
+            return v === null || compareVersions(v, latestNumeric) > 0;
+          })
           : allPlanning;
         const pastPlanning = allPlanning.length - planning.length;
         const pastPlanningLine = pastPlanning > 0
@@ -2072,6 +2082,7 @@ export function measureSnapshot(
           if (latestReleased) {
             out.push('## Latest Release\n');
             out.push(latestLine(latestReleased, RELEASES_LATEST_SUMMARY_CHARS));
+            if (planning.length === 0) out.push(...pastPlanningLine);
             out.push('');
           }
           return out.join('\n');
@@ -2097,6 +2108,7 @@ export function measureSnapshot(
           if (taskCount > 0 || featCount > 0) {
             parts.push(`  Includes: ${taskCount} task(s), ${featCount} feature(s)`);
           }
+          if (planning.length === 0) parts.push(...pastPlanningLine);
           parts.push('');
         }
       }
@@ -2955,7 +2967,7 @@ const LEAN_BRIEFING_HEADER = [
   '# Agent Context -- Sub-agent Briefing\n',
   'This project keeps its decisions, features, knowledge and tasks in `_dream_context/`.',
   `${RECALL_GUIDANCE}`,
-  'Feature PRDs: `_dream_context/knowledge/features/<slug>.md` · every knowledge file: `dreamcontext knowledge index` · tasks: `dreamcontext tasks list`.\n',
+  'No feature or knowledge list is pre-loaded here. Feature PRDs: `_dream_context/knowledge/features/<slug>.md` · every knowledge file, one line each: `dreamcontext knowledge index` (a context-routing job starts there) · tasks: `dreamcontext tasks list`.\n',
 ].join('\n');
 
 /** Where a sub-agent stands on tasks: it reports to its dispatcher, it has no user. */
