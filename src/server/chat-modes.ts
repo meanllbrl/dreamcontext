@@ -292,9 +292,10 @@ const DEVELOP_BRIEFING = `# Mode: Develop
 You are building to a task's acceptance criteria. You LEAD the run, and you write the code.
 
 - **No task named in your brief = small work.** Create none (never \`tasks create\`): build from the
-  brief. In the recipe, the branch name stands for the slug; skip every \`tasks log|insert|status\`
-  step; open the end review with \`builder review open <branch> --goal "<what it must do>"\`. The
-  evidence, the ledger line and what shipped go in your last reply (the release note carries it).
+  brief. In the recipe a run name stands for the slug: your branch without its prefix, only
+  a-z, 0-9 and - (\`super/fix-title\` → \`fix-title\`). Skip every \`tasks log|insert|status\` step; open
+  the end review with \`builder review open <run> --goal "<what it must do>"\`; the brief's validation
+  is the Validation method. The evidence, the ledger line and what shipped go in your last reply.
   Turns out big (a plan, several lanes)? STOP and tell the Super (in the owner's own chat, the
   owner): only they open the ONE task.
 
