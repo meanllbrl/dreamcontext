@@ -374,17 +374,26 @@
   border-style: solid;
   border-width: 2px;
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+/* The breathing ring is a pseudo-element whose opacity animates: an endless animation never touches box-shadow. */
+.wb-region--running::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: inherit;
+  border: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
   animation: var(--dc-motion-ambient-name, wb-region-glow) 1.6s var(--ease-out) infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
 
 @keyframes wb-region-glow {
-  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent); }
-  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-accent) 28%, transparent); }
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wb-region--running { animation: none; }
+  .wb-region--running::after { animation: none; opacity: 0.6; }
 }
 
 .wb-region-tag {

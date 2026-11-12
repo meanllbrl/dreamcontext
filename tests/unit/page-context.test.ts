@@ -247,7 +247,7 @@ describe('a whiteboard selection on the page block (board writing field, 2026-11
   });
 
   it('the Super is told what area= means', () => {
-    expect(read('src/server/chat-modes.ts')).toMatch(/\\`area=<x>,<y>,<w>,<h>\\` is an empty region the owner chose: place the new drawing inside it/);
+    expect(read('src/server/chat-modes.ts')).toMatch(/\\`area=<x>,<y>,<w>,<h>\\` is an empty region the owner chose: draw inside it; pass it verbatim/);
   });
 
   it('the Super is told what sel/box/ids mean and to delegate with them verbatim', () => {
