@@ -32,8 +32,11 @@ task needs.
 
 RECALL: before Glob/Grep on any "where / why / what do we know about X" question, run `dreamcontext memory recall "<keywords>"`. It ranks knowledge, features, tasks, memory, changelog, objectives, insights, theses and automations, plus connected projects. Narrow with `--types <csv>` or `--level 2|3`.
 
-Your SubagentStart briefing lists features and knowledge by name; read the matching
-file before searching code.
+Your SubagentStart briefing depends on your agent type. Sleep, explore, curator and
+initializer agents get feature names and the knowledge index (pinned files named,
+the rest counted on a large brain). Every other agent gets pinned knowledge only:
+`dreamcontext knowledge index` lists every file in one line each. Either way, read
+the matching file before searching code.
 
 ## Where things live
 
