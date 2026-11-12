@@ -626,6 +626,9 @@ export interface ChatSession {
   mcpAuth: McpChatAuth;
   /** Bumped on every MCP change, so a component can skip the per-token notifications. */
   mcpVersion: number;
+  /** A tab name the server derived from the owner's first message (`_meta/tab_title`), or null.
+   *  The surface applies it only to a tab still carrying its default name. */
+  offeredTitle: string | null;
   /** Sign a server in through this chat's own CLI (`mcp_authenticate`): the browser opens at the
    *  CLI's https URL, the row turns green when the CLI says so. Desktop window only. */
   mcpConnect: (name: string) => void;
@@ -1410,6 +1413,7 @@ export function createChatSession(
     mcp: null,
     mcpAuth: {},
     mcpVersion: 0,
+    offeredTitle: null,
     mcpConnect: (name: string) => mcpAction('mcpConnect', name),
     mcpReconnect: (name: string) => mcpAction('mcpReconnect', name),
     mcpRefresh: () => { sendControl({ type: 'mcpRefresh' }); },
@@ -2491,6 +2495,19 @@ export function createChatSession(
     // The chat's MCP status and sign-ins (task mcp-management): session state, never transcript.
     if (raw.includes('"subtype":"mcp_')) {
       if (applyMcpFrame(raw)) return;
+    }
+    // The tab's name, derived by the server from the owner's first message: surface state only.
+    if (raw.includes('"subtype":"tab_title"')) {
+      try {
+        const f = JSON.parse(raw) as { type?: unknown; subtype?: unknown; title?: unknown };
+        if (f.type === '_meta' && f.subtype === 'tab_title') {
+          if (typeof f.title === 'string' && f.title.trim()) {
+            session.offeredTitle = f.title;
+            applyAndNotify(() => { /* the tab's name lives on the session, not the transcript */ });
+          }
+          return;
+        }
+      } catch { /* not ours */ }
     }
     // The server's run/secret card records (plan I1): what this chat's cards match against.
     if (raw.includes('"subtype":"cards"')) {

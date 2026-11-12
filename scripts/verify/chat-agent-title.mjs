@@ -5,6 +5,8 @@
  *   npm run build && npm run verify:chat-agent-title
  *
  * WHAT IT PROVES — the whole path the Haiku namer used to own, now owned by the agent:
+ *   T0  out of band (2026-11-12): the owner's first message names a "Chat N" tab at once, from
+ *       the server's `_meta/tab_title`, with no title block and no extra turn; marked the agent's
  *   T1  a fresh chat tab starts as "Chat N" and, when the agent's answer carries a
  *       `{"type":"title"}` dream-view block, the TAB takes that name
  *   T2  the block is drawn nowhere — no raw JSON, no notice in the transcript
@@ -29,6 +31,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+/** The build under test: this checkout's `dist/` unless DC_VERIFY_DIST points at another one
+ *  (e.g. the installed package, for a before/after pair). */
+const DIST = process.env.DC_VERIFY_DIST || join(REPO, 'dist');
+/** Optional folder for the screenshots of each step. */
+const SHOTS = process.env.DC_VERIFY_SHOTS || '';
 const SCRATCH = join(tmpdir(), 'dreamcontext-verify-chat-agent-title');
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
@@ -81,14 +88,14 @@ function setupScratch() {
   const bin = join(HOME, '.local', 'bin', 'claude');
   writeFileSync(bin, STANDIN);
   chmodSync(bin, 0o755);
-  const add = spawnSync(process.execPath, [join(REPO, 'dist', 'index.js'), 'vaults', 'add', 'proj', PROJ],
+  const add = spawnSync(process.execPath, [join(DIST, 'index.js'), 'vaults', 'add', 'proj', PROJ],
     { env: { ...process.env, HOME }, encoding: 'utf-8' });
   if (add.status !== 0) throw new Error(`vaults add failed: ${add.stderr || add.stdout}`);
 }
 
 async function startServer(port) {
   const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
-  const srv = spawn(process.execPath, [join(REPO, 'dist', 'index.js'), 'dashboard', '--no-open', '-p', String(port)], {
+  const srv = spawn(process.execPath, [join(DIST, 'index.js'), 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ,
     env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -147,10 +154,24 @@ async function run(chromium, base, report) {
   const initial = await tabTitle();
   ok('the fresh tab carries its default name', /^Chat \d+$/.test(initial), initial);
 
+  const shot = async (name) => { if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `${name}.png`) }); } };
+  await shot('0-fresh-tab');
+
+  // T0 — the first message, no title block in the answer.
+  await send('fix the checkout button, it overlaps the price on small phones');
+  await until(async () => (await paneText()).includes('DONE: fix the checkout button'), 15000);
+  ok('T0 the owner\'s first message names the tab without any title block',
+    await until(async () => (await tabTitle()) === 'Fix the checkout button', 5000), await tabTitle());
+  await shot('1-after-first-answer');
+  ok('T0 the roster marks it the agent\'s, so the agent may still rename it',
+    await until(() => readRoster().some((m) => m.title === 'Fix the checkout button' && m.titleByAgent === true), 8000),
+    JSON.stringify(readRoster()));
+
   // T1 + T2 + T3
   await send('look at the checkout flow TITLE:Checkout button redesign');
   ok('T1 the agent\'s title block names the tab',
     await until(async () => (await tabTitle()) === 'Checkout button redesign'), await tabTitle());
+  await shot('2-agent-renamed');
   const text = await paneText();
   ok('T2 the answer text is shown', text.includes('DONE: look at the checkout flow'), text.slice(0, 200));
   ok('T2 the block itself is drawn nowhere — no raw JSON, no notice',
