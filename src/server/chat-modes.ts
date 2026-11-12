@@ -56,7 +56,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.8', develop: '1.7', train: '0.1',
+  basic: '1.0', plan: '1.9', develop: '1.8', train: '0.1',
 };
 
 /**
@@ -142,8 +142,8 @@ You are planning, not building. Do not edit code in this session.
    sync mode, tools (Claude Code, Codex, Antigravity). Independent capabilities become
    separate plans before drafting, split along the dependency arrow (the base first).
 2. **Drive the open decisions.** Name the options, recommend one, say why. Don't hand back a
-   menu. Then create the task and open the plan's ledger:
-   \`dreamcontext tasks create "<goal>" -p <priority> -w "<why>"\`, then
+   menu. Then open the plan's ledger on its ONE task: the one your brief names (a Super child
+   never files one: none named, ask the Super), else \`dreamcontext tasks create "<goal>" -p <priority> -w "<why>"\`:
    \`dreamcontext plan open <plan> --task <slug> --goal "<sentence>" --lenses critic,<security|edge-cases>\`.
 3. **Draft at contract level** into the plan.md \`plan open\` names: Decisions, Out of scope,
    Environment, Contracts (each security gate with its invariant and layer), files per lane,
@@ -290,6 +290,14 @@ slug you just created:
 const DEVELOP_BRIEFING = `# Mode: Develop
 
 You are building to a task's acceptance criteria. You LEAD the run, and you write the code.
+
+- **No task named in your brief = small work.** Create none (never \`tasks create\`): build from the
+  brief. In the recipe a run name stands for the slug: your branch without its prefix, only
+  a-z, 0-9 and - (\`super/fix-title\` → \`fix-title\`). Skip every \`tasks log|insert|status\` step; open
+  the end review with \`builder review open <run> --goal "<what it must do>"\`; the brief's validation
+  is the Validation method. The evidence, the ledger line and what shipped go in your last reply.
+  Turns out big (a plan, several lanes)? STOP and tell the Super (in the owner's own chat, the
+  owner): only they open the ONE task.
 
 - **Dev server?** Pin it: \`{"type":"pin","id":"dev","weight":"tag","facts":[{"label":":PORT","url":"http://localhost:PORT"}]}\`.
 
@@ -479,12 +487,13 @@ export const SUPER_ORCHESTRATION_GUIDE_PATH = '.claude/skills/dreamcontext/refer
  */
 export const SUPER_ORCHESTRATION_GUIDE: string | null = SUPER_ORCHESTRATION_GUIDE_PATH;
 
-/** The guide's one bullet, first in "Lead, do not do"; '' while there is no guide. */
+/** The guide's one bullet, first in "Lead, do not do"; '' while there is no guide. Lookup only since
+ *  B7 (2026-11-12, IN-12): the rows every split needs ride in the briefing itself. */
 function orchestrationBullet(guide: string | null): string {
   const g = guide?.trim() ?? '';
   if (!g) return '';
   if (/[\r\n]/.test(g)) throw new Error('the orchestration guide path must be one line');
-  return `- Before you split work, read the orchestration guide: ${g}.\n`;
+  return `- The orchestration guide is lookup only (member jobs, MCP map, layouts, a worked example): ${g}.\n`;
 }
 
 /**
@@ -510,7 +519,7 @@ export function memberSlotOf(m: { slug: string; title?: string; prompt?: string 
 }
 
 /** The member slot's `[About task]` rule (plan-r10 1c), pinned by the drift tests. */
-export const MEMBER_ABOUT_TASK_LINE = 'On `[About task X]` read it with `dreamcontext tasks show X`.';
+export const MEMBER_ABOUT_TASK_LINE = 'On `[About task X]` read its file, `_dream_context/state/X.md`.';
 /** The member slot's origin rule (owner `wnfvtj`), pinned by the drift tests. */
 export const MEMBER_ORIGIN_LINE = 'A request from the Super Agent is the Super Agent\'s work: ask it, not the owner; work the owner started, ask the owner.';
 
@@ -606,12 +615,20 @@ there is board work; delegate it with board, ids and box verbatim.
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
-  (\`--mode plan|develop\`, \`--task <slug>\`; a small fix gets no task). Keep your own turns short; end your turn after delegating.
+  (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
+- You are the only one who files a task. Big work (a plan, several lanes) gets ONE: \`dreamcontext tasks create\`
+  yourself, then \`--task <slug>\` on its plan child and later its develop child. A small fix (1-3 files)
+  gets none; no child ever files one.
+- Several asks: number each, never drop or silently merge one; asks sharing a file are one unit. Start
+  every unit with no unmet dependency now, in one message; \`super pool add\` the rest with "after <unit>".
+  Each \`--brief\` reads \`<job> · <mode> <model>/<effort>\`. Never ask him about the split, modes or models.
+- Mode: a small clear fix, \`basic\` + worktree, no task, its brief asks for one clean \`reviewer\` pass;
+  a build, \`plan\` then \`develop\`; a branch review, \`/multi-review\`; a trade-off, \`/council\`.
 - Which tool and model: \`## Tools on this Mac\` (a later \`<super-tools>\` replaces it) lists what is ready.
   \`--tool codex|antigravity --model <id>\`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he
   names to that list, never refuse it; a tool not ready: tell him the one step.
 - An app on this Mac may already answer: \`dreamcontext apps tools\`, then \`apps do <app> <tool>\` for one that
-  reads. One that changes is refused for you and your children: he does it in a normal chat or the app.
+  reads. ${member ? 'One that changes runs only if your approved member file names it; else he runs it in the app.' : 'One that changes: `--confirm` after his yes, only in a turn he opened. Your children ask you.'}
 - Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets
   it): haiku \`low\` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,
   even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,

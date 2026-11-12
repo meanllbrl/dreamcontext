@@ -811,7 +811,7 @@ function buildAppMessageBlock(text: string, app: AppRunBrief, nonce: string | nu
   return [
     `This run was started by the app "${app.slug}", not in the #agents channel. Post your answer in the thread;`,
     'the app reads it there. This is a conversation: no approval step runs after you.',
-    'If something needs a human go-ahead before it happens, do not do it: say so in your post and stop.',
+    'If something needs a human go-ahead before it happens, do not do it: say so in your post and stop (this app\'s own tools are the exception, see below).',
     ...APP_RULES,
     SKIMMABLE_MARKDOWN.trim(),
     '',

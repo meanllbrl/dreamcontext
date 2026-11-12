@@ -1,7 +1,8 @@
 # Super Agent orchestration guide
 
-For the Super Agent only. Read it ONCE when the owner hands you several jobs at once, then split. It
-says how to turn "do these 10 things" into safe, parallel children that finish fast. Verbs are in
+For the Super Agent only, for lookup: your briefing carries the split, mode, model, worktree and
+task-filing rules; open the section you need. It turns "do these 10 things" into safe, parallel
+children that finish fast. Verbs are in
 [cli-reference.md](cli-reference.md). The owner talks to you; you talk back in 2-4 sentences.
 
 ## 1. Split procedure
@@ -33,8 +34,11 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    those from `status`). Removing worktrees or files frees disk, never memory or swap: do not offer
    it for a RAM squeeze. A `light mode is on` note is the app slowing its animations and polling:
    it holds no job and nothing needs closing or switching off.
-   Heavy steps run one at a time per project, at most 2 projects at once, 1 while the Mac is very
-   hot (`machine.heat.heavyLimit` 1). Heat limits heavy STEPS, never children: keep delegating (§5).
+   Heavy steps run one at a time per checkout (each worktree has its own lock) and share the
+   machine's heavy slots (at least 2: one per 2 cores, per 4 GB of memory and per 2 GB free, so 4
+   on an 8-core 16 GB Mac; 2 while it is hot, 1 when it is very hot or memory is critical:
+   `machine.heat.heavyLimit`). Heat limits heavy STEPS, never children: keep
+   delegating (§5).
 8. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
    `dreamcontext super pool add` with "after <unit>" in its brief, so the job list shows the whole
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.
@@ -182,10 +186,10 @@ same setting. Fable costs 2.5x Opus per token and is slower: only for its row. R
 validators inside a flow keep their own models; never override them.
 
 ## 4. Flow map
-Mode: `basic` | `plan` | `develop`. Develop needs a task; Plan creates one. A task only for big work: a small
-clear fix (1-3 files, one clear fix, no plan round) runs `basic` with no `--task`, its child opens
-no task, and the cut's release note carries it; big work is ONE task with its waves logged inside
-it, a sub-task only when the owner asks.
+Mode: `basic` | `plan` | `develop`. Only you file a task, only for big work: ONE (`tasks create`),
+passed as `--task` to its plan and develop child, waves logged inside it, a sub-task only when the
+owner asks. A small clear fix (1-3 files, no plan round) runs `basic` with no `--task`, its child
+files none, and the cut's release note carries it.
 
 **Who takes the job.** The project's AI Team is listed in your prompt (`## Your AI Team`, each
 member's field and state) and in `super state` (`members`); check it first for every job. A job in
@@ -196,7 +200,7 @@ about once, then do the plain way.
 | Job | Who | Example |
 |---|---|---|
 | Recurring, or a member's own field | that member: `super team ask <member> "<job>"` | a `doctor` member (system, logs, cost): "check last night's API errors and today's spend" |
-| Non-trivial build | a `plan` child, then a `develop` child with the slug (`--task`) | "POST /v1/invites in orbit-api" |
+| Non-trivial build | you file ONE task, then a `plan` child and a `develop` child, both `--task <slug>` | "POST /v1/invites in orbit-api" |
 | Small clear fix | `basic` + worktree, no task; its brief requires a clean `reviewer` sub-agent pass | "the onboarding title typo" |
 | A whole goal in one session | a `basic` child running `/goal-skill` | "invites end to end, with tests" |
 | Review a branch or PR | a child running `/multi-review` | "review super/invites before the merge" |
@@ -228,7 +232,7 @@ child that spots a mistake tells you; only you amend. Each refusal says what to 
 - **Runtime proof of a server or UI** → a `goal-validator` child in that worktree (headless browser; `scripts/verify/look.mjs` if the repo has it).
 - **Brain reorganisation** → a child running `/curator`, never beside another child that writes the brain, or sleep.
 - **Release** → the release checklist pattern; the publish step is outward (§2).
-- **Every big code unit has ONE task** (Plan creates it); a small fix (1-3 files) has none. Recall before splitting. A metric →
+- **Every big code unit has ONE task** (you file it; Plan and Develop take it as `--task`); a small fix (1-3 files) has none. Recall before splitting. A metric →
   a Lab insight (never retyped). A board → `dreamcontext whiteboard` (an explanation on it is
   drawn, `whiteboard kit`; never a note stack). A recurring job → `dreamcontext automations`
   (approved as written; only risky text waits for his card). Sleep → offered after all children finish.

@@ -83,6 +83,7 @@ describe('the app tools block', () => {
     upsertCatalogEntry(ctx, catalogEntry());
     const neutral = block('how does the revenue pipeline look for customers?')!;
     expect(neutral).toContain('→ The project has the app "CRM" (app text), not installed on this Mac');
+    expect(neutral).toContain(`Suggest a look at "Shared Apps" on the Apps page`); // gece-apps A6: the tab's real name
     expect(neutral).toContain('No install button.');
 
     writeSharedSnapshot(home, { currentLogin: 'me', at: new Date().toISOString(), repos: ['acme/crm'] });

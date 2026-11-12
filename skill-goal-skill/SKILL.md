@@ -1,13 +1,9 @@
 ---
 name: goal-skill
-description: >
-  Load when the user wants to drive a non-trivial goal to completion under
-  rigorous sub-agent orchestration, or invokes `/goal-skill`. Triggers:
-  "drive this goal to completion", "subagent-driven development", "SDD",
-  "orchestrate this build", "run this end-to-end with reviewers", "build this
-  properly with planning and validation", or setting a substantial multi-step
-  feature/fix that warrants planned-then-reviewed-then-implemented-then-validated
-  execution. Use for work too large or risky for a single straight-line pass.
+description: >-
+  Drive a non-trivial goal to completion under sub-agent orchestration: plan, review, implement,
+  validate. Load on `/goal-skill`, "drive this goal to completion", "subagent-driven development",
+  "orchestrate this build".
 tags: [goal, orchestration, sdd, sub-agents, planning, review, validation]
 alwaysApply: false
 ---
@@ -71,7 +67,7 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
 
 1. **Spawn the planner** (once, at Phase 1), from the printed planner brief (Phase 1):
    ```
-   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "$(cat "$RUN/planner-brief.md")" --session-id <plannerId> --output-format json --model opus --effort high < /dev/null
+   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "$(cat "$RUN/planner-brief.md")" --session-id <plannerId> --output-format json --model opus --effort medium < /dev/null
    ```
    `< /dev/null` matters: a headless `-p` invocation with no stdin redirect can hang
    waiting for input. Always redirect stdin explicitly. The id you minted IS the
@@ -80,7 +76,7 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
 2. **Resume the planner** for a revision round (only the delta is new tokens; read-only,
    the same identity it was spawned with):
    ```
-   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> "<the delta — new findings only>" --output-format json --model opus --effort high < /dev/null
+   CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> "<the delta — new findings only>" --output-format json --model opus --effort medium < /dev/null
    ```
 
 3. **Fork an implementer from the planner session** (Phase 4, once per task in a wave).
@@ -89,10 +85,10 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <implId> \
      "$(cat "$RUN/brief-<TaskId>.md")" \
      --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
-     --output-format json --model opus --effort high < /dev/null > "$RUN/<TaskId>-r1.json"
+     --output-format json --model opus --effort medium < /dev/null > "$RUN/<TaskId>-r1.json"
    ```
    **One identity for the whole lineage, always.** The planner, its resumes, every fork and
-   every implementer resume run `--model opus --effort high` with
+   every implementer resume run `--model opus --effort medium` with
    `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. A fork reads the planner's context from the
    cache only when model, effort, system prompt and tool list match: an Opus planner forked
    as Sonnet was 54 of 55 measured cache misses, each re-reading the whole planner context
@@ -128,7 +124,7 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
    ```
    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <implId> "$(cat "$RUN/<TaskId>-r<N>.md")" \
      --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
-     --output-format json --model opus --effort high < /dev/null > "$RUN/<TaskId>-r<N>.json"
+     --output-format json --model opus --effort medium < /dev/null > "$RUN/<TaskId>-r<N>.json"
    ```
    A resume without the write flags stalls at its first Write or Bash (rule 3). Then rule 6
    on its output.
@@ -159,7 +155,7 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
      ```
      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <implId> "Finish what you were building and write your final report now." \
        --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
-       --output-format json --model opus --effort high < /dev/null > "$RUN/<TaskId>-r<N+1>.json"
+       --output-format json --model opus --effort medium < /dev/null > "$RUN/<TaskId>-r<N+1>.json"
      ```
      A resume without the permission flags stalls at its first Bash call, exactly like
      the fork described in rule 3.
@@ -234,17 +230,18 @@ migrations**, force tier **L** regardless of estimated size. These surfaces don'
 to skip rigor because the diff looked small.
 
 **Model and effort, every tier:** one identity for the whole builder lineage (mechanics
-rule 3): `--model opus --effort high`, passed explicitly on the planner's spawn and every
-resume and fork, so every fork reads the planner from the cache. High, not xhigh: measured
-on a builder lane, xhigh took 2.4x the wall time of medium for no better code, and high
-keeps the planner thinking hard enough for a safe dependency map.
+rule 3): `--model opus --effort medium`, passed explicitly on the planner's spawn and every
+resume and fork, so every fork reads the planner from the cache. Medium, the owner's builder rule
+(and `src/lib/builder-spawn.ts`): measured on a builder lane, xhigh took 2.4x the wall time of
+medium for no better code. The plan's safety comes from the clean plan reviewers of Phase 2, which
+keep their own effort.
 
 ## Orchestration flow
 
 ```mermaid
 flowchart TD
     P0[Phase 0 — one batched ask to the user] --> PT[Tier router: S / M / L, hot-path override]
-    PT --> P1[Phase 1 — goal-planner: spawn once, plan + dep map, opus at effort high]
+    PT --> P1[Phase 1 — goal-planner: spawn once, plan + dep map, opus at effort medium]
     P1 --> P2{Phase 2 — plan-reviewers, clean, parallel: all SOLID?}
     P2 -->|plan status: revise or redesign| R1[RESUME planner with plan status: whole rewrite by class]
     R1 --> P1
@@ -295,7 +292,7 @@ record that you chose it, and surface it for confirmation.
 
 Do any messy pre-fork exploration in throwaway `Explore` agents first — keep the
 planner's base lean. Then spawn **one** `goal-planner` CLI session per the mechanics
-above, with the lineage's one identity (opus, effort high). Record its `session_id` in the
+above, with the lineage's one identity (opus, effort medium). Record its `session_id` in the
 Session registry.
 
 **Planner brief — printed, filled, passed as a file.** Print it with `dreamcontext goal-live
@@ -672,12 +669,12 @@ standalone goal-live step is bookkeeping the user has to read past in the team l
 
 ```bash
 # Run start (right after the goal is confirmed): the file, the plan phase, the planner, in one step
-dreamcontext goal-live start --goal <slug> && dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind spawn --session <plannerId> && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "$(cat "$RUN/planner-brief.md")" --session-id <plannerId> --output-format json --model opus --effort high < /dev/null
+dreamcontext goal-live start --goal <slug> && dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind spawn --session <plannerId> && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p "$(cat "$RUN/planner-brief.md")" --session-id <plannerId> --output-format json --model opus --effort medium < /dev/null
 ```
 
 ```bash
 # Planner revision round N: the planner picks up where it left off
-dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind resume --round N --session <plannerId> && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> "<the delta>" --output-format json --model opus --effort high < /dev/null
+dreamcontext goal-live phase plan && dreamcontext goal-live actor planner --kind resume --round N --session <plannerId> && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> "<the delta>" --output-format json --model opus --effort medium < /dev/null
 ```
 
 ```bash
@@ -687,12 +684,12 @@ dreamcontext goal-live phase review && dreamcontext goal-live actor critic,edge-
 
 ```bash
 # Verdicts ride on the next real step (here: the planner revision it triggers)
-dreamcontext goal-live state critic=NEEDS_WORK edge-cases=SOLID && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> "<the delta>" --output-format json --model opus --effort high < /dev/null
+dreamcontext goal-live state critic=NEEDS_WORK edge-cases=SOLID && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> "<the delta>" --output-format json --model opus --effort medium < /dev/null
 ```
 
 ```bash
 # Implementer forks: one actor call per lane (a --session names ONE run), each lane its own minted id
-dreamcontext goal-live phase impl --wave 1 --waves 3 && dreamcontext goal-live actor "T1=Role registry" --role implementer --kind fork --from planner --context-of <plannerId> --session <T1Id> && dreamcontext goal-live actor "T2=Tokens" --role implementer --kind fork --from planner --context-of <plannerId> --session <T2Id> && (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <T1Id> "$(cat "$RUN/brief-T1.md")" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model opus --effort high < /dev/null > "$RUN/T1-r1.json" & CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <T2Id> "$(cat "$RUN/brief-T2.md")" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model opus --effort high < /dev/null > "$RUN/T2-r1.json" & wait)
+dreamcontext goal-live phase impl --wave 1 --waves 3 && dreamcontext goal-live actor "T1=Role registry" --role implementer --kind fork --from planner --context-of <plannerId> --session <T1Id> && dreamcontext goal-live actor "T2=Tokens" --role implementer --kind fork --from planner --context-of <plannerId> --session <T2Id> && (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <T1Id> "$(cat "$RUN/brief-T1.md")" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model opus --effort medium < /dev/null > "$RUN/T1-r1.json" & CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude -p --resume <plannerId> --fork-session --session-id <T2Id> "$(cat "$RUN/brief-T2.md")" --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" --output-format json --model opus --effort medium < /dev/null > "$RUN/T2-r1.json" & wait)
 ```
 
 ```bash

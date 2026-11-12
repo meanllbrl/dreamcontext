@@ -1,13 +1,9 @@
 ---
 name: multi-review
-description: >
-  Multi-agent code review with a router and niche specialists.
-  Load when the user invokes `/multi-review`, says "multi-reviewer", "review with
-  a team", "review this PR with specialists", "team review", "thorough review",
-  or otherwise asks for a multi-aspect code review (security + cloud-functions
-  + frontend + edge-cases) of a diff or branch. Routes the diff to relevant
-  specialist sub-agents in parallel, then the main agent synthesizes findings
-  into one greptile-style report.
+description: >-
+  Multi-agent code review: a router sends the diff to security, cloud-functions, frontend and
+  edge-case specialists in parallel, and one report comes back. Load on `/multi-review`, "review
+  with a team", "thorough review".
 tags: [review, multi-agent, sub-agents, orchestration, code-review]
 alwaysApply: false
 ---

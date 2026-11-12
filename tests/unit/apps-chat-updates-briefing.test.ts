@@ -60,6 +60,14 @@ describe('the update paragraph', () => {
     for (const own of [true, false]) expect(appChatBriefing({ ...base, own })).toContain('### Updates\nThis app was installed from `acme/yuk`');
     expect(appChatBriefing({ ...base, own: true })).toContain('`dreamcontext apps update yuk`, `dreamcontext apps do');
   });
+  it('a bound member is told a changing tool does not run from this window (gece-apps C2: it was a silent deny)', () => {
+    const base = { name: 'Yük', slug: 'yuk', appRoot: '/a', dataDir: '/d' };
+    const member = appChatBriefing({ ...base, own: false });
+    expect(member).toContain('A tool of this app that reads runs as `dreamcontext apps do yuk <id>`.');
+    expect(member).toContain('does not run from this window, even with `--confirm`');
+    expect(member).toContain("the owner runs it from the app's own screen or in main Chat");
+    expect(appChatBriefing({ ...base, own: true })).not.toContain('does not run from this window');
+  });
 });
 
 describe('the Apps page checks on open', () => {

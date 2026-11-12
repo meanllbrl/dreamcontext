@@ -1,11 +1,9 @@
 ---
 name: apps
-description: >
-  Build a dreamcontext App: a local web app that belongs to THIS project, opens in its own Mac
-  window with its own Dock icon, and uses dreamcontext (insights, tasks, roadmap, the AI Team,
-  key-based MCP servers, schedules, notifications). Load when the user invokes `/apps`, or asks
-  for "an app", "a tool with its own window", "an admin panel", "an ad manager", "a dashboard I
-  can open", or wants to change, run, look at or drive an existing app (`dreamcontext apps …`).
+description: >-
+  Build or change a dreamcontext App: a local web app of THIS project in its own Mac window, using
+  insights, tasks, the AI Team, MCP servers and schedules. Load on `/apps`, "an app", "an admin
+  panel", "a dashboard I can open", or `dreamcontext apps …`.
 ---
 
 # /apps: build and drive dreamcontext Apps

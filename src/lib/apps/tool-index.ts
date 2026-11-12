@@ -64,7 +64,7 @@ function appLine(app: NotInstalledApp): string {
   const name = quote(app.name);
   if (app.sharedWithMe === true) return `→ The project has the app ${name}, not installed on this Mac. Say: without it this takes longer or is approximate; offer to install it (an app-install button) or a Lab insight. Never install it yourself.`;
   if (app.sharedWithMe === false) return `→ The project has the app ${name}, but it is not shared with this account: ask ${app.publishedBy ?? 'its publisher'} to share it. No install button.`;
-  return `→ The project has the app ${name}, not installed on this Mac: without it this takes longer or is approximate. Suggest a look at "Shared with you" on the Apps page, or a Lab insight. No install button.`;
+  return `→ The project has the app ${name}, not installed on this Mac: without it this takes longer or is approximate. Suggest a look at "Shared Apps" on the Apps page, or a Lab insight. No install button.`;
 }
 
 /** The hook's block for this prompt, or null when no tool fits. Never throws. */

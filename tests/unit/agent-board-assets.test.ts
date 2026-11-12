@@ -408,9 +408,12 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * a card said "örnekteki gibi" and carried no example; the server now hands such a card back,
    * card-standalone.ts, and this line is the half the agent reads first). Actual 15,596.
    * 2026-11-08 (0.41.6 cut): both lines merged, ceiling -> 15700; actual 15,662.
+   * 2026-11-12 (gece-duzeltme B7, IN-8): the dream-html grammar and dc- kit list (~4,900) moved to the
+   * `draw` skill's references/chat-html.md behind a pointer; the prose-first rule stays. Ceiling -> 11000;
+   * actual 10,778.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15700);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11000);
   });
 
   /**
@@ -421,7 +424,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15662)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 10778)).toBeLessThanOrEqual(20);
   });
 
   /**
@@ -450,7 +453,10 @@ describe('CHAT_SURFACE_BRIEFING', () => {
         'dashboard/src/components/sleepy/chat/chat-html-kit.css'), 'utf-8');
     // `dc-f1..8` in the briefing is shorthand for the eight numbered classes; expand it the
     // same way a reader would before checking each one exists.
-    const expanded = CHAT_SURFACE_BRIEFING.replace(
+    // B7 (2026-11-12): the class list moved to the draw skill's chat-html reference; check both.
+    const grammar = readFileSync(
+      join(fileURLToPath(new URL('../../', import.meta.url)), 'skill-draw/references/chat-html.md'), 'utf-8');
+    const expanded = `${CHAT_SURFACE_BRIEFING}\n${grammar}`.replace(
       /dc-([fs]|bg)1\.\.8/g,
       (_m, p: string) => Array.from({ length: 8 }, (_x, i) => `dc-${p}${i + 1}`).join(' '),
     );

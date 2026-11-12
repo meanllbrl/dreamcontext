@@ -3,7 +3,11 @@
  * nothing-lost.mjs: prove every rule and fact removed from an instruction file
  * still exists in a file the reader can reach.
  *
- *   node eval/instructions-slim/nothing-lost.mjs --target skill|sleep-agents [--strict] [--root <dir>]
+ *   node eval/instructions-slim/nothing-lost.mjs --target skill|sleep-agents|briefings [--strict] [--root <dir>]
+ *
+ * `briefings` (2026-11-12, gece-duzeltme B7) checks the chat surface briefing, the mode and Super
+ * briefings, the Super orchestration guide, and every product skill's `description:` (units read
+ * from the frontmatter, which the other targets skip) against where each cut now lives.
  *
  * Units are sentences (25+ normalized chars) taken from the headings, list
  * items, table cells, paragraphs and code lines of the BASELINE file. Each unit
@@ -44,8 +48,27 @@ const SLEEP_SHARED_HOMES = [
   '_dream_context/knowledge/features/sleep-consolidation.md',
 ];
 
-/** What each target compares: baseline file → home files (repo-relative). */
+/** Product skills whose listing description the `briefings` target checks (folder names). */
+const DESCRIBED_SKILLS = [
+  'skill', 'skill-apps', 'skill-council', 'skill-curator', 'skill-deep-research', 'skill-design',
+  'skill-draw', 'skill-goal-skill', 'skill-initializer', 'skill-multi-review', 'skill-sync', 'skill-video-watching',
+];
+
+/** What each target compares: baseline file → home files (repo-relative). A home written
+ *  `description:<path>` is that file's frontmatter description; a group with `description: true`
+ *  takes its units from the baseline's description instead of its body. */
 function targetGroups(target, root) {
+  if (target === 'briefings') {
+    return [
+      { baseline: 'chat-surface.ts', homes: ['src/server/chat-surface.ts', 'skill-draw/references/chat-html.md', 'skill-draw/SKILL.md'] },
+      { baseline: 'chat-modes.ts', homes: ['src/server/chat-modes.ts', 'skill/references/super-orchestration.md', 'src/server/chat-surface.ts'] },
+      { baseline: 'super-orchestration.md', homes: ['skill/references/super-orchestration.md', 'src/server/chat-modes.ts'] },
+      { baseline: 'skill-draw.SKILL.md', homes: ['skill-draw/SKILL.md', 'skill-draw/references/chat-html.md'] },
+      ...DESCRIBED_SKILLS.map((d) => ({
+        baseline: `${d}.SKILL.md`, description: true, homes: [`description:${d}/SKILL.md`, `${d}/SKILL.md`],
+      })),
+    ];
+  }
   if (target === 'skill') {
     const refsDir = join(root, 'skill', 'references');
     const refs = existsSync(refsDir)
@@ -59,7 +82,17 @@ function targetGroups(target, root) {
       homes: [`agents/${name}.md`, ...SLEEP_SHARED_HOMES],
     }));
   }
-  throw new UsageError('--target must be `skill` or `sleep-agents`');
+  throw new UsageError('--target must be `skill`, `sleep-agents` or `briefings`');
+}
+
+/** A SKILL.md's frontmatter `description:` as one line ('' when it has none). */
+function frontmatterDescription(text) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!m) return '';
+  const d = /^description:[ \t]*(?:[>|][-+]?[ \t]*\r?\n((?:[ \t]+.*(?:\r?\n|$))+)|(.*))/m.exec(m[1]);
+  if (!d) return '';
+  const raw = d[1] !== undefined ? d[1] : d[2];
+  return raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).join(' ').replace(/^"(.*)"$/, '$1');
 }
 
 function parseArgs(argv) {
@@ -74,8 +107,8 @@ function parseArgs(argv) {
       opts.root = resolve(value);
     } else throw new UsageError(`Unknown argument: ${arg}`);
   }
-  if (opts.target !== 'skill' && opts.target !== 'sleep-agents') {
-    throw new UsageError('--target must be `skill` or `sleep-agents`');
+  if (!['skill', 'sleep-agents', 'briefings'].includes(opts.target)) {
+    throw new UsageError('--target must be `skill`, `sleep-agents` or `briefings`');
   }
   return opts;
 }
@@ -99,10 +132,13 @@ function extractUnits(text, label) {
 }
 
 /** A home file as exact-match text plus fuzzy windows. */
-function loadHome(root, rel) {
+function loadHome(root, home) {
+  const described = home.startsWith('description:');
+  const rel = described ? home.slice('description:'.length) : home;
   const abs = join(root, rel);
   if (!existsSync(abs)) return null;
-  const text = readFileSync(abs, 'utf8');
+  const raw = readFileSync(abs, 'utf8');
+  const text = described ? frontmatterDescription(raw) : raw;
   const windows = [];
   for (const block of extractBlocks(text)) {
     const blockNorm = normalize(block.text);
@@ -199,7 +235,8 @@ function run(opts) {
   const skippedHomes = new Set();
 
   for (const group of targetGroups(opts.target, opts.root)) {
-    const units = extractUnits(readBaseline(opts.root, verified, group.baseline), group.baseline);
+    const baseText = readBaseline(opts.root, verified, group.baseline);
+    const units = extractUnits(group.description ? frontmatterDescription(baseText) : baseText, group.baseline);
     const homes = [];
     for (const rel of group.homes) {
       const home = loadHome(opts.root, rel);

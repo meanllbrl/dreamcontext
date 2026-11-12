@@ -1,17 +1,9 @@
 ---
 name: dreamcontext-deep-research
-description: >
-  Load when a question needs synthesis across a LARGE or MULTI-PROJECT dreamcontext corpus —
-  more than `dreamcontext-explore` can answer in a single fast pass — or the user invokes
-  `/dreamcontext-deep-research`. Triggers: "deep research the brain", "research this across my
-  projects", "synthesize what we know about X across everything", "deep dive across the
-  connected vaults", "explore is too shallow for this", "pull together everything on X and
-  cite it", "cross-project / cross-corpus question", or any "tons of data, federated/tagged
-  vault" question where one explore agent and one answer under-serves. This is the heavy,
-  iterative, sub-agent-driven counterpart to `dreamcontext-explore`: it fans out searchers over
-  the whole curated corpus (knowledge + features + tasks + memory + CHANGELOG + objectives) AND connected
-  peer vaults, adversarially verifies the load-bearing claims, and returns a SYNTHESIZED, CITED
-  report — not raw hits.
+description: >-
+  Cited synthesis across a large or multi-project dreamcontext corpus and its connected vaults,
+  beyond one `dreamcontext-explore` pass. Load on `/dreamcontext-deep-research`, "deep research
+  the brain", "research this across my projects".
 user-invocable: true
 alwaysApply: false
 tags: [deep-research, recall, synthesis, federation, cross-project, orchestration, sub-agents, dreamcontext]

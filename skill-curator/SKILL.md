@@ -1,16 +1,9 @@
 ---
 name: curator
-description: >
-  Load when a dreamcontext brain has grown additively and needs a periodic refactor pass that
-  re-orders content into the right shape — or the user invokes `/curator`. Triggers: "curate
-  the brain", "re-organize my context", "the knowledge base has gotten messy", "clean up /
-  refactor the brain", "conform everything to current conventions", "dedup the knowledge",
-  "fix the structure, not just append to it", or any time the corpus has drifted from current
-  architecture conventions (duplicate knowledge, topics living as both feature and knowledge,
-  stale task statuses, off-vocabulary tags, a flat knowledge dump that should be foldered).
-  This is the interactive, sub-agent-driven brain REFACTOR — the pass that sleep won't do. It is
-  allowed to MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to reach the right
-  knowledge / feature / task / version / objective shape.
+description: >-
+  Refactor a dreamcontext brain that grew additively: move, merge, split, rename, re-type and
+  retire knowledge, features, tasks and tags to current conventions (the pass sleep won't do).
+  Load on `/curator`, "curate the brain", "clean up the brain", "dedup the knowledge".
 user-invocable: true
 alwaysApply: false
 tags: [curator, refactor, reorganize, cleanup, dedup, single-source-of-truth, orchestration, sub-agents, dreamcontext]

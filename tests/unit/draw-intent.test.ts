@@ -90,6 +90,8 @@ describe('drawDirective', () => {
   it('in the Chat view a plain drawing may be a dc-graph; a kept one is draw', () => {
     const any = drawDirective('any', { chatView: true, tool: null });
     expect(any).toContain('dream-html dc-graph');
+    // B7 (2026-11-12): the grammar left the surface briefing for the draw skill; the line names where.
+    expect(any).toContain("the `draw` skill's references/chat-html.md");
     expect(any).toContain('load the `draw` skill (Skill tool) first');
     expect(drawDirective('whiteboard', { chatView: true, tool: null })).not.toContain('dc-graph');
     expect(drawDirective('file', { chatView: true, tool: null })).not.toContain('dc-graph');
