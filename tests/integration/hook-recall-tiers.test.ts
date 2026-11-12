@@ -102,25 +102,38 @@ describe('K=5 rendering', () => {
 });
 
 describe('the gate', () => {
-  it('threshold is unchanged: raw score >= 2.0 over the printed hits', () => {
+  const Q = 'recall gate threshold query';
+  it('the raw floor is unchanged: score >= 2.0 over the printed hits', () => {
     const corpus = writeVault(env.root);
     const at = (score: number): RecallHit[] => [hitFor(corpus[0], score)];
-    expect(recallGatePasses(at(1.99), false)).toBe(false);
-    expect(recallGatePasses(at(2.0), false)).toBe(true);
-    expect(recallGatePasses([], false)).toBe(false);
-    expect(recallGatePasses([], true)).toBe(false);
+    expect(recallGatePasses(at(1.99), false, Q)).toBe(false);
+    expect(recallGatePasses(at(2.0), false, Q)).toBe(true);
+    expect(recallGatePasses([], false, Q)).toBe(false);
+    expect(recallGatePasses([], true, Q)).toBe(false);
   });
 
   it('the window is the printed hits: a strong raw hit at rank 5 injects, which K=3 never saw', () => {
     const corpus = writeVault(env.root);
     const hits = corpus.slice(0, RECALL_INJECT_TOP_K).map((d, i) => hitFor(d, i === 4 ? 2.4 : 0.4));
-    expect(recallGatePasses(hits, false)).toBe(true);
-    expect(recallGatePasses(hits.slice(0, 3), false)).toBe(false);
+    expect(recallGatePasses(hits, false, Q)).toBe(true);
+    expect(recallGatePasses(hits.slice(0, 3), false, Q)).toBe(false);
+  });
+
+  it('a hit carrying coverage passes on the share of the query and, for a short query, two matched words (MM-5)', () => {
+    const corpus = writeVault(env.root);
+    const h = (coverage: number, matched: number): RecallHit => ({ ...hitFor(corpus[0], 9), coverage, matched });
+    expect(recallGatePasses([h(0.5, 1)], false, Q)).toBe(true);
+    expect(recallGatePasses([h(0.03, 3)], false, Q)).toBe(false);
+    // "ne durumdayız": one content word scored 9+ on a common term; a one- or two-word query needs two matched.
+    expect(recallGatePasses([h(1, 1)], false, 'ne durumdayız')).toBe(false);
+    expect(recallGatePasses([h(1, 2)], false, 'hayır direkt çiz')).toBe(true);
+    // A filler turn tokenizes to nothing, so no hit can match it at all.
+    expect(recallGatePasses([h(1, 1)], false, 'tamam devam et lütfen')).toBe(false);
   });
 
   it('Haiku hits inject regardless of the raw score', () => {
     const corpus = writeVault(env.root);
-    expect(recallGatePasses([hitFor(corpus[0], 0)], true)).toBe(true);
+    expect(recallGatePasses([hitFor(corpus[0], 0)], true, Q)).toBe(true);
   });
 });
 

@@ -209,7 +209,11 @@ Also never sent, whatever the type: docs outside the consented vault root (or re
 
 **Index refresh** happens only at `sleep done` (a detached `recall cloud index --auto`) and by an explicit `dreamcontext recall cloud index`. Automatic builds are limited: one build per vault at a time, a per-build USD cap, a rolling 24 h cap, a 30-minute throttle, and a churn guard (three consecutive builds that mostly re-embedded the same content pause automatic builds until a person runs `recall cloud index` at a terminal).
 
-**Injection depth (K=5).** The hook injects the top **5** hits. Ranks 1-3 print as before; ranks 4-5 print as one line each: `[type] relPath - title`. The hook gate (`some(score >= 2.0)` on the raw BM25 score) is unchanged, but it now covers five printed hits, so a prompt injects slightly more often than at K=3. `hit.score` always stays the raw BM25 score (0 for a dense-only hit): fusion, priors and rerank change only the ordering.
+**Injection depth (K=5).** The hook injects the top **5** hits. Ranks 1-3 print as before; ranks 4-5 print as one line each: `[type] relPath - title`. The hook gate passes when one printed hit has raw BM25 `score >= 2.0`, matches at least 4% of the query's IDF mass and, for a query of one or two words, both words. Turn fillers (`tamam`, `devam`, `ok`, `continue`, ...) are stopwords, so "ne durumdayız" or "devam et" injects nothing. A peer block passes the same gate. `hit.score` always stays the raw BM25 score (0 for a dense-only hit): fusion, priors and rerank change only the ordering.
+
+**One slot per task.** A task's side files (`state/assets/<slug>/**`, `state/archive/**`) rank below its card, and a task takes one slot: its other matching files fold into its best hit, which prints `+N more files of this task`.
+
+**Dense on long prompts.** The cloud tiers skip the dense channel when BM25 is already sure; that threshold now scales with query length past 21 terms, so a long prompt is no longer judged sure on length alone.
 
 **Peers.** Hybrid and cloud tiers **never run over connected peers' corpora**: federated recall stays BM25 over the peers, and a peer's docs are never sent to the cloud (only this vault's eligible docs, with this vault's consent).
 

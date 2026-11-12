@@ -71,7 +71,7 @@ import { bindingsByConversation, consumeOnce, listGrants } from '../../lib/grant
 import type { Grant } from '../../lib/grants/types.js';
 import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { bm25Search, loadSkillDocs, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
@@ -631,12 +631,16 @@ export const RECALL_FULL_RENDER_RANKS = 3;
 export { RECALL_STRONG_SCORE };
 
 /**
- * The injection gate. The window is the printed hits (so K=5 widens it from 3), the threshold is the
- * raw BM25 score and does not change. `.some()` because hits are ordered by rankScore, so a strong raw
- * match need not sit at index 0.
+ * The injection gate. The window is the printed hits; a hit passes on its raw BM25 score, the share of
+ * the query it matches and, for a one- or two-word query, two matched words (strongRecallHit, audit
+ * MM-5), so a status turn ("ne durumdayız", "devam et") injects nothing. `.some()` because hits are
+ * ordered by rankScore, so a strong match need not sit at index 0.
  */
-export function recallGatePasses(hits: readonly RecallHit[], haiku: boolean): boolean {
-  return hits.length > 0 && (haiku || hits.some((h) => h.score >= RECALL_STRONG_SCORE));
+export function recallGatePasses(hits: readonly RecallHit[], haiku: boolean, query: string): boolean {
+  if (hits.length === 0) return false;
+  if (haiku) return true;
+  const terms = queryTermCount(query);
+  return hits.some((h) => strongRecallHit(h, terms));
 }
 
 /**
@@ -646,7 +650,8 @@ export function recallGatePasses(hits: readonly RecallHit[], haiku: boolean): bo
 export function renderRecallBlock(hits: readonly RecallHit[], label: string): string[] {
   const lines: string[] = ['', `— Memory recall (${label}, top ${hits.length}) —`];
   hits.forEach((h, i) => {
-    const size = h.doc.type === 'insight' ? '' : `  (${hitSize(h.doc.body)})`;
+    const more = h.family ? `, +${h.family} more file${h.family === 1 ? '' : 's'} of this task` : '';
+    const size = h.doc.type === 'insight' ? '' : `  (${hitSize(h.doc.body)}${more})`;
     if (i >= RECALL_FULL_RENDER_RANKS) {
       const title = capLine(h.doc.title || h.doc.slug, 80);
       lines.push(`  [${h.doc.type}] ${h.doc.relPath} — ${title}${size}`);
@@ -756,7 +761,7 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
     // older server: the in-process path below, exactly as before.
     if (recallMode === 'hybrid' && deps.viaDashboard !== null && env.DREAMCONTEXT_RECALL_VIA_SERVER !== '0') {
       const remote = await (deps.viaDashboard ?? recallViaDashboard)(prompt, root, { tier }).catch(() => null);
-      if (remote && (tier === 'local' || remote.timing?.tier === tier)) return remote;
+      if (remote && remote.timing?.tier === tier) return remote;
     }
     return hybridPromptRecall(prompt, root, tier, deps.home);
   }
@@ -789,6 +794,10 @@ export interface WirePromptHit {
   score: number;
   rankScore: number;
   snippet: string;
+  /** The injection gate's inputs and the folded-file count (absent from an older server). */
+  coverage?: number;
+  matched?: number;
+  family?: number;
   doc: Pick<CorpusDoc, 'type' | 'path' | 'relPath' | 'slug' | 'title' | 'description' | 'tags' | 'body'>;
 }
 
@@ -798,13 +807,20 @@ export function toWirePromptHit(h: RecallHit): WirePromptHit {
     score: h.score,
     rankScore: h.rankScore,
     snippet: h.snippet,
+    ...(h.coverage !== undefined ? { coverage: h.coverage } : {}),
+    ...(h.matched !== undefined ? { matched: h.matched } : {}),
+    ...(h.family ? { family: h.family } : {}),
     doc: { type: d.type, path: d.path, relPath: d.relPath, slug: d.slug, title: d.title, description: d.description, tags: d.tags, body: d.body },
   };
 }
 
 function fromWirePromptHit(w: WirePromptHit): RecallHit {
   const doc = { ...w.doc, tokens: [], tokenSet: new Set<string>(), termFreq: new Map<string, number>() } as CorpusDoc;
-  return { doc, score: w.score, rankScore: w.rankScore, snippet: w.snippet };
+  const hit: RecallHit = { doc, score: w.score, rankScore: w.rankScore, snippet: w.snippet };
+  if (typeof w.coverage === 'number') hit.coverage = w.coverage;
+  if (typeof w.matched === 'number') hit.matched = w.matched;
+  if (typeof w.family === 'number' && w.family > 0) hit.family = w.family;
+  return hit;
 }
 
 /** How long the prompt hook waits for the dashboard before recalling in-process. */
@@ -3631,7 +3647,7 @@ export function registerHookCommand(program: Command): void {
               // Hits are ordered by rankScore (field/recency/synonym signals), but the
               // gate must test the RAW BM25 score, which may not sit at index 0 after
               // re-ranking (see recallGatePasses).
-              const ownShown = recallGatePasses(hits, haiku);
+              const ownShown = recallGatePasses(hits, haiku, prompt);
               if (ownShown) {
                 const lines = renderRecallBlock(hits, label);
                 emitPromptBlock('recall', lines.join('\n'));
@@ -3660,11 +3676,15 @@ export function registerHookCommand(program: Command): void {
                   (t) => t.current !== true,
                 );
                 if (peerTargets.length > 0) {
+                  // curatedPeers: no session digests or changelog from another project (audit MM-7).
                   const { hits: peerHits } = crossVaultRecall(prompt, {
                     vaults: peerTargets,
                     topK: 3,
+                    curatedPeers: true,
                   });
-                  const strong = peerHits.filter((h: FederatedHit) => h.score >= 2.0);
+                  // The same gate as this vault's block: a filler turn shows no peer either.
+                  const terms = queryTermCount(prompt);
+                  const strong = peerHits.filter((h: FederatedHit) => strongRecallHit(h, terms));
                   const peerNames = peerTargets.flatMap((t) => [t.name, t.label ?? '']).filter(Boolean);
                   const peerTop = Math.max(0, ...strong.map((h) => h.score));
                   if (strong.length > 0 && peerBlockWanted(prompt, peerNames, peerTop, ownTop())) {
