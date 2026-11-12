@@ -184,19 +184,21 @@ dreamcontext doctor   # reports every core file AND every people/<slug>.md over 
 
 **Characters are the binding ceiling; lines are the authoring heuristic. Check `wc -c` first.** `people/*.md` are audited on the same ceilings (the ACTIVE constitution renders verbatim in every snapshot); `people/people.json` is skipped.
 
-**A `doctor` snapshot-size finding** (at or over the limit, or past the 18,000-char ladder target) is a C1 trigger even when every file is under 150 lines: extract from the largest core file by CHARACTERS until doctor is `ok`. A never-evict tier over the limit usually means `0.soul.md` or the ACTIVE `people/<slug>.md`, and extraction is the only fix:
+**A `doctor` snapshot-size finding at or over the hard delivery limit** is a C1 trigger even when every file is under 150 lines: extract from the largest core file by CHARACTERS until that check is `ok` or `info`. `info` (`doctor/snapshot-over-budget`: past the ladder's soft target, still delivered whole) is DONE, never a trigger: the ladder demotes other sections for exactly that. A never-evict tier over the limit usually means `0.soul.md` or the ACTIVE `people/<slug>.md`, and extraction is the only fix:
 - `0.soul.md` — move conditional "when X, do Y" rules to `knowledge/patterns/` (flag for `sleep-product`); keep only the unconditional identity.
 - `people/<slug>.md` — keep only what is true about the PERSON; flag project trivia, workflow recipes and one-off notes for extraction.
 
 Over for another reason (a huge reminder, a task-format override) → a C3 flag, not file churn.
+
+**14-day floor.** Never archive or extract an entry younger than 14 days while its file is under its own ~4,000-char ceiling. A decision dated last week is what the next sessions need on hand; moving it out costs more than the characters it frees.
 
 If a file exceeds ~4,000 chars or ~150 lines:
 - Extract the lowest-value section (flag in your report so `sleep-product` creates a knowledge file; do not create knowledge files yourself).
 - Replace the extracted block with a one-line reference: `> Archived to knowledge/<slug>.md`.
 - Merge into existing entries before adding new ones — never duplicate.
 
-**Standing authority — ceiling vs. promotion collision.** When a promotion the gate genuinely warrants is BLOCKED because the target file is AT its ceiling, you MAY extract the file's OLDEST Technical Decision yourself, directly to `knowledge/archive/<core>-<period>.md` (e.g. `knowledge/archive/2.memory-2026-h1.md`): the one scoped exception to "do not create knowledge files yourself". **Archive-before-delete, no exceptions:**
-1. Write the archive file FIRST, full content, dated.
+**Standing authority — ceiling vs. promotion collision.** When a promotion the gate genuinely warrants is BLOCKED because the target file is AT its ceiling, you MAY extract the file's OLDEST Technical Decision yourself, directly to `knowledge/archive/<core>-<period>.md` (`<period>` = the month, e.g. `knowledge/archive/2.memory-2026-11.md`): the one scoped exception to "do not create knowledge files yourself". **Archive-before-delete, no exceptions:**
+1. Write the archive file FIRST, full content, dated. **One archive file per core file per month**: append to this month's `knowledge/archive/<core>-<period>.md` when it exists, never a second file for the same month. Its `description:` says WHAT the archived entries are about (e.g. "Archived memory decisions: hook latency budget, recall tiers, release cut order"), never why they moved ("archived to bring the snapshot under the limit"), and its `tags:` carry the topics, so `memory recall` finds a decision by its subject.
 2. Verify it landed (`cat` it back, or `dreamcontext knowledge index --plain`).
 3. ONLY THEN replace the source block with `> Archived to knowledge/archive/<core>-<period>.md`.
 4. Promote the new entry into the now-freed space.
@@ -256,7 +258,7 @@ Dropped-but-load-bearing self-check: <none | anything you saw but did NOT promot
 3. **Single-observation gate for code-reality files** (`3.*`, `4.*`, `6.*`); schema changes are flagged for **sleep-product**.
 4. **Never delete a `people/<slug>.md`.** Orphans get reported, not removed.
 5. **Never auto-release.** Surface readiness; the user decides.
-6. **Anti-bloat is non-negotiable.** ~4,000 chars OR ~150 lines means extract, not append; chars bind. A `doctor` snapshot-size warning is a C1 trigger.
+6. **Anti-bloat is non-negotiable.** ~4,000 chars OR ~150 lines means extract, not append; chars bind. A `doctor` snapshot-size `warn` or `error` is a C1 trigger; `info` is not.
 7. **Flag staleness and taxonomy drift, don't fix them.** Knowledge and tags are `sleep-product`'s (report drift under `taxonomy_drift`).
 8. **Decisions > deliberation.** Save the conclusion and rationale; drop the back-and-forth.
 9. **Surgical edits only on core.** Use Edit, not Write, except when restructuring after extraction.
