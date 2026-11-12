@@ -299,6 +299,13 @@ function mergeMeta(report: GateReport, meta: GateReport): void {
 
 // ─── The publish mirror and the history check ───────────────────────────────────────
 
+/**
+ * The one way to a NEW repo, named by every refusal that needs one (repo_changed,
+ * foreign_history, history_not_clean, already_public): the same publish with `--fresh`, under
+ * the grant of the owner's own Share click (a card's Onayla covers only the publish it showed).
+ */
+export const FRESH_HINT = 'Start a new repo with today\'s version only: the same publish with --fresh (dreamcontext apps publish <slug> --go --grant <id> --fresh; the default name is <slug>-public, --repo <name> picks another), under the grant of the owner\'s Share click on the app\'s page.';
+
 export function publishMirror(home: string, rec: AppRecord): string {
   return join(appsHome(home), 'published', `${rec.hash}.git`);
 }
@@ -319,10 +326,10 @@ export function checkPublishHistory(gitDir: string, ref: string, strictRescan?: 
     const msg = installedGit(gitDir, ['log', '-1', '--format=%B', sha]);
     const line = trailerOf(msg);
     const files = filesAt(gitDir, sha);
-    if (!line || line !== treeDigest(files)) return { ok: false, code: 'foreign_history', message: `The published repo has a commit not made by a dreamcontext publish (${sha.slice(0, 7)}). Publish to a new repo instead.` };
+    if (!line || line !== treeDigest(files)) return { ok: false, code: 'foreign_history', message: `The published repo has a commit not made by a dreamcontext publish (${sha.slice(0, 7)}). ${FRESH_HINT}` };
     if (strictRescan) {
       const r = runGate(files.filter((f) => f.path !== '.gitignore'), { mode: 'strict', terms: strictRescan.terms, approvals: new Set() });
-      if (r.blocks.length) return { ok: false, code: 'history_not_clean', message: `An earlier version (${sha.slice(0, 7)}) does not pass the public check. Make a new public repo with today's version only.` };
+      if (r.blocks.length) return { ok: false, code: 'history_not_clean', message: `An earlier version (${sha.slice(0, 7)}) does not pass the public check, so this repo cannot go public. ${FRESH_HINT}` };
     }
   }
   return { ok: true };
@@ -377,7 +384,7 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
   const host = opts.host;
   const prev = opts.fresh ? undefined : rec.publish;
   let repo = prev ? await host.getRepo(prev.fullName) : null;
-  if (prev && (!repo || repo.repoId !== prev.repoId)) throw new PublishError('repo_changed', `The repo ${prev.fullName} is gone or is another repo now. Publish to a new repo.`);
+  if (prev && (!repo || repo.repoId !== prev.repoId)) throw new PublishError('repo_changed', `The repo ${prev.fullName} is gone or is another repo now. ${FRESH_HINT}`);
   if (!repo) {
     try {
       repo = await host.createRepo(pv.repoName, { private: opts.visibility === 'private', description: cleanText(pv.manifest.name, 100) });
@@ -390,7 +397,7 @@ export async function publishApp(rec: AppRecord, opts: PublishOptions): Promise<
   }
   // Publishing "to invitees" onto a repo the world can read would be a public publish under
   // the private check: refused.
-  if (!repo.private && opts.visibility === 'private') throw new PublishError('already_public', `${repo.fullName} is public: publish it as public, or start a new private repo.`);
+  if (!repo.private && opts.visibility === 'private') throw new PublishError('already_public', `${repo.fullName} is public: publish it as public (--public), or start a new private repo. ${FRESH_HINT}`);
   const fullName = repo.fullName;
   const url = host.cloneUrl(fullName);
   const turningPublic = opts.visibility === 'public' && repo.private;

@@ -27,6 +27,10 @@ export interface AppDataView {
   declared: boolean | null;
   sharedCount: number;
   sharedBytes: number;
+  /** The app's shared data as the team holds it; null when git could not answer. */
+  teamBytes?: number | null;
+  /** Over the LARGE line while this Mac shares the app: it all syncs, but slows every teammate's sync (a warning, never a refusal). */
+  large?: boolean;
   held: Partial<Record<string, number>>;
   missing: number;
   conflicts: number;
@@ -198,8 +202,11 @@ export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLa
       </div>
     );
   }
+  // A file over the host's limit has its own line below: never counted twice.
+  const hostLimit = d.mode === 'shared' ? (d.held?.host_limit ?? 0) : 0;
+  const heldHere = heldTotal(d) - hostLimit;
   const extra = [
-    heldTotal(d) > 0 ? tn('apps.data.held', heldTotal(d)) : '',
+    heldHere > 0 ? tn('apps.data.held', heldHere) : '',
     d.missing > 0 ? tn('apps.data.missing', d.missing) : '',
     d.conflicts > 0 ? tn('apps.data.conflicts', d.conflicts) : '',
   ].filter(Boolean);
@@ -223,6 +230,13 @@ export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLa
         {head}
         {extra.length > 0 && ` · ${extra.join(' · ')}`}
       </p>
+      {d.mode === 'shared' && d.large && typeof d.teamBytes === 'number' && (
+        <p className="app-card__note app-card__note--warn" data-testid="app-data-large" style={WRAP}>
+          <strong>{t('apps.data.largeLead')}</strong>{' '}
+          {t(app.origin === 'installed' ? 'apps.data.largeInstalled' : 'apps.data.large', { size: formatBytes(d.teamBytes, locale) })}
+        </p>
+      )}
+      {d.mode === 'shared' && hostLimit > 0 && <p className="app-card__note app-card__note--warn" data-testid="app-data-host-limit" style={WRAP}>{tn('apps.data.hostLimit', hostLimit)}</p>}
       {d.pull !== 'none' && <p className="app-card__note app-card__note--warn" role="status" style={WRAP}><PullState pull={d.pull} /></p>}
       {(d.declined || excluded.length > 0) && canLaunch && (
         <div className="app-card__mcp">

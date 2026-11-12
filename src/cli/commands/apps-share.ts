@@ -120,6 +120,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--dry-run', 'Only the report (the default; kept for clarity)')
     .option('--repo <name>', 'Repo name (default <slug>-app)')
     .option('--go', 'Publish now (needs --grant)')
+    .option('--fresh', "With --go: publish to a NEW repo with today's version only (when the old repo is gone, public, or has history a publish did not make); default name <slug>-public")
     .option('--grant <id>', "The one-hour grant from the owner's Publish click (in the prompt it handed you)")
     .option('--invite <logins...>', 'GitHub usernames to invite (a private app)')
     .option('--approve <ids...>', 'Generic-word lines the owner let go in the chat (the [id] in the report)')
@@ -130,10 +131,11 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--wait <seconds>', 'With --ask: wait this long for the owner (default 60, at most 110)')
     .option('--no-catalog', "With --ask: keep the app off this project's brain list")
     .option('--json', 'JSON output')
-    .action(async (slug: string, opts: { public?: boolean; repo?: string; go?: boolean; grant?: string; invite?: string[]; approve?: string[]; note?: string; tagline?: string; confirmName?: string; ask?: boolean; wait?: string; catalog?: boolean; json?: boolean }) => {
+    .action(async (slug: string, opts: { public?: boolean; repo?: string; go?: boolean; fresh?: boolean; grant?: string; invite?: string[]; approve?: string[]; note?: string; tagline?: string; confirmName?: string; ask?: boolean; wait?: string; catalog?: boolean; json?: boolean }) => {
       try {
         const p = h.project();
         const { rec } = appOf(p, slug);
+        if (opts.fresh && !opts.go) throw new AppsClientError('fresh_needs_go', "--fresh starts a new repo, so it goes only with --go --grant <id> (the grant of the owner's Share click on the app's page).");
         if (opts.ask) {
           await askOwner(p, {
             action: 'publish', slug, ...(opts.public ? { public: true } : {}),
@@ -149,6 +151,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
           const out = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/publish`, {
             grant: opts.grant, visibility: opts.public ? 'public' : 'private',
             ...(opts.repo ? { repoName: opts.repo } : {}),
+            ...(opts.fresh ? { fresh: true } : {}),
             invite: (opts.invite ?? []).flatMap((x) => x.split(/[\s,]+/)).filter(Boolean),
             approvals: opts.approve ?? [],
             ...(opts.note !== undefined ? { note: opts.note } : {}),

@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { success, error, warn, info, header } from '../../lib/format.js';
 import { readSetupConfig, updateSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
 import { runBrainSync, type SyncResult } from '../../lib/git-sync/sync-engine.js';
+import { largeDataLine } from '../../lib/apps/data-share.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
 import {
   resolveMode,
@@ -223,4 +224,10 @@ export function renderBrainSyncResult(result: SyncResult): void {
   // Surface the stale-per-project-token self-heal on ANY successful outcome (the
   // note isn't printed by the success/pushed/pulled cases above).
   if (result.healedStaleProjectToken && result.note) info(result.note);
+  for (const r of result.appData?.restored ?? []) {
+    if (r.paths.length) info(`${r.slug}: ${r.paths.length} team file${r.paths.length === 1 ? '' : 's'} shared before this Mac approved ${r.paths.length === 1 ? 'is' : 'are'} now here.`);
+    const two = r.twoVersions?.length ?? 0;
+    if (two) warn(`${r.slug}: ${two} file${two === 1 ? '' : 's'} on this Mac differ${two === 1 ? 's' : ''} from the team's copy shared before you approved. Both versions are kept and nothing is sent until you pick one (dreamcontext apps data ${r.slug}).`);
+  }
+  for (const l of result.appData?.large ?? []) warn(largeDataLine(l.name, l.bytes));
 }

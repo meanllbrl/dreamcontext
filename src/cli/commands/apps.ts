@@ -28,7 +28,7 @@ import { appendFinding, doneThrough, listFindings } from '../../lib/apps/learn-q
 import { allowAppDir } from '../../lib/apps/allow-dir.js';
 import { registerAppsShareCommands } from './apps-share.js';
 import { appDataStatus, listDataFiles, sharedMember, trackedAppFiles } from '../../lib/apps/others.js';
-import { declMatches, isDbName, pathNameRefusal, type DataDecl, type HeldReason } from '../../lib/apps/data-share.js';
+import { declMatches, isDbName, largeDataLine, pathNameRefusal, type DataDecl, type HeldReason } from '../../lib/apps/data-share.js';
 import { appPullHeld, listConflicts, resolveConflict } from '../../lib/apps/data-conflicts.js';
 import { approveDeletes, PER_SYNC_DELETE_CAP, waitingDeletes } from '../../lib/apps/data-deletes.js';
 import { callClaim } from '../../lib/apps/call-claim.js';
@@ -249,8 +249,9 @@ export function dataFileRows(files: Array<{ rel: string; size: number; mtimeMs: 
 }
 
 const HELD_WORDS: Record<HeldReason, string> = {
-  too_big: 'over 5 MB', db_file: 'a database file', name: 'a dotted or instruction name', not_plain: 'a link or hard link',
-  writing: 'written less than 3 s ago', over_cap: 'over the 25 MB app or 100 MB brain total', not_approved_here: 'not approved by the owner on this Mac', conflict: 'two versions: the owner picks',
+  db_file: 'a database file', name: 'a dotted or instruction name', not_plain: 'a link or hard link',
+  writing: 'written less than 3 s ago', not_approved_here: 'not approved by the owner on this Mac', conflict: 'two versions: the owner picks',
+  host_limit: 'over 100 MB: GitHub refuses any single file this big',
 };
 
 const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
@@ -534,7 +535,7 @@ export function registerAppsCommand(program: Command): void {
         const files = s.dataDir ? listDataFiles(s.dataDir).map((f) => ({ rel: f.rel, size: f.st.size, mtimeMs: f.st.mtimeMs })) : [];
         const rows = dataFileRows(files, s.decl, s.consent?.excluded ?? [], tracked);
         const conflicts = listConflicts(home, rec.hash).map((c) => ({ path: c.path, kind: c.kind, storedAt: c.storedAt }));
-        const result = { mode: s.mode, held: appPullHeld(home, rec.hash), files: rows, goes: s.shared, heldFiles: s.held, pending: s.pending, sharedPaths: s.sharedPaths, localPaths: s.localPaths, conflicts };
+        const result = { mode: s.mode, held: appPullHeld(home, rec.hash), teamBytes: s.teamBytes, large: s.large, files: rows, goes: s.shared, heldFiles: s.held, pending: s.pending, sharedPaths: s.sharedPaths, localPaths: s.localPaths, conflicts };
         if (opts.json) { console.log(fenced('data', JSON.stringify(result, null, 2))); return; }
         const lines: string[] = [];
         lines.push(`mode: ${s.mode}${s.decl === null ? ' (no "data" field: nothing is shared)' : ''}${result.held ? ' · a team pull is landing now' : ''}`);
@@ -550,6 +551,7 @@ export function registerAppsCommand(program: Command): void {
           : `dry run: ${s.shared.length} files go to the team (${kb(s.sharedBytes)}), ${s.held.length} stay here:`);
         for (const g of s.shared) lines.push(`  goes ${g}`);
         for (const h of s.held) lines.push(`  held ${h.path} · ${h.reason} (${HELD_WORDS[h.reason]})`);
+        if (s.large && s.teamBytes !== null) lines.push('', `LARGE: ${largeDataLine(rec.name, s.teamBytes)}`);
         if (conflicts.length) {
           lines.push('', 'two versions (mine is in place, the team\'s is stored):');
           for (const c of conflicts) lines.push(`  ${c.path} · ${c.kind} · ${c.storedAt}`);

@@ -20,23 +20,41 @@ import { resolveBrainSyncEnabled, resolveMode } from '../git-sync/brain-repo.js'
 import { appDataDir, checkAppDataChain, isInstructionName, foldName } from './data-dir.js';
 import type { AppRecord } from './registry.js';
 import type { Consent } from './data-consent.js';
-import { listConflicts } from './data-conflicts.js';
+import { listConflicts, listKeptOut } from './data-conflicts.js';
 
 // ─── types and limits ──────────────────────────────────────────────────────────────
 
 export interface DataEntry { path: string; why: string }
 export interface DataDecl { shared: DataEntry[]; local: DataEntry[] }
-export type HeldReason = 'too_big' | 'db_file' | 'name' | 'not_plain' | 'writing' | 'over_cap' | 'not_approved_here' | 'conflict';
+/** Why a file stays on this Mac. Our own size is never one (owner, 2026-11-12): shared data of
+ *  any size goes, and a large app only gets a warning ({@link SHARED_WARN_BYTES}). `host_limit` is
+ *  the git host's, not ours: one file over {@link HOST_FILE_MAX_BYTES} would make every later
+ *  brain push fail, so that one file stays here and everything else keeps syncing. */
+export type HeldReason = 'db_file' | 'name' | 'not_plain' | 'writing' | 'not_approved_here' | 'conflict' | 'host_limit';
 export interface Held { path: string; reason: HeldReason }
 export type DataMode = 'shared' | 'local' | 'undecided' | 'pending' | 'sync_off';
 
-export const HELD_REASONS: readonly HeldReason[] = ['too_big', 'db_file', 'name', 'not_plain', 'writing', 'over_cap', 'not_approved_here', 'conflict'];
+export const HELD_REASONS: readonly HeldReason[] = ['db_file', 'name', 'not_plain', 'writing', 'not_approved_here', 'conflict', 'host_limit'];
 /** At most this many entries per list (`shared`, `local`) and per consent array. */
 export const DATA_MAX_ENTRIES = 20;
 export const DATA_WHY_MAX = 120;
-export const FILE_MAX_BYTES = 5 * 1024 * 1024;
-export const APP_SHARED_MAX_BYTES = 25 * 1024 * 1024;
-export const BRAIN_SHARED_MAX_BYTES = 100 * 1024 * 1024;
+/**
+ * One request of the app SDK's `/__dc/data` read and write (a JSON body held in memory). Only a
+ * bound of that HTTP route: never a rule of what the team sync sends or takes in.
+ */
+export const SDK_FILE_MAX_BYTES = 5 * 1024 * 1024;
+/**
+ * Above this, an app's shared data (the team's copy as the next sync leaves it) is LARGE: it still
+ * syncs in full, and the Apps page and the CLI say it slows every teammate's sync. A warning, never
+ * a refusal (owner, 2026-11-12: no size limit on shared app data).
+ */
+export const SHARED_WARN_BYTES = 25 * 1024 * 1024;
+/**
+ * GitHub refuses any push carrying a single file over 100 MB (GH001), and the refused commit would
+ * then stop every later brain push of this Mac. Not a limit of ours: the one file over it stays on
+ * this Mac (`host_limit`), the rest of the app and the brain keep syncing.
+ */
+export const HOST_FILE_MAX_BYTES = 100 * 1024 * 1024;
 /** A file written less than this long ago is left for the next sync (it may be mid-write). */
 export const WRITING_SETTLE_MS = 3000;
 const DECL_PATH_MAX = 200;
@@ -185,28 +203,28 @@ export function shareRefusal(relPath: string, st: ShareStat | null, head16: Buff
     if (opts.stage && (st.nlink ?? 1) > 1) return 'not_plain';
   }
   if (isDbName(relPath) || isSqliteHead(head16)) return 'db_file';
-  if (st && st.size > FILE_MAX_BYTES) return 'too_big';
+  if (st && st.size > HOST_FILE_MAX_BYTES) return 'host_limit';
   if (st && opts.stage && typeof st.mtimeMs === 'number' && (opts.nowMs ?? Date.now()) - st.mtimeMs < WRITING_SETTLE_MS) return 'writing';
   return null;
 }
 
 /**
- * The totals half of K4. Entries in the given order are added while the app stays within
- * {@link APP_SHARED_MAX_BYTES} and the brain within {@link BRAIN_SHARED_MAX_BYTES}; the rest go
- * `over`. `appUsedBytes`/`brainUsedBytes` = what is already counted elsewhere.
+ * The size of an app's shared data as the team holds it once this Mac's next sync went: every
+ * team file (`teamFiles`, HEAD's sizes) with this Mac's shared copies (`mine`) over the same path,
+ * plus this Mac's new ones. Feeds the LARGE warning only, never a refusal.
  */
-export function capTotals(entries: { path: string; size: number }[], appUsedBytes: number, brainUsedBytes: number): { within: string[]; over: string[]; appBytes: number; brainBytes: number } {
-  let app = appUsedBytes;
-  let brain = brainUsedBytes;
-  const within: string[] = [];
-  const over: string[] = [];
-  for (const e of entries) {
-    if (app + e.size > APP_SHARED_MAX_BYTES || brain + e.size > BRAIN_SHARED_MAX_BYTES) { over.push(e.path); continue; }
-    app += e.size;
-    brain += e.size;
-    within.push(e.path);
-  }
-  return { within, over, appBytes: app, brainBytes: brain };
+export function teamSharedBytes(teamFiles: readonly { rel: string; size: number }[], mine: readonly { rel: string; size: number }[]): number {
+  const by = new Map<string, number>();
+  for (const f of teamFiles) by.set(f.rel, f.size);
+  for (const f of mine) by.set(f.rel, f.size);
+  let n = 0;
+  for (const v of by.values()) n += v;
+  return n;
+}
+
+/** The one sentence a LARGE app gets in the CLI (sync, `apps data`). */
+export function largeDataLine(name: string, bytes: number): string {
+  return `${name}: its shared data is large (${(bytes / 1024 / 1024).toFixed(1)} MB for the team). It all syncs, but every teammate downloads it, so team sync gets slower. Keep images, exports and re-fetchable data in a local folder.`;
 }
 
 // ─── the mode condition (K5) ───────────────────────────────────────────────────────
@@ -240,13 +258,13 @@ export interface SharedSetDeps {
   nowMs?: number;
   /** Paths held as `conflict`; default: the conflict store's `conflict` entries. */
   conflicts?: string[];
-  /** Shared bytes other apps of this brain already use (the 100 MB brain total). */
-  otherAppsSharedBytes?: number;
 }
 
 export interface SharedSetResult {
   mode: DataMode;
   paths: string[];
+  /** Each of `paths` with its size on disk now. */
+  sizes: { rel: string; size: number }[];
   held: Held[];
   bytes: number;
   /** Declared shared paths neither approved nor excluded (empty after a decline or when undecided). */
@@ -302,15 +320,15 @@ function walkFiles(dir: string): { rel: string; abs: string; st: Stats }[] {
 export function sharedSet(ctx: { projectRoot: string; home: string }, rec: AppRecord | null, decl: DataDecl | null, consent: Consent | null, deps: SharedSetDeps = {}): SharedSetResult {
   const pending = pendingApprovalOf(decl, consent);
   const m = deps.mode ?? brainShareMode(ctx.projectRoot);
-  if (!m.fullRepo || !m.cloudSyncOn) return { mode: 'sync_off', paths: [], held: [], bytes: 0, pending };
-  if (!decl) return { mode: 'undecided', paths: [], held: [], bytes: 0, pending: [] };
+  if (!m.fullRepo || !m.cloudSyncOn) return { mode: 'sync_off', paths: [], sizes: [], held: [], bytes: 0, pending };
+  if (!decl) return { mode: 'undecided', paths: [], sizes: [], held: [], bytes: 0, pending: [] };
   const sharedPaths = new Set(decl.shared.map((e) => e.path));
   const excluded = consent?.excluded ?? [];
   const approved = (consent?.approved ?? []).filter((p) => sharedPaths.has(p));
   const declined = consent?.declined === true;
   const live = !declined && approved.some((p) => !excluded.includes(p));
   const mode: DataMode = live ? 'shared' : pending.length ? 'pending' : 'local';
-  const none = (): SharedSetResult => ({ mode, paths: [], held: [], bytes: 0, pending });
+  const none = (): SharedSetResult => ({ mode, paths: [], sizes: [], held: [], bytes: 0, pending });
   if (!rec) return none();
 
   let dir = deps.dataDir;
@@ -321,11 +339,15 @@ export function sharedSet(ctx: { projectRoot: string; home: string }, rec: AppRe
   let conflicts: Set<string>;
   if (deps.conflicts) conflicts = new Set(deps.conflicts);
   else {
+    // Held as two versions: a stored `conflict`, and a path whose team copy came in while it was
+    // not shared here (kept out) that the late-approval restore has not settled yet. A missing
+    // stored copy must never turn into a send over the team's.
     try { conflicts = new Set(listConflicts(ctx.home, rec.hash).filter((c) => c.kind === 'conflict').map((c) => c.path)); } catch { conflicts = new Set(); }
+    for (const p of listKeptOut(ctx.home, rec.hash)) conflicts.add(p);
   }
   const nowMs = deps.nowMs ?? Date.now();
   const held: Held[] = [];
-  const candidates: { path: string; size: number }[] = [];
+  const sizes: { rel: string; size: number }[] = [];
   for (const f of walkFiles(dir)) {
     if (excluded.some((x) => declMatches(x, f.rel))) continue;
     if (decl.local.some((x) => declMatches(x.path, f.rel))) continue;
@@ -336,9 +358,7 @@ export function sharedSet(ctx: { projectRoot: string; home: string }, rec: AppRe
     const head = f.st.isFile() ? readHead16(f.abs) : null;
     const why = shareRefusal(f.rel, f.st, head, { stage: true, nowMs });
     if (why) { held.push({ path: f.rel, reason: why }); continue; }
-    candidates.push({ path: f.rel, size: f.st.size });
+    sizes.push({ rel: f.rel, size: f.st.size });
   }
-  const caps = capTotals(candidates, 0, deps.otherAppsSharedBytes ?? 0);
-  for (const p of caps.over) held.push({ path: p, reason: 'over_cap' });
-  return { mode, paths: caps.within, held, bytes: caps.appBytes, pending };
+  return { mode, paths: sizes.map((x) => x.rel), sizes, held, bytes: sizes.reduce((n, x) => n + x.size, 0), pending };
 }

@@ -30,7 +30,7 @@
  * a delete), mine back; not installed → it lands (mine parked → mine back, theirs stored).
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmdirSync, rmSync, appendFileSync, renameSync, writeFileSync, type Stats } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, rmdirSync, rmSync, appendFileSync, renameSync, unlinkSync, type Stats } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { brainPrefix, moveFileAcross } from '../agents/agent-sync.js';
@@ -41,14 +41,14 @@ import { raiseInboxRow } from '../owner-inbox.js';
 import { pauseForSync, resumeAfterSync, type SyncPauseResult } from './client.js';
 import { backupAppData, BEFORE_TEAM_PULL, type BackupResult } from './data-backup.js';
 import {
-  addConflict, appPullHeld, containedPath, listPullRecords, newStamp, parkDir, parkTarget, pullDir,
+  addConflict, appPullHeld, clearKeptOut, containedPath, dropConflictEntries, listConflicts, listKeptOut, listPullRecords, markKeptOut, newStamp, parkDir, parkTarget, pullDir,
   readPullRecord, removePullRecord, writePullRecord,
   type AppPullCtx, type ConflictKind, type FinishAppPullFn, type PlanEntry, type PullRecord, type RecoverAppPullsFn,
 } from './data-conflicts.js';
 import { capStones, clearTombstones, listTombstones, markSent, setBlocked } from './data-deletes.js';
 import { APPS_DATA_FOLDER, checkAppDataChain, ensureAppDataDir, ensureAppsMergeAttributes } from './data-dir.js';
 import { appShareView, splitAppPath, teamBlobRefusal, teamHash, type AppShareView } from './data-stage.js';
-import { brainShareMode, pathNameRefusal, sharedSet, type DataMode, type Held } from './data-share.js';
+import { brainShareMode, pathNameRefusal, sharedSet, SHARED_WARN_BYTES, teamSharedBytes, type DataMode, type Held } from './data-share.js';
 import { listApps, type AppRecord } from './registry.js';
 
 export type { AppPullCtx } from './data-conflicts.js';
@@ -126,17 +126,39 @@ function mkdirsUnder(base: string, absFile: string): void {
   }
 }
 
-/** Write bytes at `abs` atomically (temp beside it + rename); a link or file there is replaced. */
-function writeFileAtomic(abs: string, data: Buffer): void {
+/**
+ * Write the blob `spec` at `abs` atomically (streamed by git into a temp beside it, then a
+ * rename), so a blob of any size never sits in memory; a link or file there is replaced.
+ */
+function writeBlobAtomic(top: string, spec: string, abs: string): void {
   const tmp = join(dirname(abs), `.dc-pull-${randomBytes(4).toString('hex')}`);
   try {
-    writeFileSync(tmp, data, { flag: 'wx', mode: 0o644 });
+    git.writeBlobToFile(top, spec, tmp);
+    chmodSync(tmp, 0o644);
     const st = lstatOrNull(abs);
     if (st && (st.isSymbolicLink() || st.isFile())) rmSync(abs, { force: true });
     renameSync(tmp, abs);
   } catch (e) {
     try { rmSync(tmp, { force: true }); } catch { /* never made */ }
     throw e;
+  }
+}
+
+/**
+ * Keep the team's blob `spec` in the conflict store, streamed through a temp file in the pull
+ * folder (never whole in memory). False when the blob is absent or the store refused.
+ */
+function storeBlob(ctx: AppPullCtx, top: string, spec: string, hash: string, rel: string, kind: ConflictKind): boolean {
+  if (!git.blobId(top, spec)) return false;
+  mkdirSync(pullDir(ctx.home), { recursive: true, mode: 0o700 });
+  const tmp = join(pullDir(ctx.home), `.blob-${randomBytes(6).toString('hex')}`);
+  try {
+    git.writeBlobToFile(top, spec, tmp);
+    return addConflict(ctx.home, hash, rel, kind, { file: tmp }, nowOf(ctx)).ok;
+  } catch {
+    return false;
+  } finally {
+    try { rmSync(tmp, { force: true }); } catch { /* never made */ }
   }
 }
 
@@ -153,7 +175,7 @@ function pruneEmpty(start: string, stop: string): void {
 // ─── OUTBOUND ──────────────────────────────────────────────────────────────────────
 
 /** Held reasons worth a row in the owner inbox (the others are routine or have their own row). */
-const REAL_REFUSALS = new Set(['too_big', 'db_file', 'name', 'not_plain', 'over_cap']);
+const REAL_REFUSALS = new Set(['db_file', 'name', 'not_plain', 'host_limit']);
 
 export interface OutboundApp {
   slug: string;
@@ -190,14 +212,12 @@ export function stageOutbound(ctx: ExchangeCtx, opts: { dryRun?: boolean } = {})
   out.ran = true;
   const nowMs = nowOf(ctx);
   const sent: { hash: string; paths: string[] }[] = [];
-  let brainBytes = 0;
   for (const rec of appsHere(ctx)) {
     if (appPullHeld(ctx.home, rec.hash)) continue;
     if (!checkAppDataChain(ctx.projectRoot, rec.slug).ok) continue;
     const dataDir = join(b.top, b.appsDir, rec.slug);
     const view = viewOf({ ...ctx, mode }, rec.slug);
-    const ss = sharedSet({ projectRoot: ctx.projectRoot, home: ctx.home }, rec, view.decl, view.consent, { mode, dataDir, nowMs, otherAppsSharedBytes: brainBytes });
-    brainBytes += ss.bytes;
+    const ss = sharedSet({ projectRoot: ctx.projectRoot, home: ctx.home }, rec, view.decl, view.consent, { mode, dataDir, nowMs });
     const app: OutboundApp = { slug: rec.slug, hash: rec.hash, mode: ss.mode, add: [], remove: [], held: ss.held, deletesAsked: false };
     out.apps.push(app);
     if (ss.mode !== 'shared') {
@@ -230,7 +250,10 @@ export function stageOutbound(ctx: ExchangeCtx, opts: { dryRun?: boolean } = {})
     if (opts.dryRun) continue;
     if (cap.send.length) sent.push({ hash: rec.hash, paths: cap.send });
     for (const h of ss.held) {
-      if (REAL_REFUSALS.has(h.reason)) inboxRow(ctx, rec.slug, h.reason, `${rec.name}: ${h.path} stays on this Mac (${h.reason}). Shared app data must be a plain file under 5 MB, not a database, with no dotted or instruction name, within the app's 25 MB.`);
+      if (!REAL_REFUSALS.has(h.reason)) continue;
+      inboxRow(ctx, rec.slug, h.reason, h.reason === 'host_limit'
+        ? `${rec.name}: ${h.path} stays on this Mac: it is over 100 MB, and GitHub refuses any single file this big. Everything else keeps syncing. Ask Claude to move it to a local folder or split it.`
+        : `${rec.name}: ${h.path} stays on this Mac (${h.reason}). Shared app data must be a plain file, not a database, with no dotted or instruction name.`);
     }
   }
   if (!opts.dryRun) {
@@ -269,6 +292,218 @@ export function afterAppDataPush(ctx: AppPullCtx): void {
       clearTombstones(ctx.home, rec.hash, delivered, nowOf(ctx));
     } catch { /* the next push */ }
   }
+}
+
+// ─── THE TEAM'S FILES A LATE APPROVAL MISSED ───────────────────────────────────────
+
+const PLAIN_BLOB_MODES = new Set(['100644', '100755']);
+
+/** What a late approval did to one app: team files brought back, my own files held as two versions. */
+export interface RestoredApp {
+  slug: string;
+  /** Data-folder-relative team files now on this Mac. */
+  paths: string[];
+  /** My own file differs from the team's at a path just approved: both kept, the owner picks. */
+  twoVersions?: string[];
+  /** Too much to bring back inline (the Share click): the next sync brings it. */
+  deferred?: boolean;
+}
+
+/**
+ * Create `abs` from the blob `spec` only if nothing is there: streamed into a temp beside it, then
+ * hard-linked into place (`link` refuses an existing name), so a file the running app wrote in the
+ * meantime is never replaced. False when something got there first. THROWS on any other failure.
+ */
+function createBlobNoClobber(top: string, spec: string, abs: string, mode: string): boolean {
+  const tmp = join(dirname(abs), `.dc-pull-${randomBytes(4).toString('hex')}`);
+  try {
+    git.writeBlobToFile(top, spec, tmp);
+    chmodSync(tmp, mode === '100755' ? 0o755 : 0o644);
+    try { linkSync(tmp, abs); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw e;
+    }
+    return true;
+  } finally {
+    try { unlinkSync(tmp); } catch { /* never made */ }
+  }
+}
+
+/**
+ * A Mac that took the team's files in while its copy of the app did not accept them (an older
+ * manifest with no `data`, "Keep it local", an excluded part) has them in git but not on disk:
+ * the pull rule took them off (`store_theirs`, `local_path`). Once the owner approved such a
+ * path here (`sends`: in the live shared set, so the app deletes it only through
+ * `dc.data.remove`, which leaves a tombstone), the team's copy comes back from HEAD: a tracked
+ * file of a registered app, its index entry still HEAD's, no tombstone (a delete the app made
+ * stays a delete), no open conflict, passing the pull gate's K4 (plain blob, name, DB).
+ *
+ * Nothing of mine is ever overwritten. A path with a file of mine on it:
+ * - the same bytes as the team's: nothing to do (a stored `local_path` copy of it is dropped);
+ * - different bytes, and a stored team copy says the team's came in while the path was not
+ *   shared here (`local_path`, `not_installed`): it becomes a `conflict` holding HEAD's copy, so
+ *   the outbound stage holds it and the owner picks (`apps data resolve`). It is never sent as a
+ *   plain edit over the team's.
+ * A file is created only if still absent at the last moment ({@link createBlobNoClobber}): the app
+ * may be running. A path not approved here is never brought back: there the app deletes with its
+ * own code (`not_shared`), and that stays. Never during an open merge or an app's pull, and only
+ * where team data moves (full-repo, cloud sync on). `opts.maxBytes`: an app whose files to bring
+ * back weigh more is left for the next sync (`deferred`; the Share click runs on the server's
+ * loop). The sync calls it under the brain lock, BEFORE its outbound stage; the owner's Share
+ * click calls it through {@link restoreTeamFilesLocked}. Never throws.
+ */
+export function restoreTeamFiles(ctx: ExchangeCtx, opts: { maxBytes?: number } = {}): RestoredApp[] {
+  const out: RestoredApp[] = [];
+  const b = brainOf(ctx);
+  if (!b) return out;
+  try {
+    if (git.mergeHeadSha(b.top)) return out;
+    const mode = ctx.mode ?? brainShareMode(ctx.projectRoot);
+    if (!mode.fullRepo || !mode.cloudSyncOn) return out;
+    const nowMs = nowOf(ctx);
+    for (const rec of appsHere(ctx)) {
+      try {
+        if (appPullHeld(ctx.home, rec.hash)) continue;
+        if (!checkAppDataChain(ctx.projectRoot, rec.slug).ok) continue;
+        const view = viewOf({ ...ctx, mode }, rec.slug);
+        if (!view.decl) continue;
+        const files = git.treeEntriesLong(b.top, 'HEAD', `${b.appsDir}/${rec.slug}`);
+        if (!files.length) {
+          // The team has no file of this app: a kept-out mark protects nothing any more.
+          clearKeptOut(ctx.home, rec.hash, [...listKeptOut(ctx.home, rec.hash)].filter((p) => view.sends(p)));
+          continue;
+        }
+        const idx = new Map(git.indexEntries(b.top, [dirSpec(b, rec.slug)]).filter((e) => e.stage === 0).map((e) => [e.path, e.sha]));
+        const stones = new Set(listTombstones(ctx.home, rec.hash, nowMs).map((t) => t.path));
+        const stored = new Map(listConflicts(ctx.home, rec.hash).map((c) => [c.path, c.kind]));
+        const keptOut = listKeptOut(ctx.home, rec.hash);
+        const inHead = new Set<string>();
+        const dataDir = ensureAppDataDir(ctx.projectRoot, rec.slug);
+        const want: { rel: string; abs: string; sha: string; mode: string; size: number }[] = [];
+        const same: string[] = [];
+        const twoVersions: string[] = [];
+        for (const f of files) {
+          const at = splitAppPath(b.prefix, f.path);
+          if (at && at.slug === rec.slug) inHead.add(at.rel);
+          if (!at || at.slug !== rec.slug || f.type !== 'blob' || !PLAIN_BLOB_MODES.has(f.mode)) continue;
+          if (idx.get(f.path) !== f.sha) continue; // the index moved off HEAD: not this step's to touch
+          if (!view.sends(at.rel) || view.conflicts.has(at.rel) || stones.has(at.rel)) continue;
+          const abs = containedPath(dataDir, at.rel);
+          if (!abs) continue;
+          let gate: string | null;
+          try { gate = teamBlobRefusal(b.top, at.rel, f.mode, f.sha); } catch { gate = 'unreadable'; }
+          if (gate) continue;
+          const there = lstatOrNull(abs);
+          if (there) {
+            if (!there.isFile()) continue; // a link or a folder: never ours to touch
+            if (git.hashFile(b.top, abs) === f.sha) { same.push(at.rel); continue; }
+            // The kept-out record (uncapped) says the team's copy came in while this path was not
+            // shared here; a stored copy of an older version says the same.
+            const kind = stored.get(at.rel);
+            if (keptOut.has(at.rel) || kind === 'local_path' || kind === 'not_installed') twoVersions.push(at.rel);
+            continue; // a file of mine: never overwritten
+          }
+          try { mkdirsUnder(dataDir, abs); } catch { continue; } // a link or a file where a folder goes
+          want.push({ rel: at.rel, abs, sha: f.sha, mode: f.mode, size: f.size });
+        }
+        // Mine differs from the team's: the team's copy (HEAD's, not the older stored one) waits as a conflict.
+        // A store that fails keeps the kept-out mark, and the shared set holds a marked path
+        // (`conflict`) all the same: never sent, retried at the next sync.
+        const held = twoVersions.filter((rel) => {
+          const f = files.find((x) => splitAppPath(b.prefix, x.path)?.rel === rel)!;
+          return storeBlob(ctx, b.top, f.sha, rec.hash, rel, 'conflict');
+        });
+        clearKeptOut(ctx.home, rec.hash, held);
+        // A mark for a path the team no longer has protects nothing: a file of mine there is new.
+        clearKeptOut(ctx.home, rec.hash, [...keptOut].filter((p) => !inHead.has(p) && view.sends(p)));
+        const planned = want.reduce((n, w) => n + w.size, 0);
+        if (opts.maxBytes !== undefined && planned > opts.maxBytes) {
+          out.push({ slug: rec.slug, paths: [], deferred: true, ...(held.length ? { twoVersions: held } : {}) });
+          logLine(ctx, `${rec.slug}: ${want.length} team file(s) to bring back weigh ${planned} bytes; the next sync brings them`);
+          continue;
+        }
+        const paths: string[] = [];
+        for (const w of want) {
+          try { if (createBlobNoClobber(b.top, w.sha, w.abs, w.mode)) paths.push(w.rel); } catch (e) {
+            logLine(ctx, `${rec.slug}: ${w.rel} could not come back (${(e as Error).message}); retried at the next sync`);
+          }
+        }
+        // A stored team copy the disk now holds byte for byte says nothing any more.
+        dropConflictEntries(ctx.home, rec.hash, [...paths, ...same], ['local_path', 'not_installed']);
+        clearKeptOut(ctx.home, rec.hash, [...paths, ...same]);
+        if (!paths.length && !held.length) continue;
+        out.push({ slug: rec.slug, paths, ...(held.length ? { twoVersions: held } : {}) });
+        if (paths.length) {
+          logLine(ctx, `${rec.slug}: ${paths.length} team file(s) shared before this Mac approved brought back from HEAD`);
+          inboxRow(ctx, rec.slug, 'restored', `From the team: ${rec.name}: ${paths.length} file${paths.length === 1 ? '' : 's'} the team shared before you approved ${paths.length === 1 ? 'is' : 'are'} now on this Mac.`);
+        }
+        if (held.length) {
+          logLine(ctx, `${rec.slug}: ${held.length} file(s) of mine differ from the team's at paths just approved: both versions kept`);
+          inboxRow(ctx, rec.slug, 'two_versions', `${rec.name}: ${held.length} file${held.length === 1 ? '' : 's'} on this Mac differ${held.length === 1 ? 's' : ''} from the team's copy shared before you approved. Both versions are kept and nothing is sent until you pick one on the app's page.`);
+        }
+      } catch (e) {
+        logLine(ctx, `${rec.slug}: bringing the team's files back failed (${(e as Error).message}); retried at the next sync`);
+      }
+    }
+  } catch { /* git could not answer: the next sync tries again */ }
+  return out;
+}
+
+/**
+ * {@link restoreTeamFiles} from outside a sync (the owner's Share click): only while no sync
+ * holds the brain lock; a held lock skips it (that sync, or the next, brings the files). Runs on
+ * the server's loop, so it brings back at most {@link SHARED_WARN_BYTES} inline; more is left to
+ * the next sync. Never throws.
+ */
+export function restoreTeamFilesLocked(ctx: ExchangeCtx): RestoredApp[] {
+  try {
+    if (!acquireBrainLock(ctx.contextRoot, nowOf(ctx))) return [];
+  } catch { return []; }
+  try {
+    return restoreTeamFiles(ctx, { maxBytes: SHARED_WARN_BYTES });
+  } finally {
+    try { releaseBrainLock(ctx.contextRoot); } catch { /* stale lock: its TTL frees it */ }
+  }
+}
+
+// ─── LARGE shared data: a warning, never a refusal ─────────────────────────────────
+
+/**
+ * The size of one app's shared data in the team once this Mac's next sync went: HEAD's team
+ * files of `apps/<slug>/` with this Mac's shared copies over them ({@link teamSharedBytes}).
+ * `mine`: the app's `sharedSet` sizes. Null when git cannot answer. Never throws.
+ */
+export function teamAppBytes(ctx: AppPullCtx, slug: string, mine: readonly { rel: string; size: number }[]): number | null {
+  const b = brainOf(ctx);
+  if (!b) return null;
+  try {
+    const team = git.treeEntriesLong(b.top, 'HEAD', `${b.appsDir}/${slug}`)
+      .map((f) => ({ rel: splitAppPath(b.prefix, f.path)?.rel ?? '', size: f.size }))
+      .filter((f) => f.rel);
+    return teamSharedBytes(team, mine);
+  } catch { return null; }
+}
+
+/**
+ * Every registered app of this project that this Mac shares and whose team data is over {@link SHARED_WARN_BYTES}:
+ * the sync's and the CLI's warning line. Never throws.
+ */
+export function largeSharedApps(ctx: ExchangeCtx): { slug: string; name: string; bytes: number }[] {
+  const out: { slug: string; name: string; bytes: number }[] = [];
+  const b = brainOf(ctx);
+  if (!b) return out;
+  const mode = ctx.mode ?? brainShareMode(ctx.projectRoot);
+  if (!mode.fullRepo || !mode.cloudSyncOn) return out;
+  for (const rec of appsHere(ctx)) {
+    try {
+      const view = viewOf({ ...ctx, mode }, rec.slug);
+      const ss = sharedSet({ projectRoot: ctx.projectRoot, home: ctx.home }, rec, view.decl, view.consent, { mode });
+      if (ss.mode !== 'shared') continue; // only where this Mac shares it (a local app is never told it syncs)
+      const bytes = teamAppBytes(ctx, rec.slug, ss.sizes);
+      if (bytes !== null && bytes > SHARED_WARN_BYTES) out.push({ slug: rec.slug, name: rec.name, bytes });
+    } catch { /* not counted */ }
+  }
+  return out;
 }
 
 // ─── BEFORE A NEW MERGE ────────────────────────────────────────────────────────────
@@ -571,8 +806,8 @@ function mineBack(b: Brain, rec: PullRecord, dataDir: string, rel: string, abs: 
       removeEntry(abs);
       return;
     case 'head': {
-      const mine = rec.preHead ? git.readBlob(b.top, `${rec.preHead}:${p}`) : null;
-      if (mine) { mkdirsUnder(dataDir, abs); writeFileAtomic(abs, mine); } else removeEntry(abs);
+      const spec = rec.preHead ? `${rec.preHead}:${p}` : null;
+      if (spec && git.blobId(b.top, spec)) { mkdirsUnder(dataDir, abs); writeBlobAtomic(b.top, spec, abs); } else removeEntry(abs);
       return;
     }
     case 'unknown': {
@@ -611,19 +846,17 @@ function applyPlan(ctx: AppPullCtx, b: Brain, rec: PullRecord, plan: PlanEntry[]
         case 'store_theirs': {
           counts.changed++;
           const kind: ConflictKind = STORE_KINDS.has(e.reason as ConflictKind) ? e.reason as ConflictKind : 'local_path';
-          if (e.reason !== 'not_plain') {
-            const theirs = git.readBlob(b.top, `${rec.mergeHead}:${p}`);
-            if (theirs && addConflict(ctx.home, rec.hash, e.path, kind, { data: theirs }, nowOf(ctx)).ok) counts.stored++;
-          }
+          if (kind !== 'conflict') markKeptOut(ctx.home, rec.hash, [e.path]); // before the store: outlives it
+          if (e.reason !== 'not_plain' && storeBlob(ctx, b.top, `${rec.mergeHead}:${p}`, rec.hash, e.path, kind)) counts.stored++;
           mineBack(b, rec, dataDir, e.path, abs);
           break;
         }
         case 'mine_back_theirs_stored': {
           counts.changed++;
           counts.twins++;
-          const theirs = git.readBlob(b.top, `${rec.mergeHead}:${p}`);
           const kind: ConflictKind = e.reason === 'not_installed' ? 'not_installed' : 'conflict';
-          if (theirs && addConflict(ctx.home, rec.hash, e.path, kind, { data: theirs }, nowOf(ctx)).ok) counts.stored++;
+          if (kind === 'not_installed') markKeptOut(ctx.home, rec.hash, [e.path]);
+          if (storeBlob(ctx, b.top, `${rec.mergeHead}:${p}`, rec.hash, e.path, kind)) counts.stored++;
           mineBack(b, rec, dataDir, e.path, abs);
           break;
         }
@@ -794,7 +1027,8 @@ export const recoverAppPulls: RecoverAppPullsFn = (ctx) => {
  * An app installed onto a team folder under the same slug (wave 2 lane B, install.ts): the K5
  * rule as if it had just been pulled. Team files on paths the installed manifest does not call
  * `shared` leave the data folder for the conflict store (`local_path`), so after Kur no team file
- * sits on a local path. A file whose content is not the team's (mine) stays. Never throws.
+ * sits on a local path. A file whose content is not the team's (mine) stays, the team's copy
+ * stored beside it (`local_path`). Never throws.
  */
 export function applyPullRuleForInstall(ctx: AppPullCtx, slug: string, hash: string): { stored: string[] } {
   const stored: string[] = [];
@@ -813,11 +1047,14 @@ export function applyPullRuleForInstall(ctx: AppPullCtx, slug: string, hash: str
     if (!abs) continue;
     const there = lstatOrNull(abs);
     if (!there || there.isDirectory()) continue;
-    const blob = f.type === 'blob' ? git.readBlob(b.top, f.sha) : null;
-    if (there.isFile() && blob && git.hashFile(b.top, abs) !== f.sha) continue; // mine, not the team's
-    if (blob && (f.mode === '100644' || f.mode === '100755')) {
-      if (addConflict(ctx.home, hash, at.rel, 'local_path', { data: blob }, nowOf(ctx)).ok) stored.push(at.rel);
-    }
+    const isBlob = f.type === 'blob';
+    const plain = isBlob && (f.mode === '100644' || f.mode === '100755');
+    const mine = there.isFile() && isBlob && git.hashFile(b.top, abs) !== f.sha;
+    markKeptOut(ctx.home, hash, [at.rel]); // before the store: outlives it
+    // The team's copy is stored either way: when mine stays, it is what tells a later approval
+    // of this path that the two differ (held as two versions, never sent over the team's).
+    if (plain && storeBlob(ctx, b.top, f.sha, hash, at.rel, 'local_path')) stored.push(at.rel);
+    if (mine) continue; // mine, not the team's: it stays
     try { rmSync(abs, { force: true }); pruneEmpty(dirname(abs), dataDir); } catch { /* left */ }
   }
   return { stored };

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  CONFLICTS_KEEP, addConflict, appPullHeld, conflictDir, containedPath, listConflicts, listPullRecords, newStamp,
+  CONFLICTS_KEEP, addConflict, appPullHeld, conflictDir, containedPath, listConflicts, listKeptOut, listPullRecords, markKeptOut, newStamp,
   parkTarget, pullRecordPath, readPullRecord, rekeyAppState, removePullRecord, resolveConflict, writePullRecord,
   type PullRecord,
 } from '../../src/lib/apps/data-conflicts.js';
@@ -147,6 +147,23 @@ describe('the conflict store and resolve', () => {
     const r = resolveConflict(home, HASH, dataDir, 'favorites/a.json', 'theirs');
     expect(r.ok).toBe(false);
     expect(existsSync(join(outside, 'a.json'))).toBe(false);
+  });
+
+  it('never drops a copy that still waits: 25 two-version entries and 25 kept-out copies all stay; loose copies are trimmed oldest first', () => {
+    for (let i = 0; i < 25; i++) expect(addConflict(home, HASH, `w/${i}.json`, 'conflict', { data: Buffer.from(String(i)) }, Date.now() + i * 1000).ok).toBe(true);
+    expect(markKeptOut(home, HASH, Array.from({ length: 25 }, (_, i) => `k/${i}.json`))).toBe(true);
+    for (let i = 0; i < 25; i++) addConflict(home, HASH, `k/${i}.json`, 'local_path', { data: Buffer.from(String(i)) }, Date.now() + (100 + i) * 1000);
+    for (let i = 0; i < CONFLICTS_KEEP + 5; i++) addConflict(home, HASH, `l/${i}.json`, 'local_path', { data: Buffer.from(String(i)) }, Date.now() + (200 + i) * 1000);
+    const all = listConflicts(home, HASH).map((c) => c.path);
+    for (let i = 0; i < 25; i++) { expect(all).toContain(`w/${i}.json`); expect(all).toContain(`k/${i}.json`); }
+    const loose = all.filter((p) => p.startsWith('l/'));
+    expect(loose).toHaveLength(CONFLICTS_KEEP);
+    expect(loose).not.toContain('l/0.json'); // the oldest loose copies went
+    // A mark with no stored copy: keeping mine ends the hold; taking theirs has nothing to take.
+    markKeptOut(home, HASH, ['m/x.json']);
+    expect(resolveConflict(home, HASH, home, 'm/x.json', 'theirs')).toEqual({ ok: false, error: 'no_conflict' });
+    expect(resolveConflict(home, HASH, home, 'm/x.json', 'mine')).toEqual({ ok: true });
+    expect(listKeptOut(home, HASH).has('m/x.json')).toBe(false);
   });
 
   it(`keeps the newest ${CONFLICTS_KEEP}, one entry per path`, () => {

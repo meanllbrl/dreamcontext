@@ -491,6 +491,43 @@ describe('review fixes', () => {
     await expect(commitPub('public/app.js', 'export const x = 9;\n')).rejects.toMatchObject({ code: 'already_public' });
   });
 
+  it('A2: every refusal that needs a new repo names --fresh, and --fresh gets there (repo gone, public, foreign history)', async () => {
+    const freshNamed = (e: unknown) => { expect((e as PublishError).message).toContain('--fresh'); return true; };
+    // The repo is gone (deleted on the host): repo_changed, then a fresh publish makes a new one.
+    await publishFirst(pubRec());
+    // Deleted on github.com: the repo and its record are gone.
+    rmSync(join(hostDir, 'yayinci', 'tahmin-app.git'), { recursive: true, force: true });
+    rmSync(join(hostDir, 'yayinci', 'tahmin-app.json'), { force: true });
+    await expect(commitPub('public/app.js', 'export const x = 4;\n')).rejects.toMatchObject({ code: 'repo_changed' });
+    await commitPub('public/app.js', 'export const x = 5;\n').catch(freshNamed);
+    const r1 = await publishApp(getApp(home, pubProject, 'tahmin')!, { home, host: host('yayinci'), visibility: 'private', fresh: true });
+    expect(r1.fullName).toBe('yayinci/tahmin-public');
+    expect(getApp(home, pubProject, 'tahmin')!.publish?.fullName).toBe('yayinci/tahmin-public');
+    // The next plain update goes to the new repo.
+    expect((await commitPub('public/app.js', 'export const x = 6;\n')).fullName).toBe('yayinci/tahmin-public');
+    // Foreign history on the new repo: refused naming --fresh; a fresh publish with another name goes.
+    const w = join(home, 'hand2');
+    execFileSync('git', ['clone', '-q', join(hostDir, 'yayinci', 'tahmin-public.git'), w]);
+    writeFileSync(join(w, 'README.md'), 'hand\n');
+    git(w, 'commit', '-qam', 'by hand');
+    git(w, 'push', '-q', 'origin', 'HEAD:main');
+    await commitPub('public/app.js', 'export const x = 7;\n').then(() => { throw new Error('should refuse'); }, (e) => { expect(e).toMatchObject({ code: 'foreign_history' }); freshNamed(e); });
+    await expect(publishApp(getApp(home, pubProject, 'tahmin')!, { home, host: host('yayinci'), visibility: 'private', fresh: true })).rejects.toMatchObject({ code: 'repo_exists' });
+    const r2 = await publishApp(getApp(home, pubProject, 'tahmin')!, { home, host: host('yayinci'), visibility: 'private', fresh: true, repoName: 'tahmin-v2' });
+    expect(r2.fullName).toBe('yayinci/tahmin-v2');
+  });
+
+  it('A2: already_public names --fresh, and a fresh private publish leaves the public repo as it is', async () => {
+    await publishApp(pubRec(), { home, host: host('yayinci'), visibility: 'public', confirmName: 'Tahmin' });
+    const e = await commitPub('public/app.js', 'export const x = 9;\n').catch((x) => x);
+    expect(e).toMatchObject({ code: 'already_public' });
+    expect((e as PublishError).message).toContain('--fresh');
+    const r = await publishApp(getApp(home, pubProject, 'tahmin')!, { home, host: host('yayinci'), visibility: 'private', fresh: true, repoName: 'tahmin-team' });
+    expect(r.fullName).toBe('yayinci/tahmin-team');
+    expect((await host('yayinci').getRepo('yayinci/tahmin-team'))?.private).toBe(true);
+    expect((await host('yayinci').getRepo('yayinci/tahmin-app'))?.private).toBe(false);
+  });
+
   it('an update that rewrites history is refused (forward only)', async () => {
     const { kur, inst } = await setup();
     const w = join(home, 'rewrite');

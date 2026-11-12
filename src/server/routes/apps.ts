@@ -87,7 +87,7 @@ import { appDataStatus, heldCounts, trackedAppFiles } from '../../lib/apps/other
 import { applyConsentPatch, consentPath } from '../../lib/apps/data-consent.js';
 import { brainShareMode } from '../../lib/apps/data-share.js';
 import { readPullRecord, appPullHeld, listPullRecords as listPullRecordsOf } from '../../lib/apps/data-conflicts.js';
-import { recoverAppPulls } from '../../lib/apps/data-exchange.js';
+import { recoverAppPulls, restoreTeamFilesLocked } from '../../lib/apps/data-exchange.js';
 import { parseRepoSlug } from '../../lib/git-sync/origin-setup.js';
 import { resolveBrainSyncToken } from '../../lib/git-sync/brain-repo.js';
 import * as git from '../../lib/git-sync/git.js';
@@ -524,6 +524,8 @@ export function appDataField(rec: AppRecord, tracked?: string[]): Record<string,
       declared: readManifest(rec.root).ok ? s.decl !== null : null,
       sharedCount: s.shared.length,
       sharedBytes: s.sharedBytes,
+      teamBytes: s.teamBytes,
+      large: s.large,
       held: heldCounts(s.held),
       missing: s.missing,
       conflicts: s.conflicts,
@@ -537,7 +539,7 @@ export function appDataField(rec: AppRecord, tracked?: string[]): Record<string,
     };
   } catch {
     // Unread is not undecided: a read failure says nothing the owner could act on (`declared: null`).
-    return { mode: 'error', declared: null, sharedCount: 0, sharedBytes: 0, held: {}, missing: 0, conflicts: 0, pendingPaths: [], sharedPaths: [], localPaths: [], declined: false, remote: null, syncOff: true, pull: 'none' };
+    return { mode: 'error', declared: null, sharedCount: 0, sharedBytes: 0, teamBytes: null, large: false, held: {}, missing: 0, conflicts: 0, pendingPaths: [], sharedPaths: [], localPaths: [], declined: false, remote: null, syncOff: true, pull: 'none' };
   }
 }
 
@@ -573,7 +575,14 @@ export async function handleAppDataShare(req: IncomingMessage, res: ServerRespon
     return;
   }
   console.log(`  dreamcontext Apps: ${rec.slug} team data consent changed by the owner`);
-  sendJson(res, 200, { ok: true, consent: r.consent, data: appDataField(rec) });
+  // A late yes: the team's files shared before it are already in git; they come to this disk now
+  // (or at the next sync, when one holds the brain lock this moment).
+  const restored = restoreTeamFilesLocked({ gitCwd: rec.projectRoot, contextRoot: join(rec.projectRoot, '_dream_context'), projectRoot: rec.projectRoot, home });
+  const mine = restored.find((x) => x.slug === rec.slug);
+  const back = mine?.paths.length ?? 0;
+  if (back) console.log(`  dreamcontext Apps: ${rec.slug}: ${back} team file(s) shared before the approval are now on this Mac`);
+  if (mine?.deferred) console.log(`  dreamcontext Apps: ${rec.slug}: the team's files shared before the approval are large; the next sync brings them`);
+  sendJson(res, 200, { ok: true, consent: r.consent, data: appDataField(rec), restored: back, ...(mine?.deferred ? { restoreAtNextSync: true } : {}) });
 }
 
 /** Who asked, for the pause log: the run class a CLI sends, else the bare client. */
