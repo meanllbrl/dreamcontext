@@ -114,6 +114,10 @@ async function turn(blocks) {
   out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] });
   let said = 'ok';
   try { said = role === 'super' ? await superTurn(blocks[0] ?? '') : await childTurn(blocks.join('')); } catch (e) { said = 'error ' + e; }
+  // A real Super answers under the owner message's reply mark; without it the server re-sends the
+  // turn as owed and the reports land again (30 units instead of 11).
+  const ref = role === 'super' ? (/<owner-msg ref="([^"]+)"/.exec(blocks.join('\\n')) || [])[1] : null;
+  if (ref && said) said = '<!-- re:' + ref + ' -->\\n' + said;
   persist('assistant', [{ type: 'text', text: said }]);
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: said }] } });
   out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });

@@ -172,8 +172,11 @@ export function nextUnreadIndex(rows: ReadonlyArray<Span | null>, view: Span, af
     const row = rows[i];
     if (!row) { if (unmounted < 0) unmounted = i; continue; }
     // By the START: a tall unread whose first line is above the view is above, however much of
-    // it fills the view (owner 2026-11-12).
-    const side = startSide(row, view);
+    // it fills the view (owner 2026-11-12). A start inside the view counts as on screen only when
+    // the row is SEEN by the read rule (startSeen): a first line peeking in at the bottom edge is
+    // not being read, so it is ahead below, or the jump would pass it and scroll it away unread.
+    const at = startSide(row, view);
+    const side = at === 'in' && !startSeen(row, view) ? 'below' : at;
     if (side === 'above' && (above < 0 || row.top < (rows[above] as Span).top)) above = i;
     if (side === 'below' && (below < 0 || row.top < (rows[below] as Span).top)) below = i;
     if (after && side !== 'in' && row.top > after.top && (ahead < 0 || row.top < (rows[ahead] as Span).top)) ahead = i;

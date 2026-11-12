@@ -341,6 +341,15 @@ describe('the follow never pushes an unread start out of view (owner 2026-11-12)
     expect(nextUnreadIndex([{ top: 40, bottom: 600 }], view)).toBe(-1);
   });
 
+  it('a jump does not pass an unread whose first line only peeks in at the bottom', () => {
+    // The report's start 16 px inside the bottom edge: not read where it is, so it is next, not
+    // the one after it (verify super-unread: the jump skipped it and scrolled it away unread).
+    const view = { top: 0, bottom: 500 };
+    expect(nextUnreadIndex([{ top: 484, bottom: 690 }, { top: 707, bottom: 913 }], view)).toBe(0);
+    // A tall one landed under the top is being read: nothing to jump to.
+    expect(nextUnreadIndex([{ top: 64, bottom: 1200 }], view)).toBe(-1);
+  });
+
   it('a question card lands whole when it fits, its top when it does not', () => {
     expect(landingFor('prose', 2000, 500)).toBe(PROSE_LANDING);
     expect(landingFor('question', 300, 500)).toBe(PROSE_LANDING);

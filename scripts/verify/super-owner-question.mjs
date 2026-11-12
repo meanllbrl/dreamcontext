@@ -206,7 +206,7 @@ async function main() {
     await say(page, 'hello');
     await until(page, async () => frames().some((f) => f.role === 'child'), 30000);
     await page.waitForTimeout(1500);
-    await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+    await page.locator('[data-testid="drawer-super-row"]:visible, [data-testid="super-handover-btn"]:visible').first().click();
     ok('the Super stage shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0));
     ok('the super agent took the hand-over', await until(page, async () => reports().some((r) => r.kind === 'handover'), 60000));
     const child = reports().find((r) => r.kind === 'handover')?.children?.[0];
