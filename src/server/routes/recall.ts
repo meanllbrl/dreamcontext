@@ -128,11 +128,9 @@ export async function handleRecallGet(
   try {
     const started = Date.now();
     const corpus = corpusFor(contextRoot, types, minLevel);
-    // The search box lists every matching file, a task's plan drafts and briefs included: it has no
-    // place to say "+N more files of this task", so it asks unfolded (collapseTaskFamilies).
     const hits = useHybrid
-      ? await hybridSearch(query, corpus, contextRoot, topK, { collapseFamilies: false })
-      : bm25Search(query, corpus, topK, { collapseFamilies: false });
+      ? await hybridSearch(query, corpus, contextRoot, topK)
+      : bm25Search(query, corpus, topK);
     const tookMs = Date.now() - started;
 
     sendJson(res, 200, { query, mode, tier, tookMs, hits: hits.map(serializeHit) });

@@ -211,7 +211,7 @@ Also never sent, whatever the type: docs outside the consented vault root (or re
 
 **Injection depth (K=5).** The hook injects the top **5** hits. Ranks 1-3 print as before; ranks 4-5 print as one line each: `[type] relPath - title`. The hook gate passes when one printed hit has raw BM25 `score >= 2.0`, matches at least 4% of the query's IDF mass and, for a query of one or two words, both words. Turn fillers (`tamam`, `devam`, `ok`, `continue`, ...) are stopwords, so "ne durumdayız" or "devam et" injects nothing. A peer block passes the same gate. `hit.score` always stays the raw BM25 score (0 for a dense-only hit): fusion, priors and rerank change only the ordering.
 
-**One slot per task.** A task's side files (`state/assets/<slug>/**`, `state/archive/**`) rank below its card, and a task takes one slot: its other matching files fold into its best hit, which prints `+N more files of this task` (the hook and `memory recall`; `--json` carries `moreFilesOfTask`). The dashboard search box lists every file unfolded.
+**One slot per task.** A task's side files (`state/assets/<slug>/**`, `state/archive/**`) rank below its card, and a task takes one slot: its other matching files fold into its best hit, which prints `+N more files of this task` (the hook and `memory recall`; `--json` carries `moreFilesOfTask`). Only those two fold; every other list (the dashboard search box, the Assistant, a peer block) shows every file.
 
 **Dense on long prompts.** The cloud tiers skip the dense channel when BM25 is already sure; that threshold now scales with query length past 21 terms, so a long prompt is no longer judged sure on length alone.
 

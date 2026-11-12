@@ -723,12 +723,12 @@ export async function hybridSearch(
   timing.fallback = 'none';
 
   const t0 = performance.now();
-  // The fusion pool keeps every file of a task; the fused list folds them (collapseTaskFamilies), so
-  // the topK slots go to distinct tasks and a task's best file is the one that stands.
+  // The fusion pool keeps every file of a task; with `collapseFamilies` the fused list folds them
+  // (collapseTaskFamilies), so the topK slots go to distinct tasks and a task's best file stands.
   const bm25Hits = bm25Search(query, corpus, POOL, { ...opts, collapseFamilies: false });
   timing.bm25Ms = Math.round(performance.now() - t0);
   const wide = Math.max(topK, POOL);
-  const fold = (hits: RecallHit[]): RecallHit[] => (opts.collapseFamilies === false ? hits.slice(0, topK) : collapseTaskFamilies(hits, topK));
+  const fold = (hits: RecallHit[]): RecallHit[] => (opts.collapseFamilies === true ? collapseTaskFamilies(hits, topK) : hits.slice(0, topK));
 
   if (eff !== 'local') {
     const cloud = await cloudSearch(query, corpus, contextRoot, wide, eff, bm25Hits, opts, timing, home);

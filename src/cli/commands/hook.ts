@@ -733,7 +733,7 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
   // The Haiku extractor is a `claude` call: under a Codex or Antigravity prompt hook it would spend
   // the owner's Claude account behind that tool's back (row 30). BM25 there, and the header says so.
   if (recallMode === 'haiku' && hookTool() !== null) {
-    return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K), label: 'BM25 · Haiku is Claude only', haiku: false, timing: null };
+    return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K, { collapseFamilies: true }), label: 'BM25 · Haiku is Claude only', haiku: false, timing: null };
   }
   if (recallMode === 'haiku') {
     const result = (deps.haiku ?? haikuRecall)(prompt, root);
@@ -745,7 +745,7 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
       if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku: 0 docs selected');
     } else {
       if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku failed, falling back to BM25');
-      return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K), label: 'BM25', haiku: false, timing: null };
+      return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K, { collapseFamilies: true }), label: 'BM25', haiku: false, timing: null };
     }
     return { hits: [], label: 'BM25', haiku: false, timing: null };
   }
@@ -766,7 +766,7 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
     return hybridPromptRecall(prompt, root, tier, deps.home);
   }
   const label = resolved !== null ? hybridNotReadyLabel(tier, hybridNotReadyReason(root, resolved, deps.home)) : 'BM25';
-  return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_INJECT_TOP_K), label, haiku: false, timing: null };
+  return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_INJECT_TOP_K, { collapseFamilies: true }), label, haiku: false, timing: null };
 }
 
 /**
@@ -781,6 +781,7 @@ export async function hybridPromptRecall(prompt: string, root: string, tier: Rec
   const corpus = buildCorpusCached(root);
   const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none', corpusMs: Math.round(performance.now() - t0) };
   const hits = await hybridSearch(prompt, corpus, root, RECALL_INJECT_TOP_K, {
+    collapseFamilies: true,
     tier,
     home,
     timing,

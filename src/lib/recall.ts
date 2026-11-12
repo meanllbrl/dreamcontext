@@ -1416,8 +1416,9 @@ export interface Bm25Options {
   linkAware?: boolean;
   /** Alias groups from project taxonomy for query expansion (memory recall path only). */
   aliasGroups?: string[][];
-  /** Fold a task's assets and archive copies under its best hit (collapseTaskFamilies). Default
-   *  on; the hybrid path turns it off for its fusion pool and collapses the fused list instead. */
+  /** Fold a task's assets and archive copies under its best hit (collapseTaskFamilies). OFF by
+   *  default: only a surface that prints the folded count asks for it (the prompt hook, `memory
+   *  recall`), so no other list ever loses a matching file without a trace. */
   collapseFamilies?: boolean;
 }
 
@@ -1579,7 +1580,7 @@ export function bm25Search(
   // is returned unchanged for the hook's threshold checks.
   const hits = scored.map((s) => s.hit);
   hits.sort((a, b) => b.rankScore - a.rankScore);
-  const top = opts.collapseFamilies === false ? hits.slice(0, topK) : collapseTaskFamilies(hits, topK);
+  const top = opts.collapseFamilies === true ? collapseTaskFamilies(hits, topK) : hits.slice(0, topK);
   for (const hit of top) hit.snippet = extractSnippet(hit.doc, queryTerms);
   return top;
 }

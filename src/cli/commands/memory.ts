@@ -308,7 +308,7 @@ export async function hybridVaultSearch(
     ...(minLevel ? { minLevel } : {}),
   });
   const timing: RecallTiming = { tier: 'local', querySource: 'none', fallback: 'none' };
-  const hits = await hybridSearch(query, corpus, root, topK, { aliasGroups: aliasGroups(loadProjectVocabulary(root)), tier, timing, ...(home ? { home } : {}) });
+  const hits = await hybridSearch(query, corpus, root, topK, { collapseFamilies: true, aliasGroups: aliasGroups(loadProjectVocabulary(root)), tier, timing, ...(home ? { home } : {}) });
   return { hits, corpusSize: corpus.length, timing };
 }
 
@@ -449,7 +449,7 @@ async function currentVaultRecall(
       ...(types ? { types } : {}),
       ...(minLevel ? { minLevel } : {}),
     });
-    return { hits: bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(loadProjectVocabulary(root)) }), corpusSize: corpus.length };
+    return { hits: bm25Search(query, corpus, topK, { collapseFamilies: true, aliasGroups: aliasGroups(loadProjectVocabulary(root)) }), corpusSize: corpus.length };
   }
   const remote = process.env.DREAMCONTEXT_RECALL_VIA_SERVER === '0'
     ? null

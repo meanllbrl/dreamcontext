@@ -92,7 +92,7 @@ describe('MM-8: a task is one slot, its side files rank below the card', () => {
     expect(out[1].family).toBeUndefined();
   });
 
-  it('bm25Search folds a task family and ranks an equal-text asset below its card', () => {
+  it('bm25Search folds a task family only when asked, and ranks an equal-text asset below its card', () => {
     const body = 'snapshot budget demotion ladder order';
     const corpus = [
       ...filler,
@@ -100,12 +100,14 @@ describe('MM-8: a task is one slot, its side files rank below the card', () => {
       mkDoc('state/assets/snap-plan/plan-v2.md', body),
       mkDoc('state/snap-plan.md', body),
     ];
-    const hits = bm25Search(body, corpus, 5, { now: NOW });
+    // Unasked, every file is listed (the search box, the Assistant, federation): nothing vanishes silently.
+    expect(bm25Search(body, corpus, 5, { now: NOW }).filter((x) => taskFamilyOf(x.doc) === 'snap-plan')).toHaveLength(3);
+    const hits = bm25Search(body, corpus, 5, { now: NOW, collapseFamilies: true });
     expect(hits.filter((x) => taskFamilyOf(x.doc) === 'snap-plan')).toHaveLength(1);
     expect(hits[0].doc.relPath).toBe('state/snap-plan.md');
     expect(hits[0].family).toBe(2);
     // The raw score the gate reads is untouched by the side-file factor.
-    const raw = bm25Search(body, corpus, 5, { now: NOW, collapseFamilies: false });
+    const raw = bm25Search(body, corpus, 5, { now: NOW });
     const card = raw.find((x) => x.doc.relPath === 'state/snap-plan.md')!;
     const asset = raw.find((x) => x.doc.relPath === 'state/assets/snap-plan/plan-v1.md')!;
     expect(asset.score).toBeCloseTo(card.score, 10);
