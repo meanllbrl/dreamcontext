@@ -1,6 +1,6 @@
 /**
  * The awake-agent guard on `tasks create` (audit TK-1, TK-2): a Super child never files, an agent
- * never opens a sub-task; there is no daily count (owner, 2026-11-12). Every refusal names its reason AND the way
+ * is the one mechanical rule; no daily count, no sub-task refusal (owner, 2026-11-12). Every refusal names its reason AND the way
  * out (owner rule: a guard asks or explains, it never silently locks).
  */
 import { describe, it, expect } from 'vitest';
@@ -48,14 +48,10 @@ describe('checkAgentFiling', () => {
     expect(v.message).toContain('--owner-asked');
   });
 
-  it('refuses a sub-task, a plan wave included, and names the criterion command on THAT parent', () => {
+  // Owner, 2026-11-12: a sub-task needs no owner's words; the parent link rules hold it instead.
+  it('lets an agent open a sub-task, a plan wave included, with no owner\'s words', () => {
     for (const filedBy of ['agent', 'plan']) {
-      const v = checkAgentFiling({ ...base, filedBy, parent: 'odev-ver-akisi' });
-      expect(v.ok).toBe(false);
-      if (v.ok) continue;
-      expect(v.code).toBe('parent_needs_owner');
-      expect(v.message).toContain('dreamcontext tasks insert odev-ver-akisi acceptance_criteria');
-      expect(v.message).toContain('--owner-asked');
+      expect(checkAgentFiling({ ...base, filedBy, parent: 'odev-ver-akisi' })).toEqual({ ok: true, ownerAsked: false });
     }
   });
 
@@ -63,7 +59,7 @@ describe('checkAgentFiling', () => {
     expect(checkAgentFiling(base)).toEqual({ ok: true, ownerAsked: false });
   });
 
-  it('the owner\'s words lift both', () => {
+  it('the owner\'s words lift the Super-child refusal', () => {
     const v = checkAgentFiling({ ...base, superChild: true, parent: 'p', ownerAsked: OWNER_WORDS });
     expect(v).toEqual({ ok: true, ownerAsked: true });
   });

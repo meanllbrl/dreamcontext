@@ -330,7 +330,7 @@ Dropped-but-load-bearing self-check: <none | every signal you saw but did NOT fo
 
 ## Rules
 
-1. **Place before creating**: a criterion on the task that covers it, else a sub-task only when the owner asked for one, else a new parent only for an owner ask or a defect bigger than a small fix (step 2). A small fix (1-3 files, one clear fix) gets no task: the changelog carries it.
+1. **Place before creating**: a criterion on the task that covers it, else a sub-task only for a part of big work that is delivered and checked on its own (never one per step or wave), else a new parent only for an owner ask or a defect bigger than a small fix (step 2). A small fix (1-3 files, one clear fix) gets no task: the changelog carries it.
 2. **Clear the filing bar; never pad to get past it.** `--neighbor-checked` and `--declined-checked` are proof you opened what the CLI named, never a way past it.
 3. **Body = current truth, Changelog = history.**
 4. **Status reflects reality, not a reflex** (step 4); never silently delete.

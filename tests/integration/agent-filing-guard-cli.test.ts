@@ -70,16 +70,12 @@ describe('tasks create inside an agent session', () => {
     expect(cli('config agent-task-budget 0').code).not.toBe(0);
   });
 
-  it('an agent never opens a sub-task without the owner\'s words, a plan wave included', () => {
+  it('an agent opens a sub-task with no owner\'s words (2026-11-12); the parent link rules still hold', () => {
     expect(cli('tasks create "the parent job" -w "why" --by human').code).toBe(0);
-    const sub = cli('tasks create "a slice of it" --parent the-parent-job', AGENT);
-    expect(sub.code).toBe(1);
-    expect(sub.out).toContain('dreamcontext tasks insert the-parent-job acceptance_criteria');
-    const wave = cli('tasks create "Wave 1: part" --parent the-parent-job --basis plan --quote "W1 part"', AGENT);
-    expect(wave.code).toBe(1);
-    const asked = cli(`tasks create "a slice of it" --parent the-parent-job --owner-asked "${OWNER_WORDS}"`, AGENT);
-    expect(asked.code).toBe(0);
+    expect(cli('tasks create "a slice of it" --parent the-parent-job', AGENT).code).toBe(0);
     expect(taskText('a-slice-of-it')).toContain('parent_task: the-parent-job');
+    // Two levels at most: a sub-task never takes its own.
+    expect(cli('tasks create "a slice of the slice" --parent a-slice-of-it', AGENT).code).toBe(1);
   });
 
   it('a Super Agent\'s child never files, and is told to ask the Super', () => {

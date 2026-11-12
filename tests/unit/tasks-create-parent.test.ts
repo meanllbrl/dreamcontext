@@ -182,14 +182,12 @@ describe('who files during a live sleep cycle (DREAMCONTEXT_AUTO_SLEEP=1)', () =
     expect(printed()).toMatch(/--parent <slug>/);
   });
 
-  // 2026-11-12 (gece B6): a live cycle carries the auto-sleep spawn marker, so the agent guard
-  // holds it: a plan's wave is a sub-task, and an agent opens one only on the owner's words.
-  it('--basis plan --parent quoting a wave of the parent\'s map is a sub-task the agent guard refuses', async () => {
+  it('--basis plan --parent quoting a wave of the parent\'s map is the plan and never meets the bar', async () => {
     process.env.DREAMCONTEXT_AUTO_SLEEP = '';
     await cli('insert', 'the-parent', 'technical_details', 'WAVE MAP: EXECUTION: lead | W1 (src/a.ts) | W2 (src/b.ts)');
     process.env.DREAMCONTEXT_AUTO_SLEEP = '1';
-    expect(await cli('create', '1. dalga: x', '--parent', 'the-parent', '--basis', 'plan', '--quote', 'W1 (src/a.ts)')).toBe(1);
-    expect(printed()).toMatch(/sub-task only when the owner asks/);
+    expect(await cli('create', '1. dalga: x', '--parent', 'the-parent', '--basis', 'plan', '--quote', 'W1 (src/a.ts)')).toBe(0);
+    expect(fmOf('1-dalga-x').filed_by).toBe('plan');
   });
 
   it('--basis plan --parent quoting no wave is refused like any sleep filing', async () => {

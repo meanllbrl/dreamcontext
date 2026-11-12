@@ -6,20 +6,18 @@ import { spawnMarkerFromEnv } from './session-origin.js';
  *
  * The sleep filing bar (task-filing-bar.ts) gates only the cycle. Before this guard every awake
  * agent passed like the owner, and 88% of the board came through that door: the Super opened a
- * task per delegated job, its children opened one when their brief named none, and plans opened
- * wave sub-tasks. The owner's rule (2026-11-09) is "a task only for big work, ONE task, a
- * sub-task only when I ask". Prose alone did not hold it, so two mechanical refusals do:
+ * task per delegated job and its children opened one when their brief named none. The rule is
+ * the ONE task-filing standard (task-filing-standard.ts); only its last sentence is mechanical:
  *
- *   1. A Super Agent's child never files. Only the Super or the owner opens the one task.
- *   2. An agent never opens a sub-task (`--parent`), a plan's wave included.
+ *   A Super Agent's child never files. Only the Super or the owner opens the one task.
  *
- * Each refusal names its reason and the way out (owner rule: a guard asks or explains, it never
- * silently locks). The way out for both is the owner's own words: `--owner-asked "<words>"`
- * records an ask basis and lifts the guard. A batch the owner confirmed (the initializer's
- * manifest, a curator plan, waves he asked for) is his ask too: each filing quotes his
- * confirmation. An agent can lie there, but the lie is on the record
- * (the task page shows the quote) and the owner can object to it.
- * There is no daily count (owner, 2026-11-12: the budget was removed).
+ * Owner, 2026-11-12: no numeric caps (the daily budget is gone) and no sub-task refusal (an agent
+ * may open one with --parent; the parent link rules in task-parent.ts still hold: the parent
+ * exists, is open and is not itself a sub-task). The refusal names its reason and the way out
+ * (a guard asks or explains, it never silently locks): `--owner-asked "<words>"` records an ask
+ * basis and lifts it. A batch the owner confirmed (the initializer's manifest, a curator plan) is
+ * his ask too: each filing quotes his confirmation. An agent can lie there, but the lie is on the
+ * record (the task page shows the quote) and the owner can object to it.
  *
  * WHO IS AN AGENT is read from the environment, never from `--by`: an agent told to "pass
  * `--by human`" mid-cycle would otherwise walk straight past. The owner at his own terminal has
@@ -54,7 +52,7 @@ export interface AgentGuardInput {
   superChild: boolean;
 }
 
-export type AgentGuardCode = 'owner_asked_too_thin' | 'super_child' | 'parent_needs_owner';
+export type AgentGuardCode = 'owner_asked_too_thin' | 'super_child';
 
 export type AgentGuardVerdict =
   | { ok: true; ownerAsked: boolean }
@@ -86,16 +84,6 @@ export function checkAgentFiling(input: AgentGuardInput): AgentGuardVerdict {
         + 'Small work needs none: build from your brief and report in your last reply (the release note carries it). '
         + 'If the work turned out big (it needs a plan or several lanes), stop and tell the Super with an AskUserQuestion card: '
         + 'it opens the ONE task and hands it to you. ' + OWNER_WAY,
-    };
-  }
-
-  if (input.parent) {
-    return {
-      ok: false,
-      code: 'parent_needs_owner',
-      message: `Not filed: an agent opens a sub-task only when the owner asks for one (owner rule, 2026-11-09). `
-        + `Add it to ${input.parent} as a criterion instead: dreamcontext tasks insert ${input.parent} acceptance_criteria "…"; `
-        + 'a plan\'s waves are logged on that one task. ' + OWNER_WAY,
     };
   }
 

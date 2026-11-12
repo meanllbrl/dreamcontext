@@ -565,7 +565,7 @@ describe('waves live inside the task (both recipes, owner 2026-11-09)', () => {
     it(`${name}: no sub-task per wave; existing wave sub-tasks keep their progress, close and reopen`, () => {
       expect(recipe).toContain('**Waves live inside the task.**');
       expect(recipe).toMatch(/never open a sub-task per wave/);
-      expect(recipe).toMatch(/Wave sub-tasks open only when the owner asked for them/);
+      expect(recipe).toMatch(/a sub-task is only for a part of big work\s+that is delivered and checked on its own/);
       expect(recipe).not.toContain('tasks create "Wave N');
       expect(recipe).toContain('dreamcontext tasks list --parent "$S" --json');
       expect(recipe).toContain('dreamcontext tasks status <wave-N> in_progress');

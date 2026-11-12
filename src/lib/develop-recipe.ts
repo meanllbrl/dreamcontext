@@ -206,18 +206,18 @@ what the owner sees, ticked with no screenshot, is FAIL.`;
 /**
  * Waves live inside the task (owner, 2026-11-09). From 2026-10-23 a map of two or more waves
  * opened one sub-task per wave; agents then filed 39 tasks a day, 17 of them waves, each waiting
- * on the owner's sign-off. Now the waves are logged on the ONE task and a wave sub-task opens
- * only when the owner asks. Runs whose wave sub-tasks already exist keep using them
+ * on the owner's sign-off. Now the waves are logged on the ONE task, never one sub-task per
+ * wave (the task-filing standard, owner 2026-11-12). Runs whose wave sub-tasks already exist keep using them
  * (task-parent.ts waveChildren is still the definition), so the WAVE_ON_SUBTASK, WAVE_CLOSE_409
  * and WAVE_REOPEN branches below stay for them.
  */
 const WAVE_SUBTASKS = `**Waves live inside the task.** Each wave's progress, ticks and \`wN green\` line are logged
-on "$S"; never open a sub-task per wave (owner, 2026-11-09: a task only for big work, its
-waves inside it). Wave sub-tasks open only when the owner asked for them. Check once:
+on "$S"; never open a sub-task per wave or per step: a sub-task is only for a part of big work
+that is delivered and checked on its own. Check once:
 
   dreamcontext tasks list --parent "$S" --json     # each child's \`wave\` (null = not a wave)
 
-Wave sub-tasks already exist (an older plan, or the owner asked): use them, as the "With wave
+Wave sub-tasks already exist (an older plan): use them, as the "With wave
 sub-tasks" lines below say. Children that are not waves (filed by sleep, the owner or an
 agent) are not yours to build, but they keep "$S" from closing.`;
 

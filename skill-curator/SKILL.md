@@ -135,7 +135,7 @@ ambiguous, and list it as deferred.
 ### Phase 4 — EXECUTE (sub-agent fan-out — the core)
 
 Put the owner's approval of the plan, **verbatim**, in every worker's brief: a task a worker files carries it
-as `--owner-asked "<his words>"` (without them an agent never opens a sub-task, and a Super child files nothing).
+as `--owner-asked "<his words>"` (without them a Super child files nothing).
 
 Dispatch **`curator-worker`** over the approved plan, **one batch per worker** so each fits in
 context. Use `parallel` for independent batches; **`pipeline`/sequential when batches depend on each

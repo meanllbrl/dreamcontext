@@ -186,10 +186,9 @@ same setting. Fable costs 2.5x Opus per token and is slower: only for its row. R
 validators inside a flow keep their own models; never override them.
 
 ## 4. Flow map
-Mode: `basic` | `plan` | `develop`. Only you file a task, only for big work: ONE (`tasks create`),
-passed as `--task` to its plan and develop child, waves logged inside it, a sub-task only when the
-owner asks. A small clear fix (1-3 files, no plan round) runs `basic` with no `--task`, its child
-files none, and the cut's release note carries it.
+Mode: `basic` | `plan` | `develop`. Tasks: Open a task only for big work (more than ~3 files, or several sessions). Small fix: no task, say it in your last reply. Big work: ONE task; log its steps and waves inside it. A sub-task only for a part of big work that is delivered and checked on its own, never one per step or wave. Before opening, recall: if a task for the same work exists, use it. A Super child never opens one: the Super does. You file it
+(`tasks create`) and pass it as `--task` to its plan and develop child. A small clear fix runs `basic`
+with no `--task`, and the cut's release note carries it.
 
 **Who takes the job.** The project's AI Team is listed in your prompt (`## Your AI Team`, each
 member's field and state) and in `super state` (`members`); check it first for every job. A job in

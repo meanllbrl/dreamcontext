@@ -53,6 +53,7 @@ import {
   CODEX_SUBAGENT_BRIEFING_MAX_CHARS, snapshotFitChars,
   type BudgetSection, type BudgetRung, type BudgetResult,
 } from '../../lib/snapshot-budget.js';
+import { TASK_FILING_STANDARD } from '../../lib/task-filing-standard.js';
 import {
   capAtWordBoundary, compressMarkdownBlock, compressedCoreFile, packToCharBudget, shrinkBody,
   type CompressOptions,
@@ -2965,7 +2966,7 @@ function fullBriefingParts(root: string): BriefingParts {
     neverEvict: true,
     text: [
       '## Task Awareness\n',
-      'Big work is linked to ONE task in `_dream_context/state/`, its waves logged inside it. A small fix (1-3 files, one clear fix, no plan round) opens no task: its commits and the release note carry it. A sub-task only when the owner asks.',
+      `${TASK_FILING_STANDARD} Tasks live in \`_dream_context/state/\`.`,
       'If you are creating a plan or completing big work:',
       '- Check if an existing task in Active Tasks above relates to this work',
       '- If planning: return the plan to the agent that dispatched you; it decides whether the plan becomes a task (a sub-agent has no user to ask).',

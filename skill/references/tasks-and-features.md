@@ -20,13 +20,13 @@ Every task waits on the owner's sign-off, so a task costs the owner attention. A
 per job filed 31 and 39 tasks a day (17 of them per-wave sub-tasks); the owner ruled on
 2026-11-09:
 
-- **Small work opens no task.** Small = 1-3 files, one clear fix, no plan round. Its progress
-  goes in your reply and the branch's commits; the release cut's note lists it. A review loop
-  needs no task either (`builder review open <name> --goal "…"`, [cli-reference.md](cli-reference.md)).
-- **Big work is ONE task.** Anything larger (a plan round, 4+ files, several waves): one task,
-  its waves logged inside it (`wN green` lines on that task).
-- **A sub-task only when the owner asks for one.** `tasks create --parent` stays available for
-  that; never open one per wave or per step on your own.
+The standard (owner, 2026-11-12, the same words everywhere an agent is told about tasks):
+
+> Open a task only for big work (more than ~3 files, or several sessions). Small fix: no task, say it in your last reply. Big work: ONE task; log its steps and waves inside it. A sub-task only for a part of big work that is delivered and checked on its own, never one per step or wave. Before opening, recall: if a task for the same work exists, use it. A Super child never opens one: the Super does.
+
+- A review loop needs no task (`builder review open <name> --goal "…"`, [cli-reference.md](cli-reference.md)).
+- Waves are `wN green` lines on the one task. `tasks create --parent` opens a sub-task with no
+  owner's words and no count; only the Super-child rule is enforced by the CLI.
 
 ### Create
 ```bash
@@ -59,7 +59,7 @@ dreamcontext tasks undecline <key>                                              
 
 ### Sub-tasks, waves, and who opened a task
 
-**The model.** A **feature** is an area (its PRD). A **parent task** is one deliverable the owner would recognise. A **sub-task** is a step of a parent the OWNER asked to track on its own: an agent or sleep never opens one unprompted (see "A task only for big work" above). Two levels at most: a sub-task never has sub-tasks, and a closed (done- or cancelled-kind) task takes no new ones.
+**The model.** A **feature** is an area (its PRD). A **parent task** is one deliverable the owner would recognise. A **sub-task** is a part of a parent that is delivered and checked on its own, never a step or a wave (see "A task only for big work" above). Two levels at most: a sub-task never has sub-tasks, and a closed (done- or cancelled-kind) task takes no new ones.
 
 ```bash
 dreamcontext tasks create "<sentence>" --parent <parent-slug> [-w "<why>"]   # inherits version + feature; Why defaults to "Part of <parent>"
@@ -80,7 +80,7 @@ dreamcontext tasks basis <slug> --basis <kind> [--quote|--evidence "…"]       
 
 - Kinds: `ask`, `defect`, `change`, `bookmark`, `plan`, `note`. With no `--basis`, an agent's task records the start of its Why as a `note`.
 - **Who counts as sleep:** `--by sleep`, or a CLI call with NO `--by` while a sleep cycle is live. Sleep needs a basis, and opens a new top-level task only for an `ask` (the quote is looked up in the turns the owner typed this cycle, Turkish-aware) or a `defect` (the evidence in tool results); anything else goes onto the task it belongs to as a criterion (a small fix already shipped needs no task at all: the release note carries it). `--by human` is the owner's own task; `--by agent` an awake agent; `--basis plan --parent` a wave. Over HTTP a request with no `by` is the owner.
-- **The agent guard** (awake agents, read from the session's env, so `--by human` inside an agent's session is recorded as `agent`): a Super Agent's child never files (small work needs no task; big work goes back to the Super, which opens the ONE task); no agent opens a sub-task (`--parent`, a wave included); a batch he confirmed (the initializer's manifest, a curator plan) quotes his confirmation on every filing. Each refusal says why and names the way out: put it on the task it belongs to as a criterion, ask the Super or the owner, or, when the owner asked in his own words, re-run with `--owner-asked "<his words, verbatim>"` (recorded as the ask). An agent's create also runs the near-twin gate: a slice of an open task is refused with that task named (`--neighbor-checked <slug>` when it is genuinely separate).
+- **The agent guard** (awake agents, read from the session's env, so `--by human` inside an agent's session is recorded as `agent`): a Super Agent's child never files (small work needs no task; big work goes back to the Super, which opens the ONE task); a batch he confirmed (the initializer's manifest, a curator plan) quotes his confirmation on every filing. Each refusal says why and names the way out: put it on the task it belongs to as a criterion, ask the Super or the owner, or, when the owner asked in his own words, re-run with `--owner-asked "<his words, verbatim>"` (recorded as the ask). An agent's create also runs the near-twin gate: a slice of an open task is refused with that task named (`--neighbor-checked <slug>` when it is genuinely separate).
 
 ### Objections: "this task was wrong"
 
@@ -963,7 +963,7 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
    - **Know feature vs knowledge.** A **feature** (`knowledge/features/<name>.md` — typed knowledge, `type: feature`; the `dreamcontext features` CLI is a deprecated compat alias) is product documentation — what a capability *is*, its user stories + acceptance criteria — updated only at sleep. **Knowledge** (`knowledge/…`) is other durable material: research, decisions, rationale, domain/technical context. In-progress work lives in a **task**, never in a feature or knowledge file.
    - **Never create a knowledge file for something that is a feature**, and never keep a knowledge copy of content that already lives in a feature (or vice-versa). If a topic is a feature, the feature is its home — knowledge may *reference* it, not duplicate it. Don't have both a feature and a knowledge doc covering the same thing.
    - **Never duplicate knowledge.** If two docs overlap, merge into one and point the other at it. Fragmented near-duplicate knowledge and duplicate tasks are the top failure modes — `sleep-product` dedupes, but don't create the mess.
-5. **Big work needs a task; small work needs none, and don't fork tasks.** Small = 1-3 files, one clear fix, no plan round: no task, its progress in your reply and the branch's commits, the release note lists it. Bigger work gets ONE task, its waves logged inside it; a sub-task only when the owner asks. FIRST check the auto-loaded snapshot (and `dreamcontext memory recall "<keywords>" --types task`) for one that already covers it: if found, **extend it** — broaden its scope, add an acceptance criterion or a sub-step — rather than creating a near-duplicate. Create a new task only for a genuinely separate concern. In a terminal session, after a plan is approved (ExitPlanMode), offer to save it as — or fold it into — a task; that is the terminal case. In Chat, planning is dreamcontext's Plan mode, which ends by creating the task. The sleep agent flags untracked work and merges duplicates.
+5. **Big work needs a task; small work needs none, and don't fork tasks.** Small = 1-3 files, one clear fix, no plan round: no task, its progress in your reply and the branch's commits, the release note lists it. Bigger work gets ONE task, its waves logged inside it; a sub-task only for a part of big work that is delivered and checked on its own, never one per step or wave. FIRST check the auto-loaded snapshot (and `dreamcontext memory recall "<keywords>" --types task`) for one that already covers it: if found, **extend it** — broaden its scope, add an acceptance criterion or a sub-step — rather than creating a near-duplicate. Create a new task only for a genuinely separate concern. In a terminal session, after a plan is approved (ExitPlanMode), offer to save it as — or fold it into — a task; that is the terminal case. In Chat, planning is dreamcontext's Plan mode, which ends by creating the task. The sleep agent flags untracked work and merges duplicates.
    **When the user drops, cancels or says no to a piece of work that has NO task yet, record it:** `dreamcontext tasks decline "<topic>" --reason "<why not>"` — otherwise the next sleep cycle only sees that it was *discussed* and may file it as a task. Work that DID become a task is cancelled or deleted instead (that already leaves a tombstone). Details → [tasks-and-features.md](references/tasks-and-features.md).
 
 ### Naming, scaffolding, statuses, custom fields and objectives

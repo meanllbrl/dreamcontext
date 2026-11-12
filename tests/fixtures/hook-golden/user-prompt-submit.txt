@@ -18,7 +18,7 @@ There are two good reasons to keep going: the task is nearly done, or the state 
   • READ the related knowledge/feature file(s) recalled above (Read tool): the section that matches this task (each hit shows its size; a big file is not read whole) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.
   • REVIEW the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.
   • For depth, RECALL more: dreamcontext memory recall "<your keywords>" [--types knowledge,feature,task,memory] — try a few keyword sets and read the relevant hits in full.
-  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; untracked BIG work gets one task (a small fix of 1-3 files opens none; a sub-task only when the owner asks).
+  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; untracked BIG work gets one task (a small fix opens none; a sub-task only for a part delivered and checked on its own, never one per step or wave).
   Act only once the relevant memory is in your context — be the agent that has seen the whole picture, not one re-deriving it blind.
 
 --- stderr ---

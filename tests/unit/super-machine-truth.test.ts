@@ -173,6 +173,7 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // +250 (2026-11-10, 0.41.14 cut: mcp-giris's mcpSignIn lines; measured 27,823).
     // +750 (2026-11-11, 0.41.15 cut: owner cards, app tools for an app's own agent and shared app data lines; measured 28,479).
     // +200 (2026-11-12, gece-duzeltme B7: lookup-only header, the Super files every task, the per-checkout heavy lock; measured 28,745).
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(28_800);
+    // +500 (2026-11-12, 0.41.17 cut: the task-filing standard; measured 29,230).
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(29_300);
   });
 });

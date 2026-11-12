@@ -337,10 +337,8 @@ Safety rules the planner must apply when building the map:
   plan written as one chain was three levels).
 - **Waves live inside the ONE task** (owner, 2026-11-09). The task keeps the goal, every
   wave's criteria, the Validation method and the WAVE MAP; each wave's progress, ticks and
-  `wN green` line are logged on it. Never open a sub-task per wave: a wave sub-task
-  (`dreamcontext tasks create "Wave N: …" --parent <slug> --basis plan --owner-asked "<his words>"`)
-  only when the owner asks for one; without his words an agent's sub-task is refused. Work small enough for 1-3 files and no plan round is not a goal-skill run and
-  opens no task at all.
+  `wN green` line are logged on it. Never open a sub-task per wave. Open a task only for big work (more than ~3 files, or several sessions). Small fix: no task, say it in your last reply. Big work: ONE task; log its steps and waves inside it. A sub-task only for a part of big work that is delivered and checked on its own, never one per step or wave. Before opening, recall: if a task for the same work exists, use it. A Super child never opens one: the Super does. Work this small
+  is not a goal-skill run.
 - **Compiled artifacts marked.** A wave consumes the source of earlier waves, not their
   build output. When a task genuinely consumes a compiled artifact (it runs `dist/`, reads
   a generated manifest), its `depends on` cell says so explicitly, e.g.

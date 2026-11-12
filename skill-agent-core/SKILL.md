@@ -28,6 +28,10 @@ task needs.
 - Unsure of a flag? Run `dreamcontext <command> --help` or read
   `references/cli-reference.md`. Never guess one.
 
+## Tasks
+
+Open a task only for big work (more than ~3 files, or several sessions). Small fix: no task, say it in your last reply. Big work: ONE task; log its steps and waves inside it. A sub-task only for a part of big work that is delivered and checked on its own, never one per step or wave. Before opening, recall: if a task for the same work exists, use it. A Super child never opens one: the Super does.
+
 ## Recall first
 
 RECALL: before Glob/Grep on any "where / why / what do we know about X" question, run `dreamcontext memory recall "<keywords>"`. It ranks knowledge, features, tasks, memory, changelog, objectives, insights, theses and automations, plus connected projects. Narrow with `--types <csv>` or `--level 2|3`.

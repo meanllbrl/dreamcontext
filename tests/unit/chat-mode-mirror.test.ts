@@ -121,8 +121,8 @@ describe('chat modes — client menu <-> server allowlist mirror', () => {
     // fingerprint here under the new version.
     const PINNED: Record<string, [version: string, fingerprint: string]> = {
       basic: ['1.0', '7c497717dfe1'],
-      plan: ['1.9', '2eddff2d16be'], // 2026-11-12 (gece B7 + B15, one bump past 0.41.16's 1.8): the plan's ONE task is the one the Super files; a refused plan link builds only on the owner's word.
-      develop: ['1.8', 'e502a479e2b3'], // 2026-11-12 (gece-duzeltme B7): no task named = small work, none created.
+      plan: ['1.9', '175bfc43784e'], // 2026-11-12 (gece B7 + B15 + the owner's task-filing standard, one bump past 0.41.16's 1.8).
+      develop: ['1.8', '249c05398601'], // 2026-11-12 (gece B7 no-task path + the owner's task-filing standard, one bump past 0.41.16's 1.7).
       train: ['0.1', 'f613cadc20e7'],
     };
     for (const mode of PICKER_MODES) {

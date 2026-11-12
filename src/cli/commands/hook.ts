@@ -3926,7 +3926,7 @@ export function registerHookCommand(program: Command): void {
             : '  • REVIEW the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.');
         }
         g.push('  • For depth, RECALL more: dreamcontext memory recall "<your keywords>" [--types knowledge,feature,task,memory] — try a few keyword sets and read the relevant hits in full.');
-        g.push('  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; untracked BIG work gets one task (a small fix of 1-3 files opens none; a sub-task only when the owner asks).');
+        g.push('  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; untracked BIG work gets one task (a small fix opens none; a sub-task only for a part delivered and checked on its own, never one per step or wave).');
         g.push('  Act only once the relevant memory is in your context — be the agent that has seen the whole picture, not one re-deriving it blind.');
         emitPromptBlock('gate', g.join('\n'));
       }

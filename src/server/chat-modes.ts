@@ -30,6 +30,7 @@
  *  AGENT spawn a chat (`window new`, the Assistant's `chat`) keeps its own basic/plan/develop
  *  list. Order is the picker's order. */
 import { MAX_LIVE_CHILDREN, MAX_MEMBER_LIVE_CHILDREN, SUPER_BRIEF_MARKER, SUPER_SHOW_SECTION, SUPER_VOICE_SECTION } from '../lib/super/types.js';
+import { TASK_FILING_STANDARD } from '../lib/task-filing-standard.js';
 import { REACTION_MEANING } from '../lib/telegram/reactions.js';
 
 export const CHAT_MODES = ['basic', 'plan', 'develop', 'train', 'assistant', 'super'] as const;
@@ -201,8 +202,8 @@ dreamcontext tasks insert <slug> acceptance_criteria "Validation method: <the us
 dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of scope>"
 \`\`\`
 
-   Waves stay inside this ONE task: the map names them and Develop logs each one on it. Wave
-   sub-tasks only when the owner asks for them.
+   Waves stay inside this ONE task: the map names them and Develop logs each one on it, never
+   one sub-task per wave. Tasks: ${TASK_FILING_STANDARD}
 
    Present it.
 
@@ -292,6 +293,7 @@ const DEVELOP_BRIEFING = `# Mode: Develop
 
 You are building to a task's acceptance criteria. You LEAD the run, and you write the code.
 
+- **Tasks:** ${TASK_FILING_STANDARD}
 - **No task named in your brief = small work.** Create none (never \`tasks create\`): build from the
   brief. In the recipe a run name stands for the slug: your branch without its prefix, only
   a-z, 0-9 and - (\`super/fix-title\` → \`fix-title\`). Skip every \`tasks log|insert|status\` step; open
@@ -617,9 +619,8 @@ there is board work; delegate it with board, ids and box verbatim.
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
   (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
-- You are the only one who files a task. Big work (a plan, several lanes) gets ONE: \`dreamcontext tasks create\`
-  yourself, then \`--task <slug>\` on its plan child and later its develop child. A small fix (1-3 files)
-  gets none; no child ever files one.
+- Tasks: ${TASK_FILING_STANDARD} You file it: \`dreamcontext tasks create\`, then \`--task <slug>\` on
+  its plan child and later its develop child.
 - Several asks: number each, never drop or silently merge one; asks sharing a file are one unit. Start
   every unit with no unmet dependency now, in one message; \`super pool add\` the rest with "after <unit>".
   Each \`--brief\` reads \`<job> · <mode> <model>/<effort>\`. Never ask him about the split, modes or models.

@@ -127,7 +127,7 @@ what happens if the plan ships as written, never by how sure or how thorough you
   that no step builds, something the owner will notice on first opening the result that no
   criterion covers (the goal's sentence not naming it does not make it optional), a goal the
   owner opens with no observed criterion, an unsafe wave map (one file in two lanes of a wave, a contract left
-  unpinned), a plan that opens a sub-task per wave or per step the owner did not ask for (waves
+  unpinned), a plan that opens a sub-task per wave or per step (waves
   are logged inside the one task), or an `EXECUTION:` line that does not fit the work (fan-out for work one
   session can build, lead for work it cannot).
 - **Minor**: the plan works, but a step could be clearer, cheaper or more robust.
