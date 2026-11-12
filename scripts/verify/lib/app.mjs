@@ -16,7 +16,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, webkit } from 'playwright';
@@ -46,7 +46,12 @@ const pathOf = (url) => { try { const u = new URL(url); return u.pathname + u.se
 /** Requests a dev server makes that are no finding about the app. */
 const NOISE = /\/@vite\/|\/__vite_ping|favicon\.ico|\/api\/.*\/ws\b/;
 
-export async function openApp({ suite = 'look', build = false, desktop = false } = {}) {
+/**
+ * `claude`: what answers as `claude` in the fake HOME. Default a stand-in that exits 0; a path:
+ * that script (a deterministic fake); 'real': the machine's own `claude`, signed in through the
+ * login keychain (linked into the fake HOME), for a check that must measure the real model.
+ */
+export async function openApp({ suite = 'look', build = false, desktop = false, claude = null } = {}) {
   const scratch = scratchDir(`dc-verify-${suite}-${process.pid}`); // two runs can overlap in the fast line
   rmSync(scratch, { recursive: true, force: true });
   const home = join(scratch, 'home');
@@ -58,8 +63,19 @@ export async function openApp({ suite = 'look', build = false, desktop = false }
   // npm's cache stays the real one: under the fake HOME, `npx tsx` would download tsx every run.
   const bin = join(home, '.local', 'bin');
   mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 0\n');
-  chmodSync(join(bin, 'claude'), 0o755);
+  if (claude === 'real') {
+    const realHome = process.env.HOME ?? '';
+    const found = spawnSync('/bin/sh', ['-lc', 'command -v claude'], { encoding: 'utf-8' }).stdout.trim();
+    if (!found) throw new Error('claude: real asked, but no claude on this Mac');
+    symlinkSync(found, join(bin, 'claude'));
+    mkdirSync(join(home, 'Library'), { recursive: true });
+    symlinkSync(join(realHome, 'Library', 'Keychains'), join(home, 'Library', 'Keychains'));
+  } else if (claude) {
+    symlinkSync(claude, join(bin, 'claude'));
+  } else {
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(bin, 'claude'), 0o755);
+  }
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k)));
   const env = { ...clean, HOME: home, PATH: `${bin}:${process.env.PATH}`, npm_config_cache: join(process.env.HOME ?? home, '.npm'), DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_AUTO_DASHBOARD: '0' };
   // `desktop` (needs `build`: the server must be this process's direct child): the server acts as
