@@ -70,31 +70,37 @@ that choice: you cannot turn a private click into a public publish (403 `grant_s
    grant is spent the moment the push goes out; a publish the gate stopped frees it for a retry
    within the hour. Cut off or an error: run the SAME command again, it is safe. `grant_used`:
    it already went out, stop. `publish_running`: wait, never publish twice. Only `grant_expired`
-   or `owner_page_only` (replaced, the app restarted): ask him to press Share again and publish
-   with the new grant, your work stays.
+   or `owner_page_only` (the app restarted), or `grant_replaced` (he opened a newer grant: use the newest, or if
+   none reaches you): ask him to press Share again and publish with the new grant, your work stays. A first
+   private publish with no grant: ask with `--ask --invite <logins>`, or he presses Share; an
+   `--ask` without `--invite` can go out to nobody.
 7. End with a short plain list: what you cleaned, what went out, where.
 
 Licence: a private share gets "invitees use it, nobody re-shares it"; a public one MIT. A public
-publish is for good, so only the owner's own "Share publicly" click opens one.
+publish is for good, so it needs the owner's own yes: his "Share publicly" click, or his Onayla on
+an `--ask --public` card that shows it. To invite one more person to the version already out
+(`--ask --invite` answers "Nothing changed since the last publish"), he presses Share on the
+app's page.
 
 ## Asking the owner (publish, install, update, logo)
 
 When the work needs one of these and no grant came with your prompt, ask; never hunt for another way.
 
-1. Ask: `dreamcontext apps publish <slug> --ask [--note "…"] [--approve <ids>]`,
+1. Ask: `dreamcontext apps publish <slug> --ask [--note "…"] [--approve <ids>] [--invite <logins>] [--public]`,
    `dreamcontext apps install <owner/repo> --ask [--set key=value]`,
    `dreamcontext apps update <slug> --ask [--how merge|set-aside]`, or
    `dreamcontext apps logo <slug> <absolute path to a PNG or JPG> --ask`. The server builds the
    plan from its own reads and shows him ONE card (the notch; Telegram while he is away) with
    exactly what would happen: where it goes and to whom, the changed files, every permission
-   change, what a merge would lose, the picture itself. The command waits up to 110 s for him.
+   change, what a merge would lose, the picture itself. The command waits 60 s for him by default (`--wait <s>`, at most 110).
 2. Wait: still waiting, run `dreamcontext apps grant <request> --wait 100`. Rejected: stop, and do
    not ask again for 10 minutes (and only if something changed).
 3. Spend: on Onayla you get one command with a one-hour, one-time grant (a chat line `[app onayı]`
    brings the same). Run it once, as given. It runs the plan he saw, nothing you add: flags on the
    spend are ignored. `stale_request`: the app changed after his yes, nothing ran; ask again.
    `grant_used`: it already ran, stop. `grant_expired`: run the SAME `--ask` again; the card says
-   "Süresi doldu: yeniden onaylıyor musun?" and one tap gives a new hour.
+   "Süresi doldu: yeniden onaylıyor musun?" and one tap gives a new hour. A grant that came from
+   his Share click has no `--ask` to repeat: ask him to press Share again.
 
 An update publish (a published app whose files changed) never asks about visibility or invitees:
 it keeps the last publish's. The Apps page shows such an app with "Yerelde yayınlanmamış yeni

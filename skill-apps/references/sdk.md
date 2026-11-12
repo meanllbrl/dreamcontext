@@ -32,7 +32,7 @@ import { dc } from './lib/dc.mjs';
 | `dc.data.status()` | ✓ | ✓ | where this app's data lives: `{ mode: 'shared'\|'pending'\|'local'\|'undecided'\|'sync_off', shared: string[], pending: string[], held: {path, reason}[] }`. See "dc.data" below |
 | `dc.data.read(path, validate)` | ✓ | ✓ | one file (`'favorites/a1.json'`), or a folder's files one level down as an array (`'favorites/'`), each passed through `validate` (shared data is someone else's); a missing file is `null`, a missing folder `[]` |
 | `dc.data.write(path, content)` | ✗ | ✓ | writes one file atomically (temp name, then rename) |
-| `dc.data.remove(path)` | ✗ | ✓ | the only real delete of a shared file: it reaches the team |
+| `dc.data.remove(path)` | ✗ | ✓ | the only real delete of a shared file: it reaches the team. Answers `not_shared` (403) and leaves the file when the path is not shared yet, not tracked yet, or this Mac is not sharing: then delete the file with your own code |
 
 **An embedded screen reaches this Mac only.** Nothing drawn inside it (a picture, a board, a PDF)
 can load or open anything from the internet: the screen's policy and the window both refuse it, and
@@ -100,7 +100,7 @@ for `pending`, `local`, `undecided` and `sync_off` (nothing of it reaches the te
 Every `dc.data.*` path resolves inside the calling app's own data folder only; `..`, an absolute
 path and a part starting with a dot are refused. Read shared files with a `validate` function and
 draw them with `textContent`. A file missing on this Mac is never a delete; only `dc.data.remove`
-deletes, and only a shared path of this app. While a team pull is landing the app is paused: calls
+deletes, and only a shared path of this app (`not_shared` otherwise: delete the file with your own code). While a team pull is landing the app is paused: calls
 answer 503 `{error:'paused_for_sync'}` for a few seconds (until the merge finishes, if one is left
 open); in the SDK that is a `DcError` with code `paused_for_sync`: catch it and try again in a moment. An older copy of `lib/dc.mjs` lacks these calls: `dreamcontext apps validate --fix-sdk`
 refreshes it.
@@ -113,4 +113,4 @@ stderr at start. Answer the manifest's health route with `json(res, 200, dc.heal
 `{"ok": true, "dcActions": [...]}` plus whatever you pass (`dc.health({db: 'up'})`). dreamcontext
 reads the first 4 KB of that answer on every start and shows "N tools · M change" on the app card,
 with a warning when a listed tool is not served (`actions_drift`). An app whose health answers no
-`dcActions` shows "not audited".
+`dcActions` shows "not checked".
