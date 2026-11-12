@@ -38,6 +38,36 @@
   box-shadow: var(--shadow-xl);
 }
 
+/* A file dragged over the field: the field is where it lands (never the canvas). */
+.bsf[data-dropping='true'] {
+  border-color: var(--color-accent);
+  border-style: dashed;
+}
+
+/* Dropped and pasted pictures and files: the Chat composer's own chips, in a row above the words. */
+.bsf-atts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.bsf-att {
+  display: inline-flex;
+  align-items: center;
+  max-width: 220px;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.bsf-att .chat-cmp-hl-img {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .bsf:focus-within {
   border-color: var(--color-accent);
   box-shadow: var(--shadow-xl), 0 0 0 1px var(--color-accent);

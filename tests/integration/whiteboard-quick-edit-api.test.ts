@@ -49,16 +49,16 @@ function call(method: string, path: string, body?: unknown, vault = 'a'): Promis
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── the fake claude ──
-interface Spawned { args: string[]; resolve: (stdout: string) => void; child: EventEmitter & { pid: number }; killed: string[] }
+interface Spawned { args: string[]; stdin?: string; resolve: (stdout: string) => void; child: EventEmitter & { pid: number }; killed: string[] }
 let spawned: Spawned[] = [];
 let auto: ((args: string[]) => unknown) | null = null;
 const envelope = (answer: unknown) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', structured_output: answer, total_cost_usd: 0.004 });
 
-function fakeExec(args: string[], opts: { onSpawned?: (c: unknown, at: Date) => void }): Promise<ClaudeExecution> {
+function fakeExec(args: string[], opts: { onSpawned?: (c: unknown, at: Date) => void; stdin?: string }): Promise<ClaudeExecution> {
   return new Promise((resolve) => {
     const child = Object.assign(new EventEmitter(), { pid: 90000 + spawned.length });
     const entry: Spawned = {
-      args, child, killed: [],
+      args, child, killed: [], stdin: opts.stdin,
       resolve: (stdout) => resolve({ spawned: true, timedOut: false, exitCode: 0, stdout, stderrTail: '', startedAt: new Date(), finishedAt: new Date(), result: null }),
     };
     spawned.push(entry);
@@ -296,5 +296,102 @@ describe('quick edit reach', () => {
     const routes = buildRouter().list().map((r) => `${r.method} ${r.path}`).filter((r) => r.includes('quick-edit'));
     expect(routes).toHaveLength(6);
     for (const r of routes) expect(ROUTE_POLICY[r]?.allow).toBe(true);
+  });
+});
+
+describe('quick edit widgets (owner 12 Nov: insight, HTML, web page on the board)', () => {
+  const insight = (slug: string, title: string) => {
+    mkdirSync(join(roots.a, 'lab', 'insights'), { recursive: true });
+    writeFileSync(join(roots.a, 'lab', 'insights', `${slug}.md`), `---\ntitle: ${title}\nrender: app\nsource:\n  adapter: script\n  script:\n    file: scripts/x.mjs\n---\n`);
+  };
+
+  it('adds a known insight inside the area, the catalog rides in the message, and Geri al removes it', async () => {
+    insight('mrr', 'MRR');
+    auto = () => ({ reply: 'MRR insight eklendi.', notBoard: false, widgets: [{ kind: 'insight', ref: 'mrr' }] });
+    const slug = await boardWith([rect('A')]);
+    const area = { x: 600, y: 400, w: 500, h: 300 };
+    const start = await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: "MRR insight'ını buraya ekle", area });
+    const view = await settle(slug, start.body.job);
+    expect(view.state).toBe('done');
+    const card = view.elements.find((e: WhiteboardElement) => e.type === 'embeddable');
+    expect(card.customData.dc).toMatchObject({ kind: 'insight', ref: 'mrr' });
+    expect(card.x).toBe(600);
+    expect(card.y).toBe(400);
+    const user = spawned[0].args[spawned[0].args.indexOf('-p') + 1];
+    expect(user).toMatch(/<catalog-[0-9a-f]+>/);
+    expect(user).toContain('"mrr","MRR"');
+    const undo = await call('POST', `/api/whiteboards/${slug}/quick-edit/${view.edit.id}/undo`);
+    expect(undo.status).toBe(200);
+    expect(readWhiteboard(roots.a, slug).board.elements.find((e) => e.id === card.id)?.isDeleted ?? true).toBe(true);
+  });
+
+  it('an unknown insight is refused by name and the board is left byte-identical', async () => {
+    auto = () => ({ reply: 'Eklendi.', notBoard: false, widgets: [{ kind: 'insight', ref: 'churn-rate' }] });
+    const slug = await boardWith([rect('A')]);
+    const before = readFileSync(file(slug), 'utf-8');
+    const view = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'churn insight ekle' })).body.job);
+    expect(view.state).toBe('failed');
+    expect(view.code).toBe('widget');
+    expect(view.refusal).toEqual({ kind: 'insight', why: 'not_found', name: 'churn-rate' });
+    expect(readFileSync(file(slug), 'utf-8')).toBe(before);
+  });
+
+  it('a web card pointing outside the project, or at localhost, is refused; https lands', async () => {
+    const slug = await boardWith([rect('A')]);
+    for (const url of ['../../etc/passwd.html', '/etc/hosts.html', 'http://localhost:3000', 'file:///Users/x/secret.pdf']) {
+      auto = () => ({ reply: 'Kondu.', notBoard: false, widgets: [{ kind: 'web', url }] });
+      const view = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'bunu koy' })).body.job);
+      expect(view.code, url).toBe('widget');
+      expect(view.refusal.why, url).toBe('web');
+    }
+    auto = () => ({ reply: 'Site kondu.', notBoard: false, widgets: [{ kind: 'web', url: 'https://example.com' }] });
+    const ok = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'https://example.com koy' })).body.job);
+    expect(ok.state).toBe('done');
+    expect(ok.elements[0].customData.dc).toMatchObject({ kind: 'web', url: 'https://example.com/' });
+  });
+});
+
+describe('quick edit attachments (owner 12 Nov: dropped and pasted pictures and files reach the prompt)', () => {
+  // A 2x1 PNG: real bytes, so the server sniffs it as a picture.
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000002000000010802000000' + '7b40e8dd0000000c4944415408d763f8cfc0f01f0005fe02fedb4a7a1e0000000049454e44ae426082', 'hex');
+  const drop = (name: string, bytes: Buffer | string) => {
+    const dir = join(roots.a, 'tmp', 'agent-drops');
+    mkdirSync(dir, { recursive: true });
+    const p = join(dir, `${Date.now()}-${name}`);
+    writeFileSync(p, bytes);
+    return p;
+  };
+
+  it('a picture and a text file go into the turn on stdin; a picture asked to be placed lands as an image', async () => {
+    const shot = drop('ekran.png', PNG);
+    const notes = drop('notlar.txt', 'Giriş ekranı: e-posta, şifre, Giriş yap');
+    auto = () => ({ reply: 'Resim kondu.', notBoard: false, pictures: [1] });
+    const slug = await boardWith([rect('A')]);
+    const view = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'bunu tahtaya koy', attachments: [shot, notes] })).body.job);
+    expect(view.state).toBe('done');
+    const args = spawned[0].args;
+    expect(args).toContain('--input-format');
+    expect(args[args.indexOf('--output-format') + 1]).toBe('stream-json');
+    const line = JSON.parse(spawned[0].stdin!);
+    const content = line.message.content;
+    expect(content[0].text).toContain('Request from the owner: bunu tahtaya koy');
+    expect(content[0].text).toMatch(/<owner-file-[0-9a-f]+ name="notlar.txt">\nGiriş ekranı: e-posta, şifre, Giriş yap\n<\/owner-file-/);
+    expect(content[1]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG.toString('base64') } });
+    const img = view.elements.find((e: WhiteboardElement) => e.type === 'image');
+    expect(img.fileId).toMatch(/^[A-Za-z0-9_-]{8,}$/);
+  });
+
+  it('a file outside the drop folder is never read; an unreadable one is refused by name', async () => {
+    const slug = await boardWith([rect('A')]);
+    const secret = join(tmp, 'a', 'secret.txt');
+    writeFileSync(secret, 'TOKEN=1');
+    auto = () => ({ reply: 'x', notBoard: false });
+    const out = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'oku', attachments: [secret] })).body.job);
+    expect(out.code).toBe('attachment');
+    expect(out.refusal).toEqual({ kind: 'attachment', why: 'gone', name: 'secret.txt' });
+    const bin = drop('veri.bin', Buffer.from([0, 1, 2, 255, 254]));
+    const bad = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'oku', attachments: [bin] })).body.job);
+    expect(bad.refusal).toMatchObject({ why: 'type', name: 'veri.bin' });
+    expect(spawned).toHaveLength(0);
   });
 });

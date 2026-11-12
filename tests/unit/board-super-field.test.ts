@@ -140,7 +140,7 @@ describe('the component wiring', () => {
 
   it('the draft is cleared only after an accepted send', () => {
     const accepted = src.indexOf("if (!res.accepted)");
-    const cleared = src.indexOf("if (!ask) setDraft((cur)");
+    const cleared = src.indexOf("if (!ask) { setDraft((cur)");
     expect(accepted).toBeGreaterThan(0);
     expect(cleared).toBeGreaterThan(accepted);
     // The quick edit clears it only after the server took the job.
@@ -254,7 +254,7 @@ describe('where the field sits (review r1/r2: one rule decides the painted box)'
 
   it('a send settles read-only, so the draft is exactly what went; the track knows a steered turn', () => {
     expect(src).toMatch(/readOnly=\{sending\}/);
-    expect(src).toMatch(/if \(!ask\) setDraft\(\(cur\) => \(cur === sent \? '' : cur\)\)/);
+    expect(src).toMatch(/if \(!ask\) \{ setDraft\(\(cur\) => \(cur === sent \? '' : cur\)\); dropSentAttachments\(conv\); \}/);
     expect(src).toMatch(/startTrack\(msgRef\(text\), presenceRef\.current/);
   });
 });
@@ -370,7 +370,7 @@ describe('the empty region (Decision 12; criterion 2)', () => {
     expect(splitPageContext(text).page?.area).toEqual([40, -80, 320, 240]);
     expect(composeFieldMessage('buraya elma', 'q3', null, [1, 2, 30, 40])).toBe('buraya elma\n\n[On page whiteboards board=q3 area=1,2,30,40]');
     const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
-    expect(src).toMatch(/quick\.start\(\{ text: words, scope, area: areaOf\(area\) \}\)/);
+    expect(src).toMatch(/quick\.start\(\{ text: words, scope, area: areaOf\(area\), attachments: quickAttachmentPaths\(carried\) \}\)/);
   });
 
   it('Escape, a shape selection and another board clear it; the canvas never saves it', () => {
@@ -429,6 +429,12 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
     expect(lineOfJob(job({ reply: "Kutuya 'Ödeme' yazıldı.", nothing: true }), tq)).toEqual({ kind: 'nothing', reply: tq('whiteboard.quick.nothing') });
   });
 
+  it('the model declined (asked for no change): its reason is the line, so a refusal says why', () => {
+    const why = 'Proje dışındaki bir dosya tahtaya konamaz; tahtada bir şey değişmedi.';
+    expect(lineOfJob(job({ reply: why, nothing: true, declined: true }), tq)).toEqual({ kind: 'nothing', reply: why });
+    expect(lineOfJob(job({ reply: '', nothing: true, declined: true }), tq)).toEqual({ kind: 'nothing', reply: tq('whiteboard.quick.nothing') });
+  });
+
   it('review r1: a failure is worded from its code in the owner\'s language, never the server\'s prose', () => {
     expect(lineOfJob(job({ state: 'failed', code: 'timeout', error: 'no answer in 60 s' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.err.timeout') });
     expect(lineOfJob(job({ state: 'failed', code: 'surprise', error: 'Zaman aşımı' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.failed') });
@@ -444,6 +450,25 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
     expect(lineOfJob(job({ outOfScope: true, reply: 'Önce Seçenek D şeklini seç.' }), tq)).toEqual({ kind: 'outOfScope', reply: 'Önce Seçenek D şeklini seç.' });
     expect(lineOfJob(job({ state: 'failed', code: 'unreadable', error: 'answer not readable' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.err.unreadable') });
     expect(lineOfJob(job({ state: 'stopped' }), tq)).toEqual({ kind: 'stopped' });
+  });
+
+  it('a refused widget is worded with its kind and the name asked for, never a command', () => {
+    const i18n = readFileSync(fileURLToPath(new URL('../../dashboard/src/context/I18nContext.tsx', import.meta.url)), 'utf-8');
+    const tr = (k: string) => {
+      const all = [...i18n.matchAll(new RegExp(`'${k.replace(/[.-]/g, (c) => `\\${c}`)}': '((?:[^'\\\\]|\\\\.)*)'`, 'g'))];
+      return (all[1] ?? all[0])?.[1].replace(/\\'/g, "'") ?? k;
+    };
+    const line = lineOfJob(job({ state: 'failed', code: 'widget', refusal: { kind: 'insight', why: 'not_found', name: 'churn' } }), tr);
+    expect(line).toEqual({ kind: 'failed', text: 'Bu projede "churn" adında bir insight yok; tahtada bir şey değişmedi.' });
+    const web = lineOfJob(job({ state: 'failed', code: 'widget', refusal: { kind: 'web', why: 'web', name: 'http://localhost:3000' } }), tr);
+    expect((web as { text: string }).text).toContain('https');
+    for (const why of ['not_found', 'web', 'too_long', 'bad']) {
+      expect(i18n.split(`'whiteboard.quick.err.widget.${why}':`).length - 1, why).toBe(2);
+      expect(tr(`whiteboard.quick.err.widget.${why}`)).not.toMatch(/dreamcontext|whiteboard add|--ref/);
+    }
+    for (const kind of ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card', 'agent', 'card']) {
+      expect(i18n.split(`'whiteboard.quick.kind.${kind}':`).length - 1, kind).toBe(2);
+    }
   });
 
   it('the added shapes are what the edit wrote that the scene did not hold (they become the selection)', () => {

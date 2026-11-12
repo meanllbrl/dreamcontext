@@ -22,9 +22,11 @@ import { identityKey, mutateWhiteboard, readWhiteboard } from './store.js';
 import {
   applyQuickEdit, buildAdds, expandScope, scopeTextLimit, parseQuickEditAnswer, quickEditArgs, quickEditInput, quickEditSystemPrompt,
   quickEditUserMessage, QuickEditRefusal, readJournal, writeJournal, QUICK_MODEL,
-  type QuickArea, type QuickEditAnswer, type QuickJournalRecord,
-} from './quick-edit.js';
-import type { WhiteboardElement } from './widgets.js';
+  type QuickArea, type QuickEditAnswer, type QuickJournalRecord, answerDeclines } from './quick-edit.js';
+import type { WhiteboardElement, WidgetKind } from './widgets.js';
+import { prepareQuickWidgets, QuickWidgetRefusal, type Placeable, type PreparedWidget, type WidgetRefusalWhy } from './quick-widgets.js';
+import { quickCatalogText } from './quick-catalog.js';
+import { prepareQuickPictures, QuickAttachmentRefusal, quickTurnLine, readQuickAttachments, type QuickAttachment } from './quick-attachments.js';
 import { WhiteboardValidationError } from './errors.js';
 
 export const QUICK_TIMEOUT_MS = 60_000;
@@ -34,7 +36,7 @@ export const QUICK_JOB_TTL_MS = 10 * 60_000;
 
 export type QuickJobState = 'queued' | 'running' | 'applying' | 'done' | 'failed' | 'stopped';
 /** Why a job failed, as a code: the page words it in the owner's language (review r1). */
-export type QuickFailCode = 'spawn' | 'timeout' | 'limit' | 'unreadable' | 'too_big' | 'refused' | 'write' | 'unrecorded';
+export type QuickFailCode = 'spawn' | 'timeout' | 'limit' | 'unreadable' | 'too_big' | 'refused' | 'write' | 'unrecorded' | 'widget' | 'attachment';
 
 export interface QuickJobView {
   state: QuickJobState;
@@ -50,8 +52,12 @@ export interface QuickJobView {
   /** A failed job's reason: `code` for the page, `error` a log line (never shown as is). */
   code?: QuickFailCode;
   error?: string;
+  /** A refused widget (`code: 'widget'`): the page words it, naming what was not found. */
+  refusal?: { kind: WidgetKind; why: WidgetRefusalWhy; name: string } | { kind: 'attachment'; why: string; name: string };
   /** The answer asked for changes and none could be made: not a success. */
   nothing?: boolean;
+  /** With `nothing`: the answer asked for no change at all, so its reply is the reason (shown). */
+  declined?: boolean;
   /** Asked-for changes that could not be made beside the ones that were. */
   dropped?: number;
   /** Measured, for the speed criterion: spawn → answer, and the whole job. */
@@ -63,6 +69,8 @@ export interface QuickJobRequest {
   text: string;
   scope: { ids: string[]; identities: Record<string, string> } | null;
   area: QuickArea | null;
+  /** Paths the composer's upload returned; only files in the vault's drop folder are read. */
+  attachments?: string[];
   selfOrigin?: string;
 }
 
@@ -90,6 +98,8 @@ export interface QuickDeps {
   env?: Record<string, string | undefined>;
   now?: () => number;
   system?: () => string;
+  /** Tests: the vault catalog text the message carries. */
+  catalog?: () => string;
   /** Tests: the status answer and the process-group kill. */
   status?: () => QuickStatus;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
@@ -270,12 +280,18 @@ async function run(job: Job): Promise<void> {
       records ??= readJournal(job.root, job.slug, job.req.selfOrigin);
       identities[id] = untouchedIdentity(given, disk, id, records);
     }
+    // The owner's pictures and files, read now (refused before any child starts).
+    const atts: QuickAttachment[] = readQuickAttachments(job.root, job.req.attachments ?? []);
     const input = quickEditInput(board.elements, scope, job.req.area);
     const textLimit = scopeTextLimit(board.elements, scope);
     cwd = mkdtempSync(join(tmpdir(), 'dc-quick-'));
     const systemFile = join(cwd, 'system-prompt.md');
     writeFileSync(systemFile, systemPrompt());
-    const args = quickEditArgs(systemPrompt(), quickEditUserMessage(job.req.text, input), systemFile);
+    const catalog = deps.catalog ? deps.catalog() : quickCatalogText(job.root);
+    const message = quickEditUserMessage(job.req.text, input, undefined, catalog);
+    // With attachments the turn goes in on stdin (pictures are image blocks); without, as before.
+    const stdin = atts.length ? quickTurnLine(message, atts) : undefined;
+    const args = quickEditArgs(systemPrompt(), message, systemFile, { stdin: !!stdin });
     const exec = deps.exec ?? executeClaudeDetached;
     let env = deps.env;
     if (!env) {
@@ -288,6 +304,7 @@ async function run(job: Job): Promise<void> {
       cwd,
       timeoutMs: QUICK_TIMEOUT_MS,
       env,
+      ...(stdin !== undefined ? { stdin } : {}),
       onSpawned: (child) => {
         job.child = child;
         if (job.stopRequested && child.pid) { try { killGroup(-child.pid, 'SIGTERM'); } catch { /* gone */ } }
@@ -310,12 +327,18 @@ async function run(job: Job): Promise<void> {
     }
     // The drawings are built here, in a worker under a deadline, outside the board's lock.
     const built = await buildAdds(answer);
+    // The widgets are resolved against the vault here too: an unknown name refuses the edit.
+    const widgets = prepareQuickWidgets(job.root, answer.widgets ?? [], { selfOrigin: job.req.selfOrigin });
+    // A picture placed as it is: stored beside the board like `whiteboard add image` stores one.
+    const pictures = prepareQuickPictures(job.root, job.slug, answer.pictures ?? [], atts);
     if (job.stopRequested) return;
     job.view = { ...job.view, state: 'applying' };
-    await apply(job, answer, scope, identities, built, textLimit, parsed.costUsd, { modelMs, t0 });
+    await apply(job, answer, scope, identities, built, widgets, pictures, textLimit, parsed.costUsd, { modelMs, t0 });
   } catch (err) {
     if (job.stopRequested) return;
     if (job.committed) failed(job, 'unrecorded', 'the board was written; its record was not');
+    else if (err instanceof QuickAttachmentRefusal) settle(job, { state: 'failed', code: 'attachment', error: err.message, refusal: { kind: 'attachment', why: err.why, name: err.name } });
+    else if (err instanceof QuickWidgetRefusal) settle(job, { state: 'failed', code: 'widget', error: err.message, refusal: { kind: err.kind, why: err.why, name: err.name } });
     else if (err instanceof QuickEditRefusal) failed(job, err.code === 'too_big' ? 'too_big' : 'refused', err.message);
     else failed(job, err instanceof WhiteboardValidationError ? 'refused' : 'write', 'the edit was not written');
   } finally {
@@ -329,6 +352,8 @@ async function apply(
   scope: string[],
   identities: Record<string, string>,
   built: WhiteboardElement[][],
+  widgets: PreparedWidget[],
+  pictures: Placeable[],
   textLimit: number,
   costUsd: number | null,
   t: { modelMs: number; t0: number },
@@ -336,7 +361,7 @@ async function apply(
   let outcome: ReturnType<typeof applyQuickEdit> | null = null;
   const recordId = randomBytes(16).toString('base64url');
   await mutateWhiteboard(job.root, job.slug, (board) => {
-    outcome = applyQuickEdit(board, answer, { scope, identities, area: job.req.area, built, textLimit });
+    outcome = applyQuickEdit(board, answer, { scope, identities, area: job.req.area, built, widgets, pictures, textLimit });
   }, {
     selfOrigin: job.req.selfOrigin,
     onCommitted: (res) => {
@@ -363,7 +388,7 @@ async function apply(
   const wroteSomething = o.added.length + o.changed.length > 0;
   // The line follows what was written, not the model's sentence (review r1, edge-cases).
   if (!wroteSomething && o.skipped.length === 0) {
-    settle(job, { state: 'done', reply: answer.reply, nothing: true, costUsd, timing });
+    settle(job, { state: 'done', reply: answer.reply, nothing: true, ...(answerDeclines(answer) ? { declined: true } : {}), costUsd, timing });
     return;
   }
   // What the page reconciles at once: every element the edit wrote, as it landed on disk.

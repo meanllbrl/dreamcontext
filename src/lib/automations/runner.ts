@@ -1529,6 +1529,9 @@ export type SpawnImpl = typeof import('node:child_process').spawn;
 export interface ClaudeExecOptions {
   cwd: string;
   timeoutMs: number;
+  /** Written to the child's stdin, then closed (`--input-format stream-json`: a turn with
+   *  pictures). Absent: stdin is ignored, as it always was. */
+  stdin?: string;
   spawnImpl?: SpawnImpl;
   killImpl?: KillImpl;
   log?: (line: string) => void;
@@ -1614,7 +1617,7 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     // The window's key stays out: `automations run` from the Super Agent's shell must not hand its
     // session to the member it starts (`super team amend` answers to that key).
     env: { ...process.env, DREAMCONTEXT_WINDOW_TOKEN: undefined, DREAMCONTEXT_WINDOW_URL: undefined, PATH: cliAwarePath(claudeAwarePath()), ...(opts.env ?? {}) },
-    stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
+    stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : [opts.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     // Windows has no process groups to lead, and a DETACHED_PROCESS child has no console: every
     // hook and tool claude starts would open its own visible one. Not detached, the child gets a
     // hidden console (windowsHide, src/lib/proc.ts) its tree inherits, and the `-pid` kills below
@@ -1665,6 +1668,11 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
   opts.onSpawned?.(child, startedAt);
 
   const collectors = attachOutputCollectors(child);
+  if (opts.stdin !== undefined && child.stdin) {
+    // A child that exits before reading all of it closes the pipe: EPIPE is its answer, not ours.
+    child.stdin.on('error', () => { /* the exit code says what happened */ });
+    child.stdin.end(opts.stdin);
+  }
   const { timedOut, code } = await waitForExit(child, opts.timeoutMs, killFn, logFn);
   const finishedAt = nowFn();
   const stdout = collectors.getStdout();

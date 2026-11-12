@@ -141,8 +141,12 @@ export interface QuickJobView {
   /** A failed job's reason; worded here, never the server's prose (review r1). */
   code?: string;
   error?: string;
+  /** A refused widget (`code: 'widget'`): its kind, why, and the name it was asked by. */
+  refusal?: { kind: string; why: string; name: string };
   /** The answer asked for changes and none could be made. */
   nothing?: boolean;
+  /** With `nothing`: the model asked for no change, its reply says why. */
+  declined?: boolean;
   /** Asked-for changes that could not be made beside the ones that were. */
   dropped?: number;
 }
@@ -150,6 +154,25 @@ export interface QuickJobView {
 /** The server's failure codes the field words itself; any other code reads as the generic line. */
 const FAIL_CODES = new Set(['spawn', 'timeout', 'limit', 'unreadable', 'too_big', 'refused', 'write', 'unrecorded']);
 export const failKey = (code: string | undefined): string => (code && FAIL_CODES.has(code) ? `whiteboard.quick.err.${code}` : 'whiteboard.quick.failed');
+
+const WIDGET_WHYS = new Set(['not_found', 'web', 'too_long', 'bad']);
+const WIDGET_KIND_KEYS = new Set(['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card', 'agent']);
+
+const FILE_WHYS = new Set(['type', 'too_big', 'gone']);
+
+/** A refused picture or file in the owner's words: its name and why. */
+export function attachmentRefusalText(r: { why: string; name: string }, t: (key: string) => string): string {
+  const why = FILE_WHYS.has(r.why) ? r.why : 'type';
+  return t(`whiteboard.quick.err.file.${why}`).replace('{name}', r.name.trim() || '…');
+}
+
+/** A refused widget in the owner's words: what it was, the name he asked by, and why. */
+export function widgetRefusalText(r: { kind: string; why: string; name: string }, t: (key: string) => string): string {
+  const why = WIDGET_WHYS.has(r.why) ? r.why : 'bad';
+  const kind = t(WIDGET_KIND_KEYS.has(r.kind) ? `whiteboard.quick.kind.${r.kind}` : 'whiteboard.quick.kind.card');
+  const name = r.name.trim() || t('whiteboard.quick.err.widget.noName');
+  return t(`whiteboard.quick.err.widget.${why}`).replace('{kind}', kind).replace('{name}', name);
+}
 
 /** An undo refusal, in the owner's words (key under whiteboard.quick.*). */
 export function undoRefusalKey(code: string): string {
@@ -175,11 +198,17 @@ export type QuickLine =
  *  no Geri al. */
 export function lineOfJob(job: QuickJobView, t: (key: string) => string): QuickLine {
   if (job.state === 'stopped') return { kind: 'stopped' };
-  if (job.state === 'failed') return { kind: 'failed', text: t(failKey(job.code)) };
+  if (job.state === 'failed') {
+    if (job.code === 'widget' && job.refusal) return { kind: 'failed', text: widgetRefusalText(job.refusal, t) };
+    if (job.code === 'attachment' && job.refusal) return { kind: 'failed', text: attachmentRefusalText(job.refusal, t) };
+    return { kind: 'failed', text: t(failKey(job.code)) };
+  }
   const reply = (job.reply ?? '').trim();
   if (job.notBoard) return { kind: 'notBoard', reply: reply || t('whiteboard.quick.notBoard') };
   if (job.outOfScope) return { kind: 'outOfScope', reply: reply || t('whiteboard.quick.outOfScope') };
-  if (job.nothing) return { kind: 'nothing', reply: t('whiteboard.quick.nothing') };
+  // The model declined (it asked for no change): its reply is the reason. Asked-for changes that
+  // could not be made read as the plain line, never the model's sentence (review r1).
+  if (job.nothing) return { kind: 'nothing', reply: job.declined && reply ? reply : t('whiteboard.quick.nothing') };
   return { kind: 'done', reply: reply || t('whiteboard.quick.doneDefault'), editId: job.edit?.id ?? null, skipped: (job.edit?.skipped ?? job.skipped ?? []).length, dropped: job.dropped ?? 0 };
 }
 

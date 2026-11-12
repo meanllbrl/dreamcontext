@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chalk from 'chalk';
@@ -18,28 +18,23 @@ import {
   setWhiteboardGroup,
 } from '../../lib/whiteboards/store.js';
 import { WhiteboardError, WhiteboardValidationError } from '../../lib/whiteboards/errors.js';
-import { getBoard } from '../../lib/lab/boards.js';
-import { getAgent } from '../../lib/agents/store.js';
+import { pageExists, widgetBox, widgetElementAt, widgetPayloadFor, widgetRefExists } from '../../lib/whiteboards/widget-add.js';
 import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV } from '../../lib/automations/types.js';
 import { agentsOnElements } from '../../lib/whiteboards/agents.js';
 import { boardFileRelPath, fileIdFor, imageBox, imageSize, makeImageElement, sniffImageType, writeBoardFile } from '../../lib/whiteboards/files.js';
-import { checkWebUrl, isValidRef, isValidTag, isValidWidgetRef } from '../../lib/whiteboards/validate.js';
+import { checkWebUrl, isValidRef, isValidTag } from '../../lib/whiteboards/validate.js';
 import {
   WIDGET_KINDS,
   WIDGET_SIZES,
-  DEFAULT_WIDGET_BOXES, DEFAULT_WIDGET_SIZES,
+  DEFAULT_WIDGET_SIZES,
   isWidgetKind,
   isCardColor,
   CARD_COLORS,
   type CardColor,
   isWidgetSize,
   isValidPageRef,
-  makeWidgetElement,
   pageRefKind,
-  splitLabCardRef,
-  type WidgetKind,
   type WidgetSize,
-  type WidgetPayload,
 } from '../../lib/whiteboards/widgets.js';
 import {
   applyUpdate,
@@ -47,7 +42,6 @@ import {
   elementBBox,
   formatBBox,
   liveElements,
-  newTodoItem,
   prepareImport,
   readImportSource,
   removeElements,
@@ -242,29 +236,6 @@ function assertFileInScope(file: string, flag = '--file'): string {
   }
   if (!allowed.some((dir) => isInside(dir, real))) refuse('is outside the folders this agent may read from');
   return real;
-}
-
-/** Where a page ref points: a knowledge slug in the brain, or a file relative to the project. */
-function pageExists(root: string, ref: string): boolean {
-  if (pageRefKind(ref) === 'knowledge') return existsSync(join(root, 'knowledge', `${ref}.md`));
-  return existsSync(join(dirname(root), ref));
-}
-
-/** Where a ref of this kind lives in the brain — only used for the does-it-exist warning. */
-function refExists(root: string, kind: WidgetKind, ref: string): boolean {
-  if (kind === 'insight') return existsSync(join(root, 'lab', 'insights', `${ref}.md`));
-  if (kind === 'knowledge') return pageExists(root, ref);
-  if (kind === 'task') return existsSync(join(root, 'state', `${ref}.md`));
-  if (kind === 'lab-card') {
-    const parts = splitLabCardRef(ref);
-    if (!parts) return false;
-    try {
-      return !!getBoard(root, parts.board)?.cards.some((c) => c.id === parts.card);
-    } catch {
-      return false;
-    }
-  }
-  return true;
 }
 
 /** Wrap an action: a whiteboard failure prints its message and exits non-zero. */
@@ -870,57 +841,22 @@ export function registerWhiteboardCommand(program: Command): void {
         throw new WhiteboardValidationError(`invalid card color '${opts.color}' (one of ${CARD_COLORS.join(', ')})`);
       }
 
-      const payload: Omit<WidgetPayload, 'v' | 'kind'> = {
-        title: opts.title,
-        tag: opts.tag,
-        size: typeof size === 'string' ? size : undefined,
-        color: opts.color as CardColor | undefined,
-      };
-      if (kind === 'insight' || kind === 'knowledge' || kind === 'task' || kind === 'lab-card') {
-        if (!opts.ref) throw new WhiteboardValidationError(`${kind} widget needs --ref ${kind === 'lab-card' ? '<board>/<card-id>' : '<slug>'}`);
-        if (!isValidWidgetRef(kind, opts.ref)) {
-          throw new WhiteboardValidationError(kind === 'knowledge'
-            ? `invalid page ref '${opts.ref}' (a knowledge slug, or a project-relative .md/.pdf/.html path with no '..')`
-            : kind === 'lab-card'
-              ? `invalid lab card ref '${opts.ref}' (expected <board>/<card-id>, e.g. growth/c-signups; \`dreamcontext lab board show <board>\` lists card ids)`
-              : `invalid ref '${opts.ref}'`);
-        }
-        payload.ref = opts.ref;
-      } else if (kind === 'todo') {
-        payload.items = opts.item.map(newTodoItem);
-      } else if (kind === 'note') {
-        payload.markdown = body ?? '';
-      } else if (kind === 'html') {
-        if (body === undefined) throw new WhiteboardValidationError('html widget needs --text or --file');
-        payload.html = body;
-      } else if (kind === 'web') {
-        payload.url = checkWebUrl(opts.url);
-      } else if (kind === 'wiki') {
-        if (!opts.title?.trim()) throw new WhiteboardValidationError('wiki widget needs --title "<title>"');
-        payload.sections = [];
-      }
-      if (kind === 'agent') {
-        // Unlike an insight or a task, an agent cannot "come later" on its own: a card for an
-        // unknown slug is a typo, so it is refused rather than warned about.
-        if (!opts.ref) throw new WhiteboardValidationError('agent widget needs --ref <agent-slug> (`dreamcontext agents list` lists them)');
-        if (!isValidWidgetRef(kind, opts.ref)) throw new WhiteboardValidationError(`invalid agent slug '${opts.ref}'`);
-        if (!getAgent(root, opts.ref)) {
-          throw new WhiteboardValidationError(`no agent '${opts.ref}' in this project (\`dreamcontext agents list\` lists them)`);
-        }
-        payload.ref = opts.ref;
-      }
+      // The one engine (widget-add.ts): the quick edit adds widgets through it too.
+      const payload = widgetPayloadFor(root, kind, {
+        ref: opts.ref, title: opts.title, text: body, url: opts.url, items: opts.item,
+        tag: opts.tag, size: typeof size === 'string' ? size : undefined, color: opts.color as CardColor | undefined,
+      });
 
       let id = '';
       let box: BBox | null = null;
       const res = await mutateWhiteboard(root, slug, (board) => {
         const free = typeof size === 'object' ? size : undefined;
-        const own = free || payload.size ? undefined : DEFAULT_WIDGET_BOXES[kind];
-        const [w, h] = free ? [free.w, free.h] : own ?? WIDGET_SIZES[payload.size ?? DEFAULT_WIDGET_SIZES[kind]];
+        const [w, h] = widgetBox(kind, payload, free);
         // Placed on the board this lock just read: a write another session made since your
         // last `show` is in it.
         const pos = at ?? placeFree(board.elements, { w, h }, anchor);
         const [index] = nextIndices(board.elements, 1);
-        const el = makeWidgetElement(kind, payload, { x: pos.x, y: pos.y, w: free?.w, h: free?.h }, index);
+        const el = widgetElementAt(kind, payload, pos, index, free);
         box = elementBBox(el);
         if (!opts.allowOverlap) assertFree(board.elements, box, { slug, what: `add this ${kind} widget` });
         id = el.id;
@@ -929,7 +865,7 @@ export function registerWhiteboardCommand(program: Command): void {
       noteOwnWrite(root, slug, res, [id]);
 
       // A dangling ref renders "not found" on the board; warn, never fail (the entity may come later).
-      const dangling = payload.ref && !refExists(root, kind, payload.ref);
+      const dangling = payload.ref && !widgetRefExists(root, kind, payload.ref);
       const warning = dangling
         ? `no ${kind} '${payload.ref}' exists yet; the widget will show "not found" until it does`
         : kind === 'note' ? noteWarning(payload.markdown ?? '') : null;
