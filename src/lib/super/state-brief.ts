@@ -14,7 +14,7 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 
 /** The child fields a successor decides on; everything else stays in the full `state`. */
 const CHILD_KEYS = [
-  'status', 'task', 'worktree', 'branch', 'mode', 'model', 'brief', 'lastLine', 'lastLineCut', 'limit',
+  'status', 'tool', 'task', 'worktree', 'branch', 'mode', 'model', 'brief', 'lastLine', 'lastLineCut', 'limit',
   'asking', 'startError', 'elapsedMs', 'endedAt', 'adopted', 'testsToday',
 ] as const;
 
@@ -40,8 +40,15 @@ export function briefState(full: Obj): Obj {
     if (live.length) out.team = live;
   }
   if (Array.isArray(full.warnings) && full.warnings.length) out.warnings = full.warnings;
+  // The owner's agenda and what is owed him: a fresh Super reports "I am back and this runs"
+  // from them, and padStale asks it to keep or drop lines it must be able to read.
+  if (Array.isArray(full.pad) && full.pad.length) out.pad = full.pad;
   if (full.padStale) out.padStale = full.padStale;
+  for (const k of ['owed', 'held', 'blocked', 'rotating'] as const) {
+    const v = full[k];
+    if (v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0)) out[k] = v;
+  }
   if (full.limits) out.limits = full.limits;
-  out.more = 'Cards, stage, machine facts, the AI Team roster and the MCP list are left out: `dreamcontext super state` prints all of it.';
+  out.more = 'Cards and groups, the stage layout, machine facts, the AI Team roster, the MCP list and dismissed items are left out: `dreamcontext super state` prints all of it.';
   return out;
 }

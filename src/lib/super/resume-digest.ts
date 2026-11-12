@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computePlanState, isCodeLedger, renderNextAction, type Ledger } from '../plan-ledger.js';
 import { LOOP_NAME_RE, readLedgerAt, reviewLoopsDir } from '../plan-store.js';
 import { childPlaceOf } from './handoff-task.js';
+import { handoffDir, readHandoffRecord } from '../context-watch.js';
 
 /**
  * The resume digest of a Super child's hand-over (audit OR-9). A successor used to start at 73K
@@ -33,7 +34,7 @@ const oneLine = (s: string, n = MAX_LINE): string => {
 
 function git(cwd: string, args: string[]): string | null {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf-8', timeout: GIT_MS, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1024 * 1024 });
+    return execFileSync('git', args, { cwd, encoding: 'utf-8', timeout: GIT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1024 * 1024 });
   } catch { return null; }
 }
 
@@ -133,15 +134,50 @@ export function resumeDigest(input: DigestInput): string {
   return out;
 }
 
+/**
+ * The digest is built where blocking is free: in the child's OWN `tasks handoff` process
+ * (handoff-artifacts.ts), right after the record is written, and stored beside the record. The
+ * server's result-frame path only reads that small file (no git on the event loop; review r1).
+ * The first line names the record's `at`, so a digest of an earlier hand-over is never served.
+ */
+const digestPath = (contextRoot: string, key: string): string => join(handoffDir(contextRoot), `${key}.digest.txt`);
+
+/** Build and store the digest for the record `key` names. Best-effort: never throws. */
+export function storeResumeDigest(contextRoot: string, key: string): void {
+  try {
+    const rec = readHandoffRecord(contextRoot, key);
+    if (!rec || rec.kind === 'super') return;
+    const d = resumeDigest({ task: rec.task, worktree: rec.worktree, branch: rec.branch });
+    if (!d) return;
+    const path = digestPath(contextRoot, key);
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, `at=${rec.at}\n${d}`, 'utf-8');
+    renameSync(tmp, path);
+  } catch { /* the digest is a convenience, never a gate on the handoff */ }
+}
+
+/** The stored digest for this exact record, or ''. A plain small file; anything else is ignored. */
+export function readStoredDigest(contextRoot: string, key: string, at: string): string {
+  try {
+    const path = digestPath(contextRoot, key);
+    const st = lstatSync(path);
+    if (!st.isFile() || st.size > 4 * DIGEST_MAX_CHARS) return '';
+    const text = readFileSync(path, 'utf-8');
+    const nl = text.indexOf('\n');
+    if (nl < 0 || text.slice(0, nl) !== `at=${at}`) return '';
+    return text.slice(nl + 1, nl + 1 + DIGEST_MAX_CHARS + 1).slice(0, DIGEST_MAX_CHARS);
+  } catch { return ''; }
+}
+
 /** What a fresh SUPER session is told to run first (it replaces the bare `super state`). */
-export const SUPER_BRIEF_LINE = 'Start with `dreamcontext super state --brief` (children and the open queue); the plain `super state` adds cards and machine facts, only when you need them.';
+export const SUPER_BRIEF_LINE = 'Start with `dreamcontext super state --brief` (children, open queue, agenda; the plain `super state` adds cards and machine facts, only when you need them).';
 
 /**
  * The kickoff prompt with the digest appended: a Super's successor gets the brief-state line, a
- * child's gets its digest. `prompt` is `handoffContinuePrompt`'s text, unchanged before it.
+ * child's gets the digest its own hand-over stored. Reads one small file; runs no git.
  */
-export function withResumeDigest(prompt: string, record: { kind?: 'super'; task: string; worktree?: string; branch?: string }): string {
+export function withResumeDigest(prompt: string, record: { kind?: 'super'; at: string }, contextRoot: string, key: string): string {
   if (record.kind === 'super') return `${prompt} ${SUPER_BRIEF_LINE}`;
-  const d = resumeDigest({ task: record.task, worktree: record.worktree, branch: record.branch });
+  const d = readStoredDigest(contextRoot, key, record.at);
   return d ? `${prompt}\n\n${d}` : prompt;
 }

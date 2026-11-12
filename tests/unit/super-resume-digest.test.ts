@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync } from 'nod
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { briefState } from '../../src/lib/super/state-brief.js';
-import { DIGEST_MAX_CHARS, SUPER_BRIEF_LINE, resumeDigest, withResumeDigest } from '../../src/lib/super/resume-digest.js';
+import { handoffDir, writeHandoffRecord } from '../../src/lib/context-watch.js';
+import { DIGEST_MAX_CHARS, SUPER_BRIEF_LINE, resumeDigest, storeResumeDigest, withResumeDigest } from '../../src/lib/super/resume-digest.js';
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -34,7 +35,7 @@ describe('briefState (super state --brief)', () => {
     },
     queue: [{ id: 'q1', state: 'pending', kind: 'ask' }, { id: 'q2', state: 'done', kind: 'ask' }],
     containers: [{ id: 'c' }], machine: { huge: 'x'.repeat(5000) }, cards: {}, team: [{ id: 't1', status: 'running' }, { id: 't2', status: 'done' }],
-    pool: [], warnings: ['w'], status: [{ sessionId: 's1' }], mcp: ['a'], pad: [{ id: 'p' }],
+    pool: [], warnings: ['w'], owed: [{ id: 'o1' }], held: [], status: [{ sessionId: 's1' }], mcp: ['a'], pad: [{ id: 'p', text: 'waiting on you' }], padStale: { ids: ['p'] },
   };
 
   it('keeps children and the open queue, drops the stage, the machine and the older-reader duplicate', () => {
@@ -47,7 +48,10 @@ describe('briefState (super state --brief)', () => {
     expect(b.queue.map((q: any) => q.id)).toEqual(['q1']);
     expect(b.team).toEqual([{ id: 't1', status: 'running' }]);
     expect(b.warnings).toEqual(['w']);
-    for (const k of ['containers', 'machine', 'cards', 'status', 'mcp', 'pad']) expect(b[k]).toBeUndefined();
+    expect(b.pad).toEqual([{ id: 'p', text: 'waiting on you' }]);
+    expect(b.owed).toEqual([{ id: 'o1' }]);
+    expect(b.held).toBeUndefined();
+    for (const k of ['containers', 'machine', 'cards', 'status', 'mcp']) expect(b[k]).toBeUndefined();
     expect(b.more).toContain('dreamcontext super state');
     expect(JSON.stringify(b).length).toBeLessThan(JSON.stringify(full).length / 3);
   });
@@ -107,16 +111,31 @@ describe('resumeDigest', () => {
   });
 });
 
-describe('withResumeDigest', () => {
+describe('withResumeDigest (reads what the hand-over stored; runs no git)', () => {
+  const root = () => { const r = mkdtempSync(join(tmpdir(), 'b14-ctx-')); dirs.push(r); mkdirSync(join(r, 'state'), { recursive: true }); return r; };
+  const rec = (wt: string, at = '2026-11-12T01:00:00.000Z') => ({ task: 'x', title: 'X', at, contextTokens: null, fromSession: 's', tab: 'pane1', worktree: wt, branch: 'super/b14-x' });
+
   it('sends a Super successor to the brief state', () => {
-    expect(withResumeDigest('Handoff: you are the Super.', { kind: 'super', task: '.super/handoff' })).toBe(`Handoff: you are the Super. ${SUPER_BRIEF_LINE}`);
+    expect(withResumeDigest('Handoff: you are the Super.', { kind: 'super', at: 'a' }, '/nowhere', 'k')).toBe(`Handoff: you are the Super. ${SUPER_BRIEF_LINE}`);
   });
-  it('leaves a child prompt alone when there is nothing to read', () => {
-    expect(withResumeDigest('Handoff: continue task X.', { task: 'x' })).toBe('Handoff: continue task X.');
+  it('leaves a child prompt alone when nothing was stored', () => {
+    expect(withResumeDigest('Handoff: continue task X.', { at: 'a' }, root(), 'pane1')).toBe('Handoff: continue task X.');
   });
-  it('appends the digest to a child prompt', () => {
+  it('appends the digest the hand-over stored, and only for that record', () => {
+    const r = root();
     const wt = repo();
-    const out = withResumeDigest('Handoff: continue task X.', { task: 'x', worktree: wt, branch: 'super/b14-x' });
+    writeHandoffRecord(r, 'pane1', rec(wt));
+    storeResumeDigest(r, 'pane1');
+    const out = withResumeDigest('Handoff: continue task X.', { at: '2026-11-12T01:00:00.000Z' }, r, 'pane1');
     expect(out.startsWith('Handoff: continue task X.\n\nResume digest')).toBe(true);
+    // A newer hand-over (different `at`) never serves the older digest.
+    expect(withResumeDigest('P', { at: '2026-11-12T02:00:00.000Z' }, r, 'pane1')).toBe('P');
+    expect(handoffDir(r)).toContain('.handoff-requests');
+  });
+  it('stores nothing for a Super record', () => {
+    const r = root();
+    writeHandoffRecord(r, 'pane1', { ...rec('/x'), kind: 'super' });
+    storeResumeDigest(r, 'pane1');
+    expect(withResumeDigest('P', { at: '2026-11-12T01:00:00.000Z' }, r, 'pane1')).toBe('P');
   });
 });

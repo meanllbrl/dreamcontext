@@ -1,5 +1,6 @@
 import { liveTranscriptPath, findTranscriptBySessionId } from '../../lib/transcript-locate.js';
-import { lastMainChainContext } from '../../lib/context-watch.js';
+import { lastMainChainContext, handoffKey } from '../../lib/context-watch.js';
+import { storeResumeDigest } from '../../lib/super/resume-digest.js';
 import { buildDigest, writeDigest } from '../../lib/session-digest.js';
 import { appendCompactionRecord } from '../../lib/sleep-consolidation.js';
 import { withSleepStateLock } from '../../lib/sleep-state-lock.js';
@@ -49,4 +50,7 @@ export function writeHandoffArtifacts(root: string, s: HandoffSession): void {
       }));
     });
   } catch { /* the log is a record, never a gate on the handoff */ }
+  // A Super child's resume digest (START tree, changed paths, open review, next command): built
+  // here, in the handing-off process, so the server's rotation only reads it (audit OR-9).
+  try { storeResumeDigest(root, handoffKey()); } catch { /* best effort */ }
 }

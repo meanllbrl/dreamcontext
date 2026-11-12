@@ -60,7 +60,7 @@ export function handleRotationAtResult(input: RotationInput): RotationDecision {
   // A fresh Super session has no message of his to copy the language from: the turn names it.
   // The digest (START tree, changed paths, open review, next command) saves the successor the
   // rediscovery that cost a median 28 tool calls before its first edit (audit OR-9).
-  const prompt = withResumeDigest(handoffContinuePrompt(rec, { fallback: decision === 'fallback' }), rec);
+  const prompt = withResumeDigest(handoffContinuePrompt(rec, { fallback: decision === 'fallback' }), rec, contextRoot, pane);
   input.writeUserTurn(input.isSuper ? withOwnerLanguage(prompt, superKnownLanguage(pane)) : prompt);
   input.startRun(startHandoffRun({
     task: rec.task,
