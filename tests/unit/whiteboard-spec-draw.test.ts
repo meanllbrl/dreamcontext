@@ -231,14 +231,27 @@ describe('the kit reference', () => {
 
   it('names only types the builder draws, and the new flow and panel are among them', () => {
     expect(TYPES).toEqual(expect.arrayContaining(['flow', 'panel', 'stack', 'row', 'image', 'timeline', 'callout']));
-    const table = REF.slice(REF.indexOf('## Pick the shape of the idea'), REF.indexOf('## Writing for a board'));
+    const table = REF.slice(REF.indexOf('## Pick the shape of the idea'), REF.indexOf('## Screens'));
     const named = [...table.matchAll(/^\|[^|]*\|\s*([^|]*)\|/gm)].flatMap((m) => [...m[1].matchAll(/`([a-zA-Z]+)`/g)].map((x) => x[1]));
     expect(named.length).toBeGreaterThan(15);
     for (const t of named) expect(TYPES, `the kit reference names "${t}"`).toContain(t);
   });
 
+  it('its two screen examples draw clean, with the parts inside the shell, and every screen type is named', () => {
+    const blocks = [...REF.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    for (const b of blocks.slice(1)) {
+      const out = buildSpecDrawing(b, 'screen.json');
+      expect(out.audit).toEqual({ overlaps: 0, buriedText: 0, longLines: 0, wallOfText: 0 });
+    }
+    for (const t of ['device', 'windowFrame', 'appBar', 'tabBar', 'listRow', 'searchField', 'segmented', 'toggle', 'slider', 'icon', 'iconButton', 'avatar', 'imagePlaceholder', 'navbar', 'input', 'button', 'textRows']) {
+      expect(TYPES, t).toContain(t);
+      expect(REF, t).toContain(`\`${t}\``);
+    }
+  });
+
   it('names every primitive field the builder reads, in a Primitives block', () => {
-    const block = REF.slice(REF.indexOf('## Primitives'), REF.indexOf('## Writing for a board'));
+    const block = REF.slice(REF.indexOf('## Primitives'), REF.indexOf('## Screens'));
     expect(block.length).toBeGreaterThan(100);
     for (const t of ['rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'text']) expect(block, t).toContain(`\`${t}\``);
     for (const f of ['x', 'y', 'width', 'height', 'strokeColor', 'backgroundColor', 'fillStyle', 'points', 'fontSize']) expect(block, f).toContain(`\`${f}\``);

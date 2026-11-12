@@ -81,6 +81,18 @@ describe('quick edit: the answer (C2)', () => {
     for (const f of ['width', 'height', 'strokeColor', 'backgroundColor', 'points']) expect(a).toContain(f);
   });
 
+  it('the real prompt carries every screen type with its fields, and no pointer to a file it cannot read', () => {
+    const a = quickEditSystemPrompt();
+    const types = ['device', 'windowFrame', 'appBar', 'tabBar', 'listRow', 'searchField', 'segmented', 'input', 'button', 'textRows', 'imagePlaceholder', 'navbar'];
+    for (const t of types) expect(a, t).toContain(`| \`${t}\` |`);
+    for (const f of ['items', 'kind', 'leading', 'trailing', 'subtitle', 'active', 'placeholder', 'iphone']) expect(a, f).toContain(f);
+    expect(a).toContain('"type": "device"');
+    expect(a).toContain('"type": "windowFrame"');
+    expect(a).toContain('skill-draw/references/excalidraw.md');
+    expect(a).toContain('name: draw');
+    expect(a).toContain('it is just words');
+  });
+
   it('the request sits outside the nonce fence', () => {
     const m = quickEditUserMessage('elma ekle', '{"scope":[]}', 'abc123');
     expect(m.indexOf('elma ekle')).toBeLessThan(m.indexOf('<board-data-abc123>'));

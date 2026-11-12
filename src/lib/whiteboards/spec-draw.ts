@@ -87,6 +87,20 @@ export function readKitReference(dir: string | null = kitDir()): string {
 }
 
 /**
+ * The draw skill as the quick edit (a turn with no tools, so no skill loader and no files) is given
+ * it: the skill itself, the whiteboard kit and the full kit guide, read from the shipped files so
+ * there is one source. Left out on purpose: `references/whiteboards.md` (the whiteboard CLI
+ * command reference) and `chat-html.md` (the chat's HTML kit); a turn that runs nothing and
+ * answers JSON cannot act on either.
+ */
+export function readQuickEditSkill(dir: string | null = kitDir()): string {
+  if (!dir) throw new WhiteboardValidationError(MISSING_KIT);
+  return ['SKILL.md', 'references/whiteboard-kit.md', 'references/excalidraw.md']
+    .map((f) => `<!-- skill-draw/${f} -->\n${readFileSync(join(dir, f), 'utf-8')}`)
+    .join('\n\n');
+}
+
+/**
  * What a spec may carry; `out`, the vault and the frontmatter keys belong to a file build, and
  * `audit` is not the spec's to switch off (a board drawing is always audited).
  */

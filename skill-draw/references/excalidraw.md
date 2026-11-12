@@ -404,6 +404,7 @@ bits too). Every builder is also a spec JSON `type`.
   **Pass `content: (inner) => els`**: it's the only place overflow can be caught. The build audit is
   blind here — a device shell is a filled polygon and `isOpaqueBox()` only knows rect/ellipse/diamond/
   image — so a hardcoded child width silently renders *outside the bezel*. `content` warns instead.
+  **In a JSON spec** (no function to pass) give `device` / `windowFrame` an `items` array of child specs: they flow top to bottom inside `inner`, full-width bars and fields sized to it. See `references/whiteboard-kit.md` (Screens).
 - **`appBar({title,back,actions})`** · **`tabBar({items,active})`** — mobile top/bottom chrome.
 - **`icon({name,size})`** — 31 line-drawn glyphs. `iconNames()` lists them; an unknown name draws a
   box so a typo is visible rather than silently absent.

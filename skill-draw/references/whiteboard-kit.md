@@ -102,7 +102,7 @@ pain, `mint` result, `gray` muted.
 | a box with a label | `card`, `node`, `chip` | `text`, `color`, `w`, `h` |
 | a short list | `bullets` | `items`, `width` |
 | screenshots, each with what it is for | a `row` of `stack`s, each `image`, `chip`, `bullets` | image: `path`, `width` (the height follows) |
-| a screen sketched, not shot | `windowFrame`, `appBar`, `listRow`, `tabBar`, `button`, `input`, `textRows` | see the `draw` skill (`references/excalidraw.md`) |
+| a screen sketched, not shot (a phone, a tablet, a Mac, a window) | `device`, `windowFrame` holding their parts | see Screens below |
 | an arrow you place yourself | `connector` | `from` and `to` as `[x, y]`, `label`, `dashed`, `elbow` `hv`/`vh` |
 
 ## Primitives
@@ -116,9 +116,60 @@ A shape you place yourself, when no type above fits (an apple, a logo, an arrow 
 | a stroke, a polygon, an arrow | `line`, `arrow` | `x`, `y`, `points` (`[[0,0],[120,40],…]`), `strokeColor`, `backgroundColor` (a closed `line` fills), `strokeWidth`, `startArrow`, `endArrow` |
 | loose words | `text` | `x`, `y`, `text`, `fontSize`, `color`, `width` (wraps), `align` |
 
-Every type: `dreamcontext whiteboard kit --json` lists them. In text, `**bold**` draws a rule
+The types above are the ones a board needs (a number is a widget, so the charts are left out). In text, `**bold**` draws a rule
 under the phrase, `==mark==` a highlighter band, `` `code` `` a grey chip: mark one or two
 phrases a block, the number the point rests on first.
+
+## Screens: a phone, a tablet, a Mac, a window
+
+A screen mockup is a `device` (or a `windowFrame`) holding its parts in `items`. Never draw a
+phone from rectangles: the shell has the real proportions, status bar, island and home bar. The
+`items` flow top to bottom inside the safe area (`gap`, default 10); a bar, field or button takes
+the full width unless it names its own `w`. Nothing is placed by hand.
+
+| Type | Fields |
+|---|---|
+| `device` | `kind` (`iphone` 393x852, `ipad`, `mac`), `label` (caption above), `dark`, `w`, `items` (the screen's parts) |
+| `windowFrame` | `kind` (`browser` draws a URL bar, `app` a centred title), `url`, `title`, `w`, `h`, `items` |
+| `appBar` | `title`, `back` (true), `actions` (icon names, up to 3) |
+| `tabBar` | `items` (icon names or `{icon, label}`), `active` (index) |
+| `listRow` | `title`, `subtitle`, `leading` (an icon name or `avatar`), `trailing` (an icon name, `toggle` or text) |
+| `searchField` | `placeholder` |
+| `segmented` | `items` (labels), `active` (index) |
+| `input` | `label`, `placeholder` |
+| `button` | `text`, `color`, `variant` (`outline`), `w` |
+| `textRows` | `rows` (grey bars for body copy; never lorem ipsum) |
+| `imagePlaceholder` | `h`, `label` (a box where a picture goes) |
+| `navbar` | `brand`, `items` (links), `cta` (a web page's top bar) |
+| `toggle`, `slider` | `on` / `value` (0..1) |
+| `avatar`, `chip`, `divider`, `icon`, `iconButton` | `r` / `text`, `color` / (none) / `name`, `size` / `icon`, `shape`, `variant` |
+
+Icons: menu close plus minus check search chevron-left chevron-right chevron-up chevron-down
+arrow-left arrow-right more more-v play heart star user home bell trash settings share lock mail
+camera image edit filter bookmark calendar. Any other name draws an empty box.
+
+A phone screen:
+
+```json
+{ "elements": [ { "type": "device", "kind": "iphone", "label": "Ayarlar", "items": [
+  { "type": "appBar", "title": "Ayarlar", "back": true },
+  { "type": "searchField", "placeholder": "Ara" },
+  { "type": "listRow", "leading": "bell", "title": "Bildirimler", "trailing": "toggle" },
+  { "type": "listRow", "leading": "avatar", "title": "Hesap", "subtitle": "Plan: Pro" },
+  { "type": "button", "text": "Kaydet" },
+  { "type": "tabBar", "items": [ { "icon": "home", "label": "Ana" }, { "icon": "settings", "label": "Ayar" } ], "active": 1 }
+] } ] }
+```
+
+A desktop app window (`"kind": "browser"` with a `url` for a web page):
+
+```json
+{ "elements": [ { "type": "windowFrame", "kind": "app", "title": "Panel", "w": 560, "h": 380, "items": [
+  { "type": "input", "label": "Ad", "placeholder": "Adın" },
+  { "type": "textRows", "rows": 3 },
+  { "type": "button", "text": "Gönder", "w": 140 }
+] } ] }
+```
 
 ## Writing for a board
 

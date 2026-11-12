@@ -81,6 +81,25 @@ function withImageBox(e) {
   return Object.assign({}, e, { width: d.width, height: d.height });
 }
 
+// A spec cannot pass `device` / `windowFrame` a `content` function, so a screen in a spec takes
+// `items` (child specs): they flow top to bottom inside the shell's safe `inner` region. A child
+// that is a full-width bar or field gets the inner width unless it names its own `w`.
+const SCREEN_TYPES = ['device', 'windowFrame'];
+const FULL_WIDTH_TYPES = ['appBar', 'tabBar', 'listRow', 'searchField', 'segmented', 'slider', 'input', 'button', 'textRows', 'navbar', 'imagePlaceholder', 'divider'];
+function screenWithItems(e) {
+  const { items, gap, ...shell } = e;
+  const build = COMPOSITES[e.type];
+  return build(Object.assign({}, shell, {
+    content: (inner) => LAYOUTS.stack({
+      x: inner.x, y: inner.y, gap: gap == null ? 10 : gap,
+      items: items.map((it) => {
+        const spec = (it && typeof it === 'object' && FULL_WIDTH_TYPES.includes(it.type) && it.w == null) ? Object.assign({}, it, { w: inner.w }) : it;
+        return expandElements([spec]);
+      }),
+    }),
+  }));
+}
+
 function expandElements(list) {
   const out = [];
   for (const e of (list || [])) {
@@ -91,6 +110,8 @@ function expandElements(list) {
       // each item is itself a spec (or array of specs) → expand first, then let stack/row measure it
       const items = (e.items || []).map((it) => expandElements(Array.isArray(it) ? it : [it]));
       out.push(...expandElements(LAYOUTS[e.type](Object.assign({}, e, { items }))));
+    } else if (SCREEN_TYPES.includes(e.type) && Array.isArray(e.items) && e.items.length) {
+      out.push(...expandElements(screenWithItems(e)));
     } else if (COMPOSITES[e.type]) {
       out.push(...expandElements(COMPOSITES[e.type](e)));
     } else {

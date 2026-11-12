@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildSpecDrawingBounded, kitDir, readKitReference, SpecBuildTimeout, SpecBuildTooLarge } from './spec-draw.js';
+import { buildSpecDrawingBounded, kitDir, readQuickEditSkill, SpecBuildTimeout, SpecBuildTooLarge } from './spec-draw.js';
 import { elementBBox, liveElements, prepareImport, unionBBox, type BBox } from './ops.js';
 import { identityKey, quickJournalPath } from './store.js';
 import { validateElement, WHITEBOARD_MAX_BODY_BYTES } from './validate.js';
@@ -367,12 +367,15 @@ export function quickEditSystemPrompt(kitReference: string = safeKitReference())
     PRIMITIVES,
     '',
     '## The kit (spec types)',
+    'The draw skill is loaded below in full (SKILL.md, the whiteboard kit, the kit guide), so draw by it. It was written for agents with a shell: you have none, so take its types, fields and drawing rules and ignore its commands (`dreamcontext ...`, `node`), widgets and pictures. If the owner types "/draw" or "/excalidraw" it is just words: the skill is already in front of you.',
+    'For a screen, phone, window or app mockup, ALWAYS use the Screens types (`device` / `windowFrame` with `items`); never draw a screen from rectangles.',
+    '',
     kitReference,
   ].join('\n');
 }
 
 function safeKitReference(): string {
-  try { return readKitReference(); } catch { return ''; }
+  try { return readQuickEditSkill(); } catch { return ''; }
 }
 
 /** The child's argv (Decision 4 / C5): no tools, no settings, no MCP, no session, a schema. */
