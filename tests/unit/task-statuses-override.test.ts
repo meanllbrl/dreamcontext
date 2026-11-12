@@ -280,9 +280,10 @@ describe('derived behaviour reads the kind', () => {
     expect(rankOpenTasks(rows, 5, set).map((r) => r.slug)).toEqual(['b']);
   });
 
-  it('curator plan: a cancelled chore is recreated, never refreshed back to life', () => {
+  it('curator plan: a cancelled chore stays closed (the owner dropped it), never refreshed back to life', () => {
     const set = declared();
-    expect(planCuratorTask(200, { slug: CURATOR_TASK_SLUG, status: 'cancelled' }, null, set).action).toBe('create');
+    // SL-10 (B5): a sleep never brings back what the owner cancelled; it says so instead.
+    expect(planCuratorTask(200, { slug: CURATOR_TASK_SLUG, status: 'cancelled' }, null, set)).toMatchObject({ action: 'none', skippedCancelled: true });
     expect(planCuratorTask(200, { slug: CURATOR_TASK_SLUG, status: 'planned' }, null, set).action).toBe('refresh');
   });
 
