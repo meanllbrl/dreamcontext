@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { heavyRepoDir } from './builder-tools.js';
 import type { LanePick } from './run-lane.js';
@@ -33,7 +33,14 @@ import type { LanePick } from './run-lane.js';
  * N, and `builder lane --from` or `--wave final` opens `end`, which the review, its fixes and the
  * final check share. A plain chat still takes the lock, and nothing counts.
  *
- * tests/unit/run-budget.test.ts pins it.
+ * A browser run that never reached the product is not proof spent (2026-11-12, audit OR-5: the
+ * first browser check of a run was red in 50% of runs, mostly on the script's own setup). A verify
+ * script built on scripts/verify/lib/app.mjs fails fast with {@link VERIFY_HARNESS_EXIT}; that run
+ * is given back ({@link recordHarness}), {@link HARNESS_FREE_RUNS} times per bucket, so a harness
+ * that stays broken still meets the limit. And a script that drives the built app is refused
+ * before the queue while `dist/` is older than the code ({@link staleDistFor}).
+ *
+ * tests/unit/run-budget.test.ts pins it; tests/unit/verify-preflight.test.ts pins the mirror.
  */
 
 /** Runs of one command on one code tree, before the extra run a red earns. */
@@ -57,6 +64,68 @@ export interface HeavyStep {
    * record (lib/suite-record.ts).
    */
   partial?: string;
+}
+
+/**
+ * A verify script's exit when it stopped in its own setup (servers, build, app shell) and tested
+ * nothing of the product. Mirrors HARNESS_EXIT in scripts/verify/lib/preflight.mjs.
+ */
+export const VERIFY_HARNESS_EXIT = 78;
+
+/** HARNESS runs given back per bucket; past them a HARNESS run counts like any red. */
+export const HARNESS_FREE_RUNS = 2;
+
+/**
+ * What each built output is made from. Mirrors DIST_INPUTS in scripts/verify/lib/preflight.mjs,
+ * and is only applied in a repo that holds that file.
+ */
+export const VERIFY_DIST_INPUTS: readonly { output: string; inputs: readonly string[]; build: string }[] = [
+  { output: 'dashboard/dist/index.html', inputs: ['dashboard/src/', 'dashboard/public/', 'dashboard/index.html', 'dashboard/vite.config.ts', 'dashboard/excalidraw-widget-link-icon.ts', 'dashboard/devProxyOrigin.ts', 'dashboard/package.json', 'package.json', 'src/lib/'], build: 'npm run build' },
+  { output: 'dist/index.js', inputs: ['src/', 'package.json', 'tsup.config.ts', 'tsconfig.json'], build: 'npm run build:cli' },
+  { output: 'dist/dashboard/index.html', inputs: ['dashboard/dist/index.html'], build: 'npm run build:cli' },
+];
+
+export const VERIFY_PREFLIGHT_FILE = 'scripts/verify/lib/preflight.mjs';
+
+/** The one way out for an older build on purpose; both sides honor it. Mirrors OLD_BUILD_ON_PURPOSE. */
+export const VERIFY_OLD_BUILD_ON_PURPOSE = 'DC_VERIFY_DIST=dist/index.js';
+
+/** A verify script that runs the BUILT app: `--build`, `openApp({ build: true })`, or a path to dist. */
+const DRIVES_DIST = /\bbuild:\s*true\b|\bdistIndex\(|(?<![\w/@.-])dist\/(?:index\.js|dashboard)\b|['"]dist['"]\s*,\s*['"](?:index\.js|dashboard)['"]/;
+
+/**
+ * Does this browser command run the built app? `--build` on the line, or its script's text says
+ * so. `DC_VERIFY_DIST=` on the line points at another build on purpose (a before run): no.
+ */
+export function drivesDist(command: string, script: string, toplevel: string): boolean {
+  if (/(?:^|\s)DC_VERIFY_DIST=/.test(command)) return false;
+  if (/\s--build(?=\s|$)/.test(command)) return true;
+  try { return DRIVES_DIST.test(readFileSync(join(toplevel, script), 'utf-8')); } catch { return false; }
+}
+
+/**
+ * Why the built app is older than its code, with the build that fixes it, or null when it is
+ * current or cannot be told (no preflight file here, no git). Mtime-based, like the script's own
+ * preflight: a source newer than its output.
+ */
+export function staleDistFor(toplevel: string): { why: string; build: string } | null {
+  if (!existsSync(join(toplevel, VERIFY_PREFLIGHT_FILE))) return null;
+  const mtime = (p: string): number | null => { try { return statSync(p).mtimeMs; } catch { return null; } };
+  for (const { output, inputs, build } of VERIFY_DIST_INPUTS) {
+    const built = mtime(join(toplevel, output));
+    if (built === null) return { why: `there is no ${output}`, build };
+    let listed: string[];
+    try {
+      const folders = inputs.filter((p) => p.endsWith('/'));
+      listed = folders.length === 0 ? [] : execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', ...folders], { cwd: toplevel, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 }).split('\0').filter(Boolean);
+    } catch {
+      return null;
+    }
+    const files = [...new Set([...listed, ...inputs.filter((p) => !p.endsWith('/'))])];
+    const newer = files.filter((f) => (mtime(join(toplevel, f)) ?? 0) > built);
+    if (newer.length) return { why: `${output} is older than ${newer.slice(0, 3).join(', ')}${newer.length > 3 ? ` and ${newer.length - 3} more` : ''}`, build };
+  }
+  return null;
 }
 
 /** `builder heavy`'s exit code for a refusal. Not 75: running it again will not help. */
@@ -323,7 +392,10 @@ export function packageScripts(cwd: string): Record<string, string> {
   }
 }
 
-export interface BudgetBucket { runs: number; reds: number; last: string; /** The log of its last red run, kept so a repeat is answered by reading it. */ log?: string }
+export interface BudgetBucket {
+  runs: number; reds: number; last: string; /** The log of its last red run, kept so a repeat is answered by reading it. */ log?: string;
+  /** HARNESS runs given back on this bucket (at most {@link HARNESS_FREE_RUNS}). */ harness?: number;
+}
 
 export interface BudgetOverrun { at: string; bucket: string; kind: BudgetKind; command: string; reason: string }
 
@@ -415,7 +487,7 @@ export function recordStart(path: string, scope: BudgetScope, kind: BudgetKind, 
     const key = scopeKey(scope, target);
     const at = new Date(nowMs).toISOString();
     const prev = fresh(file.buckets[key], nowMs);
-    file.buckets[key] = { runs: (prev?.runs ?? 0) + 1, reds: prev?.reds ?? 0, last: at, ...(prev?.log ? { log: prev.log } : {}) };
+    file.buckets[key] = { runs: (prev?.runs ?? 0) + 1, reds: prev?.reds ?? 0, last: at, ...(prev?.log ? { log: prev.log } : {}), ...(prev?.harness ? { harness: prev.harness } : {}) };
     if (overrun) file.overruns.push({ at, bucket: key, kind, command: overrun.command.slice(0, 300), reason: overrun.reason.slice(0, 500) });
     writeBudget(path, file, nowMs);
   } catch { /* the budget never fails a check */ }
@@ -431,6 +503,25 @@ export function recordRed(path: string, scope: BudgetScope, target: string, nowM
     if (log) b.log = log;
     writeBudget(path, file, nowMs);
   } catch { /* the budget never fails a check */ }
+}
+
+/**
+ * A run that ended as HARNESS: given back (its run uncounted) while the bucket has free HARNESS
+ * runs left, and answers how many it has used; null when none was left (count it as a red).
+ */
+export function recordHarness(path: string, scope: BudgetScope, target: string, nowMs: number): number | null {
+  try {
+    const file = readBudget(path);
+    const b = file.buckets[scopeKey(scope, target)];
+    if (!b || (b.harness ?? 0) >= HARNESS_FREE_RUNS) return null;
+    b.runs = Math.max(0, b.runs - 1);
+    b.harness = (b.harness ?? 0) + 1;
+    b.last = new Date(nowMs).toISOString();
+    writeBudget(path, file, nowMs);
+    return b.harness;
+  } catch {
+    return null;
+  }
 }
 
 /** A reason a reader can use: the flag is the way out, so it must say something. */

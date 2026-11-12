@@ -35,7 +35,9 @@ const OBSERVED_CHECK = `- The observed check, ONCE, after the code PASS and on i
   no build when the repo has the shared one (\`scripts/verify/lib/app.mjs\` for a longer flow):
   \`dreamcontext builder heavy -- node scripts/verify/look.mjs '<path>' --expect '<text>'\`.
   It runs on the Vite dev server against a scratch vault, as a short check that does not wait
-  for a long run. Every browser run goes through \`builder heavy\`.`;
+  for a long run. Every browser run goes through \`builder heavy\`. Exit 78 = HARNESS: the check
+  stopped in its own setup (servers, build, app shell), tested nothing and is not counted: fix the
+  setup, never the product. A check of the built app on a \`dist/\` older than the code exits 5: build first.`;
 
 /**
  * The repeat limit in the words a lead needs (2026-10-31): `builder heavy` counts browser runs,

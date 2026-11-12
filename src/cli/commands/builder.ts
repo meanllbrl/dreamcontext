@@ -29,7 +29,7 @@ import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-q
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
   BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, becauseSpent, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
-  recordRed, recordStart, refusal, shellQuote, shellSegments, suiteInCommand, suiteScriptUnread, validReason, type BudgetKind, type BudgetScope,
+  HARNESS_FREE_RUNS, VERIFY_HARNESS_EXIT, VERIFY_OLD_BUILD_ON_PURPOSE, drivesDist, recordHarness, recordRed, recordStart, refusal, shellQuote, staleDistFor, shellSegments, suiteInCommand, suiteScriptUnread, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
 import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
@@ -589,6 +589,19 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
   // A build of changed inputs is not a repeat: the exit-5 hint "build first" must never be refused.
   const top = kind === 'build' ? gitToplevel(deps.cwd()) : null;
   const newBuild = kind === 'build' && top !== null && buildInputsChanged(recordToplevel(top));
+  // A script on the built app, while dist/ is older than the code, proves old code (audit OR-5):
+  // refused before the queue, with the build that fixes it. The one way past it is the env prefix
+  // the script's own preflight honors too: --because would pass here and stop there (HARNESS).
+  if (kind === 'browser') {
+    const distTop = gitToplevel(deps.cwd());
+    const stale = distTop && drivesDist(command, target, distTop) ? staleDistFor(distTop) : null;
+    if (stale) {
+      deps.printErr(`builder heavy: build first: this browser check runs the built app, and ${stale.why}. NOTHING ran, nothing was counted.`);
+      deps.printErr(`  Build, then run it again: dreamcontext builder heavy -- ${stale.build}`);
+      deps.printErr(`  Looking at an older build on purpose? builder heavy -- ${shellQuote(`${VERIFY_OLD_BUILD_ON_PURPOSE} ${argv.length === 1 ? argv[0] : argv.map(shellQuote).join(' ')}`)}`);
+      return HEAVY_BUILD_FIRST_EXIT;
+    }
+  }
   // Asked before the wait for the lock, so a refused run costs no queueing.
   const over = kind && scope && !newBuild
     ? refusal(readBudget(budget), scope, kind, target, Date.now(), kind === 'browser' ? laneFromGit(deps.cwd()) : undefined)
@@ -716,7 +729,15 @@ async function heavyRun(deps: BuilderDeps, argv: string[], opts: HeavyOptions): 
       if (recordable) settleSuite(deps, suite, { exit: killed ? null : code, killed, command, log: logPath, startTree, prev: red, because, dist: proof });
       else if (logPath && code === 0 && !killed) rmSync(logPath, { force: true });
       else if (logPath) printRed(deps, logPath, code, killed);
-      if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now(), recordable ? null : logPath);
+      // A verify script that stopped in its own setup tested nothing: its run is given back (audit OR-5).
+      const harness = code === VERIFY_HARNESS_EXIT && kind === 'browser' && !killed;
+      const given = harness && scope ? recordHarness(budget, scope, target, Date.now()) : null;
+      if (harness) {
+        deps.printErr(given !== null
+          ? `builder heavy: HARNESS: the check stopped in its own setup and tested nothing of the product; this run is not counted (${given} of ${HARNESS_FREE_RUNS} on this code). Fix the setup or the script.`
+          : `builder heavy: HARNESS: the check stopped in its own setup${scope ? `, and the ${HARNESS_FREE_RUNS} uncounted HARNESS runs on this code are spent: this one counts` : ''}. Fix the setup or the script.`);
+      }
+      if (code !== 0 && kind && scope && given === null) recordRed(budget, scope, target, Date.now(), recordable ? null : logPath);
       recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: killed === 'ceiling' ? null : code, waits, ...(killed === 'ceiling' ? { reason: 'ceiling' } : {}) });
       held.release();
       resolveExit(code);
@@ -758,7 +779,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .option('--wait <id>', `Block on a detached check (at most ${HEAVY_WAIT_SLICE_S / 60} min a call; call again) and exit with its exit (${HEAVY_DIED_EXIT} = it died with no result)`)
     .option('--max-run <minutes>', `Kill the check and its whole process group after this many minutes of running (default ${HEAVY_MAX_RUN_MIN})`)
     .addOption(new Option('--run-id <id>').hideHelp())
-    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, ${HEAVY_BUILD_FIRST_EXIT} = a full suite needs a fresh build first). A whole-suite run keeps a record of its red files`)
+    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, ${HEAVY_BUILD_FIRST_EXIT} = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's ${VERIFY_HARNESS_EXIT} = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files`)
     .action(async (command: string[], opts: HeavyOptions) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });
