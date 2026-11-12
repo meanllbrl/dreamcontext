@@ -260,7 +260,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
         {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}
         {(app.configMissing?.length ?? 0) > 0 && (
           <div className="app-card__note app-card__note--warn app-card__mcp">
-            <span>{ts('share.card.settingsNeeded', { keys: app.configMissing!.join(', ') })}</span>
+            <span>{t('share.card.settingsNeeded')}</span>
             {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
           </div>
         )}
@@ -278,19 +278,27 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
         {app.tools && app.tools.audit === 'drift' && (
           <p className="app-card__note app-card__note--warn"><span aria-hidden="true">⚠ </span>{t('apps.tools.drift')}{app.tools.missing.length > 0 && `: ${app.tools.missing.join(', ')}`}</p>
         )}
-        {app.tools && app.tools.audit === 'unaudited' && <p className="app-card__muted">{t('apps.tools.unaudited')}</p>}
+        {app.tools && app.tools.count > 0 && app.tools.change > 0 && (
+          <p className="app-card__muted">{t(app.tools.change === 1 ? 'apps.tools.change.one' : 'apps.tools.change').replace('{n}', String(app.tools.change))}</p>
+        )}
+        {app.tools && app.tools.audit === 'unaudited' &&<p className="app-card__muted">{t('apps.tools.unaudited')}</p>}
         {app.agentState === 'needs_approval' && <p className="app-card__note app-card__note--warn">{t('apps.agentNeedsApproval')}</p>}
         {app.agentState === 'missing' && <p className="app-card__note app-card__note--warn">{t('apps.agentMissing')}</p>}
         {app.iconIssue && <p className="app-card__note app-card__note--warn">{t(`apps.icon.${app.iconIssue.code}`)}</p>}
         {!installed && app.iconPlaceholder && (
           <div className="app-card__note app-card__note--warn app-card__mcp">
             <span>{t('store.icon.placeholder')}</span>
-            <button type="button" className="app-card__stop" onClick={() => { onClose(); askAgent(bus, ts('store.ask.icon', { slug: app.slug })); }}>{t('store.ask')}</button>
+            <button type="button" className="app-card__stop" onClick={() => { onClose(); askAgent(bus, ts('store.ask.icon', { slug: app.slug }), { fallback: { vault, title: app.name } }); }}>{t('store.ask')}</button>
           </div>
         )}
         {app.unguarded && <p className="app-card__note app-card__note--warn">{t('apps.unguarded')}</p>}
         {app.portFallback && <p className="app-card__note app-card__note--warn">{t('apps.portFallback')}</p>}
-        {state === 'error' && app.lastError && <p className="app-card__note app-card__note--bad">{app.lastError}</p>}
+        {state === 'error' && app.lastError && (
+          <div className="app-card__note app-card__note--bad app-card__mcp">
+            <span>{app.lastError}</span>
+            {canLaunch && <button type="button" className="app-card__stop" onClick={() => { onClose(); askAgent(bus, ts('store.ask.startFailed', { slug: app.slug, error: app.lastError! }), { fallback: { vault, title: app.name } }); }}>{t('store.ask')}</button>}
+          </div>
+        )}
         {err && <p className="app-card__note app-card__note--bad">{err}</p>}
       </div>
       <Shots shots={s?.shots ?? []} />
