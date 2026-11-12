@@ -10,11 +10,19 @@
  * UI shot turned light, a light one turned dark) while Chromium looked fine (2026-10-30).
  *
  * Fix, only in an engine without `context.filter`: own that one filter value. When Excalidraw
- * sets its image pre-inversion filter we let the image draw unfiltered, then rewrite the pixels
- * it just painted with the exact inverse of the canvas's dark-mode CSS filter, in plain JS. That
- * runs when Excalidraw rebuilds an image's cached bitmap (zoom settle, resize, theme switch), at
- * the bitmap's size. An engine that has `context.filter` (Chromium) keeps Excalidraw's own GPU
- * path untouched: it is already right to the eye and far cheaper.
+ * sets its image pre-inversion filter, the picture is drawn from a COPY of its source whose
+ * pixels were rewritten once with the exact inverse of the canvas's dark-mode CSS filter, in
+ * plain JS. The map is per channel and linear, so compensating the source and then scaling it
+ * shows the same pixels as scaling and then compensating. An engine that has `context.filter`
+ * (Chromium) keeps Excalidraw's own GPU path untouched: it is already right to the eye and far
+ * cheaper.
+ *
+ * WHY the source and not the drawn pixels (2026-11-12, measured in WKWebView, dark mode): the
+ * first version rewrote the pixels just painted, which are the picture's cached element bitmap.
+ * Excalidraw rebuilds that bitmap at every zoom settle at element size × zoom × screen density,
+ * up to 16.7 MP, so between 200 % and 800 % each settle read, rewrote and wrote back up to
+ * 16.7 MP on the main thread: a 250-320 ms freeze per pinch on a picture. The copy costs the
+ * source's size once (a preview, or a full picture while it is held) and then nothing per zoom.
  *
  * The limit, stated: the canvas filter can only output 7 %–93 % of each channel, so in dark
  * mode a picture's pure white shows as #ededed and pure black as #121212 (the canvas's own
@@ -75,37 +83,54 @@ export function compensateForDarkCanvas(data: Uint8ClampedArray): void {
   }
 }
 
-/** The device-pixel box a `drawImage` destination rect covers under the current transform. */
-export function destinationBox(
-  t: { a: number; b: number; c: number; d: number; e: number; f: number },
-  x: number, y: number, w: number, h: number,
-  canvasW: number, canvasH: number,
-): { x: number; y: number; w: number; h: number } | null {
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const [px, py] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
-    xs.push(t.a * px + t.c * py + t.e);
-    ys.push(t.b * px + t.d * py + t.f);
-  }
-  const x0 = Math.max(0, Math.floor(Math.min(...xs)));
-  const y0 = Math.max(0, Math.floor(Math.min(...ys)));
-  const x1 = Math.min(canvasW, Math.ceil(Math.max(...xs)));
-  const y1 = Math.min(canvasH, Math.ceil(Math.max(...ys)));
-  if (!(x1 > x0 && y1 > y0)) return null;
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-}
-
 interface CtxState { on: boolean; stack: boolean[] }
 type Ctx = CanvasRenderingContext2D;
+type Draw = (...args: unknown[]) => void;
 
 const INSTALLED = Symbol.for('dreamcontext.excalidrawImageTheme');
+
+/** The pixel size of an image source, or null when it has none yet (an unloaded image). */
+export function sourceSize(src: { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number }): { w: number; h: number } | null {
+  const w = src.naturalWidth || src.width || 0;
+  const h = src.naturalHeight || src.height || 0;
+  return w > 0 && h > 0 ? { w, h } : null;
+}
+
+/**
+ * Make a dark-compensated copy of `src` at its own pixel size, drawn with the engine's own
+ * `drawImage` (never a patched one, so no picture swaps in a smaller copy). Null when it cannot
+ * be read back: a cross-origin picture taints the canvas.
+ */
+export type CompensatedCopyMaker = (src: object, rawDraw: Draw) => CanvasImageSource | null;
+
+const canvasCopy: CompensatedCopyMaker = (src, rawDraw) => {
+  const size = sourceSize(src as never);
+  if (!size || typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = size.w;
+  canvas.height = size.h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  try {
+    rawDraw.call(ctx, src, 0, 0);
+    const img = ctx.getImageData(0, 0, size.w, size.h);
+    compensateForDarkCanvas(img.data);
+    ctx.putImageData(img, 0, 0);
+    return canvas;
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Patch a 2D-context prototype (the real one in the app, a stand-in in tests) when its engine
  * has no `filter`. Idempotent; a no-op where `filter` exists. Only the exact
  * EXCALIDRAW_IMAGE_FILTER value changes behaviour.
  */
-export function installImageThemeShim(proto: Ctx = globalThis.CanvasRenderingContext2D?.prototype): void {
+export function installImageThemeShim(
+  proto: Ctx = globalThis.CanvasRenderingContext2D?.prototype,
+  makeCopy: CompensatedCopyMaker = canvasCopy,
+): void {
   if (!proto || (proto as unknown as Record<symbol, boolean>)[INSTALLED]) return;
   if (Object.getOwnPropertyDescriptor(proto, 'filter')?.set) return; // the engine does it itself
   (proto as unknown as Record<symbol, boolean>)[INSTALLED] = true;
@@ -146,25 +171,22 @@ export function installImageThemeShim(proto: Ctx = globalThis.CanvasRenderingCon
     return restore.call(this);
   };
 
-  const drawImage = proto.drawImage as (...args: unknown[]) => void;
+  // One copy per source object, let go with it: a full picture the sharpener releases takes its
+  // copy along. `null` = it could not be made (tainted), so it is never tried again.
+  const copies = new WeakMap<object, CanvasImageSource | null>();
+  const drawImage = proto.drawImage as Draw;
   proto.drawImage = function (this: Ctx, ...args: unknown[]) {
-    drawImage.apply(this, args);
-    if (!stateOf(this).on) return;
-    const n = args.length;
-    const src = args[0] as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
-    const [dx, dy, dw, dh] = n >= 9
-      ? (args.slice(5, 9) as number[])
-      : n >= 5
-        ? (args.slice(1, 5) as number[])
-        : [args[1] as number, args[2] as number, src.naturalWidth ?? src.width ?? 0, src.naturalHeight ?? src.height ?? 0];
-    const box = destinationBox(this.getTransform(), dx, dy, dw, dh, this.canvas.width, this.canvas.height);
-    if (!box) return;
-    try {
-      const img = this.getImageData(box.x, box.y, box.w, box.h);
-      compensateForDarkCanvas(img.data);
-      this.putImageData(img, box.x, box.y);
-    } catch {
-      // A cross-origin picture taints the canvas: leave it as drawn rather than break the board.
+    if (!stateOf(this).on) { drawImage.apply(this, args); return; }
+    const src = args[0] as object;
+    let copy = copies.get(src);
+    if (copy === undefined) {
+      copy = sourceSize(src as never) ? makeCopy(src, drawImage) : null;
+      // An unloaded image has no size yet: ask again on its next draw rather than remember a miss.
+      if (copy || sourceSize(src as never)) copies.set(src, copy);
     }
+    // The copy has the source's own pixel size, so every call shape (3, 5 or 9 arguments, a
+    // source rect included) means the same pixels on it.
+    if (copy) { drawImage.apply(this, [copy, ...args.slice(1)]); return; }
+    drawImage.apply(this, args); // a tainted picture is left as drawn rather than break the board
   } as Ctx['drawImage'];
 }

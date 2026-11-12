@@ -3,8 +3,9 @@
  * its dark-mode canvas filter for images through `CanvasRenderingContext2D.filter`, which WebKit
  * (the desktop app) does not have, so every screenshot came out inverted. The shim in
  * `dashboard/src/lib/excalidrawImageTheme.ts` takes that one filter value over (only where the
- * engine lacks ctx.filter) and rewrites the drawn pixels with the exact inverse of the canvas
- * filter, in JS.
+ * engine lacks ctx.filter) and draws the picture from a copy of its SOURCE compensated once with
+ * the exact inverse of the canvas filter, in JS (2026-11-12: compensating the drawn pixels cost
+ * up to 16.7 MP of JS at every zoom settle, a 250-320 ms freeze per pinch in WKWebView).
  *
  * No DOM here: the canvas filter is modelled as the spec defines it (invert(93%), then
  * hue-rotate(180deg), each channel clamped), and the 2D context is a stand-in that records
@@ -14,8 +15,8 @@ import { describe, it, expect } from 'vitest';
 import {
   EXCALIDRAW_IMAGE_FILTER,
   compensateForDarkCanvas,
-  destinationBox,
   installImageThemeShim,
+  sourceSize,
 } from '../../dashboard/src/lib/excalidrawImageTheme.js';
 
 /** What the canvas's `invert(93%) hue-rotate(180deg)` CSS filter shows for one 0..255 pixel. */
@@ -60,35 +61,38 @@ describe('compensateForDarkCanvas', () => {
   });
 });
 
-describe('destinationBox', () => {
-  it('maps the drawn rect through the transform and clips it to the canvas', () => {
-    const t = { a: 2, b: 0, c: 0, d: 2, e: 10, f: 5 };
-    expect(destinationBox(t, 0, 0, 50, 20, 1000, 1000)).toEqual({ x: 10, y: 5, w: 100, h: 40 });
-    expect(destinationBox(t, 0, 0, 50, 20, 60, 30)).toEqual({ x: 10, y: 5, w: 50, h: 25 });
-    expect(destinationBox(t, 0, 0, 0, 20, 100, 100)).toBeNull();
-  });
-
-  it('covers a rotated rect with its bounding box', () => {
-    const t = { a: 0, b: 1, c: -1, d: 0, e: 50, f: 0 }; // 90°
-    expect(destinationBox(t, 0, 0, 30, 10, 100, 100)).toEqual({ x: 40, y: 0, w: 10, h: 30 });
+describe('sourceSize', () => {
+  it('reads an image by its natural size, a bitmap or canvas by its size, and refuses an empty one', () => {
+    expect(sourceSize({ naturalWidth: 2880, naturalHeight: 1800, width: 100, height: 60 })).toEqual({ w: 2880, h: 1800 });
+    expect(sourceSize({ width: 800, height: 500 })).toEqual({ w: 800, h: 500 });
+    expect(sourceSize({ naturalWidth: 0, naturalHeight: 0 })).toBeNull();
   });
 });
 
-/** A 2D context stand-in: one RGBA buffer, an identity transform, and a native-like `filter`. */
+type Rgba = number[];
+
+/**
+ * A 2D context stand-in: one RGBA row, a scalable transform, and a native-like `filter`. A source
+ * is one flat colour (`rgba`); drawing it paints that colour over the destination pixels.
+ */
 function fakeContextClass(withNativeFilter: boolean) {
   const engineFilter: string[] = [];
+  const copiesMade: object[] = [];
   class Ctx {
     canvas = { width: 4, height: 1 };
     pixels = new Uint8ClampedArray(16);
+    pixelReads = 0;
     save() {}
     restore() {}
     scaleX = 1;
     getTransform() { return { a: this.scaleX, b: 0, c: 0, d: 1, e: 0, f: 0 }; }
-    drawImage(...args: number[]) {
-      const [dx, , dw] = args.length >= 9 ? args.slice(5, 9) : args.slice(1, 5);
-      for (let x = dx * this.scaleX; x < (dx + dw) * this.scaleX; x++) this.pixels.set([28, 30, 40, 255], x * 4);
+    drawImage(...args: unknown[]) {
+      const src = args[0] as { rgba?: Rgba };
+      const [dx, , dw] = (args.length >= 9 ? args.slice(5, 9) : args.slice(1, 5)) as number[];
+      for (let x = dx * this.scaleX; x < (dx + dw) * this.scaleX; x++) this.pixels.set(src.rgba ?? [28, 30, 40, 255], x * 4);
     }
     getImageData(x: number, _y: number, w: number) {
+      this.pixelReads += 1;
       return { data: this.pixels.slice(x * 4, (x + w) * 4) };
     }
     putImageData(img: { data: Uint8ClampedArray }, x: number) {
@@ -103,11 +107,26 @@ function fakeContextClass(withNativeFilter: boolean) {
       set(this: object, v: string) { store.set(this, v); engineFilter.push(v); },
     });
   }
-  installImageThemeShim(Ctx.prototype as unknown as CanvasRenderingContext2D);
-  return { Ctx, engineFilter };
+  // The app's copy maker draws the source with the engine's own drawImage and compensates its
+  // pixels; here the same on a flat colour. A `tainted` source cannot be read back.
+  const makeCopy = (src: object) => {
+    const s = src as { rgba?: Rgba; naturalWidth?: number; naturalHeight?: number; tainted?: boolean };
+    if (s.tainted) return null;
+    const px = new Uint8ClampedArray(s.rgba ?? [28, 30, 40, 255]);
+    compensateForDarkCanvas(px);
+    const copy = { rgba: [...px], width: s.naturalWidth, height: s.naturalHeight };
+    copiesMade.push(copy);
+    return copy as unknown as CanvasImageSource;
+  };
+  const raw = Ctx.prototype.drawImage;
+  installImageThemeShim(Ctx.prototype as unknown as CanvasRenderingContext2D, (src, rawDraw) => {
+    expect(rawDraw).toBe(raw); // never a patched drawImage: a picture's smaller copy must not swap in
+    return makeCopy(src);
+  });
+  return { Ctx, engineFilter, copiesMade };
 }
 
-const IMG = { naturalWidth: 2, naturalHeight: 1 };
+const IMG = { naturalWidth: 2, naturalHeight: 1, rgba: [28, 30, 40, 255] };
 
 describe('installImageThemeShim', () => {
   it('leaves an engine that has ctx.filter (Chromium) alone: Excalidraw\'s own GPU path stays', () => {
@@ -120,11 +139,16 @@ describe('installImageThemeShim', () => {
   });
 
   describe('engine without ctx.filter (WebKit)', () => {
+    type Fake = CanvasRenderingContext2D & { pixels: Uint8ClampedArray; scaleX: number; pixelReads: number };
+    let copiesMade: object[] = [];
     const make = () => {
-      const { Ctx } = fakeContextClass(false);
-      return new Ctx() as unknown as CanvasRenderingContext2D & { pixels: Uint8ClampedArray; scaleX: number };
+      const made = fakeContextClass(false);
+      copiesMade = made.copiesMade;
+      return new made.Ctx() as unknown as Fake;
     };
     const shownAt = (px: Uint8ClampedArray, i: number) => darkCanvasShows([...px.slice(i * 4, i * 4 + 3)]);
+    const near = (px: Uint8ClampedArray, i: number, rgb: number[]) =>
+      shownAt(px, i).forEach((v, c) => expect(Math.abs(v - rgb[c])).toBeLessThanOrEqual(1));
 
     it('Excalidraw\'s image filter makes the drawn pixels compensated, so the dark canvas shows the original', () => {
       const ctx = make();
@@ -133,10 +157,10 @@ describe('installImageThemeShim', () => {
       expect(ctx.filter).toBe(EXCALIDRAW_IMAGE_FILTER);
       ctx.drawImage(IMG as unknown as CanvasImageSource, 1, 0, 2, 1);
       ctx.restore();
-      // pixels 1..2 were drawn and compensated, 0 and 3 untouched
+      // pixels 1..2 were drawn compensated, 0 and 3 untouched
       expect([...ctx.pixels.slice(0, 4)]).toEqual([0, 0, 0, 0]);
       expect([...ctx.pixels.slice(12, 16)]).toEqual([0, 0, 0, 0]);
-      for (const i of [1, 2]) shownAt(ctx.pixels, i).forEach((v, c) => expect(Math.abs(v - [28, 30, 40][c])).toBeLessThanOrEqual(1));
+      for (const i of [1, 2]) near(ctx.pixels, i, [28, 30, 40]);
     });
 
     it('Excalidraw\'s real call shape: 9 arguments under a scaled transform', () => {
@@ -146,8 +170,51 @@ describe('installImageThemeShim', () => {
       ctx.filter = EXCALIDRAW_IMAGE_FILTER;
       ctx.drawImage(IMG as unknown as CanvasImageSource, 0, 0, 2880, 1800, 0, 0, 1, 1);
       ctx.restore();
-      for (const i of [0, 1]) shownAt(ctx.pixels, i).forEach((v, c) => expect(Math.abs(v - [28, 30, 40][c])).toBeLessThanOrEqual(1));
+      for (const i of [0, 1]) near(ctx.pixels, i, [28, 30, 40]);
       expect([...ctx.pixels.slice(8, 16)]).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+    });
+
+    it('a rebuild at a new zoom costs nothing per pixel: one copy per source, the drawn pixels never read back', () => {
+      const ctx = make();
+      const picture = { naturalWidth: 2880, naturalHeight: 1800, rgba: [90, 110, 160, 255] };
+      for (const zoom of [1, 2, 3, 4]) {
+        ctx.scaleX = zoom;
+        ctx.pixels.fill(0);
+        ctx.save();
+        ctx.filter = EXCALIDRAW_IMAGE_FILTER;
+        ctx.drawImage(picture as unknown as CanvasImageSource, 0, 0, 2880, 1800, 0, 0, 1, 1);
+        ctx.restore();
+        near(ctx.pixels, 0, [90, 110, 160]);
+      }
+      expect(copiesMade).toHaveLength(1);
+      expect(ctx.pixelReads).toBe(0);
+    });
+
+    it('a picture that cannot be read back (tainted) draws as it is, and is not tried again', () => {
+      const ctx = make();
+      const foreign = { ...IMG, tainted: true };
+      for (let i = 0; i < 2; i++) {
+        ctx.save();
+        ctx.filter = EXCALIDRAW_IMAGE_FILTER;
+        ctx.drawImage(foreign as unknown as CanvasImageSource, 0, 0, 1, 1);
+        ctx.restore();
+      }
+      expect([...ctx.pixels.slice(0, 4)]).toEqual([28, 30, 40, 255]);
+      expect(copiesMade).toHaveLength(0);
+    });
+
+    it('an image that has not loaded yet draws as it is and gets its copy once it has a size', () => {
+      const ctx = make();
+      const loading = { naturalWidth: 0, naturalHeight: 0, rgba: [28, 30, 40, 255] };
+      ctx.save();
+      ctx.filter = EXCALIDRAW_IMAGE_FILTER;
+      ctx.drawImage(loading as unknown as CanvasImageSource, 0, 0, 1, 1);
+      expect(copiesMade).toHaveLength(0);
+      Object.assign(loading, { naturalWidth: 2, naturalHeight: 1 });
+      ctx.drawImage(loading as unknown as CanvasImageSource, 0, 0, 1, 1);
+      ctx.restore();
+      expect(copiesMade).toHaveLength(1);
+      near(ctx.pixels, 0, [28, 30, 40]);
     });
 
     it('restore() ends it: a later draw is left as drawn', () => {

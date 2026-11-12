@@ -4,7 +4,11 @@
  * so the two tables compare. The source board is only ever read.
  *
  *   node scripts/verify/whiteboard-perf.mjs --board <dir holding <slug>.excalidraw.md> \
- *     [--label before] [--engine chromium|webkit] [--limit 40] [--trace] [--dark]
+ *     [--label before] [--engine chromium|webkit] [--limit 40] [--trace] [--dark] [--stops 100,300,1000,3000] [--pinch] [--anchor <widget text>] [--headed]
+ *
+ * --stops replaces the pan/zoom script with one rest + pan per zoom level, and counts the canvas
+ * pixels the page allocated at each (`canvas_mpx`): the cost of the element bitmaps at that zoom.
+ * --pinch climbs by WebKit gesture events (the desktop app's trackpad pinch) instead of ctrl+wheel.
  *
  * --limit keeps the first N elements, the "small board" control. --trace adds a Chromium trace
  * and a CPU profile; both slow the page down, so the timing tables never come from a traced run.
@@ -28,7 +32,7 @@ const engine = arg('engine', 'chromium');
 const limit = Number(arg('limit', 0));
 const out = resolve('tmp', 'wb-perf');
 mkdirSync(out, { recursive: true });
-const name = `${label}-${engine}${limit ? `-small${limit}` : ''}${flag('dark') ? '-dark' : ''}${flag('trace') ? '-trace' : ''}`;
+const name = `${label}-${engine}${flag('pinch') ? '-pinch' : ''}${limit ? `-small${limit}` : ''}${flag('dark') ? '-dark' : ''}${flag('trace') ? '-trace' : ''}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -78,7 +82,7 @@ try {
   // WebKit's web and GPU processes are launchd's children (XPC), not the browser's.
   const webkitBefore = new Set(tree().filter((r) => /ms-playwright\/webkit/.test(r.command)).map((r) => r.pid));
   const launcher = engine === 'webkit' ? webkit : chromium;
-  browser = await launcher.launch(engine === 'chromium'
+  browser = await launcher.launch(flag('headed') ? { headless: false } : engine === 'chromium'
     ? { channel: 'chromium', args: ['--use-angle=metal', '--enable-gpu-rasterization', '--ignore-gpu-blocklist', '--enable-precise-memory-info'] }
     : {});
   const ours = () => {
@@ -97,7 +101,14 @@ try {
       new PerformanceObserver((list) => { for (const e of list.getEntries()) p.long.push({ t: e.startTime, d: e.duration }); })
         .observe({ type: 'longtask', buffered: true });
     } catch { p.noLongTask = true; }
+    p.canvasPx = 0;
+    const proto = HTMLCanvasElement.prototype;
+    const wDesc = Object.getOwnPropertyDescriptor(proto, 'width');
+    const hDesc = Object.getOwnPropertyDescriptor(proto, 'height');
+    Object.defineProperty(proto, 'width', { ...wDesc, set(v) { wDesc.set.call(this, v); this.__w = v; } });
+    Object.defineProperty(proto, 'height', { ...hDesc, set(v) { hDesc.set.call(this, v); if (this.__w) p.canvasPx += this.__w * v; } });
     p.start = () => {
+      p.canvasPx = 0;
       p.long.length = 0;
       p.frames = [];
       let last = performance.now();
@@ -109,7 +120,7 @@ try {
       };
       requestAnimationFrame(tick);
     };
-    p.stop = () => { const frames = p.frames; p.frames = null; return { frames, long: p.long.map((l) => l.d) }; };
+    p.stop = () => { const frames = p.frames; p.frames = null; return { frames, long: p.long.map((l) => l.d), canvasPx: p.canvasPx }; };
   });
   const page = await context.newPage();
   const errors = [];
@@ -169,6 +180,12 @@ try {
   // ── the script, the same every run ─────────────────────────────────────────────────────
   const box = await page.locator('.excalidraw canvas.static').first().boundingBox();
   const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  // --anchor "<text>": zoom in over the widget showing that text instead of the canvas centre.
+  if (arg('anchor', '')) {
+    const hit = await page.locator('.excalidraw__embeddable-container').filter({ hasText: arg('anchor', '') }).first().boundingBox();
+    if (!hit) throw new Error(`no widget shows "${arg('anchor', '')}"`);
+    Object.assign(centre, { x: hit.x + hit.width * 0.3, y: hit.y + hit.height * 0.3 });
+  }
   report.canvas = box;
   await page.mouse.move(centre.x, centre.y);
   const zoomText = () => page.locator('.reset-zoom-button, .zoom-reset').first().innerText({ timeout: 1000 }).catch(() => '?');
@@ -203,6 +220,29 @@ try {
     }
     await page.keyboard.up('Control');
   };
+  /**
+   * A trackpad pinch the way the desktop app gets one: WebKit gesture events at the pointer,
+   * one step per frame (lib/excalidrawPinch.ts replays them), then the gesture ends.
+   */
+  const pinchTo = async (pct) => {
+    await page.evaluate(async ({ pct, x, y }) => {
+      const target = document.elementFromPoint(x, y) ?? document.body;
+      const fire = (type, scale) => {
+        const e = new Event(type, { bubbles: true, cancelable: true });
+        Object.assign(e, { scale, clientX: x, clientY: y });
+        target.dispatchEvent(e);
+      };
+      const start = parseInt(document.querySelector('.reset-zoom-button, .zoom-reset')?.innerText ?? '100', 10);
+      const ratio = pct / start;
+      const steps = Math.max(1, Math.ceil(Math.abs(Math.log(ratio)) / Math.log(1.04)));
+      fire('gesturestart', 1);
+      for (let i = 1; i <= steps; i += 1) {
+        fire('gesturechange', ratio ** (i / steps));
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      fire('gestureend', ratio);
+    }, { pct, x: centre.x, y: centre.y });
+  };
   /** Stop at each level: Excalidraw rebuilds every visible picture's bitmap once the wheel rests. */
   const zoomStops = async () => {
     for (const pct of [25, 50, 100, 150, 100, 50, 25, 10]) {
@@ -229,6 +269,15 @@ try {
     tracing = true;
   }
   const zoom0 = await zoomText();
+  if (arg('stops', '')) {
+    // Every zoom level on its own: the wheel climbs to it and rests (the bitmap rebuild), then a
+    // short pan there. Climbing only, so each level starts from the one below it.
+    for (const pct of arg('stops', '').split(',').map(Number)) {
+      await phase(`${flag('pinch') ? 'pinch' : 'rest'}-${pct}`, async () => { await (flag('pinch') ? pinchTo : zoomTo)(pct); await sleep(700); });
+      await phase(`pan-${pct}`, () => pan(60));
+    }
+    await page.screenshot({ path: join(out, `${name}-stops-top.png`) });
+  } else {
   await phase('pan-fit', () => pan(), '2-pan-fit');
   await phase('zoom-sweep', () => zoomSweep(), '3-zoom-sweep');
   await phase('zoom-stops', () => zoomStops(), '3b-zoom-stops');
@@ -239,6 +288,7 @@ try {
   await zoomTo(300);
   await sleep(1500);
   await phase('pan-close', () => pan(120), '5-pan-close');
+  }
   if (tracing) {
     const { profile } = await cdp.send('Profiler.stop');
     const buffer = await browser.stopTracing();
@@ -260,7 +310,7 @@ process.exit(0);
 
 // ───────────────────────────────────────────────────────────────────────────────────────────
 
-function summary({ frames, long }) {
+function summary({ frames, long, canvasPx = 0 }) {
   const f = (frames ?? []).slice(1).sort((a, b) => a - b);
   const at = (q) => Math.round(f[Math.min(f.length - 1, Math.floor(f.length * q))] ?? 0);
   const share = (lim) => (f.length ? Math.round((f.filter((d) => d <= lim).length / f.length) * 100) : 0);
@@ -276,6 +326,7 @@ function summary({ frames, long }) {
     long100: long.filter((d) => d > 100).length,
     long_max_ms: Math.round(Math.max(0, ...long)),
     long_sum_ms: Math.round(long.reduce((a, b) => a + b, 0)),
+    canvas_mpx: Math.round(canvasPx / 1e5) / 10,
   };
 }
 
@@ -308,11 +359,11 @@ function summariseProfile(profile) {
 }
 
 function printTable(r) {
-  const row = (k, p) => `| ${k} | ${p.zoom ?? ''} | ${p.frames} | ${p.median_ms} | ${p.p95_ms} | ${p.max_ms} | ${p.within_33ms_pct}% | ${p.over_100ms} | ${p.long100}/${p.long50} | ${p.long_sum_ms} | ${p.rss_mb} | ${p.js_heap_mb ?? '-'} |`;
+  const row = (k, p) => `| ${k} | ${p.zoom ?? ''} | ${p.frames} | ${p.median_ms} | ${p.p95_ms} | ${p.max_ms} | ${p.within_33ms_pct}% | ${p.over_100ms} | ${p.long100}/${p.long50} | ${p.long_sum_ms} | ${p.canvas_mpx} | ${p.rss_mb} | ${p.js_heap_mb ?? '-'} |`;
   console.log(`\n${name}  ${JSON.stringify(r.board_facts)}`);
   console.log(`open: first canvas ${r.open.first_canvas_ms} ms, settled ${r.open.settled_ms} ms, ${r.open.file_requests} file requests, ${r.open.file_mb} MB, canvases ${r.open.canvases}, iframes ${r.open.iframes}, widgets ${r.open.widgets}, DOM ${r.open.dom_nodes}`);
-  console.log('| phase | zoom | frames | median | p95 | max | ≤33ms | >100ms frames | long >100/>50 | long sum | RSS MB | JS heap MB |');
-  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
+  console.log('| phase | zoom | frames | median | p95 | max | ≤33ms | >100ms frames | long >100/>50 | long sum | canvas Mpx | RSS MB | JS heap MB |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   console.log(row('open', r.open));
   for (const [k, p] of Object.entries(r.phases)) console.log(row(k, p));
   console.log(`rest: RSS ${r.rest.rss_mb} MB, heap ${r.rest.js_heap_mb ?? '-'} MB`);
