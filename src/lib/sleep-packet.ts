@@ -33,6 +33,11 @@ import { readSleepFlags, type SleepFlag } from './sleep-flags.js';
 import type { SleepState, SleepHistoryEntry } from './sleep-consolidation.js';
 import type { TaskData, TaskSummary } from './task-backend/types.js';
 import { isTerminal, type StatusDef } from './task-status.js';
+import {
+  knownIssuesText, ownerWordsBlock, readToolErrorTally, renderOwnerWords, renderRepeatedErrors, repeatedErrors,
+  tallyToolErrors, toolErrorTallyFile, toolErrorsOf, writeToolErrorTally,
+  type OwnerWordsBlock, type RepeatedError, type ToolError,
+} from './sleep-learns.js';
 
 /** Where `sleep start` writes the packet, relative to `_dream_context/` (gitignored `tmp/`). */
 export const PACKET_DIR_REL = 'tmp/sleep';
@@ -77,6 +82,8 @@ export interface PacketSession {
   transcript_problem: string | null;
   /** The session digest on disk, when there is one (relative to `_dream_context/`). */
   digest: string | null;
+  /** Tool results the transcript marks as errors or that say `command not found`, folded (C5). */
+  tool_errors?: ToolError[];
 }
 
 export interface BoardRow {
@@ -141,6 +148,10 @@ export interface SleepPacket {
   /** The cycle's bookmarks, ★★★ first, then oldest first. */
   bookmarks: Array<{ id: string; salience: number; message: string; task_slug: string | null; session_id: string | null; auto: boolean }>;
   facts: PacketFacts;
+  /** His own words since the last sleep, from the owner-words ledger (learning loop C5). */
+  owner_words?: OwnerWordsBlock;
+  /** Tool errors seen in two or more sessions on two or more days (D16a). */
+  repeated_errors?: RepeatedError[];
 }
 
 // ─── Owner turns ─────────────────────────────────────────────────────────────
@@ -192,6 +203,8 @@ export interface TypedTurns {
   turns: PacketTurn[];
   /** Turns set aside as machine-written, counted by kind (named in the packet, never silent). */
   machine: Record<string, number>;
+  /** Tool errors read in the same pass (learning loop C5). */
+  errors?: ToolError[];
 }
 
 /**
@@ -210,6 +223,7 @@ export function readTypedTurns(path: string, since: string | null): TypedTurns {
   const sinceMs = since ? Date.parse(since) : NaN;
   const turns: PacketTurn[] = [];
   const machine: Record<string, number> = {};
+  const errors: ToolError[] = [];
   for (const line of raw.split('\n')) {
     if (!line) continue;
     let rec: Record<string, unknown>;
@@ -219,6 +233,8 @@ export function readTypedTurns(path: string, since: string | null): TypedTurns {
       continue;
     }
     if (!rec || typeof rec !== 'object') continue;
+    const recAt = typeof rec.timestamp === 'string' ? rec.timestamp : null;
+    if (Number.isNaN(sinceMs) || !recAt || Date.parse(recAt) > sinceMs) errors.push(...toolErrorsOf(rec));
     const text = humanTurnText(rec) ?? queuedCommandText(rec);
     if (!text) continue;
     const at = typeof rec.timestamp === 'string' ? rec.timestamp : null;
@@ -237,7 +253,7 @@ export function readTypedTurns(path: string, since: string | null): TypedTurns {
     }
     turns.push({ at, text: clean.text, cut: 0 });
   }
-  return { turns, machine };
+  return { turns, machine, errors };
 }
 
 /**
@@ -307,13 +323,14 @@ export function packetSessions(contextRoot: string, state: SleepState, history: 
     const since = turnsSince(s.session_id, history);
     let turns: PacketTurn[] = [];
     let machine: Record<string, number> = {};
+    let errors: ToolError[] | undefined;
     let problem: string | null = null;
     if (!s.transcript_path) {
       problem = 'no transcript path recorded';
     } else {
       const loc = resolveTranscript(s.transcript_path, { sessionId: s.session_id });
       if (!loc.mainPath) problem = `transcript not found (${s.transcript_path})`;
-      else ({ turns, machine } = readTypedTurns(loc.mainPath, since));
+      else ({ turns, machine, errors } = readTypedTurns(loc.mainPath, since));
     }
     const digestRel = `state/.session-digests/${s.session_id}.md`;
     const digestAbs = join(contextRoot, digestRel);
@@ -334,6 +351,7 @@ export function packetSessions(contextRoot: string, state: SleepState, history: 
       turns_since: since,
       transcript_problem: problem,
       digest,
+      ...(errors && errors.length > 0 ? { tool_errors: errors } : {}),
     };
   });
 }
@@ -500,6 +518,8 @@ export interface PacketInputs {
   appFindings: number;
   learning: boolean;
   now?: Date;
+  /** Where the owner-words ledger, the rules stores and the tool-error tally live (tests). */
+  home?: string;
 }
 
 export function buildSleepPacket(i: PacketInputs): SleepPacket {
@@ -514,6 +534,19 @@ export function buildSleepPacket(i: PacketInputs): SleepPacket {
   const objectivesDir = join(i.contextRoot, 'core', 'objectives');
   const git = i.repos.map((r) => gitBlock(r.name, r.path, since));
   const authors = new Set(git.flatMap((g) => g.authors));
+  // What sleep learns from (C5): his words, and the tally of tool errors across sessions. Each is
+  // best-effort: a broken ledger or tally never stops the packet, and the block says what it has.
+  let ownerWords: OwnerWordsBlock | undefined;
+  try { ownerWords = ownerWordsBlock(i.contextRoot, since, { home: i.home }); } catch { ownerWords = undefined; }
+  let repeated: RepeatedError[] | undefined;
+  try {
+    const file = toolErrorTallyFile(i.contextRoot, i.home);
+    let tally = readToolErrorTally(file);
+    for (const s of sessions) if (s.tool_errors?.length) tally = tallyToolErrors(tally, s.id, s.tool_errors, now);
+    tally = tallyToolErrors(tally, '', [], now);
+    writeToolErrorTally(file, tally);
+    repeated = repeatedErrors(tally, knownIssuesText(i.contextRoot));
+  } catch { repeated = undefined; }
   return {
     generated_at: now.toISOString(),
     epoch: i.state.sleep_started_at ?? null,
@@ -541,6 +574,8 @@ export function buildSleepPacket(i: PacketInputs): SleepPacket {
       learning: i.learning,
       depth: i.state.consolidation_depth ?? null,
     },
+    ...(ownerWords ? { owner_words: ownerWords } : {}),
+    ...(repeated ? { repeated_errors: repeated } : {}),
   };
 }
 
@@ -605,6 +640,8 @@ export function renderSleepPacket(p: SleepPacket): string {
       L.push(fence(t.text));
     });
   }
+  if (p.owner_words) { L.push(''); L.push(...renderOwnerWords(p.owner_words)); }
+  if (p.repeated_errors) { L.push(''); L.push(...renderRepeatedErrors(p.repeated_errors)); }
   L.push('');
   L.push('## Git since the last consolidation (all branches)');
   for (const g of p.git) {
