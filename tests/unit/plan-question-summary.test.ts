@@ -15,6 +15,7 @@ import { modeBriefing } from '../../src/server/chat-modes.js';
 import { PLAN_QUESTION_LINE, superBatchText } from '../../src/lib/super/inbox.js';
 import { PLAN_QUEUE_ASK_WARNING, queueAskWarning } from '../../src/lib/super/ask-summary.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
+import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
 
 const OPTIONS = [
   { label: '(b) Filter by ids (Recommended)', description: 'The store filters in its own DB and sends the ids; the ranking stays.' },
@@ -149,6 +150,24 @@ describe("the Super, when a plan child's question reaches it", () => {
     expect(PLAN_QUESTION_LINE).toContain('--show <its card>');
     expect(superBatchText('/tmp/acme/_dream_context', state('develop'), question, 'b-1')).not.toContain(PLAN_QUESTION_LINE);
     expect(superBatchText('/tmp/acme/_dream_context', state('plan'), [{ ...question[0], kind: 'done' as const }], 'b-1')).not.toContain(PLAN_QUESTION_LINE);
+  });
+
+  it("its event line carries the card's own words (the summary), fenced, for a Codex question split by the bridge too", () => {
+    _resetChatRegistry();
+    const h = registerChat({ sessionId: 'p', conversationId: null, vault: 'acme', mode: 'plan' });
+    const { card } = (() => {
+      const w = new ToWire({ tool: 'codex', model: 'm', cwd: '/p', permissionMode: 'auto' });
+      w.translate({ type: 'provider_turn.updated', providerTurn: { status: 'running' } } as never, 1000);
+      const out: WireFrame[] = w.translate({ type: 'turn_item.updated', turnItem: { id: 'q', threadId: 't', nativeItemRef: null, title: null, type: 'user_input_request', status: 'waiting', requestId: 'r-9', questions: [{ id: '0', header: 'Design', question: `${SUMMARY}\nWhich design?`, options: [{ label: 'Ids', description: '' }] }] } } as never, 1000);
+      return { card: out.find((f) => f.type === 'control_request')! };
+    })();
+    h.observe(card as never);
+    const text = superBatchText('/tmp/acme/_dream_context', state('plan'), question, 'b-1');
+    expect(text).toContain('Question: Which design?');
+    expect(text).toContain(`Its card says: ${SUMMARY.split('\n')[0]}`);
+    expect(text).toContain('- Ranking runs only inside that set, before the limit');
+    expect(text).toMatch(/<untrusted-project-output[^>]*>[^<]*Its card says:/);
+    _resetChatRegistry();
   });
 
   it('`queue ask` of a plan child with no report card carries a warning', () => {
