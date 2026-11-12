@@ -4,6 +4,14 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.19] - 2026-11-12
+
+Patch on 0.41.18, local build; not published.
+
+- **Whiteboard.** Pinching in close on pictures in dark mode no longer freezes the board (WebKit).
+- **Telegram.** A report page sent as a PDF now carries its pictures.
+- **Super.** `super delegate --outward`: a push, PR or deploy the owner's own message named is done by the child.
+
 ## [0.41.18] - 2026-11-12
 
 Patch on 0.41.17, the candidate for the public release: everything finished after the 0.41.17 cut, built together. Local build; not published.
