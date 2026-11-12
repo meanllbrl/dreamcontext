@@ -4,6 +4,17 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.18] - 2026-11-12
+
+Patch on 0.41.17, the candidate for the public release: everything finished after the 0.41.17 cut, built together. Local build; not published.
+
+- **Whiteboard.** Quick edit: Claude draws on the board directly, Ask the Super stays beside it, and an empty region can be chosen to draw in.
+- **Children and MCP.** A child that asks for an installed MCP server gets it at the end of its turn and keeps its session; the Super picks up a newly connected MCP without a restart.
+- **Chat.** The project row's + opens a new Claude window at once, no menu; a report page with a diagram no longer jumps while you scroll.
+- **Plan.** Every question card a Plan chat asks carries the plan summary (Plan mode 2.0).
+- **Apps sharing.** A late approval still shares; a large file warns instead of stopping; `apps publish --fresh`.
+- **Tasks.** Closing a parent to completed or cancelled closes its open sub-tasks with it ("closed with its parent").
+
 ## [0.41.17] - 2026-11-12
 
 Patch on 0.41.16: the overnight audit fixes (general and Apps) and the agenda fix, built together. Local build; not published.
