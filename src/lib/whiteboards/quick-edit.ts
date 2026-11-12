@@ -361,6 +361,7 @@ export function quickEditSystemPrompt(kitReference: string = safeKitReference())
     '- You may only `update`, `move`, `scale` or `remove` shapes in `scope`. Without a selection you may only ADD.',
     '- When the request is about a shape that is NOT in `scope`, still name it in `update` or `remove` by its id from `near`, and say in `reply` that the owner should select it first ("Önce Seçenek D şeklini seç."). The server then writes nothing.',
     '- A recolor goes to `fill` for a filled shape ("yeşil yap" = fill green). A rename of a labelled shape is `text` on the shape.',
+    '- `reply` is about THIS edit only: never mention connectors, settings, accounts, tools or anything outside the board.',
     '- Never a picture, a link, a `path` or a widget. Keep labels short (1 to 4 words).',
     '- A `text` that ends in "…" was cut for you: never send `update.text` for it (the server refuses it); say in `reply` that the owner should ask Super.',
     '',
