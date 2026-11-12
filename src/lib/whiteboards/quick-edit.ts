@@ -368,8 +368,8 @@ export function quickEditSystemPrompt(kitReference: string = safeKitReference())
     '',
     '## The kit (spec types)',
     'The draw skill is loaded below in full (SKILL.md, the whiteboard kit, the kit guide), so draw by it. It was written for agents with a shell: you have none, so take its types, fields and drawing rules and ignore its commands (`dreamcontext ...`, `node`), widgets and pictures. If the owner types "/draw" or "/excalidraw" it is just words: the skill is already in front of you.',
-    'For a screen, phone, window or app mockup, ALWAYS use the Screens types (`device` / `windowFrame` with `items`); never draw a screen from rectangles. Build it at its natural size (a `device` with no `w`, a `windowFrame` of about 560x380) and do NOT shrink it to the area: the server scales the finished drawing down to fit, so squeezing the parts yourself only breaks them.',
-    'A screen is never an empty shell: fill its `items` with 4 to 7 realistic parts for what the owner named (a window: a `navbar` or `searchField`, `listRow`s or `input`s, `textRows`, a `button`).',
+    'For a screen, phone, window or app mockup, ALWAYS use the Screens types (`device` / `windowFrame` with `items`); never draw a screen from rectangles. Build it at its natural size (a `device` with no `w`, a `windowFrame` of about 560x380) and do NOT shrink it to the area: the server keeps it readable (it never scales text below 9 px, and lets the drawing outgrow a small area, telling the owner), so squeezing the parts yourself only breaks them.',
+    'A screen is never an empty shell: fill its `items` with 6 to 10 realistic parts for what the owner named (a phone: `appBar`, `searchField`, an `imagePlaceholder`, several `listRow`s, a `button`, ending with a `tabBar` that sits on the bottom edge; a window: a `navbar`, `searchField`, `listRow`s or `input`s, `textRows`, a `button`). The parts are spread to fill the screen.',
     '',
     kitReference,
   ].join('\n');
@@ -588,6 +588,8 @@ export async function buildAdds(
 
 export interface QuickEditOutcome {
   outOfScope: boolean;
+  /** A drawing was kept at a readable size and so outgrew the area the owner chose. */
+  grew?: boolean;
   added: string[];
   changed: string[];
   skipped: string[];
@@ -722,11 +724,25 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
 
   // ── add: place what buildAdds built (never built here), fit into the area ──
   const added: WhiteboardElement[] = [];
+  let grew = false;
   const adds = answer.add ?? [];
   if (adds.length && (!ctx.built || ctx.built.length !== adds.length)) throw new QuickEditRefusal('refused', 'a quick edit\'s drawings are built before the apply');
   adds.forEach((a, i) => {
     const { elements: placed } = prepareImport(structuredClone(ctx.built![i]) as WhiteboardElement[], [...elements, ...added], { at: { x: a.at[0], y: a.at[1] }, now });
-    if (ctx.area && placed.length) fitInto(placed, ctx.area);
+    if (ctx.area && placed.length && fitInto(placed, ctx.area)) {
+      grew = true;
+      // It outgrew the area (readable beats small): if it now sits on something, move it to the
+      // free side right of everything on the board, level with the area.
+      const live = [...elements, ...added].filter((e) => !e.isDeleted).map(elementBBox);
+      const mine = unionBBox(placed.map(elementBBox))!;
+      const hits = live.some((b) => mine.x < b.x + b.w && b.x < mine.x + mine.w && mine.y < b.y + b.h && b.y < mine.y + mine.h);
+      const all = unionBBox(live);
+      if (hits && all) {
+        const dx = all.x + all.w + 40 - mine.x;
+        const dy = ctx.area.y - mine.y;
+        for (const el of placed) { el.x = num(el.x) + dx; el.y = num(el.y) + dy; }
+      }
+    }
     added.push(...placed);
   });
   if (added.length > QUICK_BUILT_MAX) throw new QuickEditRefusal('too_big', `a quick edit draws at most ${QUICK_BUILT_MAX} elements`);
@@ -760,14 +776,18 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
     const weight = (els: WhiteboardElement[]) => els.reduce((n, el) => n + Buffer.byteLength(JSON.stringify(el)), 0);
     if (weight(written) - weight(Object.values(before)) > QUICK_GROW_SLACK) throw new QuickEditRefusal('too_big', 'the board would grow past what it can save');
   }
-  return { outOfScope: false, added: added.map((e) => e.id), changed, skipped: [...skipped], before, written, dropped };
+  return { outOfScope: false, grew, added: added.map((e) => e.id), changed, skipped: [...skipped], before, written, dropped };
 }
 
 /** Fit placed elements into the area (critic r3): scale down to fit, then move wholly inside. */
-export function fitInto(placed: WhiteboardElement[], area: QuickArea): void {
+export function fitInto(placed: WhiteboardElement[], area: QuickArea, minFont: number = QUICK_MIN_FONT): boolean {
   const box = unionBBox(placed.map(elementBBox));
-  if (!box) return;
-  const s = Math.min(1, box.w > 0 ? area.w / box.w : 1, box.h > 0 ? area.h / box.h : 1);
+  if (!box) return false;
+  // Never shrink a drawing until its smallest text drops below the kit's minimum: a mockup that
+  // cannot be read is not a mockup. It then outgrows the area (and the caller says so).
+  const fonts = placed.filter((e) => e.type === 'text' && finite(e.fontSize) && e.fontSize > 0).map((e) => e.fontSize as number);
+  const readable = fonts.length ? Math.min(1, minFont / Math.min(...fonts)) : 0;
+  const s = Math.max(readable, Math.min(1, box.w > 0 ? area.w / box.w : 1, box.h > 0 ? area.h / box.h : 1));
   if (s < 1) for (const el of placed) scaleAbout(el, s, box.x, box.y);
   const b = unionBBox(placed.map(elementBBox))!;
   const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
@@ -776,7 +796,11 @@ export function fitInto(placed: WhiteboardElement[], area: QuickArea): void {
   const dx = nx - b.x;
   const dy = ny - b.y;
   if (dx || dy) for (const el of placed) { el.x = num(el.x) + dx; el.y = num(el.y) + dy; }
+  return b.w > area.w + 0.5 || b.h > area.h + 0.5;
 }
+
+/** The kit's smallest text size (fitText's minFont): a drawing is not scaled below it. */
+export const QUICK_MIN_FONT = 9;
 
 // ─── C4: undo ─────────────────────────────────────────────────────────────
 

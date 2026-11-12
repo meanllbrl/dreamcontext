@@ -90,16 +90,41 @@ const FULL_WIDTH_TYPES = ['appBar', 'tabBar', 'listRow', 'searchField', 'segment
 function screenWithItems(e) {
   const { items, gap, ...shell } = e;
   const build = COMPOSITES[e.type];
-  const fill = (inner) => LAYOUTS.stack({
-    x: inner.x, y: inner.y, gap: gap == null ? 10 : gap,
-    items: items.map((it) => {
-      const spec = (it && typeof it === 'object' && FULL_WIDTH_TYPES.includes(it.type) && it.w == null) ? Object.assign({}, it, { w: inner.w }) : it;
-      return expandElements([spec]);
-    }),
-  });
+  // The parts FILL the screen, they do not hug its top: a trailing `tabBar` sits on the bottom edge,
+  // an `imagePlaceholder` with no `h` takes most of the spare height, and what is still spare opens
+  // the gaps a little (never past MAX_SPREAD).
+  const MAX_SPREAD = 24;
+  const g0 = gap == null ? 10 : gap;
+  const sizedIn = (inner) => (it, h) => {
+    if (!(it && typeof it === 'object')) return it;
+    const o = FULL_WIDTH_TYPES.includes(it.type) && it.w == null ? Object.assign({}, it, { w: inner.w }) : Object.assign({}, it);
+    if (h != null && it.type === 'imagePlaceholder' && it.h == null) o.h = h;
+    return o;
+  };
+  const fill = (inner) => {
+    const sized = sizedIn(inner);
+    const last = items[items.length - 1];
+    const pinned = last && last.type === 'tabBar' ? expandElements([sized(last)]) : null;
+    const rest = pinned ? items.slice(0, -1) : items;
+    const pinH = pinned ? LAYOUTS.stack({ items: [pinned] }).h : 0;
+    const flow = (h, gp) => LAYOUTS.stack({ x: inner.x, y: inner.y, gap: gp, items: rest.map((it) => expandElements([sized(it, h)])) });
+    const room = inner.h - (pinned ? pinH + g0 : 0);
+    const flexImg = rest.some((it) => it && it.type === 'imagePlaceholder' && it.h == null);
+    let imgH = null;
+    let out = flow(null, g0);
+    if (flexImg && room - out.h > 8) { imgH = 120 + Math.round((room - out.h) * 0.6); out = flow(imgH, g0); }
+    const spare = room - out.h;
+    if (spare > 8 && rest.length > 1) out = flow(imgH, g0 + Math.min(MAX_SPREAD, spare / (rest.length - 1)));
+    if (!pinned) return out;
+    const tab = LAYOUTS.stack({ x: inner.x, y: inner.y + inner.h - pinH, items: [pinned] });
+    return [].concat(out, tab);
+  };
   if (e.type === 'device') return build(Object.assign({}, shell, { content: fill }));
   // windowFrame has no `content` callback: it hands back `.inner`, the parts go in after it.
-  const frame = build(shell);
+  let frame = build(shell);
+  // The frame GROWS to hold its parts: a window never lets its content hang out of the bottom.
+  const need = fill(Object.assign({}, frame.inner, { h: 0 })).h;
+  if (need > frame.inner.h) frame = build(Object.assign({}, shell, { h: (shell.h == null ? 380 : shell.h) + Math.ceil(need - frame.inner.h) }));
   return [].concat(frame, fill(frame.inner));
 }
 

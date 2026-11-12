@@ -254,6 +254,29 @@ describe('the kit reference', () => {
     }
   });
 
+  it('a phone fills its screen: the tab bar sits on the bottom edge and the parts are spread down it', () => {
+    const els = buildSpecDrawing(JSON.stringify({ elements: [{ type: 'device', kind: 'iphone', items: [
+      { type: 'appBar', title: 'A' }, { type: 'listRow', title: 'Bir', leading: 'bell' }, { type: 'listRow', title: 'Iki', leading: 'user' },
+      { type: 'imagePlaceholder', label: 'Foto' }, { type: 'button', text: 'Git' }, { type: 'tabBar', items: [{ icon: 'home', label: 'Ana' }, { icon: 'user', label: 'Ben' }], active: 0 },
+    ] }] }), 'phone.json').elements as unknown as { type: string; text?: string; y: number; height: number }[];
+    const top = Math.min(...els.map((e) => e.y));
+    const bottom = Math.max(...els.map((e) => e.y + (e.height || 0)));
+    const lastText = Math.max(...els.filter((e) => e.type === 'text' && e.text === 'Ana').map((e) => e.y));
+    const bigImg = els.filter((e) => e.type === 'rectangle').reduce((m, e) => Math.max(m, e.height), 0);
+    expect(lastText - top).toBeGreaterThan((bottom - top) * 0.8);
+    expect(bigImg).toBeGreaterThan(200); // the image placeholder took the spare height
+  });
+
+  it('a window grows to hold its parts instead of letting them hang out of the bottom', () => {
+    const els = buildSpecDrawing(JSON.stringify({ elements: [{ type: 'windowFrame', kind: 'app', w: 560, h: 200, items: [
+      { type: 'input', label: 'A', placeholder: 'x' }, { type: 'textRows', rows: 4 }, { type: 'input', label: 'B', placeholder: 'y' }, { type: 'button', text: 'Git' },
+    ] }] }), 'win.json').elements as unknown as { type: string; text?: string; y: number; height: number }[];
+    const frame = els.filter((e) => e.type === 'rectangle').reduce((m, e) => (e.height > m.height ? e : m));
+    const btn = els.filter((e) => e.type === 'text' && e.text === 'Git')[0];
+    expect(frame.height).toBeGreaterThan(200);
+    expect(btn.y).toBeLessThan(frame.y + frame.height);
+  });
+
   it('names every primitive field the builder reads, in a Primitives block', () => {
     const block = REF.slice(REF.indexOf('## Primitives'), REF.indexOf('## Screens'));
     expect(block.length).toBeGreaterThan(100);

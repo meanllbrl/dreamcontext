@@ -114,6 +114,14 @@ export function resetQuickJobsForTests(): void {
   deps = {};
 }
 
+/** The model's sentence, plus a line when the drawing was kept readable and so outgrew the area. */
+function replyWith(reply: string, grew: boolean | undefined, asked: string): string {
+  if (!grew) return reply;
+  const tr = /[çğıöşüÇĞİÖŞÜ]/.test(asked + reply);
+  const note = tr ? ' Alan küçüktü: okunur kalsın diye çizim alanın dışına taştı.' : ' The area was small: the drawing is kept readable, so it runs past the area.';
+  return `${reply.slice(0, 300 - note.length)}${note}`.slice(0, 300);
+}
+
 let systemCache: string | null = null;
 function systemPrompt(): string {
   if (deps.system) return deps.system();
@@ -339,7 +347,7 @@ async function apply(
       const after: Record<string, string> = {};
       for (const id of [...o.added, ...o.changed]) { const el = written.get(id); if (el) after[id] = identityKey(el); }
       const rec: QuickJournalRecord = {
-        id: recordId, at: new Date().toISOString(), text: job.req.text.slice(0, 2000), reply: answer.reply,
+        id: recordId, at: new Date().toISOString(), text: job.req.text.slice(0, 2000), reply: replyWith(answer.reply, o.grew, job.req.text),
         added: o.added, changed: o.changed, before: o.before, after, costUsd, model: QUICK_MODEL, undone: false,
       };
       writeJournal(job.root, job.slug, [...readJournal(job.root, job.slug, job.req.selfOrigin), rec]);
@@ -363,7 +371,7 @@ async function apply(
   const ids = new Set(o.written.map((e) => e.id));
   settle(job, {
     state: 'done',
-    reply: answer.reply,
+    reply: replyWith(answer.reply, o.grew, job.req.text),
     costUsd,
     timing,
     ...(wroteSomething ? { edit: { id: recordId, added: o.added.length, changed: o.changed.length, skipped: o.skipped } } : {}),

@@ -59,8 +59,8 @@ const sceneOf = (page) => page.evaluate(() => {
         left: r.left, top: r.top, width: r.width, height: r.height, zoom: a.state.zoom.value, scrollX: a.state.scrollX, scrollY: a.state.scrollY,
         selected: Object.keys(a.state.selectedElementIds || {}).filter((k) => a.state.selectedElementIds[k]),
         elements: a.scene.getNonDeletedElements().map((e) => ({
-          id: e.id, type: e.type, x: e.x, y: e.y, w: e.width, h: e.height, fill: e.backgroundColor, text: e.text ?? null,
-          containerId: e.containerId ?? null, groups: e.groupIds ?? [], version: e.version, nonce: e.versionNonce,
+          id: e.id, type: e.type, ...(e.points?.length ? (() => { const xs = e.points.map((q) => q[0]); const ys = e.points.map((q) => q[1]); return { x: e.x + Math.min(...xs), y: e.y + Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }; })() : { x: e.x, y: e.y, w: e.width, h: e.height }), fill: e.backgroundColor, text: e.text ?? null,
+          pts: e.points ? [e.points.length, e.points[0], e.points[e.points.length - 1]] : null, containerId: e.containerId ?? null, groups: e.groupIds ?? [], version: e.version, nonce: e.versionNonce,
         })),
       };
     }
@@ -99,7 +99,7 @@ const emptySpot = async (page, s, w, h) => {
     }
     return true;
   }, r);
-  for (let y = s.top + 20; y + h < s.top + s.height - 20; y += 20) {
+  for (let y = s.top + 110; y + h < s.top + s.height - 20; y += 20) {
     for (let x = s.left + 20; x + w < s.left + s.width - 20; x += 20) {
       const r = { x, y, w, h };
       if (!boxes.some((b) => meets(r, b)) && await bare(r)) return r;
@@ -188,7 +188,22 @@ async function timedAdd(page, theme, w, words, { shots = false } = {}) {
   await waitIdle(page);
   const after = await sceneOf(page);
   const all = after.elements.filter((e) => !before.has(e.id));
-  const within = all.length > 0 && all.every((e) => inside(e, region));
+  const note = await lineText(page);
+  const grewNote = /taştı|runs past the area/.test(note);
+  const within = all.length > 0 && (all.every((e) => inside(e, region)) || grewNote);
+  // never on the cards that were already there, never under the toolbar
+  const cards = after.elements.filter((e) => before.has(e.id));
+  const hitCard = all.some((e) => cards.some((c) => e.x < c.x + c.w && c.x < e.x + e.w && e.y < c.y + c.h && c.y < e.y + e.h));
+  const bar = await page.locator('.App-menu, .App-toolbar').first().boundingBox().catch(() => null);
+  const underBar = !!bar && all.some((e) => { const a = screen(after, e.x, e.y); return a.x < bar.x + bar.width && bar.x < a.x + e.w * after.zoom && a.y < bar.y + bar.height && bar.y < a.y + e.h * after.zoom; });
+  ok(`${theme}@${w.name}: the drawing covers no card and is not under the toolbar`, !hitCard && !underBar, `card ${hitCard}, bar ${underBar}`);
+  if (!within) {
+    const disk = JSON.parse((/```json\n([\s\S]*?)\n```/.exec(boardBytes()) ?? [])[1] ?? '{"elements":[]}').elements;
+    const bad = all.filter((e) => !inside(e, region))[0];
+    const d = disk.find((e) => e.id === bad.id);
+    process.stdout.write(`DISK ${JSON.stringify({ x: d?.x, y: d?.y, w: d?.width, h: d?.height, pts: d?.points?.slice(0, 3), n: d?.points?.length, last: d?.points?.at(-1) })}\n`);
+  }
+  if (!within) process.stdout.write(`OUTSIDE region ${JSON.stringify(region)}: ${JSON.stringify(all.filter((e) => !inside(e, region)).slice(0, 6).map((e) => [e.type, Math.round(e.x), Math.round(e.y), Math.round(e.w), Math.round(e.h), e.text, e.pts]))}\n`);
   const selected = all.length > 0 && all.every((e) => after.selected.includes(e.id));
   ok(`${theme}@${w.name}: "${words}" lands with no reload`, landed, `${ms} ms`);
   ok(`${theme}@${w.name}: the added shapes are selected and the region is cleared`, selected && (await page.locator('[data-testid="board-region"]').count()) === 0);
@@ -206,14 +221,41 @@ const TAG = process.env.SHOT_TAG || 'sonra';
 await app.look(`/?vault=proj#wb=${SLUG}`, async (page, w) => {
   await openBoard(page);
   for (const [name, words] of PROMPTS) {
+    // back to the cards at 100%, so the next prompt finds an empty spot as the owner would
+    await page.evaluate(() => {
+      const root = document.querySelector('.wbp-canvas .excalidraw');
+      const key = root && Object.keys(root).find((k) => k.startsWith('__reactFiber$'));
+      for (let f = key ? root[key] : null; f; f = f.return) {
+        const api = f.stateNode;
+        if (api?.scene && api.state?.zoom) {
+          api.updateScene({ appState: { zoom: { value: 1 } } });
+          const cards = api.scene.getNonDeletedElements().filter((e) => /Seçenek/.test(e.text ?? '') || e.type === 'rectangle' && e.width === 220);
+          api.scrollToContent(cards, { fitToViewport: false, animate: false });
+          return;
+        }
+      }
+    });
+    await page.waitForTimeout(500);
     const t = await timedAdd(page, 'light', w, words);
     if (t) timings.push(t);
     const s = await sceneOf(page);
     const mine = s.elements.filter((e) => t?.ids.includes(e.id));
     const log = journal().at(-1);
     ok(`"${words}": ${mine.length} shapes, cost $${log?.costUsd}, reply: ${log?.reply}`, mine.length > 0);
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(400);
+    await page.evaluate((ids) => {
+      const root = document.querySelector('.wbp-canvas .excalidraw');
+      const key = root && Object.keys(root).find((k) => k.startsWith('__reactFiber$'));
+      for (let f = key ? root[key] : null; f; f = f.return) {
+        const api = f.stateNode;
+        if (api?.scene && api.state?.zoom) {
+          const els = api.scene.getNonDeletedElements().filter((e) => ids.includes(e.id));
+          api.updateScene({ appState: { selectedElementIds: {} } });
+          api.scrollToContent(els, { fitToViewport: true, viewportZoomFactor: 0.6, animate: false });
+          return;
+        }
+      }
+    }, t?.ids ?? []);
+    await page.waitForTimeout(700);
     const file = join(app.shots, `${TAG}-${name}.png`);
     await page.screenshot({ path: file });
     app.taken.push(file);
