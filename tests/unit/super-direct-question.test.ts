@@ -129,6 +129,18 @@ afterEach(async () => {
 const itemOf = async (requestId: string) => (await readSuperState(root)).queue.find((q) => q.requestId === requestId);
 
 describe('a child\'s question is the owner\'s from birth', { timeout: 30_000 }, () => {
+  it("its text carries the card's own words (a Plan child's summary), the text the main Super is handed too", async () => {
+    const h = reg(C1, 'plan');
+    h.observe({
+      type: 'control_request', request_id: 'req-p',
+      request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which design?', description: 'Problem: no filter.\n- a\n- b\n- c', options: [{ label: 'Ids' }, { label: 'Schema' }] }] } },
+    });
+    await vi.waitFor(async () => expect(await itemOf('req-p')).toBeDefined(), W);
+    const text = (await itemOf('req-p'))?.ownerText ?? '';
+    expect(text).toContain('Which design? (options: Ids | Schema)');
+    expect(text).toContain('Its card says: Problem: no filter.\n- a\n- b\n- c');
+  });
+
   it('his bar leads with it before the Super takes any turn, named by its job, and the banner opens the child', async () => {
     const busy = { on: true };
     const { inbox, delivered } = fakeInbox(busy);

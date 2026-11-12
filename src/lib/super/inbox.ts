@@ -1108,7 +1108,17 @@ function childQuestionText(sessionId: string, requestId?: string): string {
   const chat = getChat(sessionId);
   const pq = requestId ? pendingRequest(chat, requestId) : chat?.pendingQuestion;
   if (!pq) return 'A child is waiting for an answer.';
-  return pq.options.length ? `${pq.text} (options: ${pq.options.join(' | ')})` : pq.text;
+  const about = cardAbout(pq);
+  const base = pq.options.length ? `${pq.text} (options: ${pq.options.join(' | ')})` : pq.text;
+  return about ? `${base}\nIts card says: ${about}` : base;
+}
+
+/** A child question card's own words under its first question (a Plan child's summary,
+ *  plan-question.ts; a Codex / Antigravity question's lead lines, to-wire.ts), capped, or ''.
+ *  Every reader that hands a child's question to a Super carries it (review r1, r2). */
+function cardAbout(pq: { questions?: Array<{ description?: string }> }): string {
+  const about = pq.questions?.[0]?.description?.trim() ?? '';
+  return about.length > MAX_CARD_ABOUT ? `${about.slice(0, MAX_CARD_ABOUT - 1)}…` : about;
 }
 
 /**
@@ -1978,8 +1988,8 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
     if (pq.text) lines.push(wrapUntrusted(vault, `Question: ${pq.text}`));
     // Its card's own words under the question (a Plan child's summary, plan-question.ts; a
     // Codex / Antigravity question's lines above it, to-wire.ts): the Super decides on them too.
-    const about = pq.questions?.[0]?.description?.trim();
-    if (about) lines.push(wrapUntrusted(vault, `Its card says: ${about.length > MAX_CARD_ABOUT ? `${about.slice(0, MAX_CARD_ABOUT - 1)}…` : about}`));
+    const about = cardAbout(pq);
+    if (about) lines.push(wrapUntrusted(vault, `Its card says: ${about}`));
     if (pq.options.length) lines.push(wrapUntrusted(vault, `Options: ${pq.options.join(' | ')}`));
   }
   const last = e?.lastAssistantText[e.lastAssistantText.length - 1];
