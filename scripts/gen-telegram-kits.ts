@@ -10,6 +10,9 @@
  *                                    `FrameViewer`'s `HtmlFrame` draws it)
  *   src/lib/telegram/lab-kit.ts      the Lab kit + buildLabSrcdocServer (an html/v1 insight)
  *   src/lib/telegram/kit-tokens.ts   the RESOLVED theme tokens each builder inlines
+ *   src/lib/telegram/html-local-assets.ts  the page's own pictures and stylesheets written into
+ *                                    it (`lib/htmlLocalAssets.ts` + `viewerPaths.ts`, copied as
+ *                                    source: the Telegram PDF carries exactly what the card shows)
  *
  * It IMPORTS the dashboard modules and writes every constant as a literal, so nothing is
  * copied by hand. `tests/unit/telegram-kits.test.ts` builds fixed inputs with both sides and
@@ -186,11 +189,22 @@ export function labTokens(scheme: KitScheme = 'light'): Record<string, string> {
 `;
 }
 
+export const LOCAL_ASSET_SOURCES = ['dashboard/src/components/appLink/viewerPaths.ts', 'dashboard/src/lib/htmlLocalAssets.ts'] as const;
+
+/** The two pure modules, as source: the path rules first, then the inliner minus its import of them. */
+export function renderLocalAssets(sources: readonly string[] = LOCAL_ASSET_SOURCES.map((f) => readFileSync(f, 'utf-8'))): string {
+  const [paths, assets] = sources;
+  const body = assets.replace(/^import \{ parentDir, resolveDocumentRef \} from '[^']+';\n/m, '');
+  if (body === assets) throw new Error('htmlLocalAssets.ts no longer imports viewerPaths the way this copy expects');
+  return `${HEADER(LOCAL_ASSET_SOURCES.join(' + '))}\n${paths.trimEnd()}\n\n${body}`;
+}
+
 export const OUTPUTS = {
   font: 'src/lib/sandbox-font.ts',
   chat: 'src/lib/telegram/chat-kit.ts',
   lab: 'src/lib/telegram/lab-kit.ts',
   tokens: 'src/lib/telegram/kit-tokens.ts',
+  assets: 'src/lib/telegram/html-local-assets.ts',
 } as const;
 export const TOKENS_CSS = 'dashboard/src/styles/tokens.css';
 
@@ -200,6 +214,7 @@ export function renderAll(): Record<keyof typeof OUTPUTS, string> {
     chat: renderChatKit(),
     lab: renderLabKit(),
     tokens: renderTokens(readFileSync(TOKENS_CSS, 'utf-8')),
+    assets: renderLocalAssets(),
   };
 }
 
