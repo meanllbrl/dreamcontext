@@ -247,6 +247,13 @@ export interface RecallHit {
   // Higher = more relevant. Not threshold-compatible with `score`.
   rankScore: number;
   snippet: string;       // ~3 lines around the best match
+  // Share of the query's IDF mass this doc matched (0..1) and how many distinct query terms it
+  // matched. Set by bm25Search; absent on a hit built elsewhere (Haiku, an older server), where
+  // the injection gate falls back to the raw score alone (see strongRecallHit).
+  coverage?: number;
+  matched?: number;
+  // Other files of the same task folded under this hit by collapseTaskFamilies (assets, archive).
+  family?: number;
 }
 
 /** A doc's distinct terms, sorted by UTF-16 code units, with their flat and field-weighted frequencies. */
@@ -319,6 +326,13 @@ const STOPWORDS = new Set([
   'nasıl','neden','niye','nedir','neler','nelerdi','nelerdir','hangi','hangisi',
   'nerede','nereye','nereden','şey','şeyi','eden','olan','olarak','bunu','bunun',
   'şunu','onun','yapan','midir','mıdır',
+  // Turn fillers (audit MM-5): "tamam devam et lütfen", "ok looks good, continue" scored 9-12 raw
+  // on whatever doc said "devam" or "good" and injected recall on content-free turns.
+  'tamam','tamamdır','devam','evet','hayır','lütfen','peki','hadi','haydi','et','edelim','olur',
+  'olsun','teşekkürler','teşekkür','sağol','sağolun','aynen','öyle','böyle','şöyle','yap','yapalım',
+  'başla','başlayalım',
+  'ok','okay','yeah','yep','sure','please','thanks','thank','lgtm','go','ahead','continue',
+  'looks','good','great','fine','nice','just','let','lets',
 ]);
 
 // ── B4: conservative morphological folding ──────────────────────────────────
@@ -1318,9 +1332,17 @@ export function isBoardDoc(doc: CorpusDoc): boolean {
   return doc.type === 'whiteboard' || doc.slug.endsWith('.excalidraw');
 }
 
-/** Canonical-first multiplier for the doc's kind (rankScore only): pointers and label-only boards rank below prose. */
+// ── A task's side files rank below its card (audit MM-8) ─────────────────────
+// `state/assets/<slug>/**` (plan drafts, briefs, review rounds) and `state/archive/**` are indexed
+// as `task` and held 5.8 MB of the 16.2 MB task channel: 25% of injected hits were assets, opened in
+// 2 of 40 sessions. Same rankScore-only treatment as a board (raw `score` untouched); an asset whose
+// match is clearly the strongest still surfaces. Query-side only, not part of corpusBuildFingerprint.
+export const TASK_SIDE_RANK_FACTOR = 0.6;
+
+/** Canonical-first multiplier for the doc's kind (rankScore only): pointers, label-only boards and a task's side files rank below prose. */
 function kindRankFactor(doc: CorpusDoc): number {
   if (doc.type === 'changelog') return CHANGELOG_RANK_FACTOR;
+  if (isTaskSideFile(doc)) return TASK_SIDE_RANK_FACTOR;
   return isBoardDoc(doc) ? BOARD_RANK_FACTOR : 1;
 }
 
@@ -1394,6 +1416,9 @@ export interface Bm25Options {
   linkAware?: boolean;
   /** Alias groups from project taxonomy for query expansion (memory recall path only). */
   aliasGroups?: string[][];
+  /** Fold a task's assets and archive copies under its best hit (collapseTaskFamilies). Default
+   *  on; the hybrid path turns it off for its fusion pool and collapses the fused list instead. */
+  collapseFamilies?: boolean;
 }
 
 /** Raw BM25 score a printed hit must reach for the prompt hook's block to be injected (threshold
@@ -1444,6 +1469,10 @@ export function bm25Search(
     return idfOf(term) * (num / den);
   };
 
+  // The query's whole IDF mass: a hit's `coverage` is the share of it the hit matched.
+  let queryIdf = 0;
+  for (const term of queryTerms) queryIdf += idfOf(term);
+
   // Pre-tokenise the (stemmed) slug + title token sets per doc once, for the
   // exact-identity boost below. Field-match queries target a doc's identity
   // (its slug/title), which BM25F term-spread alone under-rewards.
@@ -1457,10 +1486,14 @@ export function bm25Search(
     // This is the `.score` the hook thresholds against. NONE of the B2/B3/B4/B5
     // signals may leak into this value (decoupling constraint).
     let rawScore = 0;
+    let matchedIdf = 0;
+    let matched = 0;
     const dlFlat = tokenCountOf(doc) || 1;
     for (const term of queryTerms) {
       const tf = docTermFreq(doc, term);
       if (tf === 0) continue;
+      matched++;
+      matchedIdf += idfOf(term);
       const num = tf * (K1 + 1);
       const den = tf + K1 * (1 - B + B * (dlFlat / avgdl));
       rawScore += idfOf(term) * (num / den);
@@ -1515,7 +1548,7 @@ export function bm25Search(
     scored.push({
       // Snippet is filled for the returned topK only, below: extracting one re-tokenizes
       // every line of the doc, which dominated search time when run for every match.
-      hit: { doc, score: rawScore, rankScore, snippet: '' },
+      hit: { doc, score: rawScore, rankScore, snippet: '', coverage: queryIdf > 0 ? matchedIdf / queryIdf : 0, matched },
       rawRank: rankBase,
     });
   }
@@ -1546,9 +1579,81 @@ export function bm25Search(
   // is returned unchanged for the hook's threshold checks.
   const hits = scored.map((s) => s.hit);
   hits.sort((a, b) => b.rankScore - a.rankScore);
-  const top = hits.slice(0, topK);
+  const top = opts.collapseFamilies === false ? hits.slice(0, topK) : collapseTaskFamilies(hits, topK);
   for (const hit of top) hit.snippet = extractSnippet(hit.doc, queryTerms);
   return top;
+}
+
+// ─── Task families (audit MM-8) ──────────────────────────────────────────────
+
+/**
+ * The task a `state/` doc belongs to: `state/<slug>.md`, `state/archive/<slug>.md` and anything
+ * under `state/assets/<slug>/` all name `<slug>`. Null for every other doc (a digest, knowledge).
+ */
+export function taskFamilyOf(doc: CorpusDoc): string | null {
+  if (doc.type !== 'task') return null;
+  const m = /^state\/(?:assets\/([^/]+)\/.+|(?:archive\/)?([^/]+)\.md)$/.exec(doc.relPath);
+  return m ? (m[1] ?? m[2] ?? null) : null;
+}
+
+/** True for a task's side files (its assets folder, an archived copy): ranked below the card. */
+export function isTaskSideFile(doc: CorpusDoc): boolean {
+  return doc.type === 'task' && /^state\/(assets|archive)\//.test(doc.relPath);
+}
+
+/**
+ * The first `topK` hits of a ranked list with one hit per task: a task's later hits (its plan
+ * drafts, briefs, an archived copy) fold into its best one, which counts them in `family`. 82 of
+ * 200 real prompts had two or more slots from one task (audit MM-8). Order is kept; nothing else
+ * is touched.
+ */
+export function collapseTaskFamilies(hits: readonly RecallHit[], topK: number): RecallHit[] {
+  const out: RecallHit[] = [];
+  const byFamily = new Map<string, RecallHit>();
+  for (const h of hits) {
+    const fam = taskFamilyOf(h.doc);
+    const kept = fam === null ? undefined : byFamily.get(fam);
+    if (kept) { kept.family = (kept.family ?? 0) + 1; continue; }
+    if (out.length >= topK) {
+      // Past the window only a family already shown still counts its folded files.
+      continue;
+    }
+    if (fam !== null) { if (h.family !== undefined) delete h.family; byFamily.set(fam, h); }
+    out.push(h);
+  }
+  return out;
+}
+
+// ─── The prompt hook's injection gate (audit MM-5) ───────────────────────────
+
+/**
+ * Share of the query's IDF mass a hit must match. Low on purpose: on the live brain a correct gold hit
+ * can match one word of four (4.9%, found by the dense channel), so the share does not separate signal
+ * from noise; the filler stopwords and the short-query rule below do.
+ */
+export const RECALL_GATE_MIN_COVERAGE = 0.04;
+
+/** Distinct query terms below which a hit must match two of them (a one- or two-word turn). */
+export const RECALL_GATE_SHORT_QUERY_TERMS = 3;
+
+/**
+ * A hit strong enough for the prompt hook to inject on its own: raw BM25 ≥ RECALL_STRONG_SCORE, at
+ * least RECALL_GATE_MIN_COVERAGE of the query's IDF mass, and, for a query of fewer than three
+ * distinct terms, two of them matched. Measured on 309 real owner prompts: the raw score alone
+ * injected on 306 ("ne durumdayız", "bekliyorum", "devam et şimdi" scored 9-12 on one common word);
+ * this rule blocks those 18 status turns and keeps every gold query the old gate let through
+ * (148 of 150). A hit without coverage (Haiku, an older server) keeps the raw rule.
+ */
+export function strongRecallHit(h: Pick<RecallHit, 'score' | 'coverage' | 'matched'>, queryTerms: number): boolean {
+  if (h.score < RECALL_STRONG_SCORE) return false;
+  if (typeof h.coverage !== 'number' || typeof h.matched !== 'number') return true;
+  if (h.coverage < RECALL_GATE_MIN_COVERAGE) return false;
+  return h.matched >= 2 || queryTerms >= RECALL_GATE_SHORT_QUERY_TERMS;
+}
+
+/** Distinct query terms, as BM25 counts them (the gate's short-query rule, the dense gate's scale). */
+export function queryTermCount(query: string): number {
+  return new Set(tokenize(query)).size;
 }
 
 // ─── Snippet Extraction ────────────────────────────────────────────────────
