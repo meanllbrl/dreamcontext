@@ -74,7 +74,8 @@ describe('an explanation on a whiteboard is drawn with the excalidraw kit', () =
     const description = DRAW_SKILL.slice(0, DRAW_SKILL.indexOf('\n---', 4));
     expect(description).not.toContain('NOT for a dreamcontext whiteboard');
     expect(description).toContain('`dreamcontext whiteboard');
-    expect(description).toContain('a metric is a live insight widget');
+    // B7 (2026-11-12, IN-9): the description is one sentence plus triggers; the metric rule lives in
+    // the skill body (§1, asserted below), read the moment the skill loads.
     expect(DRAW_SKILL).toContain('Run `dreamcontext whiteboard kit`');
     expect(DRAW_SKILL).toContain('**a number (MRR,\nrevenue, signups, a trend, a split) is a live `insight` widget**');
     expect(EXCALIDRAW_SKILL).toContain('> **Drawing on a dreamcontext whiteboard?**');

@@ -1,14 +1,10 @@
 ---
 name: draw
 description: >-
-  Drawing: Excalidraw files and dreamcontext whiteboards. Load BEFORE you draw anything someone
-  keeps: a diagram, flowchart, architecture or flow picture, chart, timeline, funnel, wireframe,
-  screen or device mockup, an `.excalidraw.md` or Obsidian board, a knowledge diagram, or anything
-  on a whiteboard (`dreamcontext whiteboard draw|add|kit`). A plain Excalidraw file uses the
-  builders; a whiteboard uses the builders plus live widgets (a metric is a live insight widget,
-  never a drawn chart). Triggers: draw, sketch, diagram, flowchart, chart, wireframe, mockup,
-  excalidraw, whiteboard, çiz, çizim, diyagram, şema, akış şeması, grafik çiz, wireframe çiz,
-  ekran çiz, tahtaya çiz, whiteboard'a çiz, panoya anlat, excalidraw çiz.
+  Drawing: Excalidraw files and dreamcontext whiteboards (`dreamcontext whiteboard draw|add|kit`),
+  and the Chat view's `dream-html` diagrams. Load BEFORE you draw a diagram, flowchart, chart,
+  wireframe, mockup or board. Triggers: draw, diagram, wireframe, excalidraw, whiteboard, çiz,
+  diyagram, şema, tahtaya çiz.
 ---
 
 # draw
@@ -23,7 +19,7 @@ board and audits it). This page routes you; the references hold the depth.
 |---|---|
 | **On a whiteboard**: a board under `_dream_context/whiteboards/`, or any `dreamcontext whiteboard` command | Run `dreamcontext whiteboard kit` (the types, their fields, what goes where, a worked spec). Then [references/whiteboards.md](references/whiteboards.md) for widgets, placement, recipes and agent cards. |
 | **A standalone file**: an `.excalidraw.md`, an Obsidian board, a knowledge diagram, a wireframe or mockup file | [references/excalidraw.md](references/excalidraw.md) (builders, spec schema, layout, charts, devices, knowledge conventions); [references/format.md](references/format.md) for the file anatomy. |
-| **In the dreamcontext Chat view, a drawing that is only part of your answer** ("sync akışını çiz") | Not this skill: draw it in the reply as the surface's `dream-html` `dc-graph`. It becomes a `draw` job when it must be kept: a whiteboard, an Excalidraw file, a knowledge diagram, or "kaydet / save / keep". |
+| **In the dreamcontext Chat view, a drawing that is only part of your answer** ("sync akışını çiz") | Draw it in the reply as a `dream-html` `dc-graph`: [references/chat-html.md](references/chat-html.md) (when a block earns its place, the graph grammar, the `dc-` kit). Nothing to build or render. It becomes a kept drawing (the rows above) when it must be kept: a whiteboard, an Excalidraw file, a knowledge diagram, or "kaydet / save / keep". |
 
 On a whiteboard the mix is the point: an explanation is a drawing from the kit; **a number (MRR,
 revenue, signups, a trend, a split) is a live `insight` widget** (`dreamcontext whiteboard add

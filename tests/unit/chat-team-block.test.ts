@@ -274,8 +274,9 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('unseen): the text says in one line that a question waits.'),
       // rev 25 (2026-11-01): the line before `super ask`, which runs last in the turn.
       expect.stringContaining('Write nothing between tool calls, and nothing'),
-      // rev 36 (2026-11-09, gorev-kurali): a small fix gets no task.
-      '  (`--mode plan|develop`, `--task <slug>`). Keep your own turns short; end your turn after delegating.',
+      // rev 41 (2026-11-12, gece-duzeltme B7): the guide is lookup only (its delegate line is back to the
+      // frozen wording, the no-task rule moved to its own bullet).
+      '- Before you split work, read the orchestration guide: .claude/skills/dreamcontext/references/super-orchestration.md.',
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Say'),
       expect.stringContaining("in that turn's text, in one line, that a question waits, and end it;"),
       // rev 30 (2026-11-06, owed ledger): only a child's question waits behind his card.
@@ -344,8 +345,17 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // 2026-11-11 (whiteboard-yazma-alani): a board message's selection and how to act on it.
       expect.stringContaining('= the n shapes he selected (≤ 12 ids, box their bounds): a change'),
       'there is board work; delegate it with board, ids and box verbatim.',
-      // rev 36 (2026-11-09, gorev-kurali): a small fix gets no task.
-      '  (`--mode plan|develop`, `--task <slug>`; a small fix gets no task). Keep your own turns short; end your turn after delegating.',
+      // rev 41 (2026-11-12, gece-duzeltme B7, IN-12): the orchestration guide is lookup only; the split and
+      // mode-per-job rows ride here. TK-1: the Super is the only task filer (rev 36's "a small fix gets no task" folded in).
+      '- The orchestration guide is lookup only (member jobs, MCP map, layouts, a worked example): .claude/skills/dreamcontext/references/super-orchestration.md.',
+      '- You are the only one who files a task. Big work (a plan, several lanes) gets ONE: `dreamcontext tasks create`',
+      '  yourself, then `--task <slug>` on its plan child and later its develop child. A small fix (1-3 files)',
+      '  gets none; no child ever files one.',
+      '- Several asks: number each, never drop or silently merge one; asks sharing a file are one unit. Start',
+      '  every unit with no unmet dependency now, in one message; `super pool add` the rest with "after <unit>".',
+      '  Each `--brief` reads `<job> · <mode> <model>/<effort>`. Never ask him about the split, modes or models.',
+      '- Mode: a small clear fix, `basic` + worktree, no task, its brief asks for one clean `reviewer` pass;',
+      '  a build, `plan` then `develop`; a branch review, `/multi-review`; a trade-off, `/council`.',
       // rev 26 (2026-11-02, merged into rev 27 with the weigh-first rule): which tool and model a child runs on.
       '- Which tool and model: `## Tools on this Mac` (a later `<super-tools>` replaces it) lists what is ready.',
       '  `--tool codex|antigravity --model <id>`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he',
@@ -410,8 +420,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       // rev 38 (2026-11-09, super-rutin): a scheduled job's turn.
       expect.stringContaining('`event=schedule` or `[super schedule]`: his timed job.'),
-      expect.stringContaining('<super-brief rev=40>'),
+      expect.stringContaining('<super-brief rev=41>'),
     ]);
-    expect(after.length).toBe(before.length + 58); // +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 66); // +8 (rev 41, 2026-11-12, gece-duzeltme B7: the task-filer bullet, 3 rows, the split rows, 3, and the mode rows, 2; the guide line reworded in place) +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

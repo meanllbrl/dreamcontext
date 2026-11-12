@@ -20,6 +20,15 @@ import { parseChatActions } from '../../dashboard/src/components/sleepy/chat/cha
 import { VIEW_TYPES } from '../../dashboard/src/lib/chatViewSpec.js';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * B7 (2026-11-12, gece-duzeltme IN-8): the `dream-html` grammar and the `dc-` kit list left the
+ * always-on surface briefing for the `draw` skill (`skill-draw/references/chat-html.md`); the
+ * briefing keeps the prose-first rule and points there. The kit pins below read that file.
+ */
+const GRAMMAR = readFileSync(
+  join(fileURLToPath(new URL('../../', import.meta.url)), 'skill-draw/references/chat-html.md'), 'utf-8',
+);
+
 /** Every fenced ```dream-view block the briefing actually shows the agent, in order. */
 function extractViewExamples(briefing: string): string[] {
   const re = /```dream-view\r?\n([\s\S]*?)\r?\n```/g;
@@ -66,7 +75,9 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
   });
 
   it('a drawing that is kept goes to the draw skill', () => {
-    expect(CHAT_SURFACE_BRIEFING).toContain('A drawing to KEEP (board, Excalidraw file) is the\n  `draw` skill.');
+    expect(CHAT_SURFACE_BRIEFING).toContain('A drawing to KEEP (board, Excalidraw file) is the `draw` skill.');
+    // …and a drawing in the reply finds its grammar there too.
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/load the `draw` skill and read its\s+`references\/chat-html\.md`/);
   });
 
   it('the fence name itself is named in prose, not just shown in examples', () => {
@@ -193,11 +204,11 @@ describe('CHAT_SURFACE_BRIEFING <-> dc- kit lockstep', () => {
 
   /** The canonical class list — the run between "Layout" and the last hover class. */
   function namedClasses(): string[] {
-    const from = CHAT_SURFACE_BRIEFING.indexOf('Layout `dc-doc');
-    const to = CHAT_SURFACE_BRIEFING.indexOf('dc-tip-box dc-tip-text`');
-    expect(from, 'the briefing no longer carries a dc- class list').toBeGreaterThan(-1);
+    const from = GRAMMAR.indexOf('Layout `dc-doc');
+    const to = GRAMMAR.indexOf('dc-tip-box dc-tip-text`');
+    expect(from, 'chat-html.md no longer carries a dc- class list').toBeGreaterThan(-1);
     expect(to).toBeGreaterThan(from);
-    return CHAT_SURFACE_BRIEFING.slice(from, to + 'dc-tip-box dc-tip-text'.length)
+    return GRAMMAR.slice(from, to + 'dc-tip-box dc-tip-text'.length)
       .replace(/[`()]/g, ' ')
       .split(/\s+/)
       .filter((w) => w.startsWith('dc-'))
@@ -252,7 +263,7 @@ describe('CHAT_SURFACE_BRIEFING — prose first, HTML only where it beats prose'
   it('names exactly the three things that earn a block: a diagram, an interactive view, a deck', () => {
     const section = CHAT_SURFACE_BRIEFING.slice(
       CHAT_SURFACE_BRIEFING.indexOf('## Prose first'),
-      CHAT_SURFACE_BRIEFING.indexOf('## `dream-html`'),
+      CHAT_SURFACE_BRIEFING.indexOf('## Asking'),
     );
     expect(section).toMatch(/\*\*A diagram\*\*/);
     expect(section).toMatch(/\*\*An interactive view\*\*/);
@@ -267,20 +278,21 @@ describe('CHAT_SURFACE_BRIEFING — prose first, HTML only where it beats prose'
   });
 
   it('states that a short chain is a sentence and a longer sequence a dc-graph, never a chip row', () => {
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/A 2-4 step chain is a sentence/);
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/a 2-4 step chain is a sentence/i);
+    expect(GRAMMAR).toMatch(/A 2-4 step chain is a sentence/);
     // Owner 2026-11-03: a 13-step journey drawn as wrapped chips was unreadable.
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/a longer one \(a user journey\) is a\s+\\?`dc-graph\\?` too, never a row of chips/);
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/only when the node\s+IS that; mixed tones get a one-line legend/);
+    expect(GRAMMAR).toMatch(/a longer one \(a user journey\) is a\s+\\?`dc-graph\\?` too, never a row of chips/);
+    expect(GRAMMAR).toMatch(/only when the node\s+IS that; mixed tones get a one-line legend/);
   });
 
   it('keeps the kit rule for the page and lets a product mockup wear that product\'s real look', () => {
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/never your own colors, fonts or spacing/);
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/That is your page's rule: a mockup of a real\s+product screen copies THAT product's colors, type, radii and frame from its source styles/);
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/grey boxes only for a wireframe that was asked for/);
+    expect(GRAMMAR).toMatch(/never your own colors, fonts or spacing/);
+    expect(GRAMMAR).toMatch(/That is your page's rule: a mockup of a real\s+product screen copies THAT product's colors, type, radii and frame from its source styles/);
+    expect(GRAMMAR).toMatch(/grey boxes only for a wireframe that was asked for/);
   });
 
   it('shows a dc-graph as THE dream-html example, with edges the kit draws', () => {
-    const m = /```dream-html\r?\n([\s\S]*?)\r?\n```/.exec(CHAT_SURFACE_BRIEFING);
+    const m = /```dream-html\r?\n([\s\S]*?)\r?\n```/.exec(GRAMMAR);
     expect(m, 'the briefing shows no dream-html example').not.toBeNull();
     const html = m![1];
     expect(html).toContain('class="dc-graph"');
@@ -297,7 +309,7 @@ describe('CHAT_SURFACE_BRIEFING — prose first, HTML only where it beats prose'
   });
 
   it('tells the author never to position nodes — the kit lays out and re-lays', () => {
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/Never position\s+nodes yourself/);
+    expect(GRAMMAR).toMatch(/Never position\s+nodes yourself/);
   });
 });
 

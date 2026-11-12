@@ -56,7 +56,10 @@ describe('draw skill: shipped as core', () => {
     expect(Buffer.byteLength(md)).toBeLessThanOrEqual(8192);
     const description = String(matter(md).data.description);
     expect(description.length).toBeLessThanOrEqual(1000);
-    expect(description.startsWith('Drawing: Excalidraw files and dreamcontext whiteboards.')).toBe(true);
+    expect(description.startsWith('Drawing: Excalidraw files and dreamcontext whiteboards')).toBe(true);
+    // B7 (2026-11-12, IN-9): one sentence plus a few triggers, and it now covers the Chat view's dream-html.
+    expect(description.length).toBeLessThanOrEqual(350);
+    expect(description).toContain('dream-html');
     for (const t of ['diagram', 'wireframe', 'excalidraw', 'whiteboard', 'çiz', 'diyagram', 'tahtaya çiz']) expect(description).toContain(t);
     for (const ref of ['references/whiteboards.md', 'references/excalidraw.md', 'references/format.md']) {
       expect(md).toContain(ref);

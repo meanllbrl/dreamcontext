@@ -109,7 +109,7 @@ export function detectDrawIntent(prompt: string, boardSlugs: readonly string[] =
 export function drawDirective(target: DrawTarget, o: { chatView: boolean; tool: 'codex' | 'antigravity' | null }): string {
   const load = o.tool ? 'open the `draw` skill (its SKILL.md)' : 'load the `draw` skill (Skill tool)';
   if (o.chatView && target === 'any') {
-    return `Drawing request: if this drawing is only part of your answer, draw it as a dream-html dc-graph. If it must be kept (a whiteboard, an Excalidraw file, a knowledge diagram), ${load} first.`;
+    return `Drawing request: if this drawing is only part of your answer, draw it as a dream-html dc-graph (its grammar: the \`draw\` skill's references/chat-html.md). If it must be kept (a whiteboard, an Excalidraw file, a knowledge diagram), ${load} first.`;
   }
   const kit = target === 'whiteboard' ? ' Then run `dreamcontext whiteboard kit`.' : '';
   return `Drawing request: ${load} before you draw.${kit}`;

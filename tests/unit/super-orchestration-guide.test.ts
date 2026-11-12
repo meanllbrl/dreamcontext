@@ -115,7 +115,9 @@ describe('super-orchestration guide: shape', () => {
     // +250 (2026-11-08, owner correction: haiku only for read-only research; measured 26,015).
     // +700 (2026-11-11, sahip-karti-yerinde: a child's card is the owner's on his bar and in the Super chat;
     // the `parked` and `owner-result` events; `gone` no longer closes a card; measured 28,503).
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(28_550); // +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
+    // +250 (2026-11-12, gece-duzeltme B7: lookup-only header, the Super files every task, the heavy lock's real
+    // per-checkout and slot rule; measured 28,745).
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(28_800); // +250 (2026-11-09, mcp-giris: a server in `mcpSignIn` waits on the owner, never a second delegate; measured 27,823). +190 over the 0.41.12 cap (2026-11-09, 0.41.13 cut: super-rutin's `super schedule` section; measured 27,585)
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
@@ -281,12 +283,12 @@ describe('super-orchestration guide: the briefing slot', () => {
     expect(PENDING_COMMANDS.length + PENDING_FLAGS.length).toBe(0);
     expect(SUPER_ORCHESTRATION_GUIDE).toBe('.claude/skills/dreamcontext/references/super-orchestration.md');
     const lead = superBriefing().split('## Lead, do not do\n')[1];
-    expect(lead.startsWith('- Before you split work, read the orchestration guide: .claude/skills/dreamcontext/references/super-orchestration.md.\n')).toBe(true);
+    expect(lead.startsWith('- The orchestration guide is lookup only (member jobs, MCP map, layouts, a worked example): .claude/skills/dreamcontext/references/super-orchestration.md.\n')).toBe(true);
   });
 
   it('the briefing names the guide path only through the slot, and no model id, price or table (the short work to model map, haiku/sonnet/opus, is allowed since 2026-11-08, super-model-secimi)', () => {
     const withGuide = superBriefing(SUPER_ORCHESTRATION_GUIDE_PATH);
-    expect(withGuide).toContain(`- Before you split work, read the orchestration guide: ${SUPER_ORCHESTRATION_GUIDE_PATH}.`);
+    expect(withGuide).toContain(`- The orchestration guide is lookup only (member jobs, MCP map, layouts, a worked example): ${SUPER_ORCHESTRATION_GUIDE_PATH}.`);
     expect(withGuide).not.toMatch(/claude-(opus|sonnet|haiku|fable)|\$\d|\/MTok|fable/i);
   });
 });
@@ -315,7 +317,12 @@ describe('super-orchestration guide: dreamcontext install ships it', () => {
 describe('heat and the heavy lock (the heat task, AC5)', () => {
   const FLAT = readFileSync(join(__dirname, '../../skill/references/super-orchestration.md'), 'utf8').replace(/\s+/g, ' ');
   it('per-project lock wording, heat limits steps not children, heavy steps through builder heavy', () => {
-    expect(FLAT).toContain('Heavy steps run one at a time per project, at most 2 projects at once, 1 while the Mac is very hot');
+    // B7 (2026-11-12, OR-11): the lock is per checkout and the machine's slots are heat- and
+    // memory-sized (src/lib/builder-tools.ts machineHeavySlots, src/lib/heat.ts heavyLimitFor);
+    // the old "per project, at most 2 projects" line described neither.
+    expect(FLAT).toContain('Heavy steps run one at a time per checkout (each worktree has its own lock)');
+    expect(FLAT).toContain('2 while it is hot, 1 when it is very hot or memory is critical');
+    expect(FLAT).not.toContain('at most 2 projects at once');
     expect(FLAT).toContain('Heat limits heavy STEPS, never children');
     expect(FLAT).toContain('a hook sends tsc, builds, tests and browser scripts through `dreamcontext builder heavy`');
     expect(FLAT).toContain('before its first reviewer starts, into that child; after, a new small job');

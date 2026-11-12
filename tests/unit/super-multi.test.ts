@@ -342,7 +342,8 @@ describe('the member slot in the Super briefing', () => {
     expect(b).toContain('dreamcontext super team done <item>');
     expect(b).toContain(MEMBER_ORIGIN_LINE);
     expect(b).toContain(MEMBER_ABOUT_TASK_LINE);
-    expect(MEMBER_ABOUT_TASK_LINE).toBe('On `[About task X]` read it with `dreamcontext tasks show X`.');
+    // 2026-11-12 (gece-duzeltme B7, IN-13): `tasks show` does not exist; a task is read from its file.
+    expect(MEMBER_ABOUT_TASK_LINE).toBe('On `[About task X]` read its file, `_dream_context/state/X.md`.');
     // "+ New routine" on its stage arrives as a chip titled New routine: it sets the routine up as itself.
     expect(b).toContain(memberNewRoutineLine('rota'));
     expect(memberNewRoutineLine('rota')).toContain('titled “New routine”');
