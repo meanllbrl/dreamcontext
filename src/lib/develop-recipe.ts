@@ -15,7 +15,8 @@ const EVIDENCE_TICK_RULE = `A tick needs its evidence in the same log line: the 
    observed check (section 3). No evidence = no tick, and a run with an unticked criterion
    does not close.`;
 
-const OBSERVED_CHECK = `- The observed check, when a criterion is about what the owner sees: open the result in the
+const OBSERVED_CHECK = `- The observed check, ONCE, after the code PASS and on its build, when a criterion is about
+  what the owner sees: open the result in the
   real app or a headless browser at a phone (390 px) and a desktop (1440 px) width, record the
   console errors and failed requests, take a screenshot of each, and READ the screenshots
   yourself. Log their paths and the console output, and tick those criteria here, with that
@@ -63,8 +64,10 @@ verify script of your own. Full: the pick below.`;
 const END_FINAL_CHECK = `- The final check, ONCE, after the last PASS: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
   ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
   the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
-  method when it is a command, the builds and generator scripts the change needs, and, when a
-  fix changed something visible after the observed check, that check again. A run's own
+  method when it is a command, the builds and generator scripts the change needs, and the
+  observed check below on that build. Nothing of this runs before the code PASS: measured over
+  72 reviewed runs, a build or browser pass before the review was redone after its fixes in 83%
+  of them. A fix after this check changed the code, so its re-run needs no \`--because\`. A run's own
   proof is the tests of its whole diff, the type checks and the build; the full suite is not
   a run's check. It runs once per release cut, after its build, started with
   \`builder heavy --detach\` and followed with \`--wait <id>\`; a red full run is never run
@@ -222,6 +225,21 @@ const WAVE_REOPEN = `With wave sub-tasks, the wave to resume is the open child w
 \`dreamcontext tasks list --parent "$S" --json\` (closed waves are hidden; the numbers do not
 shift), and \`--wave\` always comes from that field. Without them, the \`wN green\` lines.`;
 
+/**
+ * No task = small work (owner, 2026-11-09; audit TK-1, 2026-11-12): 88% of the Super's Develop
+ * delegations carried no task, and a recipe that presupposed one made the child file it, so the
+ * board grew ~7 tasks a day after the rule. Every step below works without one: \`builder open\`,
+ * \`builder test\` and \`builder ledger\` take any run name, and the review loop opens with \`--goal\`.
+ */
+const NO_TASK_PATH = `NO TASK IN YOUR BRIEF = small work (owner, 2026-11-09): create none, and never a sub-task.
+S is then a short run name (a-z0-9-, the branch's without its prefix), and every
+\`dreamcontext tasks ...\` line below is skipped: the start tree, the wave map, each \`wN green\`
+line and every verdict go to $ROOT/tmp/develop/$S/run.md and into your last reply, which the
+release note carries. The review loop opens with \`--goal "<what the brief asks>"\` instead of
+the task's criteria. Close = your last reply, with no status call. It turns out big (needs a
+plan, several lanes, builders): STOP and tell the Super; only the Super or the owner opens the
+ONE task.`;
+
 export const DEVELOP_RECIPE = `# Develop run recipe
 
 You are the LEAD and you write the code: build each wave yourself, check it yourself, then
@@ -238,6 +256,8 @@ Start every block below with its own \`S=<task-slug>; ROOT="$(git rev-parse --sh
 run's START tree) by pasting the literal value printed earlier, or by reading it back from the
 task log. Give every \`dreamcontext builder\` call the Bash tool's \`timeout: 600000\`: a check
 blocks for up to 9 minutes. Never start anything with the Bash tool's run_in_background.
+
+${NO_TASK_PATH}
 
 ## 0. Set up
 
@@ -303,9 +323,10 @@ ${WAVE_SUBTASKS}
    ${EVIDENCE_TICK_RULE}
    ${WAVE_ON_SUBTASK}
 
-## 3. After the last wave: one end review, the final check, then close
+## 3. After the last wave: the end review first, then the final check ONCE, then close
 
-Take the snapshot again as NOW (the same three commands, into the same $IDX), then list the
+The code is reviewed first; the build and the observed check run once, after its PASS. Take
+the snapshot again as NOW (the same three commands, into the same $IDX), then list the
 run's paths:
 
   git -c core.quotePath=false diff-tree -r -z --name-status "$START" "$NOW"
@@ -317,8 +338,6 @@ ${LANE_STEP}
 
 ${END_REVIEW_PICK}
 
-${OBSERVED_CHECK}
-
 ${REVIEW_LOOP}
 
 Then the end review:
@@ -329,17 +348,19 @@ Then the end review:
   brief (section 4, carried by its packet): every path you changed, enumerated by name, with START and NOW, never a
   bare \`git diff\` against a ref. It fetches its own changes; never paste a diff.
 ${END_REVIEW_TEAM}
-${END_FINAL_CHECK}
-
-${REPEAT_LIMIT}
 
 Record the verdict BEFORE anything else: \`dreamcontext builder mark review-end || true\`, then
-a task-log line with PASS or FAIL. A reviewer FAIL or a red final check takes the same path: fix exactly the findings, each across its whole class,
+a task-log line with PASS or FAIL.
+
+${END_FINAL_CHECK}
+${OBSERVED_CHECK}
+
+A reviewer FAIL or a red final check takes the same path: fix exactly the findings, each across its whole class,
 or the failure and nothing else, and check the fix with \`builder test "$S" --wave final --related
 <files the fix changed>\`, naming a central file's tests with \`--also\` instead of the file.
 Only what the fix touched runs: no build, no browser and no Validation command here, those wait
-for the one final check. ${END_REVIEW_ROUND} After a red final check, re-run
-only what was red. Nothing closes on a fix no reviewer has read:
+for the one final check. ${END_REVIEW_ROUND} After a red final check, the fix's reviewer also
+reads the ticks and their evidence, then re-run only what was red. Nothing closes on a fix no reviewer has read:
 
   dreamcontext builder mark review-start || true   # and review-end with its verdict
 
@@ -347,12 +368,14 @@ ${END_REVIEW_REROUND}
 
 A class in its 3rd counted round = STOP: the loop prints the owner's card. You never sign off on your own work.
 
+${REPEAT_LIMIT}
+
 ${WAVE_CLOSE_409}
 
 Stop the run's clock and carry its one line, from the records, into the status message and
 your last message: \`dreamcontext builder ledger "$S" --close\` (code / queue / checks / review).
 
-Close by the task's Validation method:
+Close by the task's Validation method (no task: your last reply, as the top of this recipe says):
 - A command that passed: \`dreamcontext tasks status "$S" completed "<what shipped + the
   command and its result>"\`.
 - A manual or browser check: \`dreamcontext tasks status "$S" in_review "<what to look at>"\`
@@ -655,8 +678,6 @@ ${END_REVIEW_PICK}
 The review's paths are the scope below: a run whose end review is skipped skips the pick too,
 and a review of the ticks alone is always one reviewer.
 
-${OBSERVED_CHECK}
-
 ${REVIEW_LOOP} In a fan-out run the owning lane makes the fix: its resume message carries
 the class rule, and you write changes.md from its report.
 
@@ -671,12 +692,13 @@ When it runs, \`dreamcontext builder mark review-start || true\` first; a skippe
 - ONE \`reviewer\` (model opus, effort high, not in the background) over the union of every wave's scope
   no wave reviewer read, enumerated by name, with the wave-1 START tree: never a bare
   \`git diff\` against a ref. A run whose every wave was REVIEWED skips it, unless a criterion
-  is about what the owner sees: then this reviewer still runs, over the task's ticks and their
-  evidence alone, since no wave reviewer saw a tick.
+  is about what the owner sees: then this reviewer still runs, after the final check, over the
+  task's ticks and their evidence alone, since no wave reviewer saw a tick.
 ${END_REVIEW_TEAM}
   The map keeps one seat for the team: \`goal-live actor end-reviewer=multi-review\`, with the
   merged verdict.
 ${END_FINAL_CHECK}
+${OBSERVED_CHECK}
 
 ${REPEAT_LIMIT}
 

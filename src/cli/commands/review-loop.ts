@@ -184,6 +184,9 @@ export function buildCodePacketText(p: CodePacketInput): string {
     '',
     ledger.criteria ?? '(none recorded)',
     '',
+    // The observed check runs once, after the code PASS (audit OR-4, develop-recipe.ts).
+    'A criterion about what the owner sees is proven by the observed check, which runs once after your PASS: unticked here is expected, never a finding by itself.',
+    '',
     '## What to read (run these yourself)',
   ];
   if (round.n === 1) {

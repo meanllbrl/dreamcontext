@@ -78,6 +78,8 @@ describe('open and the round-1 packet', () => {
     expect(p.text).toContain(`git diff ${START} ${tree(1)} -- 'src/a b.ts'`);
     expect(p.text).toContain('AC1 the export keeps every row');
     expect(p.text).toContain(CODE_REVIEW_RULES);
+    // The observed check runs after the code PASS (audit OR-4): an unticked visible criterion is no finding.
+    expect(p.text).toMatch(/proven by the observed check, which runs once after your PASS: unticked here is expected/);
     expect(existsSync(p.path)).toBe(true);
     expect(ledger().mode).toBe('code');
   });
