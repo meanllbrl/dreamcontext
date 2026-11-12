@@ -492,3 +492,117 @@ describe('a set-up server the chat asks for on its card joins it (owner 2026-11-
     expect(child!.stdin.end).not.toHaveBeenCalled();
   });
 });
+
+describe('the Super follows the project\'s MCP set (owner 2026-11-12, a teammate\'s Super blind to the claude.ai Knowledge Base a Window had)', () => {
+  const say = (child: FakeChild, frame: unknown): void => { child.stdout.emit('data', Buffer.from(`${JSON.stringify(frame)}\n`)); };
+  /** Answer every `mcp_status` the server asks this child, with `names` connected. */
+  const answerStatus = (child: FakeChild, names: () => Array<{ name: string; scope?: string }>): void => {
+    child.stdin.write.mockImplementation((raw: unknown) => {
+      let f: { type?: string; request_id?: string; request?: { subtype?: string } } | null = null;
+      try { f = JSON.parse(String(raw)); } catch { return true; }
+      if (f?.type === 'control_request' && f.request?.subtype === 'mcp_status') {
+        const servers = names().map((s) => ({ name: s.name, status: 'connected', scope: s.scope ?? 'dynamic' }));
+        setImmediate(() => say(child, { type: 'control_response', response: { subtype: 'success', request_id: f!.request_id, response: { mcpServers: servers } } }));
+      }
+      return true;
+    });
+  };
+  const LIVE = (): Array<{ name: string; scope?: string }> => [...Object.keys(USER_SERVERS), 'github'].map((name) => ({ name }));
+  const endTurn = (child: FakeChild, sid: string): void => {
+    say(child, { type: 'system', subtype: 'init', session_id: sid, model: 'opus' });
+    say(child, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Knowledge Base tools are not loaded.' }] } });
+    say(child, { type: 'result', subtype: 'success', is_error: false, session_id: sid });
+  };
+  const addUserServer = (name: string): void => {
+    const cfg = JSON.parse(readFileSync(join(fakeHome, '.claude.json'), 'utf-8'));
+    cfg.mcpServers[name] = { command: `${name}-mcp` };
+    writeFileSync(join(fakeHome, '.claude.json'), JSON.stringify(cfg));
+  };
+  const cachePath = (): string => join(fakeHome, '.dreamcontext', 'mcp-status.json');
+  afterEach(() => { rmSync(cachePath(), { force: true }); });
+
+  it('the drift: store names added since the spawn, and connectors this account saw connected after it that the process lacks', async () => {
+    const { mcpDrift } = await import('../../src/lib/super/lean-mcp.js');
+    const cells = {
+      'claude.ai Knowledge-Base|claudeai': { status: 'connected', at: 200 },
+      'claude.ai Old|claudeai': { status: 'connected', at: 50 },
+      'claude.ai Broken|claudeai': { status: 'needs-auth', at: 200 },
+      'claude.ai Have|claudeai': { status: 'connected', at: 200 },
+      'kb|abc123': { status: 'connected', at: 200 },
+    };
+    const live = [{ name: 'whatsapp' }, { name: 'claude.ai Have' }];
+    expect(mcpDrift({ configuredNow: ['whatsapp', 'kb', 'slack', '__proto__'], spawned: ['whatsapp'], granted: ['slack'], live, accountCells: cells, spawnedAt: 100 }))
+      .toEqual({ store: ['kb'], connectors: ['claude.ai Knowledge-Base'] });
+    // No reading yet: no connector verdict; nothing new: nothing.
+    expect(mcpDrift({ configuredNow: ['whatsapp'], spawned: ['whatsapp'], granted: [], live: null, accountCells: cells, spawnedAt: 100 })).toEqual({ store: [], connectors: [] });
+    // The successor started after the reading: it never re-triggers on it.
+    expect(mcpDrift({ configuredNow: ['whatsapp'], spawned: ['whatsapp'], granted: [], live: [{ name: 'whatsapp' }], accountCells: cells, spawnedAt: 300 })).toEqual({ store: [], connectors: [] });
+    // Once per conversation: a connector an earlier process already restarted for is never again.
+    expect(mcpDrift({ configuredNow: [], spawned: [], granted: [], live, accountCells: cells, spawnedAt: 100, tried: ['claude.ai Knowledge-Base'] })).toEqual({ store: [], connectors: [] });
+  });
+
+  it('a server set up after the Super started joins it on an in-place respawn at the idle turn end', async () => {
+    const sid = 'f0f0f0f0-1111-4222-8333-444444444444';
+    const first = spawnChat({ mode: 'super' }).child!;
+    answerStatus(first, LIVE);
+    addUserServer('kb');
+    endTurn(first, sid);
+    await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalled(), { timeout: 6000 });
+    state.transcripts.add(sid);
+    const before = spawned.length;
+    first.emit('close', 0);
+    expect(spawned.length).toBe(before + 1);
+    const next = spawned[spawned.length - 1];
+    expect(argvOf(next)).toContain('--resume');
+    expect(argvOf(next)).toContain(sid);
+    // The successor's store carries it (the computer store, by env reference).
+    const files = Object.entries(next.env).filter(([k]) => k.startsWith('DREAMCONTEXT_MCP_CFG')).map(([, v]) => v!);
+    expect(files.some((f) => Object.keys(JSON.parse(readFileSync(f, 'utf-8')).mcpServers ?? {}).includes('kb'))).toBe(true);
+  }, 10_000);
+
+  it('a claude.ai connector another chat on this account saw connected after the Super started joins it the same way', async () => {
+    const sid = 'f1f1f1f1-1111-4222-8333-444444444444';
+    const first = spawnChat({ mode: 'super' }).child!;
+    answerStatus(first, LIVE);
+    await new Promise((r) => setTimeout(r, 5));
+    mkdirSync(join(fakeHome, '.dreamcontext'), { recursive: true });
+    writeFileSync(cachePath(), JSON.stringify({ default: { at: 0, cells: { 'claude.ai Knowledge-Base|claudeai': { status: 'connected', at: Date.now() } } } }));
+    endTurn(first, sid);
+    await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalled(), { timeout: 6000 });
+    // End review r1: the successor still lacks it while other chats keep reading it connected.
+    // It restarts for it once per conversation, never after every turn.
+    state.transcripts.add(sid);
+    first.emit('close', 0);
+    const next = spawned[spawned.length - 1];
+    expect(next).not.toBe(first);
+    answerStatus(next, LIVE);
+    await new Promise((r) => setTimeout(r, 5));
+    writeFileSync(cachePath(), JSON.stringify({ default: { at: 0, cells: { 'claude.ai Knowledge-Base|claudeai': { status: 'connected', at: Date.now() } } } }));
+    endTurn(next, sid);
+    await new Promise((r) => setTimeout(r, 3500));
+    expect(next.stdin.end).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('nothing new: no respawn', async () => {
+    const quiet = spawnChat({ mode: 'super' }).child!;
+    answerStatus(quiet, LIVE);
+    endTurn(quiet, 'f2f2f2f2-1111-4222-8333-444444444444');
+    await new Promise((r) => setTimeout(r, 3500));
+    expect(quiet.stdin.end).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it('a detached Super, or an ordinary chat: no respawn', async () => {
+    const away = spawnChat({ mode: 'super' });
+    answerStatus(away.child!, LIVE);
+    const basic = spawnChat({ mode: 'basic' }).child!;
+    answerStatus(basic, LIVE);
+    addUserServer('kb');
+    // The owner's socket is not open (an unpinned test chat would drain on a real close).
+    away.ws.readyState = 3;
+    endTurn(away.child!, 'f3f3f3f3-1111-4222-8333-444444444444');
+    endTurn(basic, 'f4f4f4f4-1111-4222-8333-444444444444');
+    await new Promise((r) => setTimeout(r, 3500));
+    expect(away.child!.stdin.end).not.toHaveBeenCalled();
+    expect(basic.stdin.end).not.toHaveBeenCalled();
+  }, 10_000);
+});

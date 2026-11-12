@@ -29,7 +29,7 @@ import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
 import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle } from '../../lib/context-watch.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
-import { clearFresh, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
+import { clearFresh, hasFreshLatch, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 import { advanceHandoffRun, failHandoffRun, handoffProgressFrame, type HandoffRun } from '../../lib/handoff-progress.js';
 import { safeChildPath } from '../safe-path.js';
@@ -151,7 +151,7 @@ import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  knownMcpServers, mcpCardServers, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
+  knownMcpServers, mcpCardServers, mcpDrift, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
@@ -1883,6 +1883,9 @@ interface ChatSpawnOpts {
   /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
    *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
   leanMcp?: string[];
+  /** The Super's claude.ai connectors it already restarted for in this conversation (`followMcpDrift`):
+   *  a successor that still lacks one never restarts for it again (end review r1: no restart loop). */
+  mcpFollowed?: string[];
   /** A LEAN child of a member's Super (plan-r10 1): carries `DREAMCONTEXT_MEMBER_CREW=<slug>` and
    *  runs no wider than that member's own level. */
   memberCrew?: string;
@@ -2341,8 +2344,15 @@ export function startChatSession(
   // child blind to a configured Slack). Ordinary Claude chats and lean children only: a scoped
   // card, an app, the Assistant and the Super keep their own MCP rules, a bridge tool its own config.
   const mcpGrantable = !scopedCard && !app && !isAssistant && !isSuper && !bridgeTool;
+  // The Super's process outlives its MCP set (its Fresh session is a `/clear` in the same process),
+  // so it FOLLOWS the project's set: a server set up after it started joins it on an in-place
+  // respawn at an idle turn end (`followMcpDrift`; owner 2026-11-12, a teammate's Super blind to
+  // the claude.ai Knowledge Base a Window had). A Codex or Antigravity Super follows its stores.
+  const mcpFollows = isSuper && !scopedCard && !app;
+  /** When this process started: a connector another chat saw connected after it, it never fetched. */
+  const mcpSpawnedAt = Date.now();
   /** The user servers this process carries: the lean subset, else the stores as spawned. */
-  const spawnedMcp: string[] = !mcpGrantable ? []
+  const spawnedMcp: string[] = !mcpGrantable && !mcpFollows ? []
     : opts.leanMcp ? [...opts.leanMcp]
       : (() => { try { return [...storeServers(projectRoot).keys()]; } catch { return []; } })();
   /** Granted since this spawn, for the successor (a lean child's subset grows by these). */
@@ -3425,10 +3435,15 @@ export function startChatSession(
   let mcpSettleTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpTurnTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpConnecting: string | null = null;
+  /** A turn ended: the next settled reading checks the Super's MCP set against the project's. */
+  let mcpDriftDue = false;
+  /** Connectors this process restarts for; its successor never restarts for them again. */
+  const mcpFollowedNow: string[] = [];
   const mcpPublish = (servers: McpLiveServer[]): void => {
     mcpLast = servers;
     mcpLastAt = Date.now();
     sendMeta({ subtype: 'mcp_status', servers, at: mcpLastAt });
+    if (mcpDriftDue) followMcpDrift(servers);
     if (mcpTab) writeMcpHealth(contextRoot, mcpTab, servers);
     // A lean child sees only its subset: not the account's truth, so it writes no cell. Nor does a
     // Codex or Antigravity chat: the cache is Claude's account's.
@@ -4280,6 +4295,7 @@ export function startChatSession(
         if (!scopedCard) {
           if (mcpTurnTimer) clearTimeout(mcpTurnTimer);
           mcpTurnTimer = setTimeout(() => { mcpTurnTimer = null; mcpSettle(10_000); }, 2000);
+          if (mcpFollows) mcpDriftDue = true;
         }
         // An autonomy change waited for this boundary.
         // Through scheduleRespawn, never straight to respawnInPlace: a message may still be
@@ -5342,6 +5358,37 @@ export function startChatSession(
   }
 
   /**
+   * The Super's MCP set follows the project's (`mcpDrift`): once a turn ended and the reading
+   * settled, a store server set up since this process started, or a claude.ai connector this
+   * account's other chats saw connected since then, joins it on the grant's in-place respawn
+   * (same conversation, same socket, held messages replayed). Only while the owner's socket is
+   * attached, nothing runs (no turn, no background task) and no Fresh session is rotating: a
+   * detached Super is never drained for it. Each reading after a spawn is judged once.
+   */
+  function followMcpDrift(live: McpLiveServer[]): void {
+    if (!mcpFollows || !alive || handedOff || mcpGrantPending || respawnTo !== null) return;
+    // Still connecting, or the owner is signing a server in through this process: the next reading decides.
+    if (mcpConnecting || live.some((s) => s.status === 'pending')) return;
+    mcpDriftDue = false;
+    if (detached || ws.readyState !== ws.OPEN || turnsInFlight > 0 || backgroundTasks > 0) return;
+    if (isRotating(chatRegistryId) || hasFreshLatch(chatRegistryId)) return;
+    let drift: { store: string[]; connectors: string[] };
+    try {
+      const cells = !bridgeTool && mcpAccount ? readStatusCache()[mcpAccount]?.cells : null;
+      drift = mcpDrift({
+        configuredNow: knownMcpServers(projectRoot).keys(), spawned: spawnedMcp, granted: mcpGranted,
+        live: bridgeTool ? null : live, accountCells: cells, spawnedAt: mcpSpawnedAt, tried: opts.mcpFollowed ?? [],
+      });
+    } catch { return; }
+    if (!drift.store.length && !drift.connectors.length) return;
+    mcpGranted.push(...drift.store);
+    mcpFollowedNow.push(...drift.connectors);
+    console.info(`[super] ${chatRegistryId}: restarting in place for MCP set up since it started (${drift.store.length + drift.connectors.length} server(s))`);
+    mcpGrantPending = true;
+    armMcpGrant();
+  }
+
+  /**
    * Arm a pending grant's respawn only when it can run now: no turn and no background task (ending
    * the process would kill a dev server or a background sub-agent). Before that nothing is held:
    * messages go to this process as always. Called at the grant, at a turn's end and when the
@@ -5416,6 +5463,7 @@ export function startChatSession(
       ...opts,
       // A lean child's subset grows by what its card was granted (grantAskedMcp).
       ...(opts.leanMcp && mcpGranted.length ? { leanMcp: [...new Set([...opts.leanMcp, ...mcpGranted])] } : {}),
+      ...(mcpFollowedNow.length ? { mcpFollowed: [...new Set([...(opts.mcpFollowed ?? []), ...mcpFollowedNow])] } : {}),
       sessionId: conversation ? '' : opts.sessionId,
       resumeId: conversation,
       initialPrompt: '',
