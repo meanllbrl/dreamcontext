@@ -146,7 +146,8 @@ Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconcile
 | — | Inspect current mode | `dreamcontext recall status` |
 
 - **Auto-injection (ON by default):** the UserPromptSubmit hook surfaces top hits on every non-trivial prompt. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`; override mode per-session with `DREAMCONTEXT_RECALL_MODE`.
-- **Federation:** plain `recall` automatically spans eligible readable peers; hits are namespaced `<vault>::<type>/<slug>`. Scope with `--vault`/`--connected`/`--all-vaults` (see [integrations.md](integrations.md)).
+- **Federation:** plain `recall` automatically spans eligible readable peers; hits are namespaced `<vault>::<type>/<slug>`. Scope with `--vault`/`--connected`/`--all-vaults` (see [integrations.md](integrations.md)). A peer hit fills a slot this vault left empty, or replaces this vault's last hit only when its raw score is at least 2.0 and higher (peers never take more than half). Peers serve no session digests, and no changelog unless `--types` names it.
+- **Warm when the app is running:** a hybrid `memory recall` runs in the app's server, which keeps the query model, the vector index and the corpus loaded; without the app it runs in-process, same hits. `DREAMCONTEXT_RECALL_VIA_SERVER=0` forces in-process.
 
 ### Recall tiers (hybrid mode: local, cloud-index, cloud)
 
