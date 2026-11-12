@@ -46,6 +46,12 @@ describe('builder test sizes --related before it runs (OR-1)', () => {
     expect((err as Error).message).not.toMatch(/src\/leaf\.ts \(/);
   });
 
+  it('refuses before a --failed rerun too, and with no task', async () => {
+    await expect(builderTest(deps(), 'demo', { wave: '1', failed: true, related: ['src/hub.ts'] })).rejects.toThrow(/Nothing was run/);
+    await expect(builderTest(deps(), undefined, { failed: true, related: ['src/hub.ts'] })).rejects.toThrow(/Nothing was run/);
+    expect(checks).toEqual([]);
+  });
+
   it('a small related set runs as before', async () => {
     await builderTest(deps(), 'demo', { wave: '1', related: ['src/leaf.ts'] });
     expect(checks.some((a) => a[0] === 'tsc')).toBe(true);
@@ -75,7 +81,7 @@ describe('the type-check is incremental per worktree (OR-10)', () => {
     expect(argv.slice(0, 4)).toEqual(['tsc', '--noEmit', '-p', 'tsconfig.json']);
     expect(argv[4]).toBe('--incremental');
     expect(argv[5]).toBe('--tsBuildInfoFile');
-    expect(argv[6]).toMatch(/\.git\/dc-tsc\/[0-9a-f]{16}\.tsbuildinfo$/);
+    expect(argv[6]).toMatch(/\.git[\\/]dc-tsc[\\/][0-9a-f]{16}\.tsbuildinfo$/);
   });
 
   it('the file name follows the tsconfig and the package', () => {

@@ -642,6 +642,11 @@ function refuseWideRelated(root: string, plan: TestPlan): void {
  * green, 1 failures (each with its key and owning lane), 75 when a check did not run at all.
  */
 export async function builderTest(deps: SessionDeps, slug: string | undefined, opts: TestOptions): Promise<number> {
+  // Sized first, on every path, so "Nothing was run" is true (a --failed record rerun is a check too).
+  if (!opts.wideRelated && (opts.related?.length ?? 0) > 0) {
+    const root = deps.root();
+    refuseWideRelated(root, planChecks(root, normalizeOwns(root, opts.related ?? [])));
+  }
   // No task: rerun what a whole-suite record left open (plan C3).
   if (slug === undefined) {
     if (!opts.failed) throw new BuilderInputError('give a task slug and --wave <n|final>, or --failed alone to rerun the red files of a full suite on this worktree');
@@ -683,7 +688,6 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
       }
     }
   }
-  if (!opts.wideRelated) refuseWideRelated(root, plan);
   if (plan.tsc.length === 0 && plan.tests.length === 0) {
     deps.print(opts.failed ? `nothing failed in wave ${wave} last time` : 'no package or test runner found for these files');
     return 0;
