@@ -49,7 +49,7 @@ import { appendFinding } from '../../lib/apps/learn-queue.js';
 import { publicConfig, readAppConfig } from '../../lib/apps/app-config.js';
 import { appDataDir, checkAppDataChain, ensureAppDataDir } from '../../lib/apps/data-dir.js';
 import { containedPath } from '../../lib/apps/data-conflicts.js';
-import { FILE_MAX_BYTES } from '../../lib/apps/data-share.js';
+import { SDK_FILE_MAX_BYTES } from '../../lib/apps/data-share.js';
 import { addTombstone, clearTombstones } from '../../lib/apps/data-deletes.js';
 import { appDataStatus, sharedMember, trackedAppFiles } from '../../lib/apps/others.js';
 
@@ -402,7 +402,7 @@ function readOne(abs: string): { text: string } | { error: string } {
   try {
     const st = lstatSync(abs);
     if (st.isSymbolicLink() || !st.isFile()) return { error: 'not_a_file' };
-    if (st.size > FILE_MAX_BYTES) return { error: 'too_big' };
+    if (st.size > SDK_FILE_MAX_BYTES) return { error: 'too_big' };
     return { text: readFileSync(abs, 'utf-8') };
   } catch { return { error: 'not_found' }; }
 }
@@ -461,7 +461,7 @@ registerGatewayRoute('/__dc/data', { cookie: true, bearer: true }, async (gw, re
     if (ident.kind !== 'backend') { req.resume(); send(res, 403, { error: 'backend_only', message: `/__dc/data${what} is for the app's own backend (Bearer DC_TOKEN).` }); return; }
     if (method !== 'POST') { req.resume(); send(res, 405, { error: 'method' }); return; }
     let body: Record<string, unknown>;
-    try { body = (await readJson(req, FILE_MAX_BYTES + 64 * 1024)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
+    try { body = (await readJson(req, SDK_FILE_MAX_BYTES + 64 * 1024)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
     if (!body || typeof body !== 'object' || Array.isArray(body)) { send(res, 400, { error: 'invalid_body' }); return; }
     const p = relOf(body.path);
     if (!p || p.folder) { badPath(res); return; }
@@ -473,7 +473,7 @@ registerGatewayRoute('/__dc/data', { cookie: true, bearer: true }, async (gw, re
     if (what === '/write') {
       const content = typeof body.content === 'string' ? body.content : body.content !== undefined ? JSON.stringify(body.content, null, 2) : null;
       if (content === null) { send(res, 400, { error: 'invalid_body', message: '{path, content} is required' }); return; }
-      if (Buffer.byteLength(content) > FILE_MAX_BYTES) { send(res, 413, { error: 'too_big', message: 'A data file is at most 5 MB.' }); return; }
+      if (Buffer.byteLength(content) > SDK_FILE_MAX_BYTES) { send(res, 413, { error: 'too_big', message: 'One /__dc/data write is at most 5 MB; the backend writes a bigger file straight into DC_DATA_DIR (it still syncs, any size).' }); return; }
       const tmp = join(dirname(abs), `${WRITE_TMP_PREFIX}${randomBytes(6).toString('hex')}`);
       try {
         mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });

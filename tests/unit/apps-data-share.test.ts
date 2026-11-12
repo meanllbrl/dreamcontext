@@ -3,8 +3,8 @@ import { linkSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, syml
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  APP_SHARED_MAX_BYTES, BRAIN_SHARED_MAX_BYTES, DATA_MAX_ENTRIES, FILE_MAX_BYTES, WRITING_SETTLE_MS,
-  capTotals, declMatches, parseDataDecl, shareRefusal, sharedSet, validateDeclPath,
+  DATA_MAX_ENTRIES, HOST_FILE_MAX_BYTES, SDK_FILE_MAX_BYTES, SHARED_WARN_BYTES, WRITING_SETTLE_MS,
+  declMatches, largeDataLine, parseDataDecl, shareRefusal, sharedSet, teamSharedBytes, validateDeclPath,
   type DataDecl,
 } from '../../src/lib/apps/data-share.js';
 import { parseManifest, dataUndeclared } from '../../src/lib/apps/manifest.js';
@@ -108,9 +108,13 @@ describe('one file through the gate (K4)', () => {
     const magic = Buffer.from('SQLite format 3\0', 'latin1');
     const disguised = put('favorites/data.json', Buffer.concat([magic, Buffer.alloc(32)]));
     expect(shareRefusal('favorites/data.json', lstatSync(disguised), magic, { stage: true, nowMs: later() })).toBe('db_file');
-    // too big
-    const big = put('favorites/big.json', Buffer.alloc(FILE_MAX_BYTES + 1));
-    expect(shareRefusal('favorites/big.json', lstatSync(big), null, { stage: true, nowMs: later() })).toBe('too_big');
+    // size is never a refusal (owner, 2026-11-12): a file over the SDK's request bound still goes
+    const big = put('favorites/big.json', Buffer.alloc(SDK_FILE_MAX_BYTES + 1));
+    expect(shareRefusal('favorites/big.json', lstatSync(big), null, { stage: true, nowMs: later() })).toBeNull();
+    // the host's per-file limit, not ours: one file over 100 MB stays here (GitHub refuses it)
+    const at = lstatSync(big);
+    expect(shareRefusal('favorites/big.json', { ...at, isFile: () => true, isSymbolicLink: () => false, size: HOST_FILE_MAX_BYTES }, null, { stage: true, nowMs: later() })).toBeNull();
+    expect(shareRefusal('favorites/big.json', { ...at, isFile: () => true, isSymbolicLink: () => false, size: HOST_FILE_MAX_BYTES + 1 }, null, { stage: true, nowMs: later() })).toBe('host_limit');
     // writing within 3 s, stage only
     const fresh = lstatSync(put('favorites/fresh.json'));
     expect(shareRefusal('favorites/fresh.json', fresh, null, { stage: true, nowMs: fresh.mtimeMs + WRITING_SETTLE_MS - 1000 })).toBe('writing');
@@ -118,14 +122,15 @@ describe('one file through the gate (K4)', () => {
     expect(shareRefusal('favorites/fresh.json', fresh, null, { nowMs: fresh.mtimeMs })).toBeNull();
   });
 
-  it('capTotals: 25 MB per app, 100 MB per brain', () => {
+  it('teamSharedBytes: the team\'s files with this Mac\'s copies over the same path, plus its new ones', () => {
     const mb = 1024 * 1024;
-    const r = capTotals([{ path: 'a', size: 20 * mb }, { path: 'b', size: 6 * mb }, { path: 'c', size: 4 * mb }], 0, 0);
-    expect(r.within).toEqual(['a', 'c']);
-    expect(r.over).toEqual(['b']);
-    expect(r.appBytes).toBeLessThanOrEqual(APP_SHARED_MAX_BYTES);
-    const b = capTotals([{ path: 'a', size: 2 * mb }], 0, BRAIN_SHARED_MAX_BYTES - mb);
-    expect(b.over).toEqual(['a']);
+    // A and B each under the warning line alone; together over it (the B11 case): counted whole.
+    const team = [{ rel: 'favorites/a1.bin', size: 20 * mb }, { rel: 'favorites/shared.json', size: 1 * mb }];
+    const mine = [{ rel: 'favorites/b1.bin', size: 20 * mb }, { rel: 'favorites/shared.json', size: 2 * mb }];
+    expect(teamSharedBytes(team, mine)).toBe(42 * mb);
+    expect(teamSharedBytes(team, mine)).toBeGreaterThan(SHARED_WARN_BYTES);
+    expect(teamSharedBytes([], [])).toBe(0);
+    expect(largeDataLine('Rakip', 42 * mb)).toMatch(/large \(42\.0 MB for the team\)\. It all syncs/);
   });
 });
 
@@ -208,11 +213,14 @@ describe('the shared set (K3 precedence)', () => {
     expect(r.paths).not.toContain('favorites/b.json');
   });
 
-  it('the app total over 25 MB holds the rest as over_cap', () => {
+  it('an app total over 25 MB holds nothing back: every file goes, sizes counted', () => {
     put('favorites/big1.json', Buffer.alloc(4 * 1024 * 1024));
     for (let i = 0; i < 6; i++) put(`favorites/big-${i}.json`, Buffer.alloc(4 * 1024 * 1024));
     const r = sharedSet(ctx(), rec, decl, consent({ approved: ['favorites/', 'notes/', 'board.json'] }), deps());
-    expect(r.held.some((h) => h.reason === 'over_cap')).toBe(true);
-    expect(r.bytes).toBeLessThanOrEqual(APP_SHARED_MAX_BYTES);
+    expect(r.held.filter((h) => h.path.startsWith('favorites/big'))).toEqual([]);
+    for (const p of ['favorites/big1.json', ...Array.from({ length: 6 }, (_, i) => `favorites/big-${i}.json`)]) expect(r.paths).toContain(p);
+    expect(r.bytes).toBeGreaterThanOrEqual(28 * 1024 * 1024);
+    expect(r.bytes).toBeGreaterThan(SHARED_WARN_BYTES);
+    expect(r.sizes.find((x) => x.rel === 'favorites/big1.json')?.size).toBe(4 * 1024 * 1024);
   });
 });

@@ -12,7 +12,7 @@
   Only the paths the manifest's `data` declares shared, and the owner approved, go to the team;
   everything else stays on this Mac. Customer names, amounts and keys belong in local paths.
 - **Shared or local: four questions, first "local" wins.** Can it be produced again (fetched or
-  computed)? Personal? Secret? Over 5 MB or written every minute? What is left is hand-made data the
+  computed)? Personal? Secret? Big (images, exports) or written every minute? What is left is hand-made data the
   team made: shared. Why: the team's value is what people made, not what any Mac can fetch again.
 - **One file per record** (`favorites/<id>.json`), the shared part split from a mixed file into its
   own folder. Why: the unit of a conflict is a file; two people's records in two files never clash.

@@ -74,6 +74,13 @@ that choice: you cannot turn a private click into a public publish (403 `grant_s
    none reaches you): ask him to press Share again and publish with the new grant, your work stays. A first
    private publish with no grant: ask with `--ask --invite <logins>`, or he presses Share; an
    `--ask` without `--invite` can go out to nobody.
+   A refusal that says the repo cannot take this publish (`repo_changed`: the repo is gone or is
+   another one; `foreign_history`: it has commits no publish made; `history_not_clean`: an earlier
+   version fails the public check; `already_public`: a private publish onto a public repo) needs a
+   NEW repo: the same command plus `--fresh` (`--go` only; default name `<slug>-public`, `--repo
+   <name>` picks another; `repo_exists` = pick another name). It needs the grant of his Share
+   click: a card's Onayla covers only the publish it showed (403 `fresh_needs_share_click`), so ask
+   him to press Share again. The app then points at the new repo; the old one is left as it is.
 7. End with a short plain list: what you cleaned, what went out, where.
 
 Licence: a private share gets "invitees use it, nobody re-shares it"; a public one MIT. A public

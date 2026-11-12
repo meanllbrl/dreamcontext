@@ -102,7 +102,8 @@ export const REFUSED_FLAGS: Readonly<Record<string, readonly string[]>> = {
   // A change the owner agreed to: the card IS his yes, and the server then lets it through.
   'apps do': ['--confirm'],
   // The repo name and the store line are the owner's (the Share sheet); a confirm is his click.
-  'apps publish': ['--repo', '--tagline', '--confirm-name'],
+  // A new repo is the owner's too (his Share click's grant, never a card's).
+  'apps publish': ['--repo', '--tagline', '--confirm-name', '--fresh'],
 };
 
 const SPLITTERS = new Set([';', '&', '|', '>', '<', '(', ')']);

@@ -1,23 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync,
+  existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { updateSetupConfig } from '../../src/lib/setup-config.js';
-import { runBrainSync, type SyncEngineDeps, type SyncOptions, type SyncResult } from '../../src/lib/git-sync/sync-engine.js';
+import { hostFileSizeNote, hostFileSizeRefusal, runBrainSync, type SyncEngineDeps, type SyncOptions, type SyncResult } from '../../src/lib/git-sync/sync-engine.js';
 import * as gitLib from '../../src/lib/git-sync/git.js';
 import { registerApp, type AppRecord } from '../../src/lib/apps/registry.js';
 import { ensureAppDataDir, ensureAppsPrivacy } from '../../src/lib/apps/data-dir.js';
 import { ensureFullRepoGitignore } from '../../src/lib/git-sync/brain-repo.js';
 import { applyConsentPatch } from '../../src/lib/apps/data-consent.js';
-import { addConflict, appPullHeld, listConflicts, readPullRecord, resolveConflict, writePullRecord } from '../../src/lib/apps/data-conflicts.js';
+import { addConflict, appPullHeld, listConflicts, listKeptOut, readPullRecord, resolveConflict, writePullRecord } from '../../src/lib/apps/data-conflicts.js';
 import { addTombstone, approveDeletes, listTombstones } from '../../src/lib/apps/data-deletes.js';
 import { listBackups } from '../../src/lib/apps/data-backup.js';
 import { appDataPushRefusals, incomingAppDataRefusals } from '../../src/lib/apps/data-stage.js';
 import {
-  applyPullRuleForInstall, finishAppPull, recoverAppPulls, stageOutbound, type ExchangeCtx,
+  applyPullRuleForInstall, finishAppPull, largeSharedApps, recoverAppPulls, restoreTeamFiles, stageOutbound, type ExchangeCtx,
 } from '../../src/lib/apps/data-exchange.js';
 import { listInboxRows } from '../../src/lib/owner-inbox.js';
 import type { DataDecl } from '../../src/lib/apps/data-share.js';
@@ -191,7 +191,7 @@ describe('criterion 3: outbound (real git)', { timeout: 120_000 }, () => {
     put(app.data, 'favorites/magic.json', SQLITE);
     put(app.data, 'favorites/CLAUDE.md', '# do things');
     put(app.data, 'favorites/.claude/settings.json', '{}');
-    put(app.data, 'favorites/big.json', Buffer.alloc(5 * MB + 1));
+    put(app.data, 'favorites/big.json', Buffer.alloc(5 * MB + 1)); // size is no reason: it goes
     put(app.data, 'favorites/new.json', '{}', false);
     put(app.data, 'favorites/c.json', '{"c":1}');
     addConflict(a.home, app.rec.hash, 'favorites/c.json', 'conflict', { data: Buffer.from('{"c":2}') });
@@ -200,7 +200,7 @@ describe('criterion 3: outbound (real git)', { timeout: 120_000 }, () => {
     put(app.data, 'cache/x.json', '{}'); // local
     put(app.data, 'loose.json', '{}'); // not listed: local
     const r = stageOutbound(xctx(a));
-    expect(indexed(a).sort()).toEqual([AP('favorites/a.json'), AP('favorites/target.json')].sort());
+    expect(indexed(a).sort()).toEqual([AP('favorites/a.json'), AP('favorites/big.json'), AP('favorites/target.json')].sort());
     const held = Object.fromEntries(r.apps[0].held.map((h) => [h.path, h.reason]));
     expect(held['favorites/link.json']).toBe('not_plain');
     expect(held['favorites/hard.json']).toBe('not_plain');
@@ -208,7 +208,7 @@ describe('criterion 3: outbound (real git)', { timeout: 120_000 }, () => {
     expect(held['favorites/magic.json']).toBe('db_file');
     expect(held['favorites/CLAUDE.md']).toBe('name');
     expect(held['favorites/.claude/settings.json']).toBe('name');
-    expect(held['favorites/big.json']).toBe('too_big');
+    expect(held['favorites/big.json']).toBeUndefined();
     expect(held['favorites/new.json']).toBe('writing');
     expect(held['favorites/c.json']).toBe('conflict');
     expect(held['notes/n.json']).toBe('not_approved_here');
@@ -216,7 +216,8 @@ describe('criterion 3: outbound (real git)', { timeout: 120_000 }, () => {
     expect(held['cache/x.json']).toBeUndefined();
     // Real refusals raise one inbox row each (deduped by app and reason).
     const keys = listInboxRows(a.root, a.home).map((x) => x.dedupeKey);
-    expect(keys).toEqual(expect.arrayContaining(['app-data:rakip:not_plain', 'app-data:rakip:db_file', 'app-data:rakip:name', 'app-data:rakip:too_big']));
+    expect(keys).toEqual(expect.arrayContaining(['app-data:rakip:not_plain', 'app-data:rakip:db_file', 'app-data:rakip:name']));
+    expect(keys).not.toContain('app-data:rakip:too_big');
     expect(keys).not.toContain('app-data:rakip:writing');
   });
 
@@ -229,17 +230,16 @@ describe('criterion 3: outbound (real git)', { timeout: 120_000 }, () => {
     expect(indexed(a)).toEqual([]);
   });
 
-  it('3c: the 25 MB app total and the 100 MB brain total hold the rest over_cap', () => {
+  it('3c: no app or brain total holds anything back: 27 MB in one app and 112 MB in the brain all go', () => {
     const a = vaultA();
     const big = Buffer.alloc(Math.floor(4.5 * MB));
     const apps = ['ra', 'rb', 'rc', 'rd', 're'].map((slug) => install(a, RAKIP, ['favorites/'], slug));
     for (const app of apps) for (let i = 0; i < 5; i++) put(app.data, `favorites/${i}.bin`, big); // 22.5 MB each
     put(apps[0].data, 'favorites/5.bin', big); // the first app: 27 MB
     const r = stageOutbound(xctx(a), { dryRun: true });
-    const over = (slug: string) => r.apps.find((x) => x.slug === slug)!.held.filter((h) => h.reason === 'over_cap').length;
-    expect(over('ra')).toBe(1); // 25 MB app total
-    expect(over('re')).toBeGreaterThan(0); // 100 MB brain total
-    expect(over('rb')).toBe(0);
+    for (const x of r.apps) expect(x.held, x.slug).toEqual([]);
+    expect(r.add).toHaveLength(26);
+    expect(largeSharedApps(xctx(a)).map((x) => x.slug)).toEqual(['ra']); // over 25 MB: the warning only
   });
 
   it('3d: a Mac without the app syncs and nothing is deleted; a tracked shared file missing from disk is no delete either', async () => {
@@ -356,7 +356,7 @@ describe('criterion 4: dirtyPaths', { timeout: 120_000 }, () => {
 describe('criterion 5: the push gate (back door)', { timeout: 120_000 }, () => {
   const refusals = (v: Vault) => appDataPushRefusals(v.root, v.ctx, 'origin/main', { home: v.home });
 
-  it('5a: a hand-committed unapproved path, a symlink blob, a DB blob, a blob over 5 MB, a delete with no tombstone: app_data_held', async () => {
+  it('5a: a hand-committed unapproved path, a symlink blob, a DB blob, a delete with no tombstone: app_data_held; a blob over 5 MB is no reason', async () => {
     const a = vaultA();
     const app = install(a, RAKIP, ['favorites/']);
     put(app.data, 'favorites/keep.json', '{}');
@@ -371,7 +371,7 @@ describe('criterion 5: the push gate (back door)', { timeout: 120_000 }, () => {
     expect(rules[AP('notes/n.json')]).toBe('not_shared_here');
     expect(rules[AP('favorites/l.json')]).toBe('not_plain');
     expect(rules[AP('favorites/m.json')]).toBe('db_file');
-    expect(rules[AP('favorites/big.json')]).toBe('too_big');
+    expect(rules[AP('favorites/big.json')]).toBeUndefined(); // hand-committed but approved: the size alone holds nothing
     expect(rules[AP('favorites/keep.json')]).toBe('delete_without_tombstone');
     const r = await sync(a);
     expect(r.action).toBe('app-data-held');
@@ -443,7 +443,7 @@ describe('criterion 6: the pull gate', { timeout: 120_000 }, () => {
     return (incomingAppDataRefusals(b.root, b.ctx, 'origin/main') ?? ['<null>']).map((r) => (typeof r === 'string' ? r : `${r.path} ${r.rule}`));
   }
 
-  it('6a: a symlink, a gitlink, a file where apps/ or apps/<slug> is, a dotted part, an instruction name, a DB, a file over 5 MB', async () => {
+  it('6a: a symlink, a gitlink, a file where apps/ or apps/<slug> is, a dotted part, an instruction name, a DB; never a file over 5 MB', async () => {
     expect(await refusedBy({ [AP('favorites/l')]: '/etc' }, '120000')).toEqual([`${AP('favorites/l')} not_plain`]);
     rmSync(base, { recursive: true, force: true }); mkdirSync(base, { recursive: true }); git(base, 'init', '-q', '--bare', '-b', 'main', bare);
     const all = await refusedBy({
@@ -460,8 +460,8 @@ describe('criterion 6: the pull gate', { timeout: 120_000 }, () => {
       `${AP('favorites/CLAUDE.md')} name`,
       `${AP('favorites/x.sqlite')} db_file`,
       `${AP('favorites/m.json')} db_file`,
-      `${AP('favorites/big.json')} too_big`,
     ]));
+    expect(all.some((x) => x.startsWith(AP('favorites/big.json')))).toBe(false);
   });
 
   it('6b: a gitlink and a letter-case twin', async () => {
@@ -476,19 +476,29 @@ describe('criterion 6: the pull gate', { timeout: 120_000 }, () => {
     expect(rules).toEqual(expect.arrayContaining([`${AP('favorites/sub')} not_plain`, `${AP('favorites/a.json')} case`]));
   });
 
-  it('6c: more than 25 MB for one app stops the pull, and the sync changes nothing here', async () => {
+  it('6c: two Macs each under 25 MB for one app push more together; every pull still goes through, all of it lands, and the app gets the LARGE warning', async () => {
     const a = vaultA();
+    const aApp = install(a);
+    for (let i = 0; i < 4; i++) put(aApp.data, `favorites/a${i}.bin`, Buffer.alloc(Math.floor(4.5 * MB), i)); // 18 MB
+    expect((await sync(a)).action).toBe('pushed');
     const b = vaultB();
     const bApp = install(b);
-    put(bApp.data, 'favorites/mine.json', '{"mine":1}');
-    const files: Record<string, Buffer> = {};
-    for (let i = 0; i < 6; i++) files[AP(`favorites/${i}.bin`)] = Buffer.alloc(Math.floor(4.5 * MB), i);
-    teamCommit(a, files);
-    const r = await sync(b, { mode: 'pull-only', foreground: true });
-    expect(r.action).toBe('noop');
-    expect(r.note).toContain('over_cap');
-    expect(git(b.top, 'ls-tree', '-r', '--name-only', 'HEAD')).not.toContain('favorites/0.bin');
-    expect(read(join(bApp.data, 'favorites/mine.json'))).toBe('{"mine":1}');
+    for (let i = 0; i < 4; i++) put(bApp.data, `favorites/b${i}.bin`, Buffer.alloc(Math.floor(4.5 * MB), 10 + i)); // 18 more
+    const rb = await sync(b);
+    expect(rb.action).toBe('pushed');
+    expect(rb.appData?.large.map((x) => x.slug)).toEqual(['rakip']); // 36 MB for the team: warned, sent
+    // A third Mac with nothing of the app, and A itself, both pull the whole 36 MB.
+    const c = vaultB('c');
+    expect(existsSync(join(c.ctx, 'apps/rakip/favorites/b3.bin'))).toBe(true);
+    const ra = await sync(a, { mode: 'pull-only', foreground: true });
+    expect(ra.action).toBe('pulled');
+    expect(ra.note ?? '').not.toContain('over_cap');
+    for (let i = 0; i < 4; i++) expect(readFileSync(join(aApp.data, `favorites/b${i}.bin`)).length).toBe(Math.floor(4.5 * MB));
+    // An over-64 MB file (past the old in-memory read) goes and lands the same way.
+    put(aApp.data, 'favorites/huge.bin', Buffer.alloc(70 * MB, 7));
+    expect((await sync(a)).action).toBe('pushed');
+    expect((await sync(b, { mode: 'pull-only', foreground: true })).action).toBe('pulled');
+    expect(lstatSync(join(bApp.data, 'favorites/huge.bin')).size).toBe(70 * MB);
   });
 
   it('6d: a team file on a path this Mac calls local does not land in the data folder; it goes to the conflict store and is never sent back', async () => {
@@ -546,6 +556,167 @@ describe('criterion 6: the pull gate', { timeout: 120_000 }, () => {
     await sync(b);
     expect(existsSync(join(bApp.data, 'favorites/t.json'))).toBe(false);
     expect(listConflicts(b.home, bApp.rec.hash).map((c) => c.path)).toEqual(['favorites/t.json']);
+    // B1: the app's manifest gets its `data` field and the owner approves: the next sync brings
+    // the team's file shared before the approval onto this disk.
+    writeFileSync(join(bApp.rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'rakip', name: 'Rakip İstihbaratı', data: RAKIP }));
+    const ok = applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { approve: ['favorites/'] });
+    expect(ok.ok).toBe(true);
+    const r = await sync(b);
+    expect(read(join(bApp.data, 'favorites/t.json'))).toBe('{"team":1}');
+    expect(r.appData?.restored).toEqual([{ slug: 'rakip', paths: ['favorites/t.json'] }]);
+    expect(git(b.top, 'status', '--porcelain', '--', '_dream_context/apps')).toBe(''); // HEAD's copy: nothing to send
+    expect((await sync(b)).appData?.restored ?? []).toEqual([]); // once only
+  });
+
+  it('6e-2 (B1): "Keep it local" first, Share later: every team file shared before comes to this disk; mine, deleted, unapproved and conflicted paths stay as they are', async () => {
+    const a = vaultA();
+    const b = vaultB();
+    const bApp = install(b, RAKIP, []);
+    applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: true });
+    teamCommit(a, {
+      [AP('favorites/t1.json')]: '{"team":1}', [AP('favorites/t2.json')]: '{"team":2}',
+      [AP('favorites/mine.json')]: '{"team":"m"}', [AP('favorites/gone.json')]: '{"team":"g"}',
+      [AP('favorites/two.json')]: '{"team":"two"}', [AP('notes/n.json')]: '{"team":"n"}',
+    });
+    await sync(b);
+    for (const p of ['favorites/t1.json', 'favorites/t2.json', 'notes/n.json']) expect(existsSync(join(bApp.data, p)), p).toBe(false);
+    // On this Mac meanwhile: its own copy of one path, a delete the app made, a two-version file.
+    put(bApp.data, 'favorites/mine.json', '{"mine":1}', false);
+    addTombstone(b.home, bApp.rec.hash, 'favorites/gone.json');
+    addConflict(b.home, bApp.rec.hash, 'favorites/two.json', 'conflict', { data: Buffer.from('{"team":"two"}') });
+    // "Ask me again" + Share, favorites/ only (notes/ stays unapproved).
+    expect(applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: false, approve: ['favorites/'] }).ok).toBe(true);
+    const back = restoreTeamFiles(xctx(b)); // what the Share click runs
+    expect(back).toEqual([{ slug: 'rakip', paths: ['favorites/t1.json', 'favorites/t2.json'], twoVersions: ['favorites/mine.json'] }]);
+    expect(read(join(bApp.data, 'favorites/t1.json'))).toBe('{"team":1}');
+    expect(read(join(bApp.data, 'favorites/t2.json'))).toBe('{"team":2}');
+    expect(read(join(bApp.data, 'favorites/mine.json'))).toBe('{"mine":1}'); // never overwritten
+    expect(existsSync(join(bApp.data, 'favorites/gone.json'))).toBe(false); // a delete stays a delete
+    expect(existsSync(join(bApp.data, 'favorites/two.json'))).toBe(false); // the human picks
+    expect(existsSync(join(bApp.data, 'notes/n.json'))).toBe(false); // not approved here: the app deletes it with fs, that stays
+    expect(listInboxRows(b.root, b.home).map((x) => x.dedupeKey)).toEqual(expect.arrayContaining(['app-data:rakip:restored', 'app-data:rakip:two_versions']));
+    // The stored team copy of a path now on disk byte for byte is gone; mine.json waits as two versions.
+    const kinds = Object.fromEntries(listConflicts(b.home, bApp.rec.hash).map((c) => [c.path, c.kind]));
+    expect(kinds['favorites/t1.json']).toBeUndefined();
+    expect(kinds['favorites/mine.json']).toBe('conflict');
+    // The following sync never sends mine over the team's: held as two versions, the team keeps its copy.
+    await sync(b);
+    expect(remoteFile(AP('favorites/mine.json'))).toBe('{"team":"m"}');
+    expect(read(join(bApp.data, 'favorites/mine.json'))).toBe('{"mine":1}');
+    expect(stageOutbound(xctx(b), { dryRun: true }).apps.find((x) => x.slug === 'rakip')?.held).toEqual(expect.arrayContaining([{ path: 'favorites/mine.json', reason: 'conflict' }]));
+    // The owner picks the team's: it is in place and nothing of mine went.
+    expect(resolveConflict(b.home, bApp.rec.hash, bApp.data, 'favorites/mine.json', 'theirs').ok).toBe(true);
+    expect(read(join(bApp.data, 'favorites/mine.json'))).toBe('{"team":"m"}');
+  });
+
+  it('6e-4 (B1): the sync brings the team\'s files back BEFORE it stages, so a late yes never sends mine over the team\'s', async () => {
+    const a = vaultA();
+    const b = vaultB();
+    const bApp = install(b, RAKIP, []);
+    applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: true });
+    teamCommit(a, { [AP('favorites/board.json')]: '{"team":"board"}', [AP('favorites/t.json')]: '{"team":1}' });
+    await sync(b);
+    put(bApp.data, 'favorites/board.json', '{"mine":"board"}'); // the app made its own default while local
+    expect(applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: false, approve: ['favorites/'] }).ok).toBe(true);
+    const r = await sync(b); // no Share-click restore ran: the sync itself must hold it
+    expect(r.appData?.restored).toEqual([{ slug: 'rakip', paths: ['favorites/t.json'], twoVersions: ['favorites/board.json'] }]);
+    expect(remoteFile(AP('favorites/board.json'))).toBe('{"team":"board"}');
+    expect(read(join(bApp.data, 'favorites/board.json'))).toBe('{"mine":"board"}');
+    expect(read(join(bApp.data, 'favorites/t.json'))).toBe('{"team":1}');
+  });
+
+  it('6e-6 (B1): 21 newer team copies never push the marked copy of board.json out; mine waits as two versions', async () => {
+    const a = vaultA();
+    const b = vaultB();
+    const bApp = install(b, RAKIP, []);
+    applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: true });
+    teamCommit(a, { [AP('favorites/board.json')]: '{"team":"board"}' });
+    await sync(b);
+    put(bApp.data, 'favorites/board.json', '{"mine":"board"}');
+    // 21 more team files: loose copies are trimmed to 20, but board.json's is marked and stays.
+    const cards: Record<string, string> = {};
+    for (let i = 0; i < 21; i++) cards[AP(`favorites/c${String(i).padStart(2, '0')}.json`)] = `{"card":${i}}`;
+    teamCommit(a, cards, [], 'cards');
+    await sync(b);
+    expect(listConflicts(b.home, bApp.rec.hash).map((c) => c.path)).toContain('favorites/board.json'); // marked: no count drops it
+    expect(listKeptOut(b.home, bApp.rec.hash).has('favorites/board.json')).toBe(true);
+    // Even before any restore, the shared set never sends a kept-out path.
+    expect(applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: false, approve: ['favorites/'] }).ok).toBe(true);
+    expect(stageOutbound(xctx(b), { dryRun: true }).apps.find((x) => x.slug === 'rakip')?.held).toEqual(expect.arrayContaining([{ path: 'favorites/board.json', reason: 'conflict' }]));
+    const r = await sync(b);
+    expect(r.appData?.restored?.[0]?.twoVersions).toEqual(['favorites/board.json']);
+    expect(remoteFile(AP('favorites/board.json'))).toBe('{"team":"board"}');
+    expect(read(join(bApp.data, 'favorites/board.json'))).toBe('{"mine":"board"}');
+    expect(listConflicts(b.home, bApp.rec.hash).find((c) => c.path === 'favorites/board.json')?.kind).toBe('conflict');
+    expect(listKeptOut(b.home, bApp.rec.hash).size).toBe(0); // every card came back, board.json is held as a conflict
+    // The owner keeps mine: from then on it is an ordinary edit and goes.
+    expect(resolveConflict(b.home, bApp.rec.hash, bApp.data, 'favorites/board.json', 'mine').ok).toBe(true);
+    await sync(b);
+    expect(remoteFile(AP('favorites/board.json'))).toBe('{"mine":"board"}');
+  });
+
+  it('6e-7 (B1): more than 20 own files differ at the late yes: every one waits as two versions, none goes over the team\'s, later store entries drop none', async () => {
+    const a = vaultA();
+    const b = vaultB();
+    const bApp = install(b, { shared: [{ path: 'favorites/', why: 'x' }, { path: 'notes/', why: 'y' }], local: [] }, []);
+    applyConsentPatch(b.home, bApp.rec.hash, { shared: [{ path: 'favorites/', why: 'x' }, { path: 'notes/', why: 'y' }], local: [] }, { decline: true });
+    const team: Record<string, string> = {};
+    for (let i = 0; i < 21; i++) team[AP(`favorites/d${String(i).padStart(2, '0')}.json`)] = `{"team":${i}}`;
+    teamCommit(a, team);
+    await sync(b);
+    for (let i = 0; i < 21; i++) put(bApp.data, `favorites/d${String(i).padStart(2, '0')}.json`, `{"mine":${i}}`);
+    const decl = { shared: [{ path: 'favorites/', why: 'x' }, { path: 'notes/', why: 'y' }], local: [] };
+    expect(applyConsentPatch(b.home, bApp.rec.hash, decl, { decline: false, approve: ['favorites/'] }).ok).toBe(true);
+    await sync(b);
+    // 25 later copies of a part B still does not share (notes/, unapproved but declared: those land) and
+    // of a part it never declared: store entries that once pushed the oldest out.
+    const later: Record<string, string> = {};
+    for (let i = 0; i < 25; i++) later[AP(`other/x${i}.json`)] = `{"x":${i}}`;
+    teamCommit(a, later, [], 'later');
+    await sync(b);
+    await sync(b);
+    for (let i = 0; i < 21; i++) {
+      const rel = `favorites/d${String(i).padStart(2, '0')}.json`;
+      expect(remoteFile(AP(rel)), rel).toBe(`{"team":${i}}`);
+      expect(read(join(bApp.data, rel)), rel).toBe(`{"mine":${i}}`);
+    }
+    const kinds = listConflicts(b.home, bApp.rec.hash).filter((c) => c.kind === 'conflict').map((c) => c.path);
+    expect(kinds).toHaveLength(21);
+  });
+
+  it('6e-5 (B1): the Share click brings back at most the inline budget; more waits for the sync, and a file the app wrote first is never replaced', async () => {
+    const a = vaultA();
+    const b = vaultB();
+    const bApp = install(b, RAKIP, []);
+    applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: true });
+    teamCommit(a, { [AP('favorites/big.bin')]: Buffer.alloc(2048, 1), [AP('favorites/t.json')]: '{"team":1}' });
+    await sync(b);
+    applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: false, approve: ['favorites/'] });
+    expect(restoreTeamFiles(xctx(b), { maxBytes: 1024 })).toEqual([{ slug: 'rakip', paths: [], deferred: true }]);
+    expect(existsSync(join(bApp.data, 'favorites/t.json'))).toBe(false);
+    expect(restoreTeamFiles(xctx(b))).toEqual([{ slug: 'rakip', paths: ['favorites/big.bin', 'favorites/t.json'] }]);
+    expect(lstatSync(join(bApp.data, 'favorites/big.bin')).size).toBe(2048);
+  });
+
+  it('6e-3 (B1): nothing comes back during an open merge, with sync off, or through a link in the data folder', async () => {
+    const a = vaultA();
+    const b = vaultB();
+    const bApp = install(b, RAKIP, []);
+    applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: true });
+    teamCommit(a, { [AP('favorites/x/t.json')]: '{"team":1}' });
+    await sync(b);
+    applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { decline: false, approve: ['favorites/'] });
+    expect(restoreTeamFiles({ ...xctx(b), mode: { fullRepo: true, cloudSyncOn: false } })).toEqual([]);
+    // A link where a folder of the path goes: never followed.
+    mkdirSync(join(base, 'elsewhere'), { recursive: true });
+    rmSync(join(bApp.data, 'favorites/x'), { recursive: true, force: true }); // the empty folder the pull left
+    mkdirSync(join(bApp.data, 'favorites'), { recursive: true });
+    symlinkSync(join(base, 'elsewhere'), join(bApp.data, 'favorites/x'));
+    expect(restoreTeamFiles(xctx(b))).toEqual([]);
+    expect(existsSync(join(base, 'elsewhere/t.json'))).toBe(false);
+    rmSync(join(bApp.data, 'favorites/x'));
+    writePullRecord(b.home, { v: 1, hash: bApp.rec.hash, slug: 'rakip', preHead: null, mergeHead: null, phase: 'parked', parked: [], plan: null, at: new Date().toISOString() });
+    expect(restoreTeamFiles(xctx(b))).toEqual([]); // an app's pull is open
   });
 });
 
@@ -1022,6 +1193,35 @@ describe('criterion 9: pause and the merge life cycle (git side)', { timeout: 12
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────
+describe('the host\'s per-file limit (GitHub GH001)', { timeout: 120_000 }, () => {
+  const GH001 = [
+    'remote: error: Trace: 3c1f0e',
+    'remote: error: See https://gh.io/lfs for more information.',
+    'remote: error: File _dream_context/apps/rakip/favorites/huge.bin is 120.00 MB; this exceeds GitHub\'s file size limit of 100.00 MB',
+    'remote: error: GH001: Large files detected. You may want to try Git Large File Storage - https://git-lfs.github.com.',
+    ' ! [remote rejected] HEAD -> main (pre-receive hook declined)',
+  ].join('\n');
+
+  it('recognises the refusal and names the file; any other push failure is not it', () => {
+    expect(hostFileSizeRefusal(GH001)).toBe('_dream_context/apps/rakip/favorites/huge.bin');
+    expect(hostFileSizeRefusal('remote: error: GH001: Large files detected.')).toBe('');
+    expect(hostFileSizeRefusal(' ! [rejected] HEAD -> main (non-fast-forward)')).toBeNull();
+    expect(hostFileSizeRefusal('fatal: Authentication failed')).toBeNull();
+    expect(hostFileSizeRefusal('error: the file size limit of this server')).toBeNull(); // another host's words are not GitHub's
+    expect(hostFileSizeNote('apps/x/a.bin', 'origin/main')).toMatch(/apps\/x\/a\.bin is over 100 MB.*git reset --soft origin\/main, then git rm --cached -- "apps\/x\/a\.bin"/);
+  });
+
+  it('a push the host refuses for size ends the sync with that file and the way out, never "non-fast-forward twice"', async () => {
+    const a = vaultA();
+    const aApp = install(a);
+    put(aApp.data, 'favorites/t.json', '{"a":1}');
+    const fail = (): never => { throw new gitLib.GitSyncError('git push main HEAD:main failed: ' + GH001, GH001); };
+    const r = sync(a, {}, { git: { ...gitLib, push: fail } as typeof gitLib });
+    await expect(r).rejects.toThrow(/huge\.bin is over 100 MB, and GitHub refuses/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────
 describe('install onto a team folder (K9, lane B calls it)', { timeout: 120_000 }, () => {
   it('team files on paths the installed manifest does not call shared go to the store; shared ones stay', async () => {
     const a = vaultA();
@@ -1035,6 +1235,26 @@ describe('install onto a team folder (K9, lane B calls it)', { timeout: 120_000 
     expect(r.stored).toEqual(['notes/n.json']);
     expect(existsSync(join(bApp.data, 'notes/n.json'))).toBe(false);
     expect(read(join(bApp.data, 'favorites/f.json'))).toBe('{"f":1}');
+  });
+
+  it('a file of mine on such a path stays, the team\'s copy stored beside it; a later approval holds the two as two versions', async () => {
+    const a = vaultA();
+    const aApp = install(a);
+    put(aApp.data, 'notes/n.json', '{"team":"n"}');
+    expect((await sync(a)).action).toBe('pushed');
+    const b = vaultB();
+    const bApp = install(b, { shared: [{ path: 'favorites/', why: 'x' }], local: [] }, []);
+    put(bApp.data, 'notes/n.json', '{"mine":"n"}');
+    expect(applyPullRuleForInstall(xctx(b), 'rakip', bApp.rec.hash).stored).toEqual(['notes/n.json']);
+    expect(read(join(bApp.data, 'notes/n.json'))).toBe('{"mine":"n"}'); // mine stays
+    expect(listConflicts(b.home, bApp.rec.hash)).toEqual([expect.objectContaining({ path: 'notes/n.json', kind: 'local_path' })]);
+    // The manifest now shares notes/ and the owner approves: mine is never sent over the team's.
+    writeFileSync(join(bApp.rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'rakip', name: 'Rakip İstihbaratı', data: RAKIP }));
+    expect(applyConsentPatch(b.home, bApp.rec.hash, RAKIP, { approve: ['favorites/', 'notes/'] }).ok).toBe(true);
+    const s = await sync(b);
+    expect(s.appData?.restored).toEqual([{ slug: 'rakip', paths: [], twoVersions: ['notes/n.json'] }]);
+    expect(remoteFile(AP('notes/n.json'))).toBe('{"team":"n"}');
+    expect(listConflicts(b.home, bApp.rec.hash)).toEqual([expect.objectContaining({ path: 'notes/n.json', kind: 'conflict' })]);
   });
 });
 

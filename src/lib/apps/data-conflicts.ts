@@ -202,6 +202,14 @@ export function appPullHeld(home: string, hash: string): boolean {
 
 // ─── the conflict store ───────────────────────────────────────────────────────────
 
+/**
+ * How many LOOSE copies an app keeps: copies nobody has to pick any more (a `local_path` or
+ * `not_installed` copy whose path has no open kept-out mark). Never a limit on what still waits:
+ * a `conflict` (the team's copy waiting for the owner's pick) and a copy whose path is still
+ * marked kept out are never dropped by a count; they leave only when the owner picks or the disk
+ * holds the team's copy again. Otherwise a dropped copy would let this Mac's file go out over the
+ * team's.
+ */
 export const CONFLICTS_KEEP = 20;
 export type ConflictKind = 'conflict' | 'local_path' | 'not_installed';
 export interface ConflictEntry { path: string; storedAt: string; stash: string; kind: ConflictKind }
@@ -260,8 +268,8 @@ function sweepResolveTemps(dir: string): void {
 
 /**
  * Keep the team's copy of `relPath` in the store: from a file (`{file}`, a plain file, copied)
- * or bytes (`{data}`). One entry per path (a newer copy replaces the older); newest
- * {@link CONFLICTS_KEEP} per app.
+ * or bytes (`{data}`). One entry per path (a newer copy replaces the older); of the loose copies
+ * the newest {@link CONFLICTS_KEEP} per app are kept, every waiting one is kept.
  */
 export function addConflict(home: string, hash: string, relPath: string, kind: ConflictKind, source: { file: string } | { data: Buffer }, nowMs: number = Date.now()): { ok: true; entry: ConflictEntry } | { ok: false; error: string } {
   try { assertAppHash(hash); } catch { return { ok: false, error: 'bad_app' }; }
@@ -283,7 +291,11 @@ export function addConflict(home: string, hash: string, relPath: string, kind: C
   const entry: ConflictEntry = { path: relPath, storedAt: new Date(nowMs).toISOString(), stash, kind };
   const all = readIndex(home, hash);
   const next = [...all.filter((x) => x.path !== relPath), entry];
-  const kept = next.slice(-CONFLICTS_KEEP);
+  // Only loose copies are dropped, oldest first ({@link CONFLICTS_KEEP}); a waiting one never.
+  const marked = listKeptOut(home, hash);
+  const loose = next.filter((x) => x.kind !== 'conflict' && !marked.has(x.path));
+  const drop = new Set(loose.slice(0, Math.max(0, loose.length - CONFLICTS_KEEP)));
+  const kept = next.filter((x) => !drop.has(x));
   // The index is written FIRST; a stash leaves disk only once no written index names it.
   try { writeJsonAtomic(conflictIndexPath(home, hash), { entries: kept }); } catch (e) {
     dropStash(home, hash, stash);
@@ -291,6 +303,74 @@ export function addConflict(home: string, hash: string, relPath: string, kind: C
   }
   for (const old of all.filter((x) => !kept.includes(x))) dropStash(home, hash, old.stash);
   return { ok: true, entry };
+}
+
+// ─── team copies kept out of this disk ─────────────────────────────────────────────
+
+/**
+ * The paths whose team copy came in while this Mac did not share them (`local_path`,
+ * `not_installed`: the pull or install rule took the team's copy off the disk, or left mine in its
+ * place). Only the paths, never the bytes, and never capped: the conflict store keeps the newest
+ * {@link CONFLICTS_KEEP} copies, but THIS fact must outlive any of them, because it is what tells a
+ * later approval that a file here is not the team's (held as two versions, never sent over the
+ * team's copy). Written BEFORE the copy is stored, so a store that failed still leaves it.
+ */
+export function keptOutPath(home: string, hash: string): string {
+  return appStateFile(home, 'kept-out', hash);
+}
+
+/** The kept-out paths of this app. Never throws (unreadable = none). */
+export function listKeptOut(home: string, hash: string): Set<string> {
+  let raw: unknown;
+  try { raw = readJsonStrict(keptOutPath(home, hash)); } catch { return new Set(); }
+  const paths = raw && typeof raw === 'object' ? (raw as { paths?: unknown }).paths : null;
+  if (!Array.isArray(paths)) return new Set();
+  return new Set(paths.filter((p): p is string => typeof p === 'string' && !pathNameRefusal(p)));
+}
+
+function writeKeptOut(home: string, hash: string, next: Set<string>): boolean {
+  const p = keptOutPath(home, hash);
+  try {
+    if (!next.size) { rmSync(p, { force: true }); return true; }
+    mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
+    writeJsonAtomic(p, { paths: [...next].sort() });
+    return true;
+  } catch { return false; }
+}
+
+/** Record `paths` as kept out. False when the record could not be written. Never throws. */
+export function markKeptOut(home: string, hash: string, paths: readonly string[]): boolean {
+  try { assertAppHash(hash); } catch { return false; }
+  const all = listKeptOut(home, hash);
+  const add = paths.filter((p) => !pathNameRefusal(p) && !all.has(p));
+  if (!add.length) return true;
+  for (const p of add) all.add(p);
+  return writeKeptOut(home, hash, all);
+}
+
+/** Forget `paths`: the disk holds the team's copy now, a two-version entry holds them, or the owner picked. Never throws. */
+export function clearKeptOut(home: string, hash: string, paths: readonly string[]): void {
+  try { assertAppHash(hash); } catch { return; }
+  const all = listKeptOut(home, hash);
+  let changed = false;
+  for (const p of paths) changed = all.delete(p) || changed;
+  if (changed) writeKeptOut(home, hash, all);
+}
+
+/**
+ * Drop the stored entries of `paths` whose kind is one of `kinds` (and their stored copies): a
+ * stored team copy that no longer says anything (the disk now holds that same team copy). Index
+ * first, then the copies. Returns the paths dropped. Never throws.
+ */
+export function dropConflictEntries(home: string, hash: string, paths: readonly string[], kinds: readonly ConflictKind[]): string[] {
+  try { assertAppHash(hash); } catch { return []; }
+  const want = new Set(paths);
+  const all = readIndex(home, hash);
+  const gone = all.filter((x) => want.has(x.path) && kinds.includes(x.kind));
+  if (!gone.length) return [];
+  try { writeJsonAtomic(conflictIndexPath(home, hash), { entries: all.filter((x) => !gone.includes(x)) }); } catch { return []; }
+  for (const x of gone) dropStash(home, hash, x.stash);
+  return gone.map((x) => x.path);
 }
 
 /**
@@ -304,7 +384,12 @@ export function resolveConflict(home: string, hash: string, dataDir: string, rel
   if (pathNameRefusal(relPath)) return { ok: false, error: 'bad_path' };
   const all = readIndex(home, hash);
   const hit = all.find((x) => x.path === relPath);
-  if (!hit) return { ok: false, error: 'no_conflict' };
+  if (!hit) {
+    // A path held only by its kept-out mark (no stored copy: the team's file could not be kept):
+    // keeping mine is still a pick, and it ends the hold.
+    if (side === 'mine' && listKeptOut(home, hash).has(relPath)) { clearKeptOut(home, hash, [relPath]); return { ok: true }; }
+    return { ok: false, error: 'no_conflict' };
+  }
   const src = containedPath(conflictDir(home, hash), hit.stash);
   if (!src) return { ok: false, error: 'bad_path' };
   if (side === 'theirs') {
@@ -337,6 +422,7 @@ export function resolveConflict(home: string, hash: string, dataDir: string, rel
     return { ok: false, error: `write_failed: ${(e as Error).message}` };
   }
   try { rmSync(src, { force: true }); } catch { /* an unindexed leftover, harmless */ }
+  clearKeptOut(home, hash, [relPath]); // the owner picked: from now on an edit here is an edit
   return { ok: true };
 }
 
@@ -351,7 +437,7 @@ export function parkTarget(home: string, hash: string, stash: string): string | 
 /**
  * An app installed onto a team folder (Kur, same slug): the per-machine state kept under the team
  * folder's key (`teamHash`, data-stage.ts) moves to the installed app's hash: the conflict index
- * and store, and the tombstones. Refused while a pull record of either key exists (a pull is
+ * and store, the tombstones and the kept-out paths. Refused while a pull record of either key exists (a pull is
  * open: finish it first) and when the target already has state of its own (never merged over).
  * Lane B calls it from install.ts BEFORE `applyPullRuleForInstall`.
  */
@@ -363,6 +449,7 @@ export function rekeyAppState(home: string, fromHash: string, toHash: string): {
     { what: 'conflict index', from: conflictIndexPath(home, fromHash), to: conflictIndexPath(home, toHash) },
     { what: 'conflict store', from: conflictDir(home, fromHash), to: conflictDir(home, toHash) },
     { what: 'tombstones', from: appStateFile(home, 'deletes', fromHash), to: appStateFile(home, 'deletes', toHash) },
+    { what: 'kept-out paths', from: keptOutPath(home, fromHash), to: keptOutPath(home, toHash) },
   ];
   const present = pairs.filter((x) => { try { lstatSync(x.from); return true; } catch { return false; } });
   for (const x of present) {

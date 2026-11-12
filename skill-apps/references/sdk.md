@@ -92,15 +92,15 @@ is what the app SHOWS about it, never a fixed sentence of its own. `mode` says w
 - `sync_off`: the brain's cloud sync is off.
 
 `shared` lists the live shared paths, `pending` the declared paths still waiting for the owner's
-approval, and `held` the files that stay here with a reason code (`too_big`, `db_file`, `name`,
-`not_plain`, `writing`, `over_cap`, `not_approved_here`, `conflict`). Key the app's sentence on
+approval, and `held` the files that stay here with a reason code (`db_file`, `name`,
+`not_plain`, `writing`, `not_approved_here`, `conflict`; size is never one). Key the app's sentence on
 `mode === 'shared'` alone: "8 records · shared with the team" then, "8 records · only on this Mac"
 for `pending`, `local`, `undecided` and `sync_off` (nothing of it reaches the team yet).
 
 Every `dc.data.*` path resolves inside the calling app's own data folder only; `..`, an absolute
 path and a part starting with a dot are refused. Read shared files with a `validate` function and
 draw them with `textContent`. A file missing on this Mac is never a delete; only `dc.data.remove`
-deletes, and only a shared path of this app (`not_shared` otherwise: delete the file with your own code). While a team pull is landing the app is paused: calls
+deletes, and only a shared path of this app (`not_shared` otherwise: delete the file with your own code). While a path is shared, delete only with `dc.data.remove`: a shared file deleted with your own code is the team's file missing here, and the next sync brings it back. While a team pull is landing the app is paused: calls
 answer 503 `{error:'paused_for_sync'}` for a few seconds (until the merge finishes, if one is left
 open); in the SDK that is a `DcError` with code `paused_for_sync`: catch it and try again in a moment. An older copy of `lib/dc.mjs` lacks these calls: `dreamcontext apps validate --fix-sdk`
 refreshes it.

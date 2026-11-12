@@ -7,12 +7,13 @@
  *
  *  - {@link appDataPushRefusals}: every commit the push would send is checked for the `apps/`
  *    entries it INTRODUCES (`diff-tree -c`: a merge only by its resolution, so a teammate's file
- *    that came in through the merge is never held). Each must pass K4 (blob mode, name, DB,
- *    size), lie in this Mac's shared set, and a delete must have a tombstone. Otherwise the push
+ *    that came in through the merge is never held). Each must pass K4 (blob mode, name, DB),
+ *    lie in this Mac's shared set, and a delete must have a tombstone. Otherwise the push
  *    waits (`app_data_held`). Git that cannot answer holds it too. All four push paths use it.
  *  - {@link incomingAppDataRefusals}: before a pull, `apps/` or `apps/<slug>` arriving as
  *    anything but a folder, a symlink or submodule, a letter-case twin, a K4 breach (any part,
- *    DB, file size, the app and brain totals) stops the pull; local data is unchanged.
+ *    DB) stops the pull; local data is unchanged. Size is never a refusal (owner, 2026-11-12):
+ *    team data of any size comes in, and no blob is ever read whole to judge it.
  *
  * Also home to {@link appShareView}, this Mac's answer for one app folder: does a path LAND here
  * (this Mac's declaration calls it shared) and is it SENT from here (approved too, sync on).
@@ -31,8 +32,7 @@ import { readConsent, type Consent } from './data-consent.js';
 import { listConflicts } from './data-conflicts.js';
 import { listTombstones } from './data-deletes.js';
 import {
-  APP_SHARED_MAX_BYTES, BRAIN_SHARED_MAX_BYTES, FILE_MAX_BYTES, brainShareMode, declMatches,
-  isDbName, isSqliteHead, pathNameRefusal, type DataDecl,
+  brainShareMode, declMatches, isDbName, isSqliteHead, pathNameRefusal, type DataDecl,
 } from './data-share.js';
 import { readManifest } from './manifest.js';
 import { listApps, type AppRecord } from './registry.js';
@@ -179,17 +179,16 @@ export interface AppDataRefusal { path: string; rule: string }
 
 const PLAIN_MODES = new Set(['100644', '100755']);
 
-/** K4 on one blob of `apps/<slug>/<rel>`: mode, name, DB (name and magic), size. Null = passes.
- *  THROWS when git cannot read the blob. Shared by the push gate, the pull gate and the settle plan. */
+/** K4 on one blob of `apps/<slug>/<rel>`: mode, name, DB (name and magic). Null = passes. Only
+ *  the blob's first 16 bytes are read, so its size never matters. THROWS when git cannot read
+ *  the blob. Shared by the push gate, the pull gate, the settle plan and the late-approval restore. */
 export function teamBlobRefusal(top: string, rel: string, mode: string, sha: string): string | null {
   if (!PLAIN_MODES.has(mode)) return 'not_plain';
   if (pathNameRefusal(rel)) return 'name';
   if (isDbName(rel)) return 'db_file';
-  const size = git.blobSize(top, sha);
-  if (size > FILE_MAX_BYTES) return 'too_big';
-  const head = git.readBlob(top, sha);
+  const head = git.readBlobHead(top, sha, 16);
   if (head === null) throw new Error(`blob ${sha} unreadable`);
-  if (isSqliteHead(head.subarray(0, 16))) return 'db_file';
+  if (isSqliteHead(head)) return 'db_file';
   return null;
 }
 
@@ -294,17 +293,6 @@ export function incomingAppDataRefusals(gitCwd: string, contextRoot: string, rem
       if (was !== undefined && was !== t.path && theirs.some((x) => x.path === t.path)) out.push({ path: t.path, rule: 'case' });
       else if (was === undefined) folded.set(f, t.path);
     }
-    // The totals, on the tree the pull would leave: per app, and the brain's.
-    const perApp = new Map<string, number>();
-    let brain = 0;
-    for (const t of theirs) {
-      const at = splitAppPath(prefix, t.path);
-      if (!at) continue;
-      perApp.set(at.slug, (perApp.get(at.slug) ?? 0) + t.size);
-      brain += t.size;
-    }
-    for (const [slug, bytes] of perApp) if (bytes > APP_SHARED_MAX_BYTES) out.push({ path: `${appsDir}/${slug}`, rule: 'over_cap' });
-    if (brain > BRAIN_SHARED_MAX_BYTES) out.push({ path: appsDir, rule: 'over_cap' });
   } catch {
     return null;
   }
@@ -318,4 +306,4 @@ export function incomingAppData(gitCwd: string, contextRoot: string, remoteRef: 
 }
 
 export const APP_DATA_HELD_NOTE = "Held the push (app_data_held): a commit holds app data under _dream_context/apps/ that this Mac does not share with the team (not approved here, excluded, local, a file that may not go, or a delete the app did not make). Take it out of the unpushed commit (git rm --cached <path>, then git commit --amend, or approve it on the Apps page if it is the team's) and sync again.";
-export const APP_DATA_PULL_NOTE = "Skipped the pull: the team's update carries app data under _dream_context/apps/ that may not come in (a symlink, a database, a file over 5 MB, a dotted or instruction name, a letter-case twin, or over the size limit). Your app data is unchanged; ask whoever pushed it to remove it.";
+export const APP_DATA_PULL_NOTE = "Skipped the pull: the team's update carries app data under _dream_context/apps/ that may not come in (a symlink, a database, a dotted or instruction name, or a letter-case twin). Size is never a reason. Your app data is unchanged; ask whoever pushed it to remove it.";

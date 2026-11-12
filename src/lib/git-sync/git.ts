@@ -1,5 +1,5 @@
-import { execFile, execFileSync, spawn } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
+import { closeSync, existsSync, openSync, rmSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join, win32, resolve } from 'node:path';
 
 /**
@@ -1032,6 +1032,37 @@ export function readBlob(cwd: string, spec: string): Buffer | null {
     return runBuffer(cwd, ['cat-file', 'blob', spec]);
   } catch {
     return null;
+  }
+}
+
+/**
+ * The first `n` bytes of a blob, never more in memory: git is stopped once they arrived, so a
+ * blob of any size is read the same. Null when git cannot read it.
+ */
+export function readBlobHead(cwd: string, sha: string, n = 16): Buffer | null {
+  const r = spawnSync('git', ['cat-file', 'blob', sha], { cwd, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: Math.max(n, 64 * 1024) });
+  const out = r.stdout as Buffer | null;
+  const enobufs = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS';
+  if (!out || (r.error && !enobufs) || (!enobufs && r.status !== 0)) return null;
+  return out.subarray(0, n);
+}
+
+/**
+ * Write the blob `spec` (`<sha>` or `<rev>:<path>`) into the NEW file `absFile` (created `wx`,
+ * mode 0600), streamed by git straight into it: no size bound and nothing held in memory.
+ * THROWS when the file cannot be made or git fails (the partial file is removed).
+ */
+export function writeBlobToFile(cwd: string, spec: string, absFile: string): void {
+  const fd = openSync(absFile, 'wx', 0o600);
+  let r: ReturnType<typeof spawnSync>;
+  try {
+    r = spawnSync('git', ['cat-file', 'blob', spec], { cwd, stdio: ['ignore', fd, 'pipe'] });
+  } finally {
+    closeSync(fd);
+  }
+  if (r.error || r.status !== 0) {
+    try { rmSync(absFile, { force: true }); } catch { /* never made */ }
+    throw new GitSyncError(`git cat-file blob ${spec} failed: ${String(r.stderr ?? '').trim() || r.error?.message || `exit ${r.status}`}`);
   }
 }
 

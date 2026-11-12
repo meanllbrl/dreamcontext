@@ -26,7 +26,7 @@ questions of every path, in order; the first "local" answer wins:
 1. **Can it be produced again?** Fetched from a source or computed (an ad list, stats, thumbnails): local.
 2. **Is it personal?** One person's setting, draft or screen state: local.
 3. **Is it secret?** A key, a token, a customer's personal data: local.
-4. **Size and pace?** Over 5 MB, or written every minute: local; split the shared part into small files.
+4. **Size and pace?** Big (images, exports, files of several MB) or written every minute: local; split the shared part into small files.
 
 What is left, made by a person (or by you at their request), is shared. Then:
 
@@ -60,8 +60,14 @@ and `apps validate` warns `data_undeclared`. `shared: []` is a valid decision.
 The owner approves once on the Apps page, path by path: a new shared path asks only for itself,
 an unticked path is excluded, and you never remove an exclusion. Team data travels only when the
 brain is `full-repo` with cloud sync on; publishing an app (Shared Apps) never carries data.
-Keep shared data far below 25 MB for the app (the team sync stops for everyone above it): never
-share images, exports or anything a person did not write.
+dreamcontext sets no size limit: shared data of any size syncs. Above 25 MB for the app (the team's
+copy) the Apps page and `brain sync` warn that it is large, because every teammate downloads it and
+team sync gets slower: never share images, exports or anything a person did not write. The one limit
+is GitHub's: it refuses any single file over 100 MB, so such a file stays on this Mac (`host_limit`)
+and everything else keeps syncing. A shared file the team has and this Mac lacks (the owner approved
+after the team's files arrived) comes back at the next sync or the moment he approves; a file of this
+Mac's own at that path that differs from the team's is kept as two versions for the owner to pick.
+So while a path is shared, delete only with `dc.data.remove`.
 
 **The template's `data` block is a placeholder.** `apps new` ships `"shared": []` and one local
 file (`visits.json`). Rewrite it for THIS app, with the four questions, before the owner opens the

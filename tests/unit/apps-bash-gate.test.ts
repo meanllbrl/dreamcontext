@@ -63,6 +63,7 @@ describe('raises one card', () => {
     ['an install', 'dreamcontext apps install acme/x-app --ask'],
     ['the repo name on a publish', 'dreamcontext apps publish yuk --ask --repo other'],
     ['the store line on a publish', 'dreamcontext apps publish yuk --tagline x'],
+    ['a new repo on a publish', 'dreamcontext apps publish yuk --go --grant g_1 --fresh'],
     ['a git pull of the app', 'git pull'],
     ['grep -r', 'grep -r TOKEN .'],
     ['git grep', 'git grep TOKEN'],

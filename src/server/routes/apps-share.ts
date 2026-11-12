@@ -173,6 +173,8 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
   const done = held ? held.done : null;
   const bound = held ? bodyOf(held.plan, 'publish') : null;
   if (held && held.plan && !bound) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for a publish.'); return; }
+  // A card's Onayla covers exactly the publish it showed, never a new repo: said, not ignored.
+  if (bound && b.fresh === true) { held!.done(false); sendError(res, 403, 'fresh_needs_share_click', "A new repo (--fresh) needs the grant of the owner's own Share click on the app's page; the card's Onayla covers only the publish it showed. Nothing was sent."); return; }
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 50) : []);
   // A card's grant runs ITS plan: nothing in the body counts (D4). The Share click's grant keeps
   // today's shape: the agent's flags, under the visibility the owner clicked.

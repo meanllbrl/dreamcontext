@@ -20,7 +20,7 @@ import { parse as parseYaml } from 'yaml';
 import { APP_SLUG_RE } from './bundle.js';
 import { appDataDir, appsDataRoot, checkAppDataChain, contextRootOf } from './data-dir.js';
 import { readManifest } from './manifest.js';
-import { declMatches, sharedSet, type DataDecl, type DataMode, type Held, type HeldReason } from './data-share.js';
+import { declMatches, sharedSet, SHARED_WARN_BYTES, teamSharedBytes, type DataDecl, type DataMode, type Held, type HeldReason } from './data-share.js';
 import { readConsent, type Consent } from './data-consent.js';
 import { listConflicts } from './data-conflicts.js';
 import { listApps, type AppRecord } from './registry.js';
@@ -170,6 +170,12 @@ export interface AppDataStatus {
   /** Data-folder-relative files that go to the team now. */
   shared: string[];
   sharedBytes: number;
+  /** The app's shared data as the team holds it once this Mac's next sync went (HEAD's team
+   *  files with this Mac's shared copies over them); null when git cannot answer. */
+  teamBytes: number | null;
+  /** This Mac shares the app and {@link teamBytes} is over {@link SHARED_WARN_BYTES}: it syncs, but
+   *  slows every teammate's sync. Never set in another mode: a Mac that keeps it local is not told it syncs. */
+  large: boolean;
   held: Held[];
   /** Declared shared paths still awaiting the owner. */
   pending: string[];
@@ -191,25 +197,23 @@ function dataDirOf(rec: AppRecord): string | null {
   } catch { return null; }
 }
 
-/** The bytes the other apps of this brain share now (the brain-wide 100 MB total). */
-function otherAppsBytes(home: string, rec: AppRecord): number {
-  let n = 0;
-  for (const other of listApps(home, rec.projectRoot)) {
-    if (other.hash === rec.hash) continue;
-    try {
-      const m = readManifest(other.root);
-      if (!m.ok || !m.manifest.data) continue;
-      n += sharedSet({ projectRoot: other.projectRoot, home }, other, m.manifest.data, readConsent(home, other.hash)).bytes;
-    } catch { /* not counted */ }
-  }
-  return n;
+/** HEAD's files of `apps/<slug>/` with their sizes (`ls-tree -l`); null when git cannot answer. */
+function teamFilesOf(projectRoot: string, slug: string): { rel: string; size: number }[] | null {
+  const prefix = appsGitPrefix(projectRoot);
+  if (prefix === null) return null;
+  try {
+    const head = `${prefix}${slug}/`;
+    return git.treeEntriesLong(projectRoot, 'HEAD', `${prefix}${slug}`)
+      .filter((t) => t.path.startsWith(head))
+      .map((t) => ({ rel: t.path.slice(head.length), size: t.size }));
+  } catch { return null; }
 }
 
 /**
  * One app's team data as this Mac sees it now. `opts.tracked` = the brain's tracked files of this
  * app (defaults to asking git). Never throws: an unreadable manifest reads as undecided.
  */
-export function appDataStatus(home: string, rec: AppRecord, opts: { tracked?: string[]; mode?: { fullRepo: boolean; cloudSyncOn: boolean }; nowMs?: number } = {}): AppDataStatus {
+export function appDataStatus(home: string, rec: AppRecord, opts: { tracked?: string[]; mode?: { fullRepo: boolean; cloudSyncOn: boolean }; nowMs?: number; teamFiles?: { rel: string; size: number }[] | null } = {}): AppDataStatus {
   const m = readManifest(rec.root);
   const decl = m.ok ? m.manifest.data : null;
   const consent = readConsent(home, rec.hash);
@@ -217,8 +221,9 @@ export function appDataStatus(home: string, rec: AppRecord, opts: { tracked?: st
   const set = sharedSet({ projectRoot: rec.projectRoot, home }, rec, decl, consent, {
     ...(opts.mode ? { mode: opts.mode } : {}),
     ...(opts.nowMs !== undefined ? { nowMs: opts.nowMs } : {}),
-    otherAppsSharedBytes: otherAppsBytes(home, rec),
   });
+  const team = opts.teamFiles !== undefined ? opts.teamFiles : teamFilesOf(rec.projectRoot, rec.slug);
+  const teamBytes = team === null ? null : teamSharedBytes(team, set.sizes);
   const files = dir ? listDataFiles(dir) : [];
   const excluded = consent?.excluded ?? [];
   const approved = consent?.approved ?? [];
@@ -237,6 +242,8 @@ export function appDataStatus(home: string, rec: AppRecord, opts: { tracked?: st
     consent,
     shared: set.paths,
     sharedBytes: set.bytes,
+    teamBytes,
+    large: set.mode === 'shared' && teamBytes !== null && teamBytes > SHARED_WARN_BYTES,
     held: set.held,
     pending: set.pending,
     sharedPaths,

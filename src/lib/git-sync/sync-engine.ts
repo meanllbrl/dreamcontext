@@ -4,8 +4,8 @@ import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } fr
 import * as git from './git.js';
 import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appsExcludeSpec, dropStagedAppData, incomingAppData, underApps } from '../apps/data-stage.js';
 import {
-  afterAppDataPush, finishAppPulls, pendingSharedAppFiles, prepareAppPull, recoverAppPullsHeld, settleAppPulls, stageOutbound,
-  type ExchangeCtx,
+  afterAppDataPush, finishAppPulls, largeSharedApps, pendingSharedAppFiles, prepareAppPull, recoverAppPullsHeld, restoreTeamFiles, settleAppPulls, stageOutbound,
+  type ExchangeCtx, type RestoredApp,
 } from '../apps/data-exchange.js';
 import { pauseForSync, resumeAfterSync } from '../apps/client.js';
 import { backupAppData } from '../apps/data-backup.js';
@@ -144,6 +144,11 @@ export interface SyncResult {
   /** Human-facing guidance (flag-misuse notes, disabled notice, etc). CLI renders via `error()`/`warn()`. */
   note?: string;
   /**
+   * App data after this sync: the team's files a late approval had missed, brought back
+   * (`restoreTeamFiles`), and every app whose shared data is LARGE (a warning, never a refusal).
+   */
+  appData?: { restored: RestoredApp[]; large: { slug: string; name: string; bytes: number }[] };
+  /**
    * The sync detected a STALE per-project GitHub token that was shadowing the
    * signed-in account, transparently fell back to the global token, and removed
    * the stale project token. Surfaced so the CLI/dashboard can tell the user what
@@ -210,6 +215,10 @@ export interface SyncEngineDeps {
   recoverAppPullsHeld: typeof recoverAppPullsHeld;
   /** After a push reached the remote: delivered tombstones go. */
   afterAppDataPush: typeof afterAppDataPush;
+  /** Before the stage: the team's files a late approval missed come back from HEAD (B1). */
+  restoreTeamFiles: typeof restoreTeamFiles;
+  /** After the sync: apps whose shared data is over the LARGE warning line. */
+  largeSharedApps: typeof largeSharedApps;
   /** Stop/resume an app's running backend through the server (wave 1 client). */
   pauseForSync: typeof pauseForSync;
   resumeAfterSync: typeof resumeAfterSync;
@@ -258,6 +267,8 @@ const defaultDeps: SyncEngineDeps = {
   finishAppPulls,
   recoverAppPullsHeld,
   afterAppDataPush,
+  restoreTeamFiles,
+  largeSharedApps,
   pauseForSync,
   resumeAfterSync,
   backupAppData,
@@ -528,12 +539,43 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   if (!d.acquireBrainLock(contextRoot)) return { action: 'locked', scrub: EMPTY_SCRUB };
   try {
     const recovered = d.recoverAppPullsHeld(pullCtx(ctx));
-    const result = await guardedSync(ctx, opts);
+    // Under the lock and BEFORE the outbound stage: the team's files a late approval missed come
+    // back, and a file of mine that differs from the team's at a just-approved path is held as two
+    // versions, so the stage never sends it over the team's copy.
+    const restored = ctx.mode === 'full-repo' ? d.restoreTeamFiles(pullCtx(ctx)) : [];
+    let result = await guardedSync(ctx, opts);
+    // After the merge settled: a LARGE app gets its warning. Neither step ever stops the sync.
+    if (ctx.mode === 'full-repo') {
+      const large = d.largeSharedApps(pullCtx(ctx));
+      if (restored.length || large.length) result = { ...result, appData: { restored, large } };
+    }
     if (!recovered.notes.length) return result;
     return { ...result, note: [result.note, ...recovered.notes].filter(Boolean).join(' ') };
   } finally {
     d.releaseBrainLock(contextRoot);
   }
+}
+
+/**
+ * The git host refused the push for a file over its per-file size limit (GitHub: GH001, 100 MB).
+ * Returns the repo path it named (or '' when it named none); null when this is another failure.
+ * Pure: reads the error text only.
+ */
+export function hostFileSizeRefusal(text: string): string | null {
+  if (!/GH001|exceeds GitHub's file size limit|Large files detected/i.test(text)) return null;
+  const m = text.match(/File (.+?) is [\d.]+ ?[KMG]i?B; this exceeds/i);
+  return m ? m[1].trim() : '';
+}
+
+/**
+ * The sync's error for {@link hostFileSizeRefusal}: the file, why, and the way out. The way out
+ * takes the file out of EVERY unpushed commit (one may sit under a merge the sync made): the
+ * unpushed commits become one on top of `remoteRef`, without that file.
+ */
+export function hostFileSizeNote(path: string, remoteRef = 'origin/main'): string {
+  const which = path ? `${path} is` : 'A file in an unpushed commit is';
+  const rm = path ? `git rm --cached -- "${path}"` : 'git rm --cached -- <that file>';
+  return `Push refused by GitHub: ${which} over 100 MB, and GitHub refuses any single file this big (its limit, not dreamcontext's). Nothing of the brain can go until that file leaves every unpushed commit: git reset --soft ${remoteRef}, then ${rm}, then git commit -m "brain sync", and sync again (the file stays on disk). Keep it in a local folder or split it.`;
 }
 
 /** The reentrancy guard and the sync itself, under the brain lock {@link runBrainSync} holds. */
@@ -929,13 +971,18 @@ async function pushWithRetry(
   const held = appDataHeld() ?? sessionFilesHeld();
   if (held) return held;
 
+  // A rejection is presumed non-fast-forward, except the host's per-file size refusal: no merge
+  // fixes that, so it ends the sync with the file and the way out (never "non-fast-forward twice").
   const tryPush = async (): Promise<boolean> => {
     try {
       await s.run(async (env) => {
         d.git.push(gitCwd, REMOTE_NAME, ctx.branch, env);
       });
       return true;
-    } catch {
+    } catch (e) {
+      const text = `${(e as Error)?.message ?? ''}\n${(e as GitSyncError)?.stderr ?? ''}`;
+      const big = hostFileSizeRefusal(text);
+      if (big !== null) throw new GitSyncError(hostFileSizeNote(big, ctx.remoteRef), (e as GitSyncError)?.stderr);
       return false;
     }
   };
