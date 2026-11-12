@@ -55,7 +55,7 @@ import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
 import {
-  addAttachments, composeOutgoing, countsAsContent, expandCardChips, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
+  addAttachments, armTypedSend, composeOutgoing, countsAsContent, disarmTypedSend, expandCardChips, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, ownWords, pendingUploads,
   readScratch, removeAttachment, repend, setQuote, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, wasSent, type Attachment,
 } from './composerScratch';
 import {
@@ -672,6 +672,10 @@ export function Composer({
     if (isMcpCommand(draft)) { setDraft(''); session.syncDraft(''); }
   }, [draft, session]);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  /** The text an app prefilled into this box (C3): a send of a draft that still holds it is the
+   *  app's words, not his, so it carries no typed mark. Cleared by the send and by an empty box. */
+  const prefilledRef = useRef<string | null>(null);
+  useEffect(() => { if (!draft.trim()) prefilledRef.current = null; }, [draft]);
 
   // A page asked this project's Chat to start with a ready message (the Apps page's empty state
   // seeds `/apps `). Only an EMPTY, visible composer takes it: never over a half-typed draft.
@@ -682,6 +686,7 @@ export function Composer({
     // Visible means on screen: a composer of a tab that is not showing would swallow the ask.
     if (!taRef.current || taRef.current.getClientRects().length === 0) return;
     detail.accepted = true;
+    prefilledRef.current = detail.text.trim() || null;
     setDraft(detail.text);
     session.syncDraft(detail.text);
   });
@@ -2111,6 +2116,8 @@ export function Composer({
     // A slash command's card words went out with it (its chip is unstaged): its token leaves too.
     const left = slash ? tokensOnly(text, (s) => !cardIds.has(s.id)) : tokensOnly(text, (s) => unsent.has(s.id));
     const sent = () => {
+      // What an app prefilled went out with this message: the next draft is his again.
+      prefilledRef.current = null;
       // A slash command carried no chip, so its chips stay in the box for the next message.
       setDraft(left);
       session.syncDraft(left);
@@ -2124,6 +2131,15 @@ export function Composer({
       dropSentAttachments(convId, { keepAbout: slash, keepInline: slash });
       onClearQuote();
     };
+    // The Composer's own mark (C3, contract D): his own words, without any chip's block, quote or
+    // path, beside the message, on all three deliveries below. Never for a host's own routing
+    // (`sendVia`: a member channel), a slash command, or a draft that still holds an app's prefill.
+    const prefill = prefilledRef.current;
+    const own = slash || (prefill && text.includes(prefill)) ? '' : ownWords(text);
+    const deliver = (fn: () => void): void => {
+      if (own) armTypedSend(message, own);
+      try { fn(); } finally { disarmTypedSend(); }
+    };
     if (sendVia) { if (sendVia(message)) sent(); return; }
     // A remote screen's tab whose chat the Mac's window holds (hands-free sekmeler W2, D3): the
     // first send takes the chat, then sends, once. A take that fails leaves the text here.
@@ -2132,16 +2148,24 @@ export function Composer({
         if (!ok) return;
         // The same three deliveries as any send, now that the chat is here: a turn the Mac was
         // running is steered (or queued), a ⌥⏎ queues, an idle chat starts a turn.
-        if (mode === 'queue') session.enqueue(message);
-        else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
-        else if (session.send(message) === false) return;
+        let refused = false;
+        deliver(() => {
+          if (mode === 'queue') session.enqueue(message);
+          else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
+          else if (session.send(message) === false) refused = true;
+        });
+        if (refused) return;
         sent();
       });
       return;
     }
-    if (mode === 'queue') session.enqueue(message);
-    else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
-    else if (session.send(message) === false) return;
+    let refused = false;
+    deliver(() => {
+      if (mode === 'queue') session.enqueue(message);
+      else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
+      else if (session.send(message) === false) refused = true;
+    });
+    if (refused) return;
     sent();
   };
 

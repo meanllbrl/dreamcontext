@@ -119,6 +119,7 @@ import { ensureCards } from './run-terminal.js';
 import { assistantText, getChat, registerChat, isDelegatedConversation, listChats, registerChatInjector, registerCrewHandle, telegramRefs, type ChatEntry, type ChatHandle, type ChatStatus } from '../../lib/assistant/chat-registry.js';
 import { openCrewSeat } from './crew-binding.js';
 import { parseTelegramPrefix, withTelegramRef, type HubResult, type InjectedSource } from '../../lib/telegram/contract.js';
+import { appendOwnerTurn, newOwnerTurnId, type OwnerTurnLine, type OwnerTurnVia } from '../../lib/owner-words.js';
 import { takeSuperReactionBlock } from '../../lib/telegram/reactions.js';
 import { resolveRecallMode, type RecallMode } from '../../cli/commands/sleep.js';
 import { isEmbedModelDownloaded } from '../../lib/embeddings/embedder.js';
@@ -1034,6 +1035,172 @@ const superMirrorSets = new Set<MirrorSet<DeviceTag>>();
 /** Owner frames that came from a phone mirror (written at once like every owner frame, or
  *  re-fed to a successor; the mark rides on the frame itself). */
 const mirrorFrames = new WeakSet<Buffer>();
+
+// ─── Owner words: where a turn came from (learning loop C3, D15) ───────────────────────
+//
+// The owner-words ledger (lib/owner-words.ts) holds only what the server saw him type: the
+// Composer's own submit (on the Mac, or on his phone), and a Telegram text to the Super. The
+// source of a turn is decided ONCE, by `classifyOwnerFrame` in `onWsMessage`, from the frame's
+// kind and its mark, and rides with the turn through every hold path. `writeOwnerTurn` takes it
+// as a required argument and is the only caller of `appendOwnerTurn`; the hook never writes.
+
+/** Who built a `user` frame. Every frame the SERVER builds is a Buffer it registers here, so a
+ *  socket can never claim one (a frame off the wire is a new Buffer: always `socket`). */
+export type OwnerFrameOrigin = 'socket' | 'phone-mirror' | 'telegram-injector' | 'crew-server-turn' | 'owner-receipt';
+const frameOrigins = new WeakMap<Buffer, Exclude<OwnerFrameOrigin, 'socket'>>();
+
+/** Where a frame came from: a registered server-built Buffer, else the holder's socket. */
+export function ownerFrameOrigin(raw: Buffer | string): OwnerFrameOrigin {
+  return (typeof raw !== 'string' && frameOrigins.get(raw)) || 'socket';
+}
+
+/** A `user` frame the server itself builds (a phone's words, a Telegram text, a crew turn, an
+ *  owner receipt): marked as a mirror frame (the switch gate's detached bypass) and with its
+ *  origin, by identity. A held frame keeps both, because the held item IS this Buffer. */
+function serverBuiltFrame(json: Record<string, unknown>, origin: Exclude<OwnerFrameOrigin, 'socket'>): Buffer {
+  const frame = Buffer.from(JSON.stringify(json), 'utf-8');
+  mirrorFrames.add(frame);
+  frameOrigins.set(frame, origin);
+  return frame;
+}
+
+/** Every named source that writes nothing to the ledger. Window send, a delegate brief and a
+ *  draft an app prefilled all reach the server as an unmarked socket frame (`unmarked`); a Super
+ *  event, a child's first prompt and an `answer` frame never pass `writeOwnerTurn` at all. */
+export type SilentOwnerTurn =
+  | 'unmarked' | 'phone-unmarked' | 'telegram-card' | 'telegram-unconfirmed' | 'run-report' | 'schedule'
+  | 'crew-server-turn' | 'owner-receipt' | 'server-continue' | 'held-replay' | 'slash-command' | 'not-a-ledger-chat';
+
+/** The source of one owner turn: what he typed (`own`) and where, or the named reason it is not his. */
+export type OwnerTurnSource =
+  | { writes: true; via: OwnerTurnVia; own: string }
+  | { writes: false; silent: SilentOwnerTurn };
+
+export const silentOwnerTurn = (silent: SilentOwnerTurn): OwnerTurnSource => ({ writes: false, silent });
+
+/** His own words longer than this are not a chat message: no mark (the phone's own cap). */
+export const OWNER_OWN_MAX_CHARS = 100_000;
+
+function cleanOwn(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const own = v.trim();
+  if (!own || own.length > OWNER_OWN_MAX_CHARS || own.startsWith('/')) return null;
+  return own;
+}
+
+/**
+ * THE classifier (C3): the source of a frame, from who built it and its mark. Null for anything
+ * that is not an owner turn (an `answer` from a question card, an interrupt, a mode switch).
+ *
+ * - `composer`: a socket frame carrying the Composer's mark (`typed: true` and `own`); a phone's
+ *   own socket holding the chat (`deviceSocket`) is `phone`.
+ * - `phone`: a frame from the Super's phone mirror AND carrying the mark. The mirror set alone
+ *   proves nothing: the Telegram injector, a crew turn and an owner receipt are mirror frames too.
+ * - `telegram`: the injector's frame with the `own` the hub passed (a text or voice message);
+ *   confirmed by the honoured ref in `writeOwnerTurn` ({@link settleOwnerTurnSource}).
+ */
+export function classifyOwnerFrame(o: { origin: OwnerFrameOrigin; msg: unknown; deviceSocket?: boolean }): OwnerTurnSource | null {
+  const m = o.msg as { type?: unknown; text?: unknown; typed?: unknown; own?: unknown } | null;
+  if (!m || typeof m !== 'object' || Array.isArray(m) || m.type !== 'user' || typeof m.text !== 'string' || !m.text) return null;
+  if (o.origin === 'crew-server-turn') return silentOwnerTurn('crew-server-turn');
+  if (o.origin === 'owner-receipt') return silentOwnerTurn('owner-receipt');
+  const own = cleanOwn(m.own);
+  // A card tap, a rich ask's note, a member pick, a run report or a schedule: injected with no `own`.
+  if (o.origin === 'telegram-injector') return own ? { writes: true, via: 'telegram', own } : silentOwnerTurn('telegram-card');
+  const marked = m.typed === true && own !== null;
+  if (o.origin === 'phone-mirror') return marked ? { writes: true, via: 'phone', own: own as string } : silentOwnerTurn('phone-unmarked');
+  if (!marked) return silentOwnerTurn('unmarked');
+  return { writes: true, via: o.deviceSocket ? 'phone' : 'composer', own: own as string };
+}
+
+/**
+ * The source as `writeOwnerTurn` writes it, once the turn's text is parsed: a chat that keeps no
+ * ledger (the Assistant, a card, an app, a member's own chat), a server continue, a slash command,
+ * and a Telegram turn whose ref this chat's store did not honour as a text message write nothing.
+ */
+export function settleOwnerTurnSource(
+  source: OwnerTurnSource,
+  turn: { text: string; telegram?: InjectedSource; serverText: boolean; ledgerChat: boolean },
+): OwnerTurnSource {
+  if (!source.writes) return source;
+  if (!turn.ledgerChat) return silentOwnerTurn('not-a-ledger-chat');
+  if (turn.serverText) return silentOwnerTurn('server-continue');
+  if (turn.text.trimStart().startsWith('/')) return silentOwnerTurn('slash-command');
+  if (turn.telegram === 'run-report' || turn.telegram === 'schedule') return silentOwnerTurn(turn.telegram);
+  if (source.via === 'telegram' ? turn.telegram !== 'telegram-text' : turn.telegram !== undefined) return silentOwnerTurn('telegram-unconfirmed');
+  return source;
+}
+
+/** The chat kind the ledger names (`surface`), or null for a chat whose turns are never his
+ *  typed words in the sense of D15 (the Assistant, a board card, an app, a member's own chat). */
+export function ownerLedgerSurface(o: {
+  mode: string; isAssistant: boolean; card: boolean; app: boolean; member: boolean; superChild: boolean; bridgeTool: string | null;
+}): string | null {
+  if (o.isAssistant || o.card || o.app || o.member) return null;
+  if (o.bridgeTool === 'codex' || o.bridgeTool === 'antigravity') return o.bridgeTool;
+  if (o.superChild) return 'child';
+  return o.mode || 'plain';
+}
+
+/** One ledger line (contract A): every id the server has for the chat in `keys`, deduped. */
+export function ownerTurnLine(o: {
+  source: { via: OwnerTurnVia; own: string }; vault: string; surface: string; keys: readonly string[]; session: string;
+  at?: string; turn?: string;
+}): OwnerTurnLine {
+  return {
+    at: o.at ?? new Date().toISOString(),
+    turn: o.turn ?? newOwnerTurnId(),
+    vault: o.vault,
+    surface: o.surface,
+    via: o.source.via,
+    keys: [...new Set(o.keys.filter((k) => typeof k === 'string' && k !== ''))],
+    session: o.session,
+    own: o.source.own,
+  };
+}
+
+/**
+ * A turn held for an account switch, with its source (the client resubmits its TEXT to the
+ * restarted pane, so the mark is kept here, by chat and text, and taken once). Every key dies:
+ * on its take, or past {@link HELD_MARK_TTL_MS}.
+ */
+const HELD_MARK_TTL_MS = 15 * 60 * 1000;
+const heldOwnerMarks = new Map<string, Array<{ text: string; source: OwnerTurnSource; at: number }>>();
+
+function pruneHeldMarks(now: number): void {
+  for (const [chat, list] of heldOwnerMarks) {
+    const live = list.filter((e) => now - e.at < HELD_MARK_TTL_MS);
+    if (live.length) heldOwnerMarks.set(chat, live);
+    else heldOwnerMarks.delete(chat);
+  }
+}
+
+export function carryHeldOwnerMark(chatId: string, text: string, source: OwnerTurnSource, now: number = Date.now()): void {
+  pruneHeldMarks(now);
+  if (!chatId || !text || !source.writes) return;
+  heldOwnerMarks.set(chatId, [...(heldOwnerMarks.get(chatId) ?? []), { text, source, at: now }]);
+}
+
+export function takeHeldOwnerMark(chatId: string, text: string, now: number = Date.now()): OwnerTurnSource | null {
+  pruneHeldMarks(now);
+  const list = heldOwnerMarks.get(chatId);
+  const at = list ? list.findIndex((e) => e.text === text) : -1;
+  if (!list || at < 0) return null;
+  const [hit] = list.splice(at, 1);
+  if (!list.length) heldOwnerMarks.delete(chatId);
+  return hit!.source;
+}
+
+/** Test seam: a frame as the server builds it (a phone mirror's, the Telegram injector's…). */
+export function serverBuiltFrameForTests(json: Record<string, unknown>, origin: Exclude<OwnerFrameOrigin, 'socket'>): Buffer {
+  return serverBuiltFrame(json, origin);
+}
+
+export function heldOwnerMarkCountForTests(): number {
+  let n = 0;
+  for (const list of heldOwnerMarks.values()) n += list.length;
+  return n;
+}
 /** The agenda digest each Super Agent's phone mirrors were last sent, by session: an unchanged
  *  one is not sent again. Cleared when no mirror is joined and whenever one joins. */
 const digestKeys = new Map<string, string>();
@@ -2764,10 +2931,12 @@ export function startChatSession(
         // race before it).
         if (!alive || stdinEnding()) return;
         // The frame carries where it came from (a Buffer the set knows), so the mark survives
-        // the switch gate and a successor's replay: see `fromMirror` in the user branch.
-        const frame = Buffer.from(raw, 'utf-8');
-        mirrorFrames.add(frame);
-        onWsMessage(frame);
+        // the switch gate and a successor's replay: see `fromMirror` in the user branch. Its
+        // origin rides by identity too, so a held phone frame is still `phone` in a successor
+        // (C3); the Composer's mark and `own` ride in the JSON `mirrorOwnerFrame` rebuilt.
+        let json: Record<string, unknown>;
+        try { json = JSON.parse(raw) as Record<string, unknown>; } catch { return; }
+        onWsMessage(serverBuiltFrame(json, 'phone-mirror'));
       },
       holder: () => (alive && !detached && ws.readyState === ws.OPEN ? ws : null),
       key: (d) => d.idHash,
@@ -2887,9 +3056,10 @@ export function startChatSession(
         else if (!detached && ws.readyState === ws.OPEN) {
           try { ws.send(ownerEchoFrame(body, echo)); } catch { /* closing */ }
         }
-        const frame = Buffer.from(JSON.stringify({ type: 'user', text }), 'utf-8');
-        mirrorFrames.add(frame);
-        onWsMessage(frame);
+        // `own` is what he typed or said on Telegram, as the hub cleaned it (C3); a card tap or a
+        // run report carries none, so it writes no ledger line.
+        const own = typeof meta.own === 'string' && meta.own.trim() ? meta.own : undefined;
+        onWsMessage(serverBuiltFrame({ type: 'user', text, ...(own ? { own } : {}) }, 'telegram-injector'));
         return { ok: true };
       },
       interrupt: () => { if (alive) onWsMessage(JSON.stringify({ type: 'interrupt' })); },
@@ -2907,9 +3077,7 @@ export function startChatSession(
       sendServerTurn: (text) => {
         if (!alive || stdinEnding() || handedOff || !text.trim()) return false;
         crewSeat.noteServerTurn(text);
-        const frame = Buffer.from(JSON.stringify({ type: 'user', text }), 'utf-8');
-        mirrorFrames.add(frame);
-        onWsMessage(frame);
+        onWsMessage(serverBuiltFrame({ type: 'user', text }, 'crew-server-turn'));
         return true;
       },
       // An owner-proven card result (sahip-karti-yerinde K6): the same path, its frame marked
@@ -2922,9 +3090,7 @@ export function startChatSession(
           timer.unref?.();
           ownerReceiptTurns.set(text, { mark, resolve: (ok) => { clearTimeout(timer); resolve(ok); } });
           crewSeat.noteServerTurn(text);
-          const frame = Buffer.from(JSON.stringify({ type: 'user', text }), 'utf-8');
-          mirrorFrames.add(frame);
-          onWsMessage(frame);
+          onWsMessage(serverBuiltFrame({ type: 'user', text }, 'owner-receipt'));
         });
       },
       sessionPath: () => crewSeat.sessionPath(),
@@ -2949,6 +3115,23 @@ export function startChatSession(
   let handedOff = false;
   const heldForSuccessor: Array<Buffer | string> = [];
   let observedConversation = '';
+  // ── The owner-words ledger's view of this chat (C3) ──
+  /** The chat kind, or null: the Assistant, a card, an app and a member's own chat keep no ledger. */
+  const ledgerSurface = ownerLedgerSurface({
+    mode, isAssistant, card: !!card, app: !!app, member: !!opts.agent, bridgeTool,
+    superChild: !isSuper && (!!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id))),
+  });
+  /** The project root whose brain this chat runs in, resolved; '' when it has none. */
+  const ledgerVault = ((): string => {
+    try { return existsSync(contextRoot) ? realpathSync(projectRoot) : ''; } catch { return ''; }
+  })();
+  /** Every id the server has for this chat (G1's `sameConversation`): the pin (also the tab id
+   *  `tabSessionEnv` hands the child), the resumed or pinned session, the tool's mapped thread, the
+   *  registry id and the session the last init named. Read per turn: `observedConversation` moves. */
+  const ledgerKeys = (): string[] => [pinId, chatRegistryId, resumeTarget, freshPin, mappedId, observedConversation].filter((k): k is string => !!k);
+  /** The occasion (C3): the live session last observed, else the id pinned at spawn. A bridge
+   *  pane's pin is the pane, never a session, so it is no fallback there. */
+  const ledgerSession = (): string => observedConversation || resumeTarget || (bridgeTool ? '' : freshPin) || '';
   /** The model this chat's last init named, so a Super child's record is written once per change. */
   let notedChildModel = '';
   let unlistenAutonomy = () => { /* not the Assistant */ };
@@ -3583,7 +3766,7 @@ export function startChatSession(
           if (held) { resumed(); return; }
           if (respawnTo !== null || handedOff) return;
           resumed();
-          writeOwnerTurn(RESET_CONTINUE_TEXT);
+          writeOwnerTurn(RESET_CONTINUE_TEXT, silentOwnerTurn('server-continue'));
         });
     });
   };
@@ -3598,8 +3781,9 @@ export function startChatSession(
   };
 
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
-   *  released by `releaseStalledSwitch`. */
-  const writeOwnerTurn = (raw: string): void => {
+   *  released by `releaseStalledSwitch`. `source` is REQUIRED (C3): where the turn came from,
+   *  decided by `classifyOwnerFrame`; this is the only caller of `appendOwnerTurn`. */
+  const writeOwnerTurn = (raw: string, source: OwnerTurnSource): void => {
     // A Telegram turn rides as `TG_SENTINEL + ref + TG_SENTINEL + text` through every hold path
     // (D1). Parsed ONCE here: the ref counts only when the hub put it in THIS chat's store; an
     // owner-typed or stale prefix is stripped and the turn is an ordinary Mac turn. Everything
@@ -3637,6 +3821,20 @@ export function startChatSession(
         : serverTurn ? { server: true, closesNothing: true }
           : serverContinue || isServerTurnText(text) ? { server: true } : undefined);
     receipt?.resolve(true);
+    // The owner-words ledger (C3): one line, only for what he typed in this chat's composer, on
+    // his phone or on Telegram. Never throws; a failed write costs the line, never his turn.
+    const ledgerSource = settleOwnerTurnSource(source, {
+      text, serverText: serverContinue || isServerTurnText(text), ledgerChat: ledgerSurface !== null,
+      ...(tgSource ? { telegram: tgSource } : {}),
+    });
+    if (ledgerSource.writes && ledgerSurface !== null) {
+      try {
+        appendOwnerTurn(ownerTurnLine({
+          source: ledgerSource, vault: ledgerVault, surface: ledgerSurface,
+          keys: ledgerKeys(), session: ledgerSession(),
+        }));
+      } catch (err) { console.warn(`[agent-chat] owner turn not written to the ledger: ${(err as Error).message}`); }
+    }
     // The Assistant hears what is happening right now with every owner turn: a second,
     // server-written block whose only project text is each chat's fenced `topic:`
     // (live-context.ts), dropped from the replay because it starts with `<`.
@@ -4577,7 +4775,8 @@ export function startChatSession(
     // missed the boundary frame cannot perform the stale move later and resubmit these texts
     // a second time.
     sendMeta({ subtype: 'account_switch', switched: false, reason: 'switch_stalled', accountId: activeAccountId });
-    for (const text of texts) writeOwnerTurn(text);
+    // Each with the source it arrived with (kept beside the text when it was held), once.
+    for (const text of texts) writeOwnerTurn(text, takeHeldOwnerMark(chatRegistryId, text) ?? silentOwnerTurn('held-replay'));
   };
 
   /**
@@ -5556,16 +5755,27 @@ export function startChatSession(
       resumeAtReset.cancel();
       dropHeldContinue();
       const fromMirror = typeof raw !== 'string' && mirrorFrames.has(raw);
+      // Where this turn came from (C3), decided ONCE, here. A frame held for a successor is
+      // replayed as itself (its mark in the JSON, its origin by identity), so it is classified
+      // the same there. An unmarked frame that is the text of a turn held for an account switch
+      // (the client resubmits only the text) takes the source that turn arrived with.
+      const classified = classifyOwnerFrame({ origin: ownerFrameOrigin(raw), msg, deviceSocket: ownerDevice !== null }) ?? silentOwnerTurn('unmarked');
+      const source = !classified.writes && classified.silent === 'unmarked'
+        ? takeHeldOwnerMark(chatRegistryId, text) ?? classified
+        : classified;
       switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
         // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
         // never swallowed" would hold for every decision the chooser can make and fail for
         // the one case nobody planned: an unexpected error on the way to making it.
         .catch(() => false)
         .then((held) => {
-          if (!alive || held) return;
+          // Held for an account switch's restart: its source is kept beside its text, so the
+          // resubmit (or a stalled release) writes it once, as it arrived.
+          if (held) { carryHeldOwnerMark(chatRegistryId, text, source); return; }
+          if (!alive) return;
           // Autonomy changed while this message waited in the gate: it belongs to the successor.
           if (respawnTo !== null || handedOff) { holdForSuccessor(raw); return; }
-          writeOwnerTurn(text);
+          writeOwnerTurn(text, source);
         }));
       return;
     }

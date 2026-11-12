@@ -59,11 +59,25 @@ import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTeleg
 import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
-import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
+import { cleanOwnerText, inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
 
 type Obj = Record<string, unknown>;
+
+/**
+ * What the owner himself typed or said in one Telegram message (learning loop C3): the cleaned
+ * text of a message that is not a forward, then a voice note's transcript. Never the hub's header,
+ * a forwarded message, a quote ("Alıntı"), a replied-to message ("Yanıtlanan mesaj"), a caption's
+ * data block or a saved file's path. '' when there is none (the turn then writes no ledger line).
+ */
+export function telegramOwnText(msg: Obj, spoken: string | null): string {
+  const forwarded = !!msg.forward_origin && typeof msg.forward_origin === 'object';
+  const typed = !forwarded && typeof msg.text === 'string' && msg.text.trim() ? cleanOwnerText(msg.text).trim() : '';
+  const said = spoken && spoken.trim() ? spoken.trim() : '';
+  return [typed, said].filter(Boolean).join('\n\n');
+}
+
 /** A question sent without pictures: every drawing it carries is on the Mac. */
 const NOTHING_DRAWN: ReadonlySet<string> = new Set();
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
@@ -745,7 +759,8 @@ export class TelegramHub implements TelegramHubApi {
     // A hub-built header (a reply to a bot message, an agenda line's "Yaz", W5 M4/N6) goes first.
     const head = this.turnPrefix ? this.turnPrefix(ab, msg) : '';
     if (head) text = `${head}\n\n${text}`;
-    const ref = await this.injectText(ab, updateId, text, sessionId);
+    // His own words beside the turn (C3): the header, quotes, forwards and file paths stay out.
+    const ref = await this.injectText(ab, updateId, text, sessionId, null, telegramOwnText(msg, spoken));
     if (!ref) { drop(); return; }
     const mid = Number(msg.message_id);
     if (Number.isSafeInteger(mid)) this.noteReply(ab, mid, { ref, quote: inboundTurnText(msg, []) || (spoken ?? ''), from: 'owner' });
@@ -793,7 +808,7 @@ export class TelegramHub implements TelegramHubApi {
   /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
    *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
    *  status and typing begun. False = it did not reach the Super (the owner was told). */
-  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null): Promise<string | false> {
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null, own = ''): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     const inj = await this.waitInjector(ab, sessionId);
     if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
@@ -807,7 +822,8 @@ export class TelegramHub implements TelegramHubApi {
     writeTurns(dir, { v: 1, turns: [...fresh, rec].slice(-500) }, this.home);
     this.superSessions.set(sessionId, ab.key);
     this.beginTurn(ab, ref, sessionId);
-    const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? as.kind : 'telegram-text' });
+    // `own` only for a message he wrote (`deliver`); a card tap, a run report or a schedule has none.
+    const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? as.kind : 'telegram-text', ...(!as && own.trim() ? { own } : {}) });
     if (!r.ok) {
       telegramRefs.forget(inj.chatRegistryId, ref);
       this.endTurn(ref);

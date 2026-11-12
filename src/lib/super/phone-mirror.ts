@@ -75,19 +75,35 @@ export interface MirrorOpts<D> {
 
 interface Mirror<D> { ws: MirrorSocket; device: D; waiting: boolean }
 
-/** The one frame a mirror may send up, or null. */
-export function mirrorOwnerText(raw: Buffer | string): string | null {
+/** The one frame a mirror may send up, read: its text, and, when the phone's Composer marked it as
+ *  a draft he typed (`typed: true`), his own words (`own`, learning loop C3) under the same cap.
+ *  Null for anything else. */
+export function mirrorOwnerFrame(raw: Buffer | string): { text: string; own?: string } | null {
   const str = typeof raw === 'string' ? raw : raw.toString('utf-8');
-  if (str.length > MIRROR_MAX_TEXT + 200) return null;
+  // Room for the text and its `own` beside it, each under MIRROR_MAX_TEXT.
+  if (str.length > 2 * MIRROR_MAX_TEXT + 400) return null;
   let msg: unknown;
   try { msg = JSON.parse(str); } catch { return null; }
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return null;
-  const m = msg as { type?: unknown; text?: unknown };
+  const m = msg as { type?: unknown; text?: unknown; typed?: unknown; own?: unknown };
   if (m.type !== 'user' || typeof m.text !== 'string') return null;
   const text = m.text;
   // A slash command is not chat: `/effort`, `/model` and the like are run by the CLI itself.
   if (text.trimStart().startsWith('/')) return null;
-  return text.trim() && text.length <= MIRROR_MAX_TEXT ? text : null;
+  if (!text.trim() || text.length > MIRROR_MAX_TEXT) return null;
+  const own = m.typed === true && typeof m.own === 'string' && m.own.trim() && m.own.length <= MIRROR_MAX_TEXT && !m.own.trimStart().startsWith('/')
+    ? m.own : undefined;
+  return own ? { text, own } : { text };
+}
+
+/** The text of the one frame a mirror may send up, or null. */
+export function mirrorOwnerText(raw: Buffer | string): string | null {
+  return mirrorOwnerFrame(raw)?.text ?? null;
+}
+
+/** The `user` frame a mirror hands the chat: rebuilt from what was read, the mark kept. */
+export function mirrorUserFrame(read: { text: string; own?: string }): string {
+  return JSON.stringify({ type: 'user', text: read.text, ...(read.own ? { typed: true, own: read.own } : {}) });
 }
 
 /** Does a stdout line go to a mirror? Everything but the CLI's own prompts. */
@@ -174,12 +190,13 @@ export class MirrorSet<D> {
     ws.on('message', (raw) => {
       if (!this.mirrors.has(m)) return;
       if (!this.opts.valid(device)) { this.drop(m, MIRROR_CLOSE_REVOKED, 'device signed out'); return; }
-      const text = mirrorOwnerText(raw);
-      if (text === null) return;
+      const read = mirrorOwnerFrame(raw);
+      if (read === null) return;
       // Echoed to the holder and the other mirrors BEFORE the chat sees it, so every surface
       // shows the owner's words in the order they were typed.
-      this.echo(text, ws);
-      this.opts.onOwnerFrame?.(JSON.stringify({ type: 'user', text }));
+      this.echo(read.text, ws);
+      // The Composer's mark and `own` go through (C3): the chat decides the source from them.
+      this.opts.onOwnerFrame?.(mirrorUserFrame(read));
     });
     return true;
   }

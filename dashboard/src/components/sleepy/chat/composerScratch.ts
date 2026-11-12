@@ -461,6 +461,40 @@ export function composeOutgoing(
   return { ...sent, message: stripSentinelChars(sent.message), quoted: stripSentinelChars(sent.quoted) };
 }
 
+/**
+ * ONLY what he typed (learning loop C3, the `own` beside the Composer's mark): the draft with
+ * every chip token gone, so none of the reply ↩ quote, an About or agenda block, the page block,
+ * a picked element, a card chip's words and a file's path is in it (each is a chip, or staged
+ * apart from the text). The reply quote strip (`quote`) and the staged chips are never read. A
+ * slash command is no message of his: ''.
+ */
+export function ownWords(draft: string): string {
+  const own = stripSentinelChars(stripTokens(draft ?? '')).trim();
+  return own.startsWith('/') ? '' : own;
+}
+
+/**
+ * The Composer's mark for the delivery it is about to make (C3, contract D). The Composer's own
+ * submit arms it with the exact message and his `own` words, makes its delivery (send, steer or
+ * enqueue, all synchronous), and disarms it. `chatSession` reads it by that exact text, so a
+ * delivery of any other text (a queue drain, `window send`, an app's prefill, a resubmit) never
+ * carries the mark: the shared write path sets nothing by default.
+ */
+let typedSend: { message: string; own: string } | null = null;
+
+export function armTypedSend(message: string, own: string): void {
+  typedSend = own.trim() && message.trim() ? { message: message.trim(), own: own.trim() } : null;
+}
+
+export function disarmTypedSend(): void {
+  typedSend = null;
+}
+
+/** His own words when `text` is the message the Composer armed, else null. */
+export function typedOwnFor(text: string): string | null {
+  return typedSend && typedSend.message === text.trim() ? typedSend.own : null;
+}
+
 function composeBody(
   draft: string, staged: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
   opts: { superView?: boolean } = {},
@@ -666,6 +700,7 @@ export function __resetScratchForTests(): void {
   store.clear();
   listeners.clear();
   uploads.clear();
+  typedSend = null;
   seq = 0;
   flashSeq = 0;
 }
