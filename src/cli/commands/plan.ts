@@ -110,7 +110,7 @@ export async function planOpen(deps: PlanDeps, plan: string, opts: { task: strin
   }
   if (!opts.goal?.trim()) throw new PlanRefusal('--goal "<one sentence>" is required.');
   const task = await deps.backend().get(opts.task);
-  if (!task) throw new PlanRefusal(`No task "${opts.task}". Plan mode creates the task at intake: \`dreamcontext tasks create "<goal>"\`, then name it here.`);
+  if (!task) throw new PlanRefusal(`No task "${opts.task}". Name the task your brief gives you; a Super child never files one (none named: ask the Super). Otherwise create it at intake, \`dreamcontext tasks create "<goal>"\`, then name it here.`);
   return withPlanLock(deps.root, plan, () => {
     const existing = readLedger(deps.root, plan);
     if (existing.ok || !existing.missing) throw new PlanRefusal(`Plan "${plan}" already exists: \`dreamcontext plan status ${plan}\`.`);

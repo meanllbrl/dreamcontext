@@ -213,7 +213,7 @@
     },
     {
       "path": "apps catalog",
-      "desc": "The brain's list of this project's apps (a publish writes it)",
+      "desc": "The brain's list of this project's apps (a publish writes it); bare, it prints the list",
       "args": [],
       "group": true
     },
@@ -1094,7 +1094,7 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, 5 = a full suite needs a fresh build first). A whole-suite run keeps a record of its red files",
+      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, 5 = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's 78 = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files",
       "args": [
         "[command...]"
       ],
@@ -1137,7 +1137,7 @@
     },
     {
       "path": "builder open",
-      "desc": "A run starts on this branch: `heavy` counts repeats from here on, per phase",
+      "desc": "A run starts on this branch: `heavy` counts repeats from here on, per code tree (changed code runs again)",
       "args": [
         "<slug>"
       ],
@@ -1831,6 +1831,18 @@
       "desc": "Create features and insert into sections",
       "args": [],
       "group": true
+    },
+    {
+      "path": "features compact",
+      "desc": "Move a PRD's old Changelog entries to knowledge/archive/features/<name>-<YYYY-MM>.md (archive written and read back before the PRD changes)",
+      "args": [
+        "[name]"
+      ],
+      "valueFlags": [
+        "--older-than",
+        "--keep",
+        "--min-chars"
+      ]
     },
     {
       "path": "features create",
@@ -3620,6 +3632,22 @@
       ]
     },
     {
+      "path": "sleep asks",
+      "desc": "Record where the owner's asks landed this cycle (sleep-tasks)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "sleep asks set",
+      "desc": "",
+      "args": [
+        "<counts>"
+      ],
+      "valueFlags": [
+        "--by"
+      ]
+    },
+    {
       "path": "sleep auto",
       "desc": "Background consolidation for THIS machine (off by default)",
       "args": [],
@@ -3767,6 +3795,37 @@
       "args": []
     },
     {
+      "path": "sleep flag",
+      "desc": "Record a recurring problem this cycle observed (specialists run this themselves; sleep done reads it)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "sleep flag add",
+      "desc": "",
+      "args": [
+        "<key>",
+        "<label...>"
+      ],
+      "valueFlags": [
+        "--task",
+        "--by"
+      ]
+    },
+    {
+      "path": "sleep flag list",
+      "desc": "This cycle's recorded flags and the streaks kept so far",
+      "args": []
+    },
+    {
+      "path": "sleep flag none",
+      "desc": "Say you looked and nothing recurred (so a cycle with no flags still counts as reported)",
+      "args": [],
+      "valueFlags": [
+        "--by"
+      ]
+    },
+    {
       "path": "sleep history",
       "desc": "Show consolidation history log",
       "args": [],
@@ -3774,6 +3833,11 @@
         "-n",
         "--limit"
       ]
+    },
+    {
+      "path": "sleep packet",
+      "desc": "Print the sleep packet: sessions oldest to newest with every owner-typed turn, git since the last sleep, flags; --board for the open board and the tasks ready to close (sleep start writes both to tmp/sleep/)",
+      "args": []
     },
     {
       "path": "sleep start",
