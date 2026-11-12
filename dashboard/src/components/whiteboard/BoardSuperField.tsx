@@ -437,6 +437,7 @@ function QuickLineView({ line, t, superOn, onUndo, onAskSuper }: {
   onUndo: (editId: string) => void;
   onAskSuper: (() => void) | null;
 }) {
+  const skippedText = (n: number) => (n === 1 ? t('whiteboard.quick.skippedOne') : t('whiteboard.quick.skipped').replace('{n}', String(n)));
   const ask = onAskSuper && (
     <button
       type="button"
@@ -455,7 +456,7 @@ function QuickLineView({ line, t, superOn, onUndo, onAskSuper }: {
         <span className="bsf-line-ok" aria-hidden>✓</span>
         <span className="bsf-line-text">
           {line.reply}
-          {line.skipped > 0 && <>{' '}{t('whiteboard.quick.skipped').replace('{n}', String(line.skipped))}</>}
+          {line.skipped > 0 && <>{' '}{skippedText(line.skipped)}</>}
         </span>
         {line.editId && <button type="button" className="bsf-btn" onClick={() => onUndo(line.editId as string)} data-testid="board-quick-undo">{t('whiteboard.quick.undo')}</button>}
       </div>
@@ -475,7 +476,7 @@ function QuickLineView({ line, t, superOn, onUndo, onAskSuper }: {
         <span className="bsf-line-ok" aria-hidden>✓</span>
         <span className="bsf-line-text">
           {t('whiteboard.quick.undone')}
-          {line.skipped > 0 && <>{' '}{t('whiteboard.quick.skipped').replace('{n}', String(line.skipped))}</>}
+          {line.skipped > 0 && <>{' '}{skippedText(line.skipped)}</>}
         </span>
       </div>
     );
