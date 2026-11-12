@@ -78,7 +78,7 @@ export function StageControls({ rect, layouts, current, onPick, onExit, toGroup 
   const { t } = useI18n();
   const [ask, setAsk] = useState(false);
   return (
-    <div className="super-stage-controls" data-testid="super-stage-controls" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
+    <div className="super-stage-controls" data-testid="super-stage-controls" data-asking={ask && toGroup ? "true" : undefined} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
       {layouts.length > 1 && (
         <div className="super-layout-switch" role="group" aria-label={t('super.layout.switch')} data-testid="super-layout-switch">
           {layouts.map((l) => (
