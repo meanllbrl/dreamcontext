@@ -152,7 +152,8 @@ export function leadIndex(tops: ReadonlyArray<number | null>): number {
 
 /**
  * Where a jump goes: the OLDEST unread out of view, so the reader walks the list in reading order.
- * Anything above the view (or above the window: no row) comes first, then the nearest below. A
+ * Anything whose start is above the view (or above the window: no row) comes first, then the
+ * nearest below. A
  * walk under way passes `after`, the row it stands on: it goes on forward while there is a row
  * ahead, or a row still inside its dwell would call every click back. -1: all on screen.
  */
@@ -164,7 +165,9 @@ export function nextUnreadIndex(rows: ReadonlyArray<Span | null>, view: Span, af
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row) { if (unmounted < 0) unmounted = i; continue; }
-    const side = sideOf(row, view);
+    // By the START: a tall unread whose first line is above the view is above, however much of
+    // it fills the view (owner 2026-11-12).
+    const side = startSide(row, view);
     if (side === 'above' && (above < 0 || row.top < (rows[above] as Span).top)) above = i;
     if (side === 'below' && (below < 0 || row.top < (rows[below] as Span).top)) below = i;
     if (after && side !== 'in' && row.top > after.top && (ahead < 0 || row.top < (rows[ahead] as Span).top)) ahead = i;
@@ -269,3 +272,120 @@ export function advanceDwell(
   }
   return { started: next, seen };
 }
+
+// ─── The follow: new content never pushes an unread START out of view (owner 2026-11-12) ───
+
+/** A row's first line counts as on screen this close to the view's top edge. */
+export const START_SLACK = 8;
+/** A follow target this close to the bottom IS the bottom: the view stays pinned. The pin's own
+ *  `BOTTOM_SLACK` (chat/chatEntities.ts), mirrored so this file stays free of the pane's imports;
+ *  a drift test holds them equal. */
+export const FOLLOW_SLACK = 48;
+/** Where a prose or event row lands below the view's top: ChatPane's `RAIL_CLEARANCE`, mirrored
+ *  (the pane imports this file, not the other way round). */
+export const PROSE_LANDING = 64;
+
+/** The row's first line is inside the view. */
+export function startInView(row: Span, view: Span): boolean {
+  return row.top >= view.top - START_SLACK && row.top < view.bottom;
+}
+
+/** Which side of the view the row's FIRST LINE is on: a tall row whose start is above is above,
+ *  however much of it fills the view. */
+export function startSide(row: Span, view: Span): 'above' | 'below' | 'in' {
+  if (row.top < view.top - START_SLACK) return 'above';
+  if (row.top >= view.bottom) return 'below';
+  return 'in';
+}
+
+/** Seen = its start is on screen AND it is mostly visible: the end of a tall row alone is not. */
+export function startSeen(row: Span, view: Span): boolean {
+  return startInView(row, view) && mostlyVisible(row, view);
+}
+
+/**
+ * Where a pinned view goes when content lands: the bottom, unless that would put the anchor's
+ * start above the view; then the anchor's start, `landing` below the top, and the view is HELD
+ * there (unpinned) until the reader moves it. Offsets are the scroller's content coordinates.
+ * `floor`: a pinned view only ever moves DOWN (its current offset), so nothing it holds can pull
+ * it up; only the first landing of an opened pane passes 0 (plan r1 C1).
+ */
+export function followTop(bottomTop: number, anchorTop: number | null, landing: number, floor = 0): { top: number; held: boolean } {
+  const bottom = Math.max(0, bottomTop);
+  if (anchorTop === null) return { top: bottom, held: false };
+  const capped = Math.max(0, floor, anchorTop - landing);
+  if (capped >= bottom - FOLLOW_SLACK) return { top: bottom, held: false };
+  return { top: capped, held: true };
+}
+
+export type FollowAnchor = { itemId: string; unit: UnreadUnit | null } | { question: string; unit: UnreadUnit };
+
+/**
+ * What the reader chose to go past (Latest, a send, his own scroll to the end). Units by what the
+ * read marks match them by, key and time (a replay re-ids every row, plan r1 C1); the live text by
+ * its row id, which it keeps while it is being written.
+ */
+export interface Passed { units: ReadMark[]; live: Set<string> }
+export const emptyPassed = (): Passed => ({ units: [], live: new Set() });
+
+/**
+ * What the follow must keep in view: the first, in transcript order, of an unread unit the reader
+ * has not passed or the Super text still being written. A question card ranks after every item.
+ */
+export function followAnchors(
+  items: ReadonlyArray<{ id: string }>,
+  unread: readonly UnreadUnit[],
+  passed: Passed,
+  liveText: string | null,
+): FollowAnchor[] {
+  // The marks' own matcher: passed is a read the reader chose, without the dot going.
+  const open = unreadOf(unread, { since: -Infinity, read: passed.units });
+  const rows = new Map<string, UnreadUnit | null>();
+  for (const u of open) if (u.itemId) rows.set(u.itemId, u);
+  if (liveText && !passed.live.has(liveText) && !rows.has(liveText)) rows.set(liveText, null);
+  const out: FollowAnchor[] = [];
+  if (rows.size) for (const it of items) if (rows.has(it.id)) out.push({ itemId: it.id, unit: rows.get(it.id) ?? null });
+  for (const q of open) if (q.question) out.push({ question: q.question, unit: q });
+  return out;
+}
+
+/** The first candidate (the pane walks the rest when a candidate draws no row). */
+export function followAnchor(...args: Parameters<typeof followAnchors>): FollowAnchor | null {
+  return followAnchors(...args)[0] ?? null;
+}
+
+/** Pass every current unit and the live text. */
+export function passAll(passed: Passed, unread: readonly UnreadUnit[], liveText: string | null): void {
+  const have = new Set(passed.units.map((m) => `${m.key}|${m.ts}`));
+  for (const u of unread) if (!have.has(`${u.key}|${u.ts}`)) passed.units.push({ key: u.key, ts: u.ts });
+  if (liveText) passed.live.add(liveText);
+}
+
+/** How far below the view's top a unit lands: prose under the rail's clearance; a question card
+ *  whole when it fits (as close to that clearance as its height allows), its top when it does not. */
+export function landingFor(unit: 'prose' | 'question', rowHeight: number, viewHeight: number): number {
+  if (unit === 'prose') return PROSE_LANDING;
+  return Math.max(12, Math.min(PROSE_LANDING, viewHeight - rowHeight));
+}
+
+/**
+ * A door to a question (the band's Answer, the agenda's waiting row; owner K1 = A): when an unread
+ * message above the card has its start off screen, the door lands on the topmost such message
+ * first. `rows` are those messages' spans (null: above the mounted window). -1: go to the card.
+ */
+export function doorTarget(rows: ReadonlyArray<Span | null>, card: Span | null, view: Span): number {
+  let best = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) return i;
+    if (card && row.top >= card.top) continue;
+    if (startSide(row, view) === 'in') continue;
+    if (best < 0 || row.top < (rows[best] as Span).top) best = i;
+  }
+  return best;
+}
+
+/** The door's contract between `showQuestionCard` and the Super pane: bubbling, cancelable,
+ *  `detail.item` the question; the pane sets `detail.landed` to what it went to. */
+export const SUPER_QUESTION_EVENT = 'dc:super-question';
+export interface SuperQuestionDetail { item: string; landed?: 'card' | 'unread' }
