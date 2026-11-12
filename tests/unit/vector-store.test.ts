@@ -115,6 +115,16 @@ describe('building', () => {
     expect(loadVectorIndex(root, 'voyage-4')!.chunks).toHaveLength(5);
   });
 
+  it('a long-lived process loads the index once and follows a rebuild', async () => {
+    await buildCloudIndex(root, 'voyage-4', corpus(2), base);
+    const first = loadVectorIndex(root, 'voyage-4')!;
+    expect(loadVectorIndex(root, 'voyage-4')).toBe(first);
+    await buildCloudIndex(root, 'voyage-4', corpus(4), base);
+    const next = loadVectorIndex(root, 'voyage-4')!;
+    expect(next).not.toBe(first);
+    expect(next.chunks).toHaveLength(4);
+  });
+
   it('retries a transient failure and then succeeds', async () => {
     let calls = 0;
     const ok = okFetch();

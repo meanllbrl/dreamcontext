@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acquireFileLockWithin, releaseFileLock } from '../file-lock.js';
@@ -139,8 +139,36 @@ function readRows(root: string, profile: CloudProfileId, manifest: Manifest): Ma
   return out;
 }
 
+/**
+ * The last index each process loaded, per root and profile, valid while the manifest and the vector file keep
+ * their mtime, size and inode. The dashboard server answers every prompt's recall, so it must not re-read
+ * ~100 MB of vectors per prompt; a one-shot hook loads once either way. Callers only read the index.
+ */
+const indexMemo = new Map<string, { sig: string; index: DenseIndex }>();
+
+function indexSignature(root: string, profile: CloudProfileId): string | null {
+  try {
+    const m = statSync(manifestPath(root, profile));
+    const d = existsSync(dataPath(root, profile)) ? statSync(dataPath(root, profile)) : null;
+    return `${m.mtimeMs}:${m.size}:${m.ino}|${d ? `${d.mtimeMs}:${d.size}:${d.ino}` : '-'}`;
+  } catch {
+    return null;
+  }
+}
+
 /** The dense index of the cloud profile, or null when none was built. */
 export function loadVectorIndex(contextRoot: string, profile: CloudProfileId): DenseIndex | null {
+  const key = `${contextRoot}\u0000${profile}`;
+  const sig = indexSignature(contextRoot, profile);
+  const memo = indexMemo.get(key);
+  if (sig !== null && memo && memo.sig === sig) return memo.index;
+  const index = readVectorIndex(contextRoot, profile);
+  if (sig !== null && index !== null) indexMemo.set(key, { sig, index });
+  else indexMemo.delete(key);
+  return index;
+}
+
+function readVectorIndex(contextRoot: string, profile: CloudProfileId): DenseIndex | null {
   const manifest = readManifest(contextRoot, profile);
   if (manifest === null) return null;
   const rows = readRows(contextRoot, profile, manifest);
