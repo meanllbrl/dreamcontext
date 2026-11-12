@@ -5,7 +5,9 @@
  * (d26f0cc0); W3 by its own base, the 0.36.7 merge before any W3 change (ce5f1bab), adding the
  * `.env` deny and the Stop hook (only the version line differs from 0.36.2's files); W4 moved
  * only that version line, to 0.36.8, with its merge (8525a9fe); 0.40.0 moved only that line again
- * (release prep), and the harness now drops every inherited DREAMCONTEXT_/CLAUDE* variable; this
+ * (release prep), and the harness now drops every inherited DREAMCONTEXT_/CLAUDE* variable; the
+ * overnight prompt-hook diet (B1) moved two lines of user-prompt-submit.txt on purpose: each recall
+ * hit prints its size and the gate says to read the matching section, not the whole file; this
  * runs the same harness on the CURRENT build and compares every hook's stdout, stderr and exit.
  * 2026-11-12 (audit MM-9) removed exactly one block from session-start.txt: the empty
  * `## Marketing` state (8 lines), which the snapshot now omits until the surface holds something.

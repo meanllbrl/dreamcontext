@@ -342,6 +342,45 @@ export function ownerWords(prompt: string): string | null {
   return text.trim();
 }
 
+/** A recall, pattern or offer needs at least this much of the owner's text to search on. */
+export const RECALL_QUERY_MIN_CHARS = 8;
+
+/** Lines the server writes into a child's first message (super.ts DEV_SERVER_LINE, worktreePreamble). */
+const SERVER_LINE_RE = /If you start a dev server, pin its url \(a `dream-view` pin\) so the owner sees the site\.|You work in your own git worktree: [^\n]{0,600}?Never push and never merge into another branch\./g;
+/** Blocks a harness or the app writes into a turn: a finished background task, a dictation tag. */
+const MACHINE_BLOCK_RE = /<task-notification>[\s\S]*?(?:<\/task-notification>|$)|<voice-take\b[^>\n]{0,300}>|<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)/g;
+/** The dock's page header (`[On page tasks view="…"]`): where he stood, not what he asked. */
+const PAGE_HEADER_RE = /\[On page [^\]\n]*\]/g;
+/** An absolute or home path: a file name the turn carries, not a word he searched for. */
+const ABS_PATH_RE = /(^|[\s(`'"[])~?\/(?:[^\s/`'")\]]+\/)*[^\s`'")\]]*/g;
+
+/**
+ * The owner's own text in a prompt, paths kept: {@link ownerWords} minus every block a machine wrote
+ * (a `<task-notification>`, the dev-server and worktree lines of a child's first message, a page
+ * header). Null for a turn with nothing of his: a Super event, a handoff, a task notification.
+ * The initializer and draw offers read this (they need the path he named); recall reads
+ * {@link recallQuery}.
+ */
+export function promptOwnerText(prompt: string): string | null {
+  const words = ownerWords(prompt);
+  if (words === null) return null;
+  const text = words.replace(MACHINE_BLOCK_RE, ' ').replace(SERVER_LINE_RE, '').replace(PAGE_HEADER_RE, ' ').trim();
+  return text.length > 0 ? text : null;
+}
+
+/**
+ * What the prompt hook searches on: {@link promptOwnerText} without paths, whitespace folded. Null
+ * when fewer than {@link RECALL_QUERY_MIN_CHARS} chars are left: the turn then gets no recall, peers,
+ * patterns, skills gate or offers, only the lines that must always print (audit MM-1: 23-60% of
+ * firings were machine turns recalling on a sub-agent's report or the app's wrapper text).
+ */
+export function recallQuery(prompt: string): string | null {
+  const text = promptOwnerText(prompt);
+  if (text === null) return null;
+  const q = text.replace(ABS_PATH_RE, '$1 ').replace(/\s+/g, ' ').trim();
+  return q.length >= RECALL_QUERY_MIN_CHARS ? q : null;
+}
+
 /** A title in a directive line: one line, no control characters, at most 60 characters. */
 function safeTitle(t: string): string {
   const flat = t.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();

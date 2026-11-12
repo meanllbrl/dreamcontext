@@ -72,7 +72,7 @@ describe('sub-agent dispatch authorization', () => {
       // dispatch the next specialist; if the lock return swallowed the line, the
       // turn that most needs it is the one that loses it.
       const src = read('src/cli/commands/hook.ts');
-      const emitted = src.indexOf('console.log(SUBAGENT_DISPATCH_AUTHORIZATION)');
+      const emitted = src.indexOf('? SUBAGENT_DISPATCH_AUTHORIZATION : SUBAGENT_DISPATCH_REMINDER');
       const lockReturn = src.indexOf('if (lock.locked && !lock.stale) {', emitted);
       expect(emitted).toBeGreaterThan(-1);
       expect(lockReturn).toBeGreaterThan(emitted);

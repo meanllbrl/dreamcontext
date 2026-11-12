@@ -145,7 +145,7 @@ Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconcile
 | `off` | No recall injection at all | `dreamcontext recall off` |
 | — | Inspect current mode | `dreamcontext recall status` |
 
-- **Auto-injection (ON by default):** the UserPromptSubmit hook surfaces top hits on every non-trivial prompt. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`; override mode per-session with `DREAMCONTEXT_RECALL_MODE`.
+- **Auto-injection (ON by default):** the UserPromptSubmit hook surfaces top hits, each with its size (read the matching section of a big file), searched on the owner's own words: a task notification, a Super event or the app's wrapper text gets no recall, patterns or offers. A connected peer's hits show only when the prompt names it or it outscores this vault. Long fixed blocks print in full once per session, then one line. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`; override mode per-session with `DREAMCONTEXT_RECALL_MODE`.
 - **Federation:** plain `recall` automatically spans eligible readable peers; hits are namespaced `<vault>::<type>/<slug>`. Scope with `--vault`/`--connected`/`--all-vaults` (see [integrations.md](integrations.md)).
 
 ### Recall tiers (hybrid mode: local, cloud-index, cloud)

@@ -87,11 +87,15 @@ describe('hook user-prompt-submit: the AI TEAM MEMBER line', () => {
     expect(teamLines(hook(off, 'Run the signup funnel test end to end', 'super'))).toEqual([]);
   });
 
-  it('recall\'s input: a <super-team> block is cut; a team-less Super\'s output is byte-identical to no route', () => {
+  it('recall\'s input: a <super-team> block is cut; a team-less Super\'s output is byte-identical to no route, less the authorization', () => {
     const plain = "What's this month's revenue and the MRR now?";
     const withBlock = `${plain}\n<super-team fp=aaaaaaaaaaaa>\n## Your AI Team <!-- fp=aaaaaaaaaaaa -->\n- \`probe\` signup funnel test end to end lookout competitors ads\n</super-team>`;
     expect(recallOf(hook(team, withBlock))).toBe(recallOf(hook(team, plain)));
     const q = 'Fix the invite API endpoint and the onboarding title typo';
-    expect(hook(bare, q, 'super')).toBe(hook(bare, q));
+    // Byte-identical but for the sub-agent authorization, which the Super's own chat never gets
+    // (it delegates to children; audit MM-3).
+    const auth = /^Sub-agent dispatch is pre-authorized[^\n]*\n/m;
+    expect(hook(bare, q)).toMatch(auth);
+    expect(hook(bare, q, 'super')).toBe(hook(bare, q).replace(auth, ''));
   });
 });

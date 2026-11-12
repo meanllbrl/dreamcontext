@@ -36,3 +36,9 @@ setCapacityFactsForTests({
 //    retired mirror: writes aimed at the real home land in a throwaway dir. Tests that fake HOME
 //    (or pass one) are untouched.
 setMcpHomeRedirectForTests(homedir(), mkdtempSync(join(tmpdir(), 'dc-test-mcp-home-')));
+
+// 5. The prompt hook prints its long blocks in full once per session, keyed by session id under
+//    HOME (hook-delivery.ts firstInSession). Hook processes spawned with the real HOME and a reused
+//    id ('sess-1') would see each other's markers and write into the developer's home: every block
+//    in full instead. A test of the once-per-session path deletes this and fakes HOME.
+process.env.DREAMCONTEXT_PROMPT_ONCE = '0';
