@@ -335,6 +335,49 @@ describe('a project whose check cannot finish within the cap', () => {
   });
 });
 
+describe('where no detached check can run (Windows, no project-local tsc)', () => {
+  it('the cap verdict expires after ten minutes and the Stop checks inline again, as before', () => {
+    let clock = Date.now();
+    const now = () => clock;
+    let calls = 0;
+    let slowAsEver = true;
+    const runner: TscRunner = () => {
+      calls++;
+      return slowAsEver ? { output: null, ms: TSC_TIMEOUT_MS, timedOut: true } : { output: 'src/a.ts(1,1): error TS1: x', ms: 800 };
+    };
+    checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now, budgetMs: 1_000_000 });
+    const afterCap = calls;
+    clock += 60_000;
+    expect(checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now })).toEqual([]);
+    expect(checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000 })).toEqual([]);
+    expect(calls).toBe(afterCap);
+    clock += 10 * 60_000;
+    slowAsEver = false;
+    checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now, stopBudgetMs: 1_000_000 });
+    expect(checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000 })).toEqual([expect.stringMatching(/^TypeScript errors in a\.ts/)]);
+  });
+});
+
+describe('each detached run owns its files', () => {
+  it('two runs in a row never share an output file, and a harvest leaves no file behind', () => {
+    let clock = Date.now();
+    const now = () => clock;
+    const runner: TscRunner = () => ({ output: null, ms: TSC_TIMEOUT_MS, timedOut: true });
+    checkEditedFile(tsconfig, file('a.ts'), { sessionId: 's1', runner, baseDir: base, now, budgetMs: 1_000_000 });
+    const bg = fakeBackground();
+    checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000, background: bg.start });
+    bg.finish('', 0);
+    checkEditedFile(tsconfig, file('b.ts'), { sessionId: 's1', runner, baseDir: base, now, background: bg.start });
+    clock += 1000;
+    checkAtStop('s1', { runner, baseDir: base, now, budgetMs: 1_000_000, background: bg.start });
+    expect(bg.started).toHaveLength(2);
+    expect(bg.started[0].out).not.toBe(bg.started[1].out);
+    bg.finish('', 0);
+    expect(takeTscResults('s1', { baseDir: base, now })).toEqual([]);
+    expect(readdirSync(tscStateDir(tsconfig, base)).filter((n) => n.startsWith('bg'))).toEqual([]);
+  });
+});
+
 describe('a Stop never waits on a slow check', () => {
   it('an edit to a project too slow for a Stop is not checked inline even when the Stop has little room', () => {
     const slow = fakeRunner(new Set(), STOP_INLINE_MAX_MS + 60_000);

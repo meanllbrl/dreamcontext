@@ -16,7 +16,8 @@
  *   files edited in the turn are checked once, at Stop.
  * - A Stop never waits on a check that cannot answer in time: when the project's last check ran
  *   into the cap, or took longer than {@link STOP_INLINE_MAX_MS}, the Stop starts the check
- *   DETACHED (`bg.json`, `bg.out`, `bg.code`) and returns at once. The next PostToolUse or Stop
+ *   DETACHED (`bg.json` plus that run's own `bg-<nonce>.out|.code`) and returns at once. Where no
+ *   detached run is possible (Windows, no project-local tsc) the old inline rules hold. The next PostToolUse or Stop
  *   of any session collects its answer. Measured 2026-11-12: 6% of Stops sat ~30 s on a check
  *   that hit the cap and reported nothing.
  *
@@ -26,7 +27,7 @@
  * here is best-effort: a failure in this module must never break an edit.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
@@ -109,10 +110,16 @@ interface Meta {
 
 /** After a detached check failed to finish, no other is started for this long. */
 const BG_FAIL_BACKOFF_MS = 10 * 60 * 1000;
+/** Where no detached check can run, a cap verdict expires after this and an inline try is made. */
+const CAP_BACKOFF_MS = 10 * 60 * 1000;
 
-/** The project's check cannot finish within the cap: an inline try only burns 30 s. */
-function overCap(meta: Meta): boolean {
-  return typeof meta.capHitAt === 'number';
+/**
+ * The project's check cannot finish within the cap: an inline try only burns 30 s. Where a
+ * detached check can run, the verdict holds until one finishes; elsewhere it expires.
+ */
+function overCap(meta: Meta, nowMs: number, detaches: boolean): boolean {
+  if (typeof meta.capHitAt !== 'number') return false;
+  return detaches || nowMs - meta.capHitAt < CAP_BACKOFF_MS;
 }
 
 /** Resolve a binary from the project's own node_modules/.bin. */
@@ -475,16 +482,43 @@ interface BgRun {
   /** 0 while the starter has not returned yet (the claim is written first). */
   pid: number;
   startedAt: number;
+  /** Names this run's own output and exit-code files: no other run or harvest touches them. */
+  nonce: string;
   /** The pending entries filed before it started: the ones its output answers. */
   snapshot: string[];
 }
 
-const bgFile = (dir: string, name: 'bg.json' | 'bg.out' | 'bg.code') => join(dir, name);
+const BG_JSON = 'bg.json';
+const runFiles = (dir: string, nonce: string) => ({ out: join(dir, `bg-${nonce}.out`), code: join(dir, `bg-${nonce}.code`) });
 
-function clearBg(dir: string): void {
-  for (const n of ['bg.json', 'bg.out', 'bg.code'] as const) {
-    try { rmSync(bgFile(dir, n), { force: true }); } catch { /* gone */ }
+function removeRunFiles(dir: string, nonce: string): void {
+  const f = runFiles(dir, nonce);
+  for (const p of [f.out, f.code, `${f.code}.tmp`]) {
+    try { rmSync(p, { force: true }); } catch { /* gone */ }
   }
+}
+
+/**
+ * Take `bg.json` for this process alone (rename), and only if it still describes `nonce`: a
+ * newer run's record is put back. Returns the claimed path, or null.
+ */
+function claimBg(dir: string, nonce: string): string | null {
+  const claimed = join(dir, `${BG_JSON}.${process.pid}.${randomUUID()}.claim`);
+  try { renameSync(join(dir, BG_JSON), claimed); } catch { return null; }
+  const now = readJson<BgRun>(claimed);
+  if (now?.nonce === nonce) return claimed;
+  try { renameSync(claimed, join(dir, BG_JSON)); } catch { /* lost: the next start replaces it */ }
+  return null;
+}
+
+/**
+ * Can a Stop hand this project's check to a detached run at all? Not on Windows (no sh) and not
+ * without the project's own `tsc` (the detached run never uses npx). Where it cannot, the old
+ * rules hold: the Stop checks inline when it fits, and a cap verdict expires.
+ */
+function canDetach(projectRoot: string, injected: TscBackgroundStarter | undefined): boolean {
+  if (injected) return true;
+  return process.platform !== 'win32' && localBin('tsc', projectRoot) !== null;
 }
 
 /**
@@ -493,30 +527,41 @@ function clearBg(dir: string): void {
  * verdict stays. Returns whether one is still running (no other check should start meanwhile).
  */
 function harvestBg(dir: string, nowMs: number): boolean {
-  const run = readJson<BgRun>(bgFile(dir, 'bg.json'));
-  if (!run || typeof run.startedAt !== 'number') return false;
+  const run = readJson<BgRun>(join(dir, BG_JSON));
+  if (!run || typeof run.startedAt !== 'number' || typeof run.nonce !== 'string' || !/^[\w-]+$/.test(run.nonce)) {
+    // A record this version cannot read (or a torn one): drop it once it is old enough to be dead.
+    try { if (nowMs - statSync(join(dir, BG_JSON)).mtimeMs > BG_TIMEOUT_MS) rmSync(join(dir, BG_JSON), { force: true }); } catch { /* none */ }
+    return false;
+  }
+  const files = runFiles(dir, run.nonce);
   const age = nowMs - run.startedAt;
-  if (!existsSync(bgFile(dir, 'bg.code'))) {
+  if (!existsSync(files.code)) {
     const pid = typeof run.pid === 'number' ? run.pid : 0;
     if (pid === 0 && age < 10_000) return true; // being started right now
     if (pid > 0 && pidAlive(pid) && age < BG_TIMEOUT_MS) return true;
-    // Over its time, or gone without an exit code: no answer. The edits stay pending.
-    if (pid > 0 && pidAlive(pid)) {
+    const claimed = claimBg(dir, run.nonce);
+    if (!claimed) return existsSync(join(dir, BG_JSON));
+    // Over its time, or gone without an exit code: no answer, the edits stay pending. Only a run
+    // noticed soon after its deadline is ended: a much older pid (a reboot left the record
+    // behind) may belong to another process by now.
+    if (pid > 0 && age < BG_TIMEOUT_MS + 120_000 && pidAlive(pid)) {
       try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ } }
     }
     const meta = readMeta(dir);
     writeMeta(dir, { ...meta, bgFailedAt: nowMs, ...(age >= BG_TIMEOUT_MS ? { capHitAt: nowMs } : {}) });
-    clearBg(dir);
+    try { rmSync(claimed, { force: true }); } catch { /* gone */ }
+    removeRunFiles(dir, run.nonce);
+    sweepOld(dir, nowMs);
     return false;
   }
-  // Claim the harvest: only one reader answers the edits.
-  const claimed = `${bgFile(dir, 'bg.json')}.${process.pid}.harvest`;
-  try { renameSync(bgFile(dir, 'bg.json'), claimed); } catch { return false; }
+  // Claim the harvest: only one reader answers the edits, and only from this run's own files.
+  const claimed = claimBg(dir, run.nonce);
+  if (!claimed) return existsSync(join(dir, BG_JSON));
   try {
     let output: string | null = null;
-    try { output = readFileSync(bgFile(dir, 'bg.out'), 'utf-8'); } catch { /* none */ }
+    try { output = readFileSync(files.out, 'utf-8'); } catch { /* none */ }
     let ms = age;
-    try { ms = Math.max(0, statSync(bgFile(dir, 'bg.code')).mtimeMs - run.startedAt); } catch { /* keep age */ }
+    try { ms = Math.max(0, statSync(files.code).mtimeMs - run.startedAt); } catch { /* keep age */ }
     const snapshot = new Set(Array.isArray(run.snapshot) ? run.snapshot : []);
     const tsconfig = readMeta(dir).tsconfig;
     writeMeta(dir, { tsconfig, lastMs: Math.round(ms) });
@@ -527,37 +572,44 @@ function harvestBg(dir: string, nowMs: number): boolean {
     sweepOld(dir, nowMs);
   } finally {
     try { rmSync(claimed, { force: true }); } catch { /* gone */ }
-    try { rmSync(bgFile(dir, 'bg.out'), { force: true }); } catch { /* gone */ }
-    try { rmSync(bgFile(dir, 'bg.code'), { force: true }); } catch { /* gone */ }
+    removeRunFiles(dir, run.nonce);
   }
   return false;
 }
 
-/** Start a detached check for every edit pending now, unless one runs or recently failed. */
+/**
+ * Start a detached check for every edit pending now, unless one runs, recently failed, or an
+ * inline check holds the lock (the next Stop starts it then). Returns whether one is running.
+ */
 function startBg(dir: string, projectRoot: string, starter: TscBackgroundStarter, nowMs: number): boolean {
   if (harvestBg(dir, nowMs)) return true;
+  sweepOld(dir, nowMs);
   const meta = readMeta(dir);
   if (typeof meta.bgFailedAt === 'number' && nowMs - meta.bgFailedAt < BG_FAIL_BACKOFF_MS) return false;
   const snapshot = listPending(dir).map((p) => p.name);
   if (snapshot.length === 0) return false;
-  const claim: BgRun = { pid: 0, startedAt: nowMs, snapshot };
+  // Never beside an inline check: two writers of one .tsbuildinfo, twice the CPU.
+  if (!acquire(dir, nowMs)) return false;
   try {
-    writeFileSync(bgFile(dir, 'bg.json'), JSON.stringify(claim), { flag: 'wx' });
-  } catch {
-    return true; // another hook claimed it first
+    const claim: BgRun = { pid: 0, startedAt: nowMs, nonce: randomUUID(), snapshot };
+    try {
+      writeFileSync(join(dir, BG_JSON), JSON.stringify(claim), { flag: 'wx' });
+    } catch {
+      return true; // another hook claimed it first
+    }
+    let pid: number | null = null;
+    try { pid = starter(projectRoot, runFiles(dir, claim.nonce)); } catch { pid = null; }
+    if (!pid) {
+      const mine = claimBg(dir, claim.nonce);
+      if (mine) { try { rmSync(mine, { force: true }); } catch { /* gone */ } }
+      return false;
+    }
+    // A check that already ended was harvested from the claim: nothing to record then.
+    if (readJson<BgRun>(join(dir, BG_JSON))?.nonce === claim.nonce) writeAtomic(join(dir, BG_JSON), JSON.stringify({ ...claim, pid }));
+    return true;
+  } finally {
+    release(dir);
   }
-  for (const n of ['bg.out', 'bg.code'] as const) {
-    try { rmSync(bgFile(dir, n), { force: true }); } catch { /* none */ }
-  }
-  let pid: number | null = null;
-  try { pid = starter(projectRoot, { out: bgFile(dir, 'bg.out'), code: bgFile(dir, 'bg.code') }); } catch { pid = null; }
-  if (!pid) {
-    try { rmSync(bgFile(dir, 'bg.json'), { force: true }); } catch { /* gone */ }
-    return false;
-  }
-  // A check that already ended was harvested from the claim: nothing to record then.
-  if (existsSync(bgFile(dir, 'bg.json'))) writeAtomic(bgFile(dir, 'bg.json'), JSON.stringify({ ...claim, pid }));
-  return true;
 }
 
 /** Drop entries a session never collected (it ended, or crashed) once they are a day old. */
@@ -572,6 +624,12 @@ function sweepOld(dir: string, nowMs: number): void {
     }
     for (const name of readdirSync(join(dir, 'pending'))) {
       const p = join(dir, 'pending', name);
+      if (nowMs - statSync(p).mtimeMs > ENTRY_MAX_AGE_MS) rmSync(p, { force: true });
+    }
+    // A detached run's files or claim a crash left behind.
+    for (const name of readdirSync(dir)) {
+      if (!/^bg-.+\.(?:out|code|tmp)$|^bg\.json\..+\.claim$/.test(name)) continue;
+      const p = join(dir, name);
       if (nowMs - statSync(p).mtimeMs > ENTRY_MAX_AGE_MS) rmSync(p, { force: true });
     }
   } catch { /* best-effort */ }
@@ -598,18 +656,22 @@ export function checkEditedFile(tsconfigPath: string, filePath: string, opts: Ts
   const dir = tscStateDir(tsconfigPath, opts.baseDir);
   const started = opts.startedAt ?? now();
   ensureDir(dir, tsconfigPath);
-  // Filed even when no check runs now: the detached check a Stop starts answers it.
-  addPending(dir, opts.sessionId, filePath, now());
-  // A detached check is running, or the project's check does not finish within the cap: no
-  // inline check (it would race the detached one, or be cut off again).
-  if (harvestBg(dir, now()) || overCap(readMeta(dir))) {
+  const detaches = canDetach(dirname(resolve(tsconfigPath)), opts.background);
+  const running = harvestBg(dir, now());
+  if (running || overCap(readMeta(dir), now(), detaches)) {
+    // A detached check is running, or the project's check does not finish within the cap: no
+    // inline check (it would race the detached one, or be cut off again). The edit is filed for
+    // the detached check a Stop starts; where none can run it is not (nothing would answer it).
+    if (running || detaches) addPending(dir, opts.sessionId, filePath, now());
+    sweepOld(dir, now());
     return takeTscResults(opts.sessionId, { baseDir: opts.baseDir, now });
   }
+  addPending(dir, opts.sessionId, filePath, now());
 
   const lastMs = readMeta(dir).lastMs ?? 0;
   // A check too slow for a Stop is still deferred to it where the Stop can start it detached:
   // run here it would hold this edit for up to 25 s and likely hit the cap.
-  const stopDetaches = lastMs > STOP_INLINE_MAX_MS && (opts.background !== undefined || process.platform !== 'win32');
+  const stopDetaches = lastMs > STOP_INLINE_MAX_MS && detaches;
   const deferToStop = lastMs > SLOW_TSC_MS && ((opts.stopBudgetMs ?? Infinity) >= lastMs + 2000 || stopDetaches);
   let own: string | null | undefined;
   if (!deferToStop) {
@@ -663,10 +725,13 @@ export function checkAtStop(sessionId: string, opts: Omit<TscCheckOpts, 'session
     // Only what fits before the hook's own timeout: a check cut off by Claude Code answers
     // nobody, and its edits stay pending for the next hook to answer.
     const fits = () => deadline - now() >= (readMeta(dir).lastMs ?? 0) + 500;
-    if (overCap(meta) || lastMs > STOP_INLINE_MAX_MS || !fits()) {
+    const detaches = canDetach(dirname(tsconfig), opts.background);
+    if (detaches && (overCap(meta, now(), true) || lastMs > STOP_INLINE_MAX_MS || !fits())) {
       startBg(dir, dirname(tsconfig), opts.background ?? defaultTscBackground, now());
       continue;
     }
+    // No detached run here (Windows, no local tsc): the old rules, inline when it fits.
+    if (overCap(meta, now(), false)) continue;
     const ctx: RoundCtx = { dir, projectRoot: dirname(tsconfig), runner, now };
     while (fits()) {
       if (acquire(dir, now())) {
