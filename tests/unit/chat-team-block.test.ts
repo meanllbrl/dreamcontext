@@ -277,6 +277,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // rev 41 (2026-11-12, gece-duzeltme B7): the guide is lookup only (its delegate line is back to the
       // frozen wording, the no-task rule moved to its own bullet).
       '- Before you split work, read the orchestration guide: .claude/skills/dreamcontext/references/super-orchestration.md.',
+      // 2026-11-12 (super-push-red): the push line now says a push his own message named is the child's (`--outward`).
+      '  `git push` and never merge into the default branch yourself (the owner does).',
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Say'),
       expect.stringContaining("in that turn's text, in one line, that a question waits, and end it;"),
       // rev 30 (2026-11-06, owed ledger): only a child's question waits behind his card.
@@ -372,6 +374,11 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,",
       "  install, chores `sonnet` `medium`; multi-file develop, a bug with a repro, analysis `opus` `medium`; security,",
       "  money, data migration, plans `opus` `high`. On `--tool codex|antigravity` the same rows, that tool's small, mid, large model (small: read-only research only).",
+      // rev 42 (2026-11-12, super-push-red): a push, PR or deploy his own message named is the child's (`--outward`); a long brief is a file.
+      "  `git push` and never merge into the default branch yourself. A push, PR or deploy HIS own message",
+      "  named is the child's: `delegate --outward \"<that step>\"` (outside his turn `--origin <ref>`); never a",
+      "  force-push or a default-branch merge. A brief over a line is a file (`_dream_context/tmp/super-prompts/<slug>/brief.md`),",
+      "  `--prompt` one plain line naming it: an inline heredoc or `$(cat …)` is refused in an auto-mode project.",
       '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Write'),
       '  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn, with no text after it',
@@ -422,8 +429,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       // rev 38 (2026-11-09, super-rutin): a scheduled job's turn.
       expect.stringContaining('`event=schedule` or `[super schedule]`: his timed job.'),
-      expect.stringContaining('<super-brief rev=41>'),
+      expect.stringContaining('<super-brief rev=42>'),
     ]);
-    expect(after.length).toBe(before.length + 66); // +1 (2026-11-12, tahta-hizli-duzenle: the area= line) -1 (2026-11-12, owner: the task-filer bullet is the ONE task-filing standard, 2 rows for 3) +8 (rev 41, 2026-11-12, gece-duzeltme B7: the task-filer bullet, 3 rows, the split rows, 3, and the mode rows, 2; the guide line reworded in place) +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 69); // +3 (rev 42, 2026-11-12, super-push-red: the push line gone, four added) +1 (2026-11-12, tahta-hizli-duzenle: the area= line) -1 (2026-11-12, owner: the task-filer bullet is the ONE task-filing standard, 2 rows for 3) +8 (rev 41, 2026-11-12, gece-duzeltme B7: the task-filer bullet, 3 rows, the split rows, 3, and the mode rows, 2; the guide line reworded in place) +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

@@ -894,6 +894,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-origin-',
   'super-origin-home-',
   'super-outbox-home-',
+  'super-outward-',
+  'super-outward-home-',
   'super-owed-',
   'super-owed-home-',
   'super-owner-file-',
