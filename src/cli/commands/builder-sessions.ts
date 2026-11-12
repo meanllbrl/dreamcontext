@@ -45,13 +45,16 @@ import {
 } from '../../lib/builder-spawn.js';
 import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, heavySpawnPlan, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
-import { contentTree, describeHit, dropReceipt, findReceipt, planArgvReceipt, receiptState, receiptsDir, writeReceipt } from '../../lib/check-receipt.js';
+import { contentTree, describeHit, distFingerprint, dropReceipt, findReceipt, planArgvReceipt, receiptState, receiptsDir, writeReceipt } from '../../lib/check-receipt.js';
 import {
-  branchOf, buildCommand, cliSpawnTests, distGateApplies, distProof, distProofHeld, judgeSuiteRun, pinTree, recordToplevel, suiteRecordsHere, summaryFromReport, treeDiff, writeSuiteRecord,
+  branchOf, buildCommand, cliSpawnTests, distGateApplies, distProof, distProofHeld, judgeSuiteRun, pinTree, recordToplevel, seedDist, splitBaseRed, suiteRecordsHere, summaryFromReport, treeDiff, writeSuiteRecord,
+  type BaseRedTest,
 } from '../../lib/suite-record.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { recordCheck, recordStart } from '../../lib/run-ledger.js';
 import {
+  RELATED_FILE_CEILING,
+  incrementalTscArgv,
   ownerOf,
   parseTestReport,
   parseTscErrors,
@@ -59,6 +62,7 @@ import {
   readTestState,
   statePath,
   testArgv,
+  wideRelatedMessage,
   writeTestState,
   type Failure,
   type TestPlan,
@@ -199,7 +203,7 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string, opts
   try {
     exit = await new Promise<number | null>((done) => {
       // heavySpawnPlan: on Windows npx is npx.cmd, which only starts through cmd.exe.
-      const plan = heavySpawnPlan(['npx', ...argv])!;
+      const plan = heavySpawnPlan(['npx', ...incrementalTscArgv(argv, cwd)])!;
       const child = spawn(plan.file, plan.args, { cwd, stdio: ['ignore', fd, fd], shell: plan.shell, windowsVerbatimArguments: plan.windowsVerbatimArguments });
       for (const sig of ['SIGTERM', 'SIGINT'] as const) {
         const onSig = () => { killedBy = sig; child.kill(sig); };
@@ -613,18 +617,37 @@ export async function builderResume(
 
 // ─── wave-end checks ─────────────────────────────────────────────────────────
 
-export interface TestOptions { wave?: string; related?: string[]; failed?: boolean; also?: string[]; fresh?: boolean }
+export interface TestOptions { wave?: string; related?: string[]; failed?: boolean; also?: string[]; fresh?: boolean; wideRelated?: boolean }
 
 const MAX_PRINTED_FAILURES = 25;
 
 /** Past this, `related` was a central file's whole import graph, not "the tests it touched". */
 const RELATED_TEST_CEILING = 1500;
 
+/** Size each package's related set before anything runs; over the ceiling, refuse and name the hub. */
+function refuseWideRelated(root: string, plan: TestPlan): void {
+  for (const t of plan.tests) {
+    if (t.related.length === 0) continue;
+    const cwd = join(root, t.pkg);
+    const total = countRelatedTests(cwd, t.related, RELATED_FILE_CEILING);
+    if (total === null || total <= RELATED_FILE_CEILING) continue;
+    const hubs = t.related
+      .map((file) => ({ file: t.pkg === '.' ? file : `${t.pkg}/${file}`, tests: countRelatedTests(cwd, [file], RELATED_FILE_CEILING + 1) ?? 0 }))
+      .filter((h) => h.tests > RELATED_FILE_CEILING);
+    throw new BuilderInputError(wideRelatedMessage(t.pkg, total, hubs));
+  }
+}
+
 /**
  * The lead's wave-end check: type-check + related tests once, through the heavy lock. Exit 0
  * green, 1 failures (each with its key and owning lane), 75 when a check did not run at all.
  */
 export async function builderTest(deps: SessionDeps, slug: string | undefined, opts: TestOptions): Promise<number> {
+  // Sized first, on every path, so "Nothing was run" is true (a --failed record rerun is a check too).
+  if (!opts.wideRelated && (opts.related?.length ?? 0) > 0) {
+    const root = deps.root();
+    refuseWideRelated(root, planChecks(root, normalizeOwns(root, opts.related ?? [])));
+  }
   // No task: rerun what a whole-suite record left open (plan C3).
   if (slug === undefined) {
     if (!opts.failed) throw new BuilderInputError('give a task slug and --wave <n|final>, or --failed alone to rerun the red files of a full suite on this worktree');
@@ -671,7 +694,9 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
     return 0;
   }
 
-  const failures: Failure[] = [];
+  if (plan.tests.length > 0) noteDist(deps, root);
+
+  let failures: Failure[] = [];
   const notRun: string[] = [];
   const ranTsc = new Set<string>();
   const tscFailedNow = new Set<string>();
@@ -737,6 +762,11 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
     }
   }
 
+  // Already red on the base this branch grew from: printed apart, never counted (audit OR-2).
+  const split = splitBaseRed(recordToplevel(root), failures);
+  failures = split.mine;
+  const baseRed = split.baseRed;
+
   // State: what ran this time replaces its earlier status; what did not run keeps it.
   state.runs += 1;
   state.tscFailed = [...new Set([...state.tscFailed.filter((p) => !ranTsc.has(p)), ...tscFailedNow])].sort();
@@ -757,19 +787,39 @@ async function builderTestWave(deps: SessionDeps, slug: string, wave: TestWave, 
     deps.print(`FAIL ${owner ?? `? (no lane owns ${f.file})`}: ${f.key}${again}`);
   }
   if (failures.length > MAX_PRINTED_FAILURES) deps.print(`... and ${failures.length - MAX_PRINTED_FAILURES} more (see the logs above)`);
+  if (baseRed.length > 0 && split.record) {
+    deps.print(`${baseRed.length} failure(s) were already red on ${split.record.sha.slice(0, 12)}, the base this branch grew from (recorded ${split.record.at.slice(0, 16).replace('T', ' ')}): not yours, not counted. The cut's suite owns them.`);
+    for (const f of baseRed.slice(0, MAX_PRINTED_FAILURES)) deps.print(`BASE-RED (not yours): ${f.key}`);
+    if (baseRed.length > MAX_PRINTED_FAILURES) deps.print(`... and ${baseRed.length - MAX_PRINTED_FAILURES} more base-red`);
+  }
   for (const n of notRun) deps.print(`NOT RUN: ${n} (the wait ran out, could not start, or killed; the line above names who is ahead and your place is kept): do other work first, then run the same command`);
 
   const remaining = state.tscFailed.length > 0 || Object.keys(state.failedTests).length > 0;
   if (failures.length === 0 && notRun.length === 0 && !remaining) {
     rmSync(sp, { force: true });
+    const besides = baseRed.length > 0 ? ` (${baseRed.length} base-red, not yours)` : '';
     deps.print(uncovered.length === 0
-      ? `wave ${wave}: GREEN`
+      ? `wave ${wave}: GREEN${besides}`
       : `wave ${wave}: nothing failed, but NOT GREEN: no test covers ${uncovered.join(', ')}. Add --also <test files>, or say in the report that it is untested`);
     return 0;
   }
   writeTestState(sp, state);
   if (failures.length > 0 || remaining) return 1;
   return HEAVY_LOCK_BUSY_EXIT;
+}
+
+/**
+ * A worktree with no `dist/` turns every CLI-spawn test red for a reason the job did not cause.
+ * Copy a sibling's green build of this code when there is one; otherwise say so before the run.
+ */
+function noteDist(deps: SessionDeps, root: string): void {
+  try {
+    const top = recordToplevel(root);
+    if (distFingerprint(top) !== '' || !distGateApplies(top)) return;
+    const seeded = seedDist(top);
+    if (seeded.from) deps.print(`dist/: this worktree had none; ${seeded.why}`);
+    else deps.print(`dist/: this worktree has none and ${seeded.why}, so the tests that run the built CLI will fail. Build first: dreamcontext builder heavy -- ${buildCommand(top) ?? 'npm run build'}`);
+  } catch { /* the run says what it finds */ }
 }
 
 const relativeTo = (root: string, p: string) => p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
@@ -852,6 +902,7 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
     deps.print(`${name}: rerunning ${explicit.length} file(s) by name (${r.files.length - gone.length} red${cli.length ? `, ${cli.length} CLI-spawn` : ''}) + tests related to ${related.length} changed file(s) since ${base!.slice(0, 12)}`);
     const tag = `${r.id}-${Date.now()}`;
     const failureFiles: string[] = [];
+    const redIds: BaseRedTest[] = [];
     const ranFiles = new Set<string>();
     let worstExit = 0;
     let noReport = false;
@@ -870,6 +921,7 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
       const report = parseTestReport(readFileSync(out, 'utf-8'), top);
       for (const f of report.files) ranFiles.add(f);
       failureFiles.push(...report.failures.map((f) => f.file));
+      for (const f of report.failures) if (f.test !== undefined) redIds.push({ file: f.file, test: f.test });
       if (mode === 'related' && report.total > RELATED_TEST_CEILING) deps.print(`${name}: ${report.total} tests: the scope of the diff ran close to the whole suite, because ${related.length} file(s) changed since ${base!.slice(0, 12)} reach most tests (scope of the diff, not a second full run)`);
       deps.print(`${name} ${mode}: ${report.total} test(s), ${new Set(report.failures.map((f) => f.file)).size} file(s) red (log ${relativeTo(top, log)})`);
     }
@@ -883,7 +935,9 @@ export async function builderTestRecords(deps: SessionDeps, opts: { related?: st
       deps.print(`${name}: GREEN, the record is closed and kept (green tree ${now.slice(0, 12)}); a second --failed says "nothing open"`);
       codes.push(RECORD_GREEN_EXIT);
     } else if (j.state === 'red' && now && pinTree(top, r.id, 'red', now)) {
-      writeSuiteRecord({ ...r, state: 'red', files: j.files, redTree: now, reason: j.reason, at });
+      // A required file that ran no tests has no id: it stands as a load failure.
+      const ids = [...redIds, ...j.files.filter((f) => !redIds.some((t) => t.file === f)).map((file) => ({ file, test: null }))];
+      writeSuiteRecord({ ...r, state: 'red', files: j.files, redTree: now, reason: j.reason, at }, { tests: ids });
       deps.print(`${name}: still RED, ${j.files.length} file(s): fix them, then the same command again`);
       for (const f of j.files) deps.print(`  red: ${f}`);
       codes.push(RECORD_RED_EXIT);
@@ -970,6 +1024,7 @@ export function registerBuilderSessionCommands(cmd: Command, deps: SessionDeps =
     .option('--failed', 'Re-run only what failed last time (plus --related when given); with no task, the red files of this worktree\'s full-suite record plus the tests related to what changed since')
     .option('--also <tests...>', 'Test files related cannot see (they read files by path)')
     .option('--fresh', 'Run every check even when a green receipt for the same code exists (the run is recorded)')
+    .option('--wide-related', 'Run --related even when it pulls in nearly the whole suite (a central file); the default refuses and names the file')
     .description(`Wave-end check through the heavy lock: exit 0 green, 1 failures (key + owning lane), ${HEAVY_LOCK_BUSY_EXIT} a check did not run. With --failed and no task: 0 green (the record closes, kept), 1 still red, ${RECORD_INCOMPLETE_EXIT} incomplete or no record, ${RECORD_BUILD_FIRST_EXIT} build first`)
     .action((slug: string | undefined, opts: TestOptions) => run(deps, () => builderTest(deps, slug, opts)));
 
