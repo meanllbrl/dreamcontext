@@ -62,6 +62,7 @@
     "verify:chat-questions": "node scripts/verify/chat-questions.mjs",
     "verify:train-me": "node scripts/verify/train-me.mjs",
     "verify:chat-scroll": "node scripts/verify/chat-scroll.mjs",
+    "verify:super-unread-follow": "node scripts/verify/super-unread-follow.mjs",
     "verify:past-chats": "node scripts/verify/past-chats.mjs",
     "verify:past-chats-ui": "node scripts/verify/past-chats-ui.mjs",
     "verify:pdf-viewer": "node scripts/verify/pdf-viewer.mjs",

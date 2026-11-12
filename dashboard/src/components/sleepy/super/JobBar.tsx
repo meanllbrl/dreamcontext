@@ -18,6 +18,7 @@ import {
 import type { Rect } from './superLayout';
 import { SuperAgentIcon } from '../../layout/NavIcons';
 import { cssEsc } from './StageMotion';
+import { SUPER_QUESTION_EVENT, type SuperQuestionDetail } from './superUnread';
 import { showApprovalRow, showMemberApproval } from './superApprovals';
 import './JobBar.css';
 import { noteOwnerWrote } from '../../../lib/ownerAtMac';
@@ -422,7 +423,8 @@ export function showOwnerCard(wait: { kind: string; id: string } | undefined): v
   window.requestAnimationFrame(find);
 }
 
-/** Bring the question's card in the super chat into view and put the keyboard on it. False when
+/** Bring the question's card in the super chat into view and put the keyboard on it (the pane may
+ *  first show unread information above it, `SUPER_QUESTION_EVENT`). False when
  *  no card is drawn (the chat not on screen): the caller falls back. The band's Answer and the
  *  agenda's Waiting row both open a question this one way. `root` is the Super session's own
  *  container (wherever it is homed: the stage centre or the dock); without it, the centre. */
@@ -431,8 +433,15 @@ export function showQuestionCard(itemId: string, root?: ParentNode | null): bool
   const sel = root ? '[data-testid="super-question-card"]' : '[data-super-slot="centre"] [data-testid="super-question-card"]';
   const card = [...scope.querySelectorAll<HTMLElement>(sel)].find((el) => el.dataset.item === itemId);
   if (!card || !card.isConnected) return false;
-  const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  // The Super pane takes the door (owner K1 = A, 2026-11-12): unread information above the card,
+  // off screen, is shown first and the next press brings the card; it says where it went.
+  const detail: SuperQuestionDetail = { item: itemId };
+  const handled = !card.dispatchEvent(new CustomEvent(SUPER_QUESTION_EVENT, { bubbles: true, cancelable: true, detail }));
+  if (handled && detail.landed === 'unread') return true;
+  if (!handled) {
+    const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  }
   // The card's page is its focus target (SurveyCard focuses it on paging): its keys work at once.
   card.querySelector<HTMLElement>('.chat-surveycard-page:not([inert])')?.focus({ preventScroll: true });
   return true;

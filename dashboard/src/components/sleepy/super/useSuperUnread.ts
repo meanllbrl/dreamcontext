@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { ApiClient } from '../../../api/client';
 import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
-  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, mostlyVisible, nextUnreadIndex, ownerCanRead, readMarksOf, sideOf, unreadOf, unreadUnits, withRead,
+  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, nextUnreadIndex, ownerCanRead, readMarksOf, sideOf, startSeen, startSide, unreadOf, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
 import { dropSuperUnread, publishSuperUnread } from './superUnreadStore';
@@ -21,6 +21,12 @@ export type UnreadEdge = 'up' | 'down' | null;
 
 export interface SuperUnread {
   count: number;
+  /** What is unread, oldest first: the follow keeps the first one's start in view. */
+  units: readonly UnreadUnit[];
+  /** The next jump goes to a question card: the pill names it (owner 2026-11-12). */
+  nextQuestion: boolean;
+  /** The marks are loaded: what is unread is known (before that, nothing is). */
+  ready: boolean;
   /** Where the nearest unread out of view lies; null: all of it is on screen. */
   edge: UnreadEdge;
   /** Where the next jump goes. */
@@ -87,6 +93,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
 }): SuperUnread {
   const [marks, setMarks] = useState<ReadMarks | null>(null);
   const [edge, setEdge] = useState<UnreadEdge>(null);
+  const [nextQuestion, setNextQuestion] = useState(false);
   const pending = useRef<ReadMark[]>([]);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A member's marks are its own (`?superId=m:<slug>`); main's requests are unchanged.
@@ -106,7 +113,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   }, []);
 
   useEffect(() => {
-    if (!enabled) { setMarks(null); setEdge(null); pending.current = []; return undefined; }
+    if (!enabled) { setMarks(null); setEdge(null); setNextQuestion(false); pending.current = []; return undefined; }
     let live = true;
     const load = () => {
       void apiRef.current.get<unknown>('/agent/super-read').then((raw) => {
@@ -199,6 +206,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   const markAll = useCallback(() => {
     markRead(unreadRef.current);
     setEdge(null);
+    setNextQuestion(false);
   }, [markRead]);
 
   const rowOfUnit = useCallback((u: UnreadUnit) => {
@@ -279,6 +287,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   useEffect(() => {
     if (!watching) {
       setEdge(null);
+      setNextQuestion(false);
       started.current = new Map();
       missing.current = new Map();
       return undefined;
@@ -321,16 +330,21 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
           return;
         }
         const row = spanOf(el);
-        if (mostlyVisible(row, view)) { visible.push(unitId(u)); return; }
-        const side = sideOf(row, view);
+        // Seen needs the START on screen (owner 2026-11-12): the end of a tall message filling
+        // the view is not a read, and its arrow points at where it begins.
+        if (startSeen(row, view)) { visible.push(unitId(u)); return; }
+        const side = startSide(row, view);
         if (side === 'above') next = 'up';
         else if (next === null && side === 'below') next = 'down';
       });
       missing.current = waiting;
       // The arrow says where the next click goes: a walk goes on down past what it left above.
       const walked = walkingRef.current() && walkedTo.current?.isConnected ? spanOf(walkedTo.current) : null;
-      if (walked && rows.some((el) => { const r = el && spanOf(el); return !!r && r.top > walked.top && sideOf(r, view) === 'below'; })) next = 'down';
+      if (walked && rows.some((el) => { const r = el && spanOf(el); return !!r && r.top > walked.top && startSide(r, view) === 'below'; })) next = 'down';
       setEdge(next);
+      // A peek at where the next jump goes, never `next()` (that moves the walk).
+      const peek = next ? units[nextUnreadIndex(rows.map((el) => (el ? spanOf(el) : null)), view, walked)] : undefined;
+      setNextQuestion(!!peek?.question);
       const step = advanceDwell(started.current, canRead ? visible : [], Date.now());
       started.current = step.started;
       const seen = new Set(step.seen);
@@ -365,5 +379,5 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   useEffect(() => { tickRef.current(); }, [unreadKey]);
   const look = useCallback(() => { tickRef.current(); }, []);
 
-  return { count, edge, next, rowOf: rowOfUnit, look, markAll };
+  return { count, units: unread, nextQuestion, ready: enabled && !!marks, edge, next, rowOf: rowOfUnit, look, markAll };
 }

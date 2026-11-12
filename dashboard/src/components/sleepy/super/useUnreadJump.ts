@@ -9,21 +9,22 @@ import { lineHostOf } from './useSuperUnread';
  * after a reveal's hold has settled. The caller owns `glideRef`: its pin and hold stand aside
  * while that is set, and its input handlers end a jump through `stopGlideRef`.
  */
-export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landing, flashMs, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef }: {
+export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landingOf, flashMs, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef }: {
   scrollRef: RefObject<HTMLElement | null>;
   rowOf: (u: UnreadUnit) => HTMLElement | null;
   look: () => void;
   measureTop: (node: Element, scroller: HTMLElement) => number;
-  /** Where the row lands below the view's top: its line and a strip in view, nothing over them. */
-  landing: number;
+  /** Where the row lands below the view's top: its line and a strip in view, nothing over them;
+   *  a question card whole when it fits (landingFor). */
+  landingOf: (unit: UnreadUnit, row: HTMLElement, scroller: HTMLElement) => number;
   flashMs: number;
   captureAnchor: () => void;
   prevTopRef: MutableRefObject<number>;
   restoreTopRef: MutableRefObject<number>;
   glideRef: MutableRefObject<{ frame: number } | null>;
   stopGlideRef: MutableRefObject<() => void>;
-}): (unit: UnreadUnit) => void {
-  const [jump, setJump] = useState<{ unit: UnreadUnit; n: number } | null>(null);
+}): (unit: UnreadUnit, opts?: { instant?: boolean }) => void {
+  const [jump, setJump] = useState<{ unit: UnreadUnit; n: number; instant: boolean } | null>(null);
   useLayoutEffect(() => {
     if (!jump) return undefined;
     stopGlideRef.current();
@@ -32,14 +33,15 @@ export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landing, fla
     if (!scroller || !row) return undefined;
     const target = () => Math.max(0, Math.min(
       scroller.scrollHeight - scroller.clientHeight,
-      measureTop(lineHostOf(row), scroller) - landing,
+      measureTop(lineHostOf(row), scroller) - landingOf(jump.unit, row, scroller),
     ));
     const write = (top: number) => {
       scroller.scrollTop = top;
       prevTopRef.current = scroller.scrollTop;
       restoreTopRef.current = scroller.scrollTop;
     };
-    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // An opened pane's first landing is instant: no glide on arrival.
+    const still = jump.instant || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const from = still ? target() : glideFrom(scroller.scrollTop, target());
     write(from);
     const glide = { frame: 0 };
@@ -64,9 +66,12 @@ export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landing, fla
       else land();
     };
     if (still) land(); else glide.frame = requestAnimationFrame(step);
+    if (jump.instant) return () => { land(); };
     row.setAttribute('data-reply-flash', '');
     const flash = setTimeout(() => row.removeAttribute('data-reply-flash'), flashMs);
     return () => { clearTimeout(flash); row.removeAttribute('data-reply-flash'); land(); };
-  }, [jump, scrollRef, rowOf, look, measureTop, landing, flashMs, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef]);
-  return useCallback((unit: UnreadUnit) => { setJump((prev) => ({ unit, n: (prev?.n ?? 0) + 1 })); }, []);
+  }, [jump, scrollRef, rowOf, look, measureTop, landingOf, flashMs, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef]);
+  return useCallback((unit: UnreadUnit, opts?: { instant?: boolean }) => {
+    setJump((prev) => ({ unit, n: (prev?.n ?? 0) + 1, instant: !!opts?.instant }));
+  }, []);
 }
