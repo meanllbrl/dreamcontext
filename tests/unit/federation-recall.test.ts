@@ -13,6 +13,7 @@ import {
   type CrossVaultTarget,
 } from '../../src/lib/federation-recall.js';
 import { addConnection, markStale } from '../../src/lib/connections.js';
+import { writeDigest } from '../../src/lib/session-digest.js';
 
 function makeHome(): string {
   const dir = join(tmpdir(), `dc-fedrecall-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -195,6 +196,31 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
     // …but the user's OWN automations must stay first-class: plain `memory recall`
     // takes this federated path by default whenever any peer is connected.
     expect(slugs).toContain('my-digest');
+  });
+
+  it('curatedPeers: a peer never serves its session digests, nor its changelog unless asked for by type; the current vault keeps both', () => {
+    const cur = makeVault(base, 'cur', { home });
+    const peer = makeVault(base, 'peer', { home });
+    for (const v of [cur, peer]) {
+      writeDigest(join(v, '_dream_context'), `sess-${v === cur ? 'cur' : 'peer'}`, '## Decisions\n\nWe moved the quokka scheduler to a queue.\n');
+      mkdirSync(join(v, '_dream_context', 'core'), { recursive: true });
+      writeFileSync(join(v, '_dream_context', 'core', 'CHANGELOG.json'), JSON.stringify([
+        { date: '2026-10-01', type: 'feat', scope: 'quokka', description: 'Quokka scheduler queue shipped', summary: 'quokka scheduler queue' },
+      ]));
+      writeKnowledge(v, `${v === cur ? 'cur' : 'peer'}-quokka`, 'quokka scheduler queue design');
+    }
+    const vaults = [{ name: 'cur', current: true }, { name: 'peer' }];
+    // Without the flag (the Assistant's cross-brain search) a peer's digests still serve.
+    const all = crossVaultRecall('quokka scheduler queue', { vaults, home, topK: 20 }).hits.map((h) => h.key);
+    expect(all.some((k) => k.startsWith('peer::task/digest#'))).toBe(true);
+    const keys = crossVaultRecall('quokka scheduler queue', { vaults, home, topK: 20, curatedPeers: true }).hits.map((h) => h.key);
+    expect(keys).toContain('peer::knowledge/peer-quokka');
+    expect(keys.filter((k) => k.startsWith('peer::'))).toEqual(['peer::knowledge/peer-quokka']);
+    expect(keys.some((k) => k.startsWith('cur::task/digest#'))).toBe(true);
+    expect(keys.some((k) => k.startsWith('cur::changelog/'))).toBe(true);
+
+    const asked = crossVaultRecall('quokka scheduler queue', { vaults, home, topK: 20, types: ['changelog'], curatedPeers: true }).hits.map((h) => h.key);
+    expect(asked.some((k) => k.startsWith('peer::changelog/'))).toBe(true);
   });
 
   it('honours minLevel across vaults', () => {

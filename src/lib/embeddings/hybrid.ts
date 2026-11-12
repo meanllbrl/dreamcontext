@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { CHANGELOG_RANK_FACTOR, bm25Search, docKey, docRankPrior, type Bm25Options, type CorpusDoc, type RecallHit } from '../recall.js';
+import { CHANGELOG_RANK_FACTOR, bm25Search, collapseTaskFamilies, docKey, docRankPrior, queryTermCount, type Bm25Options, type CorpusDoc, type RecallHit } from '../recall.js';
 import {
   readRecallCloudConfig,
   readVaultConsent,
@@ -301,14 +301,21 @@ export function denseRankAgg(
 /**
  * Skip the dense channel (and everything that costs a network call) when BM25 is already sure:
  * top raw ≥ rawSure, or ≥ rawLead with a top1/top2 rankScore lead ≥ leadRatio.
+ *
+ * Raw BM25 is a sum over query terms, so it grows with the query: a 1,000-char prompt cleared
+ * rawSure on noise alone and dense never ran above 1,000 chars (0 of 80, audit MM-12). Both
+ * thresholds scale with `queryTerms / gate.refTerms` once the query is longer than the queries
+ * the gate was tuned on; a query of refTerms or fewer is gated exactly as before.
  */
-export function shouldSkipDense(bm25: RecallHit[], gate: DenseGate | null): boolean {
+export function shouldSkipDense(bm25: RecallHit[], gate: DenseGate | null, queryTerms = 0): boolean {
   if (gate === null || bm25.length === 0) return false;
+  const scale = gate.refTerms !== undefined && queryTerms > gate.refTerms ? queryTerms / gate.refTerms : 1;
   const topRaw = Math.max(0, ...bm25.map((h) => h.score));
-  if (topRaw >= gate.rawSure) return true;
-  if (topRaw < gate.rawLead || bm25.length < 2 || bm25[1].rankScore <= 0) return false;
+  if (topRaw >= gate.rawSure * scale) return true;
+  if (topRaw < gate.rawLead * scale || bm25.length < 2 || bm25[1].rankScore <= 0) return false;
   return bm25[0].rankScore / bm25[1].rankScore >= gate.leadRatio;
 }
+
 
 /**
  * Fuse BM25 and dense candidates under `p`. The BM25 confidence picks the fusion type exactly as the
@@ -573,7 +580,7 @@ async function cloudSearch(
   const evalMinted = opts.evalConsent === true && isUnderEvalFrozenDir(contextRoot, home);
   const params = opts.fusionParams ?? FUSION_BY_TIER[eff];
   const budget = cloudBudget(evalMinted);
-  if (shouldSkipDense(bm25Hits, params.denseGate)) {
+  if (shouldSkipDense(bm25Hits, params.denseGate, queryTermCount(query))) {
     timing.fallback = 'bm25_confident';
     return bm25Hits.slice(0, topK);
   }
@@ -716,16 +723,20 @@ export async function hybridSearch(
   timing.fallback = 'none';
 
   const t0 = performance.now();
-  const bm25Hits = bm25Search(query, corpus, POOL, opts);
+  // The fusion pool keeps every file of a task; with `collapseFamilies` the fused list folds them
+  // (collapseTaskFamilies), so the topK slots go to distinct tasks and a task's best file stands.
+  const bm25Hits = bm25Search(query, corpus, POOL, { ...opts, collapseFamilies: false });
   timing.bm25Ms = Math.round(performance.now() - t0);
+  const wide = Math.max(topK, POOL);
+  const fold = (hits: RecallHit[]): RecallHit[] => (opts.collapseFamilies === true ? collapseTaskFamilies(hits, topK) : hits.slice(0, topK));
 
   if (eff !== 'local') {
-    const cloud = await cloudSearch(query, corpus, contextRoot, topK, eff, bm25Hits, opts, timing, home);
-    if (cloud !== null) return cloud;
+    const cloud = await cloudSearch(query, corpus, contextRoot, wide, eff, bm25Hits, opts, timing, home);
+    if (cloud !== null) return fold(cloud);
     // Cloud could not answer: e5 only when it is READY (a fallback never downloads or indexes).
-    if (!localReady(contextRoot)) return bm25Hits.slice(0, topK);
+    if (!localReady(contextRoot)) return fold(bm25Hits);
   }
-  return localSearch(query, corpus, contextRoot, topK, bm25Hits, opts, timing);
+  return fold(await localSearch(query, corpus, contextRoot, wide, bm25Hits, opts, timing));
 }
 
 async function localSearch(
@@ -779,7 +790,7 @@ async function localSearch(
     // Adaptive (default): the shipped local-tier constants (FUSION_BY_TIER.local), unless the caller supplies parameters.
     const local = FUSION_BY_TIER.local;
     const params = opts.fusionParams ?? { ...local, pinMargin: opts.pinMargin ?? local.pinMargin };
-    if (shouldSkipDense(bm25Hits, params.denseGate)) {
+    if (shouldSkipDense(bm25Hits, params.denseGate, queryTermCount(query))) {
       timing.querySource = 'none';
       timing.fallback = cloudFallback === 'none' ? 'bm25_confident' : cloudFallback;
       return bm25Hits.slice(0, topK);

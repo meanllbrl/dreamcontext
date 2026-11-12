@@ -34,9 +34,16 @@ describe('the dashboard search path', () => {
     expect(fake.calls).toHaveLength(0);
   });
 
-  it('the route source never resolves or passes a tier', () => {
-    const src = readFileSync(join(__dirname, '../../src/server/routes/recall.ts'), 'utf-8');
-    expect(src).not.toMatch(/resolvePromptTier|readVaultTier|tier\s*:/);
+  it('the search route source never resolves or passes a tier', () => {
+    // The same file holds POST /api/recall/prompt, which serves a CLI's resolved tier on purpose
+    // (recall-served-tier.test.ts). The guard is on the per-keystroke GET handler and what it calls.
+    const file = readFileSync(join(__dirname, '../../src/server/routes/recall.ts'), 'utf-8');
+    const start = file.indexOf('export async function handleRecallGet(');
+    const end = file.indexOf('\nexport ', start + 1);
+    expect(start).toBeGreaterThan(-1);
+    const src = file.slice(start, end);
+    const corpusHelper = file.slice(file.indexOf('function corpusFor('), file.indexOf('\n}\n', file.indexOf('function corpusFor(')));
+    for (const part of [src, corpusHelper]) expect(part).not.toMatch(/resolvePromptTier|readVaultTier|servedTier|tier\s*:/);
     expect(src).toMatch(/hybridSearch\(query, corpus, contextRoot, topK\)/);
   });
 });

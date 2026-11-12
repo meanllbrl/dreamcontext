@@ -244,9 +244,12 @@ const CLIP_LINE_CHARS = [1_200, 600, 300, 160];
 const joined = (blocks: readonly PromptBlock[]): string =>
   blocks.filter((b) => b.text !== '').map((b) => b.text).join('\n');
 
+/** A hit's own line (`  [knowledge] knowledge/x.md …`): the path the agent opens, never cut. */
+const HIT_PATH_LINE = /^\s*\[[\w-]+\] \S/;
+
 function clipLines(text: string, max: number): string {
   return text.split('\n').map((line) => {
-    if (line.length <= max) return line;
+    if (line.length <= max || HIT_PATH_LINE.test(line)) return line;
     const chars = Array.from(line.slice(0, max));
     return `${chars.join('')}…`;
   }).join('\n');
@@ -255,15 +258,21 @@ function clipLines(text: string, max: number): string {
 const RECALL_CLIP_NOTE = '  (Long entries clipped to fit this turn: open the files named above for the full text.)';
 
 /**
- * Bring one turn's output under `max`, keeping order. Long snippets are clipped first (each hit
- * keeps its path), then a pattern's pasted body becomes a pointer, then whole blocks go, peers
- * first, and `overflow` carries what went. `must` and `gate` are the last to be touched, and the
- * top of `must` the very last.
+ * Bring one turn's output under `max`, keeping order. A pattern's pasted body becomes a pointer
+ * first (the pointer is the whole rule's path, so nothing is lost), then long snippets are clipped,
+ * never a hit's path line (audit MM-4: 21% of hits arrived cut mid-path and could not be opened),
+ * then whole blocks go, peers first, and `overflow` carries what went. `must` and `gate` are the
+ * last to be touched, and the top of `must` the very last.
  */
 export function fitPromptContext(input: readonly PromptBlock[], max: number = HOOK_OUTPUT_MAX_CHARS): FittedPrompt {
   const blocks = input.map((b) => ({ ...b }));
   const full = joined(blocks);
   if (full.length <= max) return { text: full, overflow: null };
+
+  for (const b of blocks) {
+    if (b.kind === 'patterns' && b.compact !== undefined) b.text = b.compact;
+  }
+  if (joined(blocks).length <= max) return { text: joined(blocks), overflow: null };
 
   const clipped = new Set<PromptBlock>();
   for (const limit of CLIP_LINE_CHARS) {
@@ -276,11 +285,6 @@ export function fitPromptContext(input: readonly PromptBlock[], max: number = HO
   }
   const noteAt = [...clipped].find((b) => b.kind === 'recall') ?? [...clipped][0];
   if (noteAt) noteAt.text = `${noteAt.text}\n${RECALL_CLIP_NOTE}`;
-  if (joined(blocks).length <= max) return { text: joined(blocks), overflow: null };
-
-  for (const b of blocks) {
-    if (b.kind === 'patterns' && b.compact !== undefined) b.text = b.compact;
-  }
   if (joined(blocks).length <= max) return { text: joined(blocks), overflow: null };
 
   // From here a whole block goes, so the agent is told and the full text stays on disk: a decided
@@ -313,4 +317,51 @@ export function writePromptOverflow(sessionId: string, text: string, home: strin
   const file = join(dir, `${sessionId.replace(/[^\w-]/g, '') || 'session'}.prompt-overflow.txt`);
   writeFileSync(file, text, { encoding: 'utf-8', mode: 0o600 });
   return file;
+}
+
+// ─── Once per session ───────────────────────────────────────────────────────
+
+/** The long fixed blocks a prompt prints in full once per session, then as one line (audit MM-3). */
+export type SessionOnceKey = 'authorization' | 'gate' | 'patterns';
+
+function seenFile(sessionId: string, home: string): string {
+  return join(home, '.dreamcontext', 'prompt-seen', `${sessionId.replace(/[^\w-]/g, '')}.json`);
+}
+
+/** Markers older than this belong to sessions long gone. */
+const SEEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * True the first time `key` is asked for in this session, and marks it; false after. With no
+ * session id (or an unwritable home) it is always true: a block printed twice costs tokens, a block
+ * never printed costs the rule. {@link resetSessionOnce} (SessionStart, including after a compact,
+ * which drops the earlier turns from context) makes the next prompt print them in full again.
+ */
+export function firstInSession(sessionId: string, key: SessionOnceKey, home: string = homedir()): boolean {
+  if (!sessionId.replace(/[^\w-]/g, '')) return true;
+  const file = seenFile(sessionId, home);
+  let seen: string[] = [];
+  try { seen = (JSON.parse(readFileSync(file, 'utf-8')) as { seen?: unknown }).seen as string[] ?? []; } catch { seen = []; }
+  if (!Array.isArray(seen)) seen = [];
+  if (seen.includes(key)) return false;
+  try {
+    mkdirSync(join(home, '.dreamcontext', 'prompt-seen'), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ seen: [...seen, key] }), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, file);
+  } catch { /* unmarked: the next prompt prints it in full again */ }
+  return true;
+}
+
+/** Forget what this session was shown (SessionStart: startup, resume, clear, compact), and sweep old markers. */
+export function resetSessionOnce(sessionId: string, home: string = homedir()): void {
+  const dir = join(home, '.dreamcontext', 'prompt-seen');
+  try { if (sessionId.replace(/[^\w-]/g, '')) rmSync(seenFile(sessionId, home), { force: true }); } catch { /* best effort */ }
+  try {
+    const now = Date.now();
+    for (const name of readdirSync(dir)) {
+      const file = join(dir, name);
+      if (now - statSync(file).mtimeMs > SEEN_TTL_MS) rmSync(file, { force: true });
+    }
+  } catch { /* no markers yet */ }
 }

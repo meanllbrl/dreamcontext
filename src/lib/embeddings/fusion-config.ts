@@ -5,6 +5,12 @@ export interface DenseGate {
   rawSure: number;
   rawLead: number;
   leadRatio: number;
+  /**
+   * Query length (distinct BM25 terms) the thresholds were tuned at. A longer query scales both raw
+   * thresholds by queryTerms / refTerms, since raw BM25 is a sum over terms (audit MM-12). Absent =
+   * no scaling.
+   */
+  refTerms?: number;
 }
 
 export interface FusionParams {
@@ -63,10 +69,13 @@ export const SPIKE_RERANK_MODEL: RerankModel = 'voyageai/rerank-2.5-lite';
  * production value. The dense gate is the most aggressive one that lost no r@5 hit in any language
  * and no r@1 hit on train + legacy.
  */
+/** The longest train gold query the gate was tuned on (eval/gold-v2/train.jsonl: p50 15, max 21 distinct terms), so every tuned query is gated exactly as before. */
+const REF_TERMS = 21;
+
 const VOYAGE_CORE: FusionParams = {
   ...PRODUCTION,
   relativeLambda: 0.7,
-  denseGate: { rawSure: 60, rawLead: 14, leadRatio: 2 },
+  denseGate: { rawSure: 60, rawLead: 14, leadRatio: 2, refTerms: REF_TERMS },
 };
 
 export const FUSION_BY_TIER: Record<RecallTier, FusionParams> = {

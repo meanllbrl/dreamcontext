@@ -1337,6 +1337,8 @@ describe('hook user-prompt-submit (integration)', () => {
   let tmpDir: string;
   let ctx: string;
   let savedRecallMode: string | undefined;
+  let savedHome: string | undefined;
+  let fakeHome: string;
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
@@ -1354,6 +1356,12 @@ describe('hook user-prompt-submit (integration)', () => {
     // spreads process.env, so it is pinned too.
     savedRecallMode = process.env.DREAMCONTEXT_RECALL_MODE;
     process.env.DREAMCONTEXT_RECALL_MODE = 'raw';
+    // The hook keeps which long blocks a session was already shown under HOME
+    // (hook-delivery.ts firstInSession): a fake HOME per test, so a reused session id
+    // starts fresh and nothing lands in the developer's own home.
+    savedHome = process.env.HOME;
+    fakeHome = mkdtempSync(join(tmpdir(), 'dc-ups-home-'));
+    process.env.HOME = fakeHome;
   });
 
   afterEach(() => {
@@ -1361,6 +1369,27 @@ describe('hook user-prompt-submit (integration)', () => {
     delete process.env.DREAMCONTEXT_VERSION_CHECK;
     if (savedRecallMode === undefined) delete process.env.DREAMCONTEXT_RECALL_MODE;
     else process.env.DREAMCONTEXT_RECALL_MODE = savedRecallMode;
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it('prints the long blocks in full once per session, one line after, in full again after a SessionStart (MM-3)', () => {
+    writeSleep(ctx, { debt: 2, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const env = { ...process.env, DREAMCONTEXT_SKILLS_HOOK: '0' };
+    delete env.DREAMCONTEXT_PROMPT_ONCE;
+    const ask = (prompt: string) => runWithStdin('hook user-prompt-submit', JSON.stringify({ session_id: 'once-1', prompt }), tmpDir, env);
+    const first = ask('what does the soul say about the project identity');
+    expect(first).toContain(DISPATCH_PREAMBLE_MARKER);
+    const second = ask('and what about the project identity rules');
+    expect(second).not.toContain(DISPATCH_PREAMBLE_MARKER);
+    expect(second).toMatch(/^Pre-authorized by the user: sub-agents for sleep/m);
+    // A machine turn: no recall, no gate, the one-line authorization only.
+    const note = ask('<task-notification>\n<status>completed</status>\n<result>Reviewed the project identity rules</result>\n</task-notification>');
+    expect(note).not.toContain('— Memory recall');
+    expect(note).not.toMatch(/Before (you act|acting)/);
+    runWithStdin('hook session-start', JSON.stringify({ session_id: 'once-1', source: 'compact' }), tmpDir, env);
+    expect(ask('the project identity once more please')).toContain(DISPATCH_PREAMBLE_MARKER);
   });
 
   it('silent when debt < 4 (no output)', () => {
@@ -1544,12 +1573,13 @@ describe('hook user-prompt-submit (integration)', () => {
   // VERSION_CHECK=0 is set explicitly (not just inherited): this const is captured
   // at collection time, BEFORE the describe's beforeEach sets it on process.env, so
   // without it these tests would block on the live npm registry and flake.
-  const SKILLS_ENV = { ...process.env, DREAMCONTEXT_MEMORY_HOOK: '0', DREAMCONTEXT_VERSION_CHECK: '0' };
+  // Read per call, so HOME is the test's fake one too.
+  const skillsEnv = (): NodeJS.ProcessEnv => ({ ...process.env, DREAMCONTEXT_MEMORY_HOOK: '0', DREAMCONTEXT_VERSION_CHECK: '0' });
 
   it('a relevant skill fires the gate, telling the agent to review the FULL list (no top-N subset)', () => {
     scaffoldSkills(tmpDir);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, skillsEnv());
     expect(output).toContain('get the full picture from project memory'); // gate fired
     expect(output).toContain('REVIEW the skills available');              // behaviour: scan the full list
     expect(output).toContain('do NOT limit yourself');                   // no arbitrary subset
@@ -1570,21 +1600,21 @@ describe('hook user-prompt-submit (integration)', () => {
       'Coding standards and review checklist.',
     ].join('\n'));
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'coding standards security testing error handling naming' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, skillsEnv());
     expect(output).not.toContain('get the full picture from project memory');
   });
 
   it('unrelated prompt does not fire the gate', () => {
     scaffoldSkills(tmpDir);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'xyzzy qqq zzz nothing here' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, skillsEnv());
     expect(output).not.toContain('get the full picture from project memory');
   });
 
   it('no .claude/skills dir → skills do not fire the gate (sleep reminder intact)', () => {
     writeSleep(ctx, { debt: DEBT_DROWSY, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, skillsEnv());
     expect(output).not.toContain('get the full picture from project memory');
     expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`); // existing sleep-debt behaviour intact
   });
@@ -1592,7 +1622,7 @@ describe('hook user-prompt-submit (integration)', () => {
   it('short greeting (< 8 chars) does not fire the gate', () => {
     scaffoldSkills(tmpDir);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'ok' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, skillsEnv());
     expect(output).not.toContain('get the full picture from project memory');
   });
 
@@ -1878,16 +1908,25 @@ describe('hook pre-compact (integration)', () => {
 
 describe('hook initializer detection (integration)', () => {
   let tmpDir: string;
+  let savedHome: string | undefined;
+  let fakeHome: string;
 
   // Same isolation as the user-prompt-submit block: a fresh temp project has no
   // version cache, so without this the UPS hook would block on the npm registry.
   beforeEach(() => {
     tmpDir = makeTmpDir();
     process.env.DREAMCONTEXT_VERSION_CHECK = '0';
+    // A fake HOME, as above: the prompt hook's once-per-session markers stay out of the real one.
+    savedHome = process.env.HOME;
+    fakeHome = mkdtempSync(join(tmpdir(), 'dc-init-home-'));
+    process.env.HOME = fakeHome;
   });
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.DREAMCONTEXT_VERSION_CHECK;
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    rmSync(fakeHome, { recursive: true, force: true });
   });
 
   const OFFER_MARKER = '`initializer` skill';
@@ -1936,7 +1975,8 @@ describe('hook initializer detection (integration)', () => {
 
   const SESSION_INPUT = JSON.stringify({ session_id: 'sess-1', source: 'startup', transcript_path: '/tmp/t.jsonl' });
   // Isolate the initializer offer from the recall/skills gates in UPS tests.
-  const UPS_ENV = { ...process.env, DREAMCONTEXT_VERSION_CHECK: '0', DREAMCONTEXT_MEMORY_HOOK: '0', DREAMCONTEXT_SKILLS_HOOK: '0' };
+  // Read per call: HOME is the test's fake one (set in beforeEach), not the one at collection time.
+  const upsEnv = (): NodeJS.ProcessEnv => ({ ...process.env, DREAMCONTEXT_VERSION_CHECK: '0', DREAMCONTEXT_MEMORY_HOOK: '0', DREAMCONTEXT_SKILLS_HOOK: '0' });
 
   // ── no-brain (SessionStart) ──────────────────────────────────────────────
 
@@ -1998,7 +2038,7 @@ describe('hook initializer detection (integration)', () => {
       mkdirSync(join(notes, '.obsidian'), { recursive: true });
       writeFileSync(join(notes, 'n.md'), '# note');
       const input = JSON.stringify({ session_id: 'sess-1', prompt: `migrate my notes from ${notes} into this project` });
-      const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+      const output = runWithStdin('hook user-prompt-submit', input, tmpDir, upsEnv());
       expect(output).toContain(OFFER_MARKER);
       expect(output).toContain('MIGRATE');
       expect(output).toContain(notes);
@@ -2015,7 +2055,7 @@ describe('hook initializer detection (integration)', () => {
       mkdirSync(join(old, '_dream_context', 'core'), { recursive: true });
       writeFileSync(join(old, '_dream_context', 'core', '0.soul.md'), 'old soul');
       const input = JSON.stringify({ session_id: 'sess-1', prompt: `please move the brain from ${old} over to here` });
-      const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+      const output = runWithStdin('hook user-prompt-submit', input, tmpDir, upsEnv());
       expect(output).toContain(OFFER_MARKER);
       expect(output).toContain('MIGRATE');
     } finally {
@@ -2031,7 +2071,7 @@ describe('hook initializer detection (integration)', () => {
     mkdirSync(docs, { recursive: true });
     for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, upsEnv());
     expect(output).toContain(OFFER_MARKER);
     expect(output).toContain('sizable external source');
     expect(output).toContain('docs');
@@ -2043,7 +2083,7 @@ describe('hook initializer detection (integration)', () => {
     mkdirSync(docs, { recursive: true });
     for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, upsEnv());
     expect(output).not.toContain('sizable external source');
   });
 
@@ -2053,14 +2093,14 @@ describe('hook initializer detection (integration)', () => {
     const ctx = scaffoldHealthy(tmpDir);
     writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'fix the bug in src/lib/recall.ts and run the tests' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, upsEnv());
     expect(beyondStandingPreamble(output)).toBe('');
   });
 
   it('no false positive: ingest intent but no existing source path stays silent', () => {
     scaffoldHealthy(tmpDir);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest all of my documentation eventually' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, upsEnv());
     expect(output).not.toContain(OFFER_MARKER);
   });
 
@@ -2073,7 +2113,7 @@ describe('hook initializer detection (integration)', () => {
     mkdirSync(docs, { recursive: true });
     for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
-    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, upsEnv());
     expect(output).toContain(OFFER_MARKER);       // initializer offer
     expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`);  // existing sleep-debt behaviour intact
   });
@@ -2115,7 +2155,7 @@ describe('hook initializer detection (integration)', () => {
     for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, {
-      ...UPS_ENV,
+      ...upsEnv(),
       DREAMCONTEXT_INITIALIZER_HOOK: '0',
     });
     expect(output).not.toContain(OFFER_MARKER);

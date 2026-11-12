@@ -145,8 +145,9 @@ Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconcile
 | `off` | No recall injection at all | `dreamcontext recall off` |
 | — | Inspect current mode | `dreamcontext recall status` |
 
-- **Auto-injection (ON by default):** the UserPromptSubmit hook surfaces top hits on every non-trivial prompt. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`; override mode per-session with `DREAMCONTEXT_RECALL_MODE`.
-- **Federation:** plain `recall` automatically spans eligible readable peers; hits are namespaced `<vault>::<type>/<slug>`. Scope with `--vault`/`--connected`/`--all-vaults` (see [integrations.md](integrations.md)).
+- **Auto-injection (ON by default):** the UserPromptSubmit hook surfaces top hits, each with its size (read the matching section of a big file), searched on the owner's own words: a task notification, a Super event or the app's wrapper text gets no recall, patterns or offers. A connected peer's hits show only when the prompt names it or it outscores this vault. Long fixed blocks print in full once per session, then one line. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`; override mode per-session with `DREAMCONTEXT_RECALL_MODE`.
+- **Federation:** plain `recall` automatically spans eligible readable peers; hits are namespaced `<vault>::<type>/<slug>`. Scope with `--vault`/`--connected`/`--all-vaults` (see [integrations.md](integrations.md)). A peer hit fills a slot this vault left empty, or replaces this vault's last hit only when its raw score is at least 2.0 and higher (peers never take more than half). Peers serve no session digests, and no changelog unless `--types` names it.
+- **Warm when the app is running:** a hybrid `memory recall` runs in the app's server, which keeps the query model, the vector index and the corpus loaded; without the app it runs in-process, same hits. `DREAMCONTEXT_RECALL_VIA_SERVER=0` forces in-process.
 
 ### Recall tiers (hybrid mode: local, cloud-index, cloud)
 
@@ -208,7 +209,11 @@ Also never sent, whatever the type: docs outside the consented vault root (or re
 
 **Index refresh** happens only at `sleep done` (a detached `recall cloud index --auto`) and by an explicit `dreamcontext recall cloud index`. Automatic builds are limited: one build per vault at a time, a per-build USD cap, a rolling 24 h cap, a 30-minute throttle, and a churn guard (three consecutive builds that mostly re-embedded the same content pause automatic builds until a person runs `recall cloud index` at a terminal).
 
-**Injection depth (K=5).** The hook injects the top **5** hits. Ranks 1-3 print as before; ranks 4-5 print as one line each: `[type] relPath - title`. The hook gate (`some(score >= 2.0)` on the raw BM25 score) is unchanged, but it now covers five printed hits, so a prompt injects slightly more often than at K=3. `hit.score` always stays the raw BM25 score (0 for a dense-only hit): fusion, priors and rerank change only the ordering.
+**Injection depth (K=5).** The hook injects the top **5** hits. Ranks 1-3 print as before; ranks 4-5 print as one line each: `[type] relPath - title`. The hook gate passes when one printed hit has raw BM25 `score >= 2.0`, matches at least 4% of the query's IDF mass and, for a query of one or two words, both words. Turn fillers (`tamam`, `devam`, `ok`, `continue`, ...) are stopwords, so "ne durumdayız" or "devam et" injects nothing. A peer block passes the same gate. `hit.score` always stays the raw BM25 score (0 for a dense-only hit): fusion, priors and rerank change only the ordering.
+
+**One slot per task.** A task's side files (`state/assets/<slug>/**`, `state/archive/**`) rank below its card, and a task takes one slot: its other matching files fold into its best hit, which prints `+N more files of this task` (the hook and `memory recall`; `--json` carries `moreFilesOfTask`). Only those two fold; every other list (the dashboard search box, the Assistant, a peer block) shows every file.
+
+**Dense on long prompts.** The cloud tiers skip the dense channel when BM25 is already sure; that threshold now scales with query length past 21 terms, so a long prompt is no longer judged sure on length alone.
 
 **Peers.** Hybrid and cloud tiers **never run over connected peers' corpora**: federated recall stays BM25 over the peers, and a peer's docs are never sent to the cloud (only this vault's eligible docs, with this vault's consent).
 

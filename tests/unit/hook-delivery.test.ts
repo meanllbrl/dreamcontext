@@ -217,14 +217,26 @@ describe('fitPromptContext', () => {
     expect(text).toContain('open the files named above');
   });
 
-  it('clips recall before a pattern, and a pattern becomes its pointer before it goes', () => {
+  it('a pattern becomes its pointer before recall is clipped, and before it goes (MM-4)', () => {
     const patterns: PromptBlock = { kind: 'patterns', text: `body\n${'p\n'.repeat(4_400)}`, compact: 'READ knowledge/patterns/a.md' };
     const first = fitPromptContext([must('rule'), recall(1), patterns, gate]);
-    expect(first.text).toContain('body');
+    expect(first.text).not.toContain('body');
+    expect(first.text).toContain('READ knowledge/patterns/a.md');
+    expect(first.text).toContain('ş'.repeat(4_000));
+    expect(first.text).not.toContain('open the files named above');
     const second = fitPromptContext([must('rule'), recall(), { ...patterns, text: `body\n${'p\n'.repeat(4_900)}` }, gate]);
     expect(second.text).not.toContain('body');
     expect(second.text).toContain('READ knowledge/patterns/a.md');
     expect(second.text.length).toBeLessThanOrEqual(HOOK_OUTPUT_MAX_CHARS);
+  });
+
+  it('never clips a hit path line, however long (MM-4)', () => {
+    const path = `  [task] state/${'a-very-long-task-slug-'.repeat(9)}.md  (24k chars)`;
+    const block: PromptBlock = { kind: 'recall', text: Array.from({ length: 6 }, () => `${path}\n    Why: ${'ş'.repeat(4_000)}`).join('\n') };
+    const { text } = fitPromptContext([must('rule'), block, gate]);
+    expect(path.length).toBeGreaterThan(180);
+    expect(text.length).toBeLessThanOrEqual(HOOK_OUTPUT_MAX_CHARS);
+    expect(text.split('\n').filter((l) => l === path)).toHaveLength(6);
   });
 
   it('gives up peers before recall', () => {
