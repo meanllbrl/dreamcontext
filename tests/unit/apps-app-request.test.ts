@@ -188,7 +188,10 @@ describe('publish: ask, Onayla, spend once', () => {
     expect(s.grant.command).toBe(`dreamcontext apps publish tahmin --go --grant ${s.grant.id}`);
 
     // The spend ignores what the body says: visibility, repo name, store line, confirm, invites.
-    const go = await call(share.handlePublish, { params: { slug: 'tahmin' }, body: { grant: s.grant.id, visibility: 'public', repoName: 'baska', tagline: 'x', confirmName: 'Tahmin', invite: ['kotu'], fresh: true } });
+    // A new repo (--fresh) is the owner's own Share click: the card's grant refuses it and stays unspent (0.41.18).
+    const fresh = await call(share.handlePublish, { params: { slug: 'tahmin' }, body: { grant: s.grant.id, fresh: true } });
+    expect(fresh.status).toBe(403);
+    const go = await call(share.handlePublish, { params: { slug: 'tahmin' }, body: { grant: s.grant.id, visibility: 'public', repoName: 'baska', tagline: 'x', confirmName: 'Tahmin', invite: ['kotu'] } });
     expect(go.status).toBe(200);
     expect(go.body.fullName).toBe('yayinci/tahmin-app');
     const meta = JSON.parse(readFileSync(join(hostDir, 'yayinci', 'tahmin-app.json'), 'utf-8'));
