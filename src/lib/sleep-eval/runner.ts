@@ -308,15 +308,15 @@ function agentFrontmatter(path: string): { model: string | null; effort: string 
   }
 }
 
-/** Run the scratch CLI (through the shim) and return stdout; never throws. */
-function shimRun(vault: ScratchVault, args: string[]): string {
+/** Run the scratch CLI (through the shim) and return stdout; never throws. `input` is piped to stdin. */
+function shimRun(vault: ScratchVault, args: string[], input?: string): string {
   try {
     return execFileSync(join(vault.bin, 'dreamcontext'), args, {
       cwd: vault.proj,
       env: scratchEnv(vault),
       encoding: 'utf-8',
       timeout: 5 * 60 * 1000,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(input === undefined ? { stdio: ['ignore', 'pipe', 'pipe'] as const } : { input, stdio: ['pipe', 'pipe', 'pipe'] as const }),
     });
   } catch (e) {
     const err = e as { stdout?: string };
@@ -403,7 +403,10 @@ export async function runRound(contextRoot: string, runId: string, round: Fixtur
   const brief = buildBrief(round, epoch, depth, planning, slugs);
   let briefing = '';
   try {
-    const hook = JSON.parse(shimRun(vault, ['hook', 'subagent-start'])) as { hookSpecificOutput?: { additionalContext?: string } };
+    // `claude --agent` starts a main session, so no SubagentStart fires: hand the hook the
+    // payload Claude Code would, so the specialist gets the briefing its agent type gets in a real sleep.
+    const payload = JSON.stringify({ hook_event_name: 'SubagentStart', agent_type: agents[0] });
+    const hook = JSON.parse(shimRun(vault, ['hook', 'subagent-start'], payload)) as { hookSpecificOutput?: { additionalContext?: string } };
     briefing = hook.hookSpecificOutput?.additionalContext ?? '';
   } catch { /* no briefing: the specialist still has its own instructions */ }
   const prompt = briefing ? `${briefing}\n\n---\n\n${brief}` : brief;

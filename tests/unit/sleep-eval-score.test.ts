@@ -282,9 +282,15 @@ function fakeSet(): { ctx: string; project: string; entry: string } {
     sessions: [{ session_id: 's1', file: 'sessions/s1.jsonl', stopped_at: '2026-05-02T10:00:00Z', last_assistant_message: 'ok', subagents: [] }],
     opened: [], candidates: [{ id: 'r1:explicit-ask:1', round: 'r1', category: 'explicit-ask', name: 'Recipe photos survive import', why: '', quote: '', basis: 'ask' }],
   });
-  // A stand-in CLI: answers `sleep start --json`, prints nothing for the rest.
+  // A stand-in CLI: answers `sleep start --json`, echoes the agent type `hook subagent-start`
+  // was piped as its briefing, prints nothing for the rest.
   const entry = join(dir, 'cli.mjs');
-  writeFileSync(entry, 'const a = process.argv.slice(2).join(" "); if (a === "sleep start --json") console.log(JSON.stringify({ epoch: "2026-05-03T00:00:00Z", depth: "light" }));');
+  writeFileSync(entry, [
+    'import { readFileSync } from "node:fs";',
+    'const a = process.argv.slice(2).join(" ");',
+    'if (a === "sleep start --json") console.log(JSON.stringify({ epoch: "2026-05-03T00:00:00Z", depth: "light" }));',
+    'if (a === "hook subagent-start") { let t = "none"; try { t = JSON.parse(readFileSync(0, "utf-8")).agent_type ?? "none"; } catch {} console.log(JSON.stringify({ hookSpecificOutput: { additionalContext: "BRIEFING for " + t } })); }',
+  ].join("\n"));
   return { ctx, project, entry };
 }
 
@@ -314,7 +320,10 @@ describe('runEval → scoreRun → gate', () => {
     expect(existsSync(join(ctx, 'tmp', 'sleep-eval', 'runs', meta.id, 'r1', 'scratch'))).toBe(false);
     const out = JSON.parse(readFileSync(join(ctx, 'tmp', 'sleep-eval', 'runs', meta.id, 'r1', 'output.json'), 'utf-8'));
     expect(out.opened).toEqual([{ slug: 'recipe-photos', name: 'Recipe photos survive import', why: 'Owners re-attach photos.', parent: null }]);
-    expect(readFileSync(join(ctx, 'tmp', 'sleep-eval', 'runs', meta.id, 'r1', 'brief.md'), 'utf-8')).toContain('2026-05-02T10:00:00Z  s1  []');
+    const brief = readFileSync(join(ctx, 'tmp', 'sleep-eval', 'runs', meta.id, 'r1', 'brief.md'), 'utf-8');
+    expect(brief).toContain('2026-05-02T10:00:00Z  s1  []');
+    // The hook was handed the specialist's agent type, as a real sleep dispatch would (MM-11 wave 2).
+    expect(brief.startsWith('BRIEFING for sleep-tasks')).toBe(true);
 
     recordLabel(ctx, { id: 'r1:explicit-ask:1', verdict: 'keep' });
     const stored = await scoreRun(ctx, meta.id, { sim: lexicalSimilarity, matcher: 'lexical' });
