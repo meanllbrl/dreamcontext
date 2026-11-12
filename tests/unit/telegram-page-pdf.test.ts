@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { cardOut, type CardContext } from '../../src/server/telegram/cards.js';
+import { cardOut, pageWithOwnAssets, type CardContext } from '../../src/server/telegram/cards.js';
 import { sendPresentation } from '../../src/server/telegram/present.js';
 import { chromiumArgs, findChromium, makePagePdfRenderer, PRINT_CSS, printablePage, SMALL_PDF_BYTES } from '../../src/server/telegram/page-pdf.js';
 import { SANDBOX_CSP } from '../../src/lib/telegram/chat-kit.js';
@@ -79,6 +79,63 @@ describe('a project HTML page card goes as a PDF document', () => {
       expect(text).toContain("Rapor (gönderilmedi: Telegram'a sığmadı ya da kabul edilmedi, Mac'te açık)");
       expect(text).toContain('Görev: X');
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// A 1x1 PNG: real bytes Chromium decodes.
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+
+/** A page in `docs/v1/` with pictures beside it, below it, above it, a link out of the project and a missing one. */
+function pageWithPictures(): { dir: string; outside: string; ctx: CardContext; html: string } {
+  const { dir, ctx } = project();
+  mkdirSync(join(dir, 'docs', 'v1', 'shots', 'deep'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'v1', 'beside.png'), PNG_1PX);
+  writeFileSync(join(dir, 'docs', 'v1', 'shots', 'deep', 'iç içe.png'), PNG_1PX);
+  writeFileSync(join(dir, 'docs', 'v1', 'shots', 'badge.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>');
+  writeFileSync(join(dir, 'docs', 'v1', 'page.css'), '.x{color:red}');
+  writeFileSync(join(dir, 'docs', 'above.png'), PNG_1PX);
+  writeFileSync(join(dir, 'docs', 'v1', '.env.png'), PNG_1PX);
+  const outside = mkdtempSync(join(tmpdir(), 'tg-page-pdf-'));
+  writeFileSync(join(outside, 'secret.png'), PNG_1PX);
+  symlinkSync(join(outside, 'secret.png'), join(dir, 'docs', 'v1', 'link.png'));
+  const html = [
+    '<link rel="stylesheet" href="page.css">',
+    '<img src="beside.png">', '<img src="shots/deep/i%C3%A7%20i%C3%A7e.png">', '<img src="./shots/badge.svg">',
+    '<img src="../above.png">', '<img src="link.png">', '<img src="gone.png">', '<img src=".env.png">',
+  ].join('\n');
+  writeFileSync(join(dir, 'docs', 'v1', 'page.html'), html);
+  return { dir, outside, ctx, html };
+}
+
+describe("a page's own pictures travel inside its PDF, by the card's rules", () => {
+  it('beside, nested and SVG pictures and the stylesheet are written in; ../, a symlink, a hidden name and a missing file stay as written', async () => {
+    const { dir, outside, ctx, html } = pageWithPictures();
+    try {
+      const out = pageWithOwnAssets(ctx, html, 'docs/v1/page.html');
+      const png = `data:image/png;base64,${PNG_1PX.toString('base64')}`;
+      expect(out).toContain(`<img src="${png}">\n<img src="${png}">\n<img src="data:image/svg+xml;charset=utf-8,`);
+      expect(out).toContain('<style data-dc-src="docs/v1/page.css">.x{color:red}</style>');
+      for (const kept of ['<img src="../above.png">', '<img src="link.png">', '<img src="gone.png">', '<img src=".env.png">']) expect(out).toContain(kept);
+      // The renderer gets the written-in page.
+      const renderPdf = vi.fn(async () => PDF);
+      await cardOut({ ...ctx, renderPdf }, card('web', 'docs/v1/page.html', 'Sayfa'));
+      expect(renderPdf).toHaveBeenCalledWith(out);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+  });
+
+  it('a page with no pictures of its own is passed through untouched', () => {
+    const { dir, ctx } = project();
+    try {
+      const html = '<p>x</p><img src="https://example.com/a.png">';
+      expect(pageWithOwnAssets(ctx, html, 'rapor.html')).toBe(html);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('the print layer loads lazy pictures and names the one that fails', () => {
+    const page = printablePage('<img src="x.png">')!;
+    expect(page).toContain("img.loading='eager'");
+    expect(page).toContain('Resim yüklenemedi: ');
+    expect(PRINT_CSS).toContain('.dc-print-missing{');
   });
 });
 
@@ -164,6 +221,13 @@ describe.skipIf(!findChromium())('page-pdf in a real Chromium: the page cannot p
         if (pdf) expect(pdfHasTitle(pdf, 'CANARYTITLE')).toBe(false);
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 60_000);
+
+  it('a carried picture is drawn; a blocked or broken one becomes a named placeholder, before printing', async () => {
+    const render = makePagePdfRenderer({ timeoutMs: 20_000 });
+    const probe = "<script>addEventListener('load',function(){document.title='DRAWN'+[].filter.call(document.images,function(i){return i.naturalWidth>0;}).length+'MISS'+document.querySelectorAll('.dc-print-missing').length;});</script>";
+    const pdf = await render(`${probe}<img src="data:image/png;base64,${PNG_1PX.toString('base64')}"><img src="gone.png"><img src="data:image/png;base64,AAAA" loading="lazy">`);
+    expect(pdf && pdfHasTitle(pdf, 'DRAWN1MISS2')).toBe(true);
   }, 60_000);
 
   it('another loopback server (the dashboard) gets no request: navigation, form post, image', async () => {

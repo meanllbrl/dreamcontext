@@ -55,11 +55,17 @@ export const PRINT_CSS = [
   '.dc-table,.dc-table-wrap{overflow:visible!important}',
   'h1,h2,h3,.dc-h1,.dc-h2,.dc-h3{break-after:avoid}',
   '.dc-slide{break-after:page}',
+  // A picture that could not load: its name in a dashed box, never a silent broken icon.
+  '.dc-print-missing{display:block;border:1px dashed currentColor;border-radius:6px;padding:10px 12px;margin:4px 0;opacity:.7;font-size:13px;break-inside:avoid}',
 ].join('\n');
 
 /**
- * The print script: names each panel after its tab (the tab strip is hidden), and, with
- * `downsample`, redraws oversized raster images at TARGET_DPI for their printed size.
+ * The print script: names each panel after its tab (the tab strip is hidden), loads every
+ * picture now (a `loading="lazy"` one below the fold would never load in a print), turns a
+ * picture that fails (a path the host could not carry in, which the CSP blocks, or bad bytes)
+ * into a named placeholder, and, with `downsample`, redraws oversized raster images at
+ * TARGET_DPI for their printed size. Chromium prints after the load event, so every carried
+ * picture is decoded first.
  * Runs at DOMContentLoaded, after the kit's own listeners (registered earlier in the head).
  */
 export function printScript(downsample: boolean): string {
@@ -70,6 +76,19 @@ document.addEventListener('DOMContentLoaded',function(){
     [].forEach.call(tabs.querySelectorAll('.dc-panels > .dc-panel'),function(p,i){
       if(!names[i])return;var h=document.createElement('div');h.className='dc-label dc-print-tab';h.textContent=names[i];p.parentNode.insertBefore(h,p);
     });
+  });
+  [].forEach.call([].slice.call(document.images),function(img){
+    var src=img.getAttribute('src')||'';
+    function miss(){
+      if(!img.parentNode)return;
+      var n=/^data:/i.test(src)?'':src.split(/[?#]/)[0].split('/').pop()||'';
+      try{n=decodeURIComponent(n);}catch(e){}
+      var d=document.createElement('div');d.className='dc-print-missing';
+      d.textContent='Resim yüklenemedi: '+(n||img.getAttribute('alt')||'adsız resim');
+      img.parentNode.replaceChild(d,img);
+    }
+    if(img.loading==='lazy')img.loading='eager';
+    if(src&&img.complete&&!img.naturalWidth&&!/^data:/i.test(src))miss();else img.addEventListener('error',miss,{once:true});
   });
   ${downsample ? `var DPI=${TARGET_DPI};
   [].forEach.call(document.images,function(img){

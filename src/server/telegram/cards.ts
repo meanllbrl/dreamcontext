@@ -7,7 +7,9 @@
  *   - insight → `render_card` (window clone, server seal; html/v1 frames rebuilt from the lab
  *     cache) when a renderer is wired, else its title;
  *   - a `web` card on a project file: `.html/.htm` → ONE PDF document of the page as the stage
- *     draws it (`page-pdf.ts`, bytes read through H; owner 2026-11-09); a picture or PDF → the
+ *     draws it (`page-pdf.ts`, bytes read through H; owner 2026-11-09), with the page's OWN
+ *     pictures and stylesheets written in exactly as the Mac card writes them (`pageWithOwnAssets`);
+ *     a picture or PDF → the
  *     file; anything else, or a page that could not be printed → "Mac'te açık".
  * Text in v1: whiteboard, board, task, knowledge, agenda, team, chat, member, app/v1 insights,
  * and web / live browser (a public https page as a link line, never a picture).
@@ -20,6 +22,7 @@ import { readWhiteboard } from '../../lib/whiteboards/store.js';
 import { widgetPayloadOf } from '../../lib/whiteboards/widgets.js';
 import type { SuperContainer } from '../../lib/super/types.js';
 import type { UploadFile } from '../../lib/telegram/transport.js';
+import { findLocalAssets, inlineLocalAssets, MAX_ASSET_BYTES, MAX_TOTAL_BYTES } from '../../lib/telegram/html-local-assets.js';
 import { renderPagePdf, type PagePdfRenderer } from './page-pdf.js';
 import { pngFile, type MediaItem, type Snapshotter } from './pictures.js';
 
@@ -58,13 +61,60 @@ export function cardTitle(c: Pick<SuperContainer, 'kind' | 'ref' | 'title'>): st
 }
 
 /** A project-relative or absolute path read through H; the project root and nothing else. */
-export function readProjectFile(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored'>, ref: string): { ok: true; file: UploadFile; ext: string } | { ok: false; reason: OutboundRefusal } {
+export function readProjectFile(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored'>, ref: string, maxBytes = 20 * 1024 * 1024): { ok: true; file: UploadFile; ext: string; rel: string } | { ok: false; reason: OutboundRefusal } {
   const projectRoot = dirname(ctx.contextRoot);
   const abs = isAbsolute(ref) ? ref : resolve(projectRoot, ref);
-  const r = readOutbound(abs, { roots: [projectRoot], projectRoot, maxBytes: 20 * 1024 * 1024, ...(ctx.isGitIgnored ? { isGitIgnored: ctx.isGitIgnored } : {}) });
+  const r = readOutbound(abs, { roots: [projectRoot], projectRoot, maxBytes, ...(ctx.isGitIgnored ? { isGitIgnored: ctx.isGitIgnored } : {}) });
   if (!r.ok) return { ok: false, reason: r.reason };
   const ext = extname(r.file.name).toLowerCase();
-  return { ok: true, file: { name: r.file.name, data: r.file.data, contentType: CONTENT_TYPE[ext] ?? 'application/octet-stream' }, ext };
+  return { ok: true, file: { name: r.file.name, data: r.file.data, contentType: CONTENT_TYPE[ext] ?? 'application/octet-stream' }, ext, rel: r.file.rel };
+}
+
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml',
+};
+
+/**
+ * The page at project-relative `rel` with its OWN pictures and stylesheets written in, the way
+ * the Mac card writes them (`html-local-assets.ts`, generated from the dashboard's
+ * `htmlLocalAssets.ts`): only files in the page's folder or below, no `../`, no hidden segment,
+ * no scheme. Each file is read through H (`readProjectFile`: inside the project, no symlink or
+ * hardlink, no secret class, the git-ignore rule), capped per file and per page as the card caps
+ * them. A file that cannot be read stays as written; the print layer draws it as a named
+ * placeholder (`page-pdf.ts`), never a broken icon.
+ */
+export function pageWithOwnAssets(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored'>, html: string, rel: string): string {
+  const { images, styles } = findLocalAssets(html, rel);
+  if (!images.length && !styles.length) return html;
+  let budget = MAX_TOTAL_BYTES;
+  const take = (v: string | null): string | null => {
+    if (v === null || v.length > budget) return null;
+    budget -= v.length;
+    return v;
+  };
+  const read = (p: string): Buffer | null => {
+    if (budget <= 0) return null;
+    const f = readProjectFile(ctx, p, Math.min(MAX_ASSET_BYTES, Math.floor((budget * 3) / 4)));
+    return f.ok ? f.file.data : null;
+  };
+  const loaded = { images: new Map<string, string>(), styles: new Map<string, string>() };
+  for (const p of styles) {
+    const css = take(read(p)?.toString('utf8') ?? null);
+    if (css !== null) loaded.styles.set(p, css);
+  }
+  for (const p of images) {
+    const ext = p.slice(p.lastIndexOf('.') + 1).toLowerCase();
+    const data = read(p);
+    if (!data) continue;
+    // An SVG goes as text, the way the card's vault route hands it over; it is drawn by <img>, where its scripts never run.
+    const url = ext === 'svg'
+      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(data.toString('utf8'))}`
+      : `data:${IMAGE_MIME[ext] ?? 'application/octet-stream'};base64,${data.toString('base64')}`;
+    const v = take(url);
+    if (v !== null) loaded.images.set(p, v);
+  }
+  return inlineLocalAssets(html, rel, loaded);
 }
 
 /** Why a picture the stage shows did not go (owner 2026-11-11: never a bare "(Mac'te)"). */
@@ -96,7 +146,7 @@ function fileMedia(file: UploadFile, ext: string, title: string): MediaItem | nu
 export async function reportPdf(ctx: CardContext, ref: string, title: string): Promise<MediaItem | null> {
   const f = readProjectFile(ctx, ref);
   if (!f.ok || (f.ext !== '.html' && f.ext !== '.htm')) return null;
-  const pdf = await (ctx.renderPdf ?? renderPagePdf)(f.file.data.toString('utf8'));
+  const pdf = await (ctx.renderPdf ?? renderPagePdf)(pageWithOwnAssets(ctx, f.file.data.toString('utf8'), f.rel));
   if (!pdf) return null;
   const name = `${title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim().slice(0, 80) || 'sayfa'}.pdf`;
   return { kind: 'document', file: { name, data: pdf, contentType: 'application/pdf' }, title };
