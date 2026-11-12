@@ -23,7 +23,7 @@ const EVIDENCE_TICK_RULE = `A tick needs its evidence in the same log line: the 
  */
 const TICKS_REVIEW = `- The ticks review, whenever the observed check ticked a criterion (its check green or red):
   ONE fresh \`reviewer\` (model opus, effort high, not in the background) with the TICKS
-  brief (section 4) reads only those ticks and their evidence before anything closes. FAIL =
+  brief (with the briefs below) reads every tick in the task log (or run.md) and its evidence before anything closes. FAIL =
   the same path as a red final check.`;
 
 const OBSERVED_CHECK = `- The observed check, ONCE, after the code PASS and on its build, when a criterion is about
