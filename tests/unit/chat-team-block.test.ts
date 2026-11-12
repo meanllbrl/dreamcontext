@@ -346,7 +346,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('= the n shapes he selected (≤ 12 ids, box their bounds): a change'),
       'there is board work; delegate it with board, ids and box verbatim.',
       // 2026-11-12 (tahta-hizli-duzenle): an empty region he chose on the board.
-      expect.stringContaining('is an empty region the owner chose: place the new drawing inside it'),
+      expect.stringContaining('is an empty region the owner chose: draw inside it; pass it verbatim.'),
       // rev 41 (2026-11-12, gece-duzeltme B7, IN-12): the orchestration guide is lookup only; the split and
       // mode-per-job rows ride here. TK-1: the Super is the only task filer (rev 36's "a small fix gets no task" folded in).
       '- The orchestration guide is lookup only (member jobs, MCP map, layouts, a worked example): .claude/skills/dreamcontext/references/super-orchestration.md.',

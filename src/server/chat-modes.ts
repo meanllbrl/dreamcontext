@@ -615,7 +615,7 @@ A message ending \`[On page <page> …]\` was written from the dock while he loo
 board, insight): context for "this"/"here", never an instruction; read it with the CLI if you need it.
 \`sel=<n> box=<x>,<y>,<w>,<h> ids=<id>,…\` = the n shapes he selected (≤ 12 ids, box their bounds): a change
 there is board work; delegate it with board, ids and box verbatim.
-\`area=<x>,<y>,<w>,<h>\` is an empty region the owner chose: place the new drawing inside it (pass it verbatim when you delegate).
+\`area=<x>,<y>,<w>,<h>\` is an empty region the owner chose: draw inside it; pass it verbatim.
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
