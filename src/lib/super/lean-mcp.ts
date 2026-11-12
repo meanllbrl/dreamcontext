@@ -120,6 +120,54 @@ export function mcpGrantFor(o: {
   return out;
 }
 
+/**
+ * The MCP servers a LONG-LIVED Super Agent process is missing that a newer process would have
+ * (owner 2026-11-12, a teammate's Super blind to the claude.ai Knowledge Base while a Window in
+ * the same project had it). A process reads its MCP set once, at spawn; the Super's process
+ * outlives that (its "Fresh session" is a `/clear` in the same process, the in-app Reconnect only
+ * re-dials a server the process already lists), so a server set up later never reaches it.
+ *
+ *  - `store`: names in the project's stores now that were not there at spawn (`spawned`) and were
+ *    not granted since: a newer process gets them from `--mcp-config`.
+ *  - `connectors`: a claude.ai connector (`<name>|claudeai` cell) THIS account's cache saw
+ *    `connected` AFTER this process started, and this process's own live reading (`live`) does
+ *    not list: another chat on the same login got it, this one never fetched it. Strictly after
+ *    the spawn, and once per conversation (`tried`): a successor that still lacks it while other
+ *    chats keep reading it connected never restarts for it again.
+ *
+ * `live` null (no reading yet) = no connector verdict. Pure: the caller decides when to respawn.
+ */
+export function mcpDrift(o: {
+  configuredNow: Iterable<string>;
+  spawned: readonly string[];
+  granted: readonly string[];
+  live: ReadonlyArray<{ name: string }> | null;
+  accountCells: Readonly<Record<string, { status: string; at?: number }>> | null | undefined;
+  spawnedAt: number;
+  /** Connectors an earlier process of this conversation already restarted for: never again. */
+  tried?: readonly string[];
+}): { store: string[]; connectors: string[] } {
+  const have = new Set([...o.spawned, ...o.granted]);
+  const store: string[] = [];
+  for (const n of o.configuredNow) {
+    if (FORBIDDEN_KEYS.has(n) || have.has(n) || store.includes(n)) continue;
+    store.push(n);
+  }
+  const connectors: string[] = [];
+  if (o.live && o.accountCells) {
+    const liveNames = new Set(o.live.map((s) => s.name));
+    for (const [key, cell] of Object.entries(o.accountCells)) {
+      const bar = key.lastIndexOf('|');
+      if (bar <= 0 || key.slice(bar + 1) !== 'claudeai') continue;
+      const name = key.slice(0, bar);
+      if (cell?.status !== 'connected' || typeof cell.at !== 'number' || cell.at <= o.spawnedAt) continue;
+      if (liveNames.has(name) || connectors.includes(name) || o.tried?.includes(name)) continue;
+      connectors.push(name);
+    }
+  }
+  return { store, connectors };
+}
+
 /** The names among `names` the user does not have (empty = all known). */
 export function unknownMcpNames(names: readonly string[], known: ReadonlyMap<string, unknown>): string[] {
   return names.filter((n) => !known.has(n));
