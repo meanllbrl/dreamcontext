@@ -2669,6 +2669,8 @@ describe('contentTopOf: a row\'s start in scroll pixels', () => {
     // 64 layout px below the top read as 43.52 screen px at scale 0.68.
     expect(contentTopOf(row(100 + 64 * 0.68), scroller(0.68, 7000))).toBeCloseTo(7064, 6);
     expect(screenScaleOf({ offsetHeight: 0, getBoundingClientRect: () => box(0, 0) } as unknown as HTMLElement)).toBe(1);
+    // A fractional height against offsetHeight's whole pixel is rounding, not a transform.
+    expect(screenScaleOf({ offsetHeight: 560, getBoundingClientRect: () => box(0, 559.5) } as unknown as HTMLElement)).toBe(1);
   });
 });
 

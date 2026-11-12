@@ -171,12 +171,9 @@ export function nextUnreadIndex(rows: ReadonlyArray<Span | null>, view: Span, af
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row) { if (unmounted < 0) unmounted = i; continue; }
-    // By the START: a tall unread whose first line is above the view is above, however much of
-    // it fills the view (owner 2026-11-12). A start inside the view counts as on screen only when
-    // the row is SEEN by the read rule (startSeen): a first line peeking in at the bottom edge is
-    // not being read, so it is ahead below, or the jump would pass it and scroll it away unread.
-    const at = startSide(row, view);
-    const side = at === 'in' && !startSeen(row, view) ? 'below' : at;
+    // By the START, as the reader stands to it (readSide): a tall unread whose first line is above
+    // the view is above however much of it fills the view; a start peeking in at the bottom is ahead.
+    const side = readSide(row, view);
     if (side === 'above' && (above < 0 || row.top < (rows[above] as Span).top)) above = i;
     if (side === 'below' && (below < 0 || row.top < (rows[below] as Span).top)) below = i;
     if (after && side !== 'in' && row.top > after.top && (ahead < 0 || row.top < (rows[ahead] as Span).top)) ahead = i;
@@ -312,6 +309,15 @@ export function startSeen(row: Span, view: Span): boolean {
   return startInView(row, view) && mostlyVisible(row, view);
 }
 
+/** Where an unread row stands for the READER: 'in' only when it is seen (startSeen); a first line
+ *  peeking in at the bottom edge is not being read, so it is ahead, 'below'. The one rule for the
+ *  jump, the pill's arrow and the door: a place that counted a peeking start as on screen passed
+ *  it and scrolled it away unread. */
+export function readSide(row: Span, view: Span): 'above' | 'below' | 'in' {
+  const at = startSide(row, view);
+  return at === 'in' && !startSeen(row, view) ? 'below' : at;
+}
+
 /**
  * Where a pinned view goes when content lands: the bottom, unless that would put the anchor's
  * start above the view; then the anchor's start, `landing` below the top, and the view is HELD
@@ -332,7 +338,8 @@ export type FollowAnchor = { itemId: string; unit: UnreadUnit | null } | { quest
 /**
  * What the reader chose to go past (Latest, a send, his own scroll to the end). Units by what the
  * read marks match them by, key and time (a replay re-ids every row, plan r1 C1); the live text by
- * its row id, which it keeps while it is being written.
+ * its row id, which it keeps while it is being written and after: the unit it becomes when it
+ * finishes is passed too (r1 end review: a Latest mid-stream otherwise came back as an anchor).
  */
 export interface Passed { units: ReadMark[]; live: Set<string> }
 export const emptyPassed = (): Passed => ({ units: [], live: new Set() });
@@ -350,7 +357,7 @@ export function followAnchors(
   // The marks' own matcher: passed is a read the reader chose, without the dot going.
   const open = unreadOf(unread, { since: -Infinity, read: passed.units });
   const rows = new Map<string, UnreadUnit | null>();
-  for (const u of open) if (u.itemId) rows.set(u.itemId, u);
+  for (const u of open) if (u.itemId && !passed.live.has(u.itemId)) rows.set(u.itemId, u);
   if (liveText && !passed.live.has(liveText) && !rows.has(liveText)) rows.set(liveText, null);
   const out: FollowAnchor[] = [];
   if (rows.size) for (const it of items) if (rows.has(it.id)) out.push({ itemId: it.id, unit: rows.get(it.id) ?? null });
@@ -388,7 +395,7 @@ export function doorTarget(rows: ReadonlyArray<Span | null>, card: Span | null, 
     const row = rows[i];
     if (!row) return i;
     if (card && row.top >= card.top) continue;
-    if (startSide(row, view) === 'in') continue;
+    if (readSide(row, view) === 'in') continue;
     if (best < 0 || row.top < (rows[best] as Span).top) best = i;
   }
   return best;

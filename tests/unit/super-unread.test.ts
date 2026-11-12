@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DWELL_MS, FOLLOW_SLACK, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, doorTarget, emptyPassed, followAnchor, followAnchors, followTop, landingFor, passAll, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, nextUnreadIndex, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
+  DWELL_MS, FOLLOW_SLACK, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, doorTarget, emptyPassed, followAnchor, followAnchors, followTop, landingFor, passAll, readSide, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, nextUnreadIndex, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
   type ReadMarks, type UnreadItem,
 } from '../../dashboard/src/components/sleepy/super/superUnread';
 import { BOTTOM_SLACK } from '../../dashboard/src/components/sleepy/chat/chatEntities';
@@ -312,6 +312,10 @@ describe('the follow never pushes an unread start out of view (owner 2026-11-12)
     expect(followAnchor(items, [u('a'), u(null, 'q1')], passed, 'live')).toBeNull();
     // A replay re-ids every row: the same message (key, time) under a new id stays passed. (Mutation: passed by id.)
     expect(followAnchor([{ id: 'hist-9' }], [u('hist-9', null, 1, 'ka')], passed, null)).toBeNull();
+    // Passed while it streamed: the unit it becomes when it finishes is passed too. (Mutation: live pass dropped at done.)
+    const mid = emptyPassed();
+    passAll(mid, [], 'live');
+    expect(followAnchor(items, [u('live', null, 5)], mid, null)).toBeNull();
     // A NEW message after the pass is followed.
     expect(at(followAnchor([...items, { id: 'c' }], [u('a'), u('c', null, 9)], passed, null))).toBe('c');
     // Every candidate, in order, for the pane to walk past one that draws no row.
@@ -339,6 +343,15 @@ describe('the follow never pushes an unread start out of view (owner 2026-11-12)
     const view = { top: 0, bottom: 500 };
     expect(nextUnreadIndex([{ top: -600, bottom: 600 }], view)).toBe(0);
     expect(nextUnreadIndex([{ top: 40, bottom: 600 }], view)).toBe(-1);
+  });
+
+  it('the reader\'s side: in only when seen, a start peeking in at the bottom is ahead', () => {
+    const view = { top: 0, bottom: 500 };
+    expect(readSide({ top: 484, bottom: 690 }, view)).toBe('below');
+    expect(readSide({ top: 64, bottom: 300 }, view)).toBe('in');
+    expect(readSide({ top: -600, bottom: 600 }, view)).toBe('above');
+    // The door does not count a peeking report as on screen: it lands on it before the card.
+    expect(doorTarget([{ top: 484, bottom: 690 }], { top: 700, bottom: 900 }, view)).toBe(0);
   });
 
   it('a jump does not pass an unread whose first line only peeks in at the bottom', () => {

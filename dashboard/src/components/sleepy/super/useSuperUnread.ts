@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { ApiClient } from '../../../api/client';
 import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
-  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, nextUnreadIndex, ownerCanRead, readMarksOf, sideOf, startSeen, startSide, unreadOf, unreadUnits, withRead,
+  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, nextUnreadIndex, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
 import { dropSuperUnread, publishSuperUnread } from './superUnreadStore';
@@ -333,14 +333,14 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
         // Seen needs the START on screen (owner 2026-11-12): the end of a tall message filling
         // the view is not a read, and its arrow points at where it begins.
         if (startSeen(row, view)) { visible.push(unitId(u)); return; }
-        const side = startSide(row, view);
+        const side = readSide(row, view);
         if (side === 'above') next = 'up';
         else if (next === null && side === 'below') next = 'down';
       });
       missing.current = waiting;
       // The arrow says where the next click goes: a walk goes on down past what it left above.
       const walked = walkingRef.current() && walkedTo.current?.isConnected ? spanOf(walkedTo.current) : null;
-      if (walked && rows.some((el) => { const r = el && spanOf(el); return !!r && r.top > walked.top && startSide(r, view) === 'below'; })) next = 'down';
+      if (walked && rows.some((el) => { const r = el && spanOf(el); return !!r && r.top > walked.top && readSide(r, view) === 'below'; })) next = 'down';
       setEdge(next);
       // A peek at where the next jump goes, never `next()` (that moves the walk).
       const peek = next ? units[nextUnreadIndex(rows.map((el) => (el ? spanOf(el) : null)), view, walked)] : undefined;

@@ -2805,10 +2805,12 @@ export function ChatPane({
   const landedRef = useRef(false);
   const openedAtRef = useRef(performance.now());
   useLayoutEffect(() => {
-    if (!unreadReady) return;
+    // Nothing to land on yet (the marks can load before the transcript): the first landing waits,
+    // unspent, for the first anchor (end review r1).
+    if (!unreadReady || !anchorKeyNow) return;
     const first = !landedRef.current;
     landedRef.current = true;
-    if (!anchorKeyNow || !stickRef.current || glideRef.current) return;
+    if (!stickRef.current || glideRef.current) return;
     if (first && lastActivityAtRef.current > openedAtRef.current) return;
     scrollToBottom(first);
   }, [anchorKeyNow, unreadReady, scrollToBottom]);

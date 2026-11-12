@@ -93,10 +93,12 @@ export function useFollowUnread(scrollRef: RefObject<HTMLElement | null>, conten
     for (const a of followAnchors(inp.items, inp.unread, passed.current, live)) {
       const row = rowOfAnchor(a);
       if (!row) {
-        // Above the mounted window: only an opened pane's first landing goes up to it; a block
-        // inside the window that drew nothing is skipped (plan r1 E2).
+        // Above the mounted window: only an opened pane's first landing goes up to it. A pinned
+        // follow walks on, as for a start above the view: the next candidate decides, so a new
+        // report below is still held (end review r1). A block inside the window that drew nothing
+        // is skipped too (plan r1 E2).
         if ('itemId' in a && aboveWindow(a.itemId)) {
-          if (!allowUp || !a.unit) return null;
+          if (!allowUp || !a.unit) continue;
           if (inp.releaseToItem(a.itemId) === null) continue;
           inp.jump(a.unit, { instant: true });
           return { reveal: true };

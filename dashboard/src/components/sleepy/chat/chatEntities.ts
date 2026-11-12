@@ -1549,10 +1549,14 @@ export function contentTopOf(node: Element, scroller: HTMLElement): number {
   return (node.getBoundingClientRect().top - box.top) / screenScaleOf(scroller, box) + scroller.scrollTop;
 }
 
+/** Below this a measured scale is `offsetHeight`'s whole-pixel rounding (0.5 px of a 100 px pane). */
+const SCALE_ROUNDING = 0.005;
+
 /** Screen pixels per layout pixel of an element (1 untransformed). */
 export function screenScaleOf(el: HTMLElement, box: DOMRect = el.getBoundingClientRect()): number {
   const scale = el.offsetHeight > 0 ? box.height / el.offsetHeight : 1;
-  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+  // `offsetHeight` is rounded to a whole pixel: a fractional height is not a transform (|Δ| ≤ 0.5/H).
+  return Number.isFinite(scale) && scale > 0 && Math.abs(scale - 1) > SCALE_ROUNDING ? scale : 1;
 }
 
 
