@@ -67,6 +67,14 @@ describe('quick edit widgets: names resolved against the vault', () => {
     expect(prepareQuickWidgets(root, [{ kind: 'insight', ref: 'mrr' }])[0].payload.ref).toBe('mrr');
     writeFileSync(join(root, 'state', 'odeme.md'), '---\nname: Ödeme sayfası\nstatus: todo\n---\n');
     expect(resolveByTitle(root, 'task', 'ÖDEME SAYFASI')).toBe('odeme');
+    // A page asked by its title (capitals, a space, Turkish letters) is a title, never a file path (review r2).
+    mkdirSync(join(root, 'knowledge'), { recursive: true });
+    writeFileSync(join(root, 'knowledge', 'odeme-sayfasi.md'), '---\nname: Ödeme Sayfası\ndescription: x\n---\nbody\n');
+    expect(prepareQuickWidgets(root, [{ kind: 'knowledge', ref: 'ödeme sayfası' }])[0].payload.ref).toBe('odeme-sayfasi');
+    // A title past the catalog's 80 characters, named in full.
+    const long = 'Uzun başlık '.repeat(10).trim();
+    writeFileSync(join(root, 'state', 'uzun.md'), `---\nname: ${long}\nstatus: todo\n---\n`);
+    expect(resolveByTitle(root, 'task', long)).toBe('uzun');
     expect(refusalOf(() => prepareQuickWidgets(root, [{ kind: 'task', ref: 'Fix login' }])).why).toBe('not_found');
     writeFileSync(join(root, 'state', 'fix-login-2.md'), '---\nname: Fix the login\nstatus: todo\n---\n');
     expect(resolveByTitle(root, 'task', 'Fix the login')).toBeNull();

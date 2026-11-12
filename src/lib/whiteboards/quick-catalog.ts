@@ -101,7 +101,8 @@ const norm = (s: string): string => s.normalize('NFC').toLowerCase().replace(/i\
 export function resolveByTitle(root: string, kind: string, name: string): string | null {
   const list = KIND_LIST[kind];
   if (!list) return null;
-  const want = norm(name);
+  // The catalog's titles are cut at TITLE_MAX: a longer name is compared as the catalog holds it.
+  const want = norm(clean(name));
   if (!want) return null;
   const hits = readQuickCatalog(root)[list].filter((r) => norm(r[1]) === want || norm(r[0]) === want);
   return hits.length === 1 ? hits[0][0] : null;

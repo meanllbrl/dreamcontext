@@ -150,8 +150,10 @@ export function prepareQuickWidgets(root: string, widgets: readonly QuickWidget[
     let ref = w.ref?.trim();
     if (w.kind === 'insight' || w.kind === 'task' || w.kind === 'lab-card' || w.kind === 'agent' || w.kind === 'knowledge') {
       if (!ref) throw new QuickWidgetRefusal(w.kind, 'bad', '');
-      // A page may also be a project file: the same inside-the-project rule as a web card.
-      const isPath = w.kind === 'knowledge' && pageRefKind(ref) !== 'knowledge';
+      // A page may also be a project file (a .md/.pdf/.html path): the same inside-the-project rule
+      // as a web card. Anything else is a slug or the owner's own words for its title (review r2).
+      const fileKind = w.kind === 'knowledge' ? pageRefKind(ref) : null;
+      const isPath = fileKind === 'md' || fileKind === 'pdf' || fileKind === 'html';
       if (isPath ? !projectFileInside(root, ref) : !widgetRefExists(root, w.kind, ref)) {
         // Not a slug: the owner's own words, matched by exact title across the whole vault.
         const found = isPath ? null : resolveByTitle(root, w.kind, ref);
