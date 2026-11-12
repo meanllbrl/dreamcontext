@@ -72,7 +72,7 @@ createRoot(document.getElementById('root')!).render(
         <div style={{ height: '100vh', display: 'flex', background: 'var(--color-bg)', color: 'var(--color-text)' }}>
           <div data-testid="harness-drawer" style={{ position: 'relative', display: 'flex', height: 640, width, background: 'var(--color-bg-secondary)' }}>
             <ChatDrawer rows={rows} width={width} floating={false} onClose={noop} onResize={noop} onToggleExpanded={noop}
-              onIntent={noop} onHistory={noop} onRelations={noop} onMove={noop} onDrop={noop} onMoveWindow={noop}
+              onIntent={(v, i) => { ((window as unknown as { __intents: unknown[] }).__intents ??= []).push([v, i]); }} onHistory={noop} onRelations={noop} onMove={noop} onDrop={noop} onMoveWindow={noop}
               onOpenInWindow={noop} onCloseProject={noop} onNewProject={noop} newWindowNonce={0} onManage={noop} />
           </div>
         </div>
