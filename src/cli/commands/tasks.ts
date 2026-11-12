@@ -618,11 +618,12 @@ export function registerTasksCommand(program: Command): void {
     .option('--tags', 'List distinct tags with counts (respects -s/--all; ignores other filters)')
     .option('--json', 'Emit the filtered tasks as JSON (flat array)')
     .option('--parent <slug>', 'Only the sub-tasks of this task; with --json each carries its wave number (null when it is not a wave)')
+    .option('--brief', 'One plain line per task: slug | status | updated | name (no header, no colour)')
     .action(async (opts: {
       status?: string; all?: boolean; tag?: string[]; anyTag?: string[];
       version?: string; priority?: string; feature?: string; objective?: string;
       since?: string; until?: string; parent?: string;
-      groupBy?: string; long?: boolean; tags?: boolean; json?: boolean;
+      groupBy?: string; long?: boolean; tags?: boolean; json?: boolean; brief?: boolean;
     }) => {
       const backend = getTaskBackend();
 
@@ -691,6 +692,16 @@ export function registerTasksCommand(program: Command): void {
         waveOf = new Map(siblings.map((t) => [t.slug, null]));
         for (const w of waveChildren(parentTask ?? {}, siblings)) waveOf.set(w.child.slug, w.wave);
         matched = matched.filter((t) => t.parent_task === parentSlug);
+      }
+
+      // --brief (SL-1): one plain line per task, no colour, no header. The whole board as
+      // `--json` is ~1 MB on a big brain; this is the slice an agent actually reads.
+      if (opts.brief && !opts.json) {
+        for (const t of matched) {
+          // A listing row's `name` is its slug; the sentence is its description.
+          console.log(`${basename(t.file, '.md')} | ${t.status} | ${String(t.updated_at ?? '').slice(0, 10)} | ${t.description}`);
+        }
+        return;
       }
 
       if (opts.json) {

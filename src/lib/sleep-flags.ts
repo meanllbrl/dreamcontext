@@ -65,13 +65,20 @@ export function writeSleepFlags(root: string, flags: SleepFlag[]): void {
  * ABSENT from `observed` is DROPPED — the streak is CONSECUTIVE by contract,
  * so a problem that goes quiet for one cycle starts over at 1 if it recurs.
  *
+ * ...but only when the cycle REPORTED (`reported`, default true). A cycle where no specialist
+ * recorded anything and no `--flag` was passed is not evidence that every problem went away:
+ * the flags come back unchanged, streaks neither advanced nor reset (SL-3; the store sat at `[]`
+ * for 8 cycles because the flags never reached `sleep done`).
+ *
  * Pure — never touches disk.
  */
 export function reconcileFlags(
   prev: SleepFlag[],
   observed: Array<Pick<SleepFlag, 'key' | 'label' | 'task_slug'>>,
   nowISO: string,
+  opts: { reported?: boolean } = {},
 ): SleepFlag[] {
+  if (opts.reported === false && observed.length === 0) return prev;
   const prevByKey = new Map(prev.map((f) => [f.key, f]));
   return observed.map((obs) => {
     const existing = prevByKey.get(obs.key);

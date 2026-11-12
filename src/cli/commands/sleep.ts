@@ -1,7 +1,7 @@
 import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
-import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { listApps } from '../../lib/apps/registry.js';
 import { countFindings } from '../../lib/apps/learn-queue.js';
@@ -70,6 +70,30 @@ import {
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
 import { loadStatuses } from '../../lib/overrides.js';
+import { buildSleepPacket, renderSleepPacket, renderSleepBoard, writeSleepPacket, PACKET_MD_REL, PACKET_BOARD_REL, type SleepPacket } from '../../lib/sleep-packet.js';
+import { getActivePlanningVersion } from '../../lib/active-version.js';
+import { getExistingReleases } from '../../lib/release-discovery.js';
+import { resolveLinkedRepos } from '../../lib/linked-repos.js';
+import { listPeople } from '../../lib/people-store.js';
+import { isLearningEnabled } from '../../lib/setup-config.js';
+import type { TaskData } from '../../lib/task-backend/types.js';
+import {
+  readCycleReport,
+  recordCycleFlag,
+  recordNoFlags,
+  recordCycleAsks,
+  consumeCycleReport,
+  CYCLE_REPORT_REL,
+} from '../../lib/sleep-cycle-report.js';
+import { auditFeatureLinks } from '../../lib/feature-links.js';
+import { buildRoadmapModel } from '../../lib/roadmap-model.js';
+import { writeRoadmapBoard } from './roadmap.js';
+import { runRemSleep } from '../../lib/marketing/rem-sleep.js';
+import { withLock as withMarketingLock } from '../../lib/marketing/store.js';
+import { loadCouncilIndex } from '../../lib/council.js';
+import { compactFeature, cutoffDate, oversizedPrds } from '../../lib/feature-compact.js';
+import { featuresDir, featureSlug } from '../../lib/features-path.js';
+import fg from '../../lib/glob.js';
 import { sortByOrder } from '../../lib/task-status.js';
 import { RULES_REL_PATH, readRules, unlearnedIds } from '../../lib/task-filing-rules.js';
 import { appliedObjectionIds, readObjectionsStrict, type ObjectionRecord } from '../../lib/task-objection.js';
@@ -360,6 +384,157 @@ export function filingRulesBrief(root: string): { lines: string[]; json: Record<
   };
 }
 
+/** The pending automation outputs and the apps with findings, as `sleep start` reports them. */
+function pendingSignals(root: string, state: SleepState): { outputs: number; appFindings: Array<{ slug: string; count: number }> } {
+  let outputs = 0;
+  try { outputs = pendingOutputsSince(root, outputsBoundary(state)).outputs.length; } catch { outputs = 0; }
+  let appFindings: Array<{ slug: string; count: number }> = [];
+  try {
+    appFindings = listApps(homedir(), dirname(root))
+      .map((a) => ({ slug: a.slug, count: countFindings(homedir(), a.hash) }))
+      .filter((a) => a.count > 0);
+  } catch { appFindings = []; }
+  return { outputs, appFindings };
+}
+
+/**
+ * SL-1 — gather everything the sleep packet needs and build it. Read-only. The review-kind
+ * tasks are read in full (criteria and changelog); every other task only as its listing row.
+ */
+export async function collectSleepPacket(root: string, opts: { filingRules?: string[]; outputs?: number; appFindings?: number } = {}): Promise<SleepPacket> {
+  const state = readSleepState(root);
+  const projectRoot = dirname(root);
+  const backend = getTaskBackend(root);
+  const statuses = loadStatuses(root);
+  const tasks = await backend.list({ all: true, statuses });
+  const reviewKeys = new Set(statuses.filter((d) => d.kind === 'review').map((d) => d.key));
+  const reviewTasks: TaskData[] = [];
+  for (const t of tasks) {
+    if (!reviewKeys.has(t.status)) continue;
+    const full = await backend.get(basename(t.file, '.md')).catch(() => null);
+    if (full) reviewTasks.push(full);
+  }
+  const repos: Array<{ name: string; path: string }> = [{ name: 'project', path: projectRoot }];
+  try {
+    for (const r of resolveLinkedRepos(projectRoot)) if (r.present && r.path) repos.push({ name: r.name, path: r.path });
+  } catch { /* the project alone */ }
+  let people = 0;
+  try { people = listPeople(root).length; } catch { people = 0; }
+  const signals = opts.outputs === undefined || opts.appFindings === undefined ? pendingSignals(root, state) : null;
+  return buildSleepPacket({
+    contextRoot: root,
+    state,
+    history: readSleepHistory(root),
+    tasks,
+    reviewTasks,
+    statuses,
+    releases: getExistingReleases(root).map((r) => ({ version: r.version, status: r.status ?? 'released' })),
+    runningVersion: dreamcontextVersion(),
+    activeVersion: getActivePlanningVersion(root),
+    filingRules: opts.filingRules ?? filingRulesBrief(root).lines,
+    repos,
+    people,
+    automationOutputs: opts.outputs ?? signals!.outputs,
+    appFindings: opts.appFindings ?? signals!.appFindings.reduce((a, b) => a + b.count, 0),
+    learning: isLearningEnabled(readSetupConfig(projectRoot)),
+  });
+}
+
+/** SL-4: what `sleep done` compacts — PRDs over this size, entries older than this, newest kept. */
+export const PRD_COMPACT_MIN_CHARS = 20_000;
+export const PRD_COMPACT_DAYS = 30;
+export const PRD_COMPACT_KEEP = 5;
+
+/** The steps after the specialists that need judgment, printed by `sleep start` (SL-3). */
+export function remainingChecklist(): string[] {
+  return [
+    'After the specialists (their reports record flags and asks themselves: `sleep flag add|none`, `sleep asks set`):',
+    '  1. `dreamcontext reflect`: promote a candidate only when it is load-bearing.',
+    '  2. `dreamcontext sleep done "<summary>"` (+ `--product-ran` when sleep-product ran). It runs the roadmap refresh, the feature-link audit, PRD compaction, `mk rem-sleep` and the council count itself.',
+    '  3. Report: relay what `sleep done` printed (escalations, ready-to-close, link drift, slipping objectives, unpromoted debates).',
+  ];
+}
+
+/**
+ * SL-3/SL-4 — the deterministic steps of the flow's tail, run by `sleep done` itself instead of left
+ * to an orchestrator that skipped them in most runs. Each is best-effort and says what it did.
+ * The feature-link step only AUDITS: its heal drops `related_tasks` entries whose task file is
+ * absent, and a delete is never inferred from absence inside an unattended step
+ * (knowledge/patterns/a-delete-is-never-inferred-from-absence.md). It prints the command instead.
+ */
+export async function runSleepTail(root: string, say: { info: (m: string) => void; warn: (m: string) => void }): Promise<void> {
+  try {
+    const objectivesDir = join(root, 'core', 'objectives');
+    if (existsSync(objectivesDir) && readdirSync(objectivesDir).some((f) => f.endsWith('.md'))) {
+      const model = buildRoadmapModel(root);
+      writeRoadmapBoard(root, model);
+      const slipping = model.objectives.filter((o) => o.slipping === true).map((o) => o.slug);
+      say.info(`Roadmap refreshed: ${model.objectives.length} objective(s)${slipping.length ? `, SLIPPING: ${slipping.join(', ')}` : ', none slipping'}.`);
+    }
+  } catch (err) {
+    say.warn(`Roadmap refresh: skipped — ${(err as Error).message ?? err}`);
+  }
+  try {
+    const a = auditFeatureLinks(root);
+    const fixable = a.nonCanonicalFeatureRefs.length + a.missingBackRefs.length + a.missingMemberships.length;
+    const drops = a.ghostTaskRefs.length + a.foreignClaims.length;
+    const human = a.ghostFeatureRefs.length + a.conflictingClaims.length;
+    if (fixable + drops + human > 0) {
+      say.warn(
+        `Feature links: ${fixable} to add or canonicalize, ${drops} to drop (a task file missing or claimed by another feature), ${human} for a human. ` +
+        'Review and fix with `dreamcontext doctor --heal-links` (sleep does not drop links on its own).',
+      );
+    }
+  } catch (err) {
+    say.warn(`Feature-link audit: skipped — ${(err as Error).message ?? err}`);
+  }
+  try {
+    if (existsSync(join(root, 'marketing'))) {
+      const r = await withMarketingLock(async () => runRemSleep({}));
+      if (r.marketingPresent) {
+        say.info(
+          `Marketing rem-sleep: runs kept ${r.runs.kept}, removed ${r.runs.deleted}; insights kept ${r.insights.kept}, removed ${r.insights.deleted}; ` +
+          `learnings merged ${r.learnings.merged}; redacted ${r.redaction.rewritten}.`,
+        );
+        for (const f of [...r.runs.deletedFiles, ...r.insights.deletedFiles].slice(0, 20)) say.info(`  removed ${f}`);
+      }
+    }
+  } catch (err) {
+    say.warn(`Marketing rem-sleep: skipped — ${(err as Error).message ?? err}`);
+  }
+  // SL-4 — PRDs over 20K chars move their Changelog entries older than 30 days (the newest 5
+  // always stay) into knowledge/archive/features/, archive written and read back first.
+  try {
+    const dir = featuresDir(root);
+    const files = existsSync(dir) ? fg.sync('**/*.md', { cwd: dir, absolute: true }) : [];
+    const big = oversizedPrds(files.map((f) => ({ feature: featureSlug(dir, f), path: f })), PRD_COMPACT_MIN_CHARS);
+    const cutoff = cutoffDate(new Date(), PRD_COMPACT_DAYS);
+    let moved = 0;
+    for (const t of big) {
+      try {
+        const r = compactFeature(root, t.feature, t.path, { cutoff, keepNewest: PRD_COMPACT_KEEP, today: today() });
+        if (r.moved > 0) {
+          moved += r.moved;
+          say.info(`PRD compacted: ${t.feature} moved ${r.moved} changelog entr${r.moved === 1 ? 'y' : 'ies'} (${r.movedChars} chars) → ${r.archives.map((a) => a.slice(root.length + 1)).join(', ')}`);
+        }
+      } catch (err) {
+        say.warn(`PRD compaction: ${t.feature} left as it was — ${(err as Error).message ?? err}`);
+      }
+    }
+    if (big.length > 0 && moved === 0) say.info(`PRDs over ${PRD_COMPACT_MIN_CHARS} chars: ${big.length}, none with changelog entries older than ${PRD_COMPACT_DAYS} days to move.`);
+  } catch (err) {
+    say.warn(`PRD compaction: skipped — ${(err as Error).message ?? err}`);
+  }
+  try {
+    const unpromoted = loadCouncilIndex().filter((e) => e.status === 'complete' && !e.promoted_to_knowledge);
+    if (unpromoted.length > 0) {
+      say.info(`Council: ${unpromoted.length} finished debate(s) not promoted to knowledge (\`dreamcontext council list --unpromoted\`): promote one only if the owner engaged with it.`);
+    }
+  } catch (err) {
+    say.warn(`Council check: skipped — ${(err as Error).message ?? err}`);
+  }
+}
+
 export function registerSleepCommand(program: Command): void {
   const sleep = program
     .command('sleep')
@@ -467,7 +642,7 @@ export function registerSleepCommand(program: Command): void {
     .option('--deep', 'Force a deep consolidation (authorizes destructive knowledge ops)')
     .option('--force', 'Take over an in-progress consolidation lock (a stuck or parallel sleep)')
     .option('--json', 'Emit as JSON (suppresses the human-readable lines below)')
-    .action((opts: { deep?: boolean; force?: boolean; json?: boolean }) => {
+    .action(async (opts: { deep?: boolean; force?: boolean; json?: boolean }) => {
       const root = ensureContextRoot();
       // --json mirrors the `automations tick --json` convention elsewhere in
       // this CLI: suppress the human-readable success/info/warn lines below and
@@ -706,6 +881,35 @@ export function registerSleepCommand(program: Command): void {
         const dispatch = specialistDispatchTable(projectRoot);
         for (const line of renderDispatchTable(dispatch)) say.info(line);
 
+        // SL-3 — an unfinished cycle's report is carried, never wiped: its observations are
+        // still observations. Then the steps left after the specialists.
+        const carried = readCycleReport(root);
+        if (carried.reported_by.length > 0 || carried.asks) {
+          say.info(`Carried from an unfinished cycle: ${carried.flags.length} flag(s) recorded by ${carried.reported_by.join(', ') || 'nobody'} (${CYCLE_REPORT_REL}); sleep done reads them with this cycle's.`);
+        }
+        for (const line of remainingChecklist()) say.info(line);
+
+        // SL-1 — the packet: what every specialist used to rebuild by hand (sessions oldest →
+        // newest with every owner-typed turn, the open board, ready-to-close, git, flags, and
+        // the facts that switch prompt sections off). Best-effort: without it the specialists
+        // fall back to building their input themselves, and the line says so.
+        let packetPath: string | null = null;
+        try {
+          const packet = await collectSleepPacket(root, {
+            filingRules: filingRules.lines,
+            outputs: automationOutputs.outputs.length,
+            appFindings: appFindings.reduce((a, b) => a + b.count, 0),
+          });
+          packetPath = writeSleepPacket(root, packet).md;
+          say.info(
+            `Sleep packet: _dream_context/${PACKET_MD_REL} (${packet.sessions.length} session(s) oldest to newest with the owner's turns, git, flags) ` +
+            `and _dream_context/${PACKET_BOARD_REL} (${packet.board.open.length} open task(s), ${packet.ready_to_close.length} ready to close). ` +
+            'Give both paths to every specialist (the board matters to sleep-tasks); they read them instead of rebuilding them.',
+          );
+        } catch (err) {
+          say.warn(`Sleep packet: not written — ${(err as Error).message ?? err}. Specialists build their input by hand this cycle.`);
+        }
+
         if (asJson) {
           console.log(JSON.stringify({
             epoch: state.sleep_started_at,
@@ -719,6 +923,7 @@ export function registerSleepCommand(program: Command): void {
             filingRules: filingRules.json,
             taxonomy,
             dispatch,
+            packet: packetPath,
           }, null, 2));
         }
       } finally {
@@ -726,6 +931,89 @@ export function registerSleepCommand(program: Command): void {
         // or throw). The durable epoch — not this file — carries the lock onward.
         releaseFileLock(startLockPath);
       }
+    });
+
+  // --- flag (SL-3: specialists record their own observations) ---
+  const flag = sleep
+    .command('flag')
+    .description('Record a recurring problem this cycle observed (specialists run this themselves; sleep done reads it)');
+  flag
+    .command('add')
+    .argument('<key>', 'Stable key, byte-identical every cycle: recurring-task:<slug>, ceiling-blocked:<file>, task-candidate:<topic>, …')
+    .argument('<label...>', 'One line: what recurred and the evidence')
+    .option('--task <slug>', 'The task this flag escalates (none for a task-candidate)')
+    .option('--by <specialist>', 'Who observed it (sleep-tasks, sleep-state, sleep-product, …)', 'agent')
+    .action((key: string, labelParts: string[], opts: { task?: string; by: string }) => {
+      const root = ensureContextRoot();
+      const parsed = parseFlagOption(`${key}::${labelParts.join(' ')}${opts.task ? `::${opts.task}` : ''}`);
+      if (!parsed || /\s/.test(parsed.key)) {
+        error('A flag needs a key without spaces and a label.', 'Example: dreamcontext sleep flag add recurring-task:fix-x "still todo after 3 cycles" --task fix-x --by sleep-tasks');
+        process.exitCode = 1;
+        return;
+      }
+      const r = recordCycleFlag(root, parsed, opts.by);
+      success(`Flag recorded: ${parsed.key} (${r.flags.length} this cycle). sleep done tracks the streak.`);
+    });
+  flag
+    .command('none')
+    .description('Say you looked and nothing recurred (so a cycle with no flags still counts as reported)')
+    .option('--by <specialist>', 'Who looked', 'agent')
+    .action((opts: { by: string }) => {
+      const root = ensureContextRoot();
+      recordNoFlags(root, opts.by);
+      success(`Recorded: ${opts.by} reported no recurring problem this cycle.`);
+    });
+  flag
+    .command('list')
+    .description('This cycle\'s recorded flags and the streaks kept so far')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const cycle = readCycleReport(root);
+      const kept = readSleepFlags(root);
+      if (opts.json) { console.log(JSON.stringify({ cycle, kept }, null, 2)); return; }
+      console.log(header('This cycle'));
+      console.log(`  reported by: ${cycle.reported_by.join(', ') || 'nobody yet'}`);
+      for (const f of cycle.flags) console.log(`  ${f.key} · ${f.label}${f.task_slug ? ` · ${f.task_slug}` : ''} (${f.by})`);
+      console.log(header('Streaks'));
+      if (kept.length === 0) console.log(chalk.dim('  none'));
+      for (const f of kept) console.log(`  ${f.key} · ${f.consecutive_cycles} cycle(s) · ${f.label}`);
+    });
+
+  // --- asks (SL-3: sleep-tasks records where the owner's asks landed) ---
+  sleep
+    .command('asks')
+    .description('Record where the owner\'s asks landed this cycle (sleep-tasks)')
+    .command('set')
+    .argument('<counts>', 'criterion=a,subtask=b,task=c,unplaced=d')
+    .option('--by <specialist>', 'Who placed them', 'sleep-tasks')
+    .action((raw: string, opts: { by: string }) => {
+      const root = ensureContextRoot();
+      const parsed = parseAsks(raw);
+      if (!parsed.ok) {
+        error(`"${raw}" is not criterion=a,subtask=b,task=c,unplaced=d.`, 'Example: dreamcontext sleep asks set criterion=3,subtask=0,task=1,unplaced=2');
+        process.exitCode = 1;
+        return;
+      }
+      recordCycleAsks(root, parsed.counts, opts.by);
+      success(`${parsed.line} — recorded; sleep done writes it into the cycle's history.`);
+    });
+
+  // --- packet ---
+  sleep
+    .command('packet')
+    .description('Print the sleep packet: sessions oldest to newest with every owner-typed turn, git since the last sleep, flags; --board for the open board and the tasks ready to close (sleep start writes both to tmp/sleep/)')
+    .option('--json', 'Emit the packet as JSON')
+    .option('--board', 'Print the board half (open board, ready to close, stale reviews) instead of the sessions half')
+    .option('--write', 'Also write it to _dream_context/tmp/sleep/ (packet.md, board.md, packet.json)')
+    .action(async (opts: { json?: boolean; board?: boolean; write?: boolean }) => {
+      const root = ensureContextRoot();
+      const packet = await collectSleepPacket(root);
+      if (opts.write) {
+        const paths = writeSleepPacket(root, packet);
+        if (!opts.json) info(`Written: ${paths.md} and ${paths.board}`);
+      }
+      console.log(opts.json ? JSON.stringify(packet, null, 2) : opts.board ? renderSleepBoard(packet) : renderSleepPacket(packet));
     });
 
   // --- done ---
@@ -761,6 +1049,12 @@ export function registerSleepCommand(program: Command): void {
       if (!summary.trim()) {
         error('Summary is required.');
         return;
+      }
+      // SL-3 — what the specialists recorded themselves this cycle (flags, ask counts).
+      const cycleReport = readCycleReport(ensureContextRoot());
+      if (opts.asks === undefined && cycleReport.asks) {
+        const c = cycleReport.asks.counts;
+        opts.asks = `criterion=${c.criterion},subtask=${c.subtask},task=${c.task},unplaced=${c.unplaced}`;
       }
       // Parsed BEFORE any write, and never a refusal: a malformed value is kept raw with a
       // warning, because refusing this late would leave the cycle half closed.
@@ -879,12 +1173,24 @@ export function registerSleepCommand(program: Command): void {
       // any flag at/over the escalation threshold, and bump the linked task's
       // priority. Best-effort — a flag-tracking bug must never fail `sleep done`.
       try {
-        const observed = opts.flag
+        const passed = opts.flag
           .map(parseFlagOption)
           .filter((f): f is NonNullable<ReturnType<typeof parseFlagOption>> => f !== null);
+        // The specialists' own records plus anything passed by hand; one entry per key.
+        const byKey = new Map<string, { key: string; label: string; task_slug: string | null }>();
+        for (const f of cycleReport.flags) byKey.set(f.key, { key: f.key, label: f.label, task_slug: f.task_slug ?? null });
+        for (const f of passed) byKey.set(f.key, f);
+        const observed = [...byKey.values()];
+        const reported = cycleReport.reported_by.length > 0 || opts.flag.length > 0;
         const prevFlags = readSleepFlags(root);
-        const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString());
+        const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString(), { reported });
         writeSleepFlags(root, nextFlags);
+        if (!reported && prevFlags.length > 0) {
+          info(`No specialist reported flags this cycle: ${prevFlags.length} flag(s) kept as they were (streaks not advanced).`);
+        } else if (observed.length > 0) {
+          info(`Recidivism flags: ${observed.length} observed this cycle (${nextFlags.filter((f) => f.consecutive_cycles >= 2).length} recurring).`);
+        }
+        consumeCycleReport(root);
 
         // Deferred task candidates get a summary line, not an ask: `escalations`
         // excludes the `task-candidate:` family because such a candidate was
@@ -997,6 +1303,10 @@ export function registerSleepCommand(program: Command): void {
         warn(`Curator trigger: skipped — ${(err as Error).message ?? err}`);
       }
       timer.lap('curator');
+
+      // SL-3 — the flow's deterministic tail (roadmap, link audit, mk rem-sleep, council count).
+      await runSleepTail(root, { info, warn });
+      timer.lap('tail');
 
       // AC7 — semantic dedup digest: surface merge/review/create tallies since
       // the epoch in the cycle summary. Best-effort — a log-read hiccup must
