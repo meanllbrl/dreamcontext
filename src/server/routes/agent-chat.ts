@@ -78,8 +78,8 @@ import { claudeRules, codexRules } from '../../lib/account-rules.js';
 import { createResumeAtReset, RESET_CONTINUE_TEXT } from '../../lib/resume-at-reset.js';
 import { isServerTurnText } from '../../lib/usage-readers.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
-import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
-import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
+import { mcpStoreFiles, storeFileRefs, storeServers } from '../../lib/mcp-store.js';
+import { McpControl, isSafeAuthUrl, readStatusCache, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
 import { offCardQuestionFrame } from '../../lib/card-standalone.js';
 import { removeMcpHealth, writeMcpHealth } from '../../lib/mcp-health.js';
 import { isUsableServerName, type McpLiveServer } from '../../lib/mcp-wire.js';
@@ -139,7 +139,7 @@ import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-lan
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
   childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
@@ -151,7 +151,7 @@ import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  knownMcpServers, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
+  knownMcpServers, mcpCardServers, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
@@ -1894,6 +1894,9 @@ interface ChatSpawnOpts {
   tool?: BridgeTool;
 }
 
+/** `respawnTo`'s value when the only reason is an MCP grant (agent-chat `grantAskedMcp`). */
+const MCP_GRANT_RESPAWN = 'mcp-grant';
+
 /** Wave 4 opens this, with the thread id kept by the server. Until then the path is dead. */
 const T3_CLAUDE_ENGINE_OPEN = false as boolean;
 
@@ -2333,6 +2336,23 @@ export function startChatSession(
   const browserOverride = scopedCard || app?.own ? null : prepareBrowserOverride(projectRoot);
   // The MCP stores every account shares (task mcp-management), by env reference.
   const storeMcp = chatStoreMcp({ scopedCard: scopedCard || !!app?.own, lean: !!opts.leanMcp, projectRoot });
+  // A set-up server this chat was started without, asked for on its own `mcp` card, joins it on
+  // an in-place respawn at the turn's end (lean-mcp.ts `mcpGrantFor`; owner 2026-11-12, a Super
+  // child blind to a configured Slack). Ordinary Claude chats and lean children only: a scoped
+  // card, an app, the Assistant and the Super keep their own MCP rules, a bridge tool its own config.
+  const mcpGrantable = !scopedCard && !app && !isAssistant && !isSuper && !bridgeTool;
+  /** The user servers this process carries: the lean subset, else the stores as spawned. */
+  const spawnedMcp: string[] = !mcpGrantable ? []
+    : opts.leanMcp ? [...opts.leanMcp]
+      : (() => { try { return [...storeServers(projectRoot).keys()]; } catch { return []; } })();
+  /** Granted since this spawn, for the successor (a lean child's subset grows by these). */
+  const mcpGranted: string[] = [];
+  /** A grant waits to respawn (a turn or background work still runs). Until it is ARMED (`respawnTo`
+   *  set, only when idle with no background task) this process keeps taking every message. */
+  let mcpGrantPending = false;
+  let mcpGrantArmed = false;
+  /** The card's receipt, the successor's first turn (written ahead of anything held). */
+  let mcpGrantReceipt: string | null = null;
 
   // A bridge pane holds its PANE id (its thread changes on rotation; the pane does not), so a
   // respawn of the same pane waits for the old child exactly as a Claude resume does.
@@ -4138,6 +4158,8 @@ export function startChatSession(
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTools.delivered = superTools.inPrompt;
       if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
+        // An MCP grant waited for the chat's background work (a dev server, a sub-agent) to end.
+        if (backgroundTasks === 0) armMcpGrant();
       }
 
       // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
@@ -4238,6 +4260,7 @@ export function startChatSession(
       cardFeedback.noteFrame(obj);
       // The Super's own text: its line-start `<!-- re:<ref> -->` sections close what it owed him.
       if (isSuper && obj.type === 'assistant' && !obj.parent_tool_use_id) void superSaid(chatRegistryId, assistantText(obj));
+      if (mcpGrantable && obj.type === 'assistant' && !obj.parent_tool_use_id && !handedOff) grantAskedMcp(assistantText(obj));
       if (obj.type === 'assistant' && !obj.parent_tool_use_id) {
         const used = contextTokensFromUsage((obj.message as { usage?: Record<string, unknown> } | undefined)?.usage);
         if (used > 0) lastMainContext = used;
@@ -4263,6 +4286,8 @@ export function startChatSession(
         // deciding in the switch gate (an account probe takes seconds), and ending stdin under
         // it would lose it.
         if (respawnTo !== null && turnsInFlight === 0) setImmediate(scheduleRespawn);
+        // A pending MCP grant arms at this boundary (when no background work runs).
+        if (mcpGrantPending && turnsInFlight === 0) setImmediate(armMcpGrant);
 
         // The rotated Super Agent's fresh session finished its first turn: it has read its
         // handoff, so the inbox may deliver again (handoff-rotation.ts).
@@ -5216,7 +5241,8 @@ export function startChatSession(
     const listener = (autonomy: Autonomy): void => {
       if (!alive || handedOff) return;
       const wasPending = respawnTo !== null;
-      respawnTo = autonomy === spawnedAutonomy ? null : autonomy;
+      // An MCP grant's respawn still stands when the autonomy moves back.
+      respawnTo = autonomy === spawnedAutonomy ? (mcpGrantArmed ? MCP_GRANT_RESPAWN : null) : autonomy;
       if (respawnTo !== null) { scheduleRespawn(); return; }
       // Switched back before the turn ended: no respawn is coming, so the messages held for a
       // successor go to THIS process, in arrival order.
@@ -5262,7 +5288,8 @@ export function startChatSession(
       // The agent is gone: nothing to follow (its next spawn refuses).
       if (now === null) return;
       const wasPending = respawnTo !== null;
-      respawnTo = now === spawnedLevel ? null : now;
+      // An MCP grant's respawn still stands when the level moves back (its held receipt is the successor's).
+      respawnTo = now === spawnedLevel ? (mcpGrantArmed ? MCP_GRANT_RESPAWN : null) : now;
       if (respawnTo !== null) { scheduleRespawn(); return; }
       // Moved back before the turn ended: the messages held for a successor go to this process.
       if (wasPending) for (const raw of heldForSuccessor.splice(0)) onWsMessage(raw);
@@ -5278,6 +5305,55 @@ export function startChatSession(
   let closedDuringHandoff = false;
   const holdFrame = (raw: Buffer | string): void => { heldForSuccessor.push(raw); };
   const holdClose = (): void => { closedDuringHandoff = true; };
+
+  /**
+   * This chat's own `mcp` card asked for servers the project already has and this process was
+   * started without (`mcpGrantFor`): it respawns in place at the turn's end with them (a lean
+   * child's record keeps them for every later spawn), and, when none of them waits on the
+   * owner's sign-in, its next turn is the card's own receipt (`MCP connected: …`, the first line
+   * owner-wait.ts reads), so the job goes on with no owner step. A server that needs his sign-in
+   * still joins (the card then offers its sign-in), and the chat waits on him as before.
+   */
+  function grantAskedMcp(text: string): void {
+    const asked = mcpCardServers(text);
+    if (!asked.length) return;
+    let grant: string[] = [];
+    try {
+      grant = mcpGrantFor({ asked, have: [...spawnedMcp, ...mcpGranted], known: knownMcpServers(projectRoot), lean: !!opts.leanMcp });
+    } catch { return; }
+    if (!grant.length) return;
+    mcpGranted.push(...grant);
+    if (opts.leanMcp) void noteChildMcpGrant(chatRegistryId, grant).catch((err) => { console.warn(`[super] child ${chatRegistryId}: its MCP grant was not recorded: ${(err as Error).message}`); });
+    // The card's receipt only when it is wholly true: every name it asked for is in the successor
+    // and none waits on the owner's sign-in. Otherwise the card stays his (owner-wait.ts closes a
+    // wait on a receipt), and the successor's live status shows what is still missing.
+    const after = new Set([...spawnedMcp, ...mcpGranted]);
+    let signIn: string[] = asked;
+    try { signIn = mcpNeedingSignIn(asked, readStatusCache()); } catch { /* unknown: no receipt */ }
+    if (asked.every((n) => after.has(n)) && !signIn.length) {
+      const names = mcpGranted.join(', ');
+      mcpGrantReceipt = JSON.stringify({
+        type: 'user',
+        text: `MCP connected: ${names}\n${names} ${mcpGranted.length === 1 ? 'was' : 'were'} already set up for this project, so dreamcontext restarted this chat with ${mcpGranted.length === 1 ? 'it' : 'them'}: the tools are loaded now. Carry on with the task.`,
+      });
+    }
+    mcpGrantPending = true;
+    armMcpGrant();
+  }
+
+  /**
+   * Arm a pending grant's respawn only when it can run now: no turn and no background task (ending
+   * the process would kill a dev server or a background sub-agent). Before that nothing is held:
+   * messages go to this process as always. Called at the grant, at a turn's end and when the
+   * background work ends.
+   */
+  function armMcpGrant(): void {
+    if (!mcpGrantPending || mcpGrantArmed || !alive || handedOff) return;
+    if (turnsInFlight > 0 || backgroundTasks > 0) return;
+    mcpGrantArmed = true;
+    if (respawnTo === null) respawnTo = MCP_GRANT_RESPAWN;
+    scheduleRespawn();
+  }
 
   /** Respawn once every message already queued on `switchGate` has been decided: a message
    *  still inside `maybeSwitchAccount` is not yet counted in `turnsInFlight`, and ending stdin
@@ -5308,7 +5384,7 @@ export function startChatSession(
       // Detached (pane closed, phone locked): a reattach respawns it (adoptSocket). An idle one
       // with nothing held is ended now instead, so no process keeps running at the old level
       // in the meantime; the conversation stays on disk and its next open resumes it.
-      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0) drain();
+      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0 && !mcpGrantReceipt) drain();
       return;
     }
     handedOff = true;
@@ -5338,12 +5414,16 @@ export function startChatSession(
     const conversation = pinId || observedConversation;
     startChatSession(ws, projectRoot, {
       ...opts,
+      // A lean child's subset grows by what its card was granted (grantAskedMcp).
+      ...(opts.leanMcp && mcpGranted.length ? { leanMcp: [...new Set([...opts.leanMcp, ...mcpGranted])] } : {}),
       sessionId: conversation ? '' : opts.sessionId,
       resumeId: conversation,
       initialPrompt: '',
       deferPrompt: false,
       inheritedSurfaceDispose: disposeSurface,
     });
+    // An MCP grant's receipt first (its card's answer), then what was held, in arrival order.
+    if (mcpGrantReceipt) ws.emit('message', mcpGrantReceipt);
     // Replayed through the successor's own handler, in arrival order.
     for (const raw of heldForSuccessor.splice(0)) ws.emit('message', raw);
     if (closedDuringHandoff) ws.emit('close');

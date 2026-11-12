@@ -45,6 +45,7 @@ import { memberCallState, ownerWords } from '../agents/team-roster.js';
 import { noteReply } from './read-marks.js';
 import { detectOwnerLanguage, withOwnerLanguage, type OwnerLanguage } from './owner-language.js';
 import { isServerTurnText } from '../usage-readers.js';
+import { MAX_LEAN_MCP, MCP_NAME_RE } from './lean-mcp.js';
 import {
   closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, stampOwedSince,
   type OwedEnd,
@@ -929,6 +930,23 @@ export async function noteChildModel(sessionId: string, model: string): Promise<
   await writeSuper(root, (s) => {
     const c = s.children[sessionId];
     if (c && c.model !== model) c.model = model;
+  });
+}
+
+/**
+ * A lean child was given servers its own `mcp` card asked for (lean-mcp.ts `mcpGrantFor`): they
+ * join its record's `mcp`, so every later spawn of it (a reload, Resume, `super resume`) keeps
+ * them. Only names it lacks are added; never past MAX_LEAN_MCP. Not a child of any Super: nothing.
+ */
+export async function noteChildMcpGrant(sessionId: string, names: readonly string[]): Promise<void> {
+  const root = superKeyOfChild(sessionId);
+  if (!root || !names.length) return;
+  await writeSuper(root, (s) => {
+    const c = s.children[sessionId];
+    if (!c || c.adopted) return;
+    const have = c.mcp ?? [];
+    const add = names.filter((n) => MCP_NAME_RE.test(n) && !have.includes(n)).slice(0, Math.max(0, MAX_LEAN_MCP - have.length));
+    if (add.length) c.mcp = [...have, ...add];
   });
 }
 
