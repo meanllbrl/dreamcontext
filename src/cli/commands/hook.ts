@@ -1608,7 +1608,7 @@ export function mustSleepTier(debt: number, t: SleepThresholds): MustSleepTier |
  *  comes from `SLEEP_ROSTER_CLAUSE` so the directive can never name a different set of
  *  specialists than the Sleep buttons and the background dispatcher. */
 export const SLEEP_FLOW_LINE = 'Run the sleep flow in SKILL.md: `dreamcontext sleep start`, then dispatch the '
-  + `specialists in parallel (${SLEEP_ROSTER_CLAUSE}), then \`dreamcontext sleep done\`.`;
+  + `specialists in parallel (${SLEEP_ROSTER_CLAUSE}), then \`dreamcontext sleep done\` (add \`--product-ran\` when sleep-product ran, or its pending outputs come back next cycle).`;
 
 /** The tier-specific lines under a Must Sleep header. */
 function mustSleepTierBody(tier: MustSleepTier, debt: number, t: SleepThresholds): string[] {
