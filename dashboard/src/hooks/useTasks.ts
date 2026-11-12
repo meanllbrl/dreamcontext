@@ -160,10 +160,6 @@ export interface TaskObjection {
 /** Job states that move without the owner (mirrors `LIVE_STATES`, lib/taskAgentJob.ts). */
 const LIVE_JOB_STATES: ReadonlySet<string> = new Set(['scheduled', 'queued', 'starting', 'running']);
 
-interface TasksResponse {
-  tasks: Task[];
-}
-
 interface TaskResponse {
   task: Task;
 }
@@ -221,17 +217,6 @@ interface InsertTaskSectionInput {
   content: string;
 }
 
-export function useTasks() {
-  const api = useApi();
-  return useQuery({
-    queryKey: ['tasks'],
-    queryFn: () => api.get<TasksResponse>('/tasks'),
-    select: (data) => data.tasks,
-    // A board with a job moving on its own (an agent working, a start due) keeps its chips current.
-    refetchInterval: (q) => ((q.state.data?.tasks ?? []).some((t) => LIVE_JOB_STATES.has(t.agent_job?.state ?? '')) ? pollMs(15_000) : false),
-  });
-}
-
 /**
  * One task as the LIGHT list carries it (`GET /api/tasks?view=summary`, server
  * lib/task-list-summary.ts): every frontmatter field and the agent job, `why` capped, and
@@ -249,7 +234,7 @@ export const TASK_LIST_KEY = ['tasks', { view: 'summary' }] as const;
  * The light task list, for every surface that shows a task as a name, a status and a progress
  * bar (the Super screen, a member's task list, board widgets, link pickers). Task: opening a
  * project is slow: the full list was the whole text of every task (19.9 MB for 867 tasks),
- * refetched every 15 s while an agent worked. Same live poll as {@link useTasks}.
+ * refetched every 15 s while an agent worked. Polls every 15 s while a job is live.
  */
 export function useTaskList() {
   const api = useApi();
