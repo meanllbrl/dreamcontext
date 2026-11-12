@@ -299,6 +299,33 @@ describe('quick edit: end review r1', () => {
     expect(specProblem({ elements: [{ type: 'textRows', rows: 3, path: 'x' }] })).toBe('path');
   }, 15_000);
 
+  it('edge-cases r3: what a drawing weighs is bounded in the worker, and a board never grows past what it can save', async () => {
+    // 2 KB of spec, one polyline of ~100k points (~6 MB): refused before this thread reads it.
+    const pie: QuickEditAnswer = { reply: 'x', notBoard: false, add: [{ at: [0, 0], spec: { elements: [{ type: 'pie', slices: [{ label: 'a', value: 1 }], seg: 100000, legend: false }] } }] };
+    const t0 = Date.now();
+    const err = await buildAdds(pie).catch((e) => e);
+    expect(err).toBeInstanceOf(QuickEditRefusal);
+    expect((err as QuickEditRefusal).code).toBe('too_big');
+    expect(Date.now() - t0).toBeLessThan(3000);
+    // The budget is shared by every add of one answer.
+    const two: QuickEditAnswer = { reply: 'x', notBoard: false, add: [0, 1].map((i) => ({ at: [i * 300, 0] as [number, number], spec: { elements: [{ type: 'ellipse', width: 80, height: 80 }] } })) };
+    const one = await buildAdds({ ...two, add: [two.add![0]] });
+    const w = Buffer.byteLength(JSON.stringify(one[0]));
+    expect(await buildAdds(two)).toHaveLength(2);
+    await expect(buildAdds(two, { maxBytes: w + 200 })).rejects.toThrow(QuickEditRefusal);
+    // A board at its save cap: an add is refused and nothing is written; a recolor still lands.
+    const els = [rect('A'), rect('B', 300)];
+    const cap = Buffer.byteLength(JSON.stringify({ elements: els })) + 50;
+    const many: QuickEditAnswer = { reply: '', notBoard: false, add: [{ at: [0, 0], spec: { elements: Array.from({ length: 20 }, (_, i) => ({ type: 'ellipse', x: i * 60, width: 50, height: 50 })) } }] };
+    const built = await buildAdds(many);
+    expect(Buffer.byteLength(JSON.stringify(built[0]))).toBeGreaterThan(4096);
+    expect(() => applyQuickEdit({ elements: structuredClone(els) }, many, { scope: [], identities: {}, area: null, built, savableBytes: cap })).toThrow(QuickEditRefusal);
+    expect(applyQuickEdit({ elements: structuredClone(els) }, many, { scope: [], identities: {}, area: null, built }).added).toHaveLength(20);
+    const big = structuredClone(els);
+    const recolor = applyQuickEdit({ elements: big }, { reply: '', notBoard: false, update: [{ id: 'A', fill: 'green' }] }, { scope: ['A'], identities: ids(big, ['A']), area: null, savableBytes: 10 });
+    expect(recolor.changed).toEqual(['A']);
+  }, 15_000);
+
   it('edge-cases: a queued edit counts a shape an earlier quick edit rewrote as untouched; a hand edit stays skipped', () => {
     const before = rect('A', 0, 0, { version: 3, versionNonce: 500 });
     const rec = { id: 'r'.repeat(16), at: '', text: '', reply: '', added: [], changed: ['A'], before: { A: before }, after: { A: `4:${LOSING_NONCE}` }, costUsd: null, model: 'sonnet', undone: false } as QuickJournalRecord;

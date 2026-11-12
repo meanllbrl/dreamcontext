@@ -15,10 +15,10 @@ import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildSpecDrawingBounded, kitDir, readKitReference, SpecBuildTimeout } from './spec-draw.js';
+import { buildSpecDrawingBounded, kitDir, readKitReference, SpecBuildTimeout, SpecBuildTooLarge } from './spec-draw.js';
 import { elementBBox, liveElements, prepareImport, unionBBox, type BBox } from './ops.js';
 import { identityKey, quickJournalPath } from './store.js';
-import { validateElement } from './validate.js';
+import { validateElement, WHITEBOARD_MAX_BODY_BYTES } from './validate.js';
 import { WhiteboardValidationError } from './errors.js';
 import { widgetPayloadOf, type WhiteboardElement } from './widgets.js';
 import { parseClaudeJson } from '../automations/runner.js';
@@ -30,6 +30,14 @@ export const QUICK_SCOPE_MAX = 150;
 export const QUICK_REPLY_MAX = 300;
 export const QUICK_ADD_MAX = 4;
 export const QUICK_BUILT_MAX = 300;
+/** What all of one answer's drawings may weigh together, measured in the worker (review r3: a
+ *  count like `seg` or `rows` turns 2 KB of spec into megabytes of points). A full 300-shape
+ *  drawing is a few hundred KB. */
+export const QUICK_ADD_BYTES = 1_000_000;
+/** A quick edit never grows a board past what the page can save back (its PUT cap, with room). */
+export const QUICK_SAVABLE_BYTES = Math.floor(WHITEBOARD_MAX_BODY_BYTES * 0.9);
+/** How much a change may grow a board already at {@link QUICK_SAVABLE_BYTES}: far under the cap's room. */
+export const QUICK_GROW_SLACK = 4096;
 export const QUICK_INPUT_CAP = 24_000;
 export const QUICK_NEAR_MAX = 80;
 export const QUICK_NEAR_GROW = 600;
@@ -519,6 +527,8 @@ export interface QuickEditContext {
   /** Every `add`'s elements, built by {@link buildAdds} BEFORE the board's lock: the apply only
    *  places them. An answer with adds and no `built` is refused (the build never runs here). */
   built?: readonly WhiteboardElement[][];
+  /** The board size an edit may not grow past (default {@link QUICK_SAVABLE_BYTES}; tests lower it). */
+  savableBytes?: number;
 }
 
 /**
@@ -528,13 +538,14 @@ export interface QuickEditContext {
  */
 export async function buildAdds(
   answer: QuickEditAnswer,
-  opts: { timeoutMs?: number; build?: typeof buildSpecDrawingBounded; now?: () => number } = {},
+  opts: { timeoutMs?: number; maxBytes?: number; build?: typeof buildSpecDrawingBounded; now?: () => number } = {},
 ): Promise<WhiteboardElement[][]> {
   const build = opts.build ?? buildSpecDrawingBounded;
   const clock = opts.now ?? Date.now;
   const deadline = clock() + (opts.timeoutMs ?? QUICK_BUILD_MS);
   const out: WhiteboardElement[][] = [];
   let total = 0;
+  let bytesLeft = opts.maxBytes ?? QUICK_ADD_BYTES;
   for (const a of answer.add ?? []) {
     const problem = specProblem(a.spec);
     if (problem === 'path') throw new QuickEditRefusal('refused', 'a quick edit draws shapes only, never a file or a picture');
@@ -542,15 +553,19 @@ export async function buildAdds(
     const left = deadline - clock();
     if (left <= 0) throw new QuickEditRefusal('too_big', 'the drawings did not build in time');
     let built: WhiteboardElement[];
+    let bytes: number;
     try {
-      ({ elements: built } = await build(JSON.stringify(a.spec), 'quick-edit', {
+      ({ elements: built, bytes } = await build(JSON.stringify(a.spec), 'quick-edit', {
         timeoutMs: left,
+        maxBytes: bytesLeft,
         checkPicture: () => { throw new QuickEditRefusal('refused', 'a quick edit never places a picture'); },
       }));
     } catch (err) {
       if (err instanceof SpecBuildTimeout) throw new QuickEditRefusal('too_big', 'the drawing did not build in time');
+      if (err instanceof SpecBuildTooLarge) throw new QuickEditRefusal('too_big', 'the drawing is too large for a quick edit');
       throw err;
     }
+    bytesLeft -= bytes ?? 0;
     for (const el of built) {
       if (el.type === 'image' || el.type === 'embeddable' || el.type === 'iframe') throw new QuickEditRefusal('refused', 'a quick edit never places a picture or a widget');
       if (el.link !== undefined && el.link !== null) throw new QuickEditRefusal('refused', 'a quick edit never places a link');
@@ -730,6 +745,13 @@ export function applyQuickEdit(board: { elements: WhiteboardElement[] }, answer:
     written.push(el);
   }
   for (const el of added) { elements.push(el); written.push(el); }
+  // The board must stay savable from the page: an edit that grows it past the save cap (the PUT
+  // cap less room) is refused and the draft dropped; a change that barely grows it (a recolor's
+  // version and nonce on a big board) still lands, inside the cap's room.
+  if (Buffer.byteLength(JSON.stringify({ elements })) > (ctx.savableBytes ?? QUICK_SAVABLE_BYTES)) {
+    const weight = (els: WhiteboardElement[]) => els.reduce((n, el) => n + Buffer.byteLength(JSON.stringify(el)), 0);
+    if (weight(written) - weight(Object.values(before)) > QUICK_GROW_SLACK) throw new QuickEditRefusal('too_big', 'the board would grow past what it can save');
+  }
   return { outOfScope: false, added: added.map((e) => e.id), changed, skipped: [...skipped], before, written, dropped };
 }
 

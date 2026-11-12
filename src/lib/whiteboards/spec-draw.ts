@@ -183,13 +183,19 @@ export class SpecBuildTimeout extends Error {
   constructor(readonly ms: number) { super(`the drawing did not build within ${ms} ms`); }
 }
 
+/** A bounded build made more than it may hand back: refused in the worker, never read here. */
+export class SpecBuildTooLarge extends Error {
+  constructor(readonly bytes: number, readonly max: number) { super(`the drawing is ${bytes} bytes (max ${max})`); }
+}
+
 /** The kit build, run in a worker so the caller's event loop never waits on it. */
 const WORKER_SRC = `
 const { parentPort, workerData } = require('node:worker_threads');
 try {
   const b = require(workerData.builderPath);
-  const r = b.buildExcalidraw(workerData.spec);
-  parentPort.postMessage({ ok: true });
+  b.buildExcalidraw(workerData.spec);
+  const bytes = require('node:fs').statSync(workerData.spec.out).size;
+  parentPort.postMessage(bytes > workerData.maxBytes ? { ok: false, bytes } : { ok: true, bytes });
 } catch (err) {
   parentPort.postMessage({ ok: false, message: String((err && err.message) || err) });
 }
@@ -199,13 +205,15 @@ try {
  * {@link buildSpecDrawing} for a spec nobody on this Mac wrote (a model's answer): the kit's code
  * runs in a WORKER THREAD under a time limit, never on the server's event loop, so no count in
  * the spec (rows, seg, teeth, items that multiply) can freeze the process. Past `timeoutMs` the
- * worker is terminated and {@link SpecBuildTimeout} is thrown. Same checks and output otherwise.
+ * worker is terminated and {@link SpecBuildTimeout} is thrown. What it built is measured IN the
+ * worker: past `maxBytes` it is {@link SpecBuildTooLarge} and this thread never reads it (review
+ * r3: a time bound limits the work, not how much the work produces). Same checks otherwise.
  */
 export async function buildSpecDrawingBounded(
   text: string,
   filename: string,
-  opts: { checkPicture?: (path: string) => void; timeoutMs: number; dir?: string | null },
-): Promise<{ elements: WhiteboardElement[] }> {
+  opts: { checkPicture?: (path: string) => void; timeoutMs: number; maxBytes: number; dir?: string | null },
+): Promise<{ elements: WhiteboardElement[]; bytes: number }> {
   const kit = opts.dir === undefined ? kitDir() : opts.dir;
   const builder = loadBuilder(kit);
   const { spec, pictures } = parseSpec(text, filename, builder.SPEC_TYPES, builder.LAYOUT_TYPES);
@@ -214,15 +222,25 @@ export async function buildSpecDrawingBounded(
   try {
     const out = join(dir, 'drawing.excalidraw.md');
     const builderPath = join(kit as string, 'scripts', 'build_excalidraw.js');
-    const answer = await new Promise<{ ok: boolean; message?: string }>((done, fail) => {
-      const worker = new Worker(WORKER_SRC, { eval: true, workerData: { builderPath, spec: { ...spec, out } } });
-      const timer = setTimeout(() => { void worker.terminate(); fail(new SpecBuildTimeout(opts.timeoutMs)); }, opts.timeoutMs);
-      worker.once('message', (m: { ok: boolean; message?: string }) => { clearTimeout(timer); void worker.terminate(); done(m); });
-      worker.once('error', (err) => { clearTimeout(timer); fail(new WhiteboardValidationError(`${filename} did not build: ${err.message}; ${KIT_HINT}`)); });
-      worker.once('exit', () => { clearTimeout(timer); done({ ok: false, message: 'the build stopped' }); });
+    type Answer = { ok: boolean; message?: string; bytes?: number };
+    // Every way out waits for the worker to be gone, so the cleanup below never races its write.
+    const answer = await new Promise<Answer>((done, fail) => {
+      const worker = new Worker(WORKER_SRC, { eval: true, workerData: { builderPath, spec: { ...spec, out }, maxBytes: opts.maxBytes } });
+      let settled = false;
+      const end = (settle: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        worker.terminate().catch(() => undefined).finally(settle);
+      };
+      const timer = setTimeout(() => end(() => fail(new SpecBuildTimeout(opts.timeoutMs))), opts.timeoutMs);
+      worker.once('message', (m: Answer) => end(() => done(m)));
+      worker.once('error', (err) => end(() => fail(new WhiteboardValidationError(`${filename} did not build: ${err.message}; ${KIT_HINT}`))));
+      worker.once('exit', () => end(() => done({ ok: false, message: 'the build stopped' })));
     });
+    if (!answer.ok && answer.bytes !== undefined) throw new SpecBuildTooLarge(answer.bytes, opts.maxBytes);
     if (!answer.ok) throw new WhiteboardValidationError(`${filename} did not build: ${answer.message}; ${KIT_HINT}`);
-    return { elements: readImportSource(readFileSync(out, 'utf-8'), 'drawing.excalidraw.md') };
+    return { elements: readImportSource(readFileSync(out, 'utf-8'), 'drawing.excalidraw.md'), bytes: answer.bytes ?? 0 };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
