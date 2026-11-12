@@ -649,7 +649,10 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`super open chat <child>\`, in that turn.
 - Code work in a linked repo gets its own worktree: \`--worktree <repo> --slug <a-z0-9->\`.
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
-  \`git push\` and never merge into the default branch yourself (the owner does).
+  \`git push\` and never merge into the default branch yourself. A push, PR or deploy HIS own message
+  named is the child's: \`delegate --outward "<that step>"\` (outside his turn \`--origin <ref>\`); never a
+  force-push or a default-branch merge. A brief over a line is a file (\`_dream_context/tmp/super-prompts/<slug>/brief.md\`),
+  \`--prompt\` one plain line naming it: an inline heredoc or \`$(cat …)\` is refused in an auto-mode project.
 - At most ${member ? MAX_MEMBER_LIVE_CHILDREN : MAX_LIVE_CHILDREN} children run at once; beyond that \`delegate\` answers \`held\` and keeps the job
   in the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
   \`super state\` first). The cap is the only limit on children: all of \`super state\`'s

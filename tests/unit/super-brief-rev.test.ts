@@ -205,6 +205,13 @@ describe('superBriefState', () => {
       expect(t).toContain('ask a reworded card with what was missing, never the same card.');
     }
   });
+  it('rev 42 (2026-11-12, super-push-red): a push, PR or deploy his own message named is the child\'s; a long brief is a file', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(42);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('A push, PR or deploy HIS own message\n  named is the child\'s: `delegate --outward "<that step>"`');
+      expect(t).toContain('an inline heredoc or `$(cat …)` is refused in an auto-mode project.');
+    }
+  });
   it('rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool after his yes; a member Super only when its approved file names it', () => {
     expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(40);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {

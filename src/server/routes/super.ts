@@ -49,6 +49,8 @@ import { answerOwnerItem } from '../../lib/super/answer.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { ownerMessageGist } from '../../lib/super/owed.js';
+import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
 import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/super/pad.js';
@@ -558,9 +560,27 @@ function childTestMinutes(now: number): (worktree: string, branch?: string) => T
   };
 }
 
-function worktreePreamble(w: CreatedWorktree): string {
+export function worktreePreamble(w: Pick<CreatedWorktree, 'path' | 'branch' | 'repo'>, outward?: OutwardGrant): string {
   return `You work in your own git worktree: ${w.path} (branch ${w.branch}, repo ${w.repo}). `
-    + 'cd there first, then work and commit only there. Never push and never merge into another branch.';
+    + 'cd there first, then work and commit only there. '
+    + (outward ? 'Never merge into another branch; push only as the next line says.' : 'Never push and never merge into another branch.');
+}
+
+/** `--outward "<step>"` (on `delegate` and `pool add`): refused unless it names a message of HIS
+ *  (`origin`, his turn's or `--origin`) the record holds (a ref from a child, a page or a guess is
+ *  no word of his). Checked once, here; the grant then lives with its job (outward.ts). Absent =
+ *  no grant; present but empty, several lines or too long = refused, never read as none. */
+function outwardGrant(c: SuperCaller, b: Record<string, unknown>, ref: string | undefined): { grant?: OutwardGrant } | { error: string; message: string } {
+  if (b.outward === undefined || b.outward === null) return {};
+  if (typeof b.outward !== 'string' || /[\r\n]/.test(b.outward) || !oneLine(b.outward)) return { error: 'invalid_args', message: '--outward is one non-empty line: the push, PR or deploy his message named' };
+  const step = oneLine(b.outward);
+  if (step.length > MAX_OUTWARD) return { error: 'invalid_args', message: `--outward is at most ${MAX_OUTWARD} characters: the step alone, the job goes in the prompt` };
+  const why = 'a push, PR or deploy is the owner\'s word only: ';
+  if (!ref) return { error: 'outward_needs_owner', message: `${why}give --origin <ref> of HIS message that named it; no message of his asked for it: \`super ask\` him first` };
+  const words = ownerMessageGist(c.state, ref);
+  const thisTurn = ownersTurn(c) && !!c.state.session && superOwnerMsgRef(c.state.session) === ref;
+  if (words === null && !thisTurn) return { error: 'outward_needs_owner', message: `${why}no message of his has ref ${ref}; name the one that asked for it, or \`super ask\` him` };
+  return { grant: { step, ref, ...(words ? { words } : {}) } };
 }
 
 /** `super state`'s MCP part: the names `delegate --mcp` can grant, and among them the ones that
@@ -743,13 +763,14 @@ const newPoolId = () => `p-${Date.now().toString(36)}-${randomBytes(4).toString(
  * Keep a job in the pool (plan r4 D9): the same prompt is pooled once (the row is reused), a
  * full pool (MAX_POOL rows or MAX_POOL_BYTES) keeps nothing. Returns the row's id, or why not.
  */
-async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
+async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
   if (Buffer.byteLength(job.prompt, 'utf-8') > MAX_POOL_PROMPT) return { error: 'too_large' };
   const hash = promptHash(job.prompt);
   let out: { id: string; reused: boolean } | { error: 'pool_full' | 'too_large' } = { error: 'pool_full' };
   const state = await writeSuper(root, id, (s) => {
     const have = s.pool.find((p) => p.hash === hash);
-    if (have) { if (extra.held) have.held = true; out = { id: have.id, reused: true }; return; }
+    // The same job again: a grant his message made now rides the row it already has.
+    if (have) { if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; out = { id: have.id, reused: true }; return; }
     if (s.pool.length >= MAX_POOL) { out = { error: 'pool_full' }; return; }
     const row: SuperPoolItem = {
       id: newPoolId(), title: job.title, prompt: job.prompt, hash, createdAt: Date.now(),
@@ -761,6 +782,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.mcp ? { mcp: job.mcp } : {}),
       ...(job.tool ? { tool: job.tool } : {}),
       ...(extra.held ? { held: true } : {}),
+      ...(extra.outward ? { outward: extra.outward } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
     s.pool.push(row);
@@ -774,11 +796,12 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
 /** The pool as the agent reads it: what it wrote is fenced like every other stored line. */
 function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<string, unknown>> {
   return pool.map((p) => {
-    const { prompt, hash: _hash, title, note, ...rest } = p;
+    const { prompt, hash: _hash, title, note, outward, ...rest } = p;
     return {
       ...rest,
       title: wrapUntrusted(vault, title),
       ...(note ? { note: wrapUntrusted(vault, note) } : {}),
+      ...(outward ? { outward: { ref: outward.ref, step: wrapUntrusted(vault, outward.step) } } : {}),
       promptBytes: Buffer.byteLength(prompt, 'utf-8'),
     };
   });
@@ -795,7 +818,7 @@ function safeCodexStartModel(): string {
   } catch { return ''; }
 }
 
-async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin): Promise<void> {
+async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin, outward?: OutwardGrant): Promise<void> {
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
   // Antigravity names its effort in the model id (`-high`), so it gets none of ours.
@@ -819,6 +842,10 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       ? `${room.live + inFlight} children are running (at most ${room.max})`
       : `${room.vaultLive} children are running in this project across every Super (at most ${room.vaultMax} together)`;
     if (fromRow) {
+      // A grant given with this start stays with the row, so the later start still has it.
+      if (outward && fromRow.outward !== outward) {
+        await writeSuper(root, c.superId, (s) => { const p = s.pool.find((x) => x.id === fromRow.id); if (p) p.outward = outward; });
+      }
       refuse(res, 409, 'held', `${running}; the job stays in the pool as ${fromRow.id}`, { ...facts, pooled: fromRow.id });
       return;
     }
@@ -828,7 +855,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
-    const kept = await keepInPool(root, job, { held: true }, c.superId);
+    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}) }, c.superId);
     if ('error' in kept) {
       refuse(res, 409, kept.error === 'too_large' ? 'held' : 'pool_full', `${running}; the job was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
       return;
@@ -857,7 +884,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // that may still have opened a child never loses its worktree (review W2 #1).
     const deadline = Date.now() + DELEGATE_TIMEOUT_MS;
     const r = await sendSuperCommand(c.token, 'delegate', {
-      prompt: `${wt ? `${worktreePreamble(wt)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`,
+      prompt: `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
       // The child runs LEAN (D14): only these of the user's MCP servers ([] = none).
       mcp: job.mcp ?? [],
@@ -914,6 +941,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(awaited ? { awaited: true as const } : {}),
         ...(awaited && origin ? { origin } : {}),
         ...(workOrigin ? { workOrigin } : {}),
+        ...(outward ? { outward } : {}),
       };
       startError = takeStartError(sid);
       if (startError) startFailedDraft(s, sid, startError, now);
@@ -1636,7 +1664,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         ...(ch.worktree ? { testsToday: testsOf(ch.worktree, ch.branch) } : {}),
       };
       // The live row rides on the child itself; `status[]` stays for older readers.
-      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...(ch.startError ? { startError: wrapUntrusted(vault, ch.startError) } : {}), ...row };
+      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...(ch.startError ? { startError: wrapUntrusted(vault, ch.startError) } : {}), ...(ch.outward ? { outward: { ref: ch.outward.ref, step: wrapUntrusted(vault, ch.outward.step) } } : {}), ...row };
       status.push({ sessionId: sid, ...row, ...(ch.worktree ? { worktree: ch.worktree, branch: ch.branch } : {}) });
     }
     let machine: unknown = null;
@@ -1721,6 +1749,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (note === '') { refuse(res, 400, 'invalid_args', '--note is one line of text'); return; }
     const origin = jobOrigin(c, b);
     if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
+    // `--outward "<step>"`: the push, PR or deploy HIS message named (owner, 2026-11-12). Checked
+    // here; else the grant the job already carries: its pool row's, or the child it succeeds.
+    const named = outwardGrant(c, b, origin.ref);
+    if ('error' in named) { refuse(res, 400, named.error, named.message); return; }
+    const outward = named.grant ?? fromRow?.outward ?? (succeeds !== undefined ? c.state.children[succeeds]?.outward : undefined);
     const workFor = workForArg(c, b);
     if ('error' in workFor) { refuse(res, workFor.status, workFor.error, workFor.message); return; }
     // With no brief of its own, the successor's card keeps the old one's title.
@@ -1735,7 +1768,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     try {
       // A member's child does the work of the turn that started it unless `--for` names another.
       const childOrigin = workFor.origin ?? (c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
-      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin);
+      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin, outward);
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.
       if (fromId) { claimed.delete(fromId); if (!claimed.size) claims.delete(claimKey); }
@@ -2289,7 +2322,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (job.task && !(await taskFileOk(root, job.task))) { refuse(res, 404, 'unknown_task', `no task "${job.task}" in this project (state/<slug>.md)`); return; }
     if (mcpRefused(root, job, res)) return;
     const note = oneLine(str(b.note) ?? '').slice(0, MAX_BRIEF);
-    const kept = await keepInPool(root, job, { note }, c.superId);
+    // A later wave his message named a push, PR or deploy for: checked now, kept on the row.
+    const origin = jobOrigin(c, b);
+    if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
+    const named = outwardGrant(c, b, origin.ref);
+    if ('error' in named) { refuse(res, 400, named.error, named.message); return; }
+    const kept = await keepInPool(root, job, { note, ...(named.grant ? { outward: named.grant } : {}) }, c.superId);
     if ('error' in kept) { refuse(res, 409, 'pool_full', `the pool is full (at most ${MAX_POOL} jobs, ${MAX_POOL_BYTES / 1024} KB); the job was NOT kept`); return; }
     ok(res, { pooled: kept.id, reused: kept.reused });
   },

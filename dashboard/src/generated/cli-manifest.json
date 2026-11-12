@@ -3942,6 +3942,7 @@
         "--succeeds",
         "--note",
         "--origin",
+        "--outward",
         "--for",
         "--brief",
         "--mode",
@@ -4085,6 +4086,8 @@
       "valueFlags": [
         "--prompt",
         "--note",
+        "--origin",
+        "--outward",
         "--brief",
         "--mode",
         "--model",
