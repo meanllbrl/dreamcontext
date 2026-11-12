@@ -66,7 +66,8 @@ const LAYOUTS = { stack: STYLE.stack, row: STYLE.row, panel: STYLE.panel };
 const PRIMITIVE_TYPES = ['text', 'image', 'rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'frame'];
 const SPEC_TYPES = [...PRIMITIVE_TYPES, ...Object.keys(COMPOSITES), ...Object.keys(LAYOUTS)];
 // The types whose `items` are child specs (a spec checker walks into them).
-const LAYOUT_TYPES = Object.keys(LAYOUTS);
+// A screen (`device`, `windowFrame`) holds child specs in `items` too, so a checker walks into it.
+const LAYOUT_TYPES = [...Object.keys(LAYOUTS), 'device', 'windowFrame'];
 
 // A picture given one side (or none) gets the other from its real proportions BEFORE a layout
 // measures it: stack/row read `width`/`height`, and a picture they measured as 0 tall would have the

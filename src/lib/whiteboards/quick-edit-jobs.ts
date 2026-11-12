@@ -8,7 +8,7 @@
  * touched; once `applying`, the edit stands (one short locked write) and "Geri al" undoes it.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -264,8 +264,10 @@ async function run(job: Job): Promise<void> {
     }
     const input = quickEditInput(board.elements, scope, job.req.area);
     const textLimit = scopeTextLimit(board.elements, scope);
-    const args = quickEditArgs(systemPrompt(), quickEditUserMessage(job.req.text, input));
     cwd = mkdtempSync(join(tmpdir(), 'dc-quick-'));
+    const systemFile = join(cwd, 'system-prompt.md');
+    writeFileSync(systemFile, systemPrompt());
+    const args = quickEditArgs(systemPrompt(), quickEditUserMessage(job.req.text, input), systemFile);
     const exec = deps.exec ?? executeClaudeDetached;
     let env = deps.env;
     if (!env) {

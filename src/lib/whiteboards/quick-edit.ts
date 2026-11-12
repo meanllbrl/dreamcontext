@@ -380,7 +380,11 @@ function safeKitReference(): string {
 }
 
 /** The child's argv (Decision 4 / C5): no tools, no settings, no MCP, no session, a schema. */
-export function quickEditArgs(system: string, user: string): string[] {
+/**
+ * `systemFile`: the prompt is the whole draw skill (~60k chars), past the 32k command-line cap of
+ * Windows, so a run passes it as a file; without one it rides argv (tests, small prompts).
+ */
+export function quickEditArgs(system: string, user: string, systemFile?: string): string[] {
   return [
     '-p', user,
     '--model', QUICK_MODEL,
@@ -391,7 +395,7 @@ export function quickEditArgs(system: string, user: string): string[] {
     '--strict-mcp-config',
     '--disable-slash-commands',
     '--no-session-persistence',
-    '--system-prompt', system,
+    ...(systemFile ? ['--system-prompt-file', systemFile] : ['--system-prompt', system]),
     '--json-schema', JSON.stringify(QUICK_EDIT_SCHEMA),
   ];
 }
