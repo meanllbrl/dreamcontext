@@ -19,7 +19,11 @@ import {
   MAX_PATTERN_FILE_BYTES,
   FIRST_MATCH_CEILING_FACTOR,
   MAX_PATTERN_MATCHES,
+  DEFAULT_INJECTION_BUDGET,
+  firstMatchCeiling,
+  stripNonProse,
 } from '../../src/lib/patterns.js';
+import { HOOK_OUTPUT_MAX_CHARS } from '../../src/lib/snapshot-budget.js';
 
 /**
  * Spec for pattern triggering — the mechanism that makes a documented pattern
@@ -530,5 +534,104 @@ describe('review findings — regression locks', () => {
 
     rmSync(lockPath, { force: true });
     expect(syncPatternShimsIfStale(PROJECT, ROOT)).not.toBeNull();
+  });
+});
+
+describe('audit MM-6 (2026-11-12): the gate fired on 9 prompts in 10', () => {
+  it('strips code, paths, URLs and machine-written blocks before folding', () => {
+    const out = stripNonProse(
+      'özetle /Users/someone/projects/demo/src/user-hook.ts and `owner.card()` at https://example.test/x\n' +
+      '```\nconst build = output;\n```\n' +
+      '<owner-language>tool output, this note</owner-language><owner-msg ref="abc"/> state.json kalsın',
+    );
+    for (const gone of ['Users', 'user-hook', 'owner.card', 'example', 'build', 'tool output', 'state.json', 'owner-msg']) {
+      expect(out, gone).not.toContain(gone);
+    }
+    expect(out).toContain('özetle');
+    expect(out).toContain('kalsın');
+  });
+
+  it('keeps the words around a self-closing marker: the owner\'s dictated text is never inside a pair', () => {
+    expect(stripNonProse('<voice-take ref="vt_1" lang="tr"/> plan özeti lazım')).toContain('plan özeti lazım');
+  });
+
+  it('a pattern word inside a path or a notification does not fire it', () => {
+    const docs = loadPatterns(ROOT);
+    expect(matchPatterns('/Users/someone/plan-ozeti-mehmete-nasil-anlatilir.md', docs)).toHaveLength(0);
+    expect(matchPatterns('<task-notification><summary>özetle the plan</summary></task-notification>', docs)).toHaveLength(0);
+    // ...while the same word typed by the owner beside it still does.
+    expect(matchPatterns('<task-notification><summary>done</summary></task-notification> özetle', docs)
+      .map((h) => h.pattern.slug)).toContain('plan-ozeti-mehmete-nasil-anlatilir');
+  });
+
+  describe('in a vault large enough for word statistics', () => {
+    let BIG: string;
+
+    beforeAll(() => {
+      BIG = join(mkdtempSync(join(tmpdir(), 'dc-patterns-idf-')), '_dream_context');
+      const dir = join(BIG, 'knowledge', 'patterns');
+      mkdirSync(dir, { recursive: true });
+      // Ten patterns whose PROSE all says "owner" and "output"; one is NAMED with them.
+      for (let i = 0; i < 10; i++) {
+        const slug = i === 0 ? 'owner-output-ledger' : `qa${i}x-qb${i}x-qc${i}x-qd${i}x-qe${i}x`;
+        writeFileSync(join(dir, `${slug}.md`),
+          `---\nname: ${slug}\ndescription: d\n---\n\n# ${slug}\n\nThe owner reads the output here.\n`, 'utf-8');
+      }
+    });
+    afterAll(() => rmSync(join(BIG, '..'), { recursive: true, force: true }));
+
+    it('a word most pattern prose uses is not evidence, even when a pattern is named with it', () => {
+      const docs = loadPatterns(BIG);
+      expect(matchPatterns('owner output', docs)).toHaveLength(0);
+      expect(matchPatterns('the ledger', docs).map((h) => h.pattern.slug)).toEqual(['owner-output-ledger']);
+    });
+
+    it('a long prompt needs evidence that grows with it: four rare words in 200 are a coincidence', () => {
+      const docs = loadPatterns(BIG);
+      const noise = Array.from({ length: 200 }, (_, i) => `noise${i}word`).join(' ');
+      // Four of one pattern's five name words; a flat bar of 3 fired on this.
+      expect(matchPatterns(`${noise} qa1x qb1x qc1x qd1x`, docs)).toHaveLength(0);
+      // The same words in a short message are what the message is about.
+      expect(matchPatterns('qa1x qb1x', docs).map((h) => h.pattern.slug)).toContain('qa1x-qb1x-qc1x-qd1x-qe1x');
+    });
+
+    it('a long prompt that names a pattern in full still fires it, however long', () => {
+      const docs = loadPatterns(BIG);
+      const noise = Array.from({ length: 300 }, (_, i) => `noise${i}word`).join(' ');
+      expect(matchPatterns(`${noise} qa1x qb1x qc1x qd1x qe1x`, docs).map((h) => h.pattern.slug))
+        .toContain('qa1x-qb1x-qc1x-qd1x-qe1x');
+      // A name made mostly of ordinary words is named in full by its rare one plus another.
+      expect(matchPatterns(`${noise} owner output ledger`, docs).map((h) => h.pattern.slug))
+        .toContain('owner-output-ledger');
+    });
+
+    it('two of a name\'s words scattered through a long brief are a topic, not the name', () => {
+      const docs = loadPatterns(BIG);
+      const half = Array.from({ length: 120 }, (_, i) => `noise${i}word`).join(' ');
+      const rest = Array.from({ length: 120 }, (_, i) => `other${i}word`).join(' ');
+      expect(matchPatterns(`${half} owner output ${rest} the ledger`, docs)).toHaveLength(0);
+      expect(matchPatterns(`${half} qa1x qb1x qc1x ${rest} qd1x qe1x`, docs)).toHaveLength(0);
+    });
+
+    it('keeps prose that only looks like markup or a path', () => {
+      expect(stripNonProse('if count <limit and the -> arrow')).toContain('limit and the');
+      expect(stripNonProse('ve/veya build/test kalsın')).toContain('build/test');
+      expect(stripNonProse('`<owner-msg>` anlat `</owner-msg>` bunu')).toContain('anlat');
+    });
+
+    it('strips a 120 KB prompt of unclosed tags in linear time', () => {
+      const t = Date.now();
+      stripNonProse('<ref> x '.repeat(15_000));
+      expect(Date.now() - t).toBeLessThan(500);
+    });
+  });
+});
+
+describe('audit MM-4 (2026-11-12): the inline budget fits inside the hook', () => {
+  it('pattern prose cannot outgrow the one hook that carries it', () => {
+    expect(DEFAULT_INJECTION_BUDGET).toBeLessThan(HOOK_OUTPUT_MAX_CHARS);
+    expect(firstMatchCeiling(DEFAULT_INJECTION_BUDGET)).toBeLessThan(HOOK_OUTPUT_MAX_CHARS);
+    // An explicit huge override still cannot ask for more than the hook prints.
+    expect(firstMatchCeiling(1_000_000)).toBeLessThan(HOOK_OUTPUT_MAX_CHARS);
   });
 });

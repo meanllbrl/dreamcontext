@@ -47,6 +47,13 @@
  * the two build patterns, and "componentin state yapısı" surfaces a pattern
  * about session state files. Tuning them away cost real hits every time it was
  * tried, so they are the accepted price, not an oversight.
+ *
+ * Re-measured 2026-11-12 (audit MM-6) on 1,016 real prompts from 200 sessions
+ * against this project's 63 patterns: the gate fired on 91.6%, one pattern on
+ * 82%. Stripping non-prose, scaling evidence past 3 keys, and weighting keys by
+ * how common they are in pattern prose brought it to 3.9% with the same 14/16
+ * on a gold set of owner-style questions; a ~35-key message naming a pattern
+ * by its filename words reaches all 63 (the old matcher: 55).
  */
 
 import { createHash } from 'node:crypto';
@@ -59,6 +66,7 @@ import fg from './glob.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import matter from 'gray-matter';
 import { foldAscii } from './fold-ascii.js';
+import { HOOK_OUTPUT_MAX_CHARS } from './snapshot-budget.js';
 
 // ─── Folding ────────────────────────────────────────────────────────────────
 
@@ -176,6 +184,34 @@ const IGNORED_KEYS = new Set([
   'use', 'using', 'used', 'make', 'made', 'doe', 'don', 'via', 'onto',
 ]);
 
+/** Fold a free-text string into its identity keys, in order, repeats kept. */
+function foldKeySeq(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/[^\p{L}\p{N}]+/u)) {
+    if (!raw) continue;
+    const k = foldKey(raw);
+    if (k.length >= 3 && !IGNORED_KEYS.has(k)) out.push(k);
+  }
+  return out;
+}
+
+/**
+ * Does the prompt say the pattern's filename words TOGETHER — all of them,
+ * within a window a few words wider than the name? Two of its words scattered
+ * through a long brief ("feature listesinde … integration testleri") are a
+ * topic, not the name.
+ */
+function namesTogether(seq: readonly string[], name: readonly string[]): boolean {
+  if (name.length < 2) return false;
+  const span = name.length + 3;
+  for (let start = 0; start < seq.length; start++) {
+    if (!name.some((k) => keysAlign(k, seq[start]!))) continue;
+    const window = seq.slice(start, start + span);
+    if (name.every((k) => window.some((w) => keysAlign(k, w)))) return true;
+  }
+  return false;
+}
+
 /** Fold a free-text string into its set of identity keys. */
 export function foldKeys(text: string): Set<string> {
   const out = new Set<string>();
@@ -204,6 +240,8 @@ export interface PatternDoc {
   slashName: string;
   /** Identity keys, folded. Derived automatically; `triggers:` only adds to it. */
   keys: Set<string>;
+  /** The filename's own keys, without the title's or `triggers:`. */
+  nameKeys?: Set<string>;
   /**
    * Corroborating keys from the description and section headings. These can
    * never fire the gate on their own strength the way an identity key can —
@@ -414,8 +452,9 @@ export function loadPatternsReporting(contextRoot: string): PatternLoadResult {
       // Description is deliberately excluded — it is prose, and folding it in
       // drags in every incidental noun, which is what turns a precise gate into
       // an ignorable one.
+      const nameKeys = foldKeys(slug.replace(/[-_/]+/g, ' '));
       const keys = new Set<string>([
-        ...foldKeys(slug.replace(/[-_/]+/g, ' ')),
+        ...nameKeys,
         ...foldKeys(name),
         ...authoredTriggers.flatMap((t) => [...foldKeys(t)]),
       ]);
@@ -437,6 +476,7 @@ export function loadPatternsReporting(contextRoot: string): PatternLoadResult {
         description: oneLine(fm.description ?? fm.summary),
         slashName: slashNameFor(slug),
         keys,
+        nameKeys,
         context,
         bodyKeys: foldKeys(content),
         authored: authoredTriggers.length > 0,
@@ -566,7 +606,108 @@ function firesAlone(key: string, df: number): boolean {
 function evidenceNeeded(promptKeyCount: number): number {
   if (promptKeyCount <= 10) return 1;
   if (promptKeyCount <= 30) return 2;
-  return 3;
+  // A flat 3 was the audit's finding (2026-11-12): the median real prompt
+  // folds to ~90 keys and a long brief to 300+, and three incidental words out
+  // of 300 fired a pattern on 9 prompts in 10. One more piece of evidence per
+  // 40 keys keeps a pasted brief from qualifying by sheer size.
+  return Math.max(3, Math.ceil(promptKeyCount / 40));
+}
+
+/**
+ * Text that is not the user's words about the work: fenced and inline code,
+ * URLs, file paths, and markup. A path like `/Users/…/hook.ts` folds to `user`
+ * and `hook` and fired patterns about users and hooks; a pasted stack trace
+ * fired whatever its identifiers spelled. Removed before folding.
+ *
+ * A PAIRED block (`<owner-language>…</owner-language>`, `<task-notification>…`,
+ * `<child>…`) is dropped with its contents: those are written by the server or
+ * the harness around the owner's words, and the same boilerplate on every turn
+ * ("tool output", "this note") fired one pattern on most Telegram messages. The
+ * owner's own words are never inside one; markers about them are self-closing
+ * (`<owner-msg …/>`, `<voice-take …/>`), so only the marker goes.
+ */
+/**
+ * Drop every paired `<tag …>…</tag>` block, contents included, in one linear
+ * pass: tags go on a stack and a closing tag drops back to its opener. A regex
+ * with a lazy body was quadratic on unclosed tags (1.4 s on 120 KB).
+ */
+function dropPairedBlocks(text: string): string {
+  const stack: Array<{ name: string; start: number }> = [];
+  const ranges: Array<[number, number]> = [];
+  for (const m of text.matchAll(/<(\/?)([A-Za-z][\w:-]*)(?:\s[^<>]*)?>/g)) {
+    const at = m.index ?? 0;
+    if (m[0].endsWith('/>')) continue;
+    if (m[1] === '') { stack.push({ name: m[2]!, start: at }); continue; }
+    let i = stack.length - 1;
+    while (i >= 0 && stack[i]!.name !== m[2]) i--;
+    if (i < 0) continue;
+    const start = stack[i]!.start;
+    stack.length = i;
+    // An inner block already recorded lies inside this one; the outer range wins.
+    while (ranges.length > 0 && ranges[ranges.length - 1]![0] >= start) ranges.pop();
+    ranges.push([start, at + m[0].length]);
+  }
+  if (ranges.length === 0) return text;
+  let out = '';
+  let from = 0;
+  for (const [a, b] of ranges) { out += `${text.slice(from, a)} `; from = b; }
+  return out + text.slice(from);
+}
+
+export function stripNonProse(prompt: string): string {
+  // Code first: an owner who quotes a tag in backticks (`<owner-msg>` … `</owner-msg>`)
+  // must not have everything between the two quotes taken for a block.
+  let text = prompt
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/`[^`\n]*`/g, ' ');
+  text = dropPairedBlocks(text);
+  return text
+    // Anchored at a token start, so a long run like `a.b.c.…` is not retried at
+    // every character (that was quadratic: 12 s on a 100 KB token).
+    .replace(/(?<![\w.+-])[a-z][a-z0-9+.-]*:\/\/\S+/gi, ' ')
+    // A lone tag: a name and attribute-shaped words only, so prose such as
+    // `count <limit and the -> arrow` is not mistaken for one.
+    .replace(/<\/?[A-Za-z][\w:-]*(?:\s+[A-Za-z_][\w:-]*(?:=(?:"[^"\n]*"|'[^'\n]*'|[^\s<>"']+))?){0,20}\s*\/?>/g, ' ')
+    // A rooted path (`/x`, `~/x`, `./x`) or one with two separators is a path;
+    // a single `ve/veya` or `build/test` is the owner's words.
+    .replace(/(^|\s)(?:~?\.{0,2}[/\\]|[^\s/\\]+[/\\][^\s/\\]+[/\\])\S*/g, ' ')
+    .replace(/(^|\s)[\w-]+\.(ts|tsx|js|mjs|cjs|json|jsonl|md|mdx|py|sh|css|html|yml|yaml|toml|lock|log|txt|png|jpe?g|svg|mp4)\b/gi, ' ');
+}
+
+/**
+ * How ordinary each key is in this vault's pattern PROSE: the share of patterns
+ * whose body uses it, mapped to an evidence weight.
+ *
+ * Counting a key's frequency among pattern NAMES (the old rule) called `output`,
+ * `owner` and `never` rare, because only one or two patterns are named with
+ * them, while half the vault's prose uses them. An authored trigger phrase such
+ * as "the agent did not use the skill" is folded word by word, so its every-day
+ * words became identity keys and one pattern fired on 82% of real prompts.
+ * Weighting by document frequency across the bodies (the corpus the patterns
+ * are written in) makes such a word count for little or nothing, while a word
+ * only a few patterns use keeps full weight. Below 8 patterns the statistic
+ * means nothing, so every key weighs 1 and the old behaviour stands.
+ */
+const IDF_MIN_PATTERNS = 8;
+/** At or above this share of pattern bodies, a key is ordinary: weight 0. */
+const ORDINARY_SHARE = 0.5;
+/** At or above this share, a key is common: half a piece of evidence. */
+const COMMON_SHARE = 0.2;
+
+function evidenceWeights(patterns: PatternDoc[]): (key: string) => number {
+  const n = patterns.length;
+  if (n < IDF_MIN_PATTERNS) return () => 1;
+  const bodyDf = new Map<string, number>();
+  for (const p of patterns) {
+    const seen = new Set<string>([...p.bodyKeys, ...p.keys]);
+    for (const k of seen) bodyDf.set(k, (bodyDf.get(k) ?? 0) + 1);
+  }
+  return (key: string) => {
+    const share = (bodyDf.get(key) ?? 1) / n;
+    if (share >= ORDINARY_SHARE) return 0;
+    if (share >= COMMON_SHARE) return 0.5;
+    return 1;
+  };
 }
 
 /**
@@ -593,15 +734,21 @@ export const MAX_PATTERN_MATCHES = 6;
  */
 export function matchPatterns(prompt: string, patterns: PatternDoc[]): PatternMatch[] {
   if (patterns.length === 0) return [];
-  const promptKeys = foldKeys(prompt);
+  const prose = stripNonProse(prompt);
+  const promptKeys = foldKeys(prose);
   if (promptKeys.size === 0) return [];
+  let seq: string[] | null = null;
   const df = keyFrequency(patterns);
+  const weight = evidenceWeights(patterns);
   const needed = evidenceNeeded(promptKeys.size);
   const matches: PatternMatch[] = [];
 
   for (const pattern of patterns) {
-    const matched = alignedHits(pattern.keys, promptKeys);
-    const corroborating = alignedHits(pattern.context, promptKeys);
+    // Every name key the prompt hit, and the ones that are not ordinary words.
+    // An ordinary word (weight 0) is never evidence on its own, on either channel.
+    const hitAll = alignedHits(pattern.keys, promptKeys);
+    const matched = hitAll.filter((k) => weight(k) > 0);
+    const corroborating = alignedHits(pattern.context, promptKeys).filter((k) => weight(k) > 0);
     if (matched.length === 0 && corroborating.length === 0) continue;
 
     // At least one IDENTITY key is always required. A pattern whose name shares
@@ -615,9 +762,25 @@ export function matchPatterns(prompt: string, patterns: PatternDoc[]): PatternMa
     // wrongly is one the agent learns to ignore, which is the failure this
     // whole feature exists to fix, so the trade is refused.
     if (matched.length === 0) continue;
-    if (matched.length < needed) continue;
+    // A short prompt is ABOUT its few words, so each name key it hits counts as
+    // one piece of evidence (an ordinary one only beside a real one: "feature
+    // integration" names its pattern, "owner output" names nothing). A long one
+    // (3+ needed) weighs each key by how rare it is in pattern prose: a brief
+    // that mentions "owner", "build" and "output" in passing must not add up.
+    const identityEvidence = needed >= 3
+      ? matched.reduce((sum, k) => sum + weight(k), 0)
+      : hitAll.length;
+    // Naming a pattern in full qualifies at any length: every word of its
+    // filename, said together. Without this, a pattern whose name is mostly
+    // common words could never reach a long prompt's bar (the review of this
+    // change found half the vault unreachable past 30 keys); requiring the words
+    // together keeps two passing mentions from counting as the name.
+    if (identityEvidence < needed) {
+      seq ??= foldKeySeq(prose);
+      if (!namesTogether(seq, [...(pattern.nameKeys ?? pattern.keys)])) continue;
+    }
     const decisive = matched.filter((k) => firesAlone(k, df.get(k) ?? 1));
-    if (needed === 1 && decisive.length === 0 && matched.length + corroborating.length < 2) continue;
+    if (needed === 1 && decisive.length === 0 && hitAll.length + corroborating.length < 2) continue;
 
     matches.push({
       pattern,
@@ -641,13 +804,14 @@ export function matchPatterns(prompt: string, patterns: PatternDoc[]): PatternMa
  * that menu lists `.claude/commands/` and `.claude/skills/` and nothing else.
  * A generated command per pattern closes that gap.
  *
- * Commands rather than skills, deliberately. A skill's description is loaded
- * into EVERY session's catalogue, so exposing a 40-pattern vault as skills would
- * put 40 descriptions in front of the model on every turn, for a project whose
- * own soul caps a core file at 4,000 characters. A command costs nothing until
- * it is invoked. The automatic half of this feature does not depend on the menu
- * anyway — the prompt hook fires patterns deterministically, which is both
- * cheaper and more reliable than hoping a model picks the right skill.
+ * Commands rather than skills was meant to keep them out of the model's
+ * catalogue. It does not: Claude Code lists every `.claude/commands/` file in
+ * the same skill listing, with its description. Measured 2026-11-12 (audit
+ * MM-10): 63 shims are ~12,200 chars, a fifth of the listing, in every session
+ * and every Explore/general sub-agent, and the model invoked one 15 times in
+ * 955 sessions. Whether to keep them is the owner's call (the audit asks him);
+ * until then they stay, and the prompt hook remains the channel that fires a
+ * pattern deterministically.
  */
 const SHIM_MARKER = '<!-- dreamcontext:pattern-shim -->';
 
@@ -729,15 +893,22 @@ export function syncPatternShims(projectRoot: string, contextRoot: string): Shim
 /**
  * How many characters of pattern prose one prompt may carry.
  *
- * Patterns are only injected when they actually matched, which on the measured
- * traffic is a minority of prompts — so this budget is not paid per turn, it is
- * paid per RELEVANT turn. At the vault's median pattern size (~5.5k chars) it
- * admits two patterns whole plus pointers to the rest.
+ * It lives INSIDE the prompt hook's own output, which the harness cuts at
+ * `HOOK_OUTPUT_MAX_CHARS` (9,800). The old 12,000 was larger than the whole
+ * hook, so a pasted body almost never survived the fit step: the audit
+ * (2026-11-12) counted 4 of 830 firings that arrived inline. The reserve keeps
+ * room for the must-not-miss lines, the recall block and this block's own
+ * banner and frame; what is left (4,000) carries a short pattern whole (a third
+ * of this project's) and the rest as pointers.
  *
  * Override with DREAMCONTEXT_PATTERN_BUDGET (0 disables injection and falls back
  * to pointers, which is the pre-injection behaviour).
  */
-export const DEFAULT_INJECTION_BUDGET = 12000;
+export const PATTERN_HOOK_RESERVE_CHARS = 5_800;
+export const DEFAULT_INJECTION_BUDGET = HOOK_OUTPUT_MAX_CHARS - PATTERN_HOOK_RESERVE_CHARS;
+
+/** Room the banner and the `│` frame of the pattern block take beside a body. */
+const PATTERN_FRAME_CHARS = 2_000;
 
 /** A shim sync that has not finished in this long left a dead lock behind. */
 const SHIM_LOCK_STALE_MS = 30_000;
@@ -776,6 +947,14 @@ export interface InjectionPlan {
  */
 export const FIRST_MATCH_CEILING_FACTOR = 3;
 
+/**
+ * The most a top match may carry: a multiple of the budget, and never more than
+ * the hook can print. Past the hook's own cap a body cannot land whole anyway.
+ */
+export function firstMatchCeiling(budget: number): number {
+  return Math.min(budget * FIRST_MATCH_CEILING_FACTOR, HOOK_OUTPUT_MAX_CHARS - PATTERN_FRAME_CHARS);
+}
+
 export function selectForInjection(
   matches: PatternMatch[],
   budget = injectionBudget(),
@@ -799,7 +978,7 @@ export function selectForInjection(
     const first = i === 0 && budget > 0;
     if (!first && used + body.length > budget) { pointers.push(match); continue; }
     if (first) {
-      const ceiling = budget * FIRST_MATCH_CEILING_FACTOR;
+      const ceiling = firstMatchCeiling(budget);
       if (body.length > ceiling) {
         // Truncation is a last resort, so it says so rather than pretending the
         // pattern ended — a silently halved argument is how a rule gets
