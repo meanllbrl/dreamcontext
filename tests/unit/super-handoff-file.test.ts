@@ -121,8 +121,10 @@ describe('super handoff', () => {
 
 describe('tasks handoff in the super session', () => {
   it('refuses, writes nothing, and names super handoff; a child still hands off into its task', async () => {
-    process.env.DREAMCONTEXT_TAB_SESSION = 'c1';
+    // The Super files the task (gece B6: a Super child files none), then its child c1 owns it.
+    process.env.DREAMCONTEXT_TAB_SESSION = SUPER;
     await tasksCli('create', 'Ship the thing', '-w', 'Because the thing must ship');
+    process.env.DREAMCONTEXT_TAB_SESSION = 'c1';
     const slug = 'ship-the-thing';
     const taskBefore = readFileSync(join(contextRoot, 'state', `${slug}.md`), 'utf-8');
 

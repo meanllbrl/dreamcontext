@@ -436,6 +436,7 @@ Open these with `Read` when the task needs depth:
 - **[tasks-and-features.md](references/tasks-and-features.md)**: task protocol depth, RICE, people/assignees, Workflow flowchart, Lab insights, features, versioning, multi-product.
 - **[knowledge-and-recall.md](references/knowledge-and-recall.md)**: knowledge files, pinning, recall modes, patterns, taxonomy, Excalidraw/diagrams, reading PDFs.
 - **[sleep.md](references/sleep.md)**: full consolidation flow, specialist contracts, deep sleep, epoch safety, reflect, marketing/council passes.
+- **[sleep-conditional.md](references/sleep-conditional.md)**: specialist sections a sleep-packet fact switches on (people, automation output, app findings).
 - **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (for a rule's edge case).
 - **[learning.md](references/learning.md)**: theses (hypotheses): the quality bar, evidence ledger, derived confidence, flips and promotion.
 - **[automations.md](references/automations.md)**: agents and scheduled headless runs: capture, the `## Flow` graph and questions, the retired per-routine Telegram, sharing, the channel, approval, stopping a run.

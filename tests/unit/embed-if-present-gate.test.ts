@@ -82,7 +82,8 @@ describe('--if-present gates on a USABLE cache', () => {
 
   it('sleep done gates its post-sleep refresh on usability, not existence', () => {
     const src = readFileSync(join(cwd, 'src/cli/commands/sleep.ts'), 'utf8');
-    expect(src).toContain('if (embeddingCacheUsable(root))');
+    // The guard may carry more terms (a detached refresh spawn); usability must lead it.
+    expect(src).toMatch(/if \(embeddingCacheUsable\(root\)[ )&]/);
     expect(src).not.toContain('embeddingCacheExists');
   });
 });

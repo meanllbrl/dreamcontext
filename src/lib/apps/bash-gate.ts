@@ -76,7 +76,7 @@ export const LISTED_VERBS: readonly ListedVerb[] = [
   { words: ['knowledge', 'index'], flags: ['--plain', '--tag'] },
   {
     words: ['tasks', 'list'],
-    flags: ['-s', '--status', '-a', '--all', '--tag', '--any-tag', '--version', '--priority', '--feature', '--objective', '--since', '--until', '-g', '--group-by', '--long', '--tags', '--json', '--parent'],
+    flags: ['-s', '--status', '-a', '--all', '--tag', '--any-tag', '--version', '--priority', '--feature', '--objective', '--since', '--until', '-g', '--group-by', '--long', '--tags', '--json', '--parent', '--brief'],
   },
   { words: ['apps', 'tools'], flags: ['--json'] },
   { words: ['apps', 'status'], ownSlug: true, flags: [] },

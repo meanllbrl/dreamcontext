@@ -182,12 +182,14 @@ describe('who files during a live sleep cycle (DREAMCONTEXT_AUTO_SLEEP=1)', () =
     expect(printed()).toMatch(/--parent <slug>/);
   });
 
-  it('--basis plan --parent quoting a wave of the parent\'s map is the plan and never meets the bar', async () => {
+  // 2026-11-12 (gece B6): a live cycle carries the auto-sleep spawn marker, so the agent guard
+  // holds it: a plan's wave is a sub-task, and an agent opens one only on the owner's words.
+  it('--basis plan --parent quoting a wave of the parent\'s map is a sub-task the agent guard refuses', async () => {
     process.env.DREAMCONTEXT_AUTO_SLEEP = '';
     await cli('insert', 'the-parent', 'technical_details', 'WAVE MAP: EXECUTION: lead | W1 (src/a.ts) | W2 (src/b.ts)');
     process.env.DREAMCONTEXT_AUTO_SLEEP = '1';
-    expect(await cli('create', '1. dalga: x', '--parent', 'the-parent', '--basis', 'plan', '--quote', 'W1 (src/a.ts)')).toBe(0);
-    expect(fmOf('1-dalga-x').filed_by).toBe('plan');
+    expect(await cli('create', '1. dalga: x', '--parent', 'the-parent', '--basis', 'plan', '--quote', 'W1 (src/a.ts)')).toBe(1);
+    expect(printed()).toMatch(/sub-task only when the owner asks/);
   });
 
   it('--basis plan --parent quoting no wave is refused like any sleep filing', async () => {
@@ -206,10 +208,10 @@ describe('who files during a live sleep cycle (DREAMCONTEXT_AUTO_SLEEP=1)', () =
     expect(fmOf('agent-work').filed_by).toBe('agent');
   });
 
-  it('--by human is the owner', async () => {
+  // 2026-11-12 (gece B6): inside a spawned cycle `--by human` is a claim, not the owner.
+  it('--by human inside the cycle is recorded as the agent it is', async () => {
     expect(await cli('create', 'Mine', '-w', 'short', '--by', 'human')).toBe(0);
-    expect(fmOf('mine').filed_by).toBe('human');
-    expect(fmOf('mine').filing_basis).toBeUndefined();
+    expect(fmOf('mine').filed_by).toBe('agent');
   });
 });
 

@@ -2,7 +2,7 @@
 name: draw
 description: >-
   Drawing: Excalidraw files and dreamcontext whiteboards (`dreamcontext whiteboard draw|add|kit`),
-  and the Chat view's `dream-html` diagrams. Load BEFORE you draw a diagram, flowchart, chart,
+  and the Chat view's `dream-html` diagrams. Load BEFORE drawing a diagram, flowchart, chart,
   wireframe, mockup or board. Triggers: draw, sketch, diagram, wireframe, excalidraw, whiteboard,
   çiz, çizim, diyagram, şema, akış şeması, grafik çiz, tahtaya çiz.
 ---

@@ -330,14 +330,11 @@ describe('every sleep-state lock site RE-READS inside the lock', () => {
    */
   const hookSource = readFileSync(join(__dirname, '..', '..', 'src', 'cli', 'commands', 'hook.ts'), 'utf8');
 
-  it('the knowledge-access bump reads fresh state inside its lock', () => {
-    const start = hookSource.indexOf('const bumpLock = withSleepStateLock');
-    expect(start).toBeGreaterThan(-1);
-    const body = hookSource.slice(start, hookSource.indexOf('});', start));
-    expect(body).toContain('readSleepState(root)');
-    // …and writes the object it just read, not the handler's older one.
-    expect(body).toContain('writeSleepState(root, fresh)');
-    expect(body).not.toContain('writeSleepState(root, state)');
+  // 2026-11-12 (gece B1/W1, audit MM-13): the prompt hook no longer bumps knowledge access on a
+  // printed hit, so there is no bump write left to race; `knowledge touch` still counts.
+  it('the prompt hook writes no knowledge-access bump at all', () => {
+    expect(hookSource).not.toContain('bumpKnowledgeAccess(');
+    expect(hookSource).not.toContain('const bumpLock = withSleepStateLock');
   });
 
   it('every withSleepStateLock closure in the hook contains its own read', () => {
