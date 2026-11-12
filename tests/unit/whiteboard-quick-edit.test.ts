@@ -14,6 +14,7 @@ import { mergeElements } from '../../src/lib/whiteboards/merge.js';
 import { elementBBox, unionBBox } from '../../src/lib/whiteboards/ops.js';
 import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
 import { untouchedIdentity } from '../../src/lib/whiteboards/quick-edit-jobs.js';
+import { buildSpecDrawingBounded } from '../../src/lib/whiteboards/spec-draw.js';
 
 let root: string;
 beforeEach(() => {
@@ -309,10 +310,18 @@ describe('quick edit: end review r1', () => {
     expect(Date.now() - t0).toBeLessThan(3000);
     // The budget is shared by every add of one answer.
     const two: QuickEditAnswer = { reply: 'x', notBoard: false, add: [0, 1].map((i) => ({ at: [i * 300, 0] as [number, number], spec: { elements: [{ type: 'ellipse', width: 80, height: 80 }] } })) };
-    const one = await buildAdds({ ...two, add: [two.add![0]] });
-    const w = Buffer.byteLength(JSON.stringify(one[0]));
-    expect(await buildAdds(two)).toHaveLength(2);
-    await expect(buildAdds(two, { maxBytes: w + 200 })).rejects.toThrow(QuickEditRefusal);
+    // The budget is one add's real output size (what the worker measured) with room: each add
+    // fits alone, two do not, so this fails if buildAdds stops subtracting what each add used.
+    const sizes: number[] = [];
+    const measured = (async (...args: Parameters<typeof buildSpecDrawingBounded>) => {
+      const r = await buildSpecDrawingBounded(...args);
+      sizes.push(r.bytes);
+      return r;
+    }) as typeof buildSpecDrawingBounded;
+    expect(await buildAdds(two, { build: measured })).toHaveLength(2);
+    const budget = Math.max(...sizes) + 100;
+    expect(await buildAdds({ ...two, add: [two.add![1]] }, { maxBytes: budget })).toHaveLength(1);
+    await expect(buildAdds(two, { maxBytes: budget })).rejects.toThrow(QuickEditRefusal);
     // A board at its save cap: an add is refused and nothing is written; a recolor still lands.
     const els = [rect('A'), rect('B', 300)];
     const cap = Buffer.byteLength(JSON.stringify({ elements: els })) + 50;
