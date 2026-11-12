@@ -1,16 +1,9 @@
 ---
 name: initializer
-description: >
-  Load when a project's dreamcontext brain is missing or sparse and needs to be
-  bootstrapped from real material — or the user invokes `/initializer`. Triggers:
-  "initialize my brain", "set up dreamcontext from my docs", "ingest my notes /
-  wiki / Obsidian / Notion export", "there's no _dream_context yet", "bootstrap
-  the context from this folder", or any time you detect no/empty `_dream_context/`
-  and the user has existing project material to ingest. This is the interactive,
-  sub-agent-driven bootstrap — it migrates whatever the user has into the proper
-  knowledge / feature / task hierarchy. It is the single bootstrap surface for
-  dreamcontext; it also handles codebase-only repos (a light scout + ingest pass)
-  and scales down to a trivial scaffold when there's nothing to ingest.
+description: >-
+  Bootstrap a missing or sparse dreamcontext brain from the project's docs, notes, exports or code
+  into knowledge, features and tasks. Load on `/initializer`, "initialize my brain", "ingest my
+  notes", or no `_dream_context/` yet.
 user-invocable: true
 alwaysApply: false
 tags: [initializer, bootstrap, onboarding, ingestion, orchestration, sub-agents, dreamcontext]

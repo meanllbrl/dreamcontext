@@ -1,13 +1,9 @@
 ---
 name: video-watching
 description: >-
-  Watch a video the way a human would — turn it into a time-mapped transcript
-  with the on-screen visuals (slides, UI, diagrams, text) described inline, then
-  reason about it. Triggers: "watch this video", "şu videoyu izle", "videoyu
-  analiz et", "transkript çıkar", "video transcript", "bu videoda ne var", or any
-  time the user hands over a video file/link. Produces a curated
-  <video>.transcript.md NEXT TO the source video, then continues per use-case
-  (marketing teardown, FTE analysis, knowledge capture, …).
+  Watch a video like a human: a time-mapped transcript with the on-screen visuals described
+  inline, saved next to the video, then reasoning on it. Triggers: "watch this video", "şu videoyu
+  izle", "transkript çıkar", a video file or link.
 alwaysApply: false
 ruleType: "Tool Workflow"
 version: "1.0"

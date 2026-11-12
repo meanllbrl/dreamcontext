@@ -1,15 +1,9 @@
 ---
 name: dream-sync
-description: >
-  Load when the user asks to sync/reconcile the dreamcontext brain repo with a team (a shared
-  `_dream_context/` git remote), or when `dreamcontext brain sync` (or the SessionStart snapshot)
-  reports a team merge awaiting resolution. Triggers: "/dream-sync", "sync the brain", "reconcile
-  with the team", "resolve the brain merge conflict", "already-awaiting-agent", "awaiting-agent",
-  "pending team-merge handoff". This is the agent half of the semantic-merge contract: the CLI
-  resolves every deterministic file (JSON changelog/releases/config/taxonomy, task status +
-  changelog) automatically and only ever defers PROSE files (knowledge/features) where two people
-  edited the same section — you read base/ours/theirs snapshots and write the actual semantic
-  merge, then hand back to the CLI to commit + push.
+description: >-
+  The agent half of a team brain sync: write the semantic merge of prose files two people edited,
+  then hand back to the CLI. Load on `/dream-sync`, "sync the brain", or when `dreamcontext brain
+  sync` or the snapshot reports a team merge awaiting resolution.
 user-invocable: true
 alwaysApply: false
 tags: [sync, brain-repo, git, merge, collaboration, dreamcontext]

@@ -1,19 +1,10 @@
 ---
 name: dreamcontext
-description: >
-  AI agent persistent context management system. Activate when working on any project
-  that has an _dream_context/ directory, when managing tasks, features, knowledge,
-  insights (Lab analytics metrics), roadmap objectives/OKRs, automations (scheduled,
-  unattended recurring jobs), triggers, session continuity, or when the user mentions
-  context management, agent memory, or project state — the words insight, objective,
-  task, feature, knowledge, automation, trigger name dreamcontext entities in any
-  language. Also activate when work should repeat on a schedule with nobody asking
-  ("every morning", "her gün", "run this daily", a recurring digest/report/check): that
-  is an automation here, never a hand-rolled cron/launchd job or external scheduler.
-  Provides structured memory, task lifecycle management, scheduled automations and
-  context triggers, analytics insight syncing, ClickUp/GitHub task sync, a web
-  dashboard, cross-project federation, and cross-session continuity via the
-  dreamcontext CLI.
+description: >-
+  Persistent project memory through the dreamcontext CLI. Activate in any project with a
+  `_dream_context/` directory, or when the user names a dreamcontext entity in any language: task,
+  feature, knowledge, insight, objective, automation, trigger. Work that repeats on a schedule
+  ("every morning", "her gün") is an automation here, never a hand-rolled cron or launchd job.
 user-invocable: false
 alwaysApply: true
 hooks:

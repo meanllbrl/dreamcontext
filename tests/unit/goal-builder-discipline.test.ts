@@ -107,13 +107,14 @@ describe('goal-skill: every builder runs without background tasks, with its writ
     }
   });
 
-  it('one identity for the whole lineage: planner, forks and resumes all run opus at effort high', () => {
+  // 2026-11-12 (gece-duzeltme B7 + B8, OR-13): the lineage runs at medium, the owner's builder rule.
+  it('one identity for the whole lineage: planner, forks and resumes all run opus at effort medium', () => {
     expect(SKILL).not.toMatch(/--model sonnet/);
     expect(SKILL).not.toMatch(/<tier-model>/);
-    for (const l of builderLines) for (const r of l.split(/ & (?=CLAUDE_CODE|claude)/)) expect(r, r).toContain('--model opus --effort high');
+    for (const l of builderLines) for (const r of l.split(/ & (?=CLAUDE_CODE|claude)/)) expect(r, r).toContain('--model opus --effort medium');
     const plannerLines = claudeCommands(SKILL).filter((l) => /--session-id <plannerId>|--resume <plannerId> "/.test(l));
     for (const l of plannerLines) {
-      expect(l, l).toContain('--model opus --effort high');
+      expect(l, l).toContain('--model opus --effort medium');
       expect(l, l).toContain(BUILDER_NO_BACKGROUND_ENV);
     }
     expect(SKILL).toMatch(/\*\*One identity for the whole lineage, always\.\*\*/);

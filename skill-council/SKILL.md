@@ -1,11 +1,9 @@
 ---
 name: council
-description: >
-  Structured multi-agent debate for non-trivial decisions. Load when the user asks to
-  "debate this", "get second opinions", "help me decide", "run this by council", or
-  invokes `/council`. Orchestrates 3-10 persona CLI sessions across N rounds with
-  structured verdicts, a live chamber board, and interactive interludes, then a clean
-  synthesizer sub-agent writes the final decision report.
+description: >-
+  Structured multi-agent debate for a non-trivial decision: persona sessions over rounds, then a
+  synthesizer writes the decision report. Load on `/council`, "debate this", "get second
+  opinions", "help me decide".
 tags: [council, debate, decision, sub-agents, orchestration, verdicts]
 alwaysApply: false
 ---
