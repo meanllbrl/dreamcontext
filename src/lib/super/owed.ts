@@ -143,6 +143,14 @@ export function openDebts(s: Pick<SuperState, 'owed'>): SuperOwed[] {
   return (s.owed ?? []).filter(isOpen).sort((a, b) => a.seq - b.seq);
 }
 
+/** His own message under `ref` (a `msg` debt, open or among the kept closed ones, by its ref or a
+ *  part ref): its gist, his words server-cut. Null when the record holds no message of his by
+ *  that ref (a ref a child, a page or a guess named). */
+export function ownerMessageGist(s: Pick<SuperState, 'owed'>, ref: string): string | null {
+  const d = (s.owed ?? []).find((x) => x.kind === 'msg' && (x.ref === ref || x.parts?.includes(ref)));
+  return d ? d.gist : null;
+}
+
 /** Cut a gist to `max` characters, one line, no control characters. */
 export function cutGist(raw: string, max: number): string {
   const flat = (raw ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();

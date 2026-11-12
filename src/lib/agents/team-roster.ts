@@ -345,8 +345,8 @@ export function ownerWords(prompt: string): string | null {
 /** A recall, pattern or offer needs at least this much of the owner's text to search on. */
 export const RECALL_QUERY_MIN_CHARS = 8;
 
-/** Lines the server writes into a child's first message (super.ts DEV_SERVER_LINE, worktreePreamble). */
-const SERVER_LINE_RE = /If you start a dev server, pin its url \(a `dream-view` pin\) so the owner sees the site\.|You work in your own git worktree: [^\n]{0,600}?Never push and never merge into another branch\./g;
+/** Lines the server writes into a child's first message (super.ts DEV_SERVER_LINE, worktreePreamble, outwardLine). */
+const SERVER_LINE_RE = /If you start a dev server, pin its url \(a `dream-view` pin\) so the owner sees the site\.|You work in your own git worktree: [^\n]{0,600}?(?:Never push and never merge into another branch\.|Never merge into another branch; push only as the next line says\.)|The server checked that ref [0-9a-z]{6} is the owner's own message; the Super passed on this outward step[^\n]{0,1800}?say so in your report\./g;
 /** Blocks a harness or the app writes into a turn: a finished background task, a dictation tag. */
 const MACHINE_BLOCK_RE = /<task-notification>[\s\S]*?(?:<\/task-notification>|$)|<voice-take\b[^>\n]{0,300}>|<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)/g;
 /** The dock's page header (`[On page tasks view="…"]`): where he stood, not what he asked. */

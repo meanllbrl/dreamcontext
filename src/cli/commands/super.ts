@@ -170,6 +170,9 @@ const FOR_HELP = 'A member\'s Super only: whose work this is, `owner` or one of 
 /** `--origin` on a job verb: in the owner's turn the server records his message by itself. */
 const ORIGIN_HELP = 'The owner message this job answers (its <owner-msg ref>); only outside his turn: in his turn it is recorded by itself. Its results come to you awaited=owner origin=<ref>';
 
+/** `--outward` on `delegate`: the one outward step his own message named (owner, 2026-11-12). */
+const OUTWARD_HELP = 'The push, PR or deploy the owner\'s OWN message named, in one line (e.g. "push release/x to origin, open a PR to development"); the child may run exactly that, never a force-push or a default-branch merge. Needs his message: his turn, or --origin <ref>. Kept with the job: its pool row and a --succeeds successor carry it';
+
 const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda';
 
 export function registerSuperCommand(program: Command): void {
@@ -206,16 +209,18 @@ export function registerSuperCommand(program: Command): void {
     .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)')
     .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone')
     .option('--origin <ref>', ORIGIN_HELP)
+    .option('--outward <step>', OUTWARD_HELP)
     .option('--for <item|owner>', FOR_HELP))
-    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; for?: string }) => {
+    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; outward?: string; for?: string }) => {
       const behind = serverBehindLine(await serverVersion(), dreamcontextVersion());
       if (behind) process.stderr.write(behind);
       const note = o.note !== undefined ? { note: o.note } : {};
       const origin = o.origin !== undefined ? { origin: o.origin } : {};
       const forWho = o.for !== undefined ? { for: o.for } : {};
-      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...forWho });
+      const outward = o.outward !== undefined ? { outward: o.outward } : {};
+      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho });
       if (!o.prompt) return usage('give --prompt, or --from <pool id>');
-      return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note, ...origin, ...forWho });
+      return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho });
     });
 
   s.command('open <kind> [refs...]')
@@ -418,8 +423,12 @@ export function registerSuperCommand(program: Command): void {
   job(p.command('add')
     .description('Keep a job for later; start it with `delegate --from <id>` when a slot frees')
     .requiredOption('--prompt <text>', 'The job\'s first message, complete and self-contained (at most 16 KB)')
-    .option('--note <line>', 'Your note on its row'))
-    .action((o: JobOpts & { note?: string }) => run('pool-add', { ...jobBody(o), note: o.note }));
+    .option('--note <line>', 'Your note on its row')
+    .option('--origin <ref>', ORIGIN_HELP)
+    .option('--outward <step>', OUTWARD_HELP))
+    .action((o: JobOpts & { note?: string; origin?: string; outward?: string }) => run('pool-add', {
+      ...jobBody(o), note: o.note, ...(o.origin !== undefined ? { origin: o.origin } : {}), ...(o.outward !== undefined ? { outward: o.outward } : {}),
+    }));
   p.command('remove <id>')
     .description('Drop a job from the pool')
     .action((id: string) => run('pool-remove', { id }));

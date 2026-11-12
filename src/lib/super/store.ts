@@ -17,6 +17,7 @@ import { sanitizeModel } from '../claude-args.js';
 import { capAskShows } from './ask-show.js';
 import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
+import { sanitizeOutward } from './outward.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { renameWithRetry } from '../fs-retry.js';
 import { asOwnerLanguage } from './owner-language.js';
@@ -331,6 +332,8 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (typeof c.origin === 'string' && MSG_REF_RE.test(c.origin)) child.origin = c.origin;
     const wo = parseWorkOrigin(c.workOrigin);
     if (wo) child.workOrigin = wo;
+    const outward = sanitizeOutward(c.outward);
+    if (outward) child.outward = outward;
     // The agenda's two stamps (epoch ms): a non-finite or negative value is dropped.
     const sentAt = finite(c.sentAt);
     if (sentAt !== undefined && sentAt >= 0) child.sentAt = sentAt;
@@ -774,6 +777,8 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
       ...(p.held === true ? { held: true } : {}),
       ...(p.maybeStarted === true ? { maybeStarted: true } : {}),
     };
+    const outward = sanitizeOutward(p.outward);
+    if (outward) row.outward = outward;
     if (row.maybeStarted && acceptableWorktree(p.startedIn, opts) && typeof p.startedBranch === 'string' && SUPER_BRANCH_RE.test(p.startedBranch)) {
       row.startedIn = p.startedIn;
       row.startedBranch = p.startedBranch;

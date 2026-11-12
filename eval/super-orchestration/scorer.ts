@@ -80,6 +80,8 @@ export interface Unit {
   slug: string;
   mcp: string[];
   task: string;
+  /** `delegate --outward`: a push, PR or deploy the child may run (his message's, never a child's). */
+  outward: string;
 }
 
 export interface Plan {
@@ -172,13 +174,14 @@ function unitFrom(index: number, verb: 'delegate' | 'pool', turn: number, wave: 
     worktree: o.worktree ?? '', slug: o.slug ?? '',
     mcp: (o.mcp ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     task: o.task ?? '',
+    outward: o.outward ?? '',
   };
 }
 
 // ─── Mapping units to gold items ───────────────────────────────────────────────────────
 
 const lc = (s: string) => s.toLowerCase();
-const text = (u: Unit) => `${u.prompt}\n${u.brief}`;
+const text = (u: Unit) => `${u.prompt}\n${u.brief}\n${u.outward ? `git push ${u.outward}` : ''}`;
 
 /** Deterministic: an item is covered by a unit when one of its `match` patterns hits the unit's text. */
 export function matchItems(u: Unit, sc: GoldScenario): string[] {

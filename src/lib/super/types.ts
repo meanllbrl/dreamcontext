@@ -12,6 +12,7 @@ import type { OwnerCardKind, OwnerWaitKind } from './owner-wait.js';
 import type { CardSpec } from '../cards/public.js';
 import { parseViewBlock } from '../chat-view-spec.js';
 import type { OwnerLanguage } from './owner-language.js';
+import type { OutwardGrant } from './outward.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
 
@@ -563,6 +564,9 @@ export interface SuperChild {
   origin?: string;
   /** A member Super's child: whose work it does (`delegate --for`, else the issuing turn's). */
   workOrigin?: SuperWorkOrigin;
+  /** The push, PR or deploy his own message named that this child was told it may run
+   *  (`delegate --outward`, outward.ts); a `--succeeds` successor carries it on. */
+  outward?: OutwardGrant;
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -1236,6 +1240,9 @@ export interface SuperPoolItem {
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
   tool?: SuperChildTool;
+  /** The push, PR or deploy his own message named, checked when the job was kept (outward.ts):
+   *  it starts with the job, however late, never re-read from the owed ledger. */
+  outward?: OutwardGrant;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A `delegate --from` went unconfirmed: the child may be running. */
@@ -2037,9 +2044,9 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc.
  */
-export const SUPER_BRIEF_REV = 41;
+export const SUPER_BRIEF_REV = 42;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
