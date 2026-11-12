@@ -128,7 +128,7 @@ const { startChatSession, leanChildMcpArgs, leanMcpForUpgrade, mcpConfigArgs } =
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 const { setAutoSwitchEnabled } = await import('../../src/lib/claude-accounts.js');
 const {
-  MAX_LEAN_MCP, knownMcpServers, leanMcpDir, parseMcpNames, sweepLeanMcpDir, writeLeanMcpConfig,
+  MAX_LEAN_MCP, knownMcpServers, leanMcpDir, mcpCardServers, mcpGrantFor, parseMcpNames, sweepLeanMcpDir, writeLeanMcpConfig,
 } = await import('../../src/lib/super/lean-mcp.js');
 const { leanMcpFor, leanMcpParam, mcpNames, delegateArgs } = await import('../../dashboard/src/components/sleepy/super/superHandover.js');
 
@@ -370,5 +370,125 @@ describe('the surface briefing of a delegated child', () => {
     expect(lean).toContain('AskUserQuestion');
     expect(lean).toMatch(/Never look for it among peers/);
     expect(briefingOf(spawnChat().child!)).not.toContain('Reaching the Super Agent');
+  });
+});
+
+describe('a set-up server the chat asks for on its card joins it (owner 2026-11-12, memoryos Slack)', () => {
+  const card = (servers: unknown[]): string => `Slack is not in this chat.\n\n\`\`\`dream-view\n${JSON.stringify({ type: 'mcp', id: 'need', why: 'read the DM', servers })}\n\`\`\`\n`;
+  const say = (child: FakeChild, frame: unknown): void => { child.stdout.emit('data', Buffer.from(`${JSON.stringify(frame)}\n`)); };
+  const userTexts = (child: FakeChild): string[] => child.stdin.write.mock.calls
+    .map(([raw]) => { try { return JSON.parse(String(raw)) as { type?: string; message?: { content?: Array<{ text?: string }> } }; } catch { return null; } })
+    .filter((f) => f?.type === 'user').map((f) => f!.message?.content?.[0]?.text ?? '');
+
+  it('the card\'s names: every mcp fence, in order, deduped; other cards and broken JSON ignored', () => {
+    const text = `${card(['slack', 'github'])}\n\`\`\`dream-view\n{"type":"run","id":"r","command":"x"}\n\`\`\`\n\`\`\`dream-view\n{nope\n\`\`\`\n${card(['slack', ' posthog '])}`;
+    expect(mcpCardServers(text)).toEqual(['slack', 'github', 'posthog']);
+    expect(mcpCardServers('no card here')).toEqual([]);
+  });
+
+  it('the grant: known and missing only, own keys, never past the lean cap; an unknown name stays the owner\'s', () => {
+    const known = new Map<string, unknown>([['slack', {}], ['github', {}], ['a', {}], ['b', {}], ['c', {}], ['d', {}], ['e', {}]]);
+    expect(mcpGrantFor({ asked: ['slack', 'linear', '__proto__', 'Bad Name', 'github'], have: ['github'], known, lean: true })).toEqual(['slack']);
+    expect(mcpGrantFor({ asked: ['slack', 'a', 'b'], have: ['c', 'd', 'e', 'github'], known, lean: true })).toEqual(['slack', 'a']);
+    expect(mcpGrantFor({ asked: ['slack', 'a', 'b'], have: ['c', 'd', 'e', 'github'], known, lean: false })).toEqual(['slack', 'a', 'b']);
+  });
+
+  it('a lean child that asks for a set-up server respawns with it and is told it is connected', () => {
+    const { child } = spawnChat({ mode: 'develop', leanMcp: ['whatsapp'] });
+    const first = child!;
+    expect(Object.keys(JSON.parse(readFileSync(mcpFiles(argvOf(first))[0], 'utf-8')).mcpServers)).toEqual(['whatsapp']);
+    say(first, { type: 'system', subtype: 'init', session_id: 'aaaaaaaa-1111-4222-8333-444444444444', model: 'opus' });
+    say(first, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: card(['github', 'linear']) }] } });
+    // Mid-turn: nothing yet.
+    expect(first.stdin.end).not.toHaveBeenCalled();
+    say(first, { type: 'result', subtype: 'success', is_error: false, session_id: 'aaaaaaaa-1111-4222-8333-444444444444' });
+    return vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalled()).then(() => {
+      const before = spawned.length;
+      state.transcripts.add('aaaaaaaa-1111-4222-8333-444444444444');
+      first.emit('close', 0);
+      expect(spawned.length).toBe(before + 1);
+      const next = spawned[spawned.length - 1];
+      const a = argvOf(next);
+      expect(a).toContain('--strict-mcp-config');
+      expect(a).toContain('--resume');
+      // github was set up (local scope); linear is not, so it stays out.
+      expect(Object.keys(JSON.parse(readFileSync(mcpFiles(a)[0], 'utf-8')).mcpServers)).toEqual(['whatsapp', 'github']);
+      // linear is still missing: no receipt, the card stays the owner's.
+      return new Promise((r) => setTimeout(r, 20)).then(() => expect(userTexts(next).some((t) => t.startsWith('MCP connected'))).toBe(false));
+    });
+  });
+
+  it('every name granted and none waiting on a sign-in: the successor\'s next turn is the card\'s receipt', async () => {
+    const sid = 'dddddddd-1111-4222-8333-444444444444';
+    const first = spawnChat({ mode: 'develop', leanMcp: ['whatsapp'] }).child!;
+    say(first, { type: 'system', subtype: 'init', session_id: sid, model: 'opus' });
+    say(first, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: card(['github', 'whatsapp']) }] } });
+    say(first, { type: 'result', subtype: 'success', is_error: false, session_id: sid });
+    await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalled());
+    state.transcripts.add(sid);
+    first.emit('close', 0);
+    const next = spawned[spawned.length - 1];
+    expect(Object.keys(JSON.parse(readFileSync(mcpFiles(argvOf(next))[0], 'utf-8')).mcpServers)).toEqual(['whatsapp', 'github']);
+    await vi.waitFor(() => expect(userTexts(next).some((t) => t.startsWith('MCP connected: github\n'))).toBe(true));
+  });
+
+  it('a grant waits for the chat\'s background work to end (a dev server would die with the process)', async () => {
+    const sid = 'eeeeeeee-1111-4222-8333-444444444444';
+    const { ws, child } = spawnChat({ mode: 'develop', leanMcp: [] });
+    const first = child!;
+    say(first, { type: 'system', subtype: 'init', session_id: sid, model: 'opus' });
+    say(first, { type: 'system', subtype: 'background_tasks_changed', tasks: [{ id: 'dev' }] });
+    say(first, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: card(['github']) }] } });
+    say(first, { type: 'result', subtype: 'success', is_error: false, session_id: sid });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(first.stdin.end).not.toHaveBeenCalled();
+    // Meanwhile the chat still takes messages (re-review r2: nothing is held while it waits).
+    ws.emit('message', Buffer.from(JSON.stringify({ type: 'user', text: 'how is it going?' })));
+    await vi.waitFor(() => expect(userTexts(first)).toContain('how is it going?'));
+    say(first, { type: 'result', subtype: 'success', is_error: false, session_id: sid });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(first.stdin.end).not.toHaveBeenCalled();
+    say(first, { type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+    await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalled());
+  });
+
+  it('a server it already has, or one the project does not have, changes nothing', async () => {
+    const { child } = spawnChat({ mode: 'develop', leanMcp: ['whatsapp'] });
+    say(child!, { type: 'system', subtype: 'init', session_id: 'bbbbbbbb-1111-4222-8333-444444444444', model: 'opus' });
+    say(child!, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: card(['whatsapp', 'linear']) }] } });
+    say(child!, { type: 'result', subtype: 'success', is_error: false });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(child!.stdin.end).not.toHaveBeenCalled();
+  });
+
+  it('the grant is written into the child\'s record, so a reload or Resume keeps it (never past the cap, never an adopted chat)', async () => {
+    const { updateSuperState, readSuperState, resetSuperIndex, delegatedChildMcp } = await import('../../src/lib/super/store.js');
+    const { noteChildMcpGrant } = await import('../../src/lib/super/inbox.js');
+    resetSuperIndex();
+    const ctx = join(projectRoot, '_dream_context');
+    mkdirSync(join(ctx, 'state'), { recursive: true });
+    const ch = (sessionId: string, adopted: boolean, extra = {}) => ({ sessionId, brief: '', adopted, startedAt: 1, ...extra });
+    await updateSuperState(ctx, (s) => {
+      s.session = 'sup';
+      s.children = { kid: ch('kid', false, { mcp: ['whatsapp'] }), full: ch('full', false, { mcp: ['a', 'b', 'c', 'd', 'e'] }), mine: ch('mine', true) } as typeof s.children;
+    });
+    await noteChildMcpGrant('kid', ['slack', 'whatsapp', 'Bad Name']);
+    await noteChildMcpGrant('full', ['slack', 'github']);
+    await noteChildMcpGrant('mine', ['slack']);
+    const st = await readSuperState(ctx);
+    expect(st.children.kid.mcp).toEqual(['whatsapp', 'slack']);
+    expect(st.children.full.mcp).toEqual(['a', 'b', 'c', 'd', 'e', 'slack']);
+    expect(st.children.mine.mcp ?? []).toEqual([]);
+    expect(delegatedChildMcp('kid')).toEqual(['whatsapp', 'slack']);
+    resetSuperIndex();
+  });
+
+  it('the Super Agent\'s own session is never respawned by a card', async () => {
+    const { child } = spawnChat({ mode: 'super' });
+    say(child!, { type: 'system', subtype: 'init', session_id: 'cccccccc-1111-4222-8333-444444444444', model: 'opus' });
+    say(child!, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: card(['github']) }] } });
+    say(child!, { type: 'result', subtype: 'success', is_error: false });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(child!.stdin.end).not.toHaveBeenCalled();
   });
 });

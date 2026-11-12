@@ -73,6 +73,53 @@ export function mcpNeedingSignIn(
   });
 }
 
+/** The same fence the chat and owner-wait.ts read: an unterminated one is not a card yet. */
+const VIEW_FENCE = /```dream-view[^\S\r\n]*\r?\n([\s\S]*?)```/g;
+
+/** The server names every `mcp` card in one assistant text asks for, in order, deduped. */
+export function mcpCardServers(text: string): string[] {
+  const out: string[] = [];
+  if (!text.includes('dream-view')) return out;
+  for (const m of text.matchAll(VIEW_FENCE)) {
+    let o: unknown;
+    try { o = JSON.parse(m[1]); } catch { continue; }
+    if (!o || typeof o !== 'object' || Array.isArray(o) || (o as { type?: unknown }).type !== 'mcp') continue;
+    const servers = (o as { servers?: unknown }).servers;
+    if (!Array.isArray(servers)) continue;
+    for (const s of servers) {
+      const n = typeof s === 'string' ? s.trim() : '';
+      if (n && !out.includes(n)) out.push(n);
+    }
+  }
+  return out;
+}
+
+/**
+ * A chat asked for servers it was started without (owner 2026-11-12, memoryos: a Super child
+ * needed Slack, the Super had not named it at `delegate`, and the child was blind while Slack sat
+ * configured). The names its `mcp` card asks for that this project ALREADY has and the chat does
+ * not: those join it on an in-place respawn at the turn's end, no owner step. Exact own-key
+ * matches only (`MCP_NAME_RE`, never a prototype key), and never past {@link MAX_LEAN_MCP} for a
+ * lean child, so a card cannot widen a child into everything. A name the project does not have
+ * stays the owner's (the card says "add it").
+ */
+export function mcpGrantFor(o: {
+  asked: readonly string[];
+  have: readonly string[];
+  known: ReadonlyMap<string, unknown>;
+  /** A lean child: the total stays within MAX_LEAN_MCP. */
+  lean: boolean;
+}): string[] {
+  const out: string[] = [];
+  for (const n of o.asked) {
+    if (!MCP_NAME_RE.test(n) || FORBIDDEN_KEYS.has(n) || !o.known.has(n)) continue;
+    if (o.have.includes(n) || out.includes(n)) continue;
+    if (o.lean && o.have.length + out.length >= MAX_LEAN_MCP) break;
+    out.push(n);
+  }
+  return out;
+}
+
 /** The names among `names` the user does not have (empty = all known). */
 export function unknownMcpNames(names: readonly string[], known: ReadonlyMap<string, unknown>): string[] {
   return names.filter((n) => !known.has(n));
