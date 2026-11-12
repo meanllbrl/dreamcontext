@@ -15,6 +15,17 @@ const EVIDENCE_TICK_RULE = `A tick needs its evidence in the same log line: the 
    observed check (section 3). No evidence = no tick, and a run with an unticked criterion
    does not close.`;
 
+/**
+ * The observed check runs after the code PASS (audit OR-4), so the end reviewer never sees its
+ * ticks. Who signs them off instead (B10 review, 2026-11-12): one clean reviewer of the ticks
+ * alone, on every path that ticked one, green or red. It reads a few log lines and screenshots,
+ * not the code, so it costs little and keeps "you never sign off on your own work" true.
+ */
+const TICKS_REVIEW = `- The ticks review, whenever the observed check ticked a criterion (its check green or red):
+  ONE fresh \`reviewer\` (model opus, effort high, not in the background) with the TICKS
+  brief (section 4) reads only those ticks and their evidence before anything closes. FAIL =
+  the same path as a red final check.`;
+
 const OBSERVED_CHECK = `- The observed check, ONCE, after the code PASS and on its build, when a criterion is about
   what the owner sees: open the result in the
   real app or a headless browser at a phone (390 px) and a desktop (1440 px) width, record the
@@ -354,6 +365,7 @@ a task-log line with PASS or FAIL.
 
 ${END_FINAL_CHECK}
 ${OBSERVED_CHECK}
+${TICKS_REVIEW}
 
 A reviewer FAIL or a red final check takes the same path: fix exactly the findings, each across its whole class,
 or the failure and nothing else, and check the fix with \`builder test "$S" --wave final --related
@@ -398,6 +410,11 @@ scope by name, the evidence sentence, the review rules): the dispatch prompt is 
 REVIEWER: "Review the run of <slug> against criteria <list>. Start tree <START>, current tree
 <NOW>. Scope (read these yourself with git diff <START> <NOW> -- <path>): <files>. Files with
 status A are new: read them whole. ${REVIEWER_EVIDENCE} First line PASS or FAIL."
+
+TICKS: "Check the ticked criteria <list> of <slug | the run>, nothing else. Their evidence:
+<the log lines with the screenshot paths and the console output>. Open every screenshot. For
+each tick say whether the evidence OBSERVED the criterion; a tick with no screenshot, or one
+that does not show it, or console errors the tick ignores, is FAIL. First line PASS or FAIL."
 
 VALIDATOR: "Validate task <slug> by its 'Validation method:' criterion, in the real app.
 Prove it with screenshots and a video of the flow (give their paths). Report PASS or FAIL with
@@ -699,6 +716,7 @@ ${END_REVIEW_TEAM}
   merged verdict.
 ${END_FINAL_CHECK}
 ${OBSERVED_CHECK}
+${TICKS_REVIEW}
 
 ${REPEAT_LIMIT}
 
@@ -771,6 +789,11 @@ current tree <NOW>. Scope (read these yourself with git diff <START> <NOW> -- <p
 <files>. Files with status A are new: read them whole. Changed during this wave, unclaimed:
 <paths or none>; say for each whether it belongs to it. ${REVIEWER_EVIDENCE} First line PASS or
 FAIL."
+
+TICKS: "Check the ticked criteria <list> of <slug | the run>, nothing else. Their evidence:
+<the log lines with the screenshot paths and the console output>. Open every screenshot. For
+each tick say whether the evidence OBSERVED the criterion; a tick with no screenshot, or one
+that does not show it, or console errors the tick ignores, is FAIL. First line PASS or FAIL."
 
 VALIDATOR: "Validate task <slug> by its 'Validation method:' criterion, in the real app.
 Prove it with screenshots and a video of the flow (give their paths). Report PASS or FAIL with

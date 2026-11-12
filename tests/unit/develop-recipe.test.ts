@@ -643,3 +643,19 @@ describe('develop runs with no task (small work)', () => {
     expect(src).toMatch(/\.option\('--goal <text>'/);
   });
 });
+
+/** B10 review (2026-11-12): with the observed check after the code PASS, its ticks get their own clean reader on every path. */
+describe('the ticks the observed check made are read by a clean reviewer, green or red', () => {
+  for (const [name, recipe] of [['develop', D], ['fan-out', R]] as const) {
+    it(`${name}: the ticks review follows the observed check, before the close, with its own brief`, () => {
+      const end = recipe.slice(recipe.indexOf('## 3.'), recipe.indexOf('## 4.'));
+      const ticks = end.indexOf('The ticks review, whenever the observed check ticked a criterion (its check green or red)');
+      expect(ticks).toBeGreaterThan(end.indexOf('The observed check, ONCE'));
+      expect(ticks).toBeLessThan(end.indexOf('Close by the task'));
+      expect(end).toMatch(/ONE fresh `reviewer` \(model opus, effort high, not in the background\) with the TICKS\s+brief/);
+      const briefs = recipe.slice(recipe.indexOf('TICKS: "'), recipe.indexOf('VALIDATOR: "'));
+      expect(briefs).toMatch(/Open every screenshot/);
+      expect(briefs).toMatch(/a tick with no screenshot, or one\s+that does not show it, or console errors the tick ignores, is FAIL/);
+    });
+  }
+});

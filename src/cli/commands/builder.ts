@@ -784,7 +784,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .command('open')
     .argument('<slug>', 'The task slug')
     .option('--phase <name>', 'The phase this run enters', 'build')
-    .description('A run starts on this branch: `heavy` counts repeats from here on, per phase')
+    .description('A run starts on this branch: `heavy` counts repeats from here on, per code tree (changed code runs again)')
     .action((slug: string, opts: { phase: string }) => {
       markPhase(deps.cwd(), opts.phase, slug, Date.now());
       appendLedger(ledgerPath(deps.cwd()), { type: 'mark', run: slug, what: 'open', at: Date.now() });
