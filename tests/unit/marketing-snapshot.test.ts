@@ -62,13 +62,19 @@ describe('marketing/snapshot', () => {
     }
   });
 
-  it('renders a snapshot block when marketing is bootstrapped but empty', () => {
-    const out = buildMarketingSnapshot();
+  it('returns null when marketing is bootstrapped but holds nothing yet', () => {
+    // No cohort, no insights pull, no learning: the old block was three
+    // "nothing yet" lines every session (overnight audit MM-9).
+    expect(buildMarketingSnapshot()).toBeNull();
+  });
+
+  it('keeps the empty-state lines once ANY part of the surface is in use', () => {
+    appendLearning({ type: 'ledger', body: 'evergreen entry', agent: 'performance-monitor' });
+    const out = buildMarketingSnapshot()!;
     expect(out).toContain('## Marketing');
     expect(out).toContain('No active cohorts');
     expect(out).toContain('Last insights pull:');
     expect(out).toContain('never');
-    expect(out).toContain('no learnings recorded yet');
   });
 
   it('lists active cohorts (launched / monitoring) but skips closed', () => {

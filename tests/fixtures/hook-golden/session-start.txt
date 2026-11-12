@@ -52,12 +52,4 @@ updated: "<DATE>"
 
 (+1 more knowledge file(s), not listed — search: `dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: `dreamcontext knowledge index`)
 
-## Marketing
-
-No active cohorts. Plan one with `mk cohort create <name> --hypothesis-file <path>`.
-
-**Last insights pull:** never — run `mk insights pull --campaign <id>`.
-
-**Performance Monitor:** no learnings recorded yet.
-
 --- stderr ---

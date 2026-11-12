@@ -2,7 +2,8 @@
  * Marketing snapshot section for SessionStart hook.
  *
  * Returns a `## Marketing` markdown block suitable for appending to the
- * agent context snapshot, or null if marketing isn't bootstrapped.
+ * agent context snapshot, or null if marketing isn't bootstrapped or holds
+ * nothing yet (no cohort, no insights pull, no learning).
  *
  * Performance budget: must complete in <500ms (SessionStart is in the hot
  * path of every session). Only local file reads — no network, no subprocess.
@@ -30,6 +31,17 @@ export function buildMarketingSnapshot(opts: MarketingSnapshotOpts = {}): string
   const cohorts = listCohorts();
   const active = cohorts.filter((c) => c.status === 'launched' || c.status === 'monitoring');
   const planning = cohorts.filter((c) => c.status === 'planning');
+  const lastPull = readLastInsightsPull();
+  const allPending = listPending({ now });
+  const idx = loadIndex();
+
+  // Bootstrapped but nothing in it: no cohort, no pull, no learning. Three
+  // "nothing yet" lines every session are an empty state, not context; the
+  // `mk` commands teach themselves the day the surface is used.
+  if (active.length === 0 && planning.length === 0 && !lastPull
+    && allPending.length === 0 && idx.entries.length === 0) {
+    return null;
+  }
 
   if (active.length === 0 && planning.length === 0) {
     lines.push('No active cohorts. Plan one with `mk cohort create <name> --hypothesis-file <path>`.');
@@ -49,7 +61,6 @@ export function buildMarketingSnapshot(opts: MarketingSnapshotOpts = {}): string
   }
 
   // Last `insights pull` timestamp
-  const lastPull = readLastInsightsPull();
   if (lastPull) {
     lines.push(`**Last insights pull:** ${lastPull} (${humanAge(lastPull, now)})`);
   } else {
@@ -58,9 +69,7 @@ export function buildMarketingSnapshot(opts: MarketingSnapshotOpts = {}): string
   lines.push('');
 
   // Pending Performance Monitor recs
-  const allPending = listPending({ now });
   const stalePending = listPending({ now, olderThanMs: 24 * 60 * 60 * 1000 });
-  const idx = loadIndex();
   if (allPending.length === 0 && idx.entries.length === 0) {
     lines.push('**Performance Monitor:** no learnings recorded yet.');
   } else if (allPending.length === 0) {

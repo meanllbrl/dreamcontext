@@ -637,12 +637,15 @@ describe('hook session-start (integration)', () => {
     expect(output).not.toContain('## Marketing');
   });
 
-  it('includes ## Marketing section when marketing/ is bootstrapped', () => {
+  it('omits ## Marketing while marketing/ is bootstrapped but holds nothing yet', () => {
+    // An empty surface is three "nothing yet" lines every session (audit MM-9);
+    // the block appears with its first cohort, pull or learning
+    // (tests/unit/marketing-snapshot.test.ts).
     mkdirSync(join(ctx, 'marketing'), { recursive: true });
     const input = JSON.stringify({ session_id: 'sess-1', source: 'startup', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
-    expect(output).toContain('## Marketing');
-    expect(output).toContain('No active cohorts');
+    expect(output).not.toContain('## Marketing');
+    expect(output).not.toContain('No active cohorts');
   });
 
   it('suppresses consolidation directive when sleep is in progress and debt is high', () => {
