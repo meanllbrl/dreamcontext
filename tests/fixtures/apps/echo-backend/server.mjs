@@ -26,6 +26,7 @@ const server = http.createServer((req, res) => {
   // app-araclari: a big answer, and a counter that proves a refused change never reached the app.
   if (url.pathname === '/big') { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('x'.repeat(Number(url.searchParams.get('n') || 20000))); return; }
   if (url.pathname === '/hit') { hits += 1; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ hits })); return; }
+  if (url.pathname === '/fail') { res.writeHead(500, { 'content-type': 'text/plain' }); res.end('boom from the app'); return; }
   if (url.pathname === '/hits') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ hits })); return; }
   if (url.pathname === '/env') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(process.env)); return; }
   res.writeHead(200, { 'content-type': 'text/html' });

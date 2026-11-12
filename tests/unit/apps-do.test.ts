@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { registerApp } from '../../src/lib/apps/registry.js';
+import { CATALOG_FILE } from '../../src/lib/apps/catalog.js';
 import { appOutDir, pruneAppOut, writeAppOut } from '../../src/lib/apps/out-files.js';
 
 /**
@@ -34,6 +35,7 @@ const MANIFEST = {
   actions: [
     { id: 'leak', title: 'Return the leak body', method: 'GET', path: '/leak' },
     { id: 'big', title: 'A big answer', method: 'GET', path: '/big', params: { n: { type: 'number' } } },
+    { id: 'boom', title: 'Always fails', method: 'GET', path: '/fail' },
     { id: 'hits', title: 'How many hits', method: 'GET', path: '/hits' },
     { id: 'hit', title: 'Count one hit', method: 'POST', path: '/hit', does: 'Adds one to the counter.', params: { note: { type: 'string', required: true }, mode: { type: 'enum', choices: ['a', 'b'] } } },
     { id: 'slow-change', title: 'A change that hangs', method: 'POST', path: '/slow?ms=9000', timeoutSec: 5 },
@@ -146,11 +148,11 @@ describe('dreamcontext apps do (the real CLI)', () => {
   it('tools lists the installed app with reads and changes', async () => {
     const r = await cli(['apps', 'tools']);
     expect(r.code).toBe(0);
-    expect(r.out).toContain('echo (Echo App) · installed here · 5 tools, 2 change');
+    expect(r.out).toContain('echo (Echo App) · installed here · 6 tools, 2 change');
     expect(r.out).toMatch(/hit · Count one hit · CHANGES · input: note:string, mode\?:a\|b/);
     const j = await cli(['apps', 'tools', 'echo', '--json']);
     const body = JSON.parse(j.out.slice(j.out.indexOf('{'), j.out.lastIndexOf('}') + 1));
-    expect(body.installed[0].tools.map((t: { id: string; effect: string }) => `${t.id}:${t.effect}`)).toEqual(['leak:read', 'big:read', 'hits:read', 'hit:change', 'slow-change:change']);
+    expect(body.installed[0].tools.map((t: { id: string; effect: string }) => `${t.id}:${t.effect}`)).toEqual(['leak:read', 'big:read', 'boom:read', 'hits:read', 'hit:change', 'slow-change:change']);
     expect(body.notInstalled).toEqual([]);
   }, 120_000);
 
@@ -163,6 +165,32 @@ describe('dreamcontext apps do (the real CLI)', () => {
     const body = JSON.parse(j.out.slice(j.out.indexOf('{'), j.out.lastIndexOf('}') + 1));
     expect(Object.keys(body).sort()).toEqual(['app', 'appName', 'body', 'bytes', 'effect', 'ms', 'ok', 'status', 'tool', 'toolTitle', 'truncated'].sort());
     expect(body).toMatchObject({ ok: true, app: 'echo', appName: 'Echo App', tool: 'hits', effect: 'read', status: 200, truncated: false });
+  }, 120_000);
+
+  it('an app answer of 500 ends with an error line and exit 1 (--json ok:false, still exit 1)', async () => {
+    const r = await cli(['apps', 'do', 'echo', 'boom']);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('boom from the app');
+    expect(r.out).toContain('Echo App › Always fails: the app answered HTTP 500');
+    expect(r.out).not.toContain('(reads)');
+    const j = await cli(['apps', 'do', 'echo', 'boom', '--json']);
+    expect(j.code).toBe(1);
+    const body = JSON.parse(j.out.slice(j.out.indexOf('{'), j.out.lastIndexOf('}') + 1));
+    expect(body).toMatchObject({ ok: false, status: 500 });
+  }, 120_000);
+
+  it("a catalog app that is not installed here says so (not 'No app'), and a bare catalog lists", async () => {
+    const file = join(project, '_dream_context', CATALOG_FILE);
+    writeFileSync(file, JSON.stringify({ apps: [{ slug: 'remote-only', name: 'Remote Only', repo: 'acme/remote-only', tools: [{ id: 'peek', title: 'Peek', effect: 'read' }], visibility: 'private' }] }));
+    const r = await cli(['apps', 'do', 'remote-only', 'peek']);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('not_installed_here');
+    expect(r.out).not.toContain('No app');
+    const none = await cli(['apps', 'do', 'nobody', 'peek']);
+    expect(none.out).toContain('app_not_found');
+    const list = await cli(['apps', 'catalog']);
+    expect(list.code).toBe(0);
+    expect(list.out).toContain('remote-only');
   }, 120_000);
 
   it('bad input is refused before any call', async () => {

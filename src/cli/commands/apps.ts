@@ -14,7 +14,7 @@ import { readmeSkeleton, storeWarnings } from '../../lib/apps/store-readme.js';
 import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, checkToolInput, effectOf, toolTimeoutSec, type AppManifest } from '../../lib/apps/manifest.js';
 import { projectAppTools, type ToolList } from '../../lib/apps/tools.js';
 import { INLINE_MAX_BYTES, pruneAppOut, writeAppOut } from '../../lib/apps/out-files.js';
-import { removeCatalogEntry } from '../../lib/apps/catalog.js';
+import { readCatalog, removeCatalogEntry } from '../../lib/apps/catalog.js';
 import { createNeedsOwner } from '../../lib/automations/types.js';
 import { appRootFor, getApp, listApps, registerApp } from '../../lib/apps/registry.js';
 import { copyShotTo, copyShotToProject } from '../../lib/apps/shots.js';
@@ -121,6 +121,16 @@ export function toolListLines(list: ToolList): string[] {
   return lines;
 }
 
+/** Declared data paths with no `/` or `*` that name a folder: they match one exact file, so nothing is shared. */
+export function dataFolderWithoutSlash(dataDir: string, decl: DataDecl | null): string[] {
+  const out: string[] = [];
+  for (const { path } of decl?.shared ?? []) {
+    if (path.endsWith('/') || path.includes('*') || path.includes('..') || path.startsWith('/')) continue;
+    try { if (lstatSync(join(dataDir, path)).isDirectory()) out.push(path); } catch { /* not there */ }
+  }
+  return out;
+}
+
 function project(): ProjectRef {
   refuseInAssistant();
   return resolveProject();
@@ -128,7 +138,11 @@ function project(): ProjectRef {
 
 function manifestOf(p: ProjectRef, slug: string): { rec: NonNullable<ReturnType<typeof getApp>>; manifest: AppManifest } {
   const rec = getApp(homedir(), p.projectRoot, slug);
-  if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project (dreamcontext apps list).`);
+  if (!rec) {
+    const listed = readCatalog(p.contextRoot).find((e) => e.slug === slug);
+    if (listed) throw new AppsClientError('not_installed_here', `${listed.name} is this project's app but it is not installed on this Mac. The owner installs it from the Apps page (dreamcontext apps tools lists it).`);
+    throw new AppsClientError('app_not_found', `No app "${slug}" in this project (dreamcontext apps list).`);
+  }
   const m = readManifest(rec.root);
   if (!m.ok) throw new AppsClientError('manifest_invalid', `${slug}: ${m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')} (dreamcontext apps validate ${slug})`);
   return { rec, manifest: m.manifest };
@@ -384,7 +398,7 @@ export function registerAppsCommand(program: Command): void {
         if (opts.json) { console.log(JSON.stringify(rows.map((r) => ({ slug: r.slug, name: r.name, state: r.state, agent: r.agent ?? null, actions: Array.isArray(r.actions) ? r.actions.length : undefined })), null, 2)); return; }
         if (!rows.length) { info('No apps yet. Ask your agent: /apps'); return; }
         for (const r of rows) console.log(`${r.slug}  ${r.name}  [${r.state}]${r.agent ? `  agent: ${r.agent}` : ''}`);
-        info('Actions an agent can run: dreamcontext apps actions <slug>');
+        info('Tools an agent can run: dreamcontext apps tools <slug>');
       } catch (e) { fail(e); }
     });
 
@@ -396,7 +410,8 @@ export function registerAppsCommand(program: Command): void {
         try {
           const p = project();
           const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/launch`, { owner: true }, { timeoutMs: 40_000 });
-          success(`${slug}: ${r.focused ? 'brought forward' : 'opening'} (${r.state})`);
+          const word = r.focused ? 'brought forward' : 'opening';
+          success(r.state === 'running' ? `${slug}: ${word} (running)` : `${slug}: ${word} (${r.state}; check: dreamcontext apps status ${slug})`);
         } catch (e) { fail(e); }
       });
   }
@@ -484,6 +499,9 @@ export function registerAppsCommand(program: Command): void {
         if (m.manifest.data === null) {
           console.log(`warning data_undeclared: no "data" field: nothing of this app's data is shared with the team yet. Fix: decide with the four questions of /apps (re-fetchable, personal, secret, big or constantly written = local; hand-made = shared) and write data: {"shared": [...], "local": [...]}; see dreamcontext apps data ${m.manifest.slug}`);
         }
+        for (const w of checkAppDataChain(p.projectRoot, m.manifest.slug).ok ? dataFolderWithoutSlash(appDataDir(p.projectRoot, m.manifest.slug), m.manifest.data) : []) {
+          console.log(`warning data_path_is_folder: "${w}" is a folder in the data folder but is written without a trailing slash, so it shares nothing. Fix: write "${w}/"`);
+        }
         for (const h of dataHtmlSinks(root, m.manifest.data)) {
           console.log(`warning data_html_sink: ${h.file}:${h.line} writes raw HTML (${h.sink}) in an app that shares data. Fix: draw shared data with textContent; another person wrote it`);
         }
@@ -527,7 +545,9 @@ export function registerAppsCommand(program: Command): void {
           const flags = [r.db ? 'DB' : '', r.badName ? 'NAME' : '', r.batch ? 'one refresh (likely re-fetched)' : '', r.tracked ? 'team' : ''].filter(Boolean).join(', ');
           lines.push(`  ${r.path} · ${kb(r.size)} · ${r.mtime} · ${r.decl}${flags ? ` · ${flags}` : ''}`);
         }
-        lines.push('', `dry run: ${s.shared.length} files go to the team (${kb(s.sharedBytes)}), ${s.held.length} stay here:`);
+        lines.push('', s.mode === 'sync_off'
+          ? `nothing goes to the team: sharing is not possible in this brain (${rows.length} file${rows.length === 1 ? '' : 's'} stay on this Mac)`
+          : `dry run: ${s.shared.length} files go to the team (${kb(s.sharedBytes)}), ${s.held.length} stay here:`);
         for (const g of s.shared) lines.push(`  goes ${g}`);
         for (const h of s.held) lines.push(`  held ${h.path} · ${h.reason} (${HELD_WORDS[h.reason]})`);
         if (conflicts.length) {
@@ -614,7 +634,9 @@ export function registerAppsCommand(program: Command): void {
         }
         if (opts.json) { console.log(fenced('tools', JSON.stringify(list, null, 2))); return; }
         const lines = toolListLines(list);
-        if (!lines.length) { info('This project has no apps on this Mac and none on its list.'); return; }
+        const unread = slug ? [] : listApps(homedir(), p.projectRoot).filter((r) => !list.installed.some((a) => a.slug === r.slug));
+        for (const r of unread) info(`${r.slug}: installed here but its manifest cannot be read, so its tools are not listed. Check: dreamcontext apps validate ${r.slug}`);
+        if (!lines.length) { if (!unread.length) info('This project has no apps on this Mac and none on its list.'); return; }
         console.log(fenced('tools', lines.join('\n')));
         if (list.installed.length) info("Run one: dreamcontext apps do <app> <tool> [--input '<json>'] [--json]. A tool that CHANGES runs only with --confirm, after the owner says yes in this chat.");
         if (list.notInstalled.length) info('Not installed: the owner installs it (Apps page). Without it, say the answer will take longer or be approximate, and offer a Lab insight.');
@@ -677,6 +699,12 @@ export function registerAppsCommand(program: Command): void {
         } else {
           console.log(fenced(`do ${action} status=${r.status}`, shown));
         }
+        if (Number(r.status) >= 400) {
+          // The app answered, and its answer is an error: the closing line must not read as done.
+          error(`${manifest.name} › ${a.title}: the app answered HTTP ${r.status} (its answer is above)`);
+          process.exitCode = 1;
+          return;
+        }
         success(`${manifest.name} › ${a.title} (${effect === 'read' ? 'reads' : 'changes'})`);
       } catch (e) { fail(e); }
     });
@@ -706,7 +734,15 @@ export function registerAppsCommand(program: Command): void {
       } catch (e) { fail(e); }
     });
 
-  const catalog = apps.command('catalog').description("The brain's list of this project's apps (a publish writes it)");
+  const catalog = apps.command('catalog').description("The brain's list of this project's apps (a publish writes it); bare, it prints the list");
+  catalog.action(() => {
+    try {
+      const p = project();
+      const list = readCatalog(p.contextRoot);
+      if (!list.length) { info("No app on the project's list yet (a publish writes it)."); return; }
+      for (const e of list) console.log(`${e.slug}  ${e.name}  [${e.visibility}]${e.publishedBy ? `  by ${e.publishedBy}` : ''}  ${e.repo}`);
+    } catch (e) { fail(e); }
+  });
   catalog
     .command('remove <slug>')
     .description("Take an app off the brain's list (the owner's verb; its next publish writes it back)")
@@ -861,10 +897,12 @@ export function registerAppsCommand(program: Command): void {
           for (const b of all) console.log(`${b.stamp}  ${b.files} files  ${Math.ceil(b.bytes / 1024)} KB  (${b.reason})`);
           return;
         }
+        if (appPullHeld(homedir(), rec.hash)) throw new AppsClientError('paused_for_sync', 'Team data is landing for this app right now; try again in a moment.');
         if (await backendRunning(p, slug)) throw new AppsClientError('app_running', `Stop it first: dreamcontext apps stop ${slug}`);
         const r = await restoreAppData(homedir(), rec, { at: opts.at });
         if (!r.ok) throw new AppsClientError(r.code, r.message);
         success(`${slug}: data restored from ${r.stamp} (${r.files} files) into ${ensureAppDataDir(p.projectRoot, slug)}`);
+        if (appDataStatus(homedir(), rec).mode === 'shared') info('This app shares data with the team: the restored copies of its shared files go back to the team at the next sync, replacing newer ones.');
         if (r.previous) info(`What was there is backup ${r.previous}: dreamcontext apps restore ${slug} --at ${r.previous}`);
       } catch (e) { fail(e); }
     });
