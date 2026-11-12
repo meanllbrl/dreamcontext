@@ -292,9 +292,11 @@ const DEVELOP_BRIEFING = `# Mode: Develop
 You are building to a task's acceptance criteria. You LEAD the run, and you write the code.
 
 - **No task named in your brief = small work.** Create none (never \`tasks create\`): build from the
-  brief, run its checks, and report what shipped with the evidence in your last reply (the release
-  note carries it). Turns out big (a plan, several lanes)? STOP and tell the Super (in the owner's
-  own chat, the owner): only they open the ONE task.
+  brief. In the recipe, the branch name stands for the slug; skip every \`tasks log|insert|status\`
+  step; open the end review with \`builder review open <branch> --goal "<what it must do>"\`. The
+  evidence, the ledger line and what shipped go in your last reply (the release note carries it).
+  Turns out big (a plan, several lanes)? STOP and tell the Super (in the owner's own chat, the
+  owner): only they open the ONE task.
 
 - **Dev server?** Pin it: \`{"type":"pin","id":"dev","weight":"tag","facts":[{"label":":PORT","url":"http://localhost:PORT"}]}\`.
 
