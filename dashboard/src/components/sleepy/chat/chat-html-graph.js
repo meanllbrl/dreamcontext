@@ -878,10 +878,19 @@
 
   var seq = 0;
   function layout(g) {
+    // A RE-layout keeps the block at the height it has until the new drawing sets its own
+    // (owner 2026-11-12, a report page on a Super card jumped back to its top a few times a
+    // second). Cleared, the graph falls back to a short row of chips: the page got shorter
+    // for the length of the layout, so the engine clamped the page's scroll to that short
+    // page, and on a Mac drawing classic scrollbars the bar went away, so the width read
+    // here was the width WITHOUT it; the laid drawing brought the bar back, the bar took
+    // that width away, and the graph was laid again 150 ms later, forever.
+    var held = g.classList.contains(LAID) ? g.offsetHeight : 0;
     clear(g);
+    if (held) { g.style.height = held + 'px'; g.style.overflow = 'hidden'; }
     var W = g.clientWidth;
     var data = read(g);
-    if (!data.nodes.length || !W) return;
+    if (!data.nodes.length || !W) { g.style.height = ''; g.style.overflow = ''; return; }
     var r = rank(data.nodes.length, data.edges);
     var sizes = measure(data.nodes);
     data.edges.forEach(function (e) {
@@ -976,6 +985,7 @@
     // use the pane has to be given the height it grew into, or it would be drawn larger and
     // then clipped by a block still sized for the small version.
     g.style.height = Math.round(g.dcBox.h * fitScale(g, g.dcBox)) + 'px';
+    g.style.overflow = '';
     g.appendChild(chrome(g));
     if (!g.hasAttribute('tabindex')) g.setAttribute('tabindex', '0');
     bind(g);
