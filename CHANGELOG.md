@@ -4,6 +4,18 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.17] - 2026-11-12
+
+Patch on 0.41.16: the overnight audit fixes (general and Apps) and the agenda fix, built together. Local build; not published.
+
+- **Apps.** A shared app that needs npm starts from the Dock too; a crashed app restarts from its tile; refusals say why and what to do; the template shares nothing until the agent decides; the main Super and an app's own member run changing app tools only on the owner's word; plainer Apps page and CLI answers.
+- **Speed.** The prompt hook with the app open goes from about 2.5 s to 0.9 s (p50) and `memory recall` from 2.5 s to 0.7 s; the recall cache shrinks from 47 MB to 15 MB; Settings → Recall no longer freezes the server; unchanged lists answer 304; a Stop never waits on a slow type-check; a new chat tab is named from the first message with no extra turn.
+- **Tokens and memory.** The pattern gate fires on 3.9% of prompts instead of 91.6%; the hook searches only the owner's words and prints its long blocks once per session; the snapshot spends its room on tasks; sub-agents get a briefing fit for their type; skill and agent descriptions are one sentence plus triggers.
+- **Sleep.** Specialists read one sleep packet; quick fixes from the audit; recent decisions are no longer archived to hit a soft size target; old PRD changelog entries can be compacted (`features compact`).
+- **Tasks, Plan and Develop.** Only the Super files tasks (a child is refused with the reason, agents get no sub-tasks, 3 a day); Develop has a no-task path and reviews the code before one build and one look; Plan lints its wave map (Plan mode 1.9, Develop 1.8); builder heavy counts repeats per code tree, prints base reds apart and does not count a broken harness.
+- **Doctor.** Warns when Node is below 22.16; reports the task-sync queue; a snapshot past its target is `info`.
+- **Agenda.** It keeps its size when you leave the stage and come back.
+
 ## [0.41.16] - 2026-11-11
 
 Patch on 0.41.15: two small fixes. Local build; not published.
