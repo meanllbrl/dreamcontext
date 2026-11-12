@@ -16,8 +16,8 @@
  * the cutoff move, never the newest `keep`; an undated entry is never moved. The PRD gains one
  * pointer line naming where its older entries went.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
 
 export const ARCHIVE_FEATURES_REL = 'knowledge/archive/features';
 export const COMPACT_POINTER_MARK = '<!-- features-compact -->';
@@ -39,20 +39,39 @@ export interface ChangelogSplit {
 }
 
 /** Split a PRD around its `## Changelog` section, or null when it has none. Lossless. */
+/**
+ * Offsets of the lines starting with `prefix` that sit OUTSIDE fenced code blocks (``` or ~~~).
+ * A `### ` or `## ` inside a fence is code, never a heading: splitting there would leave a
+ * fence open and turn the rest of the PRD into code.
+ */
+export function headingOffsets(text: string, test: (line: string) => boolean): number[] {
+  const out: number[] = [];
+  let fence: string | null = null;
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    const f = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (f) {
+      if (fence === null) fence = f[1][0];
+      else if (f[1][0] === fence) fence = null;
+    } else if (fence === null && test(line)) {
+      out.push(pos);
+    }
+    pos += line.length + 1;
+  }
+  return out;
+}
+
 export function splitChangelog(doc: string): ChangelogSplit | null {
-  const heading = /^## Changelog[ \t]*$/m.exec(doc);
-  if (!heading) return null;
-  const sectionStart = heading.index;
+  const headingAt = headingOffsets(doc, (l) => /^## Changelog[ \t\r]*$/.test(l));
+  if (headingAt.length === 0) return null;
+  const sectionStart = headingAt[0];
   const afterHeading = doc.indexOf('\n', sectionStart);
   const bodyStart = afterHeading < 0 ? doc.length : afterHeading + 1;
-  const nextSection = /^## (?!#)/m;
   const rest = doc.slice(bodyStart);
-  const next = nextSection.exec(rest);
-  const sectionEnd = next ? bodyStart + next.index : doc.length;
+  const next = headingOffsets(rest, (l) => /^## (?!#)/.test(l));
+  const sectionEnd = next.length ? bodyStart + next[0] : doc.length;
   const body = doc.slice(bodyStart, sectionEnd);
-  const entryRe = /^### /gm;
-  const starts: number[] = [];
-  for (const m of body.matchAll(entryRe)) starts.push(m.index!);
+  const starts = headingOffsets(body, (l) => l.startsWith('### '));
   const head = doc.slice(sectionStart, bodyStart) + body.slice(0, starts.length ? starts[0] : body.length);
   const entries: ChangelogEntry[] = starts.map((s, i) => {
     const text = body.slice(s, i + 1 < starts.length ? starts[i + 1] : body.length);
@@ -146,6 +165,13 @@ export function compactFeature(
   opts: { cutoff: string; keepNewest: number; today: string; dryRun?: boolean },
 ): CompactResult {
   refuseLink(prdPath);
+  // The PRD must really live under this vault's knowledge/features/: a symlinked folder on the
+  // way (or a symlinked features/) would aim the rewrite at another checkout.
+  const featuresReal = realpathSync(join(contextRoot, 'knowledge', 'features'));
+  const prdReal = realpathSync(prdPath);
+  if (lstatSync(join(contextRoot, 'knowledge', 'features')).isSymbolicLink() || !prdReal.startsWith(featuresReal + sep)) {
+    throw new Error(`refusing to compact ${prdPath}: it is not inside this vault's knowledge/features/ without a symlink`);
+  }
   const original = readFileSync(prdPath, 'utf-8');
   const split = splitChangelog(original);
   if (!split) return { feature, moved: 0, movedChars: 0, archives: [], skipped: 'no ## Changelog section' };

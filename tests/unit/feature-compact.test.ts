@@ -144,6 +144,35 @@ describe('compactFeature', () => {
     expect(readFileSync(prd, 'utf-8')).toBe(PRD);
   });
 
+  it('a ### or ## line inside a fenced code block is not a heading (review round 1)', () => {
+    const doc = [
+      '## Changelog', '',
+      '### 2025-01-01 - Old entry with code', '```md', '### not a heading', '## nor this', '```', 'after the fence', '',
+      '### 2026-11-10 - New', '- n', '',
+      '## Notes', 'x', '',
+    ].join('\n');
+    writeFileSync(prd, doc);
+    const s = splitChangelog(doc)!;
+    expect(s.entries).toHaveLength(2);
+    expect(s.entries[0].text).toContain('after the fence');
+    expect(s.tail.startsWith('## Notes')).toBe(true);
+    compactFeature(root, 'checkout', prd, { cutoff: '2026-01-01', keepNewest: 1, today: '2026-11-12' });
+    const after = readFileSync(prd, 'utf-8');
+    expect(after).not.toContain('not a heading');
+    expect((after.match(/```/g) ?? []).length % 2).toBe(0);
+    expect(readFileSync(archivePathFor(root, 'checkout', '2025-01'), 'utf-8')).toContain('### not a heading\n## nor this\n```\nafter the fence');
+  });
+
+  it('a PRD reached through a symlinked feature folder is refused, the outside file untouched (review round 1)', () => {
+    const outside = join(root, 'other-checkout');
+    mkdirSync(outside);
+    const outsidePrd = join(outside, 'x.md');
+    writeFileSync(outsidePrd, PRD);
+    symlinkSync(outside, join(root, 'knowledge', 'features', 'linked'));
+    expect(() => compactFeature(root, 'linked/x', join(root, 'knowledge', 'features', 'linked', 'x.md'), opts)).toThrow(/symlink/);
+    expect(readFileSync(outsidePrd, 'utf-8')).toBe(PRD);
+  });
+
   it('a nested feature gets a flat archive name', () => {
     expect(archivePathFor(root, 'lina/checkout', '2026-09')).toBe(join(root, 'knowledge', 'archive', 'features', 'lina-checkout-2026-09.md'));
   });

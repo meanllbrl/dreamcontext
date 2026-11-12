@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -60,6 +60,13 @@ describe('the cycle report', () => {
     expect(JSON.parse(readFileSync(join(root, CYCLE_REPORT_LAST_REL), 'utf-8')).flags[0].key).toBe('k');
     expect(readCycleReport(root).flags).toEqual([]);
     expect(consumeCycleReport(root)).toBe(false);
+  });
+
+  it('an unreadable report is refused, never overwritten', () => {
+    mkdirSync(join(root, 'tmp', 'sleep'), { recursive: true });
+    writeFileSync(join(root, CYCLE_REPORT_REL), '{ half written');
+    expect(() => recordNoFlags(root, 'sleep-state')).toThrow(/cannot be read/);
+    expect(readFileSync(join(root, CYCLE_REPORT_REL), 'utf-8')).toBe('{ half written');
   });
 
   it('refuses a symlinked tmp/', () => {

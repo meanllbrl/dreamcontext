@@ -1,6 +1,6 @@
 import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { listApps } from '../../lib/apps/registry.js';
@@ -384,6 +384,16 @@ export function filingRulesBrief(root: string): { lines: string[]; json: Record<
   };
 }
 
+/** True when `dir` is a checkout of dreamcontext itself (its package.json names the package). */
+function isDreamcontextCheckout(dir: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')) as { name?: unknown };
+    return pkg.name === 'dreamcontext';
+  } catch {
+    return false;
+  }
+}
+
 /** The pending automation outputs and the apps with findings, as `sleep start` reports them. */
 function pendingSignals(root: string, state: SleepState): { outputs: number; appFindings: Array<{ slug: string; count: number }> } {
   let outputs = 0;
@@ -429,7 +439,10 @@ export async function collectSleepPacket(root: string, opts: { filingRules?: str
     reviewTasks,
     statuses,
     releases: getExistingReleases(root).map((r) => ({ version: r.version, status: r.status ?? 'released' })),
-    runningVersion: dreamcontextVersion(),
+    // "Installed" means at or below the running CLI, which is only true of dreamcontext's own
+    // brain: any other project's 0.2.0 is not shipped because the CLI is 0.41. Elsewhere only a
+    // released entry in RELEASES.json counts.
+    runningVersion: repos.some((r) => isDreamcontextCheckout(r.path)) ? dreamcontextVersion() : null,
     activeVersion: getActivePlanningVersion(root),
     filingRules: opts.filingRules ?? filingRulesBrief(root).lines,
     repos,
@@ -506,7 +519,7 @@ export async function runSleepTail(root: string, say: { info: (m: string) => voi
   // always stay) into knowledge/archive/features/, archive written and read back first.
   try {
     const dir = featuresDir(root);
-    const files = existsSync(dir) ? fg.sync('**/*.md', { cwd: dir, absolute: true }) : [];
+    const files = existsSync(dir) ? fg.sync('**/*.md', { cwd: dir, absolute: true, followSymbolicLinks: false }) : [];
     const big = oversizedPrds(files.map((f) => ({ feature: featureSlug(dir, f), path: f })), PRD_COMPACT_MIN_CHARS);
     const cutoff = cutoffDate(new Date(), PRD_COMPACT_DAYS);
     let moved = 0;

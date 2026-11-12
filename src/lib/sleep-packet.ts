@@ -150,7 +150,9 @@ export interface SleepPacket {
  * command echoes, local command output, the app's own context blocks. Their text is not the
  * owner's, so the packet strips them and keeps what is left.
  */
-const INJECTED_BLOCK = /<(system-reminder|command-name|command-message|command-args|local-command-stdout|local-command-stderr|dreamcontext-[a-z-]+|ide_[a-z_]+)>[\s\S]*?<\/\1>/g;
+const INJECTED_BLOCK = /<(system-reminder|command-name|command-message|local-command-stdout|local-command-stderr|dreamcontext-[a-z-]+|ide_[a-z_]+)>[\s\S]*?<\/\1>/g;
+/** What the owner typed after a slash command: kept, as `/cmd <args>`. */
+const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/g;
 /** A turn the server or the app wrote on the user role: never an owner ask. */
 const MACHINE_PREFIX = /^\[(super events|delegated-session event)\]/;
 
@@ -162,7 +164,13 @@ export function cleanTurn(text: string): { text: string } | { machine: string } 
   // A sub-agent's completion ping (its full report rides inside): the harness's, never the owner's.
   if (/<task-notification\b/i.test(trimmed)) return { machine: 'task notification' };
   const command = /<command-name>\s*([^<\s]+)\s*<\/command-name>/.exec(trimmed);
-  const rest = trimmed.replace(INJECTED_BLOCK, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  // The arguments of a slash command are what the owner typed (`/develop fix the login bug`):
+  // they stay, prefixed with the command, while the echo tags around them go.
+  const withArgs = trimmed.replace(COMMAND_ARGS, (_m, args: string) => {
+    const a = args.trim();
+    return a ? ` ${command ? `${command[1]} ` : ''}${a} ` : ' ';
+  });
+  const rest = withArgs.replace(INJECTED_BLOCK, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (!rest) return { machine: command ? `command ${command[1]}` : 'harness block' };
   if (MACHINE_PREFIX.test(rest)) return { machine: MACHINE_PREFIX.exec(rest)![1] };
   return { text: rest };

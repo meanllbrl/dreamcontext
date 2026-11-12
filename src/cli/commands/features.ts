@@ -415,7 +415,7 @@ export function registerFeaturesCommand(program: Command): void {
       }
       let targets: Array<{ feature: string; path: string }>;
       if (opts.all) {
-        const files = existsSync(dir) ? fg.sync('**/*.md', { cwd: dir, absolute: true }) : [];
+        const files = existsSync(dir) ? fg.sync('**/*.md', { cwd: dir, absolute: true, followSymbolicLinks: false }) : [];
         targets = oversizedPrds(files.map((f) => ({ feature: featureSlug(dir, f), path: f })), minChars);
       } else {
         if (!name) {

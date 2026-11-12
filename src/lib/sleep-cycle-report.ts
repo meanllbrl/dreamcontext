@@ -81,9 +81,18 @@ function mutate(root: string, fn: (r: CycleReport) => void): CycleReport {
   assertNoLinks(root, file);
   mkdirSync(dirname(file), { recursive: true });
   return withFileLockSync(`${file}.lock`, () => {
+    // An existing file that does not parse is refused, never overwritten: it may hold another
+    // specialist's observations.
+    if (existsSync(file)) {
+      try { JSON.parse(readFileSync(file, 'utf-8')); } catch {
+        throw new Error(`${CYCLE_REPORT_REL} cannot be read; fix or move it, then record again`);
+      }
+    }
     const r = readCycleReport(root);
     fn(r);
-    writeFileSync(file, JSON.stringify(r, null, 2) + '\n', 'utf-8');
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(r, null, 2) + '\n', 'utf-8');
+    renameSync(tmp, file);
     return r;
   }, { waitMs: 5_000 });
 }

@@ -88,6 +88,8 @@ describe('sleep packet and cycle report through the CLI', () => {
     vi.mocked(getTaskBackend).mockReturnValue(fakeBackend([
       { name: 'a-task', description: 'A task', status: 'in_review', updated_at: '2026-11-11', file: `${ctx}/state/a-task.md`, version: '0.0.1', parent_task: null, acceptance_criteria: '- [x] it works', changelog: '### 2026-11-01 - Status → in_review' },
     ]) as never);
+    // dreamcontext's own checkout: a version at or below the running CLI counts as installed.
+    writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: 'dreamcontext' }));
 
     await runSleep(['start', '--json']);
 
@@ -99,6 +101,19 @@ describe('sleep packet and cycle report through the CLI', () => {
     const board = readFileSync(join(ctx, 'tmp', 'sleep', 'board.md'), 'utf-8');
     expect(board).toContain('a-task | in_review');
     expect(board).toMatch(/Ready to close \(1\)/);
+  });
+
+  it('another project\'s low version is not "installed" just because the CLI is newer (review round 1)', async () => {
+    writeState({ debt: 0, sessions: [], bookmarks: [] });
+    vi.mocked(getTaskBackend).mockReturnValue(fakeBackend([
+      { name: 'b-task', description: 'B task', status: 'in_review', updated_at: '2026-11-11', file: `${ctx}/state/b-task.md`, version: '0.0.1', parent_task: null, acceptance_criteria: '- [x] done', changelog: '' },
+    ]) as never);
+    await runSleep(['start']);
+    expect(readFileSync(join(ctx, 'tmp', 'sleep', 'board.md'), 'utf-8')).toMatch(/Ready to close \(0\)/);
+    // The same task in dreamcontext's own checkout counts as installed.
+    writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: 'dreamcontext' }));
+    await runSleep(['packet', '--write']);
+    expect(readFileSync(join(ctx, 'tmp', 'sleep', 'board.md'), 'utf-8')).toMatch(/Ready to close \(1\)/);
   });
 
   it('sleep start (human output) names the packet paths and the steps left', async () => {

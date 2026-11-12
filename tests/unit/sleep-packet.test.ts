@@ -93,6 +93,12 @@ describe('machine-written turns are counted, never shown as the owner\'s', () =>
     expect(cleanTurn('<command-name>/clear</command-name> <command-message>clear</command-message> <command-args></command-args>')).toEqual({ machine: 'command /clear' });
   });
 
+  it('keeps what the owner typed after a slash command (review round 1)', () => {
+    expect(cleanTurn('<command-name>/develop</command-name> <command-message>develop</command-message> <command-args>fix the login bug and ship it</command-args>'))
+      .toEqual({ text: '/develop fix the login bug and ship it' });
+    expect(cleanTurn('<command-name>/clear</command-name><command-args></command-args>')).toEqual({ machine: 'command /clear' });
+  });
+
   it('reads typed turns and mid-turn messages, sets the rest aside by kind, and drops an exact echo', () => {
     const lines = [
       { type: 'user', timestamp: '2026-11-11T10:00:00Z', message: { role: 'user', content: 'old ask before the last sleep' } },
