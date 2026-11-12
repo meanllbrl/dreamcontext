@@ -56,7 +56,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.8', develop: '1.7', train: '0.1',
+  basic: '1.0', plan: '1.9', develop: '1.7', train: '0.1',
 };
 
 /**

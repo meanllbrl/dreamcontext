@@ -79,7 +79,7 @@ export function lintWaveMap(planText: string): string[] {
   const named = new Set<string>();
   for (const title of ['Contracts', 'Acceptance criteria', 'Criteria']) {
     const sect = planSection(planText, title);
-    if (sect) for (const f of backticked(sect)) if (f.includes('/') && !/^(tmp|assets|docs)\//.test(f)) named.add(f);
+    if (sect) for (const f of backticked(sect)) if (f.includes('/') && !/^(tmp|assets|docs|dist|build|config)\//.test(f)) named.add(f);
   }
   for (const f of named) {
     if (!owned.some((o) => same(f, o))) out.push(`\`${f}\` is named in Contracts or criteria but no lane of the wave map owns it.`);
