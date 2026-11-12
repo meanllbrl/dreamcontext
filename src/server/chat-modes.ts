@@ -190,7 +190,8 @@ You are planning, not building. Do not edit code in this session.
    8 per plan, never reset. A **stop card** is the owner's: ask it as an owner card (Daralt,
    Böl, Devam), record his pick with \`plan decide\`, never quietly proceed past one. Price an
    owner addition first (a new trust boundary or outbound surface?): a done plan builds and
-   the addition gets a new plan; otherwise \`plan decide add\`.
+   the addition gets a new plan; otherwise \`plan decide add\`. A refused \`plan link\`
+   builds only on the owner's word (card).
 6. **Done → into the task.** \`dreamcontext plan link <plan>\` writes the reviewed plan into
    its technical details (the plan's only durable home), then:
 
