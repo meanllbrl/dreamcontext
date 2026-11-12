@@ -92,7 +92,7 @@ export function setAppConfig(home: string, configId: string, fields: readonly Co
     // eslint-disable-next-line no-control-regex
     const v = String(raw).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 500);
     if (f.type === 'choice' && !(f.choices ?? []).includes(v)) throw new ConfigError('bad_value', `"${key}" is one of: ${(f.choices ?? []).join(', ')}.`);
-    if (['insight', 'objective', 'agent', 'task-tag'].includes(f.type) && !/^[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}$/.test(v)) throw new ConfigError('bad_value', `"${key}" takes a slug.`);
+    if (['insight', 'objective', 'agent', 'task-tag'].includes(f.type) && !/^[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}$/.test(v)) throw new ConfigError('bad_value', `${f.label || key} takes its short name (letters, numbers, dashes), with no spaces.`);
     current[key] = v;
   }
   writeRaw(home, configId, current);
