@@ -192,9 +192,10 @@ describe('rendering and writing', () => {
       sessions: [s], owner_turns: { total_chars: 20, budget: 40_000, per_turn_cap: null, cut_turns: 0 },
       board: { open: [{ slug: 'a-task', status: 'todo', updated: '2026-11-11', name: 'A task', version: null, parent: null }], counts: { todo: 1 } },
       ready_to_close: [{ slug: 'r', name: 'R', version: '0.1.0', criteria: 1, ticked: 1, last_status_change: '2026-10-01', shipped: 'released' }],
-      stale_review: [], git: [{ repo: 'project', path: '/p', log: ['abc fix'], status: [], more: 0, problem: null }],
+      stale_review: [], git: [{ repo: 'project', path: '/p', log: ['abc fix'], status: [], authors: ['Ada'], more: 0, problem: null }],
       active_version: '0.2.0', filing_rules: ['!rules unreadable'], flags: [],
-      facts: { people: 1, single_person: true, automation_outputs: 0, app_findings: 0, objectives: false, marketing: false, learning: false, depth: 'standard' },
+      bookmarks: [{ id: 'b1', salience: 3, message: 'decided: no task for small fixes', task_slug: null, session_id: 's', auto: false }],
+      facts: { people: 1, single_person: true, git_authors: 1, automation_outputs: 0, app_findings: 0, objectives: false, marketing: false, learning: false, depth: 'standard' },
     };
   }
 
@@ -207,6 +208,9 @@ describe('rendering and writing', () => {
     expect(lines).toContain('skips grooming (d)');
     const multi = factSwitches({ ...packet().facts, people: 3, single_person: false, automation_outputs: 2, app_findings: 1, objectives: true }).join('\n');
     expect(multi).toContain('sleep-tasks runs §2.5');
+    expect(multi).toContain('sleep-state runs Pass B.5');
+    // One person on the roster but a second git author: detection still runs.
+    expect(factSwitches({ ...packet().facts, git_authors: 2 }).join('\n')).toContain('sleep-state runs Pass B.5');
     expect(multi).toContain('runs B7');
     expect(multi).toContain('runs B8');
   });
@@ -217,6 +221,7 @@ describe('rendering and writing', () => {
     expect(md).toContain('super events ×2');
     expect(md).toContain('WARNING: rules unreadable');
     expect(md).toContain('abc fix');
+    expect(md).toContain('- ★★★ decided: no task for small fixes · no task');
     expect(md).not.toContain('## Open board');
     const board = renderSleepBoard(packet());
     expect(board).toContain('a-task | todo | 2026-11-11');

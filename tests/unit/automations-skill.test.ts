@@ -287,7 +287,14 @@ describe('skill/references/cli-reference.md — share/unshare verbs and the six-
 });
 
 describe('agents/sleep-product.md — automation-output consumption contract', () => {
-  const content = SLEEP_PRODUCT_MD;
+  // SL-14: B7 runs only when the sleep packet says output is pending, so its text lives in the
+  // reference the prompt points at; the contract is the two read together.
+  const content = SLEEP_PRODUCT_MD + readFileSync(join(ROOT, 'skill', 'references', 'sleep-conditional.md'), 'utf-8');
+
+  it('the prompt points B7 at its reference and the packet fact that switches it on', () => {
+    expect(SLEEP_PRODUCT_MD).toContain('sleep-conditional.md');
+    expect(SLEEP_PRODUCT_MD).toContain('`sleep-product runs B7`');
+  });
 
   it('fires on the automationOutputs signal', () => {
     expect(content).toContain('automationOutputs.outputs');

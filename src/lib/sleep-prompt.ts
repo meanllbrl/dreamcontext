@@ -37,7 +37,7 @@ export const SLEEP_AGENT_PROMPT =
   'summary>"` (add --product-ran when sleep-product ran) to reset the debt. ' +
   'I am explicitly requesting the sub-agent fan-out: dispatch ' +
   `the sleep specialists as PARALLEL sub-agents via the Agent tool (${SLEEP_ROSTER_CLAUSE}), ` +
-  'each on the model `sleep start` prints for it, ' +
+  'each on the model `sleep start` prints for it and with the sleep packet paths it prints (the specialists read the packet instead of rebuilding their input), ' +
   'do NOT run those passes inline in your own ' +
   'context. When finished, reply with a SHORT Markdown summary of what was consolidated.';
 

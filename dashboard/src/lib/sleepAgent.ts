@@ -54,7 +54,7 @@ export const SLEEP_AGENT_PROMPT =
   '(sleep-product: knowledge/feature/research signals, or `sleep start` reports automation ' +
   'output or app findings; sleep-migration: `dreamcontext migrations pending` has output; ' +
   'sleep-learn: learning is enabled and a thesis is due)), ' +
-  'each on the model `sleep start` prints for it, ' +
+  'each on the model `sleep start` prints for it and with the sleep packet paths it prints (the specialists read the packet instead of rebuilding their input), ' +
   'do NOT run those passes inline in your own ' +
   'context. When finished, reply with a SHORT Markdown summary of what was consolidated.';
 

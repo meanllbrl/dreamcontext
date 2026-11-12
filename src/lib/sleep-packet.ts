@@ -105,6 +105,8 @@ export interface GitBlock {
   path: string;
   log: string[];
   status: string[];
+  /** Distinct commit authors since the boundary, bots left out. */
+  authors: string[];
   /** Lines left out of either list (named, never silent). */
   more: number;
   problem: string | null;
@@ -113,6 +115,8 @@ export interface GitBlock {
 export interface PacketFacts {
   people: number;
   single_person: boolean;
+  /** Distinct non-bot git authors since the last sleep, across the project and its linked repos. */
+  git_authors: number;
   automation_outputs: number;
   app_findings: number;
   objectives: boolean;
@@ -134,6 +138,8 @@ export interface SleepPacket {
   active_version: string | null;
   filing_rules: string[];
   flags: SleepFlag[];
+  /** The cycle's bookmarks, ★★★ first, then oldest first. */
+  bookmarks: Array<{ id: string; salience: number; message: string; task_slug: string | null; session_id: string | null; auto: boolean }>;
   facts: PacketFacts;
 }
 
@@ -436,6 +442,12 @@ export function reviewRows(
 
 // ─── Git ─────────────────────────────────────────────────────────────────────
 
+/** The bot filter of `src/lib/attribution.ts` (BOT_SLUG_FRAGMENTS), applied to an author name. */
+function isBot(author: string): boolean {
+  const slug = author.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return slug.includes('github-actions') || slug.includes('dependabot');
+}
+
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf-8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024 });
 }
@@ -444,15 +456,19 @@ function git(cwd: string, args: string[]): string {
 export function gitBlock(repo: string, path: string, since: string | null): GitBlock {
   try {
     const top = git(path, ['rev-parse', '--show-toplevel']).trim();
-    if (!top) return { repo, path, log: [], status: [], more: 0, problem: 'not a git checkout' };
+    if (!top) return { repo, path, log: [], status: [], authors: [], more: 0, problem: 'not a git checkout' };
     // --all: work lands on feature branches and worktrees, rarely on the checked-out one.
     const logArgs = ['log', '--all', '--oneline', '--decorate=short', ...(since ? [`--since=${since}`] : ['-n', String(GIT_LINES)])];
     const log = git(path, logArgs).split('\n').filter(Boolean);
     const status = git(path, ['status', '--short']).split('\n').filter(Boolean);
+    const authors = [...new Set(
+      git(path, ['log', '--all', '--format=%an', ...(since ? [`--since=${since}`] : ['-n', String(GIT_LINES)])])
+        .split('\n').map((a) => a.trim()).filter((a) => a && !isBot(a)),
+    )].sort();
     const more = Math.max(0, log.length - GIT_LINES) + Math.max(0, status.length - GIT_LINES);
-    return { repo, path, log: log.slice(0, GIT_LINES), status: status.slice(0, GIT_LINES), more, problem: null };
+    return { repo, path, log: log.slice(0, GIT_LINES), status: status.slice(0, GIT_LINES), authors, more, problem: null };
   } catch (err) {
-    return { repo, path, log: [], status: [], more: 0, problem: ((err as Error).message ?? String(err)).split('\n')[0] };
+    return { repo, path, log: [], status: [], authors: [], more: 0, problem: ((err as Error).message ?? String(err)).split('\n')[0] };
   }
 }
 
@@ -488,6 +504,8 @@ export function buildSleepPacket(i: PacketInputs): SleepPacket {
   for (const t of i.tasks) counts[t.status] = (counts[t.status] ?? 0) + 1;
   const review = reviewRows(i.reviewTasks, i.releases, i.runningVersion, now);
   const objectivesDir = join(i.contextRoot, 'core', 'objectives');
+  const git = i.repos.map((r) => gitBlock(r.name, r.path, since));
+  const authors = new Set(git.flatMap((g) => g.authors));
   return {
     generated_at: now.toISOString(),
     epoch: i.state.sleep_started_at ?? null,
@@ -497,13 +515,17 @@ export function buildSleepPacket(i: PacketInputs): SleepPacket {
     board: { open, counts },
     ready_to_close: review.ready,
     stale_review: review.stale,
-    git: i.repos.map((r) => gitBlock(r.name, r.path, since)),
+    git,
     active_version: i.activeVersion,
     filing_rules: i.filingRules,
     flags: readSleepFlags(i.contextRoot),
+    bookmarks: [...(i.state.bookmarks ?? [])]
+      .sort((a, b) => (b.salience ?? 0) - (a.salience ?? 0) || String(a.created_at).localeCompare(String(b.created_at)))
+      .map((b) => ({ id: b.id, salience: b.salience, message: b.message, task_slug: b.task_slug ?? null, session_id: b.session_id ?? null, auto: b.capture === true })),
     facts: {
       people: i.people,
       single_person: i.people <= 1,
+      git_authors: authors.size,
       automation_outputs: i.automationOutputs,
       app_findings: i.appFindings,
       objectives: hasMarkdown(objectivesDir),
@@ -527,8 +549,11 @@ function hasMarkdown(dir: string): boolean {
 /** The section switches a packet's facts turn on (SL-14), one line each. */
 export function factSwitches(f: PacketFacts): string[] {
   const out: string[] = [];
-  if (f.single_person) out.push(`Single-person brain (${f.people} on the roster): sleep-tasks skips §2.5 (person tags), sleep-state skips Pass B.5 (people detection).`);
-  else out.push(`Multi-person brain (${f.people} on the roster): sleep-tasks runs §2.5, sleep-state runs Pass B.5.`);
+  if (f.single_person) out.push(`Single-person brain (${f.people} on the roster): sleep-tasks skips §2.5 (person tags).`);
+  else out.push(`Multi-person brain (${f.people} on the roster): sleep-tasks runs §2.5.`);
+  // Detection is how a second person is first noticed, so B.5 is skipped only when nothing hints at one.
+  if (f.single_person && f.git_authors <= 1) out.push(`One git author since the last sleep: sleep-state skips Pass B.5 (people detection) unless a session shows a second person.`);
+  else out.push(`${f.git_authors} git author(s) since the last sleep: sleep-state runs Pass B.5.`);
   if (f.automation_outputs === 0) out.push('No automation output pending: sleep-product skips B7.');
   else out.push(`${f.automation_outputs} automation output(s) pending: sleep-product runs B7.`);
   if (f.app_findings === 0) out.push('No app findings: sleep-product skips B8.');
@@ -587,6 +612,10 @@ export function renderSleepPacket(p: SleepPacket): string {
   L.push('## Filing rules');
   if (p.filing_rules.length === 0) L.push('none learned yet');
   for (const l of p.filing_rules) L.push(l.startsWith('!') ? `WARNING: ${l.slice(1)}` : l);
+  L.push('');
+  L.push(`## Bookmarks (${p.bookmarks.length})`);
+  if (p.bookmarks.length === 0) L.push('none');
+  for (const b of p.bookmarks) L.push(`- ${'★'.repeat(Math.max(1, Math.min(3, b.salience)))} ${b.message.replace(/\s+/g, ' ')}${b.task_slug ? ` · task ${b.task_slug}` : ' · no task'}${b.auto ? ' · auto-captured' : ''}`);
   L.push('');
   L.push(`## Recidivism flags (${p.flags.length})`);
   if (p.flags.length === 0) L.push('none');

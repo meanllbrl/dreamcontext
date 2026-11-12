@@ -42,17 +42,19 @@ If a session's work belongs in a different domain (e.g., an architectural decisi
 
 A brief with sleep epoch, session IDs, active task slugs, planning version, optional user hint.
 
+**The sleep packet is your input.** `sleep start` writes `_dream_context/tmp/sleep/packet.md` (sessions OLDEST → NEWEST with every turn the owner typed, git since the last sleep on all branches, bookmarks, flags, filing rules, and the **Facts** that switch sections of this prompt off) and `board.md` (the open board, the in-review tasks ready to close, the stale ones). Read them first; `dreamcontext sleep packet` / `--board` rebuilds them if missing. Never rebuild that input by hand: no scripts over `transcript distill`, no `tasks list --all --json`, no re-parsing `.sleep.json` or re-running git for what the packet already holds.
+
 **Hands-off tasks (background cycles only).** When the brief carries a `Hands-off tasks:` list, those slugs belong to a session the user is working in RIGHT NOW. Do not edit, log, insert into, or re-status any of them. Report each under **"Deferred (hands-off)"** with the one line you WOULD have written. In a background cycle, task writes go through the **CLI** (`tasks log`, `tasks insert`, `tasks status`, `tasks field`), which takes the per-file lock; reserve `Edit` for body prose on tasks that are NOT hands-off.
 
 ## Protocol
 
 ### 1. Read what happened
 
-```bash
-dreamcontext transcript distill <session_id>   # filtered transcript, per session in the brief
-```
+The packet's **Sessions** hold each session's owner turns (machine-written turns are set aside and counted, never shown as the owner's), its last reply and its tasks; its **Bookmarks** come ★★★ first. Open a transcript only for a turn the packet cut short (it names the cut and the command) or a session it could not read:
 
-Also read `_dream_context/state/.sleep.json` for `sessions[].last_assistant_message` and `bookmarks[]`, sorted by salience (★★★ → ★★ → ★).
+```bash
+dreamcontext transcript distill <session_id>   # only for what the packet names as cut or unreadable
+```
 
 **Read the sessions OLDEST → NEWEST — the latest session wins.** Keep a running **current truth per topic**:
 
@@ -65,11 +67,7 @@ Also read `_dream_context/state/.sleep.json` for `sessions[].last_assistant_mess
 - **No `task_slugs`** → check `last_assistant_message`, the user hint, and bookmark messages for what the work was about.
 - **Carries a `spawn` marker** (a Develop or goal-skill builder, an automation run, a peer or lab run) → its `score` is 0 on purpose: the orchestrator's session carries the run's debt. Map it to tasks through its `task_slugs` like any other session; never skip it because it scored 0.
 
-**Build the BOARD MAP once, before you read a single session**, and hold it for the whole pass. The fold-in test is made against this map, not a keyword recall:
-
-```bash
-dreamcontext tasks list --all --json    # every task's name + description + status
-```
+**The BOARD MAP is the packet's `board.md`**: read it once, before you read a single session, and hold it for the whole pass. The fold-in test is made against this map, not a keyword recall. A completed task's name, when you need one: `dreamcontext tasks list -s completed --brief`.
 
 **Before creating anything, dedup against existing tasks.** Scan the map, then recall by topic where its one-liners are ambiguous:
 
@@ -191,14 +189,7 @@ If `tasks create` refuses, act on the rule it names; never pad the `-w`. New tas
 
 ### 2.5. Person attribution (multi-person projects only)
 
-When the roster in **`_dream_context/people/people.json`** has **>1 entry** (read it with `dreamcontext people list`; never read `.config.json`), record the person responsible for a task's progress this cycle as a `person:<slug>` tag, where the slug is a roster **key**. Attribute from git `%an` on the commits and self-identification in the transcript, applying the **shared bot-filter**: drop any author whose kebab-case slug contains `github-actions` or `dependabot` (`BOT_SLUG_FRAGMENTS` in `src/lib/attribution.ts`). Never tag a task `person:github-actions`.
-
-- **New task**: pass `--person <name>` to `dreamcontext tasks create`.
-- **Existing task**: add the tag via Edit on the frontmatter `tags:` array, or via `dreamcontext tasks insert`.
-
-Tags are additive: never remove a previously-set `person:` tag. A slug that may not match a remote backend's member roster gets a note in your report.
-
-**Single-person projects (roster has 0 or 1 entry): this step is a NO-OP.** Never inject a `person:` tag; the output must stay byte-identical to today.
+Runs only when the packet's Facts say `sleep-tasks runs §2.5`: then read `.claude/skills/dreamcontext/references/sleep-conditional.md` § "sleep-tasks §2.5" and follow it. Otherwise (single-person) it is a NO-OP: never inject a `person:` tag.
 
 ### 2.6. Learn from the owner's objections — every cycle
 
@@ -279,21 +270,23 @@ Every non-completed task costs snapshot tokens on every session, so groom the wh
 
 **(a) Direction changes.** A task partly obsoleted by a pivot: reconcile its body (step 3). **Wholly** obsoleted: close it ("obsoleted by <pivot>"). Belongs to another milestone: fix its `version:` frontmatter by Edit.
 
-**(b) Staleness.** For each task whose `updated` is **21+ days old** and untouched this cycle: work done but never logged → reconcile it now (steps 3-4); superseded / absorbed → log a final entry naming the successor, then close ("superseded by <other-slug>"); still genuinely planned → leave it, but downgrade an inflated priority; abandoned → close ("stale 21+ days, abandoned").
+**(b) Staleness, keyed on the last STATUS change** (an edit is not progress). The packet's board lists the in-review tasks whose status has not moved in 21+ days; apply the same test to other open tasks you touch. For each, untouched this cycle: work done but never logged → reconcile it now (steps 3-4); superseded / absorbed → log a final entry naming the successor, then close ("superseded by <other-slug>"); still genuinely planned → leave it, but downgrade an inflated priority; abandoned → close ("stale 21+ days, abandoned").
+
+**(f) Ready to close.** The packet's board lists the in-review tasks with every criterion ticked and a version that shipped (released, or at or below the installed CLI). For each: no user-facing change (a chore, docs, tests, an internal refactor, a CLI internal) and nothing in this cycle contradicts it → `completed` with the evidence (`tasks status <slug> completed "all criteria ticked; shipped in <version>"`). Anything the owner sees or decided stays `in_review`: he holds that sign-off. List those in ONE block of your report, `Ready to close (owner's call)`, one line each (`<slug> · <version> · what he would check`), so the orchestrator hands him one batched card instead of one per task.
 
 **(c) Tagging.** Normalize every task's `tags` to `dreamcontext taxonomy vocab` and *add* missing facets (area / type / feature).
 
 **(d) Objective linking (only when `core/objectives/` is non-empty).** For each task you touched or created whose `objectives:` is **absent or empty**, set the objective(s) it genuinely serves (`dreamcontext roadmap objective list`): `dreamcontext tasks objectives <slug> <a,b>`. **HARD RULE: a non-empty `objectives:` list is a PO decision — NEVER change or extend it.** No fit → leave it empty.
 
-**(e) Recidivism — check before you flag again.** Read `_dream_context/state/.sleep-flags.json` (plain Read) first. A problem already at `consecutive_cycles >= 3` has ALREADY been escalated: take a real action (reconcile, `in_review` "recurred N cycles — needs your decision", or close), never another flag. Report new/continuing recurrence as a flag spec:
+**(e) Recidivism — check before you flag again.** The packet's **Recidivism flags** list the streaks so far. A problem already at `consecutive_cycles >= 3` has ALREADY been escalated: take a real action (reconcile, `in_review` "recurred N cycles — needs your decision", or close), never another flag. RECORD each new/continuing recurrence yourself (the orchestrator no longer relays them), and list them in your report too:
 
-```
-### Recidivism flags (for `sleep done --flag`)
-- recurring-task:fix-releases-add-auto-discovery-scoping-bug::"still todo after N cycles"::fix-releases-add-auto-discovery-scoping-bug
-- task-candidate:snapshot-budget-ladder::"discussed twice; no file changes yet — deferred, not filed"
+```bash
+dreamcontext sleep flag add recurring-task:fix-releases-add-auto-discovery-scoping-bug "still todo after N cycles" --task fix-releases-add-auto-discovery-scoping-bug --by sleep-tasks
+dreamcontext sleep flag add task-candidate:snapshot-budget-ladder "discussed twice; no file changes yet — deferred, not filed" --by sleep-tasks
+dreamcontext sleep flag none --by sleep-tasks        # you looked and nothing recurred
 ```
 
-`sleep done --flag <key>::<label>[::<task-slug>]` is repeatable, one `--flag` per flag (never comma-separated); `sleep done` tracks the streak and escalates at 3 cycles.
+One call per flag; the key stays byte-identical every cycle. `sleep done` reads them, tracks the streak and escalates at 3 cycles; a cycle in which nobody records anything keeps every streak as it was.
 
 **Deferred task candidates** ride the same store. A `task-candidate:` entry with `consecutive_cycles >= 1` **and** independently re-observed THIS cycle (fresh evidence, not the same conversation re-read) has recurred: **file it** (full filing bar; `--neighbor-checked <slug>` when the review band names a neighbor you judged separate) and report it as **"Filed from a recurring candidate"**. Still only discussed → re-emit the SAME key. Not observed → do not re-emit; `reconcileFlags` drops it by design.
 
@@ -310,7 +303,8 @@ One line per field; write `none` rather than dropping a field.
 - Updated: <slug> (in_progress → completed, "<done, validated>"), <slug> (→ in_review, "<what to verify>"), <slug> (logged)
 - Folded in (no new task): <existing-slug>: broadened scope + added <n> stories/criteria for <smaller-piece>
 - Filed: <k>/<cap>: read from `dreamcontext sleep config`
-- Owner asks: <N> → criterion <a> · subtask <b> · task <c> · not placed <d> (each not-placed ask + why; "already a criterion" quotes that criterion and its task)
+- Owner asks: <N> → criterion <a> · subtask <b> · task <c> · not placed <d> (each not-placed ask + why; "already a criterion" quotes that criterion and its task). Also record it: `dreamcontext sleep asks set criterion=<a>,subtask=<b>,task=<c>,unplaced=<d> --by sleep-tasks`
+- Ready to close (owner's call): <slug> · <version> · <what he would check> | none
 - Rules learned: R<n> "<title>" (rests on obj_…) | merged obj_… into R<n> | unlearned: obj_… (why) | none
 - Created: <slug> (status, attached to vX.Y.Z): genuinely separate concern
 - Candidates NOT filed (cap): <what it was + the evidence> | none
@@ -325,7 +319,7 @@ One line per field; write `none` rather than dropping a field.
 - Backlog grooming: <every action: obsoleted, re-attached, retagged, priority changed, left as-is>
 - Objective links: <slug> → [<objectives>] (was empty) | no objectives in this project: skipped
 - KR metrics: <objective> current → <n> (observed) | <objective> SKIPPED: fed by bound insight <insight-slug> | none
-- Recidivism flags: <flag specs> | none this cycle
+- Recidivism flags (recorded with `sleep flag add`): <key: label> | none this cycle (`sleep flag none` run)
 - Recidivism actions: <slug> already escalated → <action taken> | none escalated
 - Cross-domain mentions: <what, for which specialist>
 - Deferred (hands-off): <slug>: <the line you would have logged> | none
