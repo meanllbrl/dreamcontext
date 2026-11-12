@@ -22,8 +22,8 @@ import { DEFAULT_BOARD_SLUG, goneBoardTarget } from './whiteboards/boardSwitcher
 import { useIsMobile } from '../hooks/useIsMobile';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import { publishPageDetail } from '../lib/pageContext';
-import { useSuperPresence } from '../lib/superPageBridge';
 import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardSuperField';
+import type { Region } from '../components/whiteboard/quickEditLogic';
 import { useCanvasBox } from './whiteboards/useCanvasBox';
 import { useTopRowFit } from './whiteboards/useTopRowFit';
 import type { SelectionRef } from '../components/whiteboard/agentDrop';
@@ -229,10 +229,14 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const { t, locale } = useI18n();
   const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush } = useWhiteboardEditor(slug);
   const { vault, bus } = useVault();
-  // The Super's writing field (2026-11-11): only while Super mode is on, on a ready board.
-  const presence = useSuperPresence(bus);
+  // The board writing field (2026-11-11), on every ready board.
   const [selection, setSelection] = useState<SelectionRef | null>(null);
   const [work, setWork] = useState<FieldWork | null>(null);
+  // The empty region the owner dragged out, and the box a quick edit is drawing in (task
+  // tahta-hizli-duzenle): page state, so the canvas draws them and the field sends them.
+  const [region, setRegion] = useState<Region | null>(null);
+  const [quickBox, setQuickBox] = useState<Region | null>(null);
+  useEffect(() => { setRegion(null); setQuickBox(null); }, [slug]);
   // The canvas, measured once: the writing field's place and whether the page's controls fit
   // in Excalidraw's top row both read it.
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
@@ -247,6 +251,8 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
     canvasRef.current = api;
     onApi(api);
   }, [onApi]);
+  const getCanvasApi = useCallback(() => canvasRef.current, []);
+  const clearRegion = useCallback(() => setRegion(null), []);
   const clearSelection = useCallback(() => {
     canvasRef.current?.excalidraw.updateScene({ appState: { selectedElementIds: {} } as never });
   }, []);
@@ -348,7 +354,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
         <PagePopupProvider>
           <div className="wbp-canvas" ref={setCanvasEl}>
             <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
-              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={controlsAside ? null : controls} onSelection={setSelection} workBox={work?.box ?? null} />
+              <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={controlsAside ? null : controls} onSelection={setSelection} workBox={work?.box ?? null} region={region} onRegion={setRegion} quickBox={quickBox} />
             </Suspense>
             {controlsAside && <div className="wbp-float-right" data-testid="wbp-controls-aside">{controls}</div>}
             {explorerToggle && (
@@ -357,8 +363,10 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
                 <span className="wbp-float-name" title={name}>{name}</span>
               </div>
             )}
-            {presence?.on && (
+            {/* Mounted whatever Super's state: Hızlı düzenle needs no Super (Decision 2). */}
+            {(
               <BoardSuperField
+                key={slug}
                 bus={bus}
                 board={slug}
                 boardName={name}
@@ -368,6 +376,10 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
                 flush={flush}
                 onWork={setWork}
                 canvas={canvasBox}
+                region={region}
+                onClearRegion={clearRegion}
+                canvasApi={getCanvasApi}
+                onQuickBox={setQuickBox}
               />
             )}
           </div>

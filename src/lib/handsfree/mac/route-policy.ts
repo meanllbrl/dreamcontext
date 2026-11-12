@@ -70,6 +70,7 @@ const ONBOARDING = 'laptop-only: first-run setup of this Mac';
 const READ = 'read of this project\'s own data; side-effect free';
 const PROJECT_WRITE = 'a change to this project\'s own data, the same as the dashboard on the laptop';
 const CHAT = 'the chat surface the phone exists for';
+const QUICK_EDIT = 'a quick edit of this project\'s board by a no-tool Claude turn: the phone already runs bypass chats on this Mac, so it adds no capability';
 const STAGE = 'the remote stage, read and arrange only; the Mac window stays the Super\'s bridge';
 
 export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
@@ -612,6 +613,14 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/whiteboards/groups/order': allow(READ),
   'PUT /api/whiteboards/groups/order': allow(PROJECT_WRITE),
   'GET /api/whiteboards/:slug/rev': allow(READ),
+  // The quick edit (plan tahta-hizli-duzenle D14): the signed-in phone already runs bypass chats
+  // on this Mac, so starting one adds no capability; an app is refused by deniedForEveryone.
+  'GET /api/whiteboards/quick-edit/status': allow(READ),
+  'POST /api/whiteboards/:slug/quick-edit': allow(QUICK_EDIT),
+  'GET /api/whiteboards/:slug/quick-edit/last': allow(READ),
+  'GET /api/whiteboards/:slug/quick-edit/:job': allow(READ),
+  'POST /api/whiteboards/:slug/quick-edit/:job/stop': allow(QUICK_EDIT),
+  'POST /api/whiteboards/:slug/quick-edit/:edit/undo': allow(QUICK_EDIT),
   'POST /api/whiteboards/:slug/files/:id': allow(PROJECT_WRITE),
   'GET /api/whiteboards/:slug/files/:id': allow('read: a board file, always sent with the sandbox CSP; side-effect free', 'sandboxed'),
   'GET /api/whiteboards/:slug': allow(READ),

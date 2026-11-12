@@ -919,12 +919,13 @@ export function partRefs(text: string, baseRef?: string): string[] {
  * About/Reply heads at the start still match. A reference to what he looked at, never an
  * instruction. MIRRORED from the server, src/lib/super/types.ts (super-types-mirror.test.ts).
  */
-export const PAGE_CONTEXT_RE = /\n\n\[On page ([a-z][a-z-]{0,31})(?: view="([^"\]\n]{1,60})")?(?: filters=([0-9]{1,3}))?(?: board=([a-z0-9][a-z0-9-]{0,63}))?(?: insight=([a-z0-9][a-z0-9-]{0,63}))?(?: sel=([1-9][0-9]{0,3}) box=(-?[0-9]{1,7}),(-?[0-9]{1,7}),([0-9]{1,7}),([0-9]{1,7}) ids=([A-Za-z0-9_-]{1,64}(?:,[A-Za-z0-9_-]{1,64}){0,11}))?\]$/;
+export const PAGE_CONTEXT_RE = /\n\n\[On page ([a-z][a-z-]{0,31})(?: view="([^"\]\n]{1,60})")?(?: filters=([0-9]{1,3}))?(?: board=([a-z0-9][a-z0-9-]{0,63}))?(?: insight=([a-z0-9][a-z0-9-]{0,63}))?(?: sel=([1-9][0-9]{0,3}) box=(-?[0-9]{1,7}),(-?[0-9]{1,7}),([0-9]{1,7}),([0-9]{1,7}) ids=([A-Za-z0-9_-]{1,64}(?:,[A-Za-z0-9_-]{1,64}){0,11}))?(?: area=(-?[0-9]{1,7}),(-?[0-9]{1,7}),([0-9]{1,7}),([0-9]{1,7}))?\]$/;
 export const MAX_PAGE_VIEW = 60;
 /** A whiteboard selection the owner had when he wrote (board writing field, 2026-11-11): `n` the
  *  true count of selected units, `box` their scene bounds [x, y, w, h], `ids` topmost first. */
 export interface PageSelection { n: number; box: [number, number, number, number]; ids: string[] }
-export interface PageContextRef { page: string; view?: string; filters?: number; board?: string; insight?: string; sel?: PageSelection }
+/** `area`: an EMPTY board region the owner dragged out ("put it exactly here"), scene [x, y, w, h]. */
+export interface PageContextRef { page: string; view?: string; filters?: number; board?: string; insight?: string; sel?: PageSelection; area?: [number, number, number, number] }
 /** At most this many element ids ride a page block; `n` and `box` carry the rest. */
 export const MAX_PAGE_SEL_IDS = 12;
 const PAGE_SEL_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -941,6 +942,14 @@ export function pageSelectionTail(sel: PageSelection | null | undefined): string
   const [x, y, w, h] = sel.box;
   return ` sel=${n} box=${clamp(x, -PAGE_SEL_COORD_MAX)},${clamp(y, -PAGE_SEL_COORD_MAX)},${clamp(w, 0)},${clamp(h, 0)} ids=${ids.join(',')}`;
 }
+/** The region's wire tail (` area=x,y,w,h`), or '' when it is not four finite numbers with a size. */
+export function pageAreaTail(area: readonly number[] | null | undefined): string {
+  if (!Array.isArray(area) || area.length !== 4 || !area.every((v) => typeof v === 'number' && Number.isFinite(v))) return '';
+  const clamp = (v: number, min: number) => Math.min(PAGE_SEL_COORD_MAX, Math.max(min, Math.round(v)));
+  const [x, y, w, h] = [clamp(area[0], -PAGE_SEL_COORD_MAX), clamp(area[1], -PAGE_SEL_COORD_MAX), clamp(area[2], 0), clamp(area[3], 0)];
+  if (w < 1 || h < 1) return '';
+  return ` area=${x},${y},${w},${h}`;
+}
 const PAGE_ID_RE = /^[a-z][a-z-]{0,31}$/;
 const PAGE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** The block for a page, or '' when the page is not a page id. A field that is not clean is left out. */
@@ -953,6 +962,7 @@ export function pageContextBlock(ctx: PageContextRef | null | undefined): string
   if (typeof ctx.board === 'string' && PAGE_SLUG_RE.test(ctx.board)) out += ` board=${ctx.board}`;
   if (typeof ctx.insight === 'string' && PAGE_SLUG_RE.test(ctx.insight)) out += ` insight=${ctx.insight}`;
   out += pageSelectionTail(ctx.sel);
+  out += pageAreaTail(ctx.area);
   return `${out}]`;
 }
 /** A message's words and the page block it ends with (null: none, the text is unchanged). */
@@ -966,6 +976,7 @@ export function splitPageContext(text: string): { text: string; page: PageContex
   if (m[4]) page.board = m[4];
   if (m[5]) page.insight = m[5];
   if (m[6]) page.sel = { n: Number(m[6]), box: [Number(m[7]), Number(m[8]), Number(m[9]), Number(m[10])], ids: m[11].split(',') };
+  if (m[12]) page.area = [Number(m[12]), Number(m[13]), Number(m[14]), Number(m[15])];
   return { text: raw.slice(0, m.index), page };
 }
 /** The super's mark on an answer's first line, `<!-- re:<ref> -->` (lib/replyMark.ts parses it). */

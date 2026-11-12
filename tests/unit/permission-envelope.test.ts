@@ -10,7 +10,7 @@ const SURFACES = Object.keys(HEADLESS_ENVELOPES) as HeadlessSurface[];
 
 describe('headless envelopes', () => {
   it('names every surface the plan lists', () => {
-    expect(SURFACES.sort()).toEqual(['agent', 'approval-question', 'ask', 'ask-write', 'automation', 'board-agent', 'builder', 'light', 'peer', 'sleep', 'super-child', 'task-step', 'verdict']);
+    expect(SURFACES.sort()).toEqual(['agent', 'approval-question', 'ask', 'ask-write', 'automation', 'board-agent', 'board-quick', 'builder', 'light', 'peer', 'sleep', 'super-child', 'task-step', 'verdict']);
   });
 
   it.each(SURFACES)('%s never reaches full access', (surface) => {

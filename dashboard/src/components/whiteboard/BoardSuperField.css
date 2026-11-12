@@ -271,3 +271,135 @@
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
+
+/* ── Hızlı düzenle (task tahta-hizli-duzenle) ─────────────────────────────────────────────── */
+
+/* The chips row carries the mode switch on its right. */
+.bsf-chips { align-items: center; }
+.bsf-chips-spacer { flex: 1; min-width: 0; }
+
+.bsf-modes {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+}
+
+.bsf-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.bsf-mode[aria-pressed='true'] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.bsf-mode:disabled { cursor: not-allowed; opacity: 0.55; }
+
+/* The bottom line of a quick edit: running, done, not a board change, out of scope. */
+.bsf-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  margin-top: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.bsf-line-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bsf-line-strong { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.bsf-line-ok { flex: none; color: var(--color-success); }
+.bsf-line--bad .bsf-line-text { color: var(--color-error-ink); }
+
+.bsf-btn {
+  flex: none;
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.bsf-btn:hover { background: var(--color-bg-hover, var(--color-bg-tertiary)); }
+.bsf-btn:disabled { cursor: default; opacity: 0.6; }
+
+.bsf-btn--accent {
+  border-color: transparent;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+}
+
+.bsf-btn--accent:hover { background: var(--color-accent-strong); box-shadow: var(--shadow-glow); }
+
+/* The empty region the owner dragged out, and the area a quick edit is drawing in. */
+.wb-region {
+  position: absolute;
+  z-index: var(--wbp-overlay-z, 2);
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1.5px dashed var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+
+.wb-region--running {
+  border-style: solid;
+  border-width: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 22%, transparent);
+  animation: var(--dc-motion-ambient-name, wb-region-glow) 1.6s var(--ease-out) infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+
+@keyframes wb-region-glow {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent); }
+  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-accent) 28%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-region--running { animation: none; }
+}
+
+.wb-region-tag {
+  position: absolute;
+  left: -1px;
+  bottom: calc(100% + 6px);
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-accent-ink);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}

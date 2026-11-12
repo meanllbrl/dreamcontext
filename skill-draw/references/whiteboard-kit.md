@@ -105,6 +105,17 @@ pain, `mint` result, `gray` muted.
 | a screen sketched, not shot | `windowFrame`, `appBar`, `listRow`, `tabBar`, `button`, `input`, `textRows` | see the `draw` skill (`references/excalidraw.md`) |
 | an arrow you place yourself | `connector` | `from` and `to` as `[x, y]`, `label`, `dashed`, `elbow` `hv`/`vh` |
 
+## Primitives
+
+A shape you place yourself, when no type above fits (an apple, a logo, an arrow in a gap). Its
+`x`, `y` are inside the spec, from 0,0.
+
+| The shape is | Type | Fields |
+|---|---|---|
+| a box, a circle, a rhombus | `rectangle`, `ellipse`, `diamond` | `x`, `y`, `width`, `height`, `strokeColor`, `backgroundColor`, `fillStyle` (`solid`), `strokeWidth`, `roundness` (true) |
+| a stroke, a polygon, an arrow | `line`, `arrow` | `x`, `y`, `points` (`[[0,0],[120,40],…]`), `strokeColor`, `backgroundColor` (a closed `line` fills), `strokeWidth`, `startArrow`, `endArrow` |
+| loose words | `text` | `x`, `y`, `text`, `fontSize`, `color`, `width` (wraps), `align` |
+
 Every type: `dreamcontext whiteboard kit --json` lists them. In text, `**bold**` draws a rule
 under the phrase, `==mark==` a highlighter band, `` `code` `` a grey chip: mark one or two
 phrases a block, the number the point rests on first.

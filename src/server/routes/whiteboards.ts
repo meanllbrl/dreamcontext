@@ -21,6 +21,12 @@ import {
   whiteboardRev,
 } from '../../lib/whiteboards/store.js';
 import { mergeElements } from '../../lib/whiteboards/merge.js';
+import {
+  ELEMENT_ID_RE, latestUndoable, rebaseAfterUndo, QUICK_SCOPE_MAX, QUICK_TEXT_MAX, readArea, readJournal, undoQuickEdit, writeJournal,
+  type QuickArea,
+} from '../../lib/whiteboards/quick-edit.js';
+import { quickEditStatus, readQuickJob, startQuickEdit, stopQuickJob } from '../../lib/whiteboards/quick-edit-jobs.js';
+import type { WhiteboardElement } from '../../lib/whiteboards/widgets.js';
 import { boardFileRelPath, readBoardFile, WHITEBOARD_MAX_FILE_BYTES, writeBoardFile } from '../../lib/whiteboards/files.js';
 import { assertPicturesHeld } from '../../lib/whiteboards/ops.js';
 import { searchPages } from '../../lib/whiteboards/pages.js';
@@ -490,6 +496,164 @@ export async function handleWhiteboardGroupOrderPut(
   }
   try {
     sendJson(res, 200, { order: await writeGroupOrder(contextRoot, body.order) });
+  } catch (err) {
+    sendWhiteboardError(res, err);
+  }
+}
+
+// ─── Quick edit (plan tahta-hizli-duzenle C1) ───────────────────────────────
+//
+// One headless no-tool `claude -p` answers one JSON edit; the store applies it under the board's
+// lock (quick-edit.ts). Main listener only for the laptop; the phone has its rows in
+// ROUTE_POLICY; an app's page and backend are refused by `deniedForEveryone`.
+
+const QUICK_ID_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+/** GET /api/whiteboards/quick-edit/status → `{ok:true}` or `{ok:false, reason:'no_claude', text}`. */
+export async function handleQuickEditStatus(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string,
+): Promise<void> {
+  sendJson(res, 200, quickEditStatus());
+}
+
+/** POST /api/whiteboards/:slug/quick-edit `{text, scope?, area?}` → 202 `{job}`. */
+export async function handleQuickEditStart(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  const text = typeof body?.text === 'string' ? body.text.trim() : '';
+  if (!text || text.length > QUICK_TEXT_MAX) {
+    sendError(res, 400, 'invalid', `Say what to change (1-${QUICK_TEXT_MAX} characters).`);
+    return;
+  }
+  let scope: { ids: string[]; identities: Record<string, string> } | null = null;
+  if (body?.scope !== undefined && body.scope !== null) {
+    const s = body.scope as { ids?: unknown; identities?: unknown };
+    if (!Array.isArray(s.ids) || !s.ids.every((id) => typeof id === 'string' && ELEMENT_ID_RE.test(id))) {
+      sendError(res, 400, 'invalid', 'scope.ids are element ids.');
+      return;
+    }
+    if (s.ids.length > QUICK_SCOPE_MAX) {
+      sendError(res, 413, 'scope_too_big', `A quick edit takes at most ${QUICK_SCOPE_MAX} shapes; select fewer or ask the Super.`);
+      return;
+    }
+    const identities: Record<string, string> = {};
+    const raw = s.identities && typeof s.identities === 'object' && !Array.isArray(s.identities) ? s.identities as Record<string, unknown> : {};
+    for (const id of s.ids as string[]) {
+      const v = raw[id];
+      if (typeof v === 'string' && /^-?\d{1,15}:-?\d{1,15}$/.test(v)) identities[id] = v;
+    }
+    scope = { ids: s.ids as string[], identities };
+  }
+  let area: QuickArea | null = null;
+  if (body?.area !== undefined && body.area !== null) {
+    area = readArea(body.area);
+    if (!area) {
+      sendError(res, 400, 'invalid', 'area is {x, y, w, h}: finite numbers, w and h from 8 to 20000.');
+      return;
+    }
+  }
+  try {
+    whiteboardRev(contextRoot, params.slug);
+  } catch (err) {
+    sendWhiteboardError(res, err);
+    return;
+  }
+  const status = quickEditStatus();
+  if (!status.ok) {
+    sendJson(res, 412, { error: 'no_claude', message: status.text });
+    return;
+  }
+  const started = startQuickEdit(contextRoot, params.slug, { text, scope, area, selfOrigin: requestSelfOrigin(req) });
+  if (!started.ok) {
+    sendError(res, started.status, started.error, started.message);
+    return;
+  }
+  sendJson(res, 202, { job: started.job });
+}
+
+/** GET /api/whiteboards/:slug/quick-edit/last → `{edit?: {id, reply, at, undone}}` (registered before `:job`). */
+export async function handleQuickEditLast(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    whiteboardRev(contextRoot, params.slug);
+  } catch (err) {
+    sendWhiteboardError(res, err);
+    return;
+  }
+  const rec = latestUndoable(readJournal(contextRoot, params.slug, requestSelfOrigin(req)));
+  sendJson(res, 200, rec ? { edit: { id: rec.id, reply: rec.reply, at: rec.at, undone: rec.undone } } : {});
+}
+
+/** GET /api/whiteboards/:slug/quick-edit/:job → the job's view; 404 for another board or vault. */
+export async function handleQuickEditJob(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const view = QUICK_ID_RE.test(params.job) ? readQuickJob(contextRoot, params.slug, params.job) : null;
+  if (!view) { sendError(res, 404, 'not_found', 'No such quick edit on this board.'); return; }
+  sendJson(res, 200, view);
+}
+
+/** POST /api/whiteboards/:slug/quick-edit/:job/stop → the job's state after the stop. */
+export async function handleQuickEditStop(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const view = QUICK_ID_RE.test(params.job) ? stopQuickJob(contextRoot, params.slug, params.job) : null;
+  if (!view) { sendError(res, 404, 'not_found', 'No such quick edit on this board.'); return; }
+  sendJson(res, 200, view);
+}
+
+/**
+ * POST /api/whiteboards/:slug/quick-edit/:edit/undo → `{elements, skipped}`: the forward inverse
+ * write (C4) under the board's lock. 409 `not_latest` when a newer edit on this board is in force.
+ */
+export async function handleQuickEditUndo(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!QUICK_ID_RE.test(params.edit)) { sendError(res, 404, 'not_found', 'No such quick edit on this board.'); return; }
+  const selfOrigin = requestSelfOrigin(req);
+  let refusal: { status: number; error: string; message: string } | null = null;
+  let undo: { written: WhiteboardElement[]; skipped: string[] } | null = null;
+  try {
+    let records: ReturnType<typeof readJournal> = [];
+    await mutateWhiteboard(contextRoot, params.slug, (board) => {
+      records = readJournal(contextRoot, params.slug, selfOrigin);
+      const rec = records.find((r) => r.id === params.edit);
+      if (!rec || rec.undone) { refusal = { status: 404, error: 'not_found', message: 'No such quick edit to undo on this board.' }; return; }
+      if (latestUndoable(records)?.id !== rec.id) { refusal = { status: 409, error: 'not_latest', message: 'A newer quick edit is in force; undo that one first.' }; return; }
+      undo = undoQuickEdit(board, rec);
+    }, {
+      selfOrigin,
+      onCommitted: () => {
+        if (refusal || !undo) return;
+        const rec = records.find((r) => r.id === params.edit)!;
+        writeJournal(contextRoot, params.slug, rebaseAfterUndo(records, rec, (undo as { written: WhiteboardElement[] }).written));
+      },
+    });
+    if (refusal) { const r = refusal as { status: number; error: string; message: string }; sendError(res, r.status, r.error, r.message); return; }
+    const done = undo as { written: WhiteboardElement[]; skipped: string[] } | null;
+    const ids = new Set((done?.written ?? []).map((e) => e.id));
+    const fresh = readWhiteboard(contextRoot, params.slug).board.elements.filter((e) => ids.has(e.id));
+    sendJson(res, 200, { elements: fresh, skipped: done?.skipped ?? [] });
   } catch (err) {
     sendWhiteboardError(res, err);
   }

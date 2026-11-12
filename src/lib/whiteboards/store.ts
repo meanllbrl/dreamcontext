@@ -407,6 +407,12 @@ export interface MutateOptions {
   /** Server origin, so a web widget URL pointing back at the dashboard is refused (D7). */
   selfOrigin?: string;
   lockWaitMs?: number;
+  /**
+   * Runs inside the board's lock once this call is settled: after the rename when it wrote
+   * (`changed`), or after deciding nothing changed. The quick-edit journal hangs off it, so a
+   * record is appended only for a write that landed and no other write can slip between them.
+   */
+  onCommitted?: (result: MutateResult) => void;
 }
 
 export interface MutateResult {
@@ -418,7 +424,8 @@ export interface MutateResult {
   changed: boolean;
 }
 
-function identityKey(el: WhiteboardElement): string {
+/** An element's identity, `version:versionNonce`: the one test of "touched" (merge, quick edit, undo). */
+export function identityKey(el: WhiteboardElement): string {
   return `${el.version}:${typeof el.versionNonce === 'number' ? el.versionNonce : 0}`;
 }
 
@@ -459,7 +466,11 @@ export async function mutateWhiteboard(
 
     const out = serializeWhiteboard(next);
     const beforeRev = sha1(raw);
-    if (out === raw) return { board: current, rev: beforeRev, before: beforeRev, changed: false };
+    if (out === raw) {
+      const same: MutateResult = { board: current, rev: beforeRev, before: beforeRev, changed: false };
+      opts.onCommitted?.(same);
+      return same;
+    }
     // Guard against ever writing something this module cannot read back — or reads back as a
     // different board: a text label holding its own `## Drawing` + json fence is found ahead of
     // the real block (format.ts), so the parsed-back elements must be the ones being written.
@@ -485,7 +496,9 @@ export async function mutateWhiteboard(
       rmSync(tmp, { force: true });
       throw err;
     }
-    return { board: parseWhiteboard(out), rev: sha1(out), before: beforeRev, changed: true };
+    const done: MutateResult = { board: parseWhiteboard(out), rev: sha1(out), before: beforeRev, changed: true };
+    opts.onCommitted?.(done);
+    return done;
   } finally {
     releaseFileLock(lockPath);
   }
@@ -726,6 +739,8 @@ export async function trashWhiteboard(root: string, slug: string): Promise<{ id:
     while (existsSync(join(trash, `${slug}-${ms}`))) ms++;
     const id = `${slug}-${ms}`;
     renameSync(dir, join(trash, id));
+    // A board made again under this slug starts with no quick-edit history.
+    dropQuickJournal(root, slug);
     return { id };
   });
 }
@@ -802,4 +817,49 @@ export async function restoreWhiteboard(root: string, id: string): Promise<{ slu
     if (done) return { slug };
   }
   throw new WhiteboardValidationError(`could not find a free slug to restore '${first.slug}'`);
+}
+
+// ─── the quick-edit journal ───────────────────────────────────────────────
+
+/**
+ * Where a board's quick edits are recorded (plan C3): `whiteboards/.locks/quick/<slug>.jsonl`.
+ * `.locks/` is ignored by every vault's `whiteboards/.gitignore`, old ones included, and `quick/`
+ * carries its own `*` .gitignore too. Every hop is lstat-checked and the realpath must stay inside
+ * `whiteboards/`: a symlinked `.locks`, `quick` or journal is refused, never followed.
+ */
+export function quickJournalPath(root: string, slug: string, opts: { create?: boolean } = {}): string {
+  if (!isValidWhiteboardSlug(slug)) throw new WhiteboardNotFoundError(`invalid whiteboard slug '${slug}'`);
+  const base = opts.create ? ensureWhiteboardsDir(root) : whiteboardsDir(root);
+  const locks = join(base, '.locks');
+  const quick = join(locks, 'quick');
+  const refuse = (what: string) => new WhiteboardValidationError(`whiteboards/${what} is not a plain folder or file; refusing the quick-edit journal`);
+  for (const [p, what] of [[base, ''], [locks, '.locks'], [quick, '.locks/quick']] as const) {
+    if (isSymlink(p)) throw refuse(what);
+    if (existsSync(p)) {
+      if (!lstatSync(p).isDirectory()) throw refuse(what);
+    } else if (opts.create) {
+      mkdirSync(p);
+    }
+  }
+  if (opts.create) {
+    const ignore = join(quick, '.gitignore');
+    if (isSymlink(ignore)) throw refuse('.locks/quick/.gitignore');
+    if (!existsSync(ignore)) writeFileSync(ignore, '*\n', 'utf-8');
+  }
+  const file = safeChildPath(quick, `${slug}.jsonl`);
+  if (!file) throw refuse(`.locks/quick/${slug}.jsonl`);
+  if (isSymlink(file)) throw refuse(`.locks/quick/${slug}.jsonl`);
+  if (existsSync(file) && !lstatSync(file).isFile()) throw refuse(`.locks/quick/${slug}.jsonl`);
+  if (existsSync(quick)) {
+    const realBase = realpathSync(base);
+    if (!realpathSync(quick).startsWith(realBase + sep)) throw refuse('.locks/quick');
+  }
+  return file;
+}
+
+/** Drop a board's quick-edit journal (the board was deleted). Never throws: a refused path is left. */
+export function dropQuickJournal(root: string, slug: string): void {
+  try {
+    rmSync(quickJournalPath(root, slug), { force: true });
+  } catch { /* nothing to drop, or a path we refuse to touch */ }
 }

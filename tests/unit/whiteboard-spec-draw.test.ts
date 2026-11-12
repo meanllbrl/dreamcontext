@@ -237,6 +237,13 @@ describe('the kit reference', () => {
     for (const t of named) expect(TYPES, `the kit reference names "${t}"`).toContain(t);
   });
 
+  it('names every primitive field the builder reads, in a Primitives block', () => {
+    const block = REF.slice(REF.indexOf('## Primitives'), REF.indexOf('## Writing for a board'));
+    expect(block.length).toBeGreaterThan(100);
+    for (const t of ['rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'text']) expect(block, t).toContain(`\`${t}\``);
+    for (const f of ['x', 'y', 'width', 'height', 'strokeColor', 'backgroundColor', 'fillStyle', 'points', 'fontSize']) expect(block, f).toContain(`\`${f}\``);
+  });
+
   it('keeps the rules a board is read by', () => {
     expect(REF).toContain('**Explain or show something: draw it. A number: a live widget. A note: a caption.**');
     expect(REF).toContain('Never a stack of markdown notes.');
@@ -263,6 +270,15 @@ describe('whiteboard draw --spec / kit (CLI)', () => {
       expect(r.code).toBe(1);
       expect(r.err).toMatch(/draw needs exactly one of --spec <spec\.json>/);
     }
+  });
+
+  it('--file refuses a kit spec instead of importing nothing', async () => {
+    writeFileSync(join(project, 'flow.json'), JSON.stringify(FLOW_SPEC));
+    const before = readWhiteboard(root, slug).board.elements.length;
+    const r = await run(['whiteboard', 'draw', slug, '--file', 'flow.json']);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/holds no Excalidraw elements: this looks like a spec, use --spec flow\.json/);
+    expect(readWhiteboard(root, slug).board.elements.length).toBe(before);
   });
 
   it('a picture in the spec is stored beside the board under its own id', async () => {

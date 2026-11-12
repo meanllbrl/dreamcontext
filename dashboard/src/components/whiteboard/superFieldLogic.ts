@@ -24,10 +24,21 @@ export function selectionSendable(sel: SelectionRef | null | undefined): boolean
  * blank line, the page block naming the board and, when there is one, the selection. Null when
  * there are no words: an empty field never sends.
  */
-export function composeFieldMessage(words: string, board: string, sel: SelectionRef | null | undefined): string | null {
+export function composeFieldMessage(
+  words: string,
+  board: string,
+  sel: SelectionRef | null | undefined,
+  area?: [number, number, number, number] | null,
+): string | null {
   const said = neutraliseHeaders(stripSentinelChars(words ?? '').trim());
   if (!said.trim()) return null;
-  const block = pageContextBlock({ page: 'whiteboards', board, ...(selectionSendable(sel) ? { sel: pageSelectionOf(sel) } : {}) });
+  const block = pageContextBlock({
+    page: 'whiteboards',
+    board,
+    ...(selectionSendable(sel) ? { sel: pageSelectionOf(sel) } : {}),
+    // The empty region he dragged out (C6): rides with or without a selection.
+    ...(area ? { area } : {}),
+  });
   return block ? `${said}\n\n${block}` : said;
 }
 

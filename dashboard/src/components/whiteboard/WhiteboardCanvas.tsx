@@ -41,6 +41,8 @@ import { WidgetFrame, WidgetNotice } from './widgets/WidgetFrame';
 import { sameWidgetSlot, widgetSlotProps, type WidgetSlotProps } from './widgetSlot';
 import { installImageThemeShim } from '../../lib/excalidrawImageTheme';
 import { selectionRef, type DropElement, type SelectionRef } from './agentDrop';
+import { RegionOutline, useRegionCapture } from './RegionOutline';
+import { quickEditScope, type QuickScope, type Region, type ScopeElement } from './quickEditLogic';
 import './WhiteboardCanvas.css';
 
 // A picture keeps its own pixels in dark mode, WebKit included — see excalidrawImageTheme.ts.
@@ -70,6 +72,13 @@ export interface WhiteboardCanvasApi {
   getElements: () => readonly OrderedExcalidrawElement[];
   /** {@link sceneSignature} of that list: equal means a save would write nothing new. */
   getSceneVersion: () => number;
+  /** The quick edit's scope (C3): the live selection grown by bound text and group members,
+   *  with this page's identities; null with nothing selected. */
+  quickScope: () => QuickScope | null;
+  /** Every element id the scene holds now, tombstones included. */
+  sceneIds: () => Set<string>;
+  /** Select exactly these ids (an added drawing becomes the selection, Decision 8). */
+  selectIds: (ids: readonly string[]) => void;
 }
 
 export interface WhiteboardCanvasProps {
@@ -95,6 +104,12 @@ export interface WhiteboardCanvasProps {
   /** An area (scene coordinates) to outline while the Super works on it: an overlay, never a
    *  scene element, so it is not saved and leaves no history entry. */
   workBox?: [number, number, number, number] | null;
+  /** The empty region the owner dragged out (Decision 12), drawn dashed over the canvas. */
+  region?: Region | null;
+  /** A new region, or null when a click, Escape or a shape selection clears it. */
+  onRegion?: (region: Region | null) => void;
+  /** The area a quick edit is drawing in (the region or the selection's box): it glows. */
+  quickBox?: Region | null;
 }
 
 /** The page's top-right controls, handed into Excalidraw's own top-right row. */
@@ -127,7 +142,7 @@ const UI_OPTIONS = {
  * Lazy-loaded through `LazyWhiteboardCanvas`, which points Excalidraw at the self-hosted fonts
  * before this module (and the Excalidraw bundle) is imported.
  */
-export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictures, onSceneChange, onInternalLink, topRight, onSelection, workBox }: WhiteboardCanvasProps) {
+export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictures, onSceneChange, onInternalLink, topRight, onSelection, workBox, region, onRegion, quickBox }: WhiteboardCanvasProps) {
   const tx = useWbText();
   const theme = useDataTheme();
   const { bus, vault } = useVault();
@@ -147,14 +162,22 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   onSelectionRef.current = onSelection;
   const selectionKey = useRef('');
   // The viewport, kept only while an area is outlined (a pan or zoom then moves the outline).
-  const workBoxRef = useRef(workBox);
-  workBoxRef.current = workBox;
+  // The Super's work box, the empty region and the quick edit's box all follow the viewport.
+  const outlined = !!(workBox || region || quickBox);
+  const workBoxRef = useRef(outlined);
+  workBoxRef.current = outlined;
+  const regionRef = useRef(region ?? null);
+  regionRef.current = region ?? null;
+  const onRegionRef = useRef(onRegion);
+  onRegionRef.current = onRegion;
   const [view, setView] = useState<{ scrollX: number; scrollY: number; zoom: number } | null>(null);
   useEffect(() => {
-    if (!workBox) { setView(null); return; }
+    if (!outlined) { setView(null); return; }
     const s = apiRef.current?.getAppState();
     if (s) setView({ scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value });
-  }, [workBox]);
+  }, [outlined, workBox, region, quickBox]);
+  const [readyApi, setReadyApi] = useState<ExcalidrawImperativeAPI | null>(null);
+  useRegionCapture(apiRef, readyApi, onRegion, !!region);
   const onInternalLinkRef = useRef(onInternalLink);
   onInternalLinkRef.current = onInternalLink;
   // The board page's page popup (PagePopup.tsx), when this canvas sits under one.
@@ -303,6 +326,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   const unsubscribers = useRef<(() => void)[]>([]);
   const handleApi = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
+    setReadyApi(api);
     unsubscribers.current.forEach((off) => off());
     unsubscribers.current = [
       ...subscribeWidgetSnapping(api, (a, drag) => agentDropRef.current(a, drag), (a, drag) => agentHoverRef.current(a, drag)),
@@ -337,6 +361,17 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
       },
       getElements: () => api.getSceneElementsIncludingDeleted(),
       getSceneVersion: () => sceneSignature(api.getSceneElementsIncludingDeleted()),
+      quickScope: () => {
+        const sel = api.getAppState().selectedElementIds;
+        const ids = Object.keys(sel).filter((id) => sel[id]);
+        return quickEditScope(api.getSceneElementsIncludingDeleted() as unknown as readonly ScopeElement[], ids);
+      },
+      sceneIds: () => new Set(api.getSceneElementsIncludingDeleted().map((e) => e.id)),
+      selectIds: (ids) => {
+        const live = new Set(api.getSceneElements().map((e) => e.id));
+        const selectedElementIds = Object.fromEntries(ids.filter((id) => live.has(id)).map((id) => [id, true as const]));
+        api.updateScene({ appState: { selectedElementIds } as Pick<AppState, 'selectedElementIds'>, captureUpdate: CaptureUpdateAction.NEVER });
+      },
     });
     loadPictures(initial.data.elements);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -364,6 +399,8 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
         selectionKey.current = key;
         onSelectionRef.current(ids.length ? selectionRef(elements as unknown as readonly DropElement[], ids) : null);
       }
+      // Selecting shapes ends the empty region (Decision 12).
+      if (ids.length && regionRef.current) onRegionRef.current?.(null);
     }
     if (workBoxRef.current) {
       const next = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
@@ -510,6 +547,14 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
           UIOptions={UI_OPTIONS}
         />
         {workBox && view && <WorkOutline box={workBox} view={view} label={tx('whiteboard.field.outline', 'Super is working on this…')} />}
+        {view && (quickBox || region) && (
+          <RegionOutline
+            box={(quickBox ?? region) as Region}
+            view={view}
+            running={!!quickBox}
+            label={quickBox ? tx('whiteboard.quick.drawingTag', 'Drawing') : tx('whiteboard.quick.regionTag', 'Your area')}
+          />
+        )}
         {sizePicker && (
           <WidgetSizePicker
             key={sizePicker.id}

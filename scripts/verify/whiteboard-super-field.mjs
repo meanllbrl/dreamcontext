@@ -179,7 +179,10 @@ async function main() {
   const reports = () => readNd(REPORTS);
   const superFrames = () => readNd(FRAMES).filter((f) => f.role === 'super');
   const browser = await chromium.launch();
+  // The field now opens in Hızlı düzenle; this check is about the Super'e sor path, so it pins that mode.
+  const SUPER_MODE = "try { localStorage.setItem('dreamcontext.whiteboard.fieldMode', 'super'); } catch {}";
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+  await context.addInitScript(SUPER_MODE);
   const page = await context.newPage();
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -425,6 +428,7 @@ async function main() {
     console.log('── phone 390');
     for (const scheme of ['light', 'dark']) {
       const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: scheme });
+      await phoneCtx.addInitScript(SUPER_MODE);
       const phone = await phoneCtx.newPage();
       await phone.goto(`${base}/?vault=acme-app#wb=launch-plan`, { waitUntil: 'domcontentloaded' });
       await phone.waitForTimeout(3500);
