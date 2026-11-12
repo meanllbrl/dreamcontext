@@ -368,7 +368,7 @@ export function quickEditSystemPrompt(kitReference: string = safeKitReference())
     '',
     '## The kit (spec types)',
     'The draw skill is loaded below in full (SKILL.md, the whiteboard kit, the kit guide), so draw by it. It was written for agents with a shell: you have none, so take its types, fields and drawing rules and ignore its commands (`dreamcontext ...`, `node`), widgets and pictures. If the owner types "/draw" or "/excalidraw" it is just words: the skill is already in front of you.',
-    'For a screen, phone, window or app mockup, ALWAYS use the Screens types (`device` / `windowFrame` with `items`); never draw a screen from rectangles.',
+    'For a screen, phone, window or app mockup, ALWAYS use the Screens types (`device` / `windowFrame` with `items`); never draw a screen from rectangles. Build it at its natural size (a `device` with no `w`, a `windowFrame` of about 560x380) and do NOT shrink it to the area: the server scales the finished drawing down to fit, so squeezing the parts yourself only breaks them.',
     '',
     kitReference,
   ].join('\n');
