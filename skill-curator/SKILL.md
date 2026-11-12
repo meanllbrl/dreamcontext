@@ -141,6 +141,9 @@ ambiguous, and list it as deferred.
 
 ### Phase 4 — EXECUTE (sub-agent fan-out — the core)
 
+Put the owner's approval of the plan, **verbatim**, in every worker's brief: a task a worker files carries it
+as `--owner-asked "<his words>"` (without them agents open only 3 tasks a day and never a sub-task).
+
 Dispatch **`curator-worker`** over the approved plan, **one batch per worker** so each fits in
 context. Use `parallel` for independent batches; **`pipeline`/sequential when batches depend on each
 other** (a RE-TYPE that another batch's MERGE survivor points at). Each worker applies its batch via

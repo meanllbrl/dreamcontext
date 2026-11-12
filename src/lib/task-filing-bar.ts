@@ -72,7 +72,9 @@ export const MIN_SLEEP_WHY_CHARS = 40;
 /**
  * Who the bar is told is filing. `agent` (an awake agent that named itself) and `plan` (a wave
  * sub-task under its parent) pass like `human`: neither is the cycle, so neither counts toward
- * its cap or meets its gates. Who counts as sleep is decided once, in filing-basis.ts.
+ * its cap or meets its gates. Who counts as sleep is decided once, in filing-basis.ts. An agent
+ * running inside a session is held instead by agent-filing-guard.ts (no Super child files, no
+ * sub-task, a daily budget) and by gate 5 alone ({@link assertAgentNeighbor}).
  */
 export type FilingActor = 'human' | 'agent' | 'plan' | 'sleep' | 'unknown';
 
@@ -237,6 +239,43 @@ export async function assertTaskFilingBar(input: FilingBarInput): Promise<Filing
     filed: cycleTasksFiled(contextRoot),
     actor,
   });
+}
+
+/**
+ * Gate 5 (the near-twin task) for an AWAKE agent (audit TK-2). The rest of the bar stays the
+ * cycle's: an agent has no cap per cycle (agent-filing-guard.ts holds its daily budget) and no
+ * Why floor. Same availability rule as the cycle's gate: when the model or the task index is
+ * missing it passes with the notice, and it never downloads or embeds the corpus inline.
+ */
+export async function assertAgentNeighbor(input: Pick<FilingBarInput,
+  'contextRoot' | 'why' | 'slug' | 'name' | 'description' | 'neighborChecked' | 'semantic' | 'embed'>): Promise<FilingBarVerdict> {
+  const skip: SemanticSkip | null =
+    input.semantic === false ? 'disabled'
+      : input.semantic === true ? null
+        : input.embed !== undefined ? null
+          : semanticSkipReason(input.contextRoot);
+  if (skip !== null) return { allowed: true, underBar: false, neighbor: { state: 'unavailable', why: skip } };
+  const title = input.name ?? input.slug ?? '';
+  const outcome = await runNeighborGate({
+    contextRoot: input.contextRoot,
+    why: input.why,
+    slug: input.slug,
+    name: input.name,
+    description: input.description,
+    neighborChecked: input.neighborChecked,
+    semantic: input.semantic,
+    embed: input.embed,
+    cap: Number.POSITIVE_INFINITY,
+    filed: [],
+    actor: 'agent',
+    title,
+    body: (input.why ?? '').trim() || title,
+    hatch: ' If the owner asked for it as its own task, pass --owner-asked "<his words, verbatim>".',
+  });
+  if (outcome.refusal !== undefined) {
+    return { allowed: false, underBar: false, reason: outcome.refusal, neighbor: outcome.neighbor };
+  }
+  return { allowed: true, underBar: false, neighbor: outcome.neighbor };
 }
 
 function capFor(contextRoot: string): number {

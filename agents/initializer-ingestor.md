@@ -60,7 +60,7 @@ Ingest exactly the batch the orchestrator assigned — into the **confirmed hier
 - **Use the CLI, never hand-edit JSON:**
   - `dreamcontext knowledge create "<title>" --description "<one-line>" --tags "<area>" --content "<distilled>"`
   - `dreamcontext features create "<name>" --why "<purpose from code>" --tags "<area>" --status planning`
-  - `dreamcontext tasks create "<short sentence name>" -p <pri> -w "<why>"` for genuinely open/in-flight work — the name is a plain sentence (the slug derives from it), `-w` is mandatory, and new tasks scaffold lean (Why + Changelog only; add sections via `tasks insert` only when there's real content)
+  - `dreamcontext tasks create "<short sentence name>" -p <pri> -w "<why>" --owner-asked "<the owner's confirmation of the manifest, verbatim, from your brief>"` for genuinely open/in-flight work (the owner confirmed these tasks: without his words an agent may open only 3 a day; never invent them: if your brief carries none, list the tasks you could not file in your report) — the name is a plain sentence (the slug derives from it), `-w` is mandatory, and new tasks scaffold lean (Why + Changelog only; add sections via `tasks insert` only when there's real content)
   - `dreamcontext roadmap objective create <slug> --title "<outcome>" [--target YYYY-MM-DD] [--depends-on a,b] --why "<from source>"` for manifest items typed `objective` (roadmap/OKR outcomes); link ingested tasks that serve one via `--objectives a,b` on create
   - `dreamcontext taxonomy add domain:<concept>` · `dreamcontext config people "A" "B"`
 - **Capture real schemas** into `knowledge/data-structures/<product>.md` — actual tables/fields
