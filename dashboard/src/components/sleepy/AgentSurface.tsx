@@ -1236,6 +1236,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   /**
    * Auto-title: the chat's OWN agent names its tab (Settings → Agents → auto-name tabs).
    *
+   * First, out of band: the server derives a name from the owner's first message and sends it
+   * (`cs.offeredTitle`); a still-default tab takes it at once, so no tab sits at "Chat N" and no
+   * turn is spent asking the agent (the old Stop-hook ask cost a full-context turn in 37% of
+   * sessions, measured 2026-11-12).
+   *
    * The agent writes a `title` dream-view block (`chatViewSpec.ts`) once it understands what
    * the work is about, and again when the subject genuinely moves — it is the one reader that
    * knows, which is why this replaced the Haiku side-call that guessed from the first message.
@@ -1251,8 +1256,29 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
    */
   const armAgentTitle = useCallback((cs: ChatSession) => {
     const read = new Set<string>();
+    let offerTaken = false;
     const off = cs.subscribe(() => {
       if (sessions.current.get(cs.id) !== cs) { off(); return; }  // closed/replaced
+      // The server's name from the owner's first message (chat-tab-title-nudge.ts): no turn is
+      // spent on it. Taken only by a tab still named "Chat N"/"Agent N" — never over a name the
+      // user, a purpose or the agent gave — and marked the agent's, so its own `title` block
+      // still renames the tab later.
+      if (!offerTaken && cs.offeredTitle) {
+        offerTaken = true;
+        const offered = cleanTabTitle(cs.offeredTitle);
+        const s = agentSettingsRef.current;
+        if (offered && s.enabled && s.autoTitle) {
+          setSessionList((prev) => {
+            let changed = false;
+            const out = prev.map((m) => {
+              if (m.id !== cs.id || m.dormant || !DEFAULT_TAB_TITLE_RE.test(m.title)) return m;
+              changed = true;
+              return { ...m, title: offered, titleByAgent: true };
+            });
+            return changed ? out : prev;
+          });
+        }
+      }
       const items = cs.getModel().items;
       let title: string | null = null;
       // Newest first, stopping at the first item already read: text blocks finish in order,

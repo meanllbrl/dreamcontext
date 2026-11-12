@@ -59,6 +59,7 @@ export function createTranscriptSession(
     mcp: null,
     mcpAuth: {},
     mcpVersion: 0,
+    offeredTitle: null,
     mcpConnect: noop,
     mcpReconnect: noop,
     mcpRefresh: noop,

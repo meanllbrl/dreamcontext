@@ -5,37 +5,20 @@ import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from '../../../sr
 const ok = { type: 'result', subtype: 'success', is_error: false };
 const said = (text: string) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
 
-describe('a Codex tab names itself', () => {
-  it('asks once, after a clean turn that left the tab unnamed', () => {
+describe('a Codex tab is named by the server, never by a hidden turn', () => {
+  it('never asks for the hidden turn, named or not', () => {
     const t = new TabTitler(() => true);
     expect(t.observe(said('hello'))).toBe(false);
-    expect(t.observe(ok)).toBe(true);
     expect(t.observe(ok)).toBe(false);
-  });
-
-  it('a turn that named the tab needs no hidden turn', () => {
-    const t = new TabTitler(() => true);
-    t.observe(said(`done\n\n${titleBlock('Fatura dışa aktarma')}`));
     expect(t.observe(ok)).toBe(false);
-    expect(t.nudge()).toEqual([]);
+    const named = new TabTitler(() => true);
+    named.observe(said(`done\n\n${titleBlock('Fatura dışa aktarma')}`));
+    expect(named.observe(ok)).toBe(false);
   });
 
-  it('a failed, interrupted or synthetic turn spends nothing', () => {
-    const t = new TabTitler(() => true);
-    expect(t.observe({ ...ok, is_error: true })).toBe(false);
-    expect(t.observe({ ...ok, subtype: 'error_during_execution' })).toBe(false);
-    expect(t.observe({ ...ok, dc_synthetic: true })).toBe(false);
-    expect(t.observe(ok)).toBe(true);
-  });
-
-  it('a tab the user named is left alone', () => {
-    const t = new TabTitler(() => false);
-    expect(t.nudge()).toEqual([]);
-    expect(t.observe(ok)).toBe(false);
-  });
-
-  it('the first turn carries the line while the tab wants a name', () => {
-    expect(new TabTitler(() => true).nudge().map((c) => c.key)).toEqual(['dreamcontext-tab-title']);
+  it('carries no naming line on any turn', () => {
+    expect(new TabTitler(() => true).nudge()).toEqual([]);
+    expect(new TabTitler(() => false).nudge()).toEqual([]);
   });
 
   it('reads a title out of the block, escapes included; other views are not titles', () => {

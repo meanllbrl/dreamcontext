@@ -1,13 +1,14 @@
 /**
- * A Codex tab names itself (plan r5 §4a), the same two-step rule Claude's hooks follow:
- * a line on the first turn, then, when a turn ends with the tab still unnamed, ONE hidden
- * follow-up turn (the Stop hook's job on Claude, `chatTabTitleStopBlock`). Its frames are not
- * drawn; only the title block it wrote goes out, and that draws nothing but the tab's name.
+ * A Codex tab's name. It used to name itself like a Claude chat: a line on the first turn, then
+ * ONE hidden follow-up turn when a turn ended with the tab unnamed. Both are retired (2026-11-12):
+ * the chat server now names every chat tab from the owner's first message
+ * (`titleFromOwnerMessage`, chat-tab-title-nudge.ts), and a hidden turn re-read the whole context
+ * to write a few words. An agent's own `title` block still renames the tab.
  *
- * The prompt is `<tag>`-wrapped, so a reopened pane never shows it as the owner's text
- * (`isInjectedUserText`).
+ * The prompt is `<tag>`-wrapped, so a reopened pane that holds an old hidden turn never shows it
+ * as the owner's text (`isInjectedUserText`).
  */
-import { CHAT_TAB_TITLE_NUDGE, CHAT_TAB_TITLE_STOP_REASON } from '../chat-tab-title-nudge.js';
+import { CHAT_TAB_TITLE_STOP_REASON } from '../chat-tab-title-nudge.js';
 
 export const HIDDEN_TITLE_PROMPT =
   `<dreamcontext_tab_title>\n${CHAT_TAB_TITLE_STOP_REASON}\nRun no tools.\n</dreamcontext_tab_title>`;
@@ -39,29 +40,24 @@ function assistantText(frame: Frame): string {
 }
 
 export class TabTitler {
-  /** The tab has a name, or its one hidden turn has been spent. */
+  /** The tab has a name, or its first turn has ended. */
   private settled = false;
-  private readonly wanted: () => boolean;
 
-  constructor(wanted: () => boolean) {
-    this.wanted = wanted;
-  }
+  /** `wanted` (does the tab still want a name) is kept in the signature for the bridge's call. */
+  constructor(_wanted: () => boolean) { /* nothing to keep: no turn is spent on a name */ }
 
-  /** App context for a turn about to start: the line, while the tab still wants a name. */
+  /** App context for a turn about to start. Retired: the server names the tab (see the header). */
   nudge(): Array<{ key: string; text: string }> {
-    return !this.settled && this.wanted() ? [{ key: 'dreamcontext-tab-title', text: CHAT_TAB_TITLE_NUDGE }] : [];
+    return [];
   }
 
-  /**
-   * Every frame the pane receives. True once a clean turn ended with no name: the caller runs
-   * the hidden turn, once.
-   */
+  /** Every frame the pane receives. Never asks for the hidden turn any more (see the header). */
   observe(frame: Frame): boolean {
     if (this.settled) return false;
     if (titleIn(assistantText(frame))) { this.settled = true; return false; }
-    if (frame.type !== 'result' || frame.dc_synthetic || frame.is_error || frame.subtype !== 'success') return false;
-    if (!this.wanted()) { this.settled = true; return false; }
-    this.settled = true;
-    return true;
+    if (frame.type === 'result' && !frame.dc_synthetic && !frame.is_error && frame.subtype === 'success') {
+      this.settled = true;
+    }
+    return false;
   }
 }

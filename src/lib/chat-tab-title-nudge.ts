@@ -1,26 +1,25 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { cleanTabTitle } from './chat-view-spec.js';
 
 /**
- * The hook half of "a Chat tab is named by the agent talking in it".
+ * How a Chat tab gets its name.
  *
- * The surface briefing asks the agent for a `title` dream-view once it understands the work,
- * but it is one rule among many in a long system prompt, and measured on 2026-09-27 only ~1
- * chat in 5 ever wrote one — the rest sat at "Chat N" all day. A rule that must not be missed
- * belongs in the hook (pattern: hook-delivered must-not-miss rules), so every user prompt in a
- * chat whose agent has not named its tab yet carries one line saying so. Once any assistant
- * message in the transcript carries a title block it goes silent for good, which also covers a
- * resumed conversation that was named yesterday.
+ * History: the surface briefing asks the agent for a `title` dream-view, but only ~1 chat in 5
+ * wrote one (2026-09-27), so a per-prompt nudge was added, then (2026-10-04, still 1 in 6) a Stop
+ * block that held the first turn open ONCE for the name. Measured 2026-11-12 that block cost one
+ * extra full-context turn in 37% of sessions (median 186,759 cache-read tokens to write ~34).
+ *
+ * Now the tab is named OUT OF BAND: the chat server derives a name from the owner's first
+ * message ({@link titleFromOwnerMessage}) and hands it to the tab as a `_meta/tab_title` frame;
+ * the tab takes it only while it still carries its default "Chat N" name, marked as the agent's
+ * so the agent may still rename it with its own `title` block (the briefing keeps that rule).
+ * Neither the nudge nor the Stop block is sent any more: both return null. They stay exported
+ * because the hook and the Codex bridge still call them.
  *
  * The chat spawn exports `DREAMCONTEXT_CHAT_TAB=1` (routes/agent-chat.ts); the terminal and the
- * Assistant do not, so neither is nudged about a tab they cannot name.
- *
- * The nudge alone did not move the number: on 2026-10-04, 1 tab in 6 was named, every one of
- * the other five had been nudged on every prompt. It rides inside a UserPromptSubmit blob big
- * enough to be persisted to a file, and "once you know what the work is" lets a long turn end
- * without it. So the Stop hook now holds the turn open ONCE (`chatTabTitleStopBlock`): the
- * agent writes the block in a short continuation, which draws nothing in the chat.
+ * Assistant do not.
  */
 export const CHAT_TAB_TITLE_NUDGE =
   'This Chat tab still has its default name. In this reply, once you know what the work is, ' +
@@ -94,13 +93,11 @@ export function tabWantsAgentTitle(env: NodeJS.ProcessEnv, contextRoot: string |
 
 /** The line to print on UserPromptSubmit, or null. Pure apart from the file reads. */
 export function chatTabTitleNudge(
-  env: NodeJS.ProcessEnv, transcriptPath: string | undefined,
-  contextRoot: string | null = null, home?: string,
+  _env: NodeJS.ProcessEnv, _transcriptPath: string | undefined,
+  _contextRoot: string | null = null, _home?: string,
 ): string | null {
-  if (env.DREAMCONTEXT_CHAT_TAB !== '1') return null;
-  if (!tabWantsAgentTitle(env, contextRoot, home)) return null;
-  if (transcriptPath && transcriptHasAgentTitle(transcriptPath)) return null;
-  return CHAT_TAB_TITLE_NUDGE;
+  // Retired: the server names the tab from the owner's first message (see the header).
+  return null;
 }
 
 /** What the Stop hook hands back as `reason` — the agent reads it as the next user turn. */
@@ -111,22 +108,71 @@ export const CHAT_TAB_TITLE_STOP_REASON =
   "Name the work this chat is about, in the user's language, spaced like a sentence, never a " +
   'slug or hyphens.';
 
-const TITLE_IN_TEXT_RE = /"type"\s*:\s*"title"/;
-
 /**
  * The Stop hook's `{decision:'block', reason}` for a Chat tab whose agent ended a turn
  * without naming it, or null. `stop_hook_active` is Claude Code's own "you already blocked
  * this stop" flag, so it asks at most once per turn and can never loop.
  */
 export function chatTabTitleStopBlock(
-  env: NodeJS.ProcessEnv,
-  input: { stop_hook_active?: unknown; transcript_path?: unknown; last_assistant_message?: unknown },
-  contextRoot: string | null, home?: string,
+  _env: NodeJS.ProcessEnv,
+  _input: { stop_hook_active?: unknown; transcript_path?: unknown; last_assistant_message?: unknown },
+  _contextRoot: string | null, _home?: string,
 ): { decision: 'block'; reason: string } | null {
-  if (env.DREAMCONTEXT_CHAT_TAB !== '1') return null;
-  if (input.stop_hook_active === true) return null;
-  if (typeof input.last_assistant_message === 'string' && TITLE_IN_TEXT_RE.test(input.last_assistant_message)) return null;
-  if (!tabWantsAgentTitle(env, contextRoot, home)) return null;
-  if (typeof input.transcript_path === 'string' && transcriptHasAgentTitle(input.transcript_path)) return null;
-  return { decision: 'block', reason: CHAT_TAB_TITLE_STOP_REASON };
+  // Retired: a held-open Stop re-read the whole context to write ~34 tokens (see the header).
+  return null;
+}
+
+/** Bracket headers the app writes into a message: `[Picture 2: path]`, `[About …]`, `[Reply …]`. */
+const APP_HEADER_RE = /\[(?:Picture \d+|About|Reply)\b[^\]\n]*\]/g;
+/** A clause ends at sentence punctuation, a colon or semicolon, a dash between spaces, or a line. */
+const CLAUSE_END_RE = /[.!?;:\n\u2026]|\s[-\u2013\u2014]\s/;
+const MAX_TITLE_WORDS = 6;
+
+/**
+ * A tab name from the owner's own words, or null when they hold nothing nameable (a greeting,
+ * a bare slash command, only a path or a picture). Pure, no model call: the first clause of the
+ * message, stripped of what the app or a paste put there (pasted blocks, code, picture and reply
+ * headers, tags, links, paths), at most {@link MAX_TITLE_WORDS} words, cleaned by the same rule
+ * as an agent's `title` block. Needs two words, so "hi" or "devam" waits for the next message
+ * (the first three clauses are tried).
+ */
+export function titleFromOwnerMessage(text: unknown): string | null {
+  if (typeof text !== 'string') return null;
+  let t = text
+    .replace(/<pasted_content\b[^>]*>[\s\S]*?<\/pasted_content>/gi, ' ')
+    .replace(/```[\s\S]*?(?:```|$)/g, ' ')
+    .replace(/<\/?[A-Za-z][\w-]*(?:\s[^>]*)?>/g, ' ')
+    .replace(APP_HEADER_RE, ' ')
+    .replace(/\bhttps?:\/\/\S+/gi, ' ')
+    .replace(/(^|[\s(])(?:~|\.{1,2})?\/[^\s)]*/g, '$1 ')
+    .replace(/`[^`\n]*`/g, ' ')
+    .replace(/\b[\w.-]+\/[\w./-]+/g, ' ')
+    .replace(/[`*_]+/g, '')
+    .replace(/^[ \t]*(?:#+|>|[-+]|\d+[.)])[ \t]+/gm, '');
+  // A leading slash command is the app's verb, not the subject.
+  t = t.replace(/^\s*\/[\w:-]+/, ' ');
+  // The first clause that names something; a greeting before it ("Merhaba.") is skipped.
+  let tried = 0;
+  for (const raw of t.split(CLAUSE_END_RE)) {
+    const clause = raw.replace(/\s+/g, ' ').trim();
+    if (!clause) continue;
+    if (++tried > 3) break;
+    let words = clause.split(' ');
+    // A comma usually starts the next thought ("fix X, it drops Y"): the part before it names it.
+    const comma = clause.indexOf(',');
+    if (comma > 0) {
+      const head = clause.slice(0, comma).split(' ');
+      if (head.filter((w) => /\p{L}/u.test(w)).length >= 2) words = head;
+    }
+    words = words.slice(0, MAX_TITLE_WORDS);
+    const lettered = words.filter((w) => /\p{L}/u.test(w));
+    if (lettered.length < 2) continue;
+    const joined = words.join(' ').replace(/[,\s]+$/, '');
+    const cleaned = cleanTabTitle(joined)?.replace(/[,;:\s]+$/, '') ?? null;
+    if (!cleaned) return null;
+    // Sentence case, except a leading i/ı whose capital depends on the language.
+    const first = cleaned[0]!;
+    return /[iı]/.test(first) ? cleaned : first.toUpperCase() + cleaned.slice(1);
+  }
+  return null;
 }

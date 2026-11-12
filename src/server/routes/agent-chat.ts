@@ -2987,6 +2987,8 @@ export function startChatSession(
   const voiceTakes = new Map<string, TakeRecord>();
   /** A spoken owner message was written and its turn's `result` has not come yet. */
   let voiceArmed = false;
+  /** This process already handed its tab a name from the owner's words (once is enough). */
+  let tabTitleOffered = false;
   /** The last owner text written (`lastSentText`) was spoken: a limit-refused resend keeps it. */
   let lastSentSpoken = false;
   /** The request id of the interrupt last written, so ITS `control_response` can be told apart
@@ -5403,6 +5405,13 @@ export function startChatSession(
       // this account (the overwhelmingly common answer, and the answer whenever anything is
       // uncertain) or holds it and asks the client to restart on another account.
       const text = msg.text;
+      // The tab's name, out of band (chat-tab-title-nudge.ts): derived from the owner's first
+      // nameable message and handed to the tab, which takes it only while it is still "Chat N".
+      // No turn is spent on it. The Assistant and a card have no tab to name.
+      if (!tabTitleOffered && !isAssistant && !card) {
+        const title = titleFromOwnerMessage(text);
+        if (title) { tabTitleOffered = true; sendMeta({ subtype: 'tab_title', title }); }
+      }
       // The OWNER spoke on the Assistant's socket: whatever project text it read before is
       // now behind a human turn, so the taint clears (autonomy.ts).
       if (isAssistant) clearTaint();
@@ -5676,6 +5685,7 @@ export function startChatSession(
 // existing importer — including this file's own handlers and
 // `tests/unit/agent-chat-history.test.ts` — keeps its import path.
 import { parseTranscriptHistory, type ChatHistoryItem } from '../../lib/transcript-history.js';
+import { titleFromOwnerMessage } from '../../lib/chat-tab-title-nudge.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { phoneReadsAsRun, phoneRunItems } from '../../lib/automations/run-chat.js';
 import { approvedRunTarget } from '../../lib/automations/approved-run-target.js';
