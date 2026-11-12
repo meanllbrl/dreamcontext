@@ -24,7 +24,7 @@ import { dirname, resolve, join, extname, basename, relative, sep } from 'node:p
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../../lib/draw-intent.js';
 import {
-  enterHookProject, firstInSession, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
+  enterHookProject, firstActInSession, firstInSession, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
   resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind,
 } from '../../lib/hook-delivery.js';
@@ -74,6 +74,10 @@ import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-tit
 import { bm25Search, loadSkillDocs, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
+import {
+  actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, promptSurface,
+} from '../../lib/rules-delivery.js';
+import { HOOK_OUTPUT_MAX_CHARS } from '../../lib/snapshot-budget.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
@@ -3151,7 +3155,7 @@ export function registerHookCommand(program: Command): void {
       // so it runs LAST, after each deny gate above had its say, and never beside a refusal.
       // Claude format only: an Antigravity hook never allows on a grant (the bridge decides, once),
       // and a Codex hook's allow means something else.
-      const allow = (): never => {
+      const allow = (updatedInput: Record<string, unknown> | null = null): never => {
         if (!hookTool()) {
           let nudge: string | null = null;
           try {
@@ -3159,12 +3163,15 @@ export function registerHookCommand(program: Command): void {
             nudge = watchRoot ? maybeNudge(watchRoot, input as Record<string, unknown>) : null;
           } catch { /* the nudge is advisory — never let it touch the tool call */ }
           const granted = agy ? null : grantGateAllow(input as Record<string, unknown>, toolName, toolInput);
-          if (granted || nudge) {
+          // A dispatch's prompt carries his always and hot rules (learning loop C7, D8): merged into
+          // the one answer, an existing grant kept, none added for the append.
+          if (granted || nudge || updatedInput) {
             console.log(JSON.stringify({
               hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
                 ...(granted ? { permissionDecision: 'allow', permissionDecisionReason: granted.reason } : {}),
                 ...(nudge ? { additionalContext: nudge } : {}),
+                ...(updatedInput ? { updatedInput } : {}),
               },
             }));
           }
@@ -3258,6 +3265,26 @@ export function registerHookCommand(program: Command): void {
         }
       }
 
+      // Gate 1g (learning loop D16d, C7): before something that cannot be taken back (a publish, a
+      // push, a release, an MCP tool that sends), his `act` rules and the matching section of every
+      // `at: act` pattern, opened in full. Context added to an allowed call is read only after it
+      // ran, so the FIRST such call of a session is refused once with that text as the reason; the
+      // retry passes. A call not on the list returns before any store is read; any error lets it through.
+      try {
+        const act = actKind(toolName, toolInput);
+        const sid = typeof input.session_id === 'string' ? input.session_id : '';
+        if (act && sid) {
+          const actRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
+          const reason = actRoot
+            ? actRefusal(act, deliverForTurn(actRoot, { ...input, tool_name: toolName, tool_input: toolInput, surface: 'act' }))
+            : null;
+          if (reason && firstActInSession(sid, act)) {
+            deny(reason);
+            return;
+          }
+        }
+      } catch { /* fail open: the act gate never blocks a call it could not read */ }
+
       // Gate 1d: a heavy step goes through the lock and the repeat limit. Measured 2026-10-31:
       // 88% of them went straight past `builder`, so the limit would count almost nothing.
       if (toolName === 'Bash') {
@@ -3286,6 +3313,17 @@ export function registerHookCommand(program: Command): void {
         return;
       }
 
+      // A dispatch's prompt with his always and hot rules appended; null on any error or when none ride.
+      const dispatchInput = (): Record<string, unknown> | null => {
+        try {
+          const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
+          if (!dRoot || typeof toolInput.prompt !== 'string') return null;
+          const prompt = appendToDispatch(toolInput.prompt, deliverForTurn(dRoot, { ...input, surface: 'dispatch' }));
+          return prompt ? { ...toolInput, prompt } : null;
+        } catch { return null; }
+      };
+      if (toolName === 'Task') allow(dispatchInput());
+
       // Gate 2: redirect default Explore agent to dreamcontext-explore.
       if (toolName !== 'Agent') allow();
 
@@ -3295,11 +3333,11 @@ export function registerHookCommand(program: Command): void {
       // Only gate the default Explore agent. Case/whitespace-tolerant so a casing
       // variant ("explore") still hits the gate, while never matching our own
       // redirect target ("dreamcontext-explore", which !== "explore").
-      if (subagentType.trim().toLowerCase() !== 'explore') allow();
+      if (subagentType.trim().toLowerCase() !== 'explore') allow(dispatchInput());
 
       // Only gate when _dream_context/ exists (context-managed projects)
       const root = resolveContextRoot();
-      if (!root) allow(); // no context directory, default Explorer is fine
+      if (!root) allow(dispatchInput()); // no context directory, default Explorer is fine
 
       // Block default Explorer and redirect to context-aware version
       console.log(JSON.stringify({
@@ -3367,13 +3405,21 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
       const agentType = input?.agent_type ?? input?.subagent_type;
       const briefing = generateSubagentBriefing({ form: briefingFormForAgent(agentType) });
-      if (!briefing) process.exit(0);
+      // His always and hot rules ride every sub-agent's start (learning loop C7), inside the one
+      // addition's host limit: what does not fit folds into one "more" line, never cut mid-rule.
+      let rules: string | null = null;
+      try {
+        const room = HOOK_OUTPUT_MAX_CHARS - (briefing?.length ?? 0) - (brainNote?.length ?? 0) - 200;
+        if (room > 300) rules = helperLines(deliverForTurn(root, { ...(input ?? {}), surface: 'child' }, { max: room }));
+      } catch { rules = null; }
+      const body = [briefing, rules].filter(Boolean).join('\n\n');
+      if (!body) process.exit(0);
 
       // SubagentStart hooks must output JSON with hookSpecificOutput.additionalContext
       console.log(JSON.stringify({
         hookSpecificOutput: {
           hookEventName: 'SubagentStart',
-          additionalContext: brainNote ? `${brainNote}\n\n${briefing}` : briefing,
+          additionalContext: brainNote ? `${brainNote}\n\n${body}` : body,
         },
       }));
     });
@@ -3494,6 +3540,15 @@ export function registerHookCommand(program: Command): void {
       // He asked for a rule to be remembered (learning loop C4): one must-print cue, on his own words
       // only. It writes nothing (the hook never writes the owner-words ledger) and makes no rule active.
       if (ownerText !== null && detectRememberIntent(ownerText)) console.log(REMEMBER_INTENT_LINE);
+      // P1 (learning loop C7): on his turn and on a finished-work event, his always, hot and
+      // report/ask rules sit next to the turn, as the must-print part. Nothing on a machine turn.
+      try {
+        const surface = promptSurface(rawPrompt);
+        if (surface !== 'machine') {
+          const lines = momentLines(deliverForTurn(root, { ...input, surface }));
+          if (lines) console.log(lines);
+        }
+      } catch { /* the rules are also in the session-start block */ }
 
       const state = readSleepState(root);
 

@@ -263,6 +263,12 @@ export interface PatternDoc {
    * `dreamcontext learn`). Still listed, but inert: no `/` shim, never matched, never pasted inline.
    */
   generated?: boolean;
+  /**
+   * `at: act` in the frontmatter: a pattern about something that cannot be taken back (a publish, a
+   * push, a message to a third party). Before such a call its matching section is opened in full
+   * (learning loop D16d, `rules-delivery.ts` actDelivery).
+   */
+  act?: boolean;
 }
 
 /**
@@ -486,6 +492,7 @@ export function loadPatternsReporting(contextRoot: string): PatternLoadResult {
         bodyKeys: foldKeys(content),
         authored: authoredTriggers.length > 0,
         ...(fm.generated === true ? { generated: true } : {}),
+        ...(fm.at === 'act' ? { act: true } : {}),
       });
     } catch (err) {
       // Must never break the prompt hook — but must never be silent either.

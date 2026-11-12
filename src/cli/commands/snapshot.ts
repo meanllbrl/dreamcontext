@@ -29,6 +29,7 @@ import {
   hasPeopleLayout, isMultiPersonVault, listPeople, personFilePath, PeopleStoreError,
 } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
+import { preferencesBlock } from '../../lib/rules-delivery.js';
 import { loadStatuses, loadTaskOverride, renderOverrideBriefing, hasCustomStatuses } from '../../lib/overrides.js';
 import { DEFAULT_STATUSES, isActive, isTerminal, statusKeys, statusKind, type StatusDef } from '../../lib/task-status.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
@@ -1397,6 +1398,14 @@ export function measureSnapshot(
   const activePerson = opts.peer !== true && hasPeopleLayout(root)
     ? resolveActivePerson(root)
     : null;
+  // His preferences (learning loop C7, D4): every active learned rule in short form with its id,
+  // pinned with the person (never demoted by the snapshot's own budget), re-sent after a
+  // compaction because the snapshot is. Never in a peer's snapshot: its rules are its own.
+  const pushPreferences = (): void => {
+    let block: string | null = null;
+    try { block = preferencesBlock(root); } catch { block = null; }
+    if (block) { parts.push(block); parts.push(''); }
+  };
   if (activePerson) {
     const constitutionPath = activePerson.slug ? personFilePath(root, activePerson.slug) : null;
     if (activePerson.slug && constitutionPath && existsSync(constitutionPath)) {
@@ -1415,6 +1424,7 @@ export function measureSnapshot(
       );
       parts.push('');
     }
+    pushPreferences();
     flushPinned('person');
   } else if (opts.peer !== true) {
     // SUNSET: remove in 0.24.0 — D15's migration window, and nothing more. It is
@@ -1431,8 +1441,9 @@ export function measureSnapshot(
       parts.push('> ⚠️ Retired layout — run `dreamcontext update` to migrate to `people/`.');
       parts.push(content);
       parts.push('');
-      flushPinned('person');
     }
+    pushPreferences();
+    flushPinned('person');
   }
 
   // 2a. Everyone ELSE in this vault — inventory, not constitution, so unlike the
