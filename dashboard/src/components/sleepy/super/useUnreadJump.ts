@@ -9,7 +9,7 @@ import { lineHostOf } from './useSuperUnread';
  * after a reveal's hold has settled. The caller owns `glideRef`: its pin and hold stand aside
  * while that is set, and its input handlers end a jump through `stopGlideRef`.
  */
-export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landingOf, flashMs, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef }: {
+export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landingOf, flashMs, holdRow, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef }: {
   scrollRef: RefObject<HTMLElement | null>;
   rowOf: (u: UnreadUnit) => HTMLElement | null;
   look: () => void;
@@ -18,6 +18,8 @@ export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landingOf, f
    *  a question card whole when it fits (landingFor). */
   landingOf: (unit: UnreadUnit, row: HTMLElement, scroller: HTMLElement) => number;
   flashMs: number;
+  /** The row landed on: the pane's hold keeps ITS start in place while the layout settles. */
+  holdRow: (row: HTMLElement) => void;
   captureAnchor: () => void;
   prevTopRef: MutableRefObject<number>;
   restoreTopRef: MutableRefObject<number>;
@@ -51,6 +53,7 @@ export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landingOf, f
       cancelAnimationFrame(glide.frame);
       glideRef.current = null;
       stopGlideRef.current = () => {};
+      holdRow(row);
       captureAnchor();
       look();
     };
@@ -70,7 +73,7 @@ export function useUnreadJump({ scrollRef, rowOf, look, measureTop, landingOf, f
     row.setAttribute('data-reply-flash', '');
     const flash = setTimeout(() => row.removeAttribute('data-reply-flash'), flashMs);
     return () => { clearTimeout(flash); row.removeAttribute('data-reply-flash'); land(); };
-  }, [jump, scrollRef, rowOf, look, measureTop, landingOf, flashMs, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef]);
+  }, [jump, scrollRef, rowOf, look, measureTop, landingOf, flashMs, holdRow, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef]);
   return useCallback((unit: UnreadUnit, opts?: { instant?: boolean }) => {
     setJump((prev) => ({ unit, n: (prev?.n ?? 0) + 1, instant: !!opts?.instant }));
   }, []);

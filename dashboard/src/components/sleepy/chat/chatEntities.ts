@@ -1540,6 +1540,22 @@ export function stepHistory(
 
 // ─── Stick-to-bottom (transcript auto-scroll) ─────────────────────────────────────
 
+/** Where a row starts in the scroller's content, in the same pixels as `scrollTop`. A rect is in
+ *  SCREEN pixels: while an ancestor is transformed (the Super pane's opening animation scales it)
+ *  they differ from scroll pixels, and a landing measured then missed by its scale (measured on a
+ *  reload: the report's start 97 px down for a 64 px landing, or above the view). */
+export function contentTopOf(node: Element, scroller: HTMLElement): number {
+  const box = scroller.getBoundingClientRect();
+  return (node.getBoundingClientRect().top - box.top) / screenScaleOf(scroller, box) + scroller.scrollTop;
+}
+
+/** Screen pixels per layout pixel of an element (1 untransformed). */
+export function screenScaleOf(el: HTMLElement, box: DOMRect = el.getBoundingClientRect()): number {
+  const scale = el.offsetHeight > 0 ? box.height / el.offsetHeight : 1;
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+
 /** How far from the bottom still counts as "at the bottom" — one short line of slack, so a
  *  token that lands between a scroll and its handler never reads as the user leaving. */
 export const BOTTOM_SLACK = 48;

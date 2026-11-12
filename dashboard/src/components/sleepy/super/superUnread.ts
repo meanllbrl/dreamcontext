@@ -1,5 +1,5 @@
 import { msgRef } from '../../../lib/superTypes';
-import { groupSuperEventTurns } from './superHandover';
+import { groupSuperEventTurns, superEventOf } from './superHandover';
 
 /**
  * WHAT IS UNREAD in the Super Agent's chat (owner 2026-10-30, draft A): the pure half.
@@ -38,6 +38,10 @@ export interface UnreadItem {
 
 /** Event turns that are bookkeeping unless the Super Agent actually said something in them. */
 const QUIET_EVENTS: ReadonlySet<string> = new Set(['handover', 'fresh']);
+/** The same, told by the prompt itself: the server re-sending a turn the Super owes a reply. It
+ *  tells the owner nothing, and its replay is drawn as an event line its live copy never was, so
+ *  it came back unread after every reload (and, with the follow, the reload landed on it). */
+const QUIET_PREFIXES: ReadonlySet<string> = new Set(['[super owed]']);
 
 /** The same words on another render path (live stream or replay, a reply mark's comment head
  *  or not) must give the same key, or a message read yesterday comes back unread. */
@@ -92,11 +96,13 @@ export function unreadUnits(
   if (opts.fold) {
     const { groups } = groupSuperEventTurns(items, { ownerBatches: opts.ownerBatches, expanded: new Set() });
     const textIds = new Set(items.filter((it) => it.kind === 'text' && it.done && it.text?.trim()).map((it) => it.id));
+    const textOf = new Map(items.map((it) => [it.id, it.text ?? '']));
     for (const g of groups.values()) {
       for (const id of g.folded) folded.add(id);
       // A batch he was asked in is drawn full: its prose rows speak for it.
       const prose = g.folded.filter((id) => textIds.has(id)).length;
-      if (!g.full && (!QUIET_EVENTS.has(g.kind) || prose > 0)) anchors.set(g.anchor, eventKey(g, prose));
+      const quiet = QUIET_EVENTS.has(g.kind) || QUIET_PREFIXES.has(superEventOf(textOf.get(g.anchor) ?? '')?.prefix ?? '');
+      if (!g.full && (!quiet || prose > 0)) anchors.set(g.anchor, eventKey(g, prose));
     }
   }
   const units: UnreadUnit[] = [];

@@ -1,6 +1,6 @@
 import { useCallback, useRef, type MutableRefObject, type RefObject } from 'react';
 import {
-  doorTarget, emptyPassed, followAnchors, followTop, landingFor, passAll as passAllOf, PROSE_LANDING,
+  doorTarget, emptyPassed, followAnchors, followTop, landingFor, passAll as passAllOf, PROSE_LANDING, START_SLACK,
   type FollowAnchor, type Span, type UnreadUnit,
 } from './superUnread';
 import { lineHostOf } from './useSuperUnread';
@@ -20,7 +20,7 @@ export interface FollowUnread {
   /** Where a pinned view goes instead of the bottom, or null for the bottom. `allowUp`: the opened
    *  pane's first landing, which may go up and reveal a row above the mounted window; otherwise a
    *  pinned view only moves down. `{ reveal: true }`: a reveal was started, it lands by itself. */
-  target: (el: HTMLElement, allowUp: boolean) => { top: number } | { reveal: true } | null;
+  target: (el: HTMLElement, allowUp: boolean) => { top: number; node: HTMLElement } | { reveal: true } | null; // node: the anchor's row; its start is lineHostOf(node)
   /** The reader chose the end (Latest, a send, his own scroll to the bottom). */
   passAll: () => void;
   /** A door to a question (the band's Answer, the agenda's waiting row; K1 = A). */
@@ -104,9 +104,13 @@ export function useFollowUnread(scrollRef: RefObject<HTMLElement | null>, conten
         continue;
       }
       const host = lineHostOf(row);
+      const top = inp.measureTop(host, el);
+      // Its start already above a pinned view: moving down cannot show it, and holding on it would
+      // only make the follow creep (the pill points at it). The next candidate decides.
+      if (!allowUp && top < el.scrollTop - START_SLACK) continue;
       const landing = 'question' in a ? landingFor('question', row.getBoundingClientRect().height, el.clientHeight) : PROSE_LANDING;
-      const next = followTop(el.scrollHeight - el.clientHeight, inp.measureTop(host, el), landing, allowUp ? 0 : el.scrollTop);
-      return next.held ? { top: next.top } : null;
+      const next = followTop(el.scrollHeight - el.clientHeight, top, landing, allowUp ? 0 : el.scrollTop);
+      return next.held ? { top: next.top, node: row } : null;
     }
     return null;
   }, [rowOfAnchor, aboveWindow]);

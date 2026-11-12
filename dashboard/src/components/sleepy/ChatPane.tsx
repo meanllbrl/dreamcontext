@@ -21,7 +21,7 @@ import {
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
-  isHeadlessAgentShell, isTeammateRun,
+  isHeadlessAgentShell, isTeammateRun, contentTopOf,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
 import { isDreamcontextCommand, teamDoneRepeats, teamDoneText } from './chat/dreamCommand';
@@ -92,7 +92,7 @@ import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { SuperUnreadBar } from './super/SuperUnreadBar';
-import { useSuperUnread } from './super/useSuperUnread';
+import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
 import { useFollowUnread } from './super/useFollowUnread';
 import { landingFor, SUPER_QUESTION_EVENT, type SuperQuestionDetail, type UnreadUnit } from './super/superUnread';
@@ -171,8 +171,13 @@ const ANCHOR_CANDIDATES = 5;
  *  deliberately scroll-invariant: `rect.top` falls by exactly what `scrollTop` rises by, so
  *  the sum is the same number before and after any scroll — including the browser's own
  *  clamp during the commit being measured. */
-function contentTopOf(node: Element, scroller: HTMLElement): number {
-  return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+/** A row the anchor hold measures. `start`: an unread row held by its start, the reply strip
+ *  above it when there is one (`lineHostOf`), resolved on every measure: the strip can mount or
+ *  leave while the history settles, and the start is what must stay in view. */
+interface HoldCandidate { node: Element; top: number; start?: boolean }
+
+function holdTopOf(c: { node: Element; start?: boolean }, scroller: HTMLElement): number {
+  return contentTopOf(c.start && c.node instanceof HTMLElement ? lineHostOf(c.node) : c.node, scroller);
 }
 
 function safeStringify(v: unknown): string {
@@ -926,6 +931,7 @@ export function ChatPane({
 
   const setStick = useCallback((next: boolean) => {
     stickRef.current = next;
+    if (next) followRowRef.current = null;
     setPinned((prev) => (prev === next ? prev : next));
     // Not every return to the bottom scrolls (a send at the bottom, a jump already there).
     if (next) setComposerFolded(false);
@@ -937,6 +943,12 @@ export function ChatPane({
   const { follow, inputs: followInputs } = useFollowUnread(scrollRef, contentRef);
   /** `captureAnchor` is defined further down; the cap re-takes the hold through this. */
   const captureAnchorRef = useRef<() => void>(() => {});
+  /** The unread row a landing holds (the follow's cap, the reload's reveal, every unread jump): the
+   *  hold measures ITS START first, resolved on every measure (`lineHostOf`: a reply strip above it
+   *  when there is one, which can mount or leave while the history settles), so nothing changing
+   *  around it can slide that start out of view. Cleared by the reader's input, another jump, or
+   *  the view pinning again. */
+  const followRowRef = useRef<HTMLElement | null>(null);
   /** The cap: when following the bottom would push the first unread's start above the view, write
    *  its start once and leave the view unpinned and HELD there. True: it wrote (or started a
    *  reveal that lands by itself), so the bottom write is skipped. */
@@ -945,6 +957,7 @@ export function ChatPane({
     if (!at) return false;
     if ('reveal' in at) return true;
     setStick(false);
+    followRowRef.current = at.node;
     el.scrollTop = at.top;
     prevTopRef.current = el.scrollTop;
     restoreTopRef.current = el.scrollTop;
@@ -1041,6 +1054,7 @@ export function ChatPane({
   const markActivity = useCallback(() => {
     lastActivityAtRef.current = performance.now();
     jumpHeldRef.current = false;
+    followRowRef.current = null;
     stopGlideRef.current();
   }, []);
   /** Pending settled-reveal timer, so a burst of scroll events keeps exactly one alive. */
@@ -1389,7 +1403,7 @@ export function ChatPane({
    *  a large block of entries is KNOWN to be landing above the reader, and therefore the only
    *  case where the height fallback in `holdAnchorSteady` is worth taking. */
   const heldAnchorRef = useRef<
-    { candidates: Array<{ node: Element; top: number }>; scrollHeight: number; prepend: boolean } | null
+    { candidates: HoldCandidate[]; scrollHeight: number; prepend: boolean } | null
   >(null);
 
   /**
@@ -1425,7 +1439,7 @@ export function ChatPane({
     const inner = contentRef.current;
     if (!el || !inner || el.clientHeight === 0) { heldAnchorRef.current = null; return; }
     const fold = el.getBoundingClientRect().top;
-    const candidates: Array<{ node: Element; top: number }> = [];
+    const candidates: HoldCandidate[] = [];
     const rows: Element[] = [];
     for (const child of Array.from(inner.children)) {
       // Never the "show earlier" button: it is the one row a reveal can DELETE rather than
@@ -1440,8 +1454,12 @@ export function ChatPane({
       if (runRows && runRows.length) rows.push(...Array.from(runRows));
       else rows.push(child);
     }
+    // The landed unread row first (followRowRef): held by its START, whichever element starts it.
+    const held = followRowRef.current;
+    if (held?.isConnected) candidates.push({ node: held, top: holdTopOf({ node: held, start: true }, el), start: true });
     for (const node of rows) {
       if (candidates.length >= ANCHOR_CANDIDATES) break;
+      if (node === held) continue;
       if (node.getBoundingClientRect().bottom <= fold) continue;
       candidates.push({ node, top: contentTopOf(node, el) });
     }
@@ -1482,7 +1500,7 @@ export function ChatPane({
     const delta = anchor
       ? anchorHoldCorrection({
         anchorTopBefore: anchor.top,
-        anchorTopAfter: contentTopOf(anchor.node, el),
+        anchorTopAfter: holdTopOf(anchor, el),
       })
       // Nothing the reader was looking at survived the commit — a rewind truncating the
       // transcript underneath a reveal. Total height is the WRONG measure (a streamed append
@@ -1504,7 +1522,7 @@ export function ChatPane({
     // perfectly leave the SAME numbers here — this is the truth either way, and recording it
     // is what makes the next call a no-op rather than a repeat of a correction already made.
     if (anchor) {
-      for (const c of held.candidates) if (c.node.isConnected) c.top = contentTopOf(c.node, el);
+      for (const c of held.candidates) if (c.node.isConnected) c.top = holdTopOf(c, el);
       held.scrollHeight = el.scrollHeight;
     } else {
       captureAnchor();
@@ -2766,7 +2784,8 @@ export function ChatPane({
   const unreadLanding = useCallback((u: UnreadUnit, row: HTMLElement, sc: HTMLElement) => (
     u.question ? landingFor('question', row.getBoundingClientRect().height, sc.clientHeight) : RAIL_CLEARANCE
   ), []);
-  const goToUnread = useUnreadJump({ scrollRef, rowOf: unreadRowOf, look: lookAtUnread, measureTop: contentTopOf, landingOf: unreadLanding, flashMs: FLASH_MS, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef });
+  const holdUnreadRow = useCallback((row: HTMLElement) => { followRowRef.current = row; }, []);
+  const goToUnread = useUnreadJump({ scrollRef, rowOf: unreadRowOf, look: lookAtUnread, measureTop: contentTopOf, landingOf: unreadLanding, flashMs: FLASH_MS, holdRow: holdUnreadRow, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef });
   followInputs.current = {
     enabled: !!superView && !!superQuestionView,
     items: unreadItems,
@@ -2802,6 +2821,7 @@ export function ChatPane({
       const detail = (e as CustomEvent<SuperQuestionDetail>).detail;
       if (!detail?.item) return;
       e.preventDefault();
+      followRowRef.current = null;
       detail.landed = follow.door(detail.item);
     };
     el.addEventListener(SUPER_QUESTION_EVENT, onDoor);
@@ -2811,6 +2831,7 @@ export function ChatPane({
     const unit = superUnread.next();
     if (!unit) return;
     follow.forgetDoor();
+    followRowRef.current = null;
     if (unit.itemId ? releaseToItem(unit.itemId) === null : !unreadRowOf(unit)) return;
     setStick(false);
     jumpHeldRef.current = true;

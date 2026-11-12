@@ -10,6 +10,7 @@
  *
  *   npm run build && node scripts/verify/super-unread-follow.mjs
  *   SHOTS_DIR=<dir> keeps the screenshots and the numbers (olcum.json) there.
+ *   ONLY=reload runs a long history and the away/back/reload step alone.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -92,8 +93,9 @@ async function superTurn(text, all) {
   const ref = (/<owner-msg ref="([^"]+)"/.exec(all) || [])[1];
   const head = ref ? '<!-- re:' + ref + ' -->\\n' : '';
   if (text.startsWith('[super handover]')) { report({ kind: 'handover' }); return 'Devraldım.'; }
-  if (text.startsWith('[super answer]')) { report({ kind: 'answer', text }); return ''; }
-  if (text.startsWith('[super')) return '';
+  // A real Super acknowledges under the reply mark, or the server re-sends the turn as owed.
+  if (text.startsWith('[super answer]')) { report({ kind: 'answer', text }); say(head + 'Tamam, yüzde 20 ile bitiriyorum.'); return ''; }
+  if (text.startsWith('[super')) { report({ kind: 'event', text: text.slice(0, 60) }); return ''; }
   const m = /^(RAPOR|IKI|AKIS|KISA) ?(\\S*)/.exec(text.trim());
   if (!m) { report({ kind: 'owner', text }); return 'ok'; }
   const [, what, tag] = m;
@@ -255,6 +257,13 @@ async function run() {
     const b = page.locator('[data-testid="super-unread-bottom"], .chat-jump').filter({ visible: true }).first();
     if (await b.count()) { await b.click(); await page.waitForTimeout(700); }
   };
+  /** Each step starts from nothing unread: what an earlier step left (passed, not read) would
+   *  otherwise be "the first unread" of the next one. */
+  const clean = async () => {
+    const all = page.locator('[data-testid="super-unread-all"]').filter({ visible: true }).first();
+    if (await all.count()) { await all.click(); await page.waitForTimeout(500); }
+    await toLatest();
+  };
   /** Where the report sits on screen, the landing band: 0 … landing (64) + start slack (8). */
   const inBand = (top) => top !== null && top >= 0 && top <= 72;
   const maxJump = (fs) => fs.reduce((mx, f, i) => (i && f.top !== null && fs[i - 1].top !== null ? Math.max(mx, Math.abs(f.top - fs[i - 1].top)) : mx), 0);
@@ -262,7 +271,7 @@ async function run() {
   /** Criterion 1 + 2 at one size and theme: at the screen, pinned, report then question. */
   const atScreen = async (tag, label) => {
     await blur(false);
-    await toLatest();
+    await clean();
     await trace.start(tag);
     await round(`RAPOR ${tag}`);
     await page.waitForTimeout(400);
@@ -299,6 +308,8 @@ async function run() {
     await until(page, async () => (await input().count()) > 0, 30000);
     await page.waitForTimeout(2500);
 
+    const ONLY = process.env.ONLY || '';
+    if (!ONLY) {
     console.log('\n── 1440 light: at the screen');
     const a = await atScreen('A', '1440-acik');
     // The report is read once its start has been on screen a second: then the question is next.
@@ -318,6 +329,7 @@ async function run() {
     await answer();
 
     console.log('\n── 1440 light: read needs the start; the band\'s Answer goes to the information first (K1 = A)');
+    await clean();
     await round('IKI B', { away: true });
     await page.waitForTimeout(800);
     // His own wheel puts the report's END at the view's bottom, its start above: the old rule read it.
@@ -352,7 +364,7 @@ async function run() {
     await answer();
 
     console.log('\n── 1440 light: a short reply that fits');
-    await toLatest();
+    await clean();
     await round('KISA C');
     await page.waitForTimeout(1500);
     const c = await m(null);
@@ -360,21 +372,25 @@ async function run() {
     ok('[1440-acik] AC5: a short reply that fits: at the bottom, pinned, no pill (distance ≤ 48)', c.distToBottom <= 48 && !c.latest && c.bar === null, c);
 
     console.log('\n── 1440 light: a streamed long answer');
-    await toLatest();
+    await clean();
     await trace.start('D');
     await round('AKIS D');
     await page.waitForTimeout(1600);
     const dFrames = await trace.stop();
     const d = await m('D');
-    note('D-stream', { end: d, frames: dFrames.length });
+    note('D-stream', { end: d, frames: dFrames.filter((f, i) => i % 5 === 0 || f.top !== dFrames[i - 1]?.top) });
     const seen = dFrames.filter((f) => f.top !== null);
     const capAt = seen.findIndex((f) => f.top <= 72);
     const afterCap = capAt >= 0 ? seen.slice(capAt) : [];
     ok('[1440-acik] AC6: a streamed answer stops at its first line; it stays in view until the end; the plain Latest pill shows', capAt >= 0 && afterCap.every((f) => f.top >= 0 && f.top <= 72) && d.latest && d.bar === null, { capAt, afterCap: afterCap.length, minTop: Math.min(...afterCap.map((f) => f.top)), maxTop: Math.max(...afterCap.map((f) => f.top)), latest: d.latest, bar: d.bar });
     await shot('sonra-1440-acik-6-akis');
 
+    } else {
+      // A history as long as the full run's before the reload step (the window mounts part of it).
+      for (const w of ['W1', 'W2', 'W3', 'W4', 'W5']) { await clean(); await round(`RAPOR ${w}`); await page.waitForTimeout(1500); await answer(); }
+    }
     console.log('\n── 1440 light: away, then back; a reload');
-    await toLatest();
+    await clean();
     await round('RAPOR E', { away: true });
     await page.waitForTimeout(1500);
     await blur(false);
@@ -390,13 +406,27 @@ async function run() {
     await until(page, async () => (await input().count()) > 0, 30000);
     await page.waitForTimeout(2500);
     const reloadFrames = await trace.stop();
+    await trace.start('E');
     await blur(false);
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(1500);
+    const focusFrames = await trace.stop();
     const e2 = await m('E');
+    const thin = (fs) => fs.filter((f, i) => i === 0 || f.top !== fs[i - 1].top || f.st !== fs[i - 1].st);
+    note('E-reload-frames', { load: thin(reloadFrames), focus: thin(focusFrames) });
     const shownAtBottom = reloadFrames.filter((f) => f.top !== null && f.top < 0 && f.d <= 48).length;
-    note('E-reload', { at: e2, framesAtBottomFirst: shownAtBottom, frames: reloadFrames.length });
+    const atLanding = await page.evaluate(() => {
+      const sc = [...document.querySelectorAll('[data-super-slot="centre"] .chat-scroll')].find((e) => e.getBoundingClientRect().height > 0);
+      if (!sc) return null;
+      const v = sc.getBoundingClientRect();
+      const el = document.elementFromPoint(v.left + v.width / 2, v.top + 70)?.closest('[data-item-id], [data-reply-strip], [data-testid]');
+      return el ? { id: el.getAttribute('data-item-id'), strip: el.getAttribute('data-reply-strip'), testid: el.getAttribute('data-testid'), cls: el.className, text: el.textContent.slice(0, 90) } : null;
+    });
+    note('E-reload-at-landing', atLanding);
+    const dotted = await page.evaluate(() => [...document.querySelectorAll('.chat-scroll [data-unread]')].filter((e) => e.getBoundingClientRect().height > 0).map((e) => ({ top: Math.round(e.getBoundingClientRect().top), id: e.getAttribute('data-item-id'), text: e.textContent.slice(0, 70) })));
+    note('E-reload', { at: e2, framesAtBottomFirst: shownAtBottom, frames: reloadFrames.length, dotted });
     ok('[1440-acik] AC7b: after a reload the view is on the first unread\'s start', inBand(e2.reportTop), { at: e2.reportTop, framesAtBottomFirst: shownAtBottom });
 
+    if (ONLY) throw new Error('ONLY: stopped after the reload step');
     console.log('\n── 1440 light: the reader\'s choice of the end wins');
     await answer();
     await toLatest();
@@ -447,9 +477,11 @@ async function run() {
     note('console-errors', real);
     ok('AC12: no console errors', real.length === 0, real);
   } catch (err) {
+    if (err?.message === 'ONLY: stopped after the reload step') { /* the asked-for step ran */ } else {
     fails.push(`crash: ${err?.message ?? err}`);
     console.log('CRASH', err?.stack || String(err));
     await page.screenshot({ path: join(SHOTS, 'zz-crash.png') }).catch(() => {});
+    }
   } finally {
     writeFileSync(join(SHOTS, 'olcum.json'), `${JSON.stringify(log, null, 2)}\n`);
     await context.close();

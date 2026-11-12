@@ -43,6 +43,12 @@ describe('what counts as unread', () => {
     expect(unreadOf(after, marks(0, [{ key: before[0].key, ts: 10 }]))).toHaveLength(1);
   });
 
+  it('a re-sent owed turn is bookkeeping unless the Super said something in it', () => {
+    const owed = '[super owed] items=1\n- owed=o2 kind=msg ref=abc at=23:04\n';
+    expect(units([user('u', 'go', 1), user('e', owed, 10)])).toEqual([]);
+    expect(units([user('u', 'go', 1), user('e', owed, 10), text('r', 'sorry, here it is', 11)]).map((u) => u.itemId)).toEqual(['e']);
+  });
+
   it('a batch is keyed by its id, whatever its item lines say', () => {
     const live = units([user('e', '[super events] batch=b1 items=1\n- item=i child=c1 event=idle', 10), text('r', 'x', 11)]);
     const replay = units([user('e', '[super events] batch=b1 items=2\n- item=i team=t member=m\n- item=j child=c2 event=idle', 10), text('r', 'x', 11)]);
