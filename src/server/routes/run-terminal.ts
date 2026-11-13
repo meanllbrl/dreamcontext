@@ -27,6 +27,7 @@
  * root. A crew child's card resolves its record through the owner item's card handle
  * (`ensureCardsFor`), with no live chat needed.
  */
+import { appReplacedUnderUs } from '../../lib/app-drift.js';
 import type { IncomingMessage, ServerResponse, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { basename, join } from 'node:path';
@@ -222,6 +223,8 @@ async function runFor(c: CardRequest, by: 'mac' | 'phone', rec: CardRecordEntry,
   // What is shown is what runs (K4): no start, from any surface, of a command that can draw as
   // something else. Attaching to a run already going is unaffected.
   if (!commandShowableAsIs((rec.spec as RunViewSpec).command)) return 409;
+  // Replaced under this server (an install while it runs): no start that would fail half-loaded.
+  if (appReplacedUnderUs()) return 409;
   const press = await pressRoot(rec, shownRoot);
   if (!press.ok) return 'folder_changed';
   const root = press.root;

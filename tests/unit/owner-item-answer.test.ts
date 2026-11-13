@@ -310,6 +310,68 @@ describe('an allowed call refused again is offered again, never locked', () => {
   });
 });
 
+describe('an Allow whose call can no longer matter (field 2026-11-13: one Allow, three deliveries)', () => {
+  const CHILD = '99e1f772-66df-4c74-bae0-c17f9253d35e';
+  const CALL = `cd /tmp/acme && dreamcontext super answer ${CHILD} req-push-1 "Yes, push 0.41.20"`;
+  function askingChild(): ChatHandle {
+    const c = registerChat({ sessionId: CHILD, conversationId: null, vault: 'acme', mode: 'develop', permissionMode: 'default' });
+    c.userSent('release it');
+    c.observe({ type: 'control_request', request_id: 'req-push-1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Push 0.41.20?', options: [{ label: 'Yes' }, { label: 'No' }] }] }, tool_use_id: 'toolu_ask' } });
+    return c;
+  }
+
+  it('the child is answered another way meanwhile and the agent runs the call in another form: closed, never offered again', async () => {
+    const child = askingChild();
+    // One process for the whole story, as on the field (a re-register's own "go" would answer its waits).
+    const session = await rotaSession();
+    const h = crew(session);
+    refuse(h, CALL);
+    await _superInboxDrained();
+    const item = (await rota()).queue.find((q) => q.own && q.kind === 'owner' && q.wait?.kind === 'refusal') as SuperQueueItem;
+    const mirror = (await main()).queue.find((q) => q.kind === 'member' && q.answers === item?.id) as SuperQueueItem;
+    const turns: string[] = [];
+    registerCrewHandle(session, { sendServerTurn: (t) => { turns.push(t); h.userSent(t, { server: true }); return true; } });
+    expect(await answerShown(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'once' } }))
+      .toEqual({ ok: true, outcome: 'allowed' });
+    expect(turns).toHaveLength(1);
+    // The owner answered the child's own card first: it asks nothing any more.
+    child.answered('req-push-1', { 'Push 0.41.20?': 'Yes' });
+    // The agent ran it without the `cd` (no grant spent, no refusal) and its turn ended.
+    h.observe({ type: 'assistant', message: { content: [{ type: 'text', text: 'Already answered.' }] } });
+    h.observe({ type: 'result', subtype: 'success', is_error: false });
+    await new Promise((r) => setTimeout(r, 5));
+    await _superInboxDrained();
+    const s = await rota();
+    expect(s.queue.find((q) => q.id === item.id)?.state).toBe('done');
+    // Never asked again: no new item for the same call, so no second Allow and no second turn.
+    expect(s.queue.filter((q) => q.own && q.wait?.kind === 'refusal' && q.state !== 'done')).toEqual([]);
+    expect(turns).toHaveLength(1);
+  });
+
+  it('allowed after the child stopped asking: closed with a short note, no grant, no turn', async () => {
+    const { session, item, mirror } = await rotaRefused(CALL);
+    const turns: string[] = [];
+    registerCrewHandle(session, { sendServerTurn: (t) => { turns.push(t); return true; } });
+    const r = await answerShown(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'once' } });
+    expect(r).toMatchObject({ ok: false, error: 'already_answered' });
+    expect(r.ok ? '' : r.message).toMatch(/already answered/);
+    expect(turns).toEqual([]);
+    expect(listGrants()).toEqual([]);
+    await _superInboxDrained();
+    expect((await rota()).queue.find((q) => q.id === item.id)?.state).toBe('done');
+  });
+
+  it('while the child still asks, the Allow goes in as before', async () => {
+    askingChild();
+    const { session, mirror } = await rotaRefused(CALL);
+    const turns: string[] = [];
+    registerCrewHandle(session, { sendServerTurn: (t) => { turns.push(t); return true; } });
+    expect(await answerShown(root, { record: 'main', item: mirror.id, via: 'bar', answer: { kind: 'refusal', action: 'allow', size: 'once' } }))
+      .toEqual({ ok: true, outcome: 'allowed' });
+    expect(turns).toHaveLength(1);
+  });
+});
+
 describe('first answer wins, at every size', () => {
   it('allowed for this job while its chat is closed: a second Allow and a Not needed are told it was answered', async () => {
     const { item, mirror } = await rotaRefused();

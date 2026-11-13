@@ -95,7 +95,7 @@ import { sanitizeModel } from '../../lib/claude-args.js';
 import { END_PARK_CONTEXT, findParkable, parkChat, parkedSince, type ParkOutcome } from '../chat-park.js';
 import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
-import { addToOutbox } from '../../lib/super/outbox.js';
+import { addToOutbox, keepFirstPrompt } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
 import { applySweep, machineGuards, planSweep, publicPlan } from '../../lib/super/worktree-sweep.js';
 import { readMachineFacts } from './machine.js';
@@ -883,9 +883,12 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // The window refuses the frame after `deadline` (epoch ms); the server waits that long
     // plus a grace, so a child the window opens is (almost always) answered in time. A frame
     // that may still have opened a child never loses its worktree (review W2 #1).
-    const deadline = Date.now() + DELEGATE_TIMEOUT_MS;
+    // Taken BEFORE the frame: the child's first turn is written after this, so it counts as arrived.
+    const sentAt = Date.now();
+    const deadline = sentAt + DELEGATE_TIMEOUT_MS;
+    const firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`;
     const r = await sendSuperCommand(c.token, 'delegate', {
-      prompt: `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`,
+      prompt: firstPrompt,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
       // The child runs LEAN (D14): only these of the user's MCP servers ([] = none).
       mcp: job.mcp ?? [],
@@ -960,6 +963,16 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     });
     // A member's child is tracked by its own super's inbox (Wave 2 step A2), never main's.
     if (startError) void pumpSuper(root, c.superId); else if (c.superId === 'main') expectChild(root, sid);
+    // Its first prompt is kept until a turn of its own is on disk: a restart before then gives it
+    // the job again, never a bare "continue" (field 2026-11-13). Keyed like the send route's outbox.
+    // Only a Claude child: its transcript is the witness that the prompt landed (a missing one
+    // means nothing landed). Another tool's rollout is not read here, so a kept prompt could never
+    // be seen to arrive and would be sent again after any restart (end review r1).
+    if (!startError && !job.tool) {
+      try { await keepFirstPrompt(superKey(root, c.superId), sid, firstPrompt, sentAt); } catch (err) {
+        console.warn(`[super] ${sid}: its first prompt was not kept for a restart: ${(err as Error).message}`);
+      }
+    }
     // The cards the old child left open moved to this one in that write (succession.ts): what the
     // owner already did for them is held for this child now (sahip-karti-yerinde K2).
     if (succeeds && !startError) {

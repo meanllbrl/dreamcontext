@@ -179,7 +179,7 @@ export function firstPromptText(record: Record<string, unknown>): string | null 
 export type PromptKind = 'owner' | 'super' | 'auto';
 
 /** Server-written turns no marker tells apart, by their fixed opening. They count for nobody. */
-const SERVER_TURNS = ['[Request interrupted', '[ran in chat]', '[delegated-session event]', 'The previous turn ', 'Your previous turn was stopped', 'The "Go to development" hand-off'];
+const SERVER_TURNS = ['[Request interrupted', '[ran in chat]', '[delegated-session event]', 'The previous turn ', 'Your previous turn was stopped', 'The "Go to development" hand-off', '[dreamcontext server] '];
 /** A turn the server or the app wrote by itself (a run report, an interrupt note, a hand-off):
  *  it rides the owner path but nobody typed it. */
 export function isServerTurnText(text: string): boolean {
