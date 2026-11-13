@@ -9,6 +9,7 @@ import {
 import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { CardHeader } from './molecules';
+import { RunElapsed, RunErrLine, RunFold, RunStatusHead, RunTime } from './RunCardLook';
 import { InlineTerminal, type CardTarget } from './InlineTerminal';
 import { buildRunReport, type RunOutcome } from './runReport';
 import { runCardView, type RunOutcome as CardOutcome } from './runCardView';
@@ -48,7 +49,9 @@ import type { RunViewSpec } from '../../../lib/chatViewSpec';
 
 type Phase = 'idle' | 'running' | 'done';
 
-export function RunCard({ spec, report, sessionId, host, folder, startRequest, onEnded, onStartRequest, onReread }: {
+export function RunCard({ spec, report, sessionId, host, folder, chatName, startRequest, onEnded, onStartRequest, onReread }: {
+  /** The chat that gets the result (the Super slot passes the job's chat name). */
+  chatName?: string;
   spec: RunViewSpec;
   /** Where the exit report goes on a host without a chat (an agent thread's reply). */
   report?: (text: string) => void;
@@ -70,7 +73,7 @@ export function RunCard({ spec, report, sessionId, host, folder, startRequest, o
   onReread?: () => void;
 }) {
   const chatHost: CardHost | undefined = host ?? (sessionId ? { session: sessionId } : undefined);
-  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} startRequest={startRequest} onEnded={onEnded} onStartRequest={onStartRequest} onReread={onReread} />;
+  if (chatHost) return <ChatRunCard spec={spec} host={chatHost} folder={folder} chatName={chatName} startRequest={startRequest} onEnded={onEnded} onStartRequest={onStartRequest} onReread={onReread} />;
   return <ThreadRunCard spec={spec} report={report} />;
 }
 
@@ -79,14 +82,14 @@ export function RunCard({ spec, report, sessionId, host, folder, startRequest, o
  * A command with a character the Telegram path refuses, or a run of 8 spaces, is drawn with those
  * as visible escapes; the caller offers it no Run.
  */
-function CommandText({ command }: { command: string }) {
+function CommandText({ command, className = 'chat-runcard-cmd', oneLine = false }: { command: string; className?: string; oneLine?: boolean }) {
   const unsafe = commandUnsafe(command);
   return (
     <code
-      className="chat-runcard-cmd"
+      className={className}
       data-testid="run-card-command"
       data-unsafe={unsafe ? 'true' : undefined}
-      style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+      style={oneLine ? undefined : { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
     >{unsafe ? escapeUnsafe(command) : command}</code>
   );
 }
@@ -122,6 +125,8 @@ interface Shown {
   ended: boolean;
   /** It ended with the server's exit frame: the process really finished. */
   exited: boolean;
+  /** When this card began showing it (the running header's clock). */
+  since: number;
 }
 
 /**
@@ -130,26 +135,32 @@ interface Shown {
  * toggle (still mounted, so the text is the same), and nothing in it blinks. A finished terminal
  * that keeps its 300px and its cursor looked stuck (owner screenshot, 2026-11-13).
  */
-function RunTerminal({ ended, ...term }: { ended: boolean } & ComponentProps<typeof InlineTerminal>) {
-  const [open, setOpen] = useState(false);
+function RunTerminal({ ended, outputControl, ...term }: {
+  ended: boolean;
+  /** The finished card draws its Output link in its own footer row: the card owns the open state. */
+  outputControl?: { open: boolean; onHasOutput: () => void };
+} & ComponentProps<typeof InlineTerminal>) {
+  const [ownOpen, setOpen] = useState(false);
   // No output, nothing to show: no toggle (a refused start keeps only its reason line).
   const [hasOutput, setHasOutput] = useState(false);
+  const open = outputControl ? outputControl.open : ownOpen;
   return (
     <>
-      {ended && hasOutput && (
+      {!outputControl && ended && hasOutput && (
         <button type="button" className="chat-runcard-outtoggle" data-testid="run-card-output-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? 'Hide output' : 'Show output'}
         </button>
       )}
-      <InlineTerminal {...term} onOutput={() => setHasOutput(true)} collapsed={ended && !open} />
+      <InlineTerminal {...term} onOutput={() => { setHasOutput(true); outputControl?.onHasOutput(); }} collapsed={ended && !open} />
     </>
   );
 }
 
 /** The chat host: the server's record decides what can be done here; `runCardView` what it says. */
-function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest, onReread }: {
+function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onStartRequest, onReread }: {
   spec: RunViewSpec;
   host: CardHost;
+  chatName?: string;
   folder?: { name: string; path: string } | null;
   startRequest?: { n: number; shown: string };
   onEnded?: () => void;
@@ -215,6 +226,14 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
   // What this card's own last terminal led to, tied to that terminal's key (a newer one voids it).
   const [outcome, setOutcome] = useState<(CardOutcome & { key: string }) | null>(null);
   const starts = useRef(0);
+  // The finished look's facts: when this card's own run ended and the last line it printed; the
+  // Output link is the footer's, so its open state lives here.
+  const [endInfo, setEndInfo] = useState<{ key: string; at: number; lastLine: string } | null>(null);
+  const [outOpen, setOutOpen] = useState(false);
+  const [hasOutput, setHasOutput] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
+  // Whether the last run THIS card started sent its output back; unknown (attached run) says error only.
+  const [sentOutput, setSentOutput] = useState(false);
 
   const live = record?.run ?? null;
   const liveRunId = live?.runId;
@@ -231,11 +250,14 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
     setShown((cur) => {
       if (cur && !cur.ended) return cur.runId ? cur : { ...cur, runId: liveRunId };
       if (cur && cur.runId === liveRunId && (cur.exited || !cur.user)) return cur;
-      return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone, ...(phone && drawnRootRef.current ? { root: drawnRootRef.current } : {}) }, user: false, ended: false, exited: false };
+      setOutOpen(false);
+      setHasOutput(false);
+      setSentOutput(false);
+      return { key: `r${liveRunId}`, runId: liveRunId, target: { sessionId, cardRef, start: false, phone, ...(phone && drawnRootRef.current ? { root: drawnRootRef.current } : {}) }, user: false, ended: false, exited: false, since: Date.now() };
     });
   }, [liveRunId, cardRef, sessionId, phone, shownEnded, pressable]);
 
-  const onEnd = (key: string, user: boolean, r: { code: number | null; exited: boolean; opened: boolean; reason?: string }) => {
+  const onEnd = (key: string, user: boolean, r: { code: number | null; tail?: string; exited: boolean; opened: boolean; reason?: string }) => {
     // The upgrade refused: the folder bound at the press is not the folder now. Say so, draw the
     // new one; nothing is pressed again.
     if (r.reason === FOLDER_CHANGED && !r.opened) {
@@ -250,7 +272,10 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
       return;
     }
     setShown((cur) => (cur?.key === key ? { ...cur, ended: true, exited: r.exited } : cur));
-    if (r.exited) setOutcome({ kind: 'exited', code: r.code, key });
+    if (r.exited) {
+      setOutcome({ kind: 'exited', code: r.code, key });
+      setEndInfo({ key, at: Date.now(), lastLine: lastLineOf(r.tail) });
+    }
     onEnded?.();
   };
 
@@ -277,6 +302,10 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
     setCheck(null);
     starts.current += 1;
     setOutcome(null);
+    setEndInfo(null);
+    setSentOutput(includeOutput);
+    setOutOpen(false);
+    setHasOutput(false);
     setShown({
       key: `l${starts.current}`,
       // The phone's press names the folder it drew in its URL; the Mac's in its ticket.
@@ -284,6 +313,7 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
       user: true,
       ended: false,
       exited: false,
+      since: Date.now(),
     });
   };
 
@@ -319,33 +349,64 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
     reading: !!phoneFolder?.reading, cannot: !!phoneFolder && !phoneFolder.reading,
   });
 
+  // The two looks of a card that ran or is running on this Mac: a status header, and for a finished
+  // one a footer row. Every other state (idle, cut off, replaced, withdrawn) keeps the plain header.
+  const running = view.phase === 'running';
+  const finished = view.phase === 'done' && view.title === 'Ran in chat'; // an unknown exit (a reloaded card) keeps the plain header: no tick is claimed
+  const failed = finished && (view.chip === null || (typeof view.chip === 'number' && view.chip !== 0));
+  const look = running ? 'run' : finished ? (failed ? 'bad' : view.chip === 0 ? 'ok' : undefined) : undefined;
+  const name = chatName || t('runCard.theAgent');
+  const ownEnd = endInfo && shown && endInfo.key === shown.key ? endInfo : null;
+  const lastLine = failed && ownEnd ? ownEnd.lastLine : '';
+  const runWord = view.runLabel === 'Run again' ? t('ownerCard.runAgainLabel') : view.runLabel;
+  const playButton = view.runLabel && !unsafe && pressable ? (
+    <button
+      type="button"
+      className={look === 'ok' || look === 'bad' ? `chat-runcard-again${failed ? ' is-strong' : ''}` : 'chat-btn pill primary chat-runcard-play'}
+      data-testid="run-card-play"
+      onClick={start}
+      disabled={!view.startable}
+    >
+      {look ? null : <span aria-hidden>▶</span>} {runWord}
+    </button>
+  ) : null;
+
   return (
-    <div className="chat-viewcard chat-runcard" data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')} data-unsafe={unsafe ? 'true' : undefined}>
-      <CardHeader
-        glyph={view.phase === 'running' ? '▸' : '>_'}
-        title={title}
-        aside={view.chip !== undefined ? exitChip(view.chip) : where ? <span className="chat-runcard-cwd" data-testid="run-card-folder" title={shownFolder.folder?.path}>{where}</span> : undefined}
-      />
+    <div className="chat-viewcard chat-runcard" data-look={look} data-phase={view.phase} data-closed-by={record?.closedBy} data-view-kind="run" data-view-id={spec.id} data-card-state={record?.state ?? (loaded ? 'none' : 'loading')} data-unsafe={unsafe ? 'true' : undefined}>
+      {look ? (
+        <RunStatusHead
+          look={look}
+          title={look === 'run' ? t('ownerCard.runningOnMac')
+            : look === 'ok' ? t('runCard.ranFine')
+              : typeof view.chip === 'number' ? t('runCard.failedExit').replace('{code}', String(view.chip)) : t('runCard.failed')}
+          sub={(look === 'run' ? t('runCard.getsResult')
+            : look === 'ok' ? t('runCard.gotResult')
+              : sentOutput ? t('runCard.gotError') : t('runCard.gotErrorOnly')).replace('{name}', name)}
+          time={look === 'run' && shown ? <RunElapsed since={shown.since} /> : ownEnd ? <RunTime at={ownEnd.at} /> : undefined}
+        />
+      ) : (
+        <CardHeader
+          glyph={view.phase === 'running' ? '▸' : '>_'}
+          title={title}
+          aside={view.chip !== undefined ? exitChip(view.chip) : where ? <span className="chat-runcard-cwd" data-testid="run-card-folder" title={shownFolder.folder?.path}>{where}</span> : undefined}
+        />
+      )}
+
+      {lastLine && <RunErrLine line={lastLine} />}
 
       {spec.why && view.phase === 'idle' && <p className="chat-runcard-why">{spec.why}</p>}
 
-      <div className="chat-runcard-cmdrow">
-        <CommandText command={spec.command} />
-        <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-        {view.runLabel && !unsafe && pressable && (
-          <button
-            type="button"
-            className="chat-btn pill primary chat-runcard-play"
-            data-testid="run-card-play"
-            onClick={start}
-            disabled={!view.startable}
-          >
-            <span aria-hidden>▶</span> {view.runLabel}
-          </button>
-        )}
-      </div>
+      {look !== 'ok' && look !== 'bad' && (
+        <div className="chat-runcard-cmdrow">
+          <CommandText command={spec.command} oneLine={look === 'run'} />
+          {look !== 'run' && (
+            <button type="button" className="chat-runcard-copy" onClick={copy} aria-label="Copy the command">
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          )}
+          {playButton}
+        </div>
+      )}
 
       {unsafe && <p className="chat-runcard-note" data-testid="run-card-unsafe">{t('ownerCard.unsafe')}</p>}
 
@@ -354,6 +415,12 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
           <input type="checkbox" checked={includeOutput} onChange={(e) => setIncludeOutput(e.target.checked)} />
           Send the output back to the agent when it finishes
         </label>
+      )}
+
+      {!look && shown?.ended && hasOutput && (
+        <button type="button" className="chat-runcard-outtoggle" data-testid="run-card-output-toggle" aria-expanded={outOpen} onClick={() => setOutOpen((o) => !o)}>
+          {outOpen ? t('runCard.hideOutput') : 'Show output'}
+        </button>
       )}
 
       {shown && vault && (
@@ -365,6 +432,22 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
           card={shown.target}
           mintTicket={shown.target.phone ? undefined : mintTicket}
           onExit={(r) => onEnd(shown.key, shown.user, r)}
+          outputControl={{ open: outOpen, onHasOutput: () => setHasOutput(true) }}
+        />
+      )}
+
+      {(look === 'ok' || look === 'bad') && (
+        <RunFold
+          open={cmdOpen}
+          onToggle={() => setCmdOpen((o) => !o)}
+          label={spec.command}
+          command={<CommandText command={spec.command} className={`chat-runfold-cmd${cmdOpen ? ' is-open' : ''}`} oneLine={!cmdOpen} />}
+          output={shown?.ended && hasOutput ? (
+            <button type="button" className="chat-runfold-link" data-testid="run-card-output-toggle" aria-expanded={outOpen} onClick={() => setOutOpen((o) => !o)}>
+              {outOpen ? t('runCard.hideOutput') : t('runCard.output')}
+            </button>
+          ) : undefined}
+          again={playButton}
         />
       )}
 
@@ -372,9 +455,15 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
         ? <p className="chat-runcard-note" data-testid="run-card-refused">{refusal}</p>
         : folderLine
           ? <p className="chat-runcard-note" data-testid="run-card-folder-line">{folderLine}</p>
-          : view.note && <p className="chat-runcard-note">{view.note}</p>}
+          : !look && view.note && <p className="chat-runcard-note">{view.note}</p>}
     </div>
   );
+}
+
+/** The last line the run printed (already stripped of terminal codes), for the failed header. */
+function lastLineOf(tail: string | undefined): string {
+  const lines = (tail ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  return (lines[lines.length - 1] ?? '').slice(0, 300);
 }
 
 /** The agent-thread host: the card runs its own command and posts its own report. */
