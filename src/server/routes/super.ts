@@ -44,7 +44,7 @@ import {
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach, settleOwnerReach } from '../../lib/super/owner-question.js';
-import { memberAskReach, pinnedMemberCard, superAnsweredFirst } from '../../lib/super/inbox.js';
+import { memberAskReach, pinnedMemberCard, planQuestion, superAnsweredFirst } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
@@ -62,7 +62,7 @@ import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
-import { askWarning, queueAskWarning } from '../../lib/super/ask-summary.js';
+import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
@@ -2284,13 +2284,18 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       { shows: Array.isArray(b.show) && b.show.length > 0 && b.noShow !== true },
     );
     if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
+    // A plan child's question goes to him whole: a report card of the plan, or not at all yet.
+    const childMode = planQuestion(c.state, child) ? 'plan' : c.state.children[child]?.mode;
+    const readShown = b.noShow === true || !Array.isArray(b.show) ? 0
+      : (b.show as unknown[]).filter((id) => c.state.containers.some((k) => k.id === id && isReadKind(k.kind))).length;
+    const noReport = planReportRefusal(childMode, readShown);
+    if (noReport) { refuse(res, 400, 'plan_report_missing', noReport); return; }
     const prep = await prepareAskShow(c, b, res, images, c.state.children[child]?.worktree ?? dirname(c.who.contextRoot), child);
     if (!prep) return;
     // Asked inside an event turn: that turn renders in full for the owner (D8).
     const batch = c.state.session ? superOpenBatch(c.state.session) : null;
     const now = Date.now();
     let shown: ReturnType<typeof applyAskShow> = null;
-    let readCards = 0;
     const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const q = s.queue.find((x) => x.id === id);
       if (q && q.kind === 'question' && q.state !== 'done') {
@@ -2298,13 +2303,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         q.ownerText = text;
         if (batch) { q.batch = batch; noteOwnerBatch(s, batch); }
         shown = applyAskShow(s, q.id, prep, c.who.contextRoot, now, s.children[child] ? child : undefined);
-        readCards = readCardsOf(s, shown).length;
       }
     });
     const show = finishAskShow(c, state, id as string, prep, shown);
-    // A plan child's question escalated with no report card of the plan: sent anyway, the Super
-    // is told (owner 2026-11-12).
-    const warning = queueAskWarning(c.state.children[child]?.mode, readCards);
+    // A plan child's question whose summary the Super's text never gave: sent, the Super is told
+    // to write it now (owner 2026-11-13: three sentences that pointed at a stage).
+    const superText = getChat(c.who.sessionId)?.lastAssistantText;
+    const warning = planTextWarning(childMode, superText?.[superText.length - 1]);
     // What reached the owner, told as it is (owner-question.ts): a Telegram copy counts only once
     // it LANDED, so its send is waited for (bounded). Only a question he has seen makes the
     // turn's end no second ping; one nobody saw keeps the reply's own notch row.

@@ -579,7 +579,7 @@ the question is the decision in one short line, his card points at the report ("
 the report stays after his answer. Asking him to approve or start a plan or any work: that report
 carries what he says yes to (the problem in one sentence, 3-6 short bullets of what will be done,
 his decisions, cost or risk in money, never time) and your text gives the same summary, as long as
-it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen
+it needs (the exception to 2-4), a Plan child's question too. A report on a plan or on options is DRAWN, never written: screen
 mockups, options side by side, short headings; text at the minimum. A product mockup wears that
 product's real colors and frame, not the kit (inline, inside its frame); the page's own colors come
 only from the kit, a page with its own shows on white in both themes; steps in order are a \`dc-graph\`, never chips. A \`preview\` is only a look at an option (a mockup, a picture). Plain words, no inside jargon ("its own copy", not worktree). Say plainly

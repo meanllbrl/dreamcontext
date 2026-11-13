@@ -39,12 +39,32 @@ export function askWarning(spec: SuperAskSpec, readCards: number): string | null
   return long ? LONG_PREVIEW_WARNING : null;
 }
 
-export const PLAN_QUEUE_ASK_WARNING = `This escalates a plan child's question with no report card of its plan. It went as it is (its own card opens with the plan's summary); now give him the plan in this turn's text. Next time ${REPORT_HOW}.`;
+export const PLAN_REPORT_REFUSAL = `This is a plan child's question about its plan, and it reaches the owner only through you: as a card in your chat that shows the plan whole. Not sent. First ${REPORT_HOW}; write him the same summary in this turn's text; then ask again with \`--show <its card>\`.`;
 
 /**
- * The warning for a `super queue ask` of a child's question, else null. Pure. A plan child asks
- * about its plan (owner 2026-11-12): the Super's escalation shows the plan whole, as a report card.
+ * Refuse a `super queue ask` of a plan child's question that names no report card (owner
+ * 2026-11-13: the Super said "the summary is on the stage" while the stage held only the child's
+ * own chat, and the card itself never reached his chat). Pure. `readShown`: how many of the
+ * `--show` cards are there to be READ (a page, a task, knowledge, a board). Null = may go.
  */
-export function queueAskWarning(childMode: string | undefined, readCards: number): string | null {
-  return childMode === 'plan' && readCards === 0 ? PLAN_QUEUE_ASK_WARNING : null;
+export function planReportRefusal(childMode: string | undefined, readShown: number): string | null {
+  return childMode === 'plan' && readShown === 0 ? PLAN_REPORT_REFUSAL : null;
+}
+
+/** A summary in the text: 3+ bullet or numbered lines, or a long paragraph (a few sentences). */
+const BULLET_RE = /^\s*(?:[-*\u2022]|\d+[.)])\s+\S/;
+export const MIN_PLAN_TEXT = 400;
+
+export const PLAN_TEXT_WARNING = `Your card went, but this turn's text gave him no summary of the plan (the problem in one sentence, what will be done in 3-6 short bullets, his decisions, cost or risk in money). Write it now, as long as it needs: the card stays at the end of your turn.`;
+
+/**
+ * The warning for a plan question escalated after a text with no summary in it, else null. Pure.
+ * `text`: the Super's newest text, the one written before the call (the rule: the line first,
+ * then the ask as the last act). A pointer like "the summary is on the stage" is no summary.
+ */
+export function planTextWarning(childMode: string | undefined, text: string | undefined): string | null {
+  if (childMode !== 'plan') return null;
+  const t = (text ?? '').trim();
+  const bullets = t.split('\n').filter((l) => BULLET_RE.test(l)).length;
+  return bullets >= 3 || t.length >= MIN_PLAN_TEXT ? null : PLAN_TEXT_WARNING;
 }

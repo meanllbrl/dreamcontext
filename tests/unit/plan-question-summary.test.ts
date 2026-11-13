@@ -13,7 +13,6 @@ import { offCardQuestionFrame } from '../../src/lib/card-standalone.js';
 import { ToWire, splitQuestionLead, type WireFrame } from '../../src/lib/t3-bridge/to-wire.js';
 import { modeBriefing } from '../../src/server/chat-modes.js';
 import { PLAN_QUESTION_LINE, superBatchText } from '../../src/lib/super/inbox.js';
-import { PLAN_QUEUE_ASK_WARNING, queueAskWarning } from '../../src/lib/super/ask-summary.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
 
@@ -168,12 +167,5 @@ describe("the Super, when a plan child's question reaches it", () => {
     expect(text).toContain('- Ranking runs only inside that set, before the limit');
     expect(text).toMatch(/<untrusted-project-output[^>]*>[^<]*Its card says:/);
     _resetChatRegistry();
-  });
-
-  it('`queue ask` of a plan child with no report card carries a warning', () => {
-    expect(queueAskWarning('plan', 0)).toBe(PLAN_QUEUE_ASK_WARNING);
-    expect(queueAskWarning('plan', 1)).toBeNull();
-    expect(queueAskWarning('develop', 0)).toBeNull();
-    expect(queueAskWarning(undefined, 0)).toBeNull();
   });
 });
