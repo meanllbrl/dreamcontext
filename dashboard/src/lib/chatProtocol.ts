@@ -1500,21 +1500,5 @@ export function stripTgPrefix(text: string): string {
   return parseTelegramClaim(text).body;
 }
 
-export function buildQuestionAnswer(
-  questions: QuestionSpec[],
-  picked: Record<string, string>,
-  extra: { input?: unknown; notes?: Record<string, string> } = {},
-): unknown {
-  const answers: Record<string, string> = {};
-  const annotations: Record<string, { notes: string }> = {};
-  for (const q of questions) {
-    const answer = picked[q.question];
-    if (typeof answer === 'string' && answer.length > 0) answers[q.question] = answer;
-    const note = extra.notes?.[q.question]?.trim();
-    if (note) annotations[q.question] = { notes: note };
-  }
-  const echoed = isRecord(extra.input) && Array.isArray(extra.input.questions)
-    ? { ...extra.input }
-    : { questions };
-  return Object.keys(annotations).length ? { ...echoed, answers, annotations } : { ...echoed, answers };
-}
+// One copy for the window and the server's own delivery (src/lib/super/request-answer.ts).
+export { buildQuestionAnswer } from '../../../src/lib/super/request-answer.js';

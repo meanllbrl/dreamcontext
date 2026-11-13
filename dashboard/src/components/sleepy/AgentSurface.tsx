@@ -89,7 +89,7 @@ import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders, confirmAction, spendChecklistNonce } from '../../lib/desktop';
 import { listenForChecklistSubmits, relayChecklistSubmit, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
 import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
-import { runWindowVerb, type WindowVerbDeps } from './windowVerbs';
+import { pastDeadline, runWindowVerb, type WindowVerbDeps } from './windowVerbs';
 import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, seededRoster, withBaseGeneration, type DesktopSeedTab } from '../handsfree/rosterRehydrate';
@@ -4547,6 +4547,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return { ok: true, result: { sessionId: s.claudeId } };
     }
     if (verb === 'answer') {
+      // Past its deadline the server answered the card itself (no window answered in time,
+      // field 2026-11-13): a window that wakes late must not answer it twice.
+      if (pastDeadline(args)) return { ok: false, error: 'expired' };
       const child = typeof args.child === 'string' ? args.child : '';
       const requestId = typeof args.requestId === 'string' ? args.requestId : '';
       if (!hasOwnKey(st.children, child)) return { ok: false, error: 'not_a_child' };

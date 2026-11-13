@@ -58,6 +58,11 @@ export type WindowVerbResult = { ok: true; result?: unknown } | { ok: false; err
 
 const MODES: readonly ChatMode[] = ['basic', 'plan', 'develop'];
 
+/** A verb whose `deadline` (ms since epoch) has passed: the server delivered it another way. */
+export function pastDeadline(args: Record<string, unknown>, now: number = Date.now()): boolean {
+  return typeof args.deadline === 'number' && Number.isFinite(args.deadline) && now > args.deadline;
+}
+
 function paneOf(deps: WindowVerbDeps, sid: string): WindowPane | undefined {
   return deps.panes.find((p) => p.tabs.includes(sid));
 }
@@ -173,6 +178,9 @@ export async function runWindowVerb(deps: WindowVerbDeps, verb: string, args: Re
   }
   if (verb === 'send') {
     if (t.sid === deps.self) return { ok: false, error: 'that is this chat; just keep going' };
+    // Past its deadline the server has given up on this window and delivered the words itself
+    // (`super send`, field 2026-11-13): a window that wakes late must not send them twice.
+    if (pastDeadline(args)) return { ok: false, error: 'expired' };
     const text = typeof args.text === 'string' ? args.text : '';
     const out = deps.send(t.sid, text);
     if (!out) return { ok: false, error: 'that chat is not running' };

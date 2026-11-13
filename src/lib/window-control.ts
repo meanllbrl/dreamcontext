@@ -23,6 +23,17 @@ import { noteSuperSend, takeSuperSend } from './super/owner-wait.js';
 export const WINDOW_TIMEOUT_MS = 20_000;
 export const WINDOW_TOKEN_HEADER = 'x-dreamcontext-window-token';
 
+/** How long before the server gives up on a window a `deadline` arg runs out. */
+const WINDOW_DEADLINE_MARGIN_MS = 2_000;
+/**
+ * The `deadline` a verb with a server fallback carries (`super send`, `super allow`): a window
+ * that wakes after it (an app in the background, field 2026-11-13) refuses the verb, so the
+ * server's own delivery after a timeout is the only one. Runs out before the server's timeout.
+ */
+export function windowDeadline(now = Date.now(), timeoutMs = WINDOW_TIMEOUT_MS): number {
+  return now + Math.max(0, timeoutMs - WINDOW_DEADLINE_MARGIN_MS);
+}
+
 /** `sent` (on a failure the server itself decided): false = the frame never reached a window;
  *  true = it was written and no answer came in time (the window may still have acted on it). */
 export type WindowResult = { ok: true; result: unknown } | { ok: false; error: string; sent?: boolean };

@@ -15,6 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types (and the card
  * mention's words, cardMention.ts).
  */
+import { superAnswerPicks, type QuestionLike } from '../../../../../src/lib/super/request-answer.js';
 import {
   ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
@@ -1106,48 +1107,8 @@ export function windowTabsFor<T extends { tab: string; kind: string }>(
 
 // ─── `super answer` (D7: the window re-checks, then answers like the child's card) ──
 
-export interface QuestionLike {
-  question: string;
-  options: Array<{ label: string }>;
-  multiSelect?: boolean;
-}
-
-/**
- * Map the agent's `choices` (option labels, one per question in order; a multi-select
- * question's labels joined) and optional free `text` onto the `picked` record
- * `buildQuestionAnswer` takes. A label the question does not offer is refused, so the agent
- * cannot put words in the owner's mouth through a fake option.
- */
-export function superAnswerPicks(
-  questions: readonly QuestionLike[],
-  choices: readonly string[],
-  text?: string,
-): { ok: true; picked: Record<string, string>; notes?: Record<string, string> } | { ok: false; error: string } {
-  if (questions.length === 0) return { ok: false, error: 'no_question' };
-  const picked: Record<string, string> = {};
-  const clean = choices.filter((c) => typeof c === 'string' && c.trim()).map((c) => c.trim());
-  if (questions.length === 1) {
-    const q = questions[0];
-    const labels = new Set(q.options.map((o) => o.label));
-    if (clean.some((c) => !labels.has(c))) return { ok: false, error: 'unknown_choice' };
-    if (clean.length > 1 && !q.multiSelect) return { ok: false, error: 'one_choice_only' };
-    if (clean.length) picked[q.question] = clean.join(', ');
-  } else {
-    if (clean.length > questions.length) return { ok: false, error: 'too_many_choices' };
-    for (let i = 0; i < clean.length; i++) {
-      const q = questions[i];
-      if (!q.options.some((o) => o.label === clean[i])) return { ok: false, error: 'unknown_choice' };
-      picked[q.question] = clean[i];
-    }
-  }
-  const free = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
-  if (!free && Object.keys(picked).length === 0) return { ok: false, error: 'empty_answer' };
-  if (!free) return { ok: true, picked };
-  const first = questions[0].question;
-  // Free text with no pick IS the answer; beside a pick it rides as the question's note.
-  if (!picked[first]) { picked[first] = free; return { ok: true, picked }; }
-  return { ok: true, picked, notes: { [first]: free } };
-}
+// One copy for the window and the server's own delivery (src/lib/super/request-answer.ts).
+export { superAnswerPicks, type QuestionLike };
 
 /**
  * The owner's own card answer carried from another surface (the hands-free phone's card for a
