@@ -3020,7 +3020,7 @@ export function syncOwnDraft(s: SuperState, superId: SuperId, sid: string, e: Ch
       if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(pq.requestId)) continue;
       s.queue.push(pq.isPermission
         ? { id: newQueueId(), sessionId: sid, kind: 'permission', own: true, state: 'escalated', createdAt: now, requestId: pq.requestId, call: itemCall(pq), ...(root ? { offer: permissionOffer(root, pq, s.member, sid) } : {}) }
-        : { id: newQueueId(), sessionId: sid, kind: 'question', own: true, ...(planQuestion(s, sid) ? { state: 'pending' as const } : { direct: true as const, state: 'escalated' as const }), createdAt: now, requestId: pq.requestId, ownerText: childQuestionText(sid, pq.requestId) });
+        : { id: newQueueId(), sessionId: sid, kind: 'question', own: true, direct: true, state: 'escalated', createdAt: now, requestId: pq.requestId, ownerText: childQuestionText(sid, pq.requestId) });
       changed = true;
       added = true;
     }
