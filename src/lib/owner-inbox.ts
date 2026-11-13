@@ -34,7 +34,9 @@ export type InboxKind =
   | 'task-review'
   | 'task-stuck'
   /** The automatic cloud recall index stopped updating (a spend cap, a failure): Update runs it (embeddings/index-stop.ts). */
-  | 'recall-index-stopped';
+  | 'recall-index-stopped'
+  /** The 24-hour background brain sync stopped on something only the owner settles (brain-auto-sync.ts). */
+  | 'brain-sync-paused';
 
 export type InboxAction =
   | 'start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review'
@@ -76,9 +78,12 @@ function rowsOf(file: InboxFile): InboxRow[] {
   return Array.isArray(file.rows) ? file.rows.filter(isRow) : [];
 }
 
+/** Kinds whose writer closes the row when its subject resolves: no day limit, it stays while true. */
+const SUBJECT_OWNED: ReadonlySet<InboxKind> = new Set<InboxKind>(['brain-sync-paused']);
+
 /** An info row: nothing to do but read it, so it dies after a day. */
 function isInfo(row: InboxRow): boolean {
-  return row.actions.every((a) => a === 'dismiss');
+  return !SUBJECT_OWNED.has(row.kind) && row.actions.every((a) => a === 'dismiss');
 }
 
 function alive(row: InboxRow, nowMs: number): boolean {

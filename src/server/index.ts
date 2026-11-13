@@ -350,6 +350,7 @@ import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
 import { startCodexEnsureJob } from './codex-ensure-job.js';
 import { warmLoginPath } from '../lib/tool-finder.js';
 import { startProjectCatchUpJob } from './project-catch-up-job.js';
+import { startBrainAutoSyncJob } from './brain-auto-sync-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { setThermalSource } from '../lib/voice/whisperPressure.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
@@ -1639,6 +1640,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       let stopClaudeUpdate: (() => void) | undefined;
       let stopSelfUpdate: (() => void) | undefined;
       let stopProjectCatchUp: (() => void) | undefined;
+      let stopBrainAutoSync: (() => void) | undefined;
       // dreamcontext App windows find this server through ~/.dreamcontext/desktop-server.json
       // (desktop/app-runner). Self-gates to the app-owned desktop server on macOS.
       let unpublishDesktopServer: () => void = () => {};
@@ -1666,6 +1668,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         stopClaudeUpdate?.();
         stopSelfUpdate?.();
         stopProjectCatchUp?.();
+        stopBrainAutoSync?.();
         // Telegram: every poll loop stops and lets go of its token's lock NOW, so a relaunch
         // within the lock's stale window is never deaf.
         stopTelegramHub();
@@ -1736,6 +1739,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       void warmLoginPath();
       // Every registered project follows the CLI on disk, however that CLI got there.
       stopProjectCatchUp = startProjectCatchUpJob();
+      // A project whose sleep does not come still reaches the team: a full brain sync once it is a
+      // day old and no agent works there. Self-gates to the app-owned desktop server.
+      stopBrainAutoSync = startBrainAutoSyncJob();
     };
     // An approved app request: one "[app onayı]" line into the requester's own chat (D10). A
     // Super child is the Super's to steer: its CLI wait carries the grant instead.

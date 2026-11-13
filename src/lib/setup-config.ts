@@ -342,6 +342,12 @@ export interface BrainLocalState {
   codeRepoPath?: string;
   lastSyncedSha?: string;
   lastFetchAt?: number;
+  /**
+   * When THIS machine last finished a full sync (fetch, merge, push) with the remote in step:
+   * `pushed`, or a clean `noop`. The desktop server's 24-hour background sync reads it
+   * (brain-auto-sync.ts); machine-local, so one Mac's push never hides another's silence.
+   */
+  lastFullSyncAt?: number;
   /** Commits actually merged in on the last pull (P2 rename). */
   pulledUpdates?: number;
   /** A pull deferred an agent-class conflict to /dream-sync (P2). */
@@ -763,6 +769,7 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
     if (typeof parsed.codeRepoPath === 'string') out.codeRepoPath = parsed.codeRepoPath;
     if (typeof parsed.lastSyncedSha === 'string') out.lastSyncedSha = parsed.lastSyncedSha;
     if (typeof parsed.lastFetchAt === 'number') out.lastFetchAt = parsed.lastFetchAt;
+    if (typeof parsed.lastFullSyncAt === 'number' && Number.isFinite(parsed.lastFullSyncAt)) out.lastFullSyncAt = parsed.lastFullSyncAt;
     if (typeof parsed.pulledUpdates === 'number') out.pulledUpdates = parsed.pulledUpdates;
     if (typeof parsed.pendingAgentMerge === 'boolean') out.pendingAgentMerge = parsed.pendingAgentMerge;
     if (typeof parsed.needsTaskSync === 'boolean') out.needsTaskSync = parsed.needsTaskSync;

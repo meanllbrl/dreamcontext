@@ -512,7 +512,9 @@ export interface OwnerInboxRow {
     | 'task-start-missed' | 'task-orphaned' | 'task-stopped' | 'task-blocked' | 'task-plan'
     | 'task-question' | 'task-stalled' | 'task-review' | 'task-stuck'
     // The automatic cloud recall index stopped updating: `update-index` runs it (embeddings/index-stop.ts).
-    | 'recall-index-stopped';
+    | 'recall-index-stopped'
+    // The 24-hour background brain sync stopped on something only the owner settles (brain-auto-sync.ts).
+    | 'brain-sync-paused';
   ref: string;
   agent: string | null;
   title: string;

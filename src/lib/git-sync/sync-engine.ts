@@ -109,6 +109,12 @@ export interface SyncOptions {
    * unset and keeps its unconditional effective-strict "any hit blocks" gate.
    */
   foreground?: boolean;
+  /**
+   * Nobody watches (the desktop server's 24-hour sync): a team merge that needs /dream-sync is
+   * backed out to a clean tree and marked pending (`--resume` redoes it attended), exactly as
+   * the headless pull does; a full sync never leaves the owner's repo mid-merge unattended.
+   */
+  headless?: boolean;
   /** Commit an IN-PROGRESS merge (requires `MERGE_HEAD`). */
   continue?: boolean;
   /** ATTENDED redo of a pull-only-deferred handoff (requires `pendingAgentMerge && !MERGE_HEAD`). */
@@ -356,6 +362,8 @@ interface Ctx {
   strict: boolean;
   /** A human/agent is present (see SyncOptions.foreground) — relaxes pull-only's headless scrub gate. */
   foreground: boolean;
+  /** Nobody watches (SyncOptions.headless): a deferred team merge is backed out, never left open. */
+  headless: boolean;
   /** Disable the pull-only dirty-tree auto-checkpoint (the on-open "don't touch my WIP" preference). */
   noCheckpoint: boolean;
   /** The home whose `~/.dreamcontext/apps/*` state the app data exchange reads and writes. */
@@ -453,6 +461,16 @@ function applyHealInfo(ctx: Ctx, result: SyncResult): SyncResult {
   };
 }
 
+/**
+ * Did this sync leave the branch in step with the remote: a push that landed, or a full sync
+ * with nothing to send or take? A noop with a note is a skip ("could not check …"), not a sync.
+ * What `lastFullSyncAt` stamps, which the desktop server's 24-hour sync reads.
+ */
+export function inStepWithRemote(opts: Pick<SyncOptions, 'mode' | 'continue' | 'resume'>, result: Pick<SyncResult, 'action' | 'note'>): boolean {
+  if (result.action === 'pushed') return true;
+  return result.action === 'noop' && !result.note && opts.mode === 'auto' && !opts.continue && !opts.resume;
+}
+
 /** Single entry point. Never throws for operational outcomes — a persistent push failure is the one true programmer-facing GitSyncError. */
 export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<SyncEngineDeps> = {}): Promise<SyncResult> {
   const d: SyncEngineDeps = { ...defaultDeps, ...depsOverride };
@@ -506,6 +524,7 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     remoteRef: `${REMOTE_NAME}/${branch}`,
     strict: !!opts.strict,
     foreground: !!opts.foreground,
+    headless: !!opts.headless,
     noCheckpoint: !!opts.noCheckpoint,
     home: opts.home ?? homedir(),
   };
@@ -544,6 +563,9 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     // versions, so the stage never sends it over the team's copy.
     const restored = ctx.mode === 'full-repo' ? d.restoreTeamFiles(pullCtx(ctx)) : [];
     let result = await guardedSync(ctx, opts);
+    if (inStepWithRemote(opts, result)) {
+      try { writeBrainLocal(projectRoot, { lastFullSyncAt: Date.now() }); } catch { /* the 24-hour sync just runs once more */ }
+    }
     // After the merge settled: a LARGE app gets its warning. Neither step ever stops the sync.
     if (ctx.mode === 'full-repo') {
       const large = d.largeSharedApps(pullCtx(ctx));
@@ -997,7 +1019,7 @@ async function pushWithRetry(
   if (!remoteExists) {
     throw new GitSyncError('Push to the empty brain remote failed — check the token has Contents read/write on that repo and the remote URL is correct.');
   }
-  const outcome = await mergeWithAppPull(ctx, { abortOnDefer: false, markPendingOnDefer: false });
+  const outcome = await mergeWithAppPull(ctx, { abortOnDefer: ctx.headless, markPendingOnDefer: ctx.headless });
   if (outcome.result) return outcome.result;
   const heldAfterMerge = appDataHeld() ?? sessionFilesHeld();
   if (heldAfterMerge) return heldAfterMerge;
@@ -1045,7 +1067,7 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
 
   let needsTaskSync = false;
   if (aheadCount > 0) {
-    const outcome = await mergeWithAppPull(ctx, { abortOnDefer: false, markPendingOnDefer: false });
+    const outcome = await mergeWithAppPull(ctx, { abortOnDefer: ctx.headless, markPendingOnDefer: ctx.headless });
     if (outcome.result) return withMergeOutcome(outcome.result, scrub);
     needsTaskSync = outcome.needsTaskSync;
   }
