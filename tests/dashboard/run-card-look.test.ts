@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/ser
 
 const { RunStatusHead, RunErrLine, RunFold } = await import('../../dashboard/src/components/sleepy/chat/RunCardLook.js');
 const read = (p: string) => readFileSync(new URL(`../../dashboard/src/${p}`, import.meta.url), 'utf-8');
-const KEYS = ['theAgent', 'ranFine', 'failedExit', 'failed', 'gotResult', 'gotError', 'gotErrorOnly', 'getsResult', 'output', 'hideOutput'];
+const KEYS = ['theAgent', 'ranFine', 'failedExit', 'finished', 'showOutput', 'gotResult', 'gotError', 'gotErrorOnly', 'getsResult', 'output', 'hideOutput'];
 
 describe('run card look', () => {
   it('the header names the outcome and the chat that got it', () => {

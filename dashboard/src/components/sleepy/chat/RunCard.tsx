@@ -140,6 +140,7 @@ function RunTerminal({ ended, outputControl, ...term }: {
   /** The finished card draws its Output link in its own footer row: the card owns the open state. */
   outputControl?: { open: boolean; onHasOutput: () => void };
 } & ComponentProps<typeof InlineTerminal>) {
+  const t = useOwnerCardT();
   const [ownOpen, setOpen] = useState(false);
   // No output, nothing to show: no toggle (a refused start keeps only its reason line).
   const [hasOutput, setHasOutput] = useState(false);
@@ -148,7 +149,7 @@ function RunTerminal({ ended, outputControl, ...term }: {
     <>
       {!outputControl && ended && hasOutput && (
         <button type="button" className="chat-runcard-outtoggle" data-testid="run-card-output-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {open ? 'Hide output' : 'Show output'}
+          {open ? t('runCard.hideOutput') : t('runCard.showOutput')}
         </button>
       )}
       <InlineTerminal {...term} onOutput={() => { setHasOutput(true); outputControl?.onHasOutput(); }} collapsed={ended && !open} />
@@ -353,7 +354,8 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
   // one a footer row. Every other state (idle, cut off, replaced, withdrawn) keeps the plain header.
   const running = view.phase === 'running';
   const finished = view.phase === 'done' && view.title === 'Ran in chat'; // an unknown exit (a reloaded card) keeps the plain header: no tick is claimed
-  const failed = finished && (view.chip === null || (typeof view.chip === 'number' && view.chip !== 0));
+  // No exit code known (null) is neither: the plain header says Finished, never red, never green.
+  const failed = finished && typeof view.chip === 'number' && view.chip !== 0;
   const look = running ? 'run' : finished ? (failed ? 'bad' : view.chip === 0 ? 'ok' : undefined) : undefined;
   const name = chatName || t('runCard.theAgent');
   const ownEnd = endInfo && shown && endInfo.key === shown.key ? endInfo : null;
@@ -378,7 +380,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
           look={look}
           title={look === 'run' ? t('ownerCard.runningOnMac')
             : look === 'ok' ? t('runCard.ranFine')
-              : typeof view.chip === 'number' ? t('runCard.failedExit').replace('{code}', String(view.chip)) : t('runCard.failed')}
+              : t('runCard.failedExit').replace('{code}', String(view.chip))}
           sub={(look === 'run' ? t('runCard.getsResult')
             : look === 'ok' ? t('runCard.gotResult')
               : sentOutput ? t('runCard.gotError') : t('runCard.gotErrorOnly')).replace('{name}', name)}
@@ -387,7 +389,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
       ) : (
         <CardHeader
           glyph={view.phase === 'running' ? '▸' : '>_'}
-          title={title}
+          title={finished && view.chip === null ? t('runCard.finished') : title}
           aside={view.chip !== undefined ? exitChip(view.chip) : where ? <span className="chat-runcard-cwd" data-testid="run-card-folder" title={shownFolder.folder?.path}>{where}</span> : undefined}
         />
       )}
@@ -419,7 +421,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
 
       {!look && shown?.ended && hasOutput && (
         <button type="button" className="chat-runcard-outtoggle" data-testid="run-card-output-toggle" aria-expanded={outOpen} onClick={() => setOutOpen((o) => !o)}>
-          {outOpen ? t('runCard.hideOutput') : 'Show output'}
+          {outOpen ? t('runCard.hideOutput') : t('runCard.showOutput')}
         </button>
       )}
 
