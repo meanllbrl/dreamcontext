@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { STAGE, type Rect, type StagePlan, type StripPlan } from './superLayout';
 import { KindTile } from './SuperTiles';
 import type { PresentLayout, SuperContainer, SuperStateView } from '../../../lib/superTypes';
@@ -67,14 +67,18 @@ export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--e
  * A presentation's controls at the top band's right end (plan-r2 D11, D12): the layouts these
  * cards can take (only when there is a choice), then the way back to the floating stage.
  */
-export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false }: {
+export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false, closable = 0, onCloseGroup }: {
   rect: Rect; layouts: readonly PresentLayout[]; current: PresentLayout; onPick: (l: PresentLayout) => void; onExit: () => void;
-  /** The presentation shows one group whole: leaving it goes back to that group's panel. */
+  /** The presentation shows one group whole: "Minimize" goes back to that group's panel, "Close group" closes its cards. */
   toGroup?: boolean;
+  /** How many of the group's cards a close would end (running jobs stay); 0 draws the button off. */
+  closable?: number;
+  onCloseGroup?: () => void;
 }) {
   const { t } = useI18n();
+  const [ask, setAsk] = useState(false);
   return (
-    <div className="super-stage-controls" data-testid="super-stage-controls" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
+    <div className="super-stage-controls" data-testid="super-stage-controls" data-asking={ask && toGroup ? "true" : undefined} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
       {layouts.length > 1 && (
         <div className="super-layout-switch" role="group" aria-label={t('super.layout.switch')} data-testid="super-layout-switch">
           {layouts.map((l) => (
@@ -85,7 +89,22 @@ export function StageControls({ rect, layouts, current, onPick, onExit, toGroup 
           ))}
         </div>
       )}
-      <button type="button" className="super-stage-exit" data-testid="super-stage-exit" data-to-group={toGroup ? 'true' : undefined} onClick={onExit} title="Esc">{t(toGroup ? 'super.stage.backToGroup' : 'super.stage.exit')}</button>
+      {toGroup ? (
+        <>
+          <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-close" disabled={closable < 1 || !onCloseGroup}
+            aria-expanded={ask} onClick={() => setAsk((v) => !v)}>{t('super.stage.closeGroup')}</button>
+          <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-minimize" onClick={onExit} title="Esc">{t('super.card.minimize')}</button>
+          {ask && closable > 0 && (
+            <div className="super-close-choice super-stage-group-ask" role="group" aria-label={t('super.group.closeAsk')} data-testid="super-stage-group-close-choice">
+              <span className="super-close-choice-q">{t('super.group.closeAsk')}</span>
+              <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-stage-group-close-end"
+                onClick={() => { setAsk(false); onCloseGroup?.(); }}>
+                {t('super.group.closeEnd').replace('{n}', String(closable))}
+              </button>
+            </div>
+          )}
+        </>
+      ) : <button type="button" className="super-stage-exit" data-testid="super-stage-exit" onClick={onExit} title="Esc">{t('super.stage.exit')}</button>}
     </div>
   );
 }

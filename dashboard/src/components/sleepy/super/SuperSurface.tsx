@@ -422,8 +422,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // row is taller than one line), so no card or agenda is ever drawn over it.
   const queueHeight = useQueueHeight(state.session);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
   );
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
@@ -1336,7 +1336,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         </button>
       )}
       {plan.controls && plan.layout && (
-        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} />
+        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} />
       )}
       {plan.strip && (
         <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />

@@ -2042,3 +2042,9 @@
   font-size: var(--font-size-xs);
 }
 .super-turn-card-closed-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
+
+/* An opened group's close and minimize sit in the presentation's toolbar; the ask opens under them. */
+.super-stage-group-ask { position: absolute; top: calc(100% + var(--space-1)); right: 0; left: auto; white-space: nowrap; z-index: var(--sz-queue); }
+.super-stage-exit--group:disabled { opacity: 0.5; cursor: default; }
+/* While its close question is open, the toolbar rises above a narrow stage's sheet and tabs. */
+.super-stage-controls[data-asking] { z-index: var(--sz-panel); }

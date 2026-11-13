@@ -116,6 +116,8 @@ export const STAGE = {
   /** The top band's presentation controls at its right end: the exit, and one segment per layout
    *  the switcher offers (none for a single choice). */
   EXIT_W: 132,
+  /** An opened group's two text buttons (close group, minimize) take the exit's place. */
+  GROUP_EXIT_W: 232,
   SWITCH_SEG_W: 96,
   /** A card's own chrome around what it shows: the 1 px border on each side and the 36 px header
    *  (SuperSurface.css `.super-card-clip`, `.super-card-head`; drift-tested). A picture card in
@@ -369,6 +371,8 @@ export interface PlanOptions {
   /** How many layouts the switcher offers (the window knows the cards' kinds); absent = those
    *  whose count fits. */
   layoutChoices?: number;
+  /** The presentation shows one group whole: its close and minimize buttons replace the exit. */
+  groupExit?: boolean;
   /** The queue pill is showing in the top band: the float centre keeps its place under it. */
   queueUp?: boolean;
   /** The bar's MEASURED height (JobBar publishes it, superJobsStore `useQueueHeight`). A card row
@@ -1327,7 +1331,7 @@ function planWith(
     const ordered = layout === 'filmstrip' ? [...shown.filter((id) => kindOf(id) !== 'agenda'), ...shown.filter((id) => kindOf(id) === 'agenda')] : shown;
     const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
-    const cw = STAGE.EXIT_W + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
+    const cw = (opts.groupExit ? STAGE.GROUP_EXIT_W : STAGE.EXIT_W) + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
     const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
     const strip = (main: Rect): StripPlan => {
       // The big card over one row holding a slot for EVERY card, in their fixed order: the big
