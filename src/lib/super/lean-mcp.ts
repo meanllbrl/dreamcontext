@@ -168,6 +168,52 @@ export function mcpDrift(o: {
   return { store, connectors };
 }
 
+/**
+ * How long after a spawn the CLI may still be fetching the claude.ai connector list. Measured on
+ * CLI 2.1.323 (2026-11-13): the list loads async after the spawn; a failure (HTTP 5xx, a timeout)
+ * is retried 3 times inline and then 3 times in the background at 5, 15 and 45 s, after which
+ * that process stops for good (about 65 s); 90 s leaves room for the slow attempts.
+ */
+const SETTLE_MS = 90_000;
+let settleMs = SETTLE_MS;
+export function setConnectorListSettleMsForTests(ms: number | null): void { settleMs = ms ?? SETTLE_MS; }
+export function connectorListSettleMs(): number { return settleMs; }
+/** Whether a process spawned at `spawnedAt` is past the CLI's own connector-list retries. */
+export function connectorListSettled(spawnedAt: number, now: number = Date.now()): boolean {
+  return now - spawnedAt >= settleMs;
+}
+
+/** A cell older than this no longer stands for a connector the account has: one removed on
+ *  claude.ai is never read again, and must not read as an outage for a month. */
+const CONNECTOR_FRESH_MS = 7 * 86_400_000;
+
+/**
+ * The claude.ai connectors this account's cache saw `connected` that a reading does not carry,
+ * ONLY when the reading has no claude.ai row at all: then the connector LIST did not load in
+ * that process (an API key or a setup-token login, or Anthropic's list service failing at the
+ * spawn), not one connector gone. A reading with any claude.ai row loaded the list: a name
+ * missing from it was removed on claude.ai, and says nothing here. Sorted, null reading = none.
+ */
+export function unloadedConnectors(
+  live: ReadonlyArray<{ name: string; home?: string }> | null,
+  accountCells: Readonly<Record<string, { status: string; at?: number }>> | null | undefined,
+  now: number = Date.now(),
+  /** Only cells read connected within this window (an outage verdict); null = every cell the
+   *  cache keeps (a cause the env proves: no chat refreshes the cells while it lasts). */
+  freshMs: number | null = CONNECTOR_FRESH_MS,
+): string[] {
+  if (!live || !accountCells) return [];
+  if (live.some((s) => s.home === 'claudeai' || /^claude\.ai /.test(s.name))) return [];
+  const out = new Set<string>();
+  for (const [key, cell] of Object.entries(accountCells)) {
+    const bar = key.lastIndexOf('|');
+    if (bar <= 0 || key.slice(bar + 1) !== 'claudeai' || cell?.status !== 'connected') continue;
+    if (freshMs !== null && (typeof cell.at !== 'number' || now - cell.at > freshMs)) continue;
+    out.add(key.slice(0, bar));
+  }
+  return [...out].sort((a, b) => a.localeCompare(b));
+}
+
 /** The names among `names` the user does not have (empty = all known). */
 export function unknownMcpNames(names: readonly string[], known: ReadonlyMap<string, unknown>): string[] {
   return names.filter((n) => !known.has(n));
