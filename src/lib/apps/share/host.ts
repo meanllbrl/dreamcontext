@@ -16,6 +16,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { ApiAdapter, ApiError } from '../../task-backend/api-adapter.js';
 import { resolveLauncherGitHubToken } from '../../git-sync/github-browse.js';
+import { tokenFingerprint, type GitHubCredential } from '../../git-sync/auth-store.js';
+import { GitHubAuthSession, classifyGitHubReject } from '../../git-sync/token-fallback.js';
 import { withGitCredentials } from '../../git-sync/credentials.js';
 import { initHardRepo, installedGit } from './installed-git.js';
 
@@ -49,7 +51,8 @@ export interface Invitation {
 }
 
 export class HostError extends Error {
-  constructor(public code: 'not_signed_in' | 'not_found' | 'no_access' | 'rate_limited' | 'exists' | 'bad_name' | 'host_error', message: string) { super(message); }
+  /** `github_auth`: GitHub refused the app's sign-in (401): one click on Reconnect fixes it. */
+  constructor(public code: 'not_signed_in' | 'github_auth' | 'not_found' | 'no_access' | 'rate_limited' | 'exists' | 'bad_name' | 'host_error', message: string) { super(message); }
 }
 
 export interface AppHost {
@@ -100,10 +103,27 @@ export class GitHubHost implements AppHost {
   kind = 'github' as const;
   allowFile = false;
   private api: ApiAdapter;
-  constructor(private token: string | null, adapter?: ApiAdapter) {
+  private token: string | null;
+  /** C2/C3: the sign-in's outcomes reach the one reconnect flag (no project, so no fallback). */
+  private session: GitHubAuthSession | null;
+  constructor(cred: string | GitHubCredential | null, adapter?: ApiAdapter) {
+    const c: GitHubCredential | null = typeof cred === 'string'
+      ? { token: cred, source: 'global', via: 'sign-in', fingerprint: tokenFingerprint(cred) }
+      : cred;
+    this.token = c?.token ?? null;
+    const session = c && typeof cred !== 'string' ? new GitHubAuthSession(c, 'browse', undefined) : null;
+    this.session = session;
     this.api = adapter ?? new ApiAdapter({
       baseUrl: 'https://api.github.com',
-      authHeaders: (): Record<string, string> => (token ? { Authorization: `token ${token}` } : {}),
+      authHeaders: (): Record<string, string> => (this.token ? { Authorization: `token ${this.token}` } : {}),
+      classifyReject: classifyGitHubReject,
+      ...(session ? {
+        authObserver: {
+          onSuccess: () => session.noteSuccess(),
+          onReject: (kind: 'auth' | 'forbidden') => session.handleReject(kind),
+          onRetryReject: () => undefined,
+        },
+      } : {}),
     });
   }
   get signedIn(): boolean { return !!this.token; }
@@ -114,7 +134,8 @@ export class GitHubHost implements AppHost {
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.kind === 'not_found') throw new HostError('not_found', 'not found (or no access)');
-        if (e.kind === 'auth') throw new HostError(this.token ? 'no_access' : 'not_signed_in', this.token ? 'GitHub refused the request. Sign in again in Settings → GitHub.' : 'sign in with GitHub first (Settings → GitHub)');
+        if (e.kind === 'auth') throw new HostError(this.token ? 'github_auth' : 'not_signed_in', this.token ? 'GitHub no longer accepts your sign-in. Reconnect in Settings → GitHub → Reconnect.' : 'sign in with GitHub first (Settings → GitHub)');
+        if (e.kind === 'forbidden') throw new HostError('no_access', `GitHub accepted your sign-in but refused this request${/"message"\s*:\s*"([^"]{1,160})"/.exec(e.message)?.[1] ? `: ${/"message"\s*:\s*"([^"]{1,160})"/.exec(e.message)?.[1]}` : '.'}`);
         if (e.kind === 'rate_limited') throw new HostError('rate_limited', 'GitHub rate limit reached; try again later');
         if (e.kind === 'invalid' && /already exists/i.test(e.message)) throw new HostError('exists', 'that repo already exists');
       }
@@ -316,7 +337,7 @@ export function resolveAppHost(home: string = homedir(), opts: { anonymous?: boo
   const local = process.env.DREAMCONTEXT_APPS_LOCAL_HOST;
   if (local && local.trim()) return new LocalHost(resolve(local.trim()), opts.anonymous ? null : (process.env.DREAMCONTEXT_APPS_LOCAL_LOGIN?.trim() || null));
   if (opts.anonymous) return new GitHubHost(null);
-  return new GitHubHost(resolveLauncherGitHubToken(home)?.token ?? null);
+  return new GitHubHost(resolveLauncherGitHubToken(home));
 }
 
 /** Read a repo reference the owner typed: `https://github.com/o/r`, `github.com/o/r`, `o/r`. */

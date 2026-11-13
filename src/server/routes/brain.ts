@@ -26,7 +26,6 @@ import { runTeamFetch, type TeamFetchVaultResult } from '../../lib/git-sync/team
 import { readConflictReport } from '../../lib/git-sync/conflict-report.js';
 import { classifySyncError, type SyncFailure } from '../../lib/git-sync/failure.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
-import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 import { SAFE_TO_GITIGNORE } from '../../lib/secret-files.js';
 import { listVaults } from '../../lib/vaults.js';
@@ -186,8 +185,6 @@ async function runSyncPayload(
 ): Promise<SyncPayload> {
   try {
     const result = await runBrainSync({ cwd: contextRoot, mode: opts.mode, foreground: opts.foreground, noCheckpoint: opts.noCheckpoint });
-    // Any outcome that REACHED the remote proves the stored token still authenticates.
-    reconcileBrainSyncSuccess(result.action);
     let failure: SyncFailure | undefined;
     if (result.action === 'no-remote' && /token/i.test(result.note ?? '')) {
       failure = classifySyncError(result.note ?? 'no github token found', syncRepoHint(projectRoot));
@@ -209,12 +206,8 @@ async function runSyncPayload(
     // retry), name the shadowing stale project token as the real culprit.
     const perProjectToken = isPerProjectToken(resolveBrainSyncToken(projectRoot));
     const failure = classifySyncError((err as Error).message, syncRepoHint(projectRoot), { perProjectToken });
-    // Only a GENUINELY auth-rejected op on the GLOBAL sign-in flags the session
-    // invalid. A permission error means GitHub accepted the credential (it just
-    // lacks a scope), so the session is still valid; a per-project/env token
-    // failing auth is not a global-sign-in problem; network/unknown leave
-    // validity untouched. (Attribution lives in reconcileBrainSyncFailure.)
-    reconcileBrainSyncFailure((err as Error).message, projectRoot, syncRepoHint(projectRoot));
+    // The sign-in's reconnect flag was already written by the engine's auth session (C3),
+    // off the real git answer and the exact token that got it.
     return {
       action: 'error',
       pulledUpdates: 0,

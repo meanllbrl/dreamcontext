@@ -27,8 +27,8 @@ Mode lives in `_dream_context/state/.config.json` under `brainRepo.mode`. **Anyt
 ## Set it up (CLI)
 
 ```bash
-# 0. Token FIRST — every push needs it (see Auth for scope + resolution order).
-dreamcontext config github-token "$(gh auth token)"   # per-MACHINE token; gitignored, never travels with the repo
+# 0. Sign in FIRST: Settings → GitHub → Connect in the app (see Auth for the resolution order).
+#    Headless/CI only: dreamcontext config github-token "$(gh auth token)"   (advanced, per-project override)
 
 # 1. Make sure the project has a GitHub origin (full-repo pushes to it).
 git remote add origin https://github.com/<you-or-org>/<repo>.git   # skip if it already has one
@@ -43,11 +43,13 @@ Every push uses the **same resolved token**, so set the token (or be logged into
 
 ## Auth — how sync authenticates (NOT gh, NOT the keychain)
 
-The token is resolved by **`resolveBrainSyncToken`, secrets-first, env-last**:
+**The normal way is the app's GitHub sign-in: Settings → GitHub → Connect** (browser approval, no token to make). Every GitHub path (brain sync, the GitHub task backend, launcher clones, app sharing, linked repos) resolves ONE credential, `resolveGitHubCredential` (`src/lib/git-sync/auth-store.ts`), in one order:
 
-1. per-project `_dream_context/state/.secrets.json` → `github.token` (set via `dreamcontext config github-token`)
-2. global `~/.dreamcontext/.secrets.json` → `github.token` (the account you logged into dreamcontext as)
-3. env `GITHUB_TOKEN`, then `GH_TOKEN`
+1. this project's own token, `_dream_context/state/.secrets.json` → `github.token` (advanced: Settings → GitHub → Advanced, or `dreamcontext config github-token`), unless it is demoted for this purpose
+2. the app's sign-in, global `~/.dreamcontext/.secrets.json` → `github.token`
+3. env `GITHUB_TOKEN`, then `GH_TOKEN` (env-only CI keeps working; a stray shell token never overrides the sign-in)
+
+**Dead tokens heal themselves.** When GitHub refuses the project's own token and the sign-in differs, the request is retried once with the sign-in. If that works, the project token is DEMOTED (a sha256 marker in machine-local `.brain-local.json`, never deleted): a 401 demotes it for every purpose, a 403 only for the purpose that got it. A rate-limit 403 never switches token. Entering a new project token restores its priority. The sign-in's own 401 raises the one `needsReconnect` flag (fingerprint-checked under a lock); only a success of the sign-in clears it, and every surface then offers one-click **Reconnect**.
 
 **The `gh` CLI and git credential helpers are never consulted** — helpers are actively disabled on every networked git call (`-c credential.helper=`), and the token is handed to git only through a `GIT_ASKPASS` helper pointed at a fresh **0600** temp file (never in the remote URL or argv). `.secrets.json` is written **gitignore-first** (the write aborts if it can't be ignored) and chmod **0600**.
 
@@ -87,7 +89,7 @@ The token is resolved by **`resolveBrainSyncToken`, secrets-first, env-last**:
 
 The project is portable, but each machine needs a few things right. **The #1 real-world failure is a machine with no token — sync then silently no-ops.**
 
-- **Every machine needs its own token.** `.secrets.json` is gitignored, so the token does **not** travel with the repo. On each new machine run **`dreamcontext config github-token "$(gh auth token)"`** (or set `GITHUB_TOKEN`, or log in so the global `~/.dreamcontext/.secrets.json` is populated). No `gh`/keychain fallback exists — if none of the three token sources is set, push/pull just quietly do nothing.
+- **Every machine needs its own sign-in.** `.secrets.json` is gitignored, so no credential travels with the repo. On each new machine sign in once: **Settings → GitHub → Connect** (headless: `dreamcontext config github-token "$(gh auth token)"` or `GITHUB_TOKEN`). No `gh`/keychain fallback exists; with none of the three sources set, push/pull quietly do nothing.
 - **The project must be its OWN git root (the enclosing-repo trap).** In `full-repo` the repo root must be the project folder. Verify: `git -C <project> rev-parse --show-toplevel` should print *that* folder — **not climb into an enclosing parent repo** (e.g. a home-directory `~/.git`). If sync targets the wrong tree, hunt for a parent `.git` above the folder and remove its stray `origin`.
 - **Windows / WSL — line endings.** dreamcontext does **not** normalize CRLF. On Windows, set `git config core.autocrlf false` (or commit a `.gitattributes` with `* text=lf`) in the project repo to avoid phantom whole-file conflicts on markdown/JSON. A mixed Windows⇄WSL checkout of the *same* folder is the highest-risk setup — pick one.
 - **Node/npx must be on PATH for GUI-launched agents.** The background pull launches via the node binary directly (not a bare `dreamcontext`), so a minimal Finder/Explorer PATH is tolerated — but the CLI itself must be installed on each machine.

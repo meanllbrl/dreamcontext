@@ -89,7 +89,7 @@ import { brainShareMode } from '../../lib/apps/data-share.js';
 import { readPullRecord, appPullHeld, listPullRecords as listPullRecordsOf } from '../../lib/apps/data-conflicts.js';
 import { recoverAppPulls, restoreTeamFilesLocked } from '../../lib/apps/data-exchange.js';
 import { parseRepoSlug } from '../../lib/git-sync/origin-setup.js';
-import { resolveBrainSyncToken } from '../../lib/git-sync/brain-repo.js';
+import { resolveGitHubCredential } from '../../lib/git-sync/auth-store.js';
 import * as git from '../../lib/git-sync/git.js';
 
 type Params = Record<string, string>;
@@ -498,7 +498,7 @@ async function lookupVisibility(projectRoot: string, name: string): Promise<void
   const key = name.toLowerCase();
   remotePending.add(key);
   try {
-    const t = resolveBrainSyncToken(projectRoot);
+    const t = resolveGitHubCredential({ projectRoot, purpose: 'browse' });
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 5000);
     try {

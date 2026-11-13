@@ -148,12 +148,12 @@ Interactively this: gitignores the derived mirror/sync state → prompts for a t
 
 #### Manual / scripted configuration
 ```bash
-echo "$GITHUB_TOKEN" | dreamcontext config github-token   # also reads GITHUB_TOKEN / GH_TOKEN from the env
+echo "$GITHUB_TOKEN" | dreamcontext config github-token   # advanced: a project-only token overriding the sign-in
 dreamcontext config github-token                          # or prompt interactively
 dreamcontext config github-repo <owner> <repo>            # set the sync target explicitly
 dreamcontext config task-backend local                    # back to local-only
 ```
-Token scope: a classic PAT needs `repo`; a fine-grained token needs **Issues** (read/write) + **Metadata**. The day-to-day sync commands (`tasks sync`, `tasks members`, `tasks provision`, `sync-hooks`) and `config show` work identically to ClickUp — they're backend-generic.
+Credential: the app's GitHub sign-in (Settings → GitHub) is enough and is the normal way; task sync uses the same one resolver as brain sync (project token → sign-in → env, see `brain-sync.md` → Auth), so a dead project token heals onto the sign-in by itself and a run that GitHub refuses stops after the first 401 with one line naming Settings → GitHub → Reconnect. `config github-token` is the advanced per-project override; its token scope: a classic PAT needs `repo`, a fine-grained token **Issues** (read/write) + **Metadata**. The day-to-day sync commands (`tasks sync`, `tasks members`, `tasks provision`, `sync-hooks`) and `config show` work identically to ClickUp — they're backend-generic.
 
 #### Deferred — Tier-2 (GitHub Projects v2)
 Priority/urgency/status as first-class **board fields** would need GitHub **Projects v2**, which is GraphQL-only and doesn't fit the REST adapter cleanly. It's a documented Tier-2 follow-up; this backend ships **plain Issues only**.

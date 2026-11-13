@@ -19,7 +19,6 @@ import {
   maskToken,
   resolveClickUpToken,
   writeClickUpToken,
-  resolveGitHubToken,
   writeGitHubToken,
 } from '../../lib/task-backend/secrets.js';
 import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
@@ -27,6 +26,7 @@ import { installTaskSyncHooks, uninstallTaskSyncHooks, hasManagedTaskSyncHooks }
 import { createClickUpBackend, discoverClickUpLists } from '../../lib/task-backend/clickup.js';
 import { createGitHubBackend, discoverGitHubRepos } from '../../lib/task-backend/github.js';
 import { SyncLedger } from '../../lib/task-backend/sync-state.js';
+import { clearProjectGitHubDemotion, resolveGitHubCredential } from '../../lib/git-sync/auth-store.js';
 import { join } from 'node:path';
 import { confirm, select } from '@inquirer/prompts';
 
@@ -120,10 +120,10 @@ function printConfig(projectRoot: string): void {
       }
     }
     if (cfg.taskBackend === 'github') {
-      const resolved = resolveGitHubToken(projectRoot);
+      const resolved = resolveGitHubCredential({ projectRoot, purpose: 'tasks' });
       const tokenLine = resolved
-        ? chalk.green('present') + chalk.dim(` (${resolved.source === 'env' ? `env:${resolved.via}` : resolved.source === 'global' ? 'GitHub sign-in' : 'secrets file'}, ${maskToken(resolved.token)})`)
-        : chalk.yellow('absent') + chalk.dim(' (set with `dreamcontext config github-token`)');
+        ? chalk.green('present') + chalk.dim(` (${resolved.source === 'env' ? `env:${resolved.via}` : resolved.source === 'global' ? 'GitHub sign-in' : 'this project\'s own token'}, ${maskToken(resolved.token)})`)
+        : chalk.yellow('absent') + chalk.dim(' (sign in with GitHub in Settings → GitHub)');
       console.log(`  GitHub token:   ${tokenLine}`);
       if (cfg.github?.owner && cfg.github?.repo) {
         console.log(`  GitHub repo:    ${chalk.dim(`${cfg.github.owner}/${cfg.github.repo}`)}`);
@@ -420,7 +420,7 @@ export function registerConfigCommand(program: Command): void {
       }
 
       if (b === 'github') {
-        const token = resolveGitHubToken(projectRoot);
+        const token = resolveGitHubCredential({ projectRoot, purpose: 'tasks' });
         const cfg = readSetupConfig(projectRoot);
 
         if (process.stdin.isTTY) {
@@ -442,7 +442,7 @@ export function registerConfigCommand(program: Command): void {
             }
           }
 
-          const liveToken = resolveGitHubToken(projectRoot);
+          const liveToken = resolveGitHubCredential({ projectRoot, purpose: 'tasks' });
           let connected = false;
           if (liveToken) {
             const contextRoot = join(projectRoot, '_dream_context');
@@ -693,7 +693,7 @@ export function registerConfigCommand(program: Command): void {
 
   config
     .command('github-token [token]')
-    .description('Store a GitHub token in the gitignored secrets file (never .config.json)')
+    .description('Advanced: store a project-only GitHub token (the GitHub sign-in in Settings → GitHub is the normal way; this token overrides it for this project)')
     .option('--user <name>', 'Scope the token to a person from the people roster')
     .action(async (token: string | undefined, opts: { user?: string }) => {
       const projectRoot = requireProjectRoot();
@@ -726,6 +726,8 @@ export function registerConfigCommand(program: Command): void {
         // writeGitHubToken guarantees the .gitignore entry exists BEFORE the
         // secrets file is written, and aborts if .gitignore can't be updated.
         writeGitHubToken(projectRoot, value, user);
+        // A new token is a fresh start: an old demotion marker is about the old value.
+        if (!user) clearProjectGitHubDemotion(projectRoot);
       } catch (err) {
         error((err as Error).message);
         process.exitCode = 1;

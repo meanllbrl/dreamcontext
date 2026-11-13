@@ -26,7 +26,7 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 | `config clickup-token [token]` | Store a ClickUp API key in the gitignored secrets file. `--user <name>` to scope it. |
 | `config clickup-list <teamId> <spaceId> <listId>` | Set the ClickUp sync target. `--migrate` / `--keep` when changing lists. |
 | `config clickup-member <person> <memberId>` | Map a roster person to a ClickUp member id. `--token-env <ENV>`. |
-| `config github-token [token]` | Store a GitHub token in the gitignored secrets file (also reads `GITHUB_TOKEN`/`GH_TOKEN`). `--user <name>` to scope it. |
+| `config github-token [token]` | Advanced: store a project-only GitHub token in the gitignored secrets file; it overrides the app's sign-in (Settings → GitHub) for this project. `--user <name>` to scope it. |
 | `config github-repo <owner> <repo>` | Set the GitHub sync target (`owner`/`repo`). |
 
 ### Machine readiness: setup machine phase and `doctor --machine`

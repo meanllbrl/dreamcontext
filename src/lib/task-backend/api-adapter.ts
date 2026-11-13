@@ -9,7 +9,8 @@
  */
 
 export type ApiErrorKind =
-  | 'auth'          // 401/403
+  | 'auth'          // 401/403 (a provider's classifyReject may narrow a 403)
+  | 'forbidden'     // a provider said: the credential is valid but not allowed here
   | 'not_found'     // 404
   | 'invalid'       // other 4xx
   | 'rate_limited'  // 429 (after retries exhausted)
@@ -55,6 +56,24 @@ export interface ApiAdapterOptions {
    * GET/HEAD requests are never spaced regardless of this setting.
    */
   minWriteIntervalMs?: number;
+  /**
+   * Provider hook: classify a 401/403 from its headers and body before the default
+   * (`auth`). Return `rate_limited` to back off and retry like a 429, `forbidden` or `auth`
+   * to throw that kind, or null for the default. Absent = every 401/403 is `auth`.
+   */
+  classifyReject?: (status: number, headers: Headers, body: string) => { kind: 'auth' | 'forbidden' | 'rate_limited'; retryAfterMs?: number | null } | null;
+  /**
+   * Credential hook: told about every successful response, and asked on an `auth` or
+   * `forbidden` reject whether to retry the request once (it swapped the credential, which
+   * `authHeaders` reads per request). `onRetryReject` hears how that retry failed.
+   */
+  authObserver?: {
+    onSuccess(): void;
+    onReject(kind: 'auth' | 'forbidden'): boolean;
+    onRetryReject(kind: ApiErrorKind): void;
+    /** True once the credential is known dead: fail fast, no request sent. */
+    isDead?(): boolean;
+  };
 }
 
 const DEFAULT_RATE_PER_MINUTE = 100;
@@ -83,6 +102,8 @@ export class ApiAdapter {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly minWriteIntervalMs: number;
+  private readonly classifyReject: ApiAdapterOptions['classifyReject'];
+  private readonly authObserver: ApiAdapterOptions['authObserver'];
 
   /** Dispatch timestamps within the sliding window (rate limiting). */
   private sent: number[] = [];
@@ -101,6 +122,8 @@ export class ApiAdapter {
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? defaultSleep;
     this.minWriteIntervalMs = opts.minWriteIntervalMs ?? 0;
+    this.classifyReject = opts.classifyReject;
+    this.authObserver = opts.authObserver;
   }
 
   /**
@@ -150,12 +173,37 @@ export class ApiAdapter {
     }
   }
 
+  /** One request with the credential hook around it (see `authObserver`). */
   private async execute<T>(method: string, path: string, opts: ApiRequestOptions): Promise<T> {
+    const obs = this.authObserver;
+    if (!obs) return this.executeAttempts<T>(method, path, opts);
+    if (obs.isDead?.()) {
+      throw new ApiError('auth', `Authentication failed (401): the credential was refused earlier in this run; ${method} ${path} not sent`, 401);
+    }
+    try {
+      const out = await this.executeAttempts<T>(method, path, opts);
+      obs.onSuccess();
+      return out;
+    } catch (err) {
+      if (!(err instanceof ApiError) || (err.kind !== 'auth' && err.kind !== 'forbidden')) throw err;
+      if (!obs.onReject(err.kind)) throw err;
+      try {
+        const out = await this.executeAttempts<T>(method, path, opts);
+        obs.onSuccess();
+        return out;
+      } catch (retryErr) {
+        if (retryErr instanceof ApiError) obs.onRetryReject(retryErr.kind);
+        throw retryErr;
+      }
+    }
+  }
+
+  private async executeAttempts<T>(method: string, path: string, opts: ApiRequestOptions): Promise<T> {
     let lastError: ApiError | null = null;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       if (attempt > 0) {
-        const backoff = lastError?.kind === 'rate_limited' && lastError.status === 429
+        const backoff = lastError?.kind === 'rate_limited'
           ? this.retryAfterMs ?? BASE_BACKOFF_MS * 2 ** attempt
           : BASE_BACKOFF_MS * 2 ** attempt;
         await this.sleep(backoff);
@@ -209,6 +257,15 @@ export class ApiAdapter {
       const snippet = detail ? `: ${detail.slice(0, 200)}` : '';
 
       if (status === 401 || status === 403) {
+        const c = this.classifyReject?.(status, response.headers, detail) ?? null;
+        if (c?.kind === 'rate_limited') {
+          this.retryAfterMs = c.retryAfterMs ?? null;
+          lastError = new ApiError('rate_limited', `Rate limited (${status}): ${method} ${path}${snippet}`, status);
+          continue; // back off and retry, like a 429
+        }
+        if (c?.kind === 'forbidden') {
+          throw new ApiError('forbidden', `Forbidden (${status})${snippet}`, status);
+        }
         throw new ApiError('auth', `Authentication failed (${status})${snippet}`, status);
       }
       if (status === 404) {

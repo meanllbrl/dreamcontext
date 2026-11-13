@@ -64,7 +64,7 @@ function githubAdapter(projectRoot: string, injected?: ApiAdapter): ApiAdapter {
     baseUrl: 'https://api.github.com',
     authHeaders: () => {
       const t = resolveBrainSyncToken(projectRoot);
-      if (!t) throw new GitSyncError('No GitHub token found (sign in with GitHub, or set GITHUB_TOKEN/GH_TOKEN).');
+      if (!t) throw new GitSyncError('No GitHub token found: sign in with GitHub in Settings → GitHub.');
       return { Authorization: `token ${t.token}` };
     },
   });

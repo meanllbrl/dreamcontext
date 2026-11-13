@@ -10,15 +10,20 @@ import {
   isOAuthAppConfigured,
   type FetchImpl,
 } from '../../lib/git-sync/oauth.js';
+import { dirname } from 'node:path';
 import {
   writeGlobalGitHubToken,
   setGlobalGitHubLogin,
-  readGlobalGitHubToken,
   readGlobalGitHubLogin,
   readGlobalGitHubNeedsReconnect,
   setGlobalGitHubAuthValid,
   clearGlobalGitHubToken,
+  clearProjectGitHubDemotion,
+  projectGitHubTokenState,
+  resolveGitHubCredential,
 } from '../../lib/git-sync/auth-store.js';
+import { writeGitHubToken, removeProjectGitHubToken } from '../../lib/task-backend/secrets.js';
+import { drainGitHubTaskQueues } from '../sync-job.js';
 
 /**
  * `/api/brain/auth/*` — the app-global "sign into dreamcontext with GitHub"
@@ -84,10 +89,20 @@ function pruneDeviceSessions(): void {
 
 function gate(res: ServerResponse): boolean {
   if (!isDesktop()) {
-    sendError(res, 403, 'desktop_only', 'GitHub sign-in is only available in the desktop app.');
+    // C5: the dashboard maps this to "managed in the app", never to "not connected".
+    sendJson(res, 403, { error: 'desktop_only', kind: 'desktop_only', reconnect: false, message: 'GitHub sign-in is only available in the desktop app.' });
     return false;
   }
   return true;
+}
+
+/**
+ * After a fresh sign-in, the task queues that waited on a refused credential drain in the
+ * background (D4). TEST seam: a route test swaps it so no real vault is touched.
+ */
+let afterSignIn: () => void = () => { void drainGitHubTaskQueues(authHome).catch(() => undefined); };
+export function __setAfterGitHubSignIn(fn: () => void): void {
+  afterSignIn = fn;
 }
 
 // ─── POST /api/brain/auth/device/start ───────────────────────────────────────
@@ -183,6 +198,7 @@ export async function handleBrainAuthDevicePoll(
         setGlobalGitHubAuthValid(true, authHome);
         deviceSessions.delete(sessionId);
         sendJson(res, 200, { status: 'authorized', login });
+        afterSignIn();
         return;
       }
       case 'slow_down':
@@ -214,15 +230,20 @@ export async function handleBrainAuthDevicePoll(
 export async function handleBrainAuthStatus(
   req: IncomingMessage,
   res: ServerResponse,
+  _params?: Record<string, string>,
+  contextRoot?: string | null,
 ): Promise<void> {
   if (!gate(res)) return;
 
   // `oauthConfigured` tells the UI whether to offer the one-click device flow or
   // steer straight to the PAT path (the placeholder client_id can't reach GitHub).
   const oauthConfigured = isOAuthAppConfigured();
+  // C5: whether the OPEN project overrides the sign-in with its own token, and its state.
+  const projectToken = contextRoot ? projectGitHubTokenState(dirname(contextRoot)) : 'none';
 
-  const global = readGlobalGitHubToken(authHome);
-  if (global) {
+  // C1 without a project: the sign-in, else env (never read here directly).
+  const cred = resolveGitHubCredential({ purpose: 'browse', home: authHome });
+  if (cred?.source === 'global') {
     sendJson(res, 200, {
       connected: true,
       login: readGlobalGitHubLogin(authHome) ?? undefined,
@@ -231,17 +252,15 @@ export async function handleBrainAuthStatus(
       // and the sidebar sync surface can never disagree about the session.
       needsReconnect: readGlobalGitHubNeedsReconnect(authHome),
       oauthConfigured,
+      projectToken,
     });
     return;
   }
-  for (const envVar of ['GITHUB_TOKEN', 'GH_TOKEN']) {
-    const v = process.env[envVar];
-    if (v && v.trim()) {
-      sendJson(res, 200, { connected: true, source: 'env', oauthConfigured });
-      return;
-    }
+  if (cred?.source === 'env') {
+    sendJson(res, 200, { connected: true, source: 'env', oauthConfigured, projectToken });
+    return;
   }
-  sendJson(res, 200, { connected: false, source: null, oauthConfigured });
+  sendJson(res, 200, { connected: false, source: null, oauthConfigured, projectToken });
 }
 
 // ─── POST /api/brain/auth/token (PAT fallback) ───────────────────────────────
@@ -276,6 +295,62 @@ export async function handleBrainAuthToken(
   // The PAT just validated against GitHub — clear any stale reconnect flag.
   setGlobalGitHubAuthValid(true, authHome);
   sendJson(res, 200, { connected: true, login, source: 'global', needsReconnect: false });
+  afterSignIn();
+}
+
+// ─── POST/DELETE /api/brain/auth/project-token (C6, Settings → GitHub → Advanced) ─
+
+/**
+ * The OPEN project's own GitHub token: validated against GitHub, written ONLY to its
+ * `github.token` (gitignore first, 0600), the project's demotion marker lifted. GitHub-only
+ * on purpose: it never writes through the active task backend, so a ClickUp key is never
+ * touched. The token is never echoed.
+ */
+export async function handleBrainAuthProjectToken(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
+  if (!gate(res)) return;
+  if (!contextRoot) {
+    sendError(res, 400, 'no_vault', 'Open a project first: this token belongs to one project.');
+    return;
+  }
+  const projectRoot = dirname(contextRoot);
+  if (req.method === 'DELETE') {
+    removeProjectGitHubToken(projectRoot);
+    clearProjectGitHubDemotion(projectRoot);
+    sendJson(res, 200, { projectToken: 'none' });
+    return;
+  }
+  const body = await parseJsonBody(req);
+  const keys = body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body) : null;
+  const raw = body && keys && keys.length === 1 && keys[0] === 'token' ? body.token : undefined;
+  const token = typeof raw === 'string' ? raw.trim() : '';
+  if (!token) {
+    sendError(res, 400, 'invalid_body', 'The body must be exactly { "token": "<token>" }.');
+    return;
+  }
+  let login: string | null;
+  try {
+    login = await fetchAuthenticatedLogin(token, fetchImpl);
+  } catch (err) {
+    sendError(res, 502, 'validate_failed', (err as Error).message);
+    return;
+  }
+  if (!login) {
+    sendError(res, 400, 'invalid_token', 'That token is not valid (GitHub rejected it).');
+    return;
+  }
+  try {
+    writeGitHubToken(projectRoot, token);
+  } catch (err) {
+    sendError(res, 500, 'write_failed', (err as Error).message);
+    return;
+  }
+  clearProjectGitHubDemotion(projectRoot);
+  sendJson(res, 200, { projectToken: 'active', login });
 }
 
 // ─── POST /api/brain/auth/logout ─────────────────────────────────────────────

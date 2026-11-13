@@ -186,9 +186,13 @@ export function isTokenRefused(report: { errors: string[]; pushed: number; creat
 }
 
 /** The line `sleep done` prints when the remote refused the token. */
-export function renderStaleRemoteLine(depth: TaskQueueDepth): string {
+export function renderStaleRemoteLine(depth: TaskQueueDepth, backend?: string): string {
   const queued = depth.ops > 0
     ? `${depth.ops} change(s) to ${depth.tasks} task(s) queued${depth.oldest ? ` since ${depth.oldest}` : ''}`
     : 'nothing queued yet';
+  if (backend === 'github') {
+    // No token to create, no command to run: the sign-in heals it and the queue drains itself.
+    return `Task sync stopped: GitHub no longer accepts your sign-in, so the board is stale (${queued}). Reconnect in Settings → GitHub → Reconnect; the queue syncs on its own after.`;
+  }
   return `Task sync skipped: the remote board refused the token, so it is stale (${queued}). Renew the task backend token, then run \`dreamcontext tasks sync\`.`;
 }

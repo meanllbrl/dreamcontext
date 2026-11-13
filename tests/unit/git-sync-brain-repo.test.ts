@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeGitHubToken } from '../../src/lib/task-backend/secrets.js';
-import { writeGlobalGitHubToken } from '../../src/lib/git-sync/auth-store.js';
+import { demoteProjectGitHubToken, writeGlobalGitHubToken } from '../../src/lib/git-sync/auth-store.js';
 import * as git from '../../src/lib/git-sync/git.js';
 import { readSetupConfig, updateSetupConfig } from '../../src/lib/setup-config.js';
 import {
@@ -15,7 +15,6 @@ import {
   acquireBrainLock,
   releaseBrainLock,
   healStaleBrainConfig,
-  demoteProjectGitHubToken,
 } from '../../src/lib/git-sync/brain-repo.js';
 
 describe('git-sync/brain-repo — resolveMode', () => {
@@ -112,7 +111,7 @@ describe('git-sync/brain-repo — resolveBrainSyncToken (M1: secrets-first, env-
     process.env.GITHUB_TOKEN = 'from-env';
     const resolved = resolveBrainSyncToken(projectRoot);
     expect(resolved?.token).toBe('from-secrets-file');
-    expect(resolved?.source).toBe('secrets');
+    expect(resolved?.source).toBe('project');
   });
 
   it('falls back to GITHUB_TOKEN/GH_TOKEN env when no per-project secret exists', () => {
@@ -134,18 +133,18 @@ describe('git-sync/brain-repo — resolveBrainSyncToken (M1: secrets-first, env-
     delete process.env.GH_TOKEN;
     writeGitHubToken(projectRoot, 'task-backend-pat');
     writeGlobalGitHubToken('global-signin-token');
-    demoteProjectGitHubToken(projectRoot, 'task-backend-pat');
+    demoteProjectGitHubToken(projectRoot, 'task-backend-pat', 'brain');
 
     const resolved = resolveBrainSyncToken(projectRoot);
     expect(resolved?.token).toBe('global-signin-token');
-    expect(resolved?.via).toBe('global');
+    expect(resolved?.source).toBe('global');
   });
 
   it('a demoted token is still the LAST resort when no global/env token exists', () => {
     delete process.env.GITHUB_TOKEN;
     delete process.env.GH_TOKEN;
     writeGitHubToken(projectRoot, 'task-backend-pat');
-    demoteProjectGitHubToken(projectRoot, 'task-backend-pat');
+    demoteProjectGitHubToken(projectRoot, 'task-backend-pat', 'brain');
 
     const resolved = resolveBrainSyncToken(projectRoot);
     expect(resolved?.token).toBe('task-backend-pat');
@@ -156,13 +155,13 @@ describe('git-sync/brain-repo — resolveBrainSyncToken (M1: secrets-first, env-
     delete process.env.GH_TOKEN;
     writeGitHubToken(projectRoot, 'old-pat');
     writeGlobalGitHubToken('global-signin-token');
-    demoteProjectGitHubToken(projectRoot, 'old-pat');
-    expect(resolveBrainSyncToken(projectRoot)?.via).toBe('global');
+    demoteProjectGitHubToken(projectRoot, 'old-pat', 'brain');
+    expect(resolveBrainSyncToken(projectRoot)?.source).toBe('global');
 
     writeGitHubToken(projectRoot, 'brand-new-pat');
     const resolved = resolveBrainSyncToken(projectRoot);
     expect(resolved?.token).toBe('brand-new-pat');
-    expect(resolved?.source).toBe('secrets');
+    expect(resolved?.source).toBe('project');
   });
 });
 

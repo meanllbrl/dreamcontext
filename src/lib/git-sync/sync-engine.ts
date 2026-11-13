@@ -23,13 +23,17 @@ import {
   acquireBrainLock,
   releaseBrainLock,
   ensureFullRepoGitignore,
-  demoteProjectGitHubToken,
   FALLBACK_AUTHOR,
 } from './brain-repo.js';
 import { withGitCredentials } from './credentials.js';
-import { readGlobalGitHubLogin, readGlobalGitHubToken } from './auth-store.js';
-import { type ResolvedToken } from '../task-backend/secrets.js';
-import { BrainSyncTokenSession } from './token-fallback.js';
+import {
+  demoteProjectGitHubToken,
+  readGlobalGitHubCredential,
+  readGlobalGitHubLogin,
+  reportGitHubAuthOutcome,
+  type GitHubCredential,
+} from './auth-store.js';
+import { GitHubAuthSession } from './token-fallback.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
 import { getPerson } from '../people-store.js';
 import {
@@ -184,9 +188,11 @@ export interface SyncEngineDeps {
   /** C3 (M3): who is signed into dreamcontext right now (global auth-store), if anyone. */
   readGlobalGitHubLogin: typeof readGlobalGitHubLogin;
   /** Stale-per-project-token self-heal: the signed-in global token to fall back to. */
-  readGlobalGitHubToken: typeof readGlobalGitHubToken;
+  readGlobalGitHubCredential: () => GitHubCredential | null;
   /** Stale-per-project-token self-heal: demote (never delete) the shadowing per-project `github.token`. */
   demoteProjectGitHubToken: typeof demoteProjectGitHubToken;
+  /** C3: the one writer of the sign-in's reconnect flag (tests inject a recorder). */
+  reportGitHubAuthOutcome?: typeof reportGitHubAuthOutcome;
   /** M3: the staging pass that holds back agent files carrying a secret (after every stage). */
   agentStagePass: typeof agentStagePass;
   /** B1-2: park untracked local agent files a pull would overwrite, before the merge. */
@@ -251,8 +257,9 @@ const defaultDeps: SyncEngineDeps = {
   acquireBrainLock,
   releaseBrainLock,
   readGlobalGitHubLogin,
-  readGlobalGitHubToken,
+  readGlobalGitHubCredential: () => readGlobalGitHubCredential(),
   demoteProjectGitHubToken,
+  reportGitHubAuthOutcome,
   agentStagePass,
   guardPullCollisions,
   resolvePendingRestores,
@@ -367,7 +374,7 @@ interface Ctx {
    * resolves a token. Carries the stale-per-project-token self-heal state so
    * `runBrainSync` can stamp `healedStaleProjectToken` onto the final result.
    */
-  session?: BrainSyncTokenSession;
+  session?: GitHubAuthSession;
 }
 
 /** Human-facing copy for a full-repo code conflict — names the file + how to finish. */
@@ -414,30 +421,32 @@ function authorFor(ctx: Ctx): { name: string; email: string } | undefined {
 }
 
 /**
- * Resolve the brain sync token and wrap it in a `BrainSyncTokenSession` (the
+ * Resolve the brain sync token and wrap it in a `GitHubAuthSession` (the
  * stale-per-project-token self-heal), storing it on the ctx so `runBrainSync`
  * can read the heal flag. Returns null when NO token is configured at all (the
  * caller returns the `no-remote` "no token" outcome). Reuses an existing session
  * on the ctx so a fetch that already healed carries the global token into the push.
  */
-function resolveTokenSession(ctx: Ctx): BrainSyncTokenSession | null {
+function resolveTokenSession(ctx: Ctx): GitHubAuthSession | null {
   if (ctx.session) return ctx.session;
-  const token: ResolvedToken | null = ctx.d.resolveBrainSyncToken(ctx.projectRoot);
+  const token: GitHubCredential | null = ctx.d.resolveBrainSyncToken(ctx.projectRoot);
   if (!token) return null;
-  const session = new BrainSyncTokenSession(token, ctx.projectRoot, {
+  const report = ctx.d.reportGitHubAuthOutcome ?? reportGitHubAuthOutcome;
+  const session = new GitHubAuthSession(token, 'brain', ctx.projectRoot, {
     withGitCredentials: ctx.d.withGitCredentials,
-    readGlobalGitHubToken: ctx.d.readGlobalGitHubToken,
+    readGlobalGitHubCredential: ctx.d.readGlobalGitHubCredential,
     demoteProjectGitHubToken: ctx.d.demoteProjectGitHubToken,
+    reportGitHubAuthOutcome: (o) => report(o),
   });
   ctx.session = session;
   return session;
 }
 
-const NO_TOKEN_NOTE = 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).';
+const NO_TOKEN_NOTE = 'No GitHub token found for the brain repo: sign in with GitHub in Settings → GitHub.';
 
 /** Human-facing note when a stale per-project token was self-healed mid-sync. */
 const HEALED_STALE_TOKEN_NOTE =
-  "This project's own GitHub token didn't work for cloud sync — sync switched to your signed-in GitHub account and will keep using it. The project token was kept (task sync may still need it).";
+  'Cloud sync now uses your GitHub sign-in.';
 
 /**
  * Stamp the stale-per-project-token heal onto a returned result. No-op when
@@ -730,7 +739,7 @@ function withMergeOutcome(result: SyncResult, preMergeScrub: { blocks: ScrubHit[
  * before the first commit/push can ever happen. Callers treat `false` as
  * "nothing to pull/merge" and (in pushing modes) proceed to bootstrap `main`.
  */
-async function fetchRemoteIfExists(ctx: Ctx, session: BrainSyncTokenSession): Promise<boolean> {
+async function fetchRemoteIfExists(ctx: Ctx, session: GitHubAuthSession): Promise<boolean> {
   const { d, gitCwd } = ctx;
   return session.run(async (env) => {
     const exists = d.git.remoteBranchExists(gitCwd, REMOTE_NAME, ctx.branch, env);
@@ -937,7 +946,7 @@ function mergeParked(ctx: Ctx, opts: MergeAndMaybeDeferOpts, sessions: ReturnTyp
 async function pushWithRetry(
   ctx: Ctx,
   scrub: { blocks: ScrubHit[]; warns: ScrubHit[] },
-  session?: BrainSyncTokenSession,
+  session?: GitHubAuthSession,
 ): Promise<SyncResult> {
   const { d, gitCwd } = ctx;
   // Reuse the caller's session (so a fetch that already healed carries the global

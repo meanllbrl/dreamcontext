@@ -366,6 +366,13 @@ export interface BrainLocalState {
    */
   demotedTokenSha256?: string;
   /**
+   * The one GitHub credential's demotion markers (github-baglanti D2): SHA-256 of the
+   * per-project `github.token` per purpose it failed for while the sign-in worked.
+   * `all` = GitHub said 401 (the token is dead everywhere); a purpose key = a 403 for that
+   * purpose only. Only hashes; a newly entered token (different hash) wins again.
+   */
+  githubDemoted?: { all?: string; brain?: string; tasks?: string; browse?: string };
+  /**
    * WHICH PERSON is at this keyboard (`people whoami --set <slug>`) — rung 2 of
    * the resolution ladder in `people-resolve.ts`. Machine identity, so it lives
    * in the one gitignored machine-local file and is NEVER written to the synced
@@ -767,6 +774,14 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
     if (typeof parsed.pendingAgentMerge === 'boolean') out.pendingAgentMerge = parsed.pendingAgentMerge;
     if (typeof parsed.needsTaskSync === 'boolean') out.needsTaskSync = parsed.needsTaskSync;
     if (typeof parsed.demotedTokenSha256 === 'string') out.demotedTokenSha256 = parsed.demotedTokenSha256;
+    const gd = parsed.githubDemoted;
+    if (gd && typeof gd === 'object' && !Array.isArray(gd)) {
+      const marks: NonNullable<BrainLocalState['githubDemoted']> = {};
+      for (const k of ['all', 'brain', 'tasks', 'browse'] as const) {
+        if (typeof gd[k] === 'string') marks[k] = gd[k];
+      }
+      out.githubDemoted = marks;
+    }
     if (typeof parsed.activePersonSlug === 'string') out.activePersonSlug = parsed.activePersonSlug;
     if (typeof parsed.contextHandoffDefault === 'boolean') out.contextHandoffDefault = parsed.contextHandoffDefault;
     // Background auto-sleep. Validated field by field, like everything above:

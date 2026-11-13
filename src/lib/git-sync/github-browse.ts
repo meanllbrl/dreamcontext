@@ -1,8 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { ApiAdapter, ApiError } from '../task-backend/api-adapter.js';
-import { readGlobalGitHubToken } from './auth-store.js';
-import type { ResolvedToken } from '../task-backend/secrets.js';
+import { resolveGitHubCredential, type GitHubCredential } from './auth-store.js';
 import { canonicalRemote, parseRepoSlug, sanitizeRepoName } from './origin-setup.js';
 import { withGitCredentials } from './credentials.js';
 import * as git from './git.js';
@@ -21,19 +20,11 @@ import { GitSyncError } from './git.js';
 // ─── Token resolution (launcher tier: global → env) ──────────────────────────
 
 /**
- * The launcher counterpart of `resolveBrainSyncToken`: identical tiering minus
- * the per-project store (there IS no project yet). Global secrets first so a
- * stray `GITHUB_TOKEN` in an inherited shell never overrides the account the
- * user actually signed in as.
+ * The launcher's credential: C1 for purpose `browse` with no project (there IS no project
+ * yet), so the app's sign-in → env.
  */
-export function resolveLauncherGitHubToken(home?: string): ResolvedToken | null {
-  const global = readGlobalGitHubToken(home);
-  if (global) return global;
-  for (const envVar of ['GITHUB_TOKEN', 'GH_TOKEN']) {
-    const v = process.env[envVar];
-    if (v && v.trim()) return { token: v.trim(), source: 'env', via: envVar };
-  }
-  return null;
+export function resolveLauncherGitHubToken(home?: string): GitHubCredential | null {
+  return resolveGitHubCredential({ purpose: 'browse', home });
 }
 
 // ─── List / search the signed-in user's repos ────────────────────────────────

@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { readSetupConfig, updateSetupConfig, type LinkedRepo } from './setup-config.js';
 import { canonicalRemote, parseRepoSlug, sanitizeRepoName } from './git-sync/origin-setup.js';
 import { withGitCredentials } from './git-sync/credentials.js';
-import { resolveBrainSyncToken } from './git-sync/brain-repo.js';
+import { resolveGitHubCredential } from './git-sync/auth-store.js';
 import type { ResolvedToken } from './task-backend/secrets.js';
 import * as git from './git-sync/git.js';
 
@@ -320,7 +320,7 @@ export interface CloneLinkedRepoOptions {
  */
 export async function cloneLinkedRepo(projectRoot: string, name: string, opts: CloneLinkedRepoOptions = {}): Promise<string> {
   const gitModule = opts.gitModule ?? git;
-  const resolveToken = opts.resolveToken ?? resolveBrainSyncToken;
+  const resolveToken = opts.resolveToken ?? ((root: string) => resolveGitHubCredential({ projectRoot: root, purpose: 'browse' }));
 
   // 1) find entry
   const entries = readSetupConfig(projectRoot)?.linkedRepos ?? [];
@@ -363,7 +363,7 @@ export async function cloneLinkedRepo(projectRoot: string, name: string, opts: C
   // 6) token.
   const resolved = resolveToken(projectRoot);
   if (!resolved) {
-    throw new LinkedRepoError(`No GitHub token found — sign in with GitHub, or set GITHUB_TOKEN/GH_TOKEN.`);
+    throw new LinkedRepoError('No GitHub token: sign in with GitHub in Settings → GitHub.');
   }
 
   // 7) clone under credentials, with the CANONICAL url (never the raw string).

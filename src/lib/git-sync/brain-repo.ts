@@ -1,8 +1,6 @@
-import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readGitHubTokenSecretsOnly, type ResolvedToken } from '../task-backend/secrets.js';
-import { readGlobalGitHubToken } from './auth-store.js';
+import { resolveGitHubCredential, type GitHubCredential } from './auth-store.js';
 import { readBrainLocal, readSetupConfig, updateSetupConfig, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import * as git from './git.js';
@@ -21,57 +19,12 @@ export const FALLBACK_AUTHOR = { name: 'dreamcontext-sync', email: 'noreply@drea
 // ─── D. Token resolution — resolveBrainSyncToken ────────────────────────────
 
 /**
- * M1 tiers: per-project `.secrets.json` github token → env
- * (`GITHUB_TOKEN`/`GH_TOKEN`). Secrets-first, env-last — INTENTIONALLY the
- * reverse of `resolveGitHubToken` (secrets.ts, env-first): a stray
- * `GITHUB_TOKEN` in some inherited shell must never silently override the
- * account a non-technical collaborator is actually logged in as.
- *
- * M2 tiering (final): per-project `.secrets.json` → GLOBAL
- * `~/.dreamcontext/.secrets.json` (the account the user signed into the
- * launcher/dashboard as) → env. A per-project token still wins over the global
- * one; the global one still wins over a stray env var.
- *
- * DEMOTION exception: when the per-project token was demoted for brain sync
- * (it failed auth/permission against the origin while the global token worked —
- * e.g. a repo-scoped task-backend PAT), the SAME token drops to last resort:
- * global → env → demoted per-project. The token is never deleted — it may be
- * the task backend's credential. Entering a NEW per-project token (different
- * hash) automatically restores the normal order.
+ * The brain sync credential: C1 (`resolveGitHubCredential`, auth-store.ts) for purpose
+ * `brain`. This project's own token (unless demoted for brain sync) → the app's sign-in →
+ * env. Kept as a named entry point because the sync engine injects it.
  */
-export function resolveBrainSyncToken(projectRoot: string): ResolvedToken | null {
-  const perProject = readGitHubTokenSecretsOnly(projectRoot);
-  if (perProject && !isDemotedProjectToken(projectRoot, perProject.token)) return perProject;
-  const global = readGlobalGitHubToken();
-  if (global) return global;
-  for (const envVar of ['GITHUB_TOKEN', 'GH_TOKEN']) {
-    const v = process.env[envVar];
-    if (v && v.trim()) return { token: v.trim(), source: 'env', via: envVar };
-  }
-  // Demoted token as last resort — better one attempt than no token at all.
-  return perProject ?? null;
-}
-
-// ─── Per-project token demotion (the no-delete self-heal) ───────────────────
-
-function tokenSha256(token: string): string {
-  return createHash('sha256').update(token, 'utf-8').digest('hex');
-}
-
-/**
- * Demote (never delete) a per-project GitHub token for brain sync: record its
- * SHA-256 in machine-local `.brain-local.json` so `resolveBrainSyncToken` stops
- * preferring it. The token stays in `.secrets.json` — the task backend may
- * legitimately own it (a PAT scoped to a different repo than the origin).
- */
-export function demoteProjectGitHubToken(projectRoot: string, token: string): void {
-  writeBrainLocal(projectRoot, { demotedTokenSha256: tokenSha256(token) });
-}
-
-/** True when THIS exact token value is the one demoted for brain sync. */
-export function isDemotedProjectToken(projectRoot: string, token: string): boolean {
-  const demoted = readBrainLocal(projectRoot).demotedTokenSha256;
-  return !!demoted && demoted === tokenSha256(token);
+export function resolveBrainSyncToken(projectRoot: string): GitHubCredential | null {
+  return resolveGitHubCredential({ projectRoot, purpose: 'brain' });
 }
 
 // ─── A/B. Mode resolution ────────────────────────────────────────────────────

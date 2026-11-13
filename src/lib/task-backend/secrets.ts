@@ -1,4 +1,3 @@
-import { readGlobalGitHubToken } from '../git-sync/auth-store.js';
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from '../gitignore.js';
@@ -195,64 +194,6 @@ export function resolveClickUpToken(
     if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: `users.${opts.user}` };
   }
   const v = secrets.clickup?.token;
-  if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
-  return null;
-}
-
-/**
- * Resolve a GitHub token. Order (mirrors ClickUp): env → secrets file → sign-in.
- *  1. `opts.envVar` (per-person `tokenEnv` from the identity layer)
- *  2. `GITHUB_TOKEN` / `GH_TOKEN`
- *  3. secrets file per-user slot (`opts.user`)
- *  4. secrets file default slot
- *  5. the machine's GitHub sign-in (`~/.dreamcontext` global secrets), so a Team sync
- *     login alone is enough for Issues mirroring. LAST on purpose: any token someone set
- *     for this project still wins.
- */
-export function resolveGitHubToken(
-  projectRoot: string,
-  opts?: { envVar?: string; user?: string; home?: string },
-): ResolvedToken | null {
-  if (opts?.envVar) {
-    const v = process.env[opts.envVar];
-    if (v && v.trim()) return { token: v.trim(), source: 'env', via: opts.envVar };
-  }
-  for (const envVar of ['GITHUB_TOKEN', 'GH_TOKEN']) {
-    const v = process.env[envVar];
-    if (v && v.trim()) return { token: v.trim(), source: 'env', via: envVar };
-  }
-
-  const secrets = readSecretsFile(projectRoot);
-  if (opts?.user) {
-    const v = secrets.github?.users?.[opts.user];
-    if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: `users.${opts.user}` };
-  }
-  const v = secrets.github?.token;
-  if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
-  const signedIn = readGlobalGitHubToken(opts?.home);
-  if (signedIn) return { token: signedIn.token, source: 'global', via: 'sign-in' };
-  return null;
-}
-
-/**
- * Read a GitHub token from the per-project secrets file ONLY — no env fallback.
- * Used by `resolveBrainSyncToken` (git-sync/brain-repo.ts), which is
- * intentionally secrets-first/env-last (the reverse of `resolveGitHubToken`'s
- * env-first order) — a non-technical collaborator's logged-in/stored credential
- * must win over a stray `GITHUB_TOKEN` in some inherited shell. Do NOT widen
- * this into an env-aware resolver; that is exactly what `resolveGitHubToken`
- * already is, and the two must stay distinct.
- */
-export function readGitHubTokenSecretsOnly(
-  projectRoot: string,
-  opts?: { user?: string },
-): ResolvedToken | null {
-  const secrets = readSecretsFile(projectRoot);
-  if (opts?.user) {
-    const v = secrets.github?.users?.[opts.user];
-    if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: `users.${opts.user}` };
-  }
-  const v = secrets.github?.token;
   if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
   return null;
 }
