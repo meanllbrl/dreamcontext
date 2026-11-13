@@ -209,7 +209,7 @@ export function InlineTerminal({
   }, []);
 
   return (
-    <div className={collapsed ? 'chat-runterm is-collapsed' : 'chat-runterm'} data-testid="run-terminal">
+    <div className={collapsed && !error ? 'chat-runterm is-collapsed' : 'chat-runterm'} data-testid="run-terminal">
       <div className="chat-runterm-screen" ref={hostRef} />
       {error && <p className="chat-runterm-error">{error}</p>}
     </div>

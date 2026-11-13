@@ -330,6 +330,8 @@
   overflow: hidden;
 }
 .chat-runterm.is-collapsed { display: none; }
+/* A failed start keeps its reason on the card: only the empty screen goes. */
+.chat-runterm:has(.chat-runterm-error) .chat-runterm-screen { display: none; }
 .chat-runcard-outtoggle {
   align-self: flex-start;
   margin: 0 var(--space-4);
