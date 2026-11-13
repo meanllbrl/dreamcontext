@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   GROUP_MAX, addEmptyGroup, buildExplorer, emptyExplorerPrefs, groupLength, groupSpelling, keepGroupIfEmptied,
   pruneExplorerPrefs, realGroupNames, renameGroupInPrefs, sanitizeExplorerPrefs, toggleCollapsed, togglePin,
-  touchRecent, validGroupName, RECENT_MAX, moveGroup, stepGroup,
+  touchRecent, validGroupName, RECENT_MAX, moveGroup, stepGroup, composeOrder, expandFolder, movedFolderPath, removeEmptyGroup,
 } from '../../dashboard/src/pages/whiteboards/explorerLogic';
 import { fold } from '../../dashboard/src/pages/whiteboards/boardSwitcherLogic';
 import * as server from '../../src/lib/whiteboards/validate.js';
@@ -27,7 +27,7 @@ describe('mirrors of the server rules', () => {
 describe('prefs', () => {
   it('sanitize keeps only the shape; nothing is pruned on read', () => {
     expect(sanitizeExplorerPrefs(null)).toEqual(emptyExplorerPrefs());
-    const p = sanitizeExplorerPrefs({ open: 'yes', pinned: ['a', 'a', 3, 'gone'], recent: ['1', '2', '3', '4', '5', '6'], emptyGroups: ['ok', 'a/b'], collapsed: ['x'] });
+    const p = sanitizeExplorerPrefs({ open: 'yes', pinned: ['a', 'a', 3, 'gone'], recent: ['1', '2', '3', '4', '5', '6'], emptyGroups: ['ok', 'a/b/c'], collapsed: ['x'] });
     expect(p).toEqual({ open: null, pinned: ['a', 'gone'], recent: ['1', '2', '3', '4', '5'], emptyGroups: ['ok'], collapsed: ['x'] });
   });
 
@@ -171,5 +171,90 @@ describe('group order (drag a group header, or Move up / Move down)', () => {
     expect(stepGroup(shown, 'beta', 1)).toEqual(['Alpha', 'Gamma', 'beta']);
     expect(stepGroup(shown, 'alpha', -1)).toBeNull();
     expect(stepGroup(shown, 'gamma', 1)).toBeNull();
+  });
+});
+
+describe('folders, two levels deep', () => {
+  const tree = [
+    b('k', 'Pazarlama', 'Kampanya'), b('m', 'Pazarlama/Reklamlar', 'Meta'), b('t', 'pazarlama/reklamlar', 'TikTok'),
+    b('q', 'Pazarlama/Funnel', 'Quiz'), b('y', 'Ürün', 'Yol'), b('o', 'Ops/Kur', 'Kurulum'), b('l'),
+  ];
+
+  it('the server and the dashboard agree on a folder path', () => {
+    for (const s of ['A/B', ' A / B ', 'a/b/c', '/b', 'a/', 'a／b', 'Pazarlama/Reklamlar']) {
+      expect(validGroupName(s)).toBe(server.readGroup(s));
+    }
+  });
+
+  it('builds the tree: sub-folders under their folder, counts include sub-folders, spelling by vote', () => {
+    const v = buildExplorer(tree, emptyExplorerPrefs(), '', null);
+    const pz = v.groups.find((g) => g.key === 'pazarlama')!;
+    expect(pz.total).toBe(4);
+    expect(pz.boards.map((x) => x.slug)).toEqual(['k']);
+    expect(pz.subs.map((x) => [x.label, x.name, x.parent, x.total])).toEqual([
+      ['Funnel', 'Pazarlama/Funnel', 'pazarlama', 1], ['Reklamlar', 'Pazarlama/Reklamlar', 'pazarlama', 2],
+    ]);
+    // A folder that holds only a sub-folder is still a folder, and not empty.
+    const ops = v.groups.find((g) => g.key === 'ops')!;
+    expect([ops.boards.length, ops.subs.length, ops.empty]).toEqual([0, 1, false]);
+    expect(v.ungrouped.map((x) => x.slug)).toEqual(['l']);
+    // Screen order: a folder's sub-folders, then its own boards.
+    expect(v.hits.slice(0, 5).map((x) => x.slug)).toEqual(['o', 'q', 'm', 't', 'k']);
+  });
+
+  it('a collapsed sub-folder hides its boards; an empty sub-folder lives in prefs under its folder', () => {
+    let p = toggleCollapsed(emptyExplorerPrefs(), 'Pazarlama/Reklamlar');
+    p = addEmptyGroup(p, 'Ürün/Ekranlar', realGroupNames(tree));
+    p = addEmptyGroup(p, 'Yeni/Alt', realGroupNames(tree));
+    const v = buildExplorer(tree, p, '', null);
+    expect(v.hits.map((x) => x.slug)).not.toContain('m');
+    const urun = v.groups.find((g) => g.key === 'urun')!;
+    expect(urun.subs.map((x) => [x.label, x.empty])).toEqual([['Ekranlar', true]]);
+    const yeni = v.groups.find((g) => g.key === 'yeni')!;
+    expect([yeni.empty, yeni.subs[0].label]).toEqual([true, 'Alt']);
+  });
+
+  it('a renamed or deleted folder moves the way the server moves it', () => {
+    expect(movedFolderPath('Pazarlama/Reklamlar', 'Pazarlama', 'Marketing')).toBe('Marketing/Reklamlar');
+    expect(movedFolderPath('Pazarlama', 'Pazarlama', null)).toBeNull();
+    expect(movedFolderPath('Pazarlama/Reklamlar', 'Pazarlama', null)).toBe('Reklamlar');
+    expect(movedFolderPath('Pazarlama/Reklamlar', 'Pazarlama/Reklamlar', null)).toBe('Pazarlama');
+    expect(movedFolderPath('Ürün', 'Pazarlama', null)).toBeUndefined();
+    // Prefs follow: collapsed and empty sub-folders move with their folder.
+    let p = toggleCollapsed(emptyExplorerPrefs(), 'Pazarlama/Reklamlar');
+    p = addEmptyGroup(p, 'Pazarlama/Boş', []);
+    p = renameGroupInPrefs(p, 'Pazarlama', 'Marketing');
+    expect(p.collapsed).toEqual([fold('Marketing/Reklamlar')]);
+    expect(p.emptyGroups).toEqual(['Marketing/Boş']);
+    expect(removeEmptyGroup(addEmptyGroup(p, 'Marketing', []), 'Marketing').emptyGroups).toEqual([]);
+  });
+
+  it('opening a board in a sub-folder opens both levels; the last board out of a sub-folder keeps it', () => {
+    let p = toggleCollapsed(toggleCollapsed(emptyExplorerPrefs(), 'Pazarlama'), 'Pazarlama/Funnel');
+    p = expandFolder(p, 'Pazarlama/Funnel');
+    expect(p.collapsed).toEqual([]);
+    expect(keepGroupIfEmptied(emptyExplorerPrefs(), tree, 'q').emptyGroups).toEqual(['Pazarlama/Funnel']);
+    // A folder that still has a board in a sub-folder is not kept as empty.
+    expect(keepGroupIfEmptied(emptyExplorerPrefs(), tree, 'k').emptyGroups).toEqual([]);
+  });
+
+  it('reordering sub-folders stores the whole order, each folder followed by its sub-folders', () => {
+    const v = buildExplorer(tree, emptyExplorerPrefs(), '', null);
+    const pz = v.groups.find((g) => g.key === 'pazarlama')!;
+    const order = composeOrder(v.groups, 'pazarlama', moveGroup(pz.subs, fold('Pazarlama/Reklamlar'), fold('Pazarlama/Funnel'), false));
+    expect(order).toEqual(['Ops', 'Ops/Kur', 'Pazarlama', 'Pazarlama/Reklamlar', 'Pazarlama/Funnel', 'Ürün']);
+    const resorted = buildExplorer(tree, emptyExplorerPrefs(), '', null, order!);
+    expect(resorted.groups.find((g) => g.key === 'pazarlama')!.subs.map((x) => x.label)).toEqual(['Reklamlar', 'Funnel']);
+    const tops = composeOrder(v.groups, null, moveGroup(v.groups, 'urun', 'ops', false));
+    expect(tops).toEqual(['Ürün', 'Ops', 'Ops/Kur', 'Pazarlama', 'Pazarlama/Funnel', 'Pazarlama/Reklamlar']);
+  });
+});
+
+describe('deleting an empty folder keeps what the dialog promises', () => {
+  it('its empty sub-folders become folders; deleting an empty sub-folder keeps its folder', () => {
+    let p = addEmptyGroup(emptyExplorerPrefs(), 'A', []);
+    p = addEmptyGroup(p, 'A/B', []);
+    expect(renameGroupInPrefs(p, 'A', null).emptyGroups).toEqual(['B']);
+    expect(renameGroupInPrefs(p, 'A/B', null).emptyGroups).toEqual(['A']);
   });
 });

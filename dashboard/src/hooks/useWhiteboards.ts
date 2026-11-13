@@ -202,8 +202,12 @@ function withGroup(b: WhiteboardSummary, group: string | null): WhiteboardSummar
 
 export interface GroupRenameResult { from: string; to: string | null; moved: string[]; skipped: string[]; failed: { slug: string; reason: string }[] }
 
-/** Rename a group (`to: null` = ungroup all) on every board in it; boards match by fold. */
-export function useRenameWhiteboardGroup(fold: (s: string) => string) {
+/**
+ * Rename, move or delete a folder. `moved` says where a board in `group` lands (undefined = not
+ * in that folder), so a folder's sub-folders move on screen with it (explorerLogic's
+ * `movedFolderPath`, the server's rule).
+ */
+export function useRenameWhiteboardGroup(moved: (group: string, from: string, to: string | null) => string | null | undefined) {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
@@ -212,8 +216,10 @@ export function useRenameWhiteboardGroup(fold: (s: string) => string) {
     onMutate: async ({ from, to }) => {
       await qc.cancelQueries({ queryKey: LIST_KEY, exact: true });
       const before = qc.getQueryData<WhiteboardSummary[]>(LIST_KEY);
-      const key = fold(from);
-      qc.setQueryData<WhiteboardSummary[]>(LIST_KEY, (list) => list?.map((b) => (b.group && fold(b.group) === key ? withGroup(b, to) : b)));
+      qc.setQueryData<WhiteboardSummary[]>(LIST_KEY, (list) => list?.map((b) => {
+        const next = b.group ? moved(b.group, from, to) : undefined;
+        return next === undefined ? b : withGroup(b, next);
+      }));
       return { before };
     },
     onError: (_err, _input, ctx) => { if (ctx?.before) qc.setQueryData(LIST_KEY, ctx.before); },

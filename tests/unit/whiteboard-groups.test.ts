@@ -43,14 +43,15 @@ describe('readGroup / parseGroupInput', () => {
     expect(readGroup(undefined)).toBeNull();
     expect(readGroup(2026)).toBeNull();
     expect(readGroup(['Tilki', 'CRM'])).toBeNull();
-    expect(readGroup('a/b')).toBeNull();
+    expect(readGroup('a/b/c')).toBeNull();
+    expect(readGroup('a/')).toBeNull();
     expect(readGroup('x'.repeat(GROUP_MAX + 1))).toBeNull();
     expect(readGroup('Sati̇s')).toBe('Sati̇s'.normalize('NFC'));
   });
 
   it('a write refuses a bad name instead of ungrouping; only null ungroups', () => {
     expect(parseGroupInput(null)).toBeNull();
-    for (const bad of ['', '   ', 'a/b', 'line\nbreak', 5, ['x'], undefined, 'x'.repeat(GROUP_MAX + 1)]) {
+    for (const bad of ['', '   ', 'a/b/c', '/b', 'a／b', 'line\nbreak', 5, ['x'], undefined, 'x'.repeat(GROUP_MAX + 1)]) {
       expect(() => parseGroupInput(bad)).toThrow(WhiteboardValidationError);
     }
   });
@@ -73,7 +74,7 @@ describe('a board in a group', () => {
   it('create --group stores group + group-by, and validates before making the folder', () => {
     const { slug } = createWhiteboard(root, 'Revenue', '', { group: 'Tilki metrics', by: 'owner' });
     expect(fm(slug)).toMatchObject({ group: 'Tilki metrics', 'group-by': 'owner' });
-    expect(() => createWhiteboard(root, 'Broken', '', { group: 'a/b' })).toThrow(WhiteboardValidationError);
+    expect(() => createWhiteboard(root, 'Broken', '', { group: 'a/b/c' })).toThrow(WhiteboardValidationError);
     expect(listWhiteboards(root).map((b) => b.slug)).toEqual([slug]);
     expect(readdirSync(whiteboardsDir(root))).not.toContain('broken');
   });
@@ -87,7 +88,7 @@ describe('a board in a group', () => {
   });
 
   it('a board whose disk value is invalid reads ungrouped and is moved with expect: null', async () => {
-    for (const [i, line] of ['group: 2026', 'group: [Tilki, CRM]', 'group: "a/b"'].entries()) {
+    for (const [i, line] of ['group: 2026', 'group: [Tilki, CRM]', 'group: "a/b/c"'].entries()) {
       const { slug } = createWhiteboard(root, `Odd ${i}`);
       handWrite(slug, line);
       const before = readFileSync(fileOf(slug), 'utf-8');
@@ -107,7 +108,7 @@ describe('a board in a group', () => {
   it('an invalid write is a 400 and the file is byte-identical', async () => {
     const { slug } = createWhiteboard(root, 'Keep', '', { group: 'Keep me' });
     const before = readFileSync(fileOf(slug), 'utf-8');
-    await expect(setWhiteboardGroup(root, slug, 'a/b', { by: 'owner' })).rejects.toThrow(WhiteboardValidationError);
+    await expect(setWhiteboardGroup(root, slug, 'a/b/c', { by: 'owner' })).rejects.toThrow(WhiteboardValidationError);
     await expect(patchWhiteboardMeta(root, slug, { group: 7, by: 'owner' })).rejects.toThrow(WhiteboardValidationError);
     expect(readFileSync(fileOf(slug), 'utf-8')).toBe(before);
   });
@@ -180,7 +181,7 @@ describe('renameWhiteboardGroup', () => {
     const a = createWhiteboard(root, 'a', '', { group: 'G' }).slug;
     await expect(renameWhiteboardGroup(root, null, 'X', { by: 'owner' })).rejects.toThrow(WhiteboardValidationError);
     const before = readFileSync(fileOf(a), 'utf-8');
-    await expect(renameWhiteboardGroup(root, 'G', 'a/b', { by: 'owner' })).rejects.toThrow(WhiteboardValidationError);
+    await expect(renameWhiteboardGroup(root, 'G', 'a/b/c', { by: 'owner' })).rejects.toThrow(WhiteboardValidationError);
     expect(readFileSync(fileOf(a), 'utf-8')).toBe(before);
     await renameWhiteboardGroup(root, 'G', null, { by: 'owner' });
     expect(groupOf(a)).toBeUndefined();
@@ -236,7 +237,7 @@ describe('whiteboard group routes', () => {
     r = await call(handleWhiteboardRename, { method: 'PATCH', params: { slug }, body: { group: null, expectGroup: 'G' } });
     expect(r.status).toBe(200);
     expect(groupOf(slug)).toBeUndefined();
-    r = await call(handleWhiteboardRename, { method: 'PATCH', params: { slug }, body: { group: 'a/b' } });
+    r = await call(handleWhiteboardRename, { method: 'PATCH', params: { slug }, body: { group: 'a/b/c' } });
     expect(r.status).toBe(400);
   });
 

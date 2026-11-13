@@ -144,7 +144,7 @@ async function main() {
     await page.screenshot({ path: join(SHOTS, 'masaustu-acik.png') });
 
     // E2 — new group, then drag CRM onto it
-    await page.locator('.wbx-foot-btn', { hasText: 'New group' }).click();
+    await page.locator('.wbx-foot-btn', { hasText: 'New folder' }).click();
     await page.locator('.wbx-field').fill('Sales');
     await page.keyboard.press('Enter');
     ok('E2 New group makes an empty group', await groupRow(page, 'Sales').locator('.wbx-count', { hasText: 'empty' }).count() === 1);
@@ -176,7 +176,7 @@ async function main() {
     // Remove from group
     await waitFor(async () => (await groupRow(page, 'Tilki metrics').locator('.wbx-kids .wbx-name').allInnerTexts()).includes('Onboarding'));
     await boardRow(page, 'Onboarding', '.wbx-group').locator('.wbx-more').click();
-    await page.locator('.wbx-menu .wbx-menu-item', { hasText: 'Remove from group' }).click();
+    await page.locator('.wbx-menu .wbx-menu-item', { hasText: 'Remove from folder' }).click();
     ok('E2 Remove from group takes it out', await waitFor(() => groupOnDisk('onboarding') === null));
     // Pin
     await boardRow(page, 'REVENUE', '.wbx-group').locator('.wbx-more').click();
@@ -323,7 +323,7 @@ async function main() {
     await page.screenshot({ path: join(SHOTS, 'sag-tik-tahta.png') });
     const gb = await groupRow(page, 'Sales').locator('.wbx-row--group').boundingBox();
     await page.mouse.click(gb.x + gb.width / 2, gb.y + gb.height / 2, { button: 'right' });
-    ok('E8 a right-click on a group row replaces it with the group menu', await waitFor(async () => (await page.locator('.wbx-menu').count()) === 1 && /Rename group/.test(await page.locator('.wbx-menu').innerText())));
+    ok('E8 a right-click on a group row replaces it with the group menu', await waitFor(async () => (await page.locator('.wbx-menu').count()) === 1 && /Rename/.test(await page.locator('.wbx-menu').innerText())));
     await page.screenshot({ path: join(SHOTS, 'sag-tik-grup.png') });
     await page.keyboard.press('Escape');
     ok('E8 Escape closes it', await waitFor(async () => (await page.locator('.wbx-menu').count()) === 0));

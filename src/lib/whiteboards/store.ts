@@ -18,7 +18,7 @@ import { acquireFileLockWithin, releaseFileLock } from '../file-lock.js';
 import { safeChildPath } from '../../server/safe-path.js';
 import { emptyWhiteboard, parseWhiteboard, serializeWhiteboard, sortElements, type Whiteboard } from './format.js';
 import { stripTombstones } from './merge.js';
-import { foldGroup, isValidWhiteboardSlug, parseGroupInput, readGroup, validateElement } from './validate.js';
+import { FOLDER_DEPTH, FOLDER_SEP, foldGroup, folderParts, isValidWhiteboardSlug, parseGroupInput, readGroup, topFolder, validateElement } from './validate.js';
 import {
   WhiteboardConflictError,
   WhiteboardCorruptError,
@@ -540,25 +540,39 @@ export const GROUP_KEY = 'group';
 export const GROUP_BY_KEY = 'group-by';
 export type GroupAuthor = 'owner' | 'agent';
 
-/**
- * The spelling a new group name lands under: an existing group that folds the same way
- * ("tilki metrics" → "Tilki metrics") wins, so near-duplicates do not pile up. Among several
- * spellings of one fold, the one most boards carry, then the smallest string — the same rule
- * the explorer uses to show it. `skip` is the board being written, which never votes.
- */
-export function adoptGroupSpelling(root: string, name: string, skip: string | null): string {
-  const key = foldGroup(name);
-  const votes = new Map<string, number>();
-  for (const b of listWhiteboards(root)) {
-    if (b.slug === skip || !b.group || foldGroup(b.group) !== key) continue;
-    votes.set(b.group, (votes.get(b.group) ?? 0) + 1);
-  }
+/** The most-carried spelling among `votes`, then the smallest string; null when none voted. */
+function pickSpelling(votes: Map<string, number>): string | null {
   let best: string | null = null;
   let bestN = 0;
   for (const [spelling, n] of votes) {
     if (n > bestN || (n === bestN && best !== null && spelling < best)) { best = spelling; bestN = n; }
   }
-  return best ?? name;
+  return best;
+}
+
+/**
+ * The spelling a folder path lands under, one level at a time: the top folder takes the spelling
+ * of an existing folder that folds the same way ("pazarlama/Reklamlar" -> "Pazarlama/Reklamlar"),
+ * and a sub-folder the spelling of an existing sub-folder of that same top folder. Among several
+ * spellings of one fold, the one most boards carry, then the smallest string: the same rule the
+ * explorer uses to show it. `skip` is the board being written, which never votes; a board in
+ * `ignore` (a folder being renamed away) never votes either.
+ */
+export function adoptGroupSpelling(root: string, name: string, skip: string | null, ignore?: (b: WhiteboardSummary) => boolean): string {
+  const [top, sub] = folderParts(name);
+  const topKey = foldGroup(top);
+  const subKey = sub === undefined ? null : foldGroup(sub);
+  const topVotes = new Map<string, number>();
+  const subVotes = new Map<string, number>();
+  for (const b of listWhiteboards(root)) {
+    if (b.slug === skip || !b.group || ignore?.(b)) continue;
+    const [bTop, bSub] = folderParts(b.group);
+    if (foldGroup(bTop) !== topKey) continue;
+    topVotes.set(bTop, (topVotes.get(bTop) ?? 0) + 1);
+    if (subKey !== null && bSub !== undefined && foldGroup(bSub) === subKey) subVotes.set(bSub, (subVotes.get(bSub) ?? 0) + 1);
+  }
+  const t = pickSpelling(topVotes) ?? top;
+  return sub === undefined ? t : `${t}${FOLDER_SEP}${pickSpelling(subVotes) ?? sub}`;
 }
 
 export interface SetGroupOptions {
@@ -626,13 +640,28 @@ export async function patchWhiteboardMeta(
   return { slug, name: boardName(board, slug), group: readGroup(board.frontmatter[GROUP_KEY]), rev };
 }
 
+/** Is `group` the folder `key` (folded) or one of its sub-folders? */
+function inFolder(group: string, key: string): boolean {
+  const g = foldGroup(group);
+  return g === key || g.startsWith(`${key}${FOLDER_SEP}`);
+}
+
 /**
- * Rename a group (`to: null` = take every board out of it). The new name is resolved ONCE,
- * before any board is touched: a case-, accent- or ı-only change ("Satis" → "Satış") is taken
- * as typed, and only a name that folds to a DIFFERENT existing group adopts its spelling. The
- * boards are found by fold, so every spelling of the group moves, and each is written with its
- * own current value as `expect`, under its own lock: a board the owner dragged out meanwhile
- * is skipped, never overwritten. Idempotent: a retry moves whatever is left.
+ * Rename a folder, or move it (owner, 2026-11-13: folders two levels deep). Every board in the
+ * folder AND in its sub-folders moves with it: "Pazarlama" -> "Marketing" takes
+ * "Pazarlama/Reklamlar" to "Marketing/Reklamlar". `to` may name a top folder or a sub-folder
+ * ("Pazarlama/Reklamlar" -> "Ürün" makes it a top folder; "Funnel" -> "Pazarlama/Funnel" makes it
+ * a sub-folder). `to: null` deletes the folder and nothing else: its own boards come out one
+ * level (a sub-folder's into its parent, a top folder's to no folder) and a top folder's
+ * sub-folders become top folders. A move that would make a third level is refused before any
+ * board is touched.
+ *
+ * The new name is resolved ONCE, before any board is touched: a case-, accent- or ı-only change
+ * ("Satis" -> "Satış") is taken as typed, and only a name that folds to a DIFFERENT existing
+ * folder adopts its spelling. The boards are found by fold, so every spelling of the folder
+ * moves, and each is written with its own current value as `expect`, under its own lock: a board
+ * the owner dragged out meanwhile is skipped, never overwritten. Idempotent: a retry moves
+ * whatever is left.
  */
 export async function renameWhiteboardGroup(
   root: string,
@@ -640,38 +669,46 @@ export async function renameWhiteboardGroup(
   to: unknown,
   opts: { by: GroupAuthor; force?: boolean },
 ): Promise<{ from: string; to: string | null; moved: string[]; skipped: string[]; failed: { slug: string; reason: string }[] }> {
-  if (from === null) throw new WhiteboardValidationError('name the group to rename');
+  if (from === null) throw new WhiteboardValidationError('name the folder to rename');
   const source = parseGroupInput(from) as string;
   const asked = parseGroupInput(to);
   const key = foldGroup(source);
-  const boards = listWhiteboards(root);
-  let target = asked;
-  if (asked !== null && foldGroup(asked) !== key) {
-    // Adopt against groups other than the one being renamed.
-    const votes = new Map<string, number>();
-    for (const b of boards) {
-      if (!b.group || foldGroup(b.group) !== foldGroup(asked)) continue;
-      votes.set(b.group, (votes.get(b.group) ?? 0) + 1);
-    }
-    let best: string | null = null;
-    let bestN = 0;
-    for (const [sp, n] of votes) if (n > bestN || (n === bestN && best !== null && sp < best)) { best = sp; bestN = n; }
-    target = best ?? asked;
+  const boards = listWhiteboards(root).filter((b) => b.group && inFolder(b.group, key));
+  const sourceDepth = folderParts(source).length;
+  const hasSubs = boards.some((b) => folderParts(b.group as string).length > sourceDepth);
+  if (asked !== null && folderParts(asked).length + (hasSubs ? 1 : 0) > FOLDER_DEPTH) {
+    throw new WhiteboardValidationError(`'${source}' has sub-folders, so it cannot go inside another folder (folders are two levels deep)`);
   }
+  if (asked !== null && inFolder(asked, key) && foldGroup(asked) !== key) {
+    throw new WhiteboardValidationError(`'${source}' cannot go inside itself`);
+  }
+  // The new spelling, against folders other than the one being renamed (a case-only change is taken as typed).
+  const target = asked !== null && foldGroup(asked) !== key
+    ? adoptGroupSpelling(root, asked, null, (b) => !!b.group && inFolder(b.group, key))
+    : asked;
+  // The parent a deleted sub-folder's own boards fall into, in the spelling the boards under it
+  // carry (the sub-folder's own boards vote too: they carry the parent's spelling).
+  const parent = sourceDepth > 1 ? adoptGroupSpelling(root, topFolder(source), null) : null;
   const moved: string[] = [];
   const skipped: string[] = [];
   const failed: { slug: string; reason: string }[] = [];
   for (const b of boards) {
-    if (!b.group || foldGroup(b.group) !== key) continue;
+    const current = b.group as string;
+    const rest = folderParts(current).slice(sourceDepth);
+    const next = target !== null
+      ? [...folderParts(target), ...rest].join(FOLDER_SEP)
+      : rest.length > 0 ? rest.join(FOLDER_SEP) : parent;
     try {
-      await setWhiteboardGroup(root, b.slug, target, { by: opts.by, force: opts.force, expect: b.group, adopt: false });
+      // A sub-folder lifted to the top (a deleted parent) adopts an existing top folder's spelling.
+      const write = target === null && rest.length > 0 && next !== null ? adoptGroupSpelling(root, next, b.slug, (x) => !!x.group && inFolder(x.group, key)) : next;
+      await setWhiteboardGroup(root, b.slug, write, { by: opts.by, force: opts.force, expect: current, adopt: false });
       moved.push(b.slug);
     } catch (err) {
       if (err instanceof WhiteboardConflictError && err.code === 'stale_group') { skipped.push(b.slug); continue; }
       failed.push({ slug: b.slug, reason: err instanceof WhiteboardConflictError ? err.code : (err as Error).message });
     }
   }
-  // The group keeps its place in the explorer under its new name (ungroup-all drops it).
+  // The folder keeps its place in the explorer under its new name (a delete drops it).
   // Best-effort: the boards moved, a busy order file must not turn that into an error.
   if (moved.length > 0 && failed.length === 0) {
     try { await renameInGroupOrder(root, source, target); } catch { /* order is a preference */ }

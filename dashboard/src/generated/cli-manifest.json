@@ -5316,6 +5316,8 @@
       "valueFlags": [
         "-d",
         "--description",
+        "-f",
+        "--folder",
         "-g",
         "--group"
       ]
@@ -5338,25 +5340,35 @@
     },
     {
       "path": "whiteboard group",
-      "desc": "The explorer groups boards sit in (frontmatter `group`). A board the owner placed is refused without --force.",
+      "desc": "The folders boards sit in (frontmatter `group`), two levels deep: \"Folder\" or \"Folder/Sub-folder\". `folder` is the same command. A board the owner placed is refused without --force.",
       "args": [],
-      "group": true
+      "group": true,
+      "aliases": [
+        "folder"
+      ]
     },
     {
       "path": "whiteboard group clear",
-      "desc": "Take a board out of its group",
+      "desc": "Take a board out of its folder",
       "args": [
         "<slug>"
       ]
     },
     {
+      "path": "whiteboard group delete",
+      "desc": "Delete a folder, never a board: its boards come out one level (a sub-folder's into its parent, a folder's to no folder) and its sub-folders become folders",
+      "args": [
+        "<folder>"
+      ]
+    },
+    {
       "path": "whiteboard group list",
-      "desc": "List the groups and how many boards each holds",
+      "desc": "List the folders (a sub-folder as \"Folder/Sub-folder\") and how many boards each holds",
       "args": []
     },
     {
       "path": "whiteboard group rename",
-      "desc": "Rename a group on every board in it (all spellings of it); owner-placed boards are skipped without --force",
+      "desc": "Rename or move a folder with its sub-folders (\"Funnel\" -> \"Pazarlama/Funnel\" makes it a sub-folder); owner-placed boards are skipped without --force",
       "args": [
         "<from>",
         "<to>"
@@ -5364,7 +5376,7 @@
     },
     {
       "path": "whiteboard group set",
-      "desc": "Put a board in a group (an existing group with the same letters keeps its spelling)",
+      "desc": "Put a board in a folder, \"Folder\" or \"Folder/Sub-folder\" (an existing folder with the same letters keeps its spelling)",
       "args": [
         "<slug>",
         "<name>"
@@ -5377,8 +5389,23 @@
     },
     {
       "path": "whiteboard list",
-      "desc": "List whiteboards",
-      "args": []
+      "desc": "List whiteboards, by folder (two levels: \"Folder\" and \"Folder/Sub-folder\")",
+      "args": [],
+      "valueFlags": [
+        "-f",
+        "--folder"
+      ]
+    },
+    {
+      "path": "whiteboard move",
+      "desc": "Move a board into a folder (\"Folder\" or \"Folder/Sub-folder\"), or out of every folder with --out. A board the owner placed is refused without --force.",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "-f",
+        "--folder"
+      ]
     },
     {
       "path": "whiteboard nav",

@@ -22,7 +22,7 @@ import { pageExists, widgetBox, widgetElementAt, widgetPayloadFor, widgetRefExis
 import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV } from '../../lib/automations/types.js';
 import { agentsOnElements } from '../../lib/whiteboards/agents.js';
 import { boardFileRelPath, fileIdFor, imageBox, imageSize, makeImageElement, sniffImageType, writeBoardFile } from '../../lib/whiteboards/files.js';
-import { checkWebUrl, isValidRef, isValidTag } from '../../lib/whiteboards/validate.js';
+import { checkWebUrl, foldGroup, isValidRef, isValidTag, parseGroupInput } from '../../lib/whiteboards/validate.js';
 import {
   WIDGET_KINDS,
   WIDGET_SIZES,
@@ -610,40 +610,59 @@ export function registerWhiteboardCommand(program: Command): void {
     .command('whiteboard')
     .description('Read and edit whiteboards: excalidraw boards carrying live widgets (insight, knowledge, task, todo, note, html, web, wiki); draw on them with the `draw` skill');
 
+  /** Folder names by reader order ('tr', case and accents aside), then by exact spelling; 0 only
+   *  for the same string, so a caller can go on to the next level. */
+  const byFolderName = (a: string, b: string) => a.localeCompare(b, 'tr', { sensitivity: 'base' }) || (a < b ? -1 : a > b ? 1 : 0);
+
   // --- list ---
   wb.command('list', { isDefault: true })
-    .description('List whiteboards')
+    .description('List whiteboards, by folder (two levels: "Folder" and "Folder/Sub-folder")')
+    .option('-f, --folder <path>', 'Only the boards in this folder and its sub-folders ("Pazarlama" or "Pazarlama/Reklamlar")')
     .option('--json', 'Machine-readable output')
-    .action(run((opts: { json?: boolean }) => {
-      const boards = listWhiteboards(ensureContextRoot());
+    .action(run((opts: { folder?: string; json?: boolean }) => {
+      let boards = listWhiteboards(ensureContextRoot());
+      if (opts.folder !== undefined) {
+        const key = foldGroup(parseGroupInput(opts.folder) as string);
+        boards = boards.filter((b) => b.group && (foldGroup(b.group) === key || foldGroup(b.group).startsWith(`${key}/`)));
+      }
       if (opts.json) {
         console.log(JSON.stringify(boards, null, 2));
         return;
       }
       if (boards.length === 0) {
-        info('No whiteboards yet. Create one: dreamcontext whiteboard create "<name>"');
+        info(opts.folder !== undefined
+          ? `No boards in the folder '${opts.folder}'.`
+          : 'No whiteboards yet. Create one: dreamcontext whiteboard create "<name>"');
         return;
       }
-      // Grouped as the dashboard's explorer shows them: each group by name, Ungrouped last.
+      // Grouped as the dashboard's explorer shows them: each folder by name, a sub-folder right
+      // under its folder, boards without a folder last.
       const groups = new Map<string, typeof boards>();
       for (const b of boards) {
         const key = b.group ?? '';
         groups.set(key, [...(groups.get(key) ?? []), b]);
       }
-      const order = [...groups.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b, 'tr', { sensitivity: 'base' }) || (a < b ? -1 : 1)));
+      const order = [...groups.keys()].sort((a, b) => {
+        if (a === '' || b === '') return a === '' ? 1 : -1;
+        const [at, as = ''] = a.split('/');
+        const [bt, bs = ''] = b.split('/');
+        // Folder first (equal tops compare 0), then the folder's own boards, then its sub-folders by name.
+        return byFolderName(at, bt) || (as === bs ? 0 : as === '' ? -1 : bs === '' ? 1 : byFolderName(as, bs));
+      });
       const ordered = order.flatMap((k) => groups.get(k) ?? []);
       let lastGroup: string | null = null;
       for (const b of ordered) {
         const g = b.group ?? '';
+        const sub = g.includes('/');
         if (groups.size > 1 && g !== lastGroup) {
-          console.log(chalk.dim(g ? `${g}:` : 'Ungrouped:'));
+          console.log(chalk.dim(g ? `${sub ? '  ' : ''}${g}:` : 'No folder:'));
           lastGroup = g;
         }
         const note = b.corrupt ? chalk.red(`  (does not parse: ${b.corrupt})`) : chalk.dim(`  ${b.elements} element${b.elements === 1 ? '' : 's'}`);
         const mark = b.isDefault ? chalk.cyan('  (default)') : '';
-        console.log(`  ${chalk.bold(b.name)}  ${chalk.dim(b.slug)}${mark}${note}`);
+        console.log(`${sub ? '    ' : '  '}${chalk.bold(b.name)}  ${chalk.dim(b.slug)}${mark}${note}`);
       }
-      if (!boards.some((b) => b.isDefault)) {
+      if (!boards.some((b) => b.isDefault) && opts.folder === undefined) {
         console.log(chalk.dim(`  The default board "${DEFAULT_WHITEBOARD.name}" (${DEFAULT_WHITEBOARD.slug}) is created the first time the dashboard opens it.`));
       }
     }));
@@ -652,13 +671,15 @@ export function registerWhiteboardCommand(program: Command): void {
   wb.command('create <name>')
     .description('Create a whiteboard (the name is kept verbatim; the slug is derived from it)')
     .option('-d, --description <text>', 'One-line description', '')
-    .option('-g, --group <name>', 'Put it in this explorer group (an existing group\'s spelling wins)')
+    .option('-f, --folder <path>', 'Put it in this folder: "Folder" or "Folder/Sub-folder" (an existing folder\'s spelling wins)')
+    .option('-g, --group <name>', 'The same as --folder (the older name)')
     .option('--json', 'Machine-readable output')
-    .action(run((name: string, opts: { description: string; group?: string; json?: boolean }) => {
+    .action(run((name: string, opts: { description: string; folder?: string; group?: string; json?: boolean }) => {
+      if (opts.folder !== undefined && opts.group !== undefined) throw new WhiteboardValidationError('give --folder or --group, not both');
       // A new board is "another board" by definition.
       const home = scopedBoard();
       if (home !== null) throw new WhiteboardValidationError(`this agent acts only on its own board '${home}' and cannot create boards`);
-      const created = createWhiteboard(ensureContextRoot(), name, opts.description, { group: opts.group, by: 'agent' });
+      const created = createWhiteboard(ensureContextRoot(), name, opts.description, { group: opts.folder ?? opts.group, by: 'agent' });
       if (opts.json) {
         console.log(JSON.stringify(created, null, 2));
         return;
@@ -682,54 +703,69 @@ export function registerWhiteboardCommand(program: Command): void {
     }));
 
   // --- group ---
-  const group = wb.command('group')
-    .description('The explorer groups boards sit in (frontmatter `group`). A board the owner placed is refused without --force.');
+  // --- move ---
+  wb.command('move <slug>')
+    .description('Move a board into a folder ("Folder" or "Folder/Sub-folder"), or out of every folder with --out. A board the owner placed is refused without --force.')
+    .option('-f, --folder <path>', 'The folder to move it into')
+    .option('--out', 'Take it out of its folder')
+    .option('--force', 'Move it even though the owner placed it (only when the owner asked)')
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, opts: { folder?: string; out?: boolean; force?: boolean; json?: boolean }) => {
+      if ((opts.folder === undefined) === !opts.out) throw new WhiteboardValidationError('give --folder <path> or --out');
+      assertBoardInScope(slug);
+      const out = await setWhiteboardGroup(ensureContextRoot(), slug, opts.out ? null : opts.folder, { by: 'agent', force: opts.force });
+      if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+      success(out.group ? `${chalk.dim(slug)} → folder ${chalk.bold(out.group)}` : `${chalk.dim(slug)} is in no folder now`);
+    }));
+
+  const group = wb.command('group').alias('folder')
+    .description('The folders boards sit in (frontmatter `group`), two levels deep: "Folder" or "Folder/Sub-folder". `folder` is the same command. A board the owner placed is refused without --force.');
 
   group.command('list', { isDefault: true })
-    .description('List the groups and how many boards each holds')
+    .description('List the folders (a sub-folder as "Folder/Sub-folder") and how many boards each holds')
     .option('--json', 'Machine-readable output')
     .action(run((opts: { json?: boolean }) => {
       const counts = new Map<string, string[]>();
       for (const b of listWhiteboards(ensureContextRoot())) {
         if (b.group) counts.set(b.group, [...(counts.get(b.group) ?? []), b.slug]);
       }
-      const rows = [...counts].sort(([a], [b]) => a.localeCompare(b, 'tr', { sensitivity: 'base' }) || (a < b ? -1 : 1))
+      const rows = [...counts].sort(([a], [b]) => byFolderName(a, b))
         .map(([name, boards]) => ({ name, boards }));
       if (opts.json) {
         console.log(JSON.stringify(rows, null, 2));
         return;
       }
       if (rows.length === 0) {
-        info('No groups yet. Put a board in one: dreamcontext whiteboard group set <slug> "<group>"');
+        info('No folders yet. Put a board in one: dreamcontext whiteboard move <slug> --folder "<folder>"');
         return;
       }
       for (const r of rows) console.log(`  ${chalk.bold(r.name)}  ${chalk.dim(`${r.boards.length} board${r.boards.length === 1 ? '' : 's'}: ${r.boards.join(', ')}`)}`);
     }));
 
   group.command('set <slug> <name>')
-    .description('Put a board in a group (an existing group with the same letters keeps its spelling)')
+    .description('Put a board in a folder, "Folder" or "Folder/Sub-folder" (an existing folder with the same letters keeps its spelling)')
     .option('--force', 'Move it even though the owner placed it (only when the owner asked)')
     .option('--json', 'Machine-readable output')
     .action(run(async (slug: string, name: string, opts: { force?: boolean; json?: boolean }) => {
       assertBoardInScope(slug);
       const out = await setWhiteboardGroup(ensureContextRoot(), slug, name, { by: 'agent', force: opts.force });
       if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
-      success(`${chalk.dim(slug)} → group ${chalk.bold(out.group ?? '')}`);
+      success(`${chalk.dim(slug)} → folder ${chalk.bold(out.group ?? '')}`);
     }));
 
   group.command('clear <slug>')
-    .description('Take a board out of its group')
+    .description('Take a board out of its folder')
     .option('--force', 'Even though the owner placed it (only when the owner asked)')
     .option('--json', 'Machine-readable output')
     .action(run(async (slug: string, opts: { force?: boolean; json?: boolean }) => {
       assertBoardInScope(slug);
       const out = await setWhiteboardGroup(ensureContextRoot(), slug, null, { by: 'agent', force: opts.force });
       if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
-      success(`${chalk.dim(slug)} is in no group now`);
+      success(`${chalk.dim(slug)} is in no folder now`);
     }));
 
   group.command('rename <from> <to>')
-    .description('Rename a group on every board in it (all spellings of it); owner-placed boards are skipped without --force')
+    .description('Rename or move a folder with its sub-folders ("Funnel" -> "Pazarlama/Funnel" makes it a sub-folder); owner-placed boards are skipped without --force')
     .option('--force', 'Also move boards the owner placed (only when the owner asked)')
     .option('--json', 'Machine-readable output')
     .action(run(async (from: string, to: string, opts: { force?: boolean; json?: boolean }) => {
@@ -737,7 +773,21 @@ export function registerWhiteboardCommand(program: Command): void {
       if (home !== null) throw new WhiteboardValidationError(`this agent acts only on its own board '${home}' and cannot rename a group`);
       const out = await renameWhiteboardGroup(ensureContextRoot(), from, to, { by: 'agent', force: opts.force });
       if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
-      success(`Group ${chalk.bold(out.from)} → ${chalk.bold(out.to ?? '')}: ${out.moved.length} board${out.moved.length === 1 ? '' : 's'} moved`);
+      success(`Folder ${chalk.bold(out.from)} → ${chalk.bold(out.to ?? '')}: ${out.moved.length} board${out.moved.length === 1 ? '' : 's'} moved`);
+      for (const f of out.failed) console.log(chalk.yellow(`  ${f.slug}: ${f.reason}`));
+      if (out.failed.length > 0) process.exitCode = 1;
+    }));
+
+  group.command('delete <folder>')
+    .description('Delete a folder, never a board: its boards come out one level (a sub-folder\'s into its parent, a folder\'s to no folder) and its sub-folders become folders')
+    .option('--force', 'Also move boards the owner placed (only when the owner asked)')
+    .option('--json', 'Machine-readable output')
+    .action(run(async (folder: string, opts: { force?: boolean; json?: boolean }) => {
+      const home = scopedBoard();
+      if (home !== null) throw new WhiteboardValidationError(`this agent acts only on its own board '${home}' and cannot delete a folder`);
+      const out = await renameWhiteboardGroup(ensureContextRoot(), folder, null, { by: 'agent', force: opts.force });
+      if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+      success(`Folder ${chalk.bold(out.from)} deleted: ${out.moved.length} board${out.moved.length === 1 ? '' : 's'} moved out, none deleted`);
       for (const f of out.failed) console.log(chalk.yellow(`  ${f.slug}: ${f.reason}`));
       if (out.failed.length > 0) process.exitCode = 1;
     }));

@@ -21,8 +21,9 @@ import { BoardGlyph, ChevronRightGlyph, ClockGlyph, DotsGlyph, FolderGlyph, PinG
 import { TrashSection } from './BoardTrash';
 import { DEFAULT_BOARD_SLUG, canDeleteBoard, fold, isDefaultBoard, newBoardName } from './boardSwitcherLogic';
 import {
-  addEmptyGroup, buildExplorer, keepGroupIfEmptied, moveGroup, pruneExplorerPrefs, realGroupNames, removeEmptyGroup,
-  renameGroupInPrefs, stepGroup, toggleCollapsed, togglePin, validGroupName, GROUP_MAX, type ExplorerGroup, type ExplorerPrefs,
+  addEmptyGroup, buildExplorer, composeOrder, expandFolder, keepGroupIfEmptied, moveGroup, movedFolderPath, pruneExplorerPrefs,
+  realGroupNames, renameGroupInPrefs, stepGroup, toggleCollapsed, togglePin, validFolderName, FOLDER_SEP,
+  GROUP_MAX, type ExplorerGroup, type ExplorerPrefs,
 } from './explorerLogic';
 import './BoardExplorer.css';
 
@@ -35,6 +36,8 @@ type Menu = ({ kind: 'board'; slug: string } & MenuAt) | ({ kind: 'group'; key: 
 type Field =
   | { kind: 'new-board'; group: string | null }
   | { kind: 'new-group' }
+  /** A new sub-folder inside the top folder `parent` (its key). */
+  | { kind: 'new-sub'; parent: string }
   | { kind: 'rename-board'; slug: string }
   | { kind: 'rename-group'; key: string }
   | null;
@@ -128,7 +131,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
       .replace(/\{(board|reason)\}/g, (_m, k: string) => (k === 'board' ? n.board : n.reason)),
   });
   const setGroup = useSetWhiteboardGroup(refused);
-  const renameGroup = useRenameWhiteboardGroup(fold);
+  const renameGroup = useRenameWhiteboardGroup(movedFolderPath);
   const create = useCreateWhiteboard();
   const renameBoard = useRenameWhiteboard();
   const del = useDeleteWhiteboard();
@@ -149,13 +152,18 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   const order = groupOrder.data;
   const view = useMemo(() => buildExplorer(boards, prefs, query, openSlug, order ?? []), [boards, prefs, query, openSlug, order]);
   const groupNames = useMemo(() => realGroupNames(boards), [boards]);
+  /** Every folder, a sub-folder right after its folder: the lookup for menus and fields. The
+   *  menu's "Move to" list is the whole tree, never only the search hits. */
+  const allFolders = useMemo(() => buildExplorer(boards, prefs, '', null, order ?? []).groups, [boards, prefs, order]);
+  const flatFolders = useMemo(() => allFolders.flatMap((g) => [g, ...g.subs]), [allFolders]);
+  const findFolder = (key: string) => flatFolders.find((g) => g.key === key) ?? view.groups.flatMap((g) => [g, ...g.subs]).find((g) => g.key === key);
   const bySlug = useMemo(() => new Map(boards.map((b) => [b.slug, b])), [boards]);
 
-  // The open board's group opens when that board is opened (once: a click may fold it again).
-  const openGroupKey = openSlug && bySlug.get(openSlug)?.group ? fold(bySlug.get(openSlug)!.group!) : null;
+  // The open board's folder (and its parent) opens when that board is opened (once: a click may fold it again).
+  const openGroup = openSlug ? bySlug.get(openSlug)?.group ?? null : null;
   useEffect(() => {
-    if (openGroupKey) change((p) => (p.collapsed.includes(openGroupKey) ? { ...p, collapsed: p.collapsed.filter((k) => k !== openGroupKey) } : p));
-  }, [openSlug, openGroupKey, change]);
+    if (openGroup) change((p) => expandFolder(p, openGroup));
+  }, [openSlug, openGroup, change]);
 
   // The open board's row scrolls into view when it changes.
   useEffect(() => {
@@ -172,8 +180,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
    *  collapsed group is opened first, whichever copy of the row asked. */
   const startRename = (slug: string) => {
     const g = bySlug.get(slug)?.group;
-    const grp = g ? view.groups.find((x) => x.key === fold(g)) : undefined;
-    if (grp?.collapsed) change((p) => toggleCollapsed(p, grp.name));
+    if (g) change((p) => expandFolder(p, g));
     setMenu(null);
     setConfirm(null);
     setField({ kind: 'rename-board', slug });
@@ -211,19 +218,28 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
       renameBoard.mutate({ slug: f.slug, name: name.slice(0, 200) }, { onError: (e: Error) => setNote({ text: e.message }) });
       return;
     }
-    const name = validGroupName(raw);
+    // Every field names ONE folder; its place in the tree comes from where the field is.
+    const name = validFolderName(raw);
     if (raw.trim() && !name) { setNote({ text: t('whiteboard.explorer.badGroupName').replace('{max}', String(GROUP_MAX)) }); return; }
     if (!name) return;
     if (f.kind === 'new-group') {
       change((p) => addEmptyGroup(p, name, groupNames));
       return;
     }
-    const group = view.groups.find((g) => g.key === f.key);
-    if (!group || group.name === name) return;
-    runGroupRename(group, name);
+    if (f.kind === 'new-sub') {
+      const parent = findFolder(f.parent);
+      if (!parent) return;
+      change((p) => expandFolder(addEmptyGroup(p, `${parent.name}${FOLDER_SEP}${name}`, groupNames), parent.name));
+      return;
+    }
+    const group = findFolder(f.key);
+    if (!group || group.label === name) return;
+    const parent = group.parent ? findFolder(group.parent) : undefined;
+    runGroupRename(group, parent ? `${parent.name}${FOLDER_SEP}${name}` : name);
   };
 
-  /** Rename (or ungroup all, `to: null`) a group. An empty group lives in prefs only. */
+  /** Rename or move a folder, or delete it (`to: null`: its boards come out one level). An empty
+   *  folder lives in prefs only. */
   const runGroupRename = (group: ExplorerGroup<WhiteboardSummary>, to: string | null) => {
     setNote(null);
     change((p) => renameGroupInPrefs(p, group.name, to));
@@ -257,10 +273,16 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   };
 
   // ── drag ──
+  /** A folder reorders only among its siblings: the dragover line and the drop both ask this. */
+  const sameLevel = (a: string, b: string) => findFolder(a)?.parent === findFolder(b)?.parent;
   const endDrag = () => { setDrag(null); setDropAt(null); setDragGroup(null); setGroupDropAt(null); };
   /** A group dragged over another group's block: the line goes above it or below it, by half. */
   const onGroupDragOver = (e: DragEvent<HTMLDivElement>, target: string) => {
     if (!dragGroup) return false;
+    // A folder reorders only among its siblings: over a folder of another level the event goes
+    // on to the enclosing folder block, which is the dragged folder's sibling.
+    if (!sameLevel(dragGroup, target)) return true;
+    e.stopPropagation();
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     const head = e.currentTarget.querySelector('.wbx-row--group') ?? e.currentTarget;
@@ -271,19 +293,32 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   };
   const onDragOver = (e: DragEvent, target: string) => {
     if (!drag) return;
+    // The innermost folder under the pointer takes the drop, never its parent too.
+    e.stopPropagation();
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     if (dropAt !== target) setDropAt(target);
   };
   const onDrop = (e: DragEvent, target: string) => {
     e.preventDefault();
+    e.stopPropagation();
     if (drag) moveTo(drag, target === UNGROUPED ? null : target);
     endDrag();
   };
   const onGroupDrop = (e: DragEvent, target: string) => {
+    // Not a sibling: the enclosing folder block drew the line, so it takes the drop.
+    if (dragGroup && !sameLevel(dragGroup, target)) return;
     e.preventDefault();
-    if (dragGroup && groupDropAt?.key === target) reorder(moveGroup(view.groups, dragGroup, target, groupDropAt.after));
+    e.stopPropagation();
+    if (dragGroup && groupDropAt?.key === target) reorderAmong(dragGroup, (sibs) => moveGroup(sibs, dragGroup, target, groupDropAt.after));
     endDrag();
+  };
+  /** Rearrange a folder among its siblings (top folders, or one folder's sub-folders) and store
+   *  the whole order: every top folder followed by its sub-folders. */
+  const reorderAmong = (key: string, step: (siblings: ExplorerGroup<WhiteboardSummary>[]) => string[] | null) => {
+    const parentKey = findFolder(key)?.parent ?? null;
+    const siblings = parentKey === null ? view.groups : view.groups.find((g) => g.key === parentKey)?.subs ?? [];
+    reorder(composeOrder(view.groups, parentKey, step(siblings)));
   };
   // WKWebView reports `relatedTarget = null` mid-drag: a leave with no target is not a leave.
   const onDragLeave = (e: DragEvent, target: string) => {
@@ -369,9 +404,10 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
     );
   };
 
-  const groupBlock = (g: ExplorerGroup<WhiteboardSummary>) => {
+  const groupBlock = (g: ExplorerGroup<WhiteboardSummary>): ReactNode => {
     const renaming = field?.kind === 'rename-group' && field.key === g.key;
     const adding = field?.kind === 'new-board' && field.group !== null && fold(field.group) === g.key;
+    const addingSub = field?.kind === 'new-sub' && field.parent === g.key;
     return (
       <div
         key={`g:${g.key}`}
@@ -391,10 +427,11 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
         onDrop={(e) => (dragGroup ? onGroupDrop(e, g.key) : onDrop(e, g.name))}
       >
         {renaming ? (
-          <InlineField initial={g.name} label={t('whiteboard.explorer.groupName')} maxLength={GROUP_MAX} onDone={commitField} onCancel={cancelField} />
+          <InlineField initial={g.label} label={t('whiteboard.explorer.groupName')} maxLength={GROUP_MAX} onDone={commitField} onCancel={cancelField} />
         ) : (
           <div
             className="wbx-row wbx-row--group"
+            data-sub={g.parent ? '' : undefined}
             draggable={!view.searching}
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = 'move';
@@ -417,14 +454,14 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
             >
               <span className="wbx-twisty" data-open={g.collapsed ? undefined : ''}><ChevronRightGlyph /></span>
               <FolderGlyph />
-              <span className="wbx-name">{g.name}</span>
-              <span className="wbx-count">{g.empty ? t('whiteboard.explorer.emptyCount') : g.boards.length}</span>
+              <span className="wbx-name">{g.label}</span>
+              <span className="wbx-count">{g.empty ? t('whiteboard.explorer.emptyCount') : g.total}</span>
             </button>
             <button
               type="button"
               className="wbx-more"
-              aria-label={t('whiteboard.explorer.newBoardIn').replace('{name}', g.name)}
-              title={t('whiteboard.explorer.newBoardIn').replace('{name}', g.name)}
+              aria-label={t('whiteboard.explorer.newBoardIn').replace('{name}', g.label)}
+              title={t('whiteboard.explorer.newBoardIn').replace('{name}', g.label)}
               onClick={() => { setMenu(null); setField({ kind: 'new-board', group: g.name }); if (g.collapsed) change((p) => toggleCollapsed(p, g.name)); }}
             >
               <PlusGlyph />
@@ -432,7 +469,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
             <button
               type="button"
               className="wbx-more"
-              aria-label={t('whiteboard.explorer.moreFor').replace('{name}', g.name)}
+              aria-label={t('whiteboard.explorer.moreFor').replace('{name}', g.label)}
               aria-haspopup="menu"
               onClick={(e) => { setConfirm(null); setMenu({ kind: 'group', key: g.key, ...menuAt(e.currentTarget, null) }); }}
             >
@@ -442,8 +479,10 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
         )}
         {!g.collapsed && (
           <div className="wbx-kids">
+            {addingSub && <InlineField initial="" label={t('whiteboard.explorer.subFolderName')} placeholder={t('whiteboard.explorer.subFolderName')} maxLength={GROUP_MAX} onDone={commitField} onCancel={cancelField} />}
+            {g.subs.map(groupBlock)}
             {g.boards.map((b) => row(b, `g:${g.key}`))}
-            {g.empty && !adding && <p className="wbx-hint">{t('whiteboard.explorer.emptyHint')}</p>}
+            {g.empty && g.subs.length === 0 && !adding && !addingSub && <p className="wbx-hint">{t('whiteboard.explorer.emptyHint')}</p>}
             {adding && <InlineField initial="" label={t('whiteboard.switcher.new')} placeholder={t('whiteboard.page.namePlaceholder')} onDone={commitField} onCancel={cancelField} />}
           </div>
         )}
@@ -452,7 +491,11 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   };
 
   const menuBoard = menu?.kind === 'board' ? bySlug.get(menu.slug) : undefined;
-  const menuGroup = menu?.kind === 'group' ? view.groups.find((g) => g.key === menu.key) : undefined;
+  const menuGroup = menu?.kind === 'group' ? findFolder(menu.key) : undefined;
+  const menuParent = menuGroup?.parent ? findFolder(menuGroup.parent) : undefined;
+  /** The folders a board's "Move to" lists: the whole tree, a sub-folder indented under its folder. */
+  const moveTargets = flatFolders.map((g) => ({ name: g.name, label: g.label, depth: g.parent ? 1 : 0, key: g.key }));
+  const menuSiblings = menuGroup ? (menuGroup.parent ? view.groups.find((g) => g.key === menuGroup.parent)?.subs ?? [] : view.groups) : [];
 
   return (
     <aside className="wbx" ref={rootRef} aria-label={t('whiteboard.explorer.title')} data-phone={phone ? '' : undefined}>
@@ -566,11 +609,20 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
               <div className="wbx-menu-sep" role="separator" />
               <p className="wbx-menu-label">{t('whiteboard.explorer.moveTo')}</p>
               {menuBoard.corrupt && <p className="wbx-menu-label">{t('whiteboard.explorer.corruptNoMove')}</p>}
-              {[...groupNames, ...prefs.emptyGroups.filter((e) => !groupNames.some((g) => fold(g) === fold(e)))]
-                .filter((g) => !menuBoard.group || fold(g) !== fold(menuBoard.group))
-                .map((g) => (
-                  <MenuButton key={g} label={g} icon={<FolderGlyph />} disabled={!!menuBoard.corrupt} onClick={() => { moveTo(menuBoard.slug, g); closeMenu(); }} />
-                ))}
+              {moveTargets.map((g) => {
+                const here = !!menuBoard.group && fold(menuBoard.group) === g.key;
+                return (
+                  <MenuButton
+                    key={g.key}
+                    label={g.label}
+                    icon={<FolderGlyph />}
+                    indent={g.depth}
+                    tag={here ? t('whiteboard.explorer.here') : undefined}
+                    disabled={!!menuBoard.corrupt || here}
+                    onClick={() => { moveTo(menuBoard.slug, g.name); closeMenu(); }}
+                  />
+                );
+              })}
               {menuBoard.group && (
                 <MenuButton label={t('whiteboard.explorer.removeFromGroup')} disabled={!!menuBoard.corrupt} onClick={() => { moveTo(menuBoard.slug, null); closeMenu(); }} />
               )}
@@ -584,38 +636,51 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
           ))}
           {menuGroup && (confirm === `g:${menuGroup.key}` ? (
             <div className="wbx-confirm">
-              <p>{t('whiteboard.explorer.ungroupAsk').replace('{name}', menuGroup.name)}</p>
+              <p>{(menuParent
+                ? t(menuGroup.empty ? 'whiteboard.explorer.deleteEmptyAsk' : 'whiteboard.explorer.deleteSubFolderAsk').replace('{parent}', menuParent.label)
+                : t(menuGroup.subs.length > 0 ? 'whiteboard.explorer.deleteFolderAsk' : menuGroup.empty ? 'whiteboard.explorer.deleteEmptyAsk' : 'whiteboard.explorer.deleteFlatFolderAsk')
+              ).replace('{name}', menuGroup.label)}</p>
               <div className="wbx-confirm-actions">
                 <button type="button" className="wbx-menu-item" autoFocus onClick={() => setConfirm(null)}>{t('whiteboard.widget.cancel')}</button>
-                <button type="button" className="wbx-menu-item" onClick={() => { closeMenu(); if (menuGroup.empty) change((p) => removeEmptyGroup(p, menuGroup.name)); else runGroupRename(menuGroup, null); }}>
-                  {menuGroup.empty ? t('whiteboard.explorer.deleteEmptyGroup') : t('whiteboard.explorer.ungroupAll')}
+                <button type="button" className="wbx-menu-item" onClick={() => { closeMenu(); runGroupRename(menuGroup, null); }}>
+                  {t('whiteboard.explorer.deleteFolder')}
                 </button>
               </div>
             </div>
           ) : (
             <>
-              <MenuButton label={t('whiteboard.explorer.renameGroup')} autoFocus onClick={() => { setMenu(null); setField({ kind: 'rename-group', key: menuGroup.key }); }} />
-              <MenuButton label={t('whiteboard.explorer.newBoardIn').replace('{name}', menuGroup.name)} onClick={() => { setMenu(null); setField({ kind: 'new-board', group: menuGroup.name }); }} />
-              {!view.searching && view.groups.length > 1 && (
+              <MenuButton label={t('whiteboard.explorer.newBoardIn').replace('{name}', menuGroup.label)} autoFocus onClick={() => { setMenu(null); setField({ kind: 'new-board', group: menuGroup.name }); change((p) => expandFolder(p, menuGroup.name)); }} />
+              {!menuGroup.parent && (
+                <MenuButton label={t('whiteboard.explorer.newSubFolder')} onClick={() => { setMenu(null); setField({ kind: 'new-sub', parent: menuGroup.key }); change((p) => expandFolder(p, menuGroup.name)); }} />
+              )}
+              <MenuButton label={t('whiteboard.explorer.renameGroup')} onClick={() => { setMenu(null); setField({ kind: 'rename-group', key: menuGroup.key }); }} />
+              {menuGroup.parent && (
+                <>
+                  <div className="wbx-menu-sep" role="separator" />
+                  <p className="wbx-menu-label">{t('whiteboard.explorer.moveTo')}</p>
+                  {allFolders.filter((g) => g.key !== menuGroup.parent).map((g) => (
+                    <MenuButton key={g.key} label={g.label} icon={<FolderGlyph />} onClick={() => { closeMenu(); runGroupRename(menuGroup, `${g.name}${FOLDER_SEP}${menuGroup.label}`); }} />
+                  ))}
+                  <MenuButton label={t('whiteboard.explorer.moveToTop')} onClick={() => { closeMenu(); runGroupRename(menuGroup, menuGroup.label); }} />
+                </>
+              )}
+              {!view.searching && menuSiblings.length > 1 && (
                 <>
                   <div className="wbx-menu-sep" role="separator" />
                   <MenuButton
                     label={t('whiteboard.explorer.moveGroupUp')}
-                    disabled={view.groups[0]?.key === menuGroup.key}
-                    onClick={() => { reorder(stepGroup(view.groups, menuGroup.key, -1)); closeMenu(); }}
+                    disabled={menuSiblings[0]?.key === menuGroup.key}
+                    onClick={() => { reorderAmong(menuGroup.key, (sibs) => stepGroup(sibs, menuGroup.key, -1)); closeMenu(); }}
                   />
                   <MenuButton
                     label={t('whiteboard.explorer.moveGroupDown')}
-                    disabled={view.groups[view.groups.length - 1]?.key === menuGroup.key}
-                    onClick={() => { reorder(stepGroup(view.groups, menuGroup.key, 1)); closeMenu(); }}
+                    disabled={menuSiblings[menuSiblings.length - 1]?.key === menuGroup.key}
+                    onClick={() => { reorderAmong(menuGroup.key, (sibs) => stepGroup(sibs, menuGroup.key, 1)); closeMenu(); }}
                   />
                 </>
               )}
               <div className="wbx-menu-sep" role="separator" />
-              <MenuButton
-                label={menuGroup.empty ? t('whiteboard.explorer.deleteEmptyGroup') : t('whiteboard.explorer.ungroupAll')}
-                onClick={() => setConfirm(`g:${menuGroup.key}`)}
-              />
+              <MenuButton label={t('whiteboard.explorer.deleteFolder')} onClick={() => setConfirm(`g:${menuGroup.key}`)} />
             </>
           ))}
         </div>
@@ -633,14 +698,26 @@ function Section({ label, icon, action, children }: { label: string; icon?: Reac
   );
 }
 
-function MenuButton({ label, onClick, disabled, danger, icon, autoFocus, hint }: {
+function MenuButton({ label, onClick, disabled, danger, icon, autoFocus, hint, indent, tag }: {
   label: string; onClick: () => void; disabled?: boolean; danger?: boolean; icon?: ReactNode; autoFocus?: boolean;
   /** Its keyboard shortcut, drawn quiet at the right. */
   hint?: string;
+  /** A sub-folder in a folder list: one step in. */
+  indent?: number;
+  /** A quiet pill at the right ("here" on the folder a board is in). */
+  tag?: string;
 }) {
   return (
-    <button type="button" role="menuitem" className={danger ? 'wbx-menu-item wbx-menu-item--danger' : 'wbx-menu-item'} disabled={disabled} autoFocus={autoFocus} onClick={onClick}>
-      {icon}{label}{hint && <kbd className="wbx-menu-hint">{hint}</kbd>}
+    <button
+      type="button"
+      role="menuitem"
+      className={danger ? 'wbx-menu-item wbx-menu-item--danger' : 'wbx-menu-item'}
+      data-indent={indent ? String(indent) : undefined}
+      disabled={disabled}
+      autoFocus={autoFocus}
+      onClick={onClick}
+    >
+      {icon}{label}{hint && <kbd className="wbx-menu-hint">{hint}</kbd>}{tag && <span className="wbx-menu-tag">{tag}</span>}
     </button>
   );
 }

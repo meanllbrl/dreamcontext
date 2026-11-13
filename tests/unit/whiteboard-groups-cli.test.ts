@@ -62,14 +62,14 @@ describe('whiteboard group', () => {
     expect(listed).toEqual([{ name: 'Tilki metrics', boards: ['crm', 'revenue'] }]);
     createWhiteboard(root, 'Loose');
     const plain = await run(['whiteboard', 'list']);
-    expect(plain.out).toMatch(/Tilki metrics:[\s\S]*Ungrouped:[\s\S]*Loose/);
+    expect(plain.out).toMatch(/Tilki metrics:[\s\S]*No folder:[\s\S]*Loose/);
     const json = JSON.parse((await run(['whiteboard', 'list', '--json'])).out);
     expect(json.find((b: { slug: string }) => b.slug === 'crm').group).toBe('Tilki metrics');
   });
 
   it('an invalid name exits 1 and changes nothing', async () => {
     const { slug } = createWhiteboard(root, 'X');
-    const r = await run(['whiteboard', 'group', 'set', slug, 'a/b']);
+    const r = await run(['whiteboard', 'group', 'set', slug, 'a/b/c']);
     expect(r.code).toBe(1);
     expect(groupOf(slug)).toBeUndefined();
   });

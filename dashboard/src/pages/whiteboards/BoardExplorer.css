@@ -419,6 +419,19 @@
   color: var(--color-text-tertiary);
 }
 
+/* A sub-folder in a "Move to" list sits one step in, under its folder. */
+.wbx-menu-item[data-indent='1'] { padding-left: calc(var(--space-2) + 16px); }
+
+/* "here": the folder a board already sits in. */
+.wbx-menu-tag {
+  margin-left: auto;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
 /* ─── recently deleted (BoardTrash.tsx): the list's foot ─── */
 
 .wbx-trash {
