@@ -241,7 +241,8 @@ describe('sleep done / sleep start in a scratch project', () => {
     }));
     vi.mocked(getTaskBackend).mockReturnValue(fakeBackend({ name: 'github', sync }) as never);
 
-    await runSleep(['done', 'Consolidated']);
+    // The post-sleep task sync runs in the background child `sleep done` starts (`sleep sync-after`).
+    await runSleep(['sync-after']);
 
     expect(sync).toHaveBeenCalledTimes(1);
     // github-baglanti D7: ONE line that names the one place to fix it, not the raw error.
@@ -263,7 +264,7 @@ describe('sleep done / sleep start in a scratch project', () => {
     }));
     vi.mocked(getTaskBackend).mockReturnValue(fakeBackend({ name: 'github', sync }) as never);
 
-    await runSleep(['done', 'Consolidated']);
+    await runSleep(['sync-after']);
 
     expect(sync).toHaveBeenCalledTimes(2);
     expect(out()).toContain('retrying once');

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import matter from 'gray-matter';
 import { findPackageDir } from './catalog.js';
 import { SLEEP_SPECIALISTS, type SleepSpecialist } from './setup-config.js';
@@ -200,4 +200,151 @@ export function renderStaleRemoteLine(depth: TaskQueueDepth, backend?: string, s
     return `Task sync stopped: GitHub no longer accepts ${refused}, so the board is stale (${queued}). Reconnect in Settings → GitHub → Reconnect; the queue syncs on its own after.`;
   }
   return `Task sync skipped: the remote board refused the token, so it is stale (${queued}). Renew the task backend token, then run \`dreamcontext tasks sync\`.`;
+}
+
+// ─── Closing-step bound and the background task sync ─────────────────────────
+
+/**
+ * How long `sleep done` may spend, in total, on its closing steps that wait on
+ * something outside this process (the task backend, git, the marketing lock).
+ * The debt is already recorded by then: past this budget a step is reported as
+ * skipped and `sleep done` prints its report and exits, instead of going silent.
+ * `DREAMCONTEXT_SLEEP_DONE_BUDGET_MS` overrides it (tests, a slow machine).
+ */
+export const SLEEP_DONE_BUDGET_MS = 90_000;
+
+export function sleepDoneBudgetMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.DREAMCONTEXT_SLEEP_DONE_BUDGET_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : SLEEP_DONE_BUDGET_MS;
+}
+
+export type BoundedResult<T> = { done: true; value: T } | { done: false };
+
+/**
+ * Wait for `work` at most `ms`. A step that is still running then is LEFT running
+ * (it cannot be cancelled from here) and reported as not done; its later failure
+ * is swallowed so it never surfaces as an unhandled rejection. The timer is
+ * unref'd, so a step that finishes early never holds the process open.
+ */
+export async function runBounded<T>(work: () => Promise<T>, ms: number): Promise<BoundedResult<T>> {
+  const running = Promise.resolve().then(work);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<BoundedResult<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ done: false }), Math.max(0, ms));
+    (timer as { unref?: () => void }).unref?.();
+  });
+  try {
+    return await Promise.race([running.then((value) => ({ done: true as const, value })), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    running.catch(() => { /* reported by the caller's own try, or abandoned past the budget */ });
+  }
+}
+
+/** Where the background post-sleep sync writes its report (overwritten each run). */
+export const POST_SLEEP_SYNC_LOG_REL = join('tmp', 'sleep', 'sync.log');
+
+/** The line the child prints between the brain sync's report and the task sync's. */
+export const BRAIN_SYNC_DONE_MARK = '· brain sync finished ·';
+
+export interface PostSleepSyncChild {
+  logPath: string;
+  /** True while the child process has not exited. */
+  running: () => boolean;
+}
+
+/**
+ * Start the post-sleep syncs (`sleep sync-after`: brain sync, then the task sync)
+ * as ONE detached child whose output goes to {@link POST_SLEEP_SYNC_LOG_REL}, and
+ * return at once. Neither may hold `sleep done` open: git runs synchronously under
+ * multi-minute ceilings, and a remote board paces a backlog of a few hundred tasks
+ * under its rate limit for many minutes. Awaited in-process, an agent's command
+ * timeout killed `sleep done` before it printed anything and before the backlog
+ * could ever drain. Null when no CLI entry is known (then nothing was started).
+ */
+export function spawnPostSleepSync(
+  projectRoot: string,
+  contextRoot: string,
+  launch: (cliEntry: string, cwd: string, env: NodeJS.ProcessEnv, logPath: string) => () => boolean = defaultPostSleepSyncLaunch,
+  cliEntry: string | undefined = process.argv[1],
+): PostSleepSyncChild | null {
+  if (!cliEntry) return null;
+  const logPath = join(contextRoot, POST_SLEEP_SYNC_LOG_REL);
+  const env = { ...process.env };
+  delete env.DREAMCONTEXT_TAB_SESSION;
+  delete env.CLAUDE_CODE_SESSION_ID;
+  return { logPath, running: launch(cliEntry, projectRoot, env, logPath) };
+}
+
+function defaultPostSleepSyncLaunch(cliEntry: string, cwd: string, env: NodeJS.ProcessEnv, logPath: string): () => boolean {
+  mkdirSync(dirname(logPath), { recursive: true });
+  const fd = openSync(logPath, 'w');
+  try {
+    const child = spawn(process.execPath, [cliEntry, 'sleep', 'sync-after'], {
+      detached: true,
+      stdio: ['ignore', fd, fd],
+      windowsHide: true,
+      cwd,
+      env,
+    });
+    let exited = false;
+    child.once('exit', () => { exited = true; });
+    child.once('error', () => { exited = true; });
+    child.unref();
+    return () => !exited;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function readLog(logPath: string): string {
+  try {
+    // eslint-disable-next-line no-control-regex
+    return existsSync(logPath) ? readFileSync(logPath, 'utf-8').replace(/\u001b\[[0-9;]*m/g, '') : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Wait, without blocking the event loop, until the child has printed
+ * {@link BRAIN_SYNC_DONE_MARK} (`done`), exited without it (`exited`), or the
+ * deadline passed (`timeout`: the child is LEFT running and finishes on its own).
+ */
+export async function waitForBrainSync(
+  logPath: string,
+  deadline: number,
+  running: () => boolean,
+  pollMs = 200,
+  now: () => number = () => Date.now(),
+): Promise<'done' | 'exited' | 'timeout'> {
+  for (;;) {
+    if (readLog(logPath).includes(BRAIN_SYNC_DONE_MARK)) return 'done';
+    if (!running()) return readLog(logPath).includes(BRAIN_SYNC_DONE_MARK) ? 'done' : 'exited';
+    if (now() >= deadline) return 'timeout';
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+/** The brain sync's report lines: what the child printed before the mark, minus its start line. */
+export function readBrainSyncSection(logPath: string): string[] {
+  const text = readLog(logPath);
+  const cut = text.indexOf(BRAIN_SYNC_DONE_MARK);
+  return (cut >= 0 ? text.slice(0, cut) : text)
+    .split('\n')
+    .filter((l) => l.trim() && !/Post-sleep sync started/.test(l));
+}
+
+/**
+ * What the PREVIOUS background sync reported that the owner must not miss: its
+ * warning and error lines (a brain sync that failed after \`sleep done\` stopped
+ * waiting, a refused token, an incomplete push). ANSI stripped; empty when the log
+ * is missing or the run was clean.
+ */
+export function readPostSleepSyncFindings(contextRoot: string, max = 6): string[] {
+  return readLog(join(contextRoot, POST_SLEEP_SYNC_LOG_REL))
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && /^[✗⚠]|INCOMPLETE|stopped|skipped|error|stale/i.test(l))
+    .slice(0, max);
 }

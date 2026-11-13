@@ -56,6 +56,13 @@ import {
   isSyncAuthFailure,
   isTokenRefused,
   renderStaleRemoteLine,
+  runBounded,
+  sleepDoneBudgetMs,
+  spawnPostSleepSync,
+  waitForBrainSync,
+  readBrainSyncSection,
+  readPostSleepSyncFindings,
+  BRAIN_SYNC_DONE_MARK,
 } from '../../lib/sleep-cycle-tools.js';
 import {
   readSleepFlags,
@@ -554,6 +561,136 @@ export async function runSleepTail(root: string, say: { info: (m: string) => voi
     }
   } catch (err) {
     say.warn(`Council check: skipped — ${(err as Error).message ?? err}`);
+  }
+}
+
+/**
+ * Post-sleep task sync (issue #11): push the consolidation's task updates, then
+ * re-mirror. The consolidation touches EVERY reconciled task at once, so this is
+ * the heaviest burst the backend ever sees: the adapter paces itself under the
+ * rate ceiling and a backlog of a few hundred tasks takes many minutes. So it runs
+ * in `sleep sync-after`, a detached child `sleep done` starts and never waits on
+ * (after brain sync; its report lands in tmp/sleep/sync.log; the next `sleep done` prints
+ * what that report warned about). Best-effort: a sync failure must never fail
+ * the cycle, but it must NEVER fail SILENTLY either.
+ */
+export async function runPostSleepTaskSync(root: string): Promise<void> {
+  let taskSyncAuthFailed = false;
+  let synced = false;
+  try {
+    const backend = getTaskBackend(root);
+    if (backend.name !== 'local') {
+      // The consolidation touches every reconciled task, so this sync can
+      // run for minutes — show live progress instead of going silent.
+      const bar = new ProgressBar();
+      const syncOpts: SyncOptions = {
+        onProgress: (ev) => bar.update(`task sync (${ev.phase})`, ev.current, ev.total),
+      };
+      let report;
+      try {
+        report = await backend.sync('both', syncOpts);
+        // SL-7 — a token the remote refused OUTRIGHT (nothing moved, every
+        // error a credential refusal) will be refused again: no retry, no
+        // wording that reads as a completion. One task's 403 (a GitHub rate
+        // limit answers 403 too) is NOT that: it keeps the retry below.
+        taskSyncAuthFailed = isTokenRefused(report);
+        // Any task that still failed to push leaves the local→remote state
+        // incomplete. Retry the whole sync ONCE — the failed tasks are still
+        // drift-flagged, so they get re-selected, and the rate window has
+        // advanced. One extra pass, not a loop.
+        if (report.failedPushes.length > 0 && !taskSyncAuthFailed) {
+          bar.done();
+          warn(`Task sync: ${report.failedPushes.length} task(s) did not push — retrying once…`);
+          report = await backend.sync('both', syncOpts);
+        }
+        synced = !taskSyncAuthFailed;
+      } finally {
+        bar.done();
+      }
+      if (taskSyncAuthFailed) {
+        // GitHub: ONE line that names the one place to fix it (D7); others keep the detail.
+        if (backend.name !== 'github') for (const e of report.errors.slice(0, 3)) warn(`  ${e}`);
+        warn(renderStaleRemoteLine(readTaskQueueDepth(root), backend.name, refusedGitHubSource(root, backend.name)));
+      } else {
+        if (report.conflicts.length > 0) {
+          warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
+        }
+        const pushedTotal = report.pushed + report.created;
+        if (pushedTotal > 0 || report.pulled > 0) {
+          info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
+        }
+        // LOUD on residual failure — never a dim one-liner. The mirror is
+        // ahead of the remote; the user must know to re-run.
+        if (report.failedPushes.length > 0) {
+          error(`Task sync INCOMPLETE: ${report.failedPushes.length} task(s) failed to push after retry — the remote is stale for: ${report.failedPushes.join(', ')}`);
+          for (const e of report.errors) warn(`  ${e}`);
+          warn('Run `dreamcontext tasks sync` to finish, or check the ClickUp token / connectivity.');
+        } else if (report.errors.length > 0) {
+          // Non-push errors (pull/delete/field) — surface, don't bury.
+          warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
+          for (const e of report.errors) warn(`  ${e}`);
+        }
+        // Data-quality warnings (e.g. an unmapped assignee left unassigned).
+        // The task synced, but assignment silently failing is exactly the
+        // class of bug we refuse to bury — surface every one.
+        if (report.warnings.length > 0) {
+          warn(`Task sync: ${report.warnings.length} assignment warning(s):`);
+          for (const w of report.warnings) warn(`  ${w}`);
+        }
+      }
+    }
+  } catch (err) {
+    // The sync engine itself threw (auth/lock/transport) — best-effort by
+    // contract, but visible: a swallowed failure is what hid the last bug.
+    // A thrown refusal stopped the whole sync, so it IS a refused token.
+    const message = (err as Error).message ?? String(err);
+    const backendName = readSetupConfig(dirname(root))?.taskBackend ?? 'local';
+    if (isSyncAuthFailure(message)) {
+      taskSyncAuthFailed = true;
+      if (backendName !== 'github') warn(`Task sync: skipped — ${message}`);
+      warn(renderStaleRemoteLine(readTaskQueueDepth(root), backendName, refusedGitHubSource(root, backendName)));
+    } else {
+      warn(`Task sync: skipped — ${message}`);
+    }
+  }
+
+  // Brain sync used to run a second task sync when a pull flagged the mirrors out of
+  // date (needsTaskSync, C2 M3); this run IS that sync, so it clears the flag.
+  if (synced) {
+    try {
+      if (readBrainLocal(dirname(root)).needsTaskSync) writeBrainLocal(dirname(root), { needsTaskSync: false });
+    } catch { /* the next sync clears it */ }
+  }
+}
+
+/**
+ * Post-sleep whole-project sync (github-cloud-collaboration-brain-repo-sync):
+ * fetch/merge/commit/push the whole project (`full-repo`) when autoSync is on.
+ * Runs in the `sleep sync-after` child, before the task sync. Best-effort: a sync
+ * failure must never fail the cycle, but it must never fail SILENTLY either.
+ */
+export async function runPostSleepBrainSync(root: string): Promise<void> {
+  try {
+    const cfg = readSetupConfig(dirname(root));
+    if (!cfg?.brainRepo?.autoSync) return;
+    const result = await runBrainSync({ cwd: root, mode: 'auto' });
+    renderBrainSyncResult(result);
+    if (result.action === 'awaiting-agent' || result.action === 'already-awaiting-agent') {
+      warn('Brain sync paused on a team merge — run /dream-sync to reconcile (it will resume or continue as needed).');
+    }
+    // C2 (M3): a merge that touched task files flags the mirrors out of date; the
+    // task sync that runs right after this in the same child clears the flag.
+    if (result.needsTaskSync) writeBrainLocal(dirname(root), { needsTaskSync: true });
+  } catch (err) {
+    const projectRoot = dirname(root);
+    warn(`Brain sync: skipped — ${(err as Error).message ?? err}`);
+    // Tier-aware hint: a stale per-project token shadowing the signed-in
+    // account is the usual cause of a persistent auth/permission failure.
+    const perProjectToken = isPerProjectToken(resolveBrainSyncToken(projectRoot));
+    const failure = classifySyncError((err as Error).message ?? String(err), undefined, { perProjectToken });
+    if (perProjectToken && (failure.kind === 'auth' || failure.kind === 'permission')) {
+      warn(failure.message);
+    }
   }
 }
 
@@ -1067,6 +1204,22 @@ export function registerSleepCommand(program: Command): void {
     )
     .action(async (summaryParts: string[], opts: { flag: string[]; ackPrivateDerivation?: boolean; asks?: string; productRan?: boolean }) => {
       const timer = createPhaseTimer();
+      // The debt is recorded before any slow step runs, so nothing after it may hold
+      // the command open: every step that waits on something outside this process
+      // shares one budget, and a step still running past it is named as skipped.
+      const budgetMs = sleepDoneBudgetMs();
+      const deadline = Date.now() + budgetMs;
+      const budgetLabel = budgetMs >= 1000 ? `${Math.round(budgetMs / 1000)}s` : `${budgetMs}ms`;
+      const skipped: string[] = [];
+      let leftRunning = false; // an in-process step still pending holds the event loop open
+      const bounded = async (label: string, hint: string, work: () => Promise<void>): Promise<void> => {
+        const r = await runBounded(work, Math.max(deadline - Date.now(), 1000));
+        if (!r.done) {
+          skipped.push(label);
+          leftRunning = true;
+          warn(`${label}: still running after the ${budgetLabel} budget, so sleep done went on without it. ${hint}`);
+        }
+      };
       let summary = summaryParts.join(' ');
       if (!summary.trim()) {
         error('Summary is required.');
@@ -1201,140 +1354,144 @@ export function registerSleepCommand(program: Command): void {
       // observations against the persisted streak, surface a one-line ask for
       // any flag at/over the escalation threshold, and bump the linked task's
       // priority. Best-effort — a flag-tracking bug must never fail `sleep done`.
-      try {
-        const passed = opts.flag
-          .map(parseFlagOption)
-          .filter((f): f is NonNullable<ReturnType<typeof parseFlagOption>> => f !== null);
-        // The specialists' own records plus anything passed by hand; one entry per key.
-        const byKey = new Map<string, { key: string; label: string; task_slug: string | null }>();
-        for (const f of cycleReport.flags) byKey.set(f.key, { key: f.key, label: f.label, task_slug: f.task_slug ?? null });
-        for (const f of passed) byKey.set(f.key, f);
-        const observed = [...byKey.values()];
-        const reported = cycleReport.reported_by.length > 0 || opts.flag.length > 0;
-        const prevFlags = readSleepFlags(root);
-        const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString(), { reported });
-        writeSleepFlags(root, nextFlags);
-        if (!reported && prevFlags.length > 0) {
-          info(`No specialist reported flags this cycle: ${prevFlags.length} flag(s) kept as they were (streaks not advanced).`);
-        } else if (observed.length > 0) {
-          info(`Recidivism flags: ${observed.length} observed this cycle (${nextFlags.filter((f) => f.consecutive_cycles >= 2).length} recurring).`);
-        }
-        consumeCycleReport(root);
+      await bounded('Recidivism flags', 'The flags are recorded; the next sleep re-reads them.', async () => {
+        try {
+          const passed = opts.flag
+            .map(parseFlagOption)
+            .filter((f): f is NonNullable<ReturnType<typeof parseFlagOption>> => f !== null);
+          // The specialists' own records plus anything passed by hand; one entry per key.
+          const byKey = new Map<string, { key: string; label: string; task_slug: string | null }>();
+          for (const f of cycleReport.flags) byKey.set(f.key, { key: f.key, label: f.label, task_slug: f.task_slug ?? null });
+          for (const f of passed) byKey.set(f.key, f);
+          const observed = [...byKey.values()];
+          const reported = cycleReport.reported_by.length > 0 || opts.flag.length > 0;
+          const prevFlags = readSleepFlags(root);
+          const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString(), { reported });
+          writeSleepFlags(root, nextFlags);
+          if (!reported && prevFlags.length > 0) {
+            info(`No specialist reported flags this cycle: ${prevFlags.length} flag(s) kept as they were (streaks not advanced).`);
+          } else if (observed.length > 0) {
+            info(`Recidivism flags: ${observed.length} observed this cycle (${nextFlags.filter((f) => f.consecutive_cycles >= 2).length} recurring).`);
+          }
+          consumeCycleReport(root);
 
-        // Deferred task candidates get a summary line, not an ask: `escalations`
-        // excludes the `task-candidate:` family because such a candidate was
-        // deliberately never filed, so there is no task to bump and nothing to
-        // hand the user a decision about. Reporting the count is what keeps a
-        // deferred idea visible until a later cycle re-observes and files it.
-        const deferredCandidates = renderTaskCandidateLine(nextFlags);
-        if (deferredCandidates) info(deferredCandidates);
+          // Deferred task candidates get a summary line, not an ask: `escalations`
+          // excludes the `task-candidate:` family because such a candidate was
+          // deliberately never filed, so there is no task to bump and nothing to
+          // hand the user a decision about. Reporting the count is what keeps a
+          // deferred idea visible until a later cycle re-observes and files it.
+          const deferredCandidates = renderTaskCandidateLine(nextFlags);
+          if (deferredCandidates) info(deferredCandidates);
 
-        const escalated = escalations(nextFlags);
-        if (escalated.length > 0) {
-          for (const line of renderEscalationAsks(escalated)) warn(line);
-          const backend = getTaskBackend(root);
-          for (const flag of escalated) {
-            if (!flag.task_slug) continue;
-            try {
-              const task = await backend.get(flag.task_slug);
-              if (task) {
-                await backend.updateFields(flag.task_slug, { priority: bumpPriority(task.priority) });
+          const escalated = escalations(nextFlags);
+          if (escalated.length > 0) {
+            for (const line of renderEscalationAsks(escalated)) warn(line);
+            const backend = getTaskBackend(root);
+            for (const flag of escalated) {
+              if (!flag.task_slug) continue;
+              try {
+                const task = await backend.get(flag.task_slug);
+                if (task) {
+                  await backend.updateFields(flag.task_slug, { priority: bumpPriority(task.priority) });
+                }
+              } catch (err) {
+                warn(`Recidivism escalation: could not bump priority for ${flag.task_slug} — ${(err as Error).message ?? err}`);
               }
-            } catch (err) {
-              warn(`Recidivism escalation: could not bump priority for ${flag.task_slug} — ${(err as Error).message ?? err}`);
             }
           }
+        } catch (err) {
+          warn(`Recidivism tracking: skipped — ${(err as Error).message ?? err}`);
         }
-      } catch (err) {
-        warn(`Recidivism tracking: skipped — ${(err as Error).message ?? err}`);
-      }
+      });
       timer.lap('flags');
 
       // AC6 (2/2) — orphan-tag curator trigger: >= ORPHAN_TAG_CURATOR_THRESHOLD
       // orphan tags across the corpus auto-creates (or refreshes) a standing
       // curator task, using the same doc-list pattern as `taxonomy audit`.
       // Best-effort — a taxonomy audit hiccup must never fail `sleep done`.
-      try {
-        const vocab = loadProjectVocabulary(root);
-        // The only corpus build left in `sleep done` (the embedding refresh is a
-        // detached child now), served from the mtime-validated cache.
-        const corpus = buildCorpusCached(root);
-        // Archives are frozen (never retagged), so their tags cannot count toward the chore.
-        const docs = corpus.filter((d) => !isFixExcluded(d.relPath)).map((d) => ({ slug: d.slug, tags: d.tags }));
-        const buckets = auditCorpus(docs, vocab);
+      await bounded('Curator trigger', 'The next sleep re-checks the orphan tags.', async () => {
+        try {
+          const vocab = loadProjectVocabulary(root);
+          // The only corpus build left in `sleep done` (the embedding refresh is a
+          // detached child now), served from the mtime-validated cache.
+          const corpus = buildCorpusCached(root);
+          // Archives are frozen (never retagged), so their tags cannot count toward the chore.
+          const docs = corpus.filter((d) => !isFixExcluded(d.relPath)).map((d) => ({ slug: d.slug, tags: d.tags }));
+          const buckets = auditCorpus(docs, vocab);
 
-        const backend = getTaskBackend(root);
-        const existingTask = await backend.get(CURATOR_TASK_SLUG);
+          const backend = getTaskBackend(root);
+          const existingTask = await backend.get(CURATOR_TASK_SLUG);
 
-        // If the chore's own file is gone, follow the tombstone chain: it may
-        // have been MERGED into a task that is still open, in which case the
-        // orphan count belongs there and re-filing would be the duplicate this
-        // whole mechanism exists to stop.
-        let absorbing: { slug: string; status: string } | null = null;
-        if (!existingTask) {
-          const resolved = resolveTombstone(root, CURATOR_TASK_SLUG);
-          if (resolved.livingSlug) {
-            const target = await backend.get(resolved.livingSlug).catch(() => null);
-            if (target) absorbing = { slug: target.slug, status: target.status };
+          // If the chore's own file is gone, follow the tombstone chain: it may
+          // have been MERGED into a task that is still open, in which case the
+          // orphan count belongs there and re-filing would be the duplicate this
+          // whole mechanism exists to stop.
+          let absorbing: { slug: string; status: string } | null = null;
+          if (!existingTask) {
+            const resolved = resolveTombstone(root, CURATOR_TASK_SLUG);
+            if (resolved.livingSlug) {
+              const target = await backend.get(resolved.livingSlug).catch(() => null);
+              if (target) absorbing = { slug: target.slug, status: target.status };
+            }
           }
-        }
 
-        const statuses = loadStatuses(root);
-        const plan = planCuratorTask(
-          buckets.orphan.length,
-          existingTask ? { slug: existingTask.slug, status: existingTask.status } : null,
-          absorbing,
-          statuses,
-        );
-        if (plan.action === 'create') {
-          await backend.create({
-            name: plan.name,
-            // The chore is born WITH its justification. It used to be created
-            // with an empty '(To be defined)' template — B0 found that made it
-            // the only zero-justification task in 116 created since August.
-            description: plan.description,
-            why: plan.description,
-            priority: 'medium',
-            status: 'todo',
-            tags: ['topic:taxonomy'],
-            // Sleep opened it, on a measured count rather than an owner ask.
-            local_fields: {
-              filed_by: 'sleep',
-              filing_basis: { kind: 'change', quote: `${buckets.orphan.length} orphan tags`, at: today_, verified: true },
-            },
-            variant: 'cli',
-          });
-          info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
-        } else if (plan.action === 'reopen') {
-          // The chore shipped once and the orphans came back: reopen the same
-          // task (a create would collide on its fixed slug), with the reason.
-          const openKey = sortByOrder(statuses).find((d) => d.kind === 'open')?.key ?? 'todo';
-          await backend.updateFields(plan.slug, { status: openKey });
-          await backend.addChangelog(
-            plan.slug,
-            `- ${today_}: reopened by sleep: ${buckets.orphan.length} orphan tag(s) came back after the last curator pass.`,
-            { createIfMissing: true },
+          const statuses = loadStatuses(root);
+          const plan = planCuratorTask(
+            buckets.orphan.length,
+            existingTask ? { slug: existingTask.slug, status: existingTask.status } : null,
+            absorbing,
+            statuses,
           );
-          info(`Curator task reopened: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
-        } else if (plan.skippedCancelled) {
-          info(`Curator task ${plan.slug} is cancelled, so sleep left it closed (${buckets.orphan.length} orphan tags). Reopen it yourself if you want the pass.`);
-        } else if (plan.action === 'refresh' || plan.action === 'refresh-absorbing') {
-          await backend.addChangelog(
-            plan.slug,
-            `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
-            { createIfMissing: true },
-          );
-          info(plan.action === 'refresh'
-            ? `Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`
-            : `Curator chore was merged into ${plan.slug}; logged ${buckets.orphan.length} orphan tags there instead of re-filing it.`);
+          if (plan.action === 'create') {
+            await backend.create({
+              name: plan.name,
+              // The chore is born WITH its justification. It used to be created
+              // with an empty '(To be defined)' template — B0 found that made it
+              // the only zero-justification task in 116 created since August.
+              description: plan.description,
+              why: plan.description,
+              priority: 'medium',
+              status: 'todo',
+              tags: ['topic:taxonomy'],
+              // Sleep opened it, on a measured count rather than an owner ask.
+              local_fields: {
+                filed_by: 'sleep',
+                filing_basis: { kind: 'change', quote: `${buckets.orphan.length} orphan tags`, at: today_, verified: true },
+              },
+              variant: 'cli',
+            });
+            info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+          } else if (plan.action === 'reopen') {
+            // The chore shipped once and the orphans came back: reopen the same
+            // task (a create would collide on its fixed slug), with the reason.
+            const openKey = sortByOrder(statuses).find((d) => d.kind === 'open')?.key ?? 'todo';
+            await backend.updateFields(plan.slug, { status: openKey });
+            await backend.addChangelog(
+              plan.slug,
+              `- ${today_}: reopened by sleep: ${buckets.orphan.length} orphan tag(s) came back after the last curator pass.`,
+              { createIfMissing: true },
+            );
+            info(`Curator task reopened: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+          } else if (plan.skippedCancelled) {
+            info(`Curator task ${plan.slug} is cancelled, so sleep left it closed (${buckets.orphan.length} orphan tags). Reopen it yourself if you want the pass.`);
+          } else if (plan.action === 'refresh' || plan.action === 'refresh-absorbing') {
+            await backend.addChangelog(
+              plan.slug,
+              `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
+              { createIfMissing: true },
+            );
+            info(plan.action === 'refresh'
+              ? `Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`
+              : `Curator chore was merged into ${plan.slug}; logged ${buckets.orphan.length} orphan tags there instead of re-filing it.`);
+          }
+        } catch (err) {
+          warn(`Curator trigger: skipped — ${(err as Error).message ?? err}`);
         }
-      } catch (err) {
-        warn(`Curator trigger: skipped — ${(err as Error).message ?? err}`);
-      }
+      });
       timer.lap('curator');
 
       // SL-3 — the flow's deterministic tail (roadmap, link audit, mk rem-sleep, council count).
-      await runSleepTail(root, { info, warn });
+      await bounded('Closing steps (roadmap, link audit, PRD compaction, marketing, council)', 'Run `dreamcontext roadmap` and `dreamcontext doctor` to redo them.', () => runSleepTail(root, { info, warn }));
       timer.lap('tail');
 
       // AC7 — semantic dedup digest: surface merge/review/create tallies since
@@ -1374,130 +1531,49 @@ export function registerSleepCommand(program: Command): void {
       }
       timer.lap('digests');
 
-      // Post-sleep task sync (issue #11): push the consolidation's task updates,
-      // then re-mirror. The consolidation touches EVERY reconciled task at once,
-      // so this is the heaviest burst the backend ever sees — the adapter paces
-      // itself under the rate ceiling (so one pass syncs everything) and retries
-      // transient failures. Still best-effort: a sync failure must never fail
-      // `sleep done` — but it must NEVER fail SILENTLY either.
-      let taskSyncAuthFailed = false;
-      try {
-        const backend = getTaskBackend(root);
-        if (backend.name !== 'local') {
-          // The consolidation touches every reconciled task, so this sync can
-          // run for minutes — show live progress instead of going silent.
-          const bar = new ProgressBar();
-          const syncOpts: SyncOptions = {
-            onProgress: (ev) => bar.update(`task sync (${ev.phase})`, ev.current, ev.total),
-          };
-          let report;
-          try {
-            report = await backend.sync('both', syncOpts);
-            // SL-7 — a token the remote refused OUTRIGHT (nothing moved, every
-            // error a credential refusal) will be refused again: no retry, no
-            // wording that reads as a completion. One task's 403 (a GitHub rate
-            // limit answers 403 too) is NOT that: it keeps the retry below.
-            taskSyncAuthFailed = isTokenRefused(report);
-            // Any task that still failed to push leaves the local→remote state
-            // incomplete. Retry the whole sync ONCE — the failed tasks are still
-            // drift-flagged, so they get re-selected, and the rate window has
-            // advanced. One extra pass, not a loop.
-            if (report.failedPushes.length > 0 && !taskSyncAuthFailed) {
-              bar.done();
-              warn(`Task sync: ${report.failedPushes.length} task(s) did not push — retrying once…`);
-              report = await backend.sync('both', syncOpts);
-            }
-          } finally {
-            bar.done();
-          }
-          if (taskSyncAuthFailed) {
-            // GitHub: ONE line that names the one place to fix it (D7); others keep the detail.
-            if (backend.name !== 'github') for (const e of report.errors.slice(0, 3)) warn(`  ${e}`);
-            warn(renderStaleRemoteLine(readTaskQueueDepth(root), backend.name, refusedGitHubSource(root, backend.name)));
-          } else {
-            if (report.conflicts.length > 0) {
-              warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
-            }
-            const pushedTotal = report.pushed + report.created;
-            if (pushedTotal > 0 || report.pulled > 0) {
-              info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
-            }
-            // LOUD on residual failure — never a dim one-liner. The mirror is
-            // ahead of the remote; the user must know to re-run.
-            if (report.failedPushes.length > 0) {
-              error(`Task sync INCOMPLETE: ${report.failedPushes.length} task(s) failed to push after retry — the remote is stale for: ${report.failedPushes.join(', ')}`);
-              for (const e of report.errors) warn(`  ${e}`);
-              warn('Run `dreamcontext tasks sync` to finish, or check the ClickUp token / connectivity.');
-            } else if (report.errors.length > 0) {
-              // Non-push errors (pull/delete/field) — surface, don't bury.
-              warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
-              for (const e of report.errors) warn(`  ${e}`);
-            }
-            // Data-quality warnings (e.g. an unmapped assignee left unassigned).
-            // The task synced, but assignment silently failing is exactly the
-            // class of bug we refuse to bury — surface every one.
-            if (report.warnings.length > 0) {
-              warn(`Task sync: ${report.warnings.length} assignment warning(s):`);
-              for (const w of report.warnings) warn(`  ${w}`);
-            }
-          }
-        }
-      } catch (err) {
-        // The sync engine itself threw (auth/lock/transport) — best-effort by
-        // contract, but visible: a swallowed failure is what hid the last bug.
-        // A thrown refusal stopped the whole sync, so it IS a refused token.
-        const message = (err as Error).message ?? String(err);
-        const backendName = readSetupConfig(dirname(root))?.taskBackend ?? 'local';
-        if (isSyncAuthFailure(message)) {
-          taskSyncAuthFailed = true;
-          if (backendName !== 'github') warn(`Task sync: skipped — ${message}`);
-          warn(renderStaleRemoteLine(readTaskQueueDepth(root), backendName, refusedGitHubSource(root, backendName)));
-        } else {
-          warn(`Task sync: skipped — ${message}`);
-        }
-      }
-      timer.lap('task-sync');
 
-      // Post-sleep whole-project sync (github-cloud-collaboration-brain-repo-sync):
-      // fetch/merge/commit/push the whole project (`full-repo`) when autoSync is
-      // on. The engine resolves the mode internally, so this only checks the toggle.
-      // Best-effort by the same discipline as task sync above — a sync failure
-      // must never fail `sleep done`, but it must never fail SILENTLY either.
+      // Post-sleep syncs: brain sync (whole project, when autoSync is on) THEN the
+      // task backend sync, in ONE detached child (`sleep sync-after`), in that order
+      // so the two never race. Neither may hold `sleep done` open: git runs
+      // synchronously under multi-minute ceilings, and a remote board paces a
+      // backlog under its rate limit for many minutes (13 Nov: killed after 30,
+      // silently, before the backlog ever drained). Brain sync's report is printed
+      // here when it lands within the budget; the task sync is never waited on.
+      // The previous run's warnings come first: a refused token stays loud.
       try {
-        const cfg = readSetupConfig(dirname(root));
-        if (cfg?.brainRepo?.autoSync) {
-          const result = await runBrainSync({ cwd: root, mode: 'auto' });
-          renderBrainSyncResult(result);
-          if (result.action === 'awaiting-agent' || result.action === 'already-awaiting-agent') {
-            warn('Brain sync paused on a team merge — run /dream-sync to reconcile (it will resume or continue as needed).');
-          }
-          // C2 (M3): react to EITHER signal — this run's OWN merge result, or a
-          // PERSISTED flag a prior BACKGROUND pull (session-start's detached
-          // spawn, a wholly separate process) already set and never got to
-          // resolve. Without the OR, a quiet remote (nothing new to merge THIS
-          // run) would leave an earlier background pull's flag stuck `true`
-          // forever, even though `sleep done` is exactly the kind of
-          // "task-backend sync actually ran" event that should clear it.
-          if (!taskSyncAuthFailed && (result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync)) {
-            const backend = getTaskBackend(root);
-            if (backend.name !== 'local') {
-              await backend.sync('both');
-              writeBrainLocal(dirname(root), { needsTaskSync: false });
+        const autoSync = !!readSetupConfig(dirname(root))?.brainRepo?.autoSync;
+        let backendName = 'local';
+        try { backendName = getTaskBackend(root).name; } catch { /* a broken backend config: the child reports it */ }
+        const remote = backendName !== 'local';
+        if (autoSync || remote) {
+          for (const line of readPostSleepSyncFindings(root)) warn(`Last background sync: ${line.replace(/^[✗⚠]\s*/, '')}`);
+          const depth = readTaskQueueDepth(root);
+          const started = spawnPostSleepSync(dirname(root), root);
+          if (!started) {
+            warn(`Post-sleep sync: not started (no CLI entry to launch it); run ${autoSync ? '`dreamcontext brain sync`, then ' : ''}\`dreamcontext tasks sync\`.`);
+          } else {
+            const report = started.logPath.slice(dirname(root).length + 1);
+            let childDied = false;
+            if (autoSync) {
+              const waited = await waitForBrainSync(started.logPath, deadline, started.running);
+              for (const line of readBrainSyncSection(started.logPath)) console.log(line);
+              if (waited === 'timeout') {
+                skipped.push('Brain sync');
+                warn(`Brain sync: still running after the ${budgetLabel} budget, so sleep done went on without it; it finishes in the background (its report: ${report}).`);
+              } else if (waited === 'exited') {
+                warn(`Post-sleep sync: the background run stopped before brain sync finished (its report: ${report}). Run \`dreamcontext brain sync\`${remote ? ', then `dreamcontext tasks sync`' : ''}.`);
+                childDied = true;
+              }
+            }
+            if (remote && !childDied) {
+              info(chalk.dim(`Task sync (${backendName}${depth.ops > 0 ? `, ${depth.ops} change(s) to ${depth.tasks} task(s) queued` : ''}) runs in the background${autoSync ? ' after brain sync' : ''}; its report: ${report}`));
             }
           }
         }
       } catch (err) {
-        const projectRoot = dirname(root);
-        warn(`Brain sync: skipped — ${(err as Error).message ?? err}`);
-        // Tier-aware hint: a stale per-project token shadowing the signed-in
-        // account is the usual cause of a persistent auth/permission failure.
-        const perProjectToken = isPerProjectToken(resolveBrainSyncToken(projectRoot));
-        const failure = classifySyncError((err as Error).message ?? String(err), undefined, { perProjectToken });
-        if (perProjectToken && (failure.kind === 'auth' || failure.kind === 'permission')) {
-          warn(failure.message);
-        }
+        warn(`Post-sleep sync: not started — ${(err as Error).message ?? err}. Run \`dreamcontext brain sync\` / \`dreamcontext tasks sync\`.`);
       }
-      timer.lap('brain-sync');
+      timer.lap('sync');
 
       // Post-sleep embedding refresh (decision-embedding-layer: "eager during
       // sleep"). Sleep just rewrote the corpus — the moment the mtime pre-filter
@@ -1548,6 +1624,27 @@ export function registerSleepCommand(program: Command): void {
       timer.lap('durability');
       const phases = timer.line();
       if (phases) info(chalk.dim(phases));
+      if (skipped.length > 0) {
+        warn(`sleep done finished; skipped because they ran past the budget: ${skipped.join('; ')}.`);
+      }
+      if (leftRunning) {
+        // A step left running keeps the event loop alive; exit once stdout drains.
+        await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+        process.exit(process.exitCode ?? 0);
+      }
+    });
+
+  // --- sync-after (internal: the background child `sleep done` starts) ---
+  sleep
+    .command('sync-after', { hidden: true })
+    .description('Post-sleep brain sync then task sync, in that order (started in the background by sleep done)')
+    .action(async () => {
+      const root = ensureContextRoot();
+      info(`Post-sleep sync started ${new Date().toISOString()}`);
+      await runPostSleepBrainSync(root);
+      console.log(BRAIN_SYNC_DONE_MARK);
+      await runPostSleepTaskSync(root);
+      info(`Post-sleep sync finished ${new Date().toISOString()}`);
     });
 
   // --- debt ---
