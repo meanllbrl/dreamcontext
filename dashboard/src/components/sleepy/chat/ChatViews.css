@@ -346,7 +346,8 @@
   background: transparent;
   border: 2.5px solid var(--color-accent-soft);
   border-top-color: var(--color-accent);
-  animation: chat-runhead-spin 0.9s linear infinite;
+  animation: var(--dc-motion-status-name, chat-runhead-spin) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes chat-runhead-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { [data-look='run'] .chat-runhead-mark { animation: none; } }
