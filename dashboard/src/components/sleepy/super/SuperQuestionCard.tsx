@@ -4,6 +4,7 @@ import type { ChatSession, PendingQuestion } from '../chatSession';
 import { SurveyCard, SurveyReceipt, type SurveyHost, type SurveyRead } from '../chat/SurveyCard';
 import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { OwnerCardSlot } from './OwnerCardSlot';
+import { ownerCardItemsOf, placeOwnerCards } from './cardPlacement';
 import { surveyDraftKey } from '../chat/surveyDrafts';
 import { RemotePermission } from './SuperPermissionCard';
 import { useI18n } from '../../../context/I18nContext';
@@ -162,8 +163,11 @@ export function SuperQuestionTail({ session, anchored }: {
   const view = useSuperQuestions(session.claudeId);
   if (!view) return null;
   const rest = view.open.filter((q) => !anchored.has(q.id));
-  const members = view.members ?? [];
-  const cards = view.cards ?? [];
+  // Only what waits on the owner NOW: a settled card (a child's, or a member's mirror carrying
+  // one) is drawn in its place in the transcript (cardPlacement.ts), never here.
+  const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.map((q) => q.id));
+  const members = (view.members ?? []).filter((q) => !q.card || waiting.has(q.id));
+  const cards = (view.cards ?? []).filter((q) => waiting.has(q.id));
   if (!rest.length && !members.length && !cards.length) return null;
   return (
     <>

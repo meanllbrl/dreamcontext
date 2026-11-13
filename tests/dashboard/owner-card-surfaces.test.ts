@@ -203,7 +203,7 @@ describe('the Super-chat slot draws the card from the record (B1-B4)', () => {
   });
 
   it('the chat tail draws every card item of main children and a member mirror carrying a card', () => {
-    const mirror = item(SECRET, { id: 'q-m', kind: 'member', member: 'turing', of: 'owner', state: 'pending' } as Partial<SuperQueueItem>);
+    const mirror = item(SECRET, { id: 'q-m', kind: 'member', member: 'turing', of: 'owner', state: 'pending', card: handleOf(SECRET, { cardRef: 'b'.repeat(32) }) } as Partial<SuperQueueItem>);
     publishSuperQuestions('SUPER', {
       open: [], members: [mirror], cards: [item(RUN)], superSession: undefined, sessionFor: () => undefined,
       titleFor: () => 'Invoice export', pausedFor: () => false,

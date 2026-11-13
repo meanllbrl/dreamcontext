@@ -202,6 +202,9 @@ export function latchSeen(latch: AnswerLatch, key: string | null, pendingPresent
  *  with words of its own. */
 export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
+  // An owner card he already acted on (ran, saved, sent): its result is on its way (`delivery`),
+  // nothing waits on him any more (run-kart-altta, cardPlacement.ts `tailHolds`).
+  if (item.card && item.delivery) return false;
   // The server's one nudge to a member that stopped in silence is the member's turn, never his
   // (uye-bildirim K6): never counted, never drawn.
   if (item.kind === 'nudge') return false;

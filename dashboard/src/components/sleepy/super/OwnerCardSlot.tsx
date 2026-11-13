@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useState, type ComponentType, type ReactNode
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi, useVaultId } from '../../../context/VaultContext';
-import { cardNotNeeded, useCardState, type CardStateView } from '../../../lib/cardRecords';
+import { cardNotNeeded, refreshCards, useCardState, type CardStateView } from '../../../lib/cardRecords';
 import type { RunCard as RunCardT } from '../chat/RunCard';
 import type { SecretCard as SecretCardT } from '../chat/SecretCard';
 import type { ChecklistCard as ChecklistCardT } from '../chat/ChatViews';
@@ -68,10 +68,13 @@ const LAZY_CARDS: SlotCards = {
  * result went (`item.delivery`). A result kept from before a restart is drawn read-only, as plain
  * text, beside the card's own action; a card the transcript no longer holds offers only Not needed.
  */
-export function OwnerCardSlot({ item, title, paused, cards = LAZY_CARDS, cardState }: {
+export function OwnerCardSlot({ item, title, paused, place = 'tail', cards = LAZY_CARDS, cardState }: {
   item: SuperQueueItem;
   title: string;
   paused: boolean;
+  /** Where it is drawn (cardPlacement.ts): the chat's tail while it waits on the owner, its place
+   *  in the transcript once settled. */
+  place?: 'tail' | 'history';
   /** Tests only: the card components (the lazy real ones by default). */
   cards?: SlotCards;
   /** Tests only: the card's state instead of reading it from the server. */
@@ -87,6 +90,14 @@ export function OwnerCardSlot({ item, title, paused, cards = LAZY_CARDS, cardSta
   const state = cardState === undefined ? fetched.state : cardState;
   const reload = fetched.reload;
   useEffect(() => mountOwnerSlot(item.id), [item.id]);
+  // Settled (he acted, the child ended, a restart closed it): the card's record is read again, so
+  // a card drawn anew in its place in history says how it ended, never a fresh ▶ Run from a list
+  // this window loaded while it was open.
+  const postingSession = handle?.postingSession;
+  useEffect(() => {
+    if ((open && !item.delivery) || !postingSession || cardState !== undefined) return;
+    void refreshCards(postingSession, (p) => api.get<unknown>(p));
+  }, [open, postingSession, item.delivery, api, cardState]);
   const runRequest = useSlotRunRequest(item.id);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -136,6 +147,7 @@ export function OwnerCardSlot({ item, title, paused, cards = LAZY_CARDS, cardSta
       data-kind={spec.type}
       data-delivery={item.delivery}
       data-state={open ? 'open' : 'closed'}
+      data-place={place}
     >
       <CardHeader
         glyph={spec.type === 'run' ? '>_' : spec.type === 'secret' ? '🔑' : spec.type === 'checklist' ? '☑' : '⇄'}
@@ -157,7 +169,8 @@ export function OwnerCardSlot({ item, title, paused, cards = LAZY_CARDS, cardSta
         <p className="chat-agentthread-note" data-testid="super-owner-runagain">{t('ownerCard.runAgainNote')}</p>
       )}
       {line && <p className="chat-agentthread-note" data-testid="super-owner-result">{line}</p>}
-      {open && (
+      {/* Not needed only while it waits on him: his action already has a result once `delivery` is set. */}
+      {open && !item.delivery && (
         <div className="chat-agentthread-actions">
           {spec.type === 'mcp' && (
             <button type="button" className="chat-agentthread-btn is-primary" data-testid="super-owner-open" onClick={showJob}>{t('ownerCard.openJob')}</button>

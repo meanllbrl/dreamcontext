@@ -490,7 +490,9 @@ export interface OwnerCardHandle {
 export const OWNER_WAKE_OUTCOMES = ['woken', 'live', 'held:cap', 'held:no_window', 'held:phone', 'ended'] as const;
 export type OwnerWakeOutcome = typeof OWNER_WAKE_OUTCOMES[number];
 
-export const OWNER_DELIVERY_STATES = ['sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended'] as const;
+// `allowed` / `not_needed`: a run card settled by his answer to the refusal of the same command
+// (run-kart-altta): Allow let the child run it itself; Not needed declined it.
+export const OWNER_DELIVERY_STATES = ['sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended', 'allowed', 'not_needed'] as const;
 export type OwnerDeliveryState = typeof OWNER_DELIVERY_STATES[number];
 
 export interface OwnerResultFact {

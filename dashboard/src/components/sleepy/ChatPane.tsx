@@ -82,9 +82,11 @@ import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQu
 import { SuperRequestBlock } from './super/MemberStage';
 import { memberSuperId } from './super/memberStageModel';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
-import type { SuperId } from '../../lib/superTypes';
+import type { SuperId, SuperQueueItem } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
+import { OwnerCardSlot } from './super/OwnerCardSlot';
+import { anchorSettledCards, ownerCardItemsOf, placeOwnerCards } from './super/cardPlacement';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
@@ -825,6 +827,10 @@ export function ChatPane({
   // expands one with a click. The phone's mirror folds too, from the Mac's digest (PhoneAgenda).
   // Any other chat has no context and draws nothing new.
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
+  // The Super chat's question view: its open questions and the owner cards its children left.
+  const superQuestionView = useSuperQuestions(superView ? session.claudeId : null);
+  // The one rule of where an owner card is drawn (cardPlacement.ts): a settled one in its place.
+  const settledOwnerCards = useMemo(() => placeOwnerCards(ownerCardItemsOf(superQuestionView)).settled, [superQuestionView]);
   // The cards each Super turn put on the stage, by its answer (turnCards.ts, owner 2026-11-08): read
   // from the turn's own tool results, so they outlive the stage. An answer whose cards did not
   // change keeps its object, so a streaming token never re-renders an earlier answer.
@@ -2162,7 +2168,7 @@ export function ChatPane({
         // transcript's: a question card moving to a newer segment keeps its state.
         const hidden = hiddenRecaps.has(item.id);
         const shows = (seg: RunSegment<ChatItem>) => seg.kind === 'run' || shapeOf(seg.item).draw !== 'nothing';
-        const body = hidden ? [] : (recapBodies.get(item.id) ?? []).filter((seg) => shows(seg) || cardsOf(seg).length > 0);
+        const body = hidden ? [] : (recapBodies.get(item.id) ?? []).filter((seg) => shows(seg) || cardsOf(seg).length > 0 || settledOf(seg).length > 0);
         let tail = body.length - 1;
         while (tail >= 0 && !shows(body[tail])) tail -= 1;
         return (
@@ -2330,6 +2336,8 @@ export function ChatPane({
   // piece DRAWS (what it keeps, plus each recap card's body in its place), so a call folded into
   // an event line is not counted as drawn (the tail draws it), and one in a recap lands in its card.
   const questionCards = new Map<string, Array<AskRef & { live: boolean }>>();
+  /** Every item the Super chat draws, in reading order: where a settled owner card is placed. */
+  const drawnForCards: ChatItem[] = [];
   const foldSuper = <T extends ChatItem>(piece: T[]): T[] => {
     let kept = piece;
     let drawn = piece;
@@ -2353,6 +2361,7 @@ export function ChatPane({
     }
     // The phone's mirror draws them too (its cards come from /api/agent/super-questions).
     if (superView) for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
+    if (superView && settledOwnerCards.length) drawnForCards.push(...drawn);
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
@@ -2445,14 +2454,35 @@ export function ChatPane({
     return ids.flatMap((id) => questionCards.get(id) ?? [])
       .map((c) => ({ ...c, live: c.live && latestAsk.get(c.item) === c.toolItemId }));
   };
-  const questionProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => cardsOf(seg)
-    .map((c) => ({ key: `question:${c.toolItemId}`, step: false, invisible: false, actor: 'lead', running: false }));
+  // A settled owner card, under the last item drawn before it was posted (cardPlacement.ts).
+  let settledAt: Map<string, SuperQueueItem[]> | null = null;
+  const settledOf = (seg: RunSegment<ChatItem>): SuperQueueItem[] => {
+    if (!settledOwnerCards.length) return [];
+    settledAt ??= anchorSettledCards(drawnForCards, settledOwnerCards);
+    const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
+    return ids.flatMap((id) => settledAt!.get(id) ?? []);
+  };
+  const questionProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => [
+    ...cardsOf(seg).map((c): StretchProbe => ({ key: `question:${c.toolItemId}`, step: false, invisible: false, actor: 'lead', running: false })),
+    ...settledOf(seg).map((q): StretchProbe => ({ key: `owner-card:${q.id}`, step: false, invisible: false, actor: 'lead', running: false })),
+  ];
   /** The items that got a LIVE card above; every other open question goes to the tail. */
   const anchoredQuestions = new Set<string>();
-  const questionNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => cardsOf(seg).map((c) => {
-    if (c.live) anchoredQuestions.add(c.item);
-    return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} />;
-  });
+  const questionNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => [
+    ...cardsOf(seg).map((c) => {
+      if (c.live) anchoredQuestions.add(c.item);
+      return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} />;
+    }),
+    ...settledOf(seg).map((q) => (
+      <OwnerCardSlot
+        key={`owner-card-${q.id}`}
+        item={q}
+        title={superQuestionView?.titleFor?.(q.sessionId) || q.member || q.ownerText || ''}
+        paused={false}
+        place="history"
+      />
+    )),
+  ];
   // The accruing tail is the last segment that SHOWS something, not the last segment. An
   // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
   // and by array position alone that invisible single would demote the live run from tail to
@@ -2758,7 +2788,6 @@ export function ChatPane({
   useEffect(() => { feedRef.current?.onPinned(pinned); }, [pinned]);
 
   // The Super chat's unread marks: the rules, the marks and the painting live in the hook.
-  const superQuestionView = useSuperQuestions(superView ? session.claudeId : null);
   const unreadItems = useMemo(() => [...conv.history, ...conv.items], [conv.history, conv.items]);
   const superUnread = useSuperUnread({
     // The view is null once taken back: the record is gone then, and the session may stay.
