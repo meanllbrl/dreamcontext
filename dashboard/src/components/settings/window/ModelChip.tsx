@@ -4,6 +4,7 @@ import { useAgentModelConfig, useAgentTools } from '../../../hooks/useAgentCapab
 import { FALLBACK_MODEL_CONFIG, effortLabel } from '../../../lib/agentComposer';
 import { ModelPicker, ToolMark, type PickerTarget, type SettingsTarget } from '../../sleepy/chat/model-picker/ModelPicker';
 import { claudeState, codexState, type PickerTool, type PickerToolState } from '../../sleepy/chat/model-picker/pickerModel';
+import './ModelChip.css';
 
 export interface ChipValue {
   tool: PickerTool;
@@ -12,13 +13,16 @@ export interface ChipValue {
   effort: string;
 }
 
-/** The composer picker's tools, read the same way the chat reads them (ChatPaneHost). */
-export function usePickerTools(_model?: string): PickerToolState[] {
+/** The composer picker's tools, read the same way the chat reads them (ChatPaneHost).
+ *  `withAntigravity`: a job Antigravity can run (the whiteboard's quick edit) lists it too. */
+export function usePickerTools(_model?: string, withAntigravity = false): PickerToolState[] {
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
-  const codexInfo = useAgentTools().data?.find((t) => t.tool === 'codex');
+  const tools = useAgentTools().data;
+  const codexInfo = tools?.find((t) => t.tool === 'codex');
+  const antigravityInfo = withAntigravity ? tools?.find((t) => t.tool === 'antigravity') : undefined;
   return useMemo(
-    () => [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : [])],
-    [modelConfig, codexInfo],
+    () => [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : []), ...(antigravityInfo ? [codexState(antigravityInfo)] : [])],
+    [modelConfig, codexInfo, antigravityInfo],
   );
 }
 
@@ -33,7 +37,7 @@ function modelLabel(tools: PickerToolState[], tool: PickerTool, id: string): str
  * composer's own picker behind a chip, in settings mode. A pick writes the job's saved default
  * only; an open chat keeps its model. Esc closes the picker, never the window.
  */
-export function ModelChip({ value, fallback, inherited, target, onPick, onEffort, disabled, why, label, testId, onOpenTab }: {
+export function ModelChip({ value, fallback, inherited, target, onPick, onEffort, disabled, why, label, testId, onOpenTab, withAntigravity, className }: {
   value: ChipValue;
   /** What runs when `value.model` / `value.effort` is empty. */
   fallback?: { model: string; effort: string; text?: string };
@@ -50,12 +54,16 @@ export function ModelChip({ value, fallback, inherited, target, onPick, onEffort
   testId?: string;
   /** A locked tool's "Sign in" goes to that tool's tab. */
   onOpenTab?: (target: SettingsTarget) => void;
+  /** List Antigravity's models too (a job it can run). */
+  withAntigravity?: boolean;
+  /** An extra class on the chip (a page's own size). */
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<CSSProperties>({ visibility: 'hidden' });
-  const tools = usePickerTools(value.tool === 'claude' ? value.model : '');
+  const tools = usePickerTools(value.tool === 'claude' ? value.model : '', withAntigravity);
 
   const shownModel = value.model || fallback?.model || '';
   const shownEffort = value.effort || fallback?.effort || '';
@@ -108,7 +116,7 @@ export function ModelChip({ value, fallback, inherited, target, onPick, onEffort
       <button
         ref={chipRef}
         type="button"
-        className={`sw-mdc${dim ? ' inh' : ''}`}
+        className={`sw-mdc${dim ? ' inh' : ''}${className ? ` ${className}` : ''}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`${label}: ${name}${shownEffort ? ` ${effortLabel(shownEffort)}` : ''}`}

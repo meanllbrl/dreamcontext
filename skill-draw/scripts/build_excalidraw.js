@@ -66,7 +66,8 @@ const LAYOUTS = { stack: STYLE.stack, row: STYLE.row, panel: STYLE.panel };
 const PRIMITIVE_TYPES = ['text', 'image', 'rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'frame'];
 const SPEC_TYPES = [...PRIMITIVE_TYPES, ...Object.keys(COMPOSITES), ...Object.keys(LAYOUTS)];
 // The types whose `items` are child specs (a spec checker walks into them).
-const LAYOUT_TYPES = Object.keys(LAYOUTS);
+// A screen (`device`, `windowFrame`) holds child specs in `items` too, so a checker walks into it.
+const LAYOUT_TYPES = [...Object.keys(LAYOUTS), 'device', 'windowFrame'];
 
 // A picture given one side (or none) gets the other from its real proportions BEFORE a layout
 // measures it: stack/row read `width`/`height`, and a picture they measured as 0 tall would have the
@@ -81,6 +82,52 @@ function withImageBox(e) {
   return Object.assign({}, e, { width: d.width, height: d.height });
 }
 
+// A spec cannot pass `device` / `windowFrame` a `content` function, so a screen in a spec takes
+// `items` (child specs): they flow top to bottom inside the shell's safe `inner` region. A child
+// that is a full-width bar or field gets the inner width unless it names its own `w`.
+const SCREEN_TYPES = ['device', 'windowFrame'];
+const FULL_WIDTH_TYPES = ['appBar', 'tabBar', 'listRow', 'searchField', 'segmented', 'slider', 'input', 'button', 'textRows', 'navbar', 'imagePlaceholder', 'divider'];
+function screenWithItems(e) {
+  const { items, gap, ...shell } = e;
+  const build = COMPOSITES[e.type];
+  // The parts FILL the screen, they do not hug its top: a trailing `tabBar` sits on the bottom edge,
+  // an `imagePlaceholder` with no `h` takes most of the spare height, and what is still spare opens
+  // the gaps a little (never past MAX_SPREAD).
+  const MAX_SPREAD = 24;
+  const g0 = gap == null ? 10 : gap;
+  const sizedIn = (inner) => (it, h) => {
+    if (!(it && typeof it === 'object')) return it;
+    const o = FULL_WIDTH_TYPES.includes(it.type) && it.w == null ? Object.assign({}, it, { w: inner.w }) : Object.assign({}, it);
+    if (h != null && it.type === 'imagePlaceholder' && it.h == null) o.h = h;
+    return o;
+  };
+  const fill = (inner) => {
+    const sized = sizedIn(inner);
+    const last = items[items.length - 1];
+    const pinned = last && last.type === 'tabBar' ? expandElements([sized(last)]) : null;
+    const rest = pinned ? items.slice(0, -1) : items;
+    const pinH = pinned ? LAYOUTS.stack({ items: [pinned] }).h : 0;
+    const flow = (h, gp) => LAYOUTS.stack({ x: inner.x, y: inner.y, gap: gp, items: rest.map((it) => expandElements([sized(it, h)])) });
+    const room = inner.h - (pinned ? pinH + g0 : 0);
+    const flexImg = rest.some((it) => it && it.type === 'imagePlaceholder' && it.h == null);
+    let imgH = null;
+    let out = flow(null, g0);
+    if (flexImg && room - out.h > 8) { imgH = 120 + Math.round((room - out.h) * 0.6); out = flow(imgH, g0); }
+    const spare = room - out.h;
+    if (spare > 8 && rest.length > 1) out = flow(imgH, g0 + Math.min(MAX_SPREAD, spare / (rest.length - 1)));
+    if (!pinned) return out;
+    const tab = LAYOUTS.stack({ x: inner.x, y: inner.y + inner.h - pinH, items: [pinned] });
+    return [].concat(out, tab);
+  };
+  if (e.type === 'device') return build(Object.assign({}, shell, { content: fill }));
+  // windowFrame has no `content` callback: it hands back `.inner`, the parts go in after it.
+  let frame = build(shell);
+  // The frame GROWS to hold its parts: a window never lets its content hang out of the bottom.
+  const need = fill(Object.assign({}, frame.inner, { h: 0 })).h;
+  if (need > frame.inner.h) frame = build(Object.assign({}, shell, { h: (shell.h == null ? 380 : shell.h) + Math.ceil(need - frame.inner.h) }));
+  return [].concat(frame, fill(frame.inner));
+}
+
 function expandElements(list) {
   const out = [];
   for (const e of (list || [])) {
@@ -91,6 +138,8 @@ function expandElements(list) {
       // each item is itself a spec (or array of specs) → expand first, then let stack/row measure it
       const items = (e.items || []).map((it) => expandElements(Array.isArray(it) ? it : [it]));
       out.push(...expandElements(LAYOUTS[e.type](Object.assign({}, e, { items }))));
+    } else if (SCREEN_TYPES.includes(e.type) && Array.isArray(e.items) && e.items.length) {
+      out.push(...expandElements(screenWithItems(e)));
     } else if (COMPOSITES[e.type]) {
       out.push(...expandElements(COMPOSITES[e.type](e)));
     } else {

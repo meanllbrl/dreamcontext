@@ -52,7 +52,7 @@ export const HEADLESS_ENVELOPES: Readonly<Record<HeadlessSurface, HeadlessEnvelo
   builder: { claude: 'allowlisted tools, forked sessions', codex: null, antigravity: null, brain: false, why: 'Not built yet: Codex threads do fork (thread/fork, a real turn on 0.164.0 kept the parent\'s words), but the builder runner starts Claude sessions only. A Codex lead builds its waves itself, its reviewers as spawn_agent sub-agents.', antigravityWhy: 'Not built yet: the builder runner starts Claude sessions only, and forking an Antigravity conversation was never tried. An Antigravity lead builds its waves itself, its reviewers as invoke_subagent sub-agents.' },
   peer: { claude: 'auto, in the other project', codex: 'auto', antigravity: null, brain: true, antigravityWhy: 'Not built yet: Antigravity has no classifier-gated mode like Claude\'s auto, and its write bridge would let a peer\'s message run any command in another project.' },
   ask: { claude: 'read-only tools', codex: 'default', antigravity: 'read', brain: false, strict: true },
-  'board-quick': { claude: 'no tools, no settings, no MCP, one JSON answer the server applies', codex: null, antigravity: null, brain: false, strict: true, why: "Not in v1: Codex cannot run a turn with zero tools; a read-only sandbox still reads files, and a quick edit's output lands on a board that syncs to teammates, so board text could steer it into drawing a local secret there.", antigravityWhy: "Not in v1: Antigravity cannot run a turn with zero tools; its read mode still reads files, and a quick edit's output lands on a board that syncs to teammates, so board text could steer it into drawing a local secret there." },
+  'board-quick': { claude: 'no tools, no settings, no MCP, one JSON answer the server applies', codex: 'default', antigravity: 'read', brain: false, strict: true, why: 'Codex and Antigravity run it in their headless read-only mode, started in an empty temp folder as the working directory; the server applies the one JSON answer exactly as for Claude (owner, 2026-11-12: no sandbox beyond that).' },
   'ask-write': { claude: 'acceptEdits in the project', codex: 'auto', antigravity: null, brain: true, strict: true, antigravityWhy: 'Not built yet: Antigravity has no edits-only mode, and its write bridge would run any command, wider than Claude\'s acceptEdits.' },
 };
 
@@ -169,12 +169,14 @@ export interface CodexRunArgs {
   /** A native thread to continue. */
   readonly resume?: string | null;
   readonly extraRoots?: readonly string[];
+  /** The turn in a file instead of argv (a quick edit's ~60k prompt is past Windows' 32k cap). */
+  readonly promptFile?: string;
 }
 
 /** `dreamcontext t3-run …`, after the CLI's path. The prompt rides whole in one `=` argument, so a
  *  prompt that starts with a dash is still its value. */
 export function codexRunArgs(a: CodexRunArgs): string[] {
-  const out = ['t3-run', '--surface', a.surface, `--prompt=${a.prompt}`];
+  const out = ['t3-run', '--surface', a.surface, a.promptFile ? `--prompt-file=${a.promptFile}` : `--prompt=${a.prompt}`];
   if (a.tool === 'antigravity') out.push('--tool', 'antigravity');
   if (a.model) out.push('--model', a.model);
   if (a.effort) out.push('--effort', a.effort);

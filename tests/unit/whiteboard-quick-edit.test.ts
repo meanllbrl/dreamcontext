@@ -81,6 +81,18 @@ describe('quick edit: the answer (C2)', () => {
     for (const f of ['width', 'height', 'strokeColor', 'backgroundColor', 'points']) expect(a).toContain(f);
   });
 
+  it('the real prompt carries every screen type with its fields, and no pointer to a file it cannot read', () => {
+    const a = quickEditSystemPrompt();
+    const types = ['device', 'windowFrame', 'appBar', 'tabBar', 'listRow', 'searchField', 'segmented', 'input', 'button', 'textRows', 'imagePlaceholder', 'navbar'];
+    for (const t of types) expect(a, t).toContain(`| \`${t}\` |`);
+    for (const f of ['items', 'kind', 'leading', 'trailing', 'subtitle', 'active', 'placeholder', 'iphone']) expect(a, f).toContain(f);
+    expect(a).toContain('"type": "device"');
+    expect(a).toContain('"type": "windowFrame"');
+    expect(a).toContain('skill-draw/references/excalidraw.md');
+    expect(a).toContain('name: draw');
+    expect(a).toContain('it is just words');
+  });
+
   it('the request sits outside the nonce fence', () => {
     const m = quickEditUserMessage('elma ekle', '{"scope":[]}', 'abc123');
     expect(m.indexOf('elma ekle')).toBeLessThan(m.indexOf('<board-data-abc123>'));
@@ -197,6 +209,29 @@ describe('quick edit: apply (C3)', () => {
     const again = applyQuickEdit({ elements: els }, small, { scope: [], identities: {}, area: null, built: await buildAdds(small) });
     expect(new Set(els.map((e) => e.id)).size).toBe(els.length);
     expect(again.added).toHaveLength(1);
+  });
+
+  it('fitInto never scales text below the kit minimum: a small area is outgrown and it says so', () => {
+    const txt = (id: string, y: number) => ({ ...rect(id, 0, y, { width: 300, height: 40 }), type: 'text', text: 'abc', fontSize: 10 });
+    const els = [txt('a', 0), txt('b', 600)];
+    const grew = fitInto(els, { x: 0, y: 0, w: 50, h: 50 });
+    expect(grew).toBe(true);
+    expect(els[1].fontSize).toBeGreaterThanOrEqual(9);
+    // MUTATION guard: shapes without text still shrink into a small area, and report it fit.
+    const plain = [rect('p', 0, 0, { width: 400, height: 400 })];
+    expect(fitInto(plain, { x: 0, y: 0, w: 50, h: 50 })).toBe(false);
+    expect(plain[0].width).toBeLessThanOrEqual(50.001);
+  });
+
+  it('a screen drawn into a small area keeps its size, stays off other shapes and flags the growth', async () => {
+    const board = { elements: [rect('card', 200, 0, { width: 200, height: 200 })] };
+    const ans: QuickEditAnswer = { reply: 'ok', notBoard: false, add: [{ at: [0, 0], spec: { elements: [{ type: 'device', kind: 'iphone', items: [{ type: 'appBar', title: 'A' }, { type: 'button', text: 'B' }] }] } }] };
+    const out = applyQuickEdit(board, ans, { scope: [], identities: {}, area: { x: 0, y: 0, w: 120, h: 150 }, built: await buildAdds(ans) });
+    expect(out.grew).toBe(true);
+    const mine = board.elements.filter((e) => out.added.includes(e.id));
+    const box = unionBBox(mine.map(elementBBox))!;
+    expect(box.w).toBeGreaterThan(250);
+    expect(box.x + 0.5).toBeGreaterThanOrEqual(400); // moved right of the card it would have covered
   });
 
   it('fitInto keeps a small drawing where it is when it already fits', () => {

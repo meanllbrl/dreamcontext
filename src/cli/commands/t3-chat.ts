@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 
@@ -66,14 +66,21 @@ export function registerT3ChatCommand(program: Command): void {
     .command('t3-run', { hidden: true })
     .description('Run one headless turn on Codex or Antigravity; prints one JSON document (used by automations, sleep, AI Team)')
     .requiredOption('--surface <surface>', 'which headless surface this is (headless-envelope.ts)')
-    .requiredOption('--prompt <text>', 'the turn')
+    .option('--prompt <text>', 'the turn')
+    .option('--prompt-file <path>', 'the turn, read from a file (past the command-line cap)')
     .option('--tool <tool>', 'codex (default) or antigravity', 'codex')
     .option('--model <model>', 'model id')
     .option('--effort <effort>', 'reasoning effort')
     .option('--account <id>', 'a Codex account other than #0')
     .option('--resume <threadId>', 'a native thread to continue')
     .option('--extra-root <path...>', 'another folder the sandboxed run may write (a linked repo)')
-    .action(async (o: { surface: string; prompt: string; tool: string; model?: string; effort?: string; account?: string; resume?: string; extraRoot?: string[] }) => {
+    .action(async (o: { surface: string; prompt?: string; promptFile?: string; tool: string; model?: string; effort?: string; account?: string; resume?: string; extraRoot?: string[] }) => {
+      let prompt = o.prompt;
+      if (o.promptFile) { try { prompt = readFileSync(o.promptFile, 'utf-8'); } catch { prompt = undefined; } }
+      if (!prompt) {
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 't3-run: no turn (--prompt or a readable --prompt-file)', num_turns: 0, total_cost_usd: 0 }) + '\n');
+        process.exit(2);
+      }
       if (o.tool !== 'codex' && o.tool !== 'antigravity') {
         process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `t3-run: unknown tool ${String(o.tool).slice(0, 40)}`, num_turns: 0, total_cost_usd: 0 }) + '\n');
         process.exit(2);
@@ -86,7 +93,7 @@ export function registerT3ChatCommand(program: Command): void {
         process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `${label} could not load: ${String(err).slice(0, 300)}`, num_turns: 0, total_cost_usd: 0, dc_tool: o.tool }) + '\n');
         process.exit(1);
       }
-      process.exit(await bridge.runT3Headless({ ...o, tool: o.tool, surface: o.surface as never, cwd: process.cwd() }));
+      process.exit(await bridge.runT3Headless({ ...o, prompt, tool: o.tool, surface: o.surface as never, cwd: process.cwd() }));
     });
 
   // The account jobs that need T3's own code (plan r5 §4b, W2): a shadow home laid out before a

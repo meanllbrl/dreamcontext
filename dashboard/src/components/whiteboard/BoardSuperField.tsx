@@ -24,11 +24,24 @@ import {
   type CanvasBox, type SaveKind,
 } from './superFieldLogic';
 import {
-  QUICK_SCOPE_MAX, addedIds, areaOf, effectiveMode, lineOfJob, readFieldMode, regionChipText, startRefusalKey, undoRefusalKey, writeFieldMode,
-  type FieldMode, type QuickJobView, type QuickLine, type Region,
+  QUICK_SCOPE_MAX, addedIds, areaOf, effectiveMode, lineOfJob, quickReady, readFieldMode, readQuickModel, regionChipText, startRefusalKey, undoRefusalKey, writeFieldMode,
+  writeQuickModel, type FieldMode, type QuickJobView, type QuickLine, type QuickModel, type QuickTool, type Region,
 } from './quickEditLogic';
+import { ModelChip } from '../settings/window/ModelChip';
+import { useAgentTools } from '../../hooks/useAgentCapabilities';
 import { useQuickEdit } from '../../hooks/useQuickEdit';
 import type { WhiteboardCanvasApi } from './LazyWhiteboardCanvas';
+import { useVaultId } from '../../context/VaultContext';
+import { uploadAgentFile } from '../../lib/agentDrop';
+import { agentFileUrl } from '../../api/client';
+import {
+  pendingUploads, readScratch, removeAttachment, stageUpload, subscribeScratch, type Attachment,
+} from '../sleepy/chat/composerScratch';
+import { GLYPH_IMAGE } from '../sleepy/chat/composerRefs';
+import { PictureChip } from '../sleepy/chat/ComposerRefLayer';
+import { chipThumbFor } from '../sleepy/chat/picturePeekBox';
+import { BOARD_ATTACH_MAX, boardAttachConv, dropCarried, fieldAttachments, quickAttachmentPaths, superMessageWith } from './boardAttachments';
+import '../sleepy/chat/composer.css';
 import './BoardSuperField.css';
 
 /** The marks hold this long after the work last read as going (a turn ending, a child starting). */
@@ -41,7 +54,7 @@ export interface FieldWork {
 }
 
 /** What a quick edit asked, kept so "Super'e sor" can send the same words and area. */
-interface LastAsk { words: string; sel: SelectionRef | null; area: Region | null }
+interface LastAsk { words: string; sel: SelectionRef | null; area: Region | null; atts: Attachment[] }
 
 const storage = (): Storage | null => { try { return window.localStorage; } catch { return null; } };
 
@@ -84,10 +97,37 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
   const onQuickBoxRef = useRef(onQuickBox);
   onQuickBoxRef.current = onQuickBox;
 
+  // ── pictures and files: dropped or pasted, staged in the Chat composer's own store ──
+  const { vault } = useVaultId();
+  const conv = boardAttachConv(board);
+  const [atts, setAtts] = useState<Attachment[]>(() => fieldAttachments(readScratch(conv).attachments));
+  useEffect(() => {
+    setAtts(fieldAttachments(readScratch(conv).attachments));
+    return subscribeScratch(conv, (s) => setAtts(fieldAttachments(s.attachments)));
+  }, [conv]);
+  const [dropping, setDropping] = useState(false);
+  const stageFiles = (files: readonly File[]) => {
+    const room = BOARD_ATTACH_MAX - fieldAttachments(readScratch(conv).attachments).length;
+    if (files.length > room) setNote({ text: t('whiteboard.quick.attachMax').replace('{n}', String(BOARD_ATTACH_MAX)), bad: true });
+    for (const f of files.slice(0, Math.max(0, room))) stageUpload(conv, f, (x) => uploadAgentFile(vault, x, x.name || 'Pasted image'));
+  };
+  const hasFiles = (dt: DataTransfer | null) => !!dt && Array.from(dt.types ?? []).includes('Files');
+  /** Every upload this field started has settled: what is sent is a path, never a chip in flight. */
+  const settledAtts = async (): Promise<Attachment[]> => {
+    await Promise.all(pendingUploads(conv));
+    return fieldAttachments(readScratch(conv).attachments);
+  };
+
   // ── the mode and the quick edit ──
   const quick = useQuickEdit(board);
   const superOn = !!presence?.on;
-  const quickOk = quick.status?.ok !== false;
+  // The model the quick edit runs on: one pick for this Mac, every board (Sonnet until changed).
+  const [qModel, setQModel] = useState<QuickModel>(() => readQuickModel(storage()));
+  const pickModel = (tool: QuickTool, model: string) => { const next = { tool, model }; setQModel(next); writeQuickModel(storage(), next); };
+  // The mode (and so the chip) needs ANY ready tool; a Claude pick with Claude signed out is
+  // refused at send with "pick another model" (review r1), never by hiding the way to pick one.
+  const agentTools = useAgentTools().data;
+  const quickOk = quickReady(quick.status?.ok !== false, agentTools);
   const [picked, setPicked] = useState<FieldMode>(() => readFieldMode(storage()));
   const mode = effectiveMode(picked, superOn, quickOk);
   const pick = (m: FieldMode) => { setPicked(m); writeFieldMode(storage(), m); };
@@ -177,8 +217,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
     const sent = ask ? ask.words : draft;
     const sel = ask ? ask.sel : selection;
     const area = ask ? ask.area : region;
-    const text = composeFieldMessage(sent, board, sel, area);
-    if (!text) return;
+    if (!composeFieldMessage(sent, board, sel, area)) return;
     const box = area ?? (sel && selectionSendable(sel) ? sel.box : null);
     sendingRef.current = true;
     setSending(true);
@@ -186,10 +225,14 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
     try {
       const saved = await settleSave(() => saveRef.current, flush);
       if (saved === 'deleted') { setNote({ text: t('whiteboard.field.deleted'), bad: true }); return; }
+      // The pictures and files go as a Chat message carries them, between the words and the page line.
+      const carried = ask ? ask.atts : await settledAtts();
+      const text = composeFieldMessage(superMessageWith(sent, carried), board, sel, area);
+      if (!text) return;
       const res = sendFromPage(bus, text);
       if (!res.accepted) { setNote({ text: refusal(res.reason), bad: true }); return; }
       // The field is read-only while a send settles, so the draft is still exactly what went.
-      if (!ask) setDraft((cur) => (cur === sent ? '' : cur));
+      if (!ask) { setDraft((cur) => (cur === sent ? '' : cur)); dropCarried(conv, carried); }
       else setLine(null);
       if (saved === 'unsaved') setNote({ text: t('whiteboard.field.unsaved'), bad: false });
       setTrack({ ...startTrack(msgRef(text), presenceRef.current, Date.now()), box });
@@ -197,7 +240,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       sendingRef.current = false;
       setSending(false);
     }
-  }, [draft, board, selection, region, flush, bus, t]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draft, board, selection, region, flush, bus, t, conv]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** The quick edit: save first (the identities it sends must be on disk), start, follow, apply. */
   const sendQuick = useCallback(async () => {
@@ -216,7 +259,8 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       if (saved === 'deleted') { setNote({ text: t('whiteboard.field.deleted'), bad: true }); return; }
       const scope = canvasApi()?.quickScope() ?? null;
       if (scope && scope.ids.length > QUICK_SCOPE_MAX) { setNote({ text: t('whiteboard.quick.tooBig'), bad: true }); return; }
-      const r = await quick.start({ text: words, scope, area: areaOf(area) });
+      const carried = await settledAtts();
+      const r = await quick.start({ text: words, scope, area: areaOf(area), attachments: quickAttachmentPaths(carried), tool: qModel.tool, model: qModel.model });
       if (!r.ok) {
         // Refused in band: nothing started, the words stay in the field.
         setNote({ text: t(startRefusalKey(r.status, r.code)), bad: true });
@@ -225,7 +269,8 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
       }
       job = r.job;
       setDraft((cur) => (cur.trim() === words ? '' : cur));
-      setLastAsk({ words, sel, area });
+      setLastAsk({ words, sel, area, atts: carried });
+      dropCarried(conv, carried);
       setLine(null);
       setRuns((cur) => [...cur, { job: r.job, startedAt: Date.now() }]);
       onQuickBoxRef.current(box);
@@ -245,7 +290,7 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
     setRuns((cur) => cur.filter((x) => x.job !== job));
     if (!view) { setLine({ kind: 'failed', text: t('whiteboard.quick.failed') }); return; }
     landJob(view, before);
-  }, [draft, region, selection, flush, canvasApi, quick, t]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draft, region, selection, flush, canvasApi, quick, t, conv]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** A finished job lands at once (Decision 6): its elements into the scene, what it added
    *  selected (Decision 8), the region cleared when the edit wrote something. */
@@ -317,7 +362,44 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
           <button type="button" className="bsf-link" onClick={() => openSuperFromPage(bus)}>{t('whiteboard.field.openChat')}</button>
         </div>
       )}
-      <div className="bsf" data-testid="board-super-field">
+      <div
+        className="bsf"
+        data-testid="board-super-field"
+        data-dropping={dropping ? 'true' : undefined}
+        // A file dropped here is the field's, never the canvas's (which would place it as an image).
+        onDragOver={(e) => { if (!hasFiles(e.dataTransfer)) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setDropping(true); }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false); }}
+        onDrop={(e) => {
+          if (!hasFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setDropping(false);
+          stageFiles(Array.from(e.dataTransfer.files));
+        }}
+      >
+        {atts.length > 0 && (
+          <div className="bsf-atts" data-testid="board-field-attachments">
+            {atts.map((a) => {
+              const thumb = a.path ? chipThumbFor(a.path) : null;
+              const img = a.url ?? (a.path && thumb?.picture ? agentFileUrl(vault, a.path, { raw: true }) : undefined);
+              return (
+                <span className="bsf-att" key={a.id} data-testid="board-field-attachment" data-state={a.failed ? 'failed' : a.uploading ? 'uploading' : 'ready'}>
+                  <PictureChip
+                    sent
+                    img={img}
+                    icon={img ? undefined : '📄'}
+                    lead={GLYPH_IMAGE}
+                    rest={`\u00A0${a.name}`}
+                    state={a.failed ? 'failed' : a.uploading ? 'uploading' : 'ready'}
+                    title={a.failed ? `${a.name} · ${t('whiteboard.quick.attachFailed')}` : a.name}
+                    testId="board-field-attachment-chip"
+                  />
+                  <button type="button" className="bsf-chip-x" aria-label={`${t('whiteboard.quick.attachRemove')} ${a.name}`} title={t('whiteboard.quick.attachRemove')} onClick={() => removeAttachment(conv, a.id)}>×</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div className="bsf-chips">
           {region && (
             <span className="bsf-chip bsf-chip--sel" data-testid="board-quick-region-chip">
@@ -338,6 +420,19 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
             <span className="bsf-chip-text">{boardName}</span>
           </span>
           <span className="bsf-chips-spacer" />
+          {mode === 'quick' && (
+            <ModelChip
+              value={{ tool: qModel.tool, model: qModel.model, effort: '' }}
+              fallback={qModel.model ? undefined : { model: '', effort: '', text: t('whiteboard.quick.toolDefault') }}
+              target={{ efforts: [] }}
+              onPick={(tool, model) => pickModel(tool, model)}
+              onEffort={() => undefined}
+              withAntigravity
+              className="bsf-model"
+              label={t('whiteboard.quick.model')}
+              testId="board-quick-model"
+            />
+          )}
           <span className="bsf-modes" role="group" aria-label={t('whiteboard.quick.modes')} data-testid="board-field-modes">
             <button
               type="button"
@@ -390,7 +485,14 @@ export function BoardSuperField({ bus, board, boardName, selection, onClearSelec
             onChange={(e) => { setDraft(e.target.value); if (note) setNote(null); }}
             onKeyDown={onKeyDown}
             onKeyUp={(e) => e.stopPropagation()}
-            onPaste={(e) => e.stopPropagation()}
+            onPaste={(e) => {
+              // Keys and pastes here are the field's: the canvas never takes a picture pasted into it.
+              e.stopPropagation();
+              const files = Array.from(e.clipboardData?.items ?? []).filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter((f): f is File => !!f);
+              if (!files.length) return;
+              e.preventDefault();
+              stageFiles(files);
+            }}
           />
           {running && !typed ? (
             <button type="button" className="bsf-btn" onClick={() => void stopAll()} data-testid="board-quick-stop">{t('whiteboard.quick.stop')}</button>

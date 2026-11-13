@@ -231,14 +231,54 @@ describe('the kit reference', () => {
 
   it('names only types the builder draws, and the new flow and panel are among them', () => {
     expect(TYPES).toEqual(expect.arrayContaining(['flow', 'panel', 'stack', 'row', 'image', 'timeline', 'callout']));
-    const table = REF.slice(REF.indexOf('## Pick the shape of the idea'), REF.indexOf('## Writing for a board'));
+    const table = REF.slice(REF.indexOf('## Pick the shape of the idea'), REF.indexOf('## Screens'));
     const named = [...table.matchAll(/^\|[^|]*\|\s*([^|]*)\|/gm)].flatMap((m) => [...m[1].matchAll(/`([a-zA-Z]+)`/g)].map((x) => x[1]));
     expect(named.length).toBeGreaterThan(15);
     for (const t of named) expect(TYPES, `the kit reference names "${t}"`).toContain(t);
   });
 
+  it('its two screen examples draw clean, with the parts inside the shell, and every screen type is named', () => {
+    const blocks = [...REF.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    for (const b of blocks.slice(1)) {
+      const out = buildSpecDrawing(b, 'screen.json');
+      expect(out.audit).toEqual({ overlaps: 0, buriedText: 0, longLines: 0, wallOfText: 0 });
+      // the parts really are drawn: the same shell with no items is smaller
+      const bare = JSON.parse(b);
+      delete bare.elements[0].items;
+      expect(out.elements.length, 'the items drew').toBeGreaterThan(buildSpecDrawing(JSON.stringify(bare), 'bare.json').elements.length + 5);
+    }
+    for (const t of ['device', 'windowFrame', 'appBar', 'tabBar', 'listRow', 'searchField', 'segmented', 'toggle', 'slider', 'icon', 'iconButton', 'avatar', 'imagePlaceholder', 'navbar', 'input', 'button', 'textRows']) {
+      expect(TYPES, t).toContain(t);
+      expect(REF, t).toContain(`\`${t}\``);
+    }
+  });
+
+  it('a phone fills its screen: the tab bar sits on the bottom edge and the parts are spread down it', () => {
+    const els = buildSpecDrawing(JSON.stringify({ elements: [{ type: 'device', kind: 'iphone', items: [
+      { type: 'appBar', title: 'A' }, { type: 'listRow', title: 'Bir', leading: 'bell' }, { type: 'listRow', title: 'Iki', leading: 'user' },
+      { type: 'imagePlaceholder', label: 'Foto' }, { type: 'button', text: 'Git' }, { type: 'tabBar', items: [{ icon: 'home', label: 'Ana' }, { icon: 'user', label: 'Ben' }], active: 0 },
+    ] }] }), 'phone.json').elements as unknown as { type: string; text?: string; y: number; height: number }[];
+    const top = Math.min(...els.map((e) => e.y));
+    const bottom = Math.max(...els.map((e) => e.y + (e.height || 0)));
+    const lastText = Math.max(...els.filter((e) => e.type === 'text' && e.text === 'Ana').map((e) => e.y));
+    const bigImg = els.filter((e) => e.type === 'rectangle').reduce((m, e) => Math.max(m, e.height), 0);
+    expect(lastText - top).toBeGreaterThan((bottom - top) * 0.8);
+    expect(bigImg).toBeGreaterThan(200); // the image placeholder took the spare height
+  });
+
+  it('a window grows to hold its parts instead of letting them hang out of the bottom', () => {
+    const els = buildSpecDrawing(JSON.stringify({ elements: [{ type: 'windowFrame', kind: 'app', w: 560, h: 200, items: [
+      { type: 'input', label: 'A', placeholder: 'x' }, { type: 'textRows', rows: 4 }, { type: 'input', label: 'B', placeholder: 'y' }, { type: 'button', text: 'Git' },
+    ] }] }), 'win.json').elements as unknown as { type: string; text?: string; y: number; height: number }[];
+    const frame = els.filter((e) => e.type === 'rectangle').reduce((m, e) => (e.height > m.height ? e : m));
+    const btn = els.filter((e) => e.type === 'text' && e.text === 'Git')[0];
+    expect(frame.height).toBeGreaterThan(200);
+    expect(btn.y).toBeLessThan(frame.y + frame.height);
+  });
+
   it('names every primitive field the builder reads, in a Primitives block', () => {
-    const block = REF.slice(REF.indexOf('## Primitives'), REF.indexOf('## Writing for a board'));
+    const block = REF.slice(REF.indexOf('## Primitives'), REF.indexOf('## Screens'));
     expect(block.length).toBeGreaterThan(100);
     for (const t of ['rectangle', 'ellipse', 'diamond', 'line', 'arrow', 'text']) expect(block, t).toContain(`\`${t}\``);
     for (const f of ['x', 'y', 'width', 'height', 'strokeColor', 'backgroundColor', 'fillStyle', 'points', 'fontSize']) expect(block, f).toContain(`\`${f}\``);

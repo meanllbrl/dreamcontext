@@ -517,8 +517,7 @@
   border-bottom-color: var(--color-accent);
 }
 
-.sw-tab-mark,
-.sw-mdc-mark {
+.sw-tab-mark {
   display: inline-grid;
   place-items: center;
   width: 15px;
@@ -526,8 +525,7 @@
   flex: none;
 }
 
-.sw-tab-mark .mp-mark,
-.sw-mdc-mark .mp-mark {
+.sw-tab-mark .mp-mark {
   width: 15px;
   height: 15px;
 }
@@ -541,47 +539,6 @@
 /* The accounts sit straight in the card: no box inside a box beyond each account. */
 .sw-acc > * {
   margin: 0;
-}
-
-/* ── One chip per job, the composer's picker behind it ── */
-.sw-mdc {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  padding: 0 var(--space-2) 0 9px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-secondary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.sw-mdc b {
-  font-weight: var(--font-weight-semibold);
-}
-
-.sw-mdc:hover:not(:disabled),
-.sw-mdc[aria-expanded='true'] {
-  border-color: var(--color-border-hover);
-}
-
-.sw-mdc .dim,
-.sw-mdc-car {
-  color: var(--color-text-tertiary);
-}
-
-.sw-mdc.inh b {
-  font-weight: var(--font-weight-normal);
-  color: var(--color-text-secondary);
-}
-
-.sw-mdc:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .sw-reset {
@@ -598,36 +555,6 @@
 .sw-reset:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text);
-}
-
-/* The picker's popover: portaled to body above the window, anchored by ModelChip. It carries
-   its own surface because the composer's stylesheet anchors the same class to the composer. */
-.sw-popover {
-  position: fixed;
-  z-index: 80;
-}
-
-.sw-popover .chat-cmp-modelmenu.mp {
-  position: static;
-  inset: auto;
-  display: flex;
-  flex-direction: column;
-  width: min(412px, calc(100vw - 16px));
-  max-width: none;
-  max-height: min(460px, calc(100vh - 16px));
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-elevated, var(--color-bg-secondary));
-  box-shadow: var(--shadow-lg);
-}
-
-.sw-popover .mp-list {
-  overflow: auto;
-}
-
-.sw-popover .mp-tool[aria-disabled='true'] {
-  opacity: 0.45;
 }
 
 /* ── Limit rules: the spread rule's weights under Details ── */

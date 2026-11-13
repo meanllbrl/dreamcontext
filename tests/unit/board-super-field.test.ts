@@ -17,6 +17,7 @@ import { nextNeed, rowOverflow } from '../../dashboard/src/pages/whiteboards/use
 import {
   CLICK_SLOP_PX, FIELD_MODE_KEY, QUICK_SCOPE_MAX, REGION_MIN_PX, addedIds, areaOf, dragOutcome, effectiveMode, failKey, lineOfJob, undoRefusalKey,
   quickEditScope, readFieldMode, regionChipText, startRefusalKey, writeFieldMode, type ScopeElement,
+  QUICK_MODEL_KEY, quickReady, readQuickModel, writeQuickModel,
 } from '../../dashboard/src/components/whiteboard/quickEditLogic.js';
 
 const sel = (over: Partial<SelectionRef> = {}): SelectionRef => ({ n: 2, ids: ['a1', 'b2'], box: [10, 20, 300, 40], one: null, ...over });
@@ -140,7 +141,7 @@ describe('the component wiring', () => {
 
   it('the draft is cleared only after an accepted send', () => {
     const accepted = src.indexOf("if (!res.accepted)");
-    const cleared = src.indexOf("if (!ask) setDraft((cur)");
+    const cleared = src.indexOf("if (!ask) { setDraft((cur)");
     expect(accepted).toBeGreaterThan(0);
     expect(cleared).toBeGreaterThan(accepted);
     // The quick edit clears it only after the server took the job.
@@ -254,7 +255,7 @@ describe('where the field sits (review r1/r2: one rule decides the painted box)'
 
   it('a send settles read-only, so the draft is exactly what went; the track knows a steered turn', () => {
     expect(src).toMatch(/readOnly=\{sending\}/);
-    expect(src).toMatch(/if \(!ask\) setDraft\(\(cur\) => \(cur === sent \? '' : cur\)\)/);
+    expect(src).toMatch(/if \(!ask\) \{ setDraft\(\(cur\) => \(cur === sent \? '' : cur\)\); dropCarried\(conv, carried\); \}/);
     expect(src).toMatch(/startTrack\(msgRef\(text\), presenceRef\.current/);
   });
 });
@@ -296,6 +297,38 @@ const tq = (k: string) => ({
 
 describe('the mode switch (Decision 1, 2; criteria 1, 17)', () => {
   const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); }, m }; };
+
+  it('the quick edit model: Sonnet until picked, then one pick per machine; anything unreadable is Sonnet', () => {
+    const store = mem();
+    expect(readQuickModel(store)).toEqual({ tool: 'claude', model: 'sonnet' });
+    writeQuickModel(store, { tool: 'antigravity', model: '' });
+    expect(JSON.parse(store.m.get(QUICK_MODEL_KEY)!)).toEqual({ tool: 'antigravity', model: '' });
+    expect(readQuickModel(store)).toEqual({ tool: 'antigravity', model: '' });
+    writeQuickModel(store, { tool: 'codex', model: 'gpt-5.5' });
+    expect(readQuickModel(store)).toEqual({ tool: 'codex', model: 'gpt-5.5' });
+    for (const raw of ['{', '{"tool":"gpt","model":"x"}', '{"tool":"codex"}', '{"tool":"claude","model":""}', JSON.stringify({ tool: 'codex', model: 'x'.repeat(65) })]) {
+      store.m.set(QUICK_MODEL_KEY, raw);
+      expect(readQuickModel(store), raw).toEqual({ tool: 'claude', model: 'sonnet' });
+    }
+    const broken = { getItem: () => { throw new Error('x'); }, setItem: () => { throw new Error('x'); } };
+    expect(readQuickModel(broken)).toEqual({ tool: 'claude', model: 'sonnet' });
+    expect(() => writeQuickModel(broken, { tool: 'codex', model: '' })).not.toThrow();
+    expect(failKey('tool')).toBe('whiteboard.quick.err.tool');
+    expect(failKey('gate')).toBe('whiteboard.quick.err.gate');
+  });
+
+  it('review r1: a Claude sign-out with Sonnet picked keeps the quick mode (and its model chip) when Codex or Gemini is ready', () => {
+    const codex = [{ tool: 'claude', ready: false }, { tool: 'codex', ready: true }];
+    expect(quickReady(false, codex)).toBe(true);
+    expect(effectiveMode('quick', true, quickReady(false, codex))).toBe('quick');
+    expect(effectiveMode('super', false, quickReady(false, [{ tool: 'antigravity', ready: true }]))).toBe('quick');
+    // Nothing ready anywhere: the mode closes, as before.
+    expect(quickReady(false, [{ tool: 'codex', ready: false }, { tool: 'antigravity', ready: false }])).toBe(false);
+    expect(quickReady(false, undefined)).toBe(false);
+    expect(quickReady(true, undefined)).toBe(true);
+    // A Claude tool row never stands in for the Claude sign-in check.
+    expect(quickReady(false, [{ tool: 'claude', ready: true }])).toBe(false);
+  });
 
   it('Hızlı düzenle is the default; the last pick is remembered per machine', () => {
     const store = mem();
@@ -370,7 +403,7 @@ describe('the empty region (Decision 12; criterion 2)', () => {
     expect(splitPageContext(text).page?.area).toEqual([40, -80, 320, 240]);
     expect(composeFieldMessage('buraya elma', 'q3', null, [1, 2, 30, 40])).toBe('buraya elma\n\n[On page whiteboards board=q3 area=1,2,30,40]');
     const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/whiteboard/BoardSuperField.tsx', import.meta.url)), 'utf-8');
-    expect(src).toMatch(/quick\.start\(\{ text: words, scope, area: areaOf\(area\) \}\)/);
+    expect(src).toMatch(/quick\.start\(\{ text: words, scope, area: areaOf\(area\), attachments: quickAttachmentPaths\(carried\), tool: qModel\.tool, model: qModel\.model \}\)/);
   });
 
   it('Escape, a shape selection and another board clear it; the canvas never saves it', () => {
@@ -429,6 +462,12 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
     expect(lineOfJob(job({ reply: "Kutuya 'Ödeme' yazıldı.", nothing: true }), tq)).toEqual({ kind: 'nothing', reply: tq('whiteboard.quick.nothing') });
   });
 
+  it('the model declined (asked for no change): its reason is the line, so a refusal says why', () => {
+    const why = 'Proje dışındaki bir dosya tahtaya konamaz; tahtada bir şey değişmedi.';
+    expect(lineOfJob(job({ reply: why, nothing: true, declined: true }), tq)).toEqual({ kind: 'nothing', reply: why });
+    expect(lineOfJob(job({ reply: '', nothing: true, declined: true }), tq)).toEqual({ kind: 'nothing', reply: tq('whiteboard.quick.nothing') });
+  });
+
   it('review r1: a failure is worded from its code in the owner\'s language, never the server\'s prose', () => {
     expect(lineOfJob(job({ state: 'failed', code: 'timeout', error: 'no answer in 60 s' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.err.timeout') });
     expect(lineOfJob(job({ state: 'failed', code: 'surprise', error: 'Zaman aşımı' }), tq)).toEqual({ kind: 'failed', text: tq('whiteboard.quick.failed') });
@@ -446,6 +485,25 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
     expect(lineOfJob(job({ state: 'stopped' }), tq)).toEqual({ kind: 'stopped' });
   });
 
+  it('a refused widget is worded with its kind and the name asked for, never a command', () => {
+    const i18n = readFileSync(fileURLToPath(new URL('../../dashboard/src/context/I18nContext.tsx', import.meta.url)), 'utf-8');
+    const tr = (k: string) => {
+      const all = [...i18n.matchAll(new RegExp(`'${k.replace(/[.-]/g, (c) => `\\${c}`)}': '((?:[^'\\\\]|\\\\.)*)'`, 'g'))];
+      return (all[1] ?? all[0])?.[1].replace(/\\'/g, "'") ?? k;
+    };
+    const line = lineOfJob(job({ state: 'failed', code: 'widget', refusal: { kind: 'insight', why: 'not_found', name: 'churn' } }), tr);
+    expect(line).toEqual({ kind: 'failed', text: 'Bu projede "churn" adında bir insight bulunamadı; tahtada bir şey değişmedi.' });
+    const web = lineOfJob(job({ state: 'failed', code: 'widget', refusal: { kind: 'web', why: 'web', name: 'http://localhost:3000' } }), tr);
+    expect((web as { text: string }).text).toContain('https');
+    for (const why of ['not_found', 'web', 'too_long', 'bad']) {
+      expect(i18n.split(`'whiteboard.quick.err.widget.${why}':`).length - 1, why).toBe(2);
+      expect(tr(`whiteboard.quick.err.widget.${why}`)).not.toMatch(/dreamcontext|whiteboard add|--ref/);
+    }
+    for (const kind of ['insight', 'knowledge', 'task', 'todo', 'note', 'html', 'web', 'wiki', 'lab-card', 'agent', 'card']) {
+      expect(i18n.split(`'whiteboard.quick.kind.${kind}':`).length - 1, kind).toBe(2);
+    }
+  });
+
   it('the added shapes are what the edit wrote that the scene did not hold (they become the selection)', () => {
     expect(addedIds([{ id: 'old' }, { id: 'n1' }, { id: 'n2', isDeleted: true }, { id: 'n3' }], new Set(['old']))).toEqual(['n1', 'n3']);
   });
@@ -454,7 +512,7 @@ describe('the quick edit\'s lines (criteria 5, 6, 10, 11)', () => {
     expect(startRefusalKey(409, 'busy')).toBe('whiteboard.quick.busy');
     expect(startRefusalKey(429, 'rate')).toBe('whiteboard.quick.rate');
     expect(startRefusalKey(413, 'scope_too_big')).toBe('whiteboard.quick.tooBig');
-    expect(startRefusalKey(412, 'no_claude')).toBe('whiteboard.quick.noClaude');
+    expect(startRefusalKey(412, 'no_claude')).toBe('whiteboard.quick.claudeOut');
     expect(startRefusalKey(500, '')).toBe('whiteboard.quick.failed');
   });
 

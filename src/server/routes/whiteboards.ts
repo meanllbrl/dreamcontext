@@ -26,6 +26,8 @@ import {
   type QuickArea,
 } from '../../lib/whiteboards/quick-edit.js';
 import { quickEditStatus, readQuickJob, startQuickEdit, stopQuickJob } from '../../lib/whiteboards/quick-edit-jobs.js';
+import { QUICK_ATTACH_MAX } from '../../lib/whiteboards/quick-attachments.js';
+import { readQuickPick } from '../../lib/whiteboards/quick-edit-tools.js';
 import type { WhiteboardElement } from '../../lib/whiteboards/widgets.js';
 import { boardFileRelPath, readBoardFile, WHITEBOARD_MAX_FILE_BYTES, writeBoardFile } from '../../lib/whiteboards/files.js';
 import { assertPicturesHeld } from '../../lib/whiteboards/ops.js';
@@ -519,7 +521,9 @@ export async function handleQuickEditStatus(
   sendJson(res, 200, quickEditStatus());
 }
 
-/** POST /api/whiteboards/:slug/quick-edit `{text, scope?, area?}` → 202 `{job}`. */
+/** POST /api/whiteboards/:slug/quick-edit `{text, scope?, area?, attachments?, tool?, model?}` → 202 `{job}`.
+ *  `attachments`: paths the composer's upload returned (the job reads only those, quick-attachments.ts).
+ *  `tool` / `model`: the composer's model pick (quick-edit-tools.ts); absent = Claude Sonnet. */
 export async function handleQuickEditStart(
   req: IncomingMessage,
   res: ServerResponse,
@@ -559,18 +563,33 @@ export async function handleQuickEditStart(
       return;
     }
   }
+  let attachments: string[] = [];
+  if (body?.attachments !== undefined && body.attachments !== null) {
+    const a = body.attachments as unknown;
+    if (!Array.isArray(a) || a.length > QUICK_ATTACH_MAX || !a.every((p) => typeof p === 'string' && p.length > 0 && p.length <= 4096)) {
+      sendError(res, 400, 'invalid', `attachments are up to ${QUICK_ATTACH_MAX} uploaded file paths.`);
+      return;
+    }
+    attachments = a as string[];
+  }
+  const pick = readQuickPick(body?.tool, body?.model);
+  if (!pick) {
+    sendError(res, 400, 'invalid', 'tool is claude, codex or antigravity; model is that tool\'s model name.');
+    return;
+  }
   try {
     whiteboardRev(contextRoot, params.slug);
   } catch (err) {
     sendWhiteboardError(res, err);
     return;
   }
-  const status = quickEditStatus();
+  // Claude's sign-in is checked here; Codex and Antigravity say so from their own run (`tool`).
+  const status = pick.tool === 'claude' ? quickEditStatus() : { ok: true as const };
   if (!status.ok) {
     sendJson(res, 412, { error: 'no_claude', message: status.text });
     return;
   }
-  const started = startQuickEdit(contextRoot, params.slug, { text, scope, area, selfOrigin: requestSelfOrigin(req) });
+  const started = startQuickEdit(contextRoot, params.slug, { text, scope, area, attachments, pick, selfOrigin: requestSelfOrigin(req) });
   if (!started.ok) {
     sendError(res, started.status, started.error, started.message);
     return;
