@@ -101,28 +101,38 @@ dreamcontext whiteboard draw <slug> --spec spec.json [--at x,y | --below <tag> |
 dreamcontext whiteboard kit                            # the drawing kit: types, fields, a worked example
 ```
 
-### Groups (the dashboard's board explorer)
+### Folders (the dashboard's board explorer)
 
-The Whiteboard page has a left explorer listing every board, in groups. A board's group is its
-own frontmatter, `group: "Orbit metrics"`, next to `group-by: owner|agent` (who placed it), so the
-team, another machine and agents see the same groups and brain sync merges them per key.
-Nothing moves on disk; a board with no (or an invalid) `group` is Ungrouped.
+The Whiteboard page has a left explorer listing every board, in folders, **two levels deep**: a
+folder holds boards and sub-folders, a sub-folder holds only boards. A board's folder is its own
+frontmatter, `group: "Orbit metrics"` or `group: "Orbit metrics/Ads"` (`/` separates the two
+levels), next to `group-by: owner|agent` (who placed it), so the team, another machine and agents
+see the same folders and brain sync merges them per key. Nothing moves on disk; a board with no
+(or an invalid, e.g. three-level) `group` is under "No folder". `folder` and `group` are the same
+command.
 
 ```bash
-dreamcontext whiteboard group list [--json]               # groups and their boards
-dreamcontext whiteboard group set <slug> "Orbit metrics"  # put a board in a group
-dreamcontext whiteboard group clear <slug>                # take it out
-dreamcontext whiteboard group rename "Satis" "Satış"      # every board, every spelling of the group
-dreamcontext whiteboard create "Name" --group "Orbit metrics"
+dreamcontext whiteboard list [--folder "Orbit metrics"] [--json]   # boards by folder; --folder: that folder and its sub-folders
+dreamcontext whiteboard create "Name" --folder "Orbit metrics/Ads" # --group is the older name
+dreamcontext whiteboard move <slug> --folder "Orbit metrics/Ads"   # or --out: no folder
+dreamcontext whiteboard folder list [--json]                       # folders ("A/B" for a sub-folder) and their boards
+dreamcontext whiteboard folder rename "Satis" "Satış"              # every board, every spelling, sub-folders too
+dreamcontext whiteboard folder rename "Ads" "Orbit metrics/Ads"    # move a folder into another (only one without sub-folders)
+dreamcontext whiteboard folder delete "Orbit metrics/Ads"          # boards come out one level; no board is deleted
 ```
 
-- A name is 1-60 characters on one line, without `/`. An existing group with the same letters
-  (case, accents and ı aside) keeps its spelling: `group set x "orbit metrics"` lands in
-  "Orbit metrics". A rename that only fixes case or letters ("Satis" → "Satış") is taken as typed.
+- Each folder name is 1-60 characters on one line, without `/`. An existing folder with the same
+  letters (case, accents and ı aside) keeps its spelling, level by level: `move x --folder
+  "orbit metrics/ads"` lands in "Orbit metrics/Ads". A rename that only fixes case or letters
+  ("Satis" → "Satış") is taken as typed.
+- Deleting a sub-folder puts its boards into its folder; deleting a folder takes its boards out
+  of every folder and makes its sub-folders folders. A move that would make a third level is
+  refused before any board moves.
 - **A board the owner placed is refused** (`owner_grouped`) — also after he took it OUT of a
   group (`group-by: owner` stays). Pass `--force` only when the owner asked for that move.
-  `group rename` skips such boards and lists them as failed; it exits 1 when any failed.
-- A board agent may `group set|clear` only its own board and cannot `group rename`.
+  `folder rename|delete` skip such boards and list them as failed; they exit 1 when any failed.
+- A board agent may `group set|clear` only its own board (a sub-folder path is fine) and cannot
+  rename or delete a folder.
 - `group` and `group-by` merge as separate keys, so a cross-machine merge can pair one side's
   group with the other's author: at worst one refusal or one allowed move, never a lost board.
 - A hand-written date (`group: 2026-10-28`) reads as its ISO string, and the next write of the

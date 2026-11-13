@@ -6,6 +6,9 @@
  * A board's group is its own frontmatter (`group`, read by the server). Groups are DERIVED from
  * the boards, keyed by {@link fold}, so "Tilki" and "tilki" written by two hands show as one
  * group. An empty group (just made, nothing dropped in yet) lives only in these prefs.
+ *
+ * Groups are FOLDERS, two levels deep (owner, 2026-11-13): a group is "Folder" or
+ * "Folder/Sub-folder". A folder holds boards and sub-folders; a sub-folder holds only boards.
  */
 import { fold, type SwitcherBoard } from './boardSwitcherLogic';
 
@@ -13,12 +16,46 @@ import { fold, type SwitcherBoard } from './boardSwitcherLogic';
 export const GROUP_MAX = 60;
 export const groupLength = (s: string): number => [...s].length;
 
-/** A group name the server will take, or null. Same rules as `parseGroupInput`. */
-export function validGroupName(raw: string): string | null {
+export const FOLDER_SEP = '/';
+export const FOLDER_DEPTH = 2;
+
+/** One folder name (no "/"), the way the server cleans each part of a path, or null. */
+export function validFolderName(raw: string): string | null {
   const s = raw.normalize('NFC').trim();
   // eslint-disable-next-line no-control-regex
-  if (!s || groupLength(s) > GROUP_MAX || /[\u0000-\u001f\u007f-\u009f\u2028\u2029\/]/.test(s)) return null;
+  if (!s || groupLength(s) > GROUP_MAX || /[\u0000-\u001f\u007f-\u009f\u2028\u2029\/]/.test(s) || fold(s).includes(FOLDER_SEP)) return null;
   return s;
+}
+
+/** A folder path the server will take ("Folder" or "Folder/Sub-folder"), or null. Same rules as `parseGroupInput`. */
+export function validGroupName(raw: string): string | null {
+  const parts = raw.split(FOLDER_SEP);
+  if (parts.length > FOLDER_DEPTH) return null;
+  const clean = parts.map(validFolderName);
+  return clean.some((p) => p === null) ? null : clean.join(FOLDER_SEP);
+}
+
+export const folderParts = (group: string): string[] => group.split(FOLDER_SEP);
+
+/** Is `group` the folder `key` (folded) or one of its sub-folders? */
+export function inFolder(group: string, key: string): boolean {
+  const g = fold(group);
+  return g === key || g.startsWith(`${key}${FOLDER_SEP}`);
+}
+
+/**
+ * Where a board in `group` lands when the folder `from` is renamed or moved to `to`, or deleted
+ * (`to: null`: a sub-folder's boards go into its parent, a folder's out of every folder, and its
+ * sub-folders become folders). `undefined` = the board is not in that folder. Mirrors
+ * `renameWhiteboardGroup` in src/lib/whiteboards/store.ts.
+ */
+export function movedFolderPath(group: string, from: string, to: string | null): string | null | undefined {
+  if (!inFolder(group, fold(from))) return undefined;
+  const fromParts = folderParts(from);
+  const rest = folderParts(group).slice(fromParts.length);
+  if (to !== null) return [to, ...rest].join(FOLDER_SEP);
+  if (rest.length > 0) return rest.join(FOLDER_SEP);
+  return fromParts.length > 1 ? fromParts[0] : null;
 }
 
 export interface ExplorerPrefs {
@@ -75,6 +112,14 @@ export function toggleCollapsed(prefs: ExplorerPrefs, name: string): ExplorerPre
   return { ...prefs, collapsed };
 }
 
+/** Open a folder and, for a sub-folder, its parent (the open board's place is always visible). */
+export function expandFolder(prefs: ExplorerPrefs, group: string): ExplorerPrefs {
+  const parts = folderParts(group);
+  const keys = parts.map((_, i) => fold(parts.slice(0, i + 1).join(FOLDER_SEP)));
+  if (!keys.some((k) => prefs.collapsed.includes(k))) return prefs;
+  return { ...prefs, collapsed: prefs.collapsed.filter((k) => !keys.includes(k)) };
+}
+
 /** Add an empty group (no-op when a real or empty group already folds the same way). */
 export function addEmptyGroup(prefs: ExplorerPrefs, name: string, realGroups: readonly string[]): ExplorerPrefs {
   const key = fold(name);
@@ -82,9 +127,10 @@ export function addEmptyGroup(prefs: ExplorerPrefs, name: string, realGroups: re
   return { ...prefs, emptyGroups: [...prefs.emptyGroups, name] };
 }
 
+/** Forget an empty folder and every empty sub-folder in it. */
 export function removeEmptyGroup(prefs: ExplorerPrefs, name: string): ExplorerPrefs {
   const key = fold(name);
-  return { ...prefs, emptyGroups: prefs.emptyGroups.filter((g) => fold(g) !== key) };
+  return { ...prefs, emptyGroups: prefs.emptyGroups.filter((g) => !inFolder(g, key)) };
 }
 
 /**
@@ -94,7 +140,8 @@ export function removeEmptyGroup(prefs: ExplorerPrefs, name: string): ExplorerPr
  */
 export function pruneExplorerPrefs(prefs: ExplorerPrefs, boards: readonly SwitcherBoard[]): ExplorerPrefs {
   const slugs = new Set(boards.map((b) => b.slug));
-  const real = new Set(boards.flatMap((b) => (b.group ? [fold(b.group)] : [])));
+  // A folder is real when a board sits in it or in one of its sub-folders.
+  const real = new Set(boards.flatMap((b) => (b.group ? [fold(b.group), fold(folderParts(b.group)[0])] : [])));
   const pinned = prefs.pinned.filter((s) => slugs.has(s));
   const recent = prefs.recent.filter((s) => slugs.has(s));
   const emptyGroups = prefs.emptyGroups.filter((g) => !real.has(fold(g)));
@@ -102,26 +149,43 @@ export function pruneExplorerPrefs(prefs: ExplorerPrefs, boards: readonly Switch
   return { ...prefs, pinned, recent, emptyGroups };
 }
 
-/** A group renamed (or ungrouped, `to: null`): its collapsed and empty entries follow it. */
+/**
+ * A folder renamed, moved or deleted (`to: null`, see {@link movedFolderPath}): its collapsed and
+ * empty entries, and those of its sub-folders, follow it.
+ */
 export function renameGroupInPrefs(prefs: ExplorerPrefs, from: string, to: string | null): ExplorerPrefs {
   const key = fold(from);
-  const wasCollapsed = prefs.collapsed.includes(key);
-  const collapsed = prefs.collapsed.filter((k) => k !== key);
-  if (wasCollapsed && to !== null) collapsed.push(fold(to));
-  const hadEmpty = prefs.emptyGroups.some((g) => fold(g) === key);
-  const emptyGroups = prefs.emptyGroups.filter((g) => fold(g) !== key);
-  if (hadEmpty && to !== null && !emptyGroups.some((g) => fold(g) === fold(to))) emptyGroups.push(to);
+  const collapsed: string[] = [];
+  for (const k of prefs.collapsed) {
+    const next = inFolder(k, key) ? movedFolderPath(k, from, to) : k;
+    if (next !== null && next !== undefined && !collapsed.includes(fold(next))) collapsed.push(fold(next));
+  }
+  const emptyGroups: string[] = [];
+  for (const g of prefs.emptyGroups) {
+    const next = inFolder(g, key) ? movedFolderPath(g, from, to) : g;
+    if (next !== null && next !== undefined && !emptyGroups.some((x) => fold(x) === fold(next))) emptyGroups.push(next);
+  }
   return { ...prefs, collapsed, emptyGroups };
 }
 
 export interface ExplorerGroup<T> {
-  /** Folded name: the group's identity. */
+  /** Folded path: the folder's identity. */
   key: string;
-  /** The spelling shown: the one most boards carry, ties to the smallest string. */
+  /** The full path the server takes ("Folder" or "Folder/Sub-folder"), each part in the spelling
+   *  most boards carry, ties to the smallest string. */
   name: string;
+  /** The folder's own name, what its row shows. */
+  label: string;
+  /** The parent folder's key; null for a top folder. */
+  parent: string | null;
+  /** The boards directly in it. */
   boards: T[];
+  /** Its sub-folders (always empty for a sub-folder: two levels). */
+  subs: ExplorerGroup<T>[];
+  /** Boards in it and in its sub-folders. */
+  total: number;
   collapsed: boolean;
-  /** Lives only in prefs: no board carries it yet. */
+  /** No board in it or in its sub-folders: it lives only in prefs. */
   empty: boolean;
 }
 
@@ -171,36 +235,62 @@ export function buildExplorer<T extends SwitcherBoard>(
   const shown = boards.filter(hit);
   const bySlug = new Map(boards.map((b) => [b.slug, b]));
 
-  // A Map keyed by fold: a group named `__proto__` is just a key.
-  const buckets = new Map<string, { spellings: string[]; boards: T[] }>();
+  // Spellings: every board votes, not only the search hits, so a search never renames. A top
+  // folder's spelling is voted by every board under it; a sub-folder's by the boards in it.
+  // Maps keyed by fold: a folder named `__proto__` is just a key.
+  const topSpell = new Map<string, string[]>();
+  const subSpell = new Map<string, string[]>();
+  for (const b of boards) {
+    if (!b.group) continue;
+    const [t, sub] = folderParts(b.group);
+    topSpell.set(fold(t), [...(topSpell.get(fold(t)) ?? []), t]);
+    if (sub !== undefined) subSpell.set(fold(b.group), [...(subSpell.get(fold(b.group)) ?? []), sub]);
+  }
+
+  const tops = new Map<string, ExplorerGroup<T>>();
+  const topOf = (t: string, empty: boolean): ExplorerGroup<T> => {
+    const key = fold(t);
+    let g = tops.get(key);
+    if (!g) {
+      const name = topSpell.has(key) ? groupSpelling(topSpell.get(key)!) : t;
+      g = { key, name, label: name, parent: null, boards: [], subs: [], total: 0, collapsed: !searching && prefs.collapsed.includes(key), empty };
+      tops.set(key, g);
+    }
+    return g;
+  };
+  const subOf = (top: ExplorerGroup<T>, path: string, sub: string, empty: boolean): ExplorerGroup<T> => {
+    const key = fold(path);
+    let g = top.subs.find((x) => x.key === key);
+    if (!g) {
+      const label = subSpell.has(key) ? groupSpelling(subSpell.get(key)!) : sub;
+      g = { key, name: `${top.name}${FOLDER_SEP}${label}`, label, parent: top.key, boards: [], subs: [], total: 0, collapsed: !searching && prefs.collapsed.includes(key), empty };
+      top.subs.push(g);
+    }
+    return g;
+  };
+
   const ungrouped: T[] = [];
   for (const b of shown) {
     if (!b.group) { ungrouped.push(b); continue; }
-    const key = fold(b.group);
-    const bucket = buckets.get(key) ?? { spellings: [], boards: [] };
-    bucket.spellings.push(b.group);
-    bucket.boards.push(b);
-    buckets.set(key, bucket);
+    const [t, sub] = folderParts(b.group);
+    const top = topOf(t, false);
+    (sub === undefined ? top : subOf(top, b.group, sub, false)).boards.push(b);
   }
-  // Every spelling on every board votes, not only the search hits, so a search never renames.
-  const allSpellings = new Map<string, string[]>();
-  for (const b of boards) if (b.group) allSpellings.set(fold(b.group), [...(allSpellings.get(fold(b.group)) ?? []), b.group]);
-
-  const groups: ExplorerGroup<T>[] = [...buckets].map(([key, bucket]) => ({
-    key,
-    name: groupSpelling(allSpellings.get(key) ?? bucket.spellings),
-    boards: bucket.boards.sort(byName),
-    // Every group is open while searching. (The open board's group is opened once, when the
-    // board is opened, by the explorer; a click may fold it again.)
-    collapsed: !searching && prefs.collapsed.includes(key),
-    empty: false,
-  }));
   if (!searching) {
     for (const g of prefs.emptyGroups) {
-      const key = fold(g);
-      if (allSpellings.has(key) || groups.some((x) => x.key === key)) continue;
-      groups.push({ key, name: g, boards: [], collapsed: false, empty: true });
+      const [t, sub] = folderParts(g);
+      const known = topSpell.has(fold(t)) || tops.has(fold(t));
+      const top = topOf(t, !known);
+      if (sub !== undefined && !subSpell.has(fold(g))) subOf(top, g, sub, true);
     }
+  }
+  const groups = [...tops.values()];
+  for (const top of groups) {
+    top.boards.sort(byName);
+    for (const sub of top.subs) { sub.boards.sort(byName); sub.total = sub.boards.length; }
+    sortGroups(top.subs, groupOrder);
+    top.total = top.boards.length + top.subs.reduce((n, x) => n + x.total, 0);
+    if (top.total > 0) top.empty = false;
   }
   sortGroups(groups, groupOrder);
   ungrouped.sort(byName);
@@ -208,14 +298,23 @@ export function buildExplorer<T extends SwitcherBoard>(
   const pick = (slugs: readonly string[]) => slugs.flatMap((s) => (bySlug.has(s) ? [bySlug.get(s)!] : []));
   const pinned = searching ? [] : pick(prefs.pinned);
   const recent = searching ? [] : pick(prefs.recent).filter((b) => b.slug !== openSlug).slice(0, RECENT_SHOWN);
-  const hits = [...groups.flatMap((g) => (g.collapsed ? [] : g.boards)), ...ungrouped];
+  const hits = [
+    ...groups.flatMap((g) => (g.collapsed ? [] : [...g.subs.flatMap((x) => (x.collapsed ? [] : x.boards)), ...g.boards])),
+    ...ungrouped,
+  ];
   return { searching, pinned, recent, groups, ungrouped, hits };
 }
 
 /** The group names boards carry (one spelling per fold), for menus and the empty-group check. */
 export function realGroupNames(boards: readonly SwitcherBoard[]): string[] {
   const m = new Map<string, string[]>();
-  for (const b of boards) if (b.group) m.set(fold(b.group), [...(m.get(fold(b.group)) ?? []), b.group]);
+  const vote = (g: string) => m.set(fold(g), [...(m.get(fold(g)) ?? []), g]);
+  for (const b of boards) {
+    if (!b.group) continue;
+    vote(b.group);
+    // A folder that holds only sub-folders is still a folder.
+    if (folderParts(b.group).length > 1) vote(folderParts(b.group)[0]);
+  }
   return [...m.values()].map(groupSpelling).sort((a, b) => a.localeCompare(b, 'tr', { sensitivity: 'base' }));
 }
 
@@ -227,7 +326,8 @@ export function keepGroupIfEmptied(prefs: ExplorerPrefs, boards: readonly Switch
   const from = boards.find((b) => b.slug === movedSlug)?.group;
   if (!from) return prefs;
   const key = fold(from);
-  const others = boards.some((b) => b.slug !== movedSlug && b.group && fold(b.group) === key);
+  // A folder that still has a board in a sub-folder is not empty.
+  const others = boards.some((b) => b.slug !== movedSlug && b.group && inFolder(b.group, key));
   if (others) return prefs;
   const spelling = groupSpelling(boards.filter((b) => b.group && fold(b.group) === key).map((b) => b.group!));
   return prefs.emptyGroups.some((g) => fold(g) === key) ? prefs : { ...prefs, emptyGroups: [...prefs.emptyGroups, spelling] };
@@ -270,6 +370,24 @@ export function moveGroup(
   const next = [...rest.slice(0, at), shown[from], ...rest.slice(at)];
   if (next.every((g, i) => g.key === shown[i].key)) return null;
   return next.map((g) => g.name);
+}
+
+/**
+ * The whole order to store after siblings were rearranged: every top folder, each followed by
+ * its sub-folders. `parent` names whose siblings `names` are (null = the top folders).
+ */
+export function composeOrder(
+  tops: readonly { key: string; name: string; subs: readonly { name: string }[] }[],
+  parent: string | null,
+  names: readonly string[] | null,
+): string[] | null {
+  if (!names) return null;
+  const subsOf = (t: { key: string; subs: readonly { name: string }[] }) => (parent === t.key ? [...names] : t.subs.map((x) => x.name));
+  if (parent === null) {
+    const topByName = new Map(tops.map((t) => [t.name, t]));
+    return names.flatMap((n) => { const t = topByName.get(n); return t ? [n, ...subsOf(t)] : [n]; });
+  }
+  return tops.flatMap((t) => [t.name, ...subsOf(t)]);
 }
 
 /** One step up (`-1`) or down (`1`): the keyboard's way to reorder (the group's ⋯ menu). */

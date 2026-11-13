@@ -2,7 +2,7 @@ import { lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { acquireFileLockWithin, releaseFileLock } from '../file-lock.js';
 import { ensureWhiteboardsDir, whiteboardsDir } from './store.js';
-import { foldGroup, parseGroupInput, readGroup } from './validate.js';
+import { FOLDER_SEP, foldGroup, parseGroupInput, readGroup } from './validate.js';
 import { WhiteboardLockError, WhiteboardValidationError } from './errors.js';
 
 /**
@@ -123,21 +123,35 @@ export async function writeGroupOrder(root: string, order: unknown): Promise<str
   return withOrderLock(root, () => clean);
 }
 
+/** Is `name` the folder `key` (folded) or one of its sub-folders? */
+function underKey(name: string, key: string): boolean {
+  const g = foldGroup(name);
+  return g === key || g.startsWith(`${key}${FOLDER_SEP}`);
+}
+
 /**
- * A group renamed keeps its place; ungrouped (`to: null`) leaves the order. If the new name
- * folds onto a group already listed, that one keeps its place and the old entry goes.
- * No file, or the group not listed: nothing written.
+ * A folder renamed or moved keeps its place, and so do its sub-folders ("Pazarlama/Reklamlar"
+ * follows "Pazarlama" -> "Marketing"). A deleted folder (`to: null`) leaves the order; a deleted
+ * top folder's sub-folders keep their place as top folders. If a new name folds onto a folder
+ * already listed, that one keeps its place and the old entry goes. No file, or nothing listed:
+ * nothing written.
  */
 export async function renameInGroupOrder(root: string, from: string, to: string | null): Promise<void> {
   const key = foldGroup(from);
-  if (!readGroupOrder(root).some((g) => foldGroup(g) === key)) return;
+  const depth = from.split(FOLDER_SEP).length;
+  if (!readGroupOrder(root).some((g) => underKey(g, key))) return;
   await withOrderLock(root, (current) => {
-    const at = current.findIndex((g) => foldGroup(g) === key);
-    if (at < 0) return null;
-    const next = [...current];
-    if (to === null || current.some((g, i) => i !== at && foldGroup(g) === foldGroup(to))) next.splice(at, 1);
-    else next[at] = to;
-    return next;
+    if (!current.some((g) => underKey(g, key))) return null;
+    // A folder already listed outside the moved one keeps its place over a renamed entry.
+    const kept = new Set(current.filter((g) => !underKey(g, key)).map(foldGroup));
+    const next: string[] = [];
+    for (const g of current) {
+      if (!underKey(g, key)) { next.push(g); continue; }
+      const rest = g.split(FOLDER_SEP).slice(depth);
+      const moved = to !== null ? [to, ...rest].join(FOLDER_SEP) : rest.length > 0 ? rest.join(FOLDER_SEP) : null;
+      if (moved !== null && !kept.has(foldGroup(moved))) next.push(moved);
+    }
+    return cleanOrder(next);
   });
 }
 

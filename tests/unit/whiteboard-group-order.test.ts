@@ -35,7 +35,7 @@ describe('group order file', () => {
   });
 
   it('a write refuses a bad name instead of dropping it, and keeps one spelling per fold', async () => {
-    await expect(writeGroupOrder(root, ['ok', 'a/b'])).rejects.toBeInstanceOf(WhiteboardValidationError);
+    await expect(writeGroupOrder(root, ['ok', 'a/b/c'])).rejects.toBeInstanceOf(WhiteboardValidationError);
     await expect(writeGroupOrder(root, ['ok', 3])).rejects.toBeInstanceOf(WhiteboardValidationError);
     await expect(writeGroupOrder(root, 'ok')).rejects.toBeInstanceOf(WhiteboardValidationError);
     expect(await writeGroupOrder(root, ['Satış', 'SATIS', ' Ops '])).toEqual(['Satış', 'Ops']);
@@ -44,7 +44,7 @@ describe('group order file', () => {
   it('a broken or hand-mangled file reads as what is valid in it, never throws', () => {
     expect(parseGroupOrder('not json')).toEqual([]);
     expect(parseGroupOrder('[1,2]')).toEqual([]);
-    expect(parseGroupOrder('{"order":["A",4,"a/b","a","B"]}')).toEqual(['A', 'B']);
+    expect(parseGroupOrder('{"order":["A",4,"a/b/c","a","B"]}')).toEqual(['A', 'B']);
   });
 
   it('a symlinked order file is never read nor written through', async () => {
@@ -117,7 +117,7 @@ describe('group order routes', () => {
     expect(await call(handleWhiteboardGroupOrderPut, { method: 'PUT', body: { order: ['B', 'A'] } })).toEqual({ status: 200, body: { order: ['B', 'A'] } });
     expect((await call(handleWhiteboardGroupOrderGet)).body).toEqual({ order: ['B', 'A'] });
     expect((await call(handleWhiteboardGroupOrderPut, { method: 'PUT', body: {} })).status).toBe(400);
-    expect((await call(handleWhiteboardGroupOrderPut, { method: 'PUT', body: { order: ['x/y'] } })).status).toBe(400);
+    expect((await call(handleWhiteboardGroupOrderPut, { method: 'PUT', body: { order: ['x/y/z'] } })).status).toBe(400);
     expect((await call(handleWhiteboardGroupOrderGet)).body).toEqual({ order: ['B', 'A'] });
   });
 });

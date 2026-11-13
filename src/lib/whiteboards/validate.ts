@@ -312,16 +312,44 @@ export function foldGroup(s: string): string {
 
 const GROUP_BAD_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\/]/;
 
-function cleanGroup(raw: string): string | null {
+/**
+ * Folders go two levels deep (owner, 2026-11-13: "hadi 2 seviye olsun"): a group is a folder
+ * path, `"Pazarlama"` or `"Pazarlama/Reklamlar"`, and `/` is its only separator. A folder holds
+ * boards and sub-folders; a sub-folder holds only boards. Each part is one folder name of at most
+ * {@link GROUP_MAX} code points.
+ */
+export const FOLDER_SEP = '/';
+export const FOLDER_DEPTH = 2;
+
+function cleanPart(raw: string): string | null {
   const s = raw.normalize('NFC').trim();
-  if (!s || groupLength(s) > GROUP_MAX || GROUP_BAD_CHARS.test(s)) return null;
+  // A look-alike slash ("／") would fold onto the separator and blur two folders into one.
+  if (!s || groupLength(s) > GROUP_MAX || GROUP_BAD_CHARS.test(s) || foldGroup(s).includes(FOLDER_SEP)) return null;
   return s;
 }
 
+function cleanGroup(raw: string): string | null {
+  const parts = raw.split(FOLDER_SEP);
+  if (parts.length > FOLDER_DEPTH) return null;
+  const clean = parts.map(cleanPart);
+  if (clean.some((p) => p === null)) return null;
+  return clean.join(FOLDER_SEP);
+}
+
+/** A folder path's parts: `["Pazarlama"]` or `["Pazarlama", "Reklamlar"]`. */
+export function folderParts(group: string): string[] {
+  return group.split(FOLDER_SEP);
+}
+
+/** The top folder of a path (itself for a top folder). */
+export function topFolder(group: string): string {
+  return folderParts(group)[0];
+}
+
 /**
- * A board's group as READ from disk. Anything that is not a valid name (absent, a number, a
- * list from Obsidian's List property, a name with `/`) reads as no group. Reading never
- * rewrites the file. A YAML date arrives as its ISO string (format.ts) and is read as that.
+ * A board's group as READ from disk. Anything that is not a valid folder path (absent, a number,
+ * a list from Obsidian's List property, three levels, an empty part) reads as no group. Reading
+ * never rewrites the file. A YAML date arrives as its ISO string (format.ts) and is read as that.
  */
 export function readGroup(raw: unknown): string | null {
   return typeof raw === 'string' ? cleanGroup(raw) : null;
@@ -329,15 +357,15 @@ export function readGroup(raw: unknown): string | null {
 
 /**
  * A group name given to a WRITE (the PATCH, a create, the CLI). JSON `null` means "no group";
- * anything else that is not a valid name is refused, so a bad name can never quietly take a
- * board out of its group.
+ * anything else that is not a valid folder path is refused, so a bad name can never quietly take
+ * a board out of its group.
  */
 export function parseGroupInput(raw: unknown): string | null {
   if (raw === null) return null;
-  if (typeof raw !== 'string') throw new WhiteboardValidationError('a group name is a string (or null to take the board out of its group)');
+  if (typeof raw !== 'string') throw new WhiteboardValidationError('a folder name is a string (or null to take the board out of its folder)');
   const s = cleanGroup(raw);
   if (s === null) {
-    throw new WhiteboardValidationError(`a group name is 1-${GROUP_MAX} characters on one line, without "/" or control characters`);
+    throw new WhiteboardValidationError(`a folder is "Folder" or "Folder/Sub-folder" (two levels at most); each name is 1-${GROUP_MAX} characters on one line, without control characters`);
   }
   return s;
 }
