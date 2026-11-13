@@ -367,3 +367,6 @@
 /* Above the chat the card shares 60% of the column: the text scrolls in its own box so Approve,
    under it, stays in view without scrolling the card. */
 .super-approvals .aiteam-approval-pre { max-height: 160px; }
+/* App cards waiting in this project: the chat's own card, stacked (owner 2026-11-13). */
+.super-approvals-apps { display: flex; flex-direction: column; gap: var(--space-2); }
+.super-approvals-apps .chat-viewcard { margin: 0; }

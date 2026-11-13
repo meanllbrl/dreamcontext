@@ -136,9 +136,10 @@ interface AppRequest {
   view: () => AppCardView;
 }
 
-/** A surface that draws an app request card: the requester's chat, the notch, Telegram. */
-export type CardSurface = 'chat' | 'notch' | 'telegram';
-export const CARD_SURFACES: readonly CardSurface[] = ['chat', 'notch', 'telegram'];
+/** A surface that draws an app request card: the requester's chat, the Super Agent's screen
+ *  (every waiting card of its project, whoever asked), the notch, Telegram. */
+export type CardSurface = 'chat' | 'super' | 'notch' | 'telegram';
+export const CARD_SURFACES: readonly CardSurface[] = ['chat', 'super', 'notch', 'telegram'];
 
 export const REQUEST_LIFETIME_MS = APP_PROPOSAL_TIMEOUT_MS;
 export const REJECT_COOLDOWN_MS = 10 * 60_000;
@@ -470,6 +471,21 @@ export function openAppRequests(): Array<{ id: string; vault: string; view: AppC
     id: r.id, vault: r.plan.vault, hash: r.hash, logo: r.logo,
     view: { action: viewAction(r.plan.body.action), appName: r.plan.appName, vault: r.plan.vault, title: r.plan.title, lines: r.plan.lines, ...(r.plan.warn ? { warn: r.plan.warn } : {}), hash: r.hash },
   }));
+}
+
+/**
+ * The cards still waiting in one project, oldest first, for the Super Agent's screen (owner
+ * 2026-11-13: an agent said "press Onayla on the cards" and no card was in front of him). Derived
+ * from the requests themselves, so a card is there whether or not the asking agent pasted its block
+ * into a chat. Proposal ids only: a request id reads the grant (`apps grant`), a proposal id only
+ * the card.
+ */
+export function waitingAppCards(vault: string, now = Date.now()): string[] {
+  sweep(now);
+  return [...requests.values()]
+    .filter((r) => r.plan.vault === vault && stateOf(r, now) === 'pending')
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((r) => r.proposalId);
 }
 
 export function onAppRequestOpened(fn: Opened): () => void {

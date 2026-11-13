@@ -260,7 +260,7 @@ describe('the Super is told where his approvals are, and never to give one', () 
     expect(band).toContain('`/agents/${slug}/enabled`, { enabled: false, sessionId }');
     const surface = readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperSurface.tsx', import.meta.url), 'utf-8');
     expect(surface).toContain('approvals={agendaApprovals}');
-    expect(surface).toContain('<SuperApprovalBand items={approvals} superId={superId} toast={approvalNote} onToast={setApprovalNote} />');
+    expect(surface).toContain('<SuperApprovalBand items={approvals} appCards={appCards} superId={superId} toast={approvalNote} onToast={setApprovalNote} />');
     expect(surface).toContain('agendaApprovalRows(approvals, state.queue)');
   });
 });

@@ -117,7 +117,7 @@ export interface RequestAnswer { state: string; shown: string[]; failed?: string
 /** A grant the agent may still spend: approved, or approved and its last run failed (the hour still holds). */
 export const spendable = (a: RequestAnswer): boolean => (a.state === 'approved' || a.state === 'failed') && !!a.grant?.id;
 
-const SURFACE_WORDS: Record<string, string> = { chat: 'in this chat', notch: 'on the notch', telegram: 'on his Telegram' };
+const SURFACE_WORDS: Record<string, string> = { chat: 'in this chat', super: 'on his Super Agent screen', notch: 'on the notch', telegram: 'on his Telegram' };
 
 /**
  * Where the card really is, from the server's own record of the surfaces that DREW it (ek-4,
@@ -192,7 +192,24 @@ export function requestCardBlock(proposalId: string): string {
   return ['```dream-view', JSON.stringify({ type: 'app-request', id: proposalId }), '```'].join('\n');
 }
 
-interface Opened { request: string; state: string; renewal?: boolean; proposal?: string }
+interface Opened { request: string; state: string; renewal?: boolean; proposal?: string; superScreen?: boolean }
+
+/**
+ * What the agent does with a waiting card. "Do not paste" only when the server RECORDED the Super
+ * screen drawing it, and only for that project's own Super chat (a block there would be the same
+ * card twice). Everywhere else, and whenever nothing drew it yet (the phone, an unfocused window,
+ * another page), the block goes in the reply: the guidance never says more than the Shown: line.
+ */
+export function pendingGuidance(o: Pick<Opened, 'proposal' | 'superScreen'>, shown: readonly string[]): string[] {
+  if (!o.proposal) return [];
+  if (o.superScreen && shown.includes('super')) {
+    return ['The card is on his Super Agent screen above your chat (Shown: says so): do not paste a block, it would be the same card twice. Say in one line what it does and why it needs his yes (one tap on Onayla). Never say his word is not enough.'];
+  }
+  return [
+    'Put this card in your reply, as is: it is drawn right there and he approves it with one tap. Say in one line why it needs his yes (it runs code someone else wrote, on his Mac). Never say his word is not enough.',
+    requestCardBlock(o.proposal),
+  ];
+}
 
 /** Opens a request card for the owner (or answers with a grant he already gave for exactly this). */
 async function openRequest(p: ProjectRef, body: Record<string, unknown>, json: boolean | undefined): Promise<Opened> {
@@ -200,6 +217,7 @@ async function openRequest(p: ProjectRef, body: Record<string, unknown>, json: b
   const o: Opened = {
     request: String(out.request ?? ''), state: String(out.state ?? ''), renewal: out.renewal === true,
     ...(typeof out.proposal === 'string' ? { proposal: out.proposal } : {}),
+    ...(out.superScreen === true ? { superScreen: true } : {}),
   };
   if (json) return o;
   if (o.state === 'approved') info('The owner already approved exactly this, and the grant is still good.');
@@ -211,16 +229,13 @@ async function openRequest(p: ProjectRef, body: Record<string, unknown>, json: b
  * The command never blocks here: the card reaches his chat only with the agent's reply.
  */
 async function sayPending(p: ProjectRef, o: Opened, json: boolean | undefined): Promise<void> {
-  // A beat for the notch and Telegram to report a card they drew.
-  const a = await waitForOwner(p, o.request, 2, json, 'silent');
+  // A beat for the notch, the Super screen (it reads every 2 s) and Telegram to report a card they drew.
+  const a = await waitForOwner(p, o.request, 3, json, 'silent');
   if (json) { console.log(JSON.stringify({ ...o, shown: a.shown, card: o.proposal ? requestCardBlock(o.proposal) : null }, null, 2)); return; }
   if (a.state !== 'pending') { sayAnswer(o.request, a); return; }
   if (o.renewal) info('The grant ran out unused: the card asks "Süresi doldu: yeniden onaylıyor musun?".');
   console.log(shownLine(a.shown));
-  if (o.proposal) {
-    console.log('Put this card in your reply, as is: it is drawn right there and he approves it with one tap. Say in one line why it needs his yes (it runs code someone else wrote, on his Mac). Never say his word is not enough.');
-    console.log(requestCardBlock(o.proposal));
-  }
+  for (const line of pendingGuidance(o, a.shown)) console.log(line);
   console.log(`After your reply: dreamcontext apps grant ${o.request} --wait 110 (its Shown: line is the only truth about where the card is).`);
 }
 

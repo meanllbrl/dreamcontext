@@ -7,6 +7,7 @@ import { useAgent } from '../../../hooks/useAgents';
 import { useAutomation } from '../../../hooks/useAutomations';
 import { TeamIcon } from '../../aiteam/TeamIcons';
 import { superApprovalSentence, type SuperApproval } from './superApprovals';
+import { AppRequestCard } from '../chat/AppRequestCard';
 import '../../../pages/AiTeamPage.css';
 import './TaskStrip.css';
 
@@ -24,9 +25,17 @@ import './TaskStrip.css';
  * super's own session rides along, so it hears the decision as an `automation` event.
  *
  * The rows are derived (`superApprovals`): a decided item leaves when the lists are re-read.
+ *
+ * APP CARDS (owner 2026-11-13: "onay kartı yok, onay kartına basman gerekir diyor"): every app
+ * install, publish, update or logo waiting in this project, whoever asked (the Super, one of its
+ * jobs, any chat), drawn as the very card a chat draws, with Onayla and Reddet. It is here because
+ * the request exists, never because an agent remembered to paste a block. Its buttons are the
+ * notch's owner-key decide route, so an agent cannot press them.
  */
-export function SuperApprovalBand({ items, superId, toast, onToast }: {
+export function SuperApprovalBand({ items, appCards = [], superId, toast, onToast }: {
   items: SuperApproval[];
+  /** Proposal ids of this project's waiting app cards (`useWaitingAppCards`). */
+  appCards?: readonly string[];
   superId: string | null;
   /** The last decision's answer. Held by the stage, so it outlives the last row it answers. */
   toast: string;
@@ -34,11 +43,24 @@ export function SuperApprovalBand({ items, superId, toast, onToast }: {
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState<string | null>(null);
-  if (items.length === 0 && !toast) return null;
+  const count = items.length + appCards.length;
+  if (count === 0 && !toast) return null;
   return (
     <div className="super-member-band super-approvals" data-testid="super-approvals" role="region" aria-label={t('super.approvals.title')}>
-      {items.length > 0 && (
-        <p className="super-approvals-head">{t('super.approvals.title')}<span className="super-approvals-n">{items.length}</span></p>
+      {count > 0 && (
+        <p className="super-approvals-head">{t('super.approvals.title')}<span className="super-approvals-n">{count}</span></p>
+      )}
+      {appCards.length > 0 && (
+        <div className="super-approvals-apps" data-testid="super-app-cards">
+          {appCards.map((id) => (
+            <AppRequestCard
+              key={id}
+              spec={{ type: 'app-request', id }}
+              where="super"
+              onDecided={(action, name) => onToast(t(action === 'approve' ? 'super.approvals.appApproved' : 'super.approvals.appDeclined').replace('{name}', name))}
+            />
+          ))}
+        </div>
       )}
       {items.length > 0 && (
         <div className="aiteam-approval">

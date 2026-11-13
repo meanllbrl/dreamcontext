@@ -7,6 +7,7 @@
  *   POST /api/apps/requests            build the action plan, open the card
  *   GET  /api/apps/requests/:id        its state; after Onayla the grant and the exact command
  *   GET  /api/apps/requests/:id/logo   a logo card's snapshotted bytes (by the card's proposal id)
+ *   GET  /api/apps/requests/waiting    this project's waiting cards, for the Super Agent's screen
  *
  * Headers: `x-dc-agent-session` names the requester's chat, for the "[app onayı]" line only
  * (delivery, never authority); `x-dc-run` can only narrow (an app's own assistant: its own app,
@@ -25,11 +26,12 @@ import { LogoError } from '../../lib/apps/app-logo.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { PublishError } from '../../lib/apps/share/publish.js';
 import { InstallError } from '../../lib/apps/share/install.js';
-import { AppRequestError, appRequestByProposal, appRequestLogo, appRequestStatus, claimAppRequestReceipt, markAppRequestShown, openAppRequest, waitAppRequest, type CardSurface } from '../../lib/apps/share/app-request.js';
+import { AppRequestError, appRequestByProposal, appRequestLogo, appRequestStatus, claimAppRequestReceipt, markAppRequestShown, openAppRequest, waitAppRequest, waitingAppCards, type CardSurface } from '../../lib/apps/share/app-request.js';
 import { buildInstallPlan, buildInviteInstallPlan, buildLogoPlan, buildPublishPlan, buildUpdatePlan, type BuiltPlan } from '../../lib/apps/share/app-plan.js';
 import { parseAppRepoRef } from '../../lib/apps/share/host.js';
 import { listShared } from '../../lib/apps/share/shared.js';
 import { realPath } from '../../lib/real-path.js';
+import { superOfSession } from '../../lib/super/store.js';
 
 type Params = Record<string, string>;
 
@@ -88,7 +90,7 @@ export async function handleAppRequestCreate(req: IncomingMessage, res: ServerRe
     let built: BuiltPlan;
     if (action === 'install') {
       const projectRoot = realRoot(projectRootOf(contextRoot));
-      const vault = listVaults(home).find((v) => realRoot(v.path) === projectRoot)?.name;
+      const vault = vaultOf(contextRoot);
       if (!vault) { sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
       const config = b.config && typeof b.config === 'object' && !Array.isArray(b.config) ? (b.config as Record<string, unknown>) : {};
       // K2: a repo with a pending invitation for this account installs from the invitation (the
@@ -123,7 +125,15 @@ export async function handleAppRequestCreate(req: IncomingMessage, res: ServerRe
     // typed in the chat do not count; the card sits in that chat, one tap). Any `ownerSaid` field
     // an older agent sends is ignored.
     const out = openAppRequest({ plan: built.plan, stillFresh: built.stillFresh, logo: built.logo ?? null, agentSessions });
-    sendJson(res, 200, { request: out.id, state: out.state, renewal: out.renewal, proposal: out.proposalId });
+    // The project's Super Agent screen draws every waiting card itself (`/requests/waiting`): when
+    // this project's main Super asks AND the screen reported drawing it (the CLI reads `shown`), a
+    // block pasted into its reply would be the same card twice.
+    // Its own project's Super only: a Super asking for another project's app gets the block.
+    const ownRoot = realRoot(contextRoot);
+    const superScreen = agentSessions.some((s) => {
+      try { const ref = superOfSession(s); return ref?.superId === 'main' && realRoot(ref.root) === ownRoot; } catch { return false; }
+    });
+    sendJson(res, 200, { request: out.id, state: out.state, renewal: out.renewal, proposal: out.proposalId, superScreen });
   } catch (e) { fail(res, e); }
 }
 
@@ -149,7 +159,24 @@ export async function handleAppRequestLogo(req: IncomingMessage, res: ServerResp
   res.end(hit.data);
 }
 
-const SURFACES: readonly CardSurface[] = ['chat', 'notch'];
+const SURFACES: readonly CardSurface[] = ['chat', 'super', 'notch'];
+
+/** This project's vault name (the registry's), or null when it is not registered. */
+function vaultOf(contextRoot: string): string | null {
+  const projectRoot = realRoot(projectRootOf(contextRoot));
+  return listVaults(appsHomeDir()).find((v) => realRoot(v.path) === projectRoot)?.name ?? null;
+}
+
+/**
+ * GET /api/apps/requests/waiting: every card still waiting for the owner in THIS project, so the
+ * Super Agent's screen draws each one as a pressable card whether or not the agent that asked put
+ * its block in a chat. Proposal ids only (they read the card, never a grant).
+ */
+export async function handleAppRequestWaiting(req: IncomingMessage, res: ServerResponse, _p: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const vault = vaultOf(contextRoot);
+  sendJson(res, 200, { cards: vault ? waitingAppCards(vault) : [] });
+}
 
 /** GET /api/apps/requests/card/:proposal: the chat card's plan and state (the notch reads the same plan). */
 export async function handleAppRequestCard(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {
@@ -184,6 +211,6 @@ export async function handleAppRequestShown(req: IncomingMessage, res: ServerRes
   const b = (await parseJsonBody(req)) ?? {};
   const id = params.proposal ?? '';
   const where = SURFACES.find((s) => s === b.where);
-  if (!PROPOSAL_ID.test(id) || !where) { sendError(res, 400, 'bad_request', 'A card id and where it is drawn (chat or notch).'); return; }
+  if (!PROPOSAL_ID.test(id) || !where) { sendError(res, 400, 'bad_request', 'A card id and where it is drawn (chat, super or notch).'); return; }
   sendJson(res, 200, { ok: markAppRequestShown({ proposalId: id }, where) });
 }

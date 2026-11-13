@@ -701,6 +701,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/apps/requests': deny(SECRET),
   'GET /api/apps/requests/:id': deny(SECRET),
   'GET /api/apps/requests/:id/logo': deny(WINDOW),
+  'GET /api/apps/requests/waiting': deny(WINDOW),
   'GET /api/apps/requests/card/:proposal': deny(WINDOW),
   'POST /api/apps/requests/card/:proposal/shown': deny(WINDOW),
   // app-ux-genel: the chat card's receipt, what waits, install progress, the job's grant check,

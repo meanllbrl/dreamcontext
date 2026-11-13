@@ -34,6 +34,7 @@ import { useAutomations } from '../../../hooks/useAutomations';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { superApprovals, showApprovalRow, agendaApprovals as agendaApprovalRows, showMemberApproval } from './superApprovals';
 import { SuperApprovalBand } from './SuperApprovalBand';
+import { useWaitingAppCards } from './superAppCards';
 import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
@@ -1071,6 +1072,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const teamAgents = useAgents({ enabled: !member, pollEveryMs: 15_000 }).data;
   const teamAutomations = useAutomations({ enabled: !member, pollEveryMs: 15_000 }).data;
   const approvals = useMemo(() => (member ? [] : superApprovals(teamAgents, teamAutomations)), [member, teamAgents, teamAutomations]);
+  // Every app card waiting in this project, whoever asked (owner 2026-11-13): drawn here because
+  // the request exists, never only when an agent pasted its block.
+  const appCards = useWaitingAppCards(!member && !remote);
   // A member `super team ask` was refused for already has its own Waiting row (the queue's).
   const agendaApprovals = agendaApprovalRows(approvals, state.queue);
   // Its row on the card; when the card is not on screen (a presentation's folded chat, a folded
@@ -1090,7 +1094,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const id = window.setTimeout(() => setApprovalNote(''), 4000);
     return () => window.clearTimeout(id);
   }, [approvalNote]);
-  const approvalsTop = !member && (approvals.length > 0 || approvalNote !== '');
+  const approvalsTop = !member && (approvals.length > 0 || appCards.length > 0 || approvalNote !== '');
   useEffect(() => {
     slotsChangedRef.current();
     const el = memberTopRef.current;
@@ -1202,7 +1206,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
             />
             {approvalsTop && (
               <div className="super-member-top" ref={memberTopRef} data-testid="super-approvals-top">
-                <SuperApprovalBand items={approvals} superId={superId} toast={approvalNote} onToast={setApprovalNote} />
+                <SuperApprovalBand items={approvals} appCards={appCards} superId={superId} toast={approvalNote} onToast={setApprovalNote} />
               </div>
             )}
             {member && (

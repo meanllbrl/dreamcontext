@@ -47,7 +47,14 @@ const MOVING: ReadonlySet<RequestState> = new Set(['pending', 'approved', 'runni
  * On mount it tells the server the card is DRAWN here (`shown`), which is the only thing that lets
  * the agent say where the card is.
  */
-export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; report?: (text: string) => void }) {
+export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
+  spec: AppRequestViewSpec;
+  report?: (text: string) => void;
+  /** Where it is drawn, for the server's `shown`: a chat, or the Super Agent's screen (its band). */
+  where?: 'chat' | 'super';
+  /** The owner's press landed (the band says it once the card leaves the waiting list). */
+  onDecided?: (action: 'approve' | 'reject', appName: string) => void;
+}) {
   const api = useApi();
   const t = useOwnerCardT();
   const say = (key: string, vars: Record<string, string> = {}) => Object.entries(vars).reduce((s, [k, v]) => s.split(`{${k}}`).join(v), t(key));
@@ -72,8 +79,8 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
   useEffect(() => {
     if (!pending || told.current) return;
     told.current = true;
-    void api.post(`/apps/requests/card/${encodeURIComponent(spec.id)}/shown`, { where: 'chat' }).catch(() => { told.current = false; });
-  }, [api, pending, spec.id]);
+    void api.post(`/apps/requests/card/${encodeURIComponent(spec.id)}/shown`, { where }).catch(() => { told.current = false; });
+  }, [api, pending, spec.id, where]);
 
   // K4: the yes did not reach the asking chat: this card posts the receipt, once (the server's
   // claim is atomic; a second card gets 409 and posts nothing).
@@ -93,6 +100,7 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
     setBusy(false);
     if (outcome === 'ok' || outcome === 'gone' || outcome === 'stale') {
       await queryClient.invalidateQueries({ queryKey: key });
+      if (outcome === 'ok') onDecided?.(action, card.appName);
       if (outcome === 'ok' && action === 'reject') report?.(`[app request turned down · ${card.appName}] The owner said no on its card. Nothing ran. Do not ask again unless something changed.`);
       return;
     }
