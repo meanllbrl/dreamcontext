@@ -13,7 +13,7 @@ import { InstallSheet, SharedApps, TrashList, useShareT, type SharedList } from 
 import type { SettingsWay } from '../components/apps/InstallSheet';
 import { askAgent, handOff } from '../components/apps/askAgent';
 import { settingsPrompt } from '../components/apps/settingsPrompt';
-import { APPS_WAITING_KEY, type AppsWaiting } from '../components/layout/useNavBadges';
+import { APPS_WAITING_KEY, type AppsWaiting } from '../hooks/useAppsWaiting';
 import { AppDataNotices } from '../components/apps/AppDataNotice';
 import { updateCheckDue } from '../components/apps/updateCheck';
 import { revealPath } from '../lib/reveal';

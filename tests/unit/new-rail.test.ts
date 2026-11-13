@@ -5,6 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('../../dashboard/src/hooks/useAppsWaiting.js', () => ({ useAppsWaiting: () => 0, APPS_WAITING_KEY: 'apps-waiting' }));
 vi.mock('../../dashboard/src/components/sleepy/AgentSurface.js', () => ({ PROJECT_ROLLUP_EVENT: 'dc-project-rollup' }));
 const { BOTTOM_BAR, MORE_PAGES, RAIL_ENTRIES, RAIL_FOOT, morePagesNarrow, railPageOf } = await import('../../dashboard/src/components/layout/newshell/railModel.js');
 const { NAV_GROUPS } = await import('../../dashboard/src/components/layout/Sidebar.js');

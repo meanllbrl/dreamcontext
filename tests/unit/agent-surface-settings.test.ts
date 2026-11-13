@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 let mode: 'new' | 'classic' | null = 'classic';
+vi.mock('../../dashboard/src/hooks/useAppsWaiting.js', () => ({ useAppsWaiting: () => 0, APPS_WAITING_KEY: 'apps-waiting' }));
 vi.mock('../../dashboard/src/lib/uxMode', async (orig) => ({
   ...(await orig<object>()),
   readShellModeFrozen: () => mode,

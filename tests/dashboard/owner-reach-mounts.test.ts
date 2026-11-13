@@ -20,6 +20,7 @@ import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/ser
 const { TEMPLATES } = vi.hoisted(() => ({
   TEMPLATES: { 'owner.answer.refusedLead': '{name} wanted to run this. Nothing ran.' } as Record<string, string>,
 }));
+vi.mock('../../dashboard/src/hooks/useAppsWaiting.js', () => ({ useAppsWaiting: () => 0, APPS_WAITING_KEY: 'apps-waiting' }));
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({ locale: 'en', setLocale: () => {}, t: (key: string) => TEMPLATES[key] ?? key }),
   I18nProvider: ({ children }: { children: unknown }) => children,

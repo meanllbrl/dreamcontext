@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   hasRemote: false,
 }));
 
+vi.mock('../../dashboard/src/hooks/useAppsWaiting.js', () => ({ useAppsWaiting: () => 0, APPS_WAITING_KEY: 'apps-waiting' }));
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: 'en', setLocale: () => {} }),
   I18nProvider: ({ children }: { children: unknown }) => children,

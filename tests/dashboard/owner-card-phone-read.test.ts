@@ -90,7 +90,9 @@ describe('the phone draws the folder from { session, cards, folders } and presse
 
   it('an app secret (folder null) keeps its app and its Save', () => {
     const html = renderToStaticMarkup(createElement(SecretCard, { spec: APP_SECRET as never, sessionId: SID }));
-    expect(html).toContain('shop · .env');
+    // app-ux-genel K9: an app key card names the app; the file is under Details after the save.
+    expect(html).toContain('>shop<');
+    expect(html).not.toContain('.env');
     expect(has(html, 'secret-card-save')).toBe(true);
   });
 
