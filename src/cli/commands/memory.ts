@@ -1,4 +1,5 @@
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
+import { QUICK_RECALL_SCOPE, QUICK_RECALL_SCOPE_ENV, quickReadable } from '../../lib/whiteboards/quick-readable.js';
 import { Command } from 'commander';
 import { request as httpRequest } from 'node:http';
 import { listVaults } from '../../lib/vaults.js';
@@ -502,6 +503,10 @@ export function registerMemoryCommand(program: Command): void {
         // ── Federation branch (P1.2/P1.3) ──────────────────────────────────────
         // ANY of --vault / --connected / --all-vaults routes through cross-vault
         // recall.
+        // A whiteboard quick edit's run (quick-readable.ts): this vault only, whatever flag it
+        // passed, and only the brain's shared pages.
+        const thisVaultOnly = process.env[QUICK_RECALL_SCOPE_ENV] === QUICK_RECALL_SCOPE;
+        if (thisVaultOnly) { opts.vault = []; opts.connected = false; opts.allVaults = false; }
         const explicitVaults = opts.vault ?? [];
         // A hybrid vault answers for itself first (see recallFederated's `localHits`); a BM25 vault
         // stays inside the one BM25 merge, byte-identical to before.
@@ -530,12 +535,14 @@ export function registerMemoryCommand(program: Command): void {
         const connectedTargets = resolveConnectedVaults(currentTarget, root);
         // An app's chat stays in this project: its listed verb runs with no card, and reaching a
         // peer's brain is what `--connected` raises one for.
-        if (connectedTargets.length > 1 && !(process.env[AGENT_CHAT_ENV] ?? '').startsWith('app-')) {
+        if (connectedTargets.length > 1 && !thisVaultOnly && !(process.env[AGENT_CHAT_ENV] ?? '').startsWith('app-')) {
           recallFederated(root, query, topK, types, minLevel, { ...opts, connected: true }, await ownHits());
           return;
         }
 
-        const { hits, corpusSize } = await currentVaultRecall(root, query, topK, types, minLevel);
+        const found = await currentVaultRecall(root, query, topK, types, minLevel);
+        const corpusSize = found.corpusSize;
+        const hits = thisVaultOnly ? found.hits.filter((h) => quickReadable(h.doc.relPath)) : found.hits;
 
         if (opts.json) {
           const payload = hits.map((h) => ({
