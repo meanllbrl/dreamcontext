@@ -158,8 +158,15 @@ export function runReceiptCommand(text: string): string {
 export function refusalsSettledByRun(text: string, open: readonly OwnerWait[]): OwnerWait[] {
   const command = runReceiptCommand(text);
   if (!command) return [];
-  return open.filter((w) => w.kind === 'refusal' && !!w.refusal && w.refusal.whole
-    && SHELL_TOOLS.has(w.refusal.tool) && w.refusal.input.trim() === command);
+  return open.filter((w) => w.kind === 'refusal' && !!w.refusal && sameShellCommand(w.refusal, command));
+}
+
+/** ONE predicate, both directions: a refused call and a run card are the same command when the
+ *  refusal is a shell call whose WHOLE input equals the card's command (trimmed). A cut input, or
+ *  any other tool, is never the same. */
+export function sameShellCommand(refusal: Pick<RefusalFact, 'tool' | 'input' | 'whole'>, command: string): boolean {
+  const cmd = command.trim();
+  return !!cmd && refusal.whole && SHELL_TOOLS.has(refusal.tool) && refusal.input.trim() === cmd;
 }
 
 // ─── Waits the server reads, not cards (uye-bildirim K2, K6) ───────────────────────────────────

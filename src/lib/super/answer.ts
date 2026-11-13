@@ -19,6 +19,7 @@ import {
   ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, itemCall, type CallBirth, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
 } from './inbox.js';
 import { addToOutbox } from './outbox.js';
+import { sameShellCommand } from './owner-wait.js';
 import { eligible } from '../grants/eligible.js';
 import { canonicalInput } from '../grants/canonical.js';
 import { listGrants, newGrantId, writeGrant } from '../grants/store.js';
@@ -321,6 +322,39 @@ function offered(item: SuperQueueItem): GrantSize[] {
   return item.offer ? item.offer.sizes : ['once'];
 }
 
+/**
+ * The reverse of `refusalsSettledByRun` (run-kart-altta): a child whose command a permission check
+ * refused also left the owner a run card with that SAME command. Once he answered the refusal
+ * (Allow lets the child run it itself; Not needed means it is not wanted), the card waits on
+ * nothing: its wait and its card record close and its item is done, so it settles in its place in
+ * the Super chat instead of asking him to run what is already decided. The same child (or the
+ * session that posted the card), an open run card, the same shell command (`sameShellCommand`).
+ */
+export function runCardsSettledByRefusal(state: Pick<SuperState, 'queue'>, refusalItem: SuperQueueItem): SuperQueueItem[] {
+  const r = refusalItem.wait?.kind === 'refusal' ? refusalItem.wait.refusal : undefined;
+  if (!r) return [];
+  return state.queue.filter((q) => q.id !== refusalItem.id && q.kind === 'owner' && q.state !== 'done'
+    && q.card?.spec.type === 'run' && q.wait?.kind === 'run'
+    && (q.sessionId === refusalItem.sessionId || q.card.postingSession === refusalItem.sessionId)
+    && sameShellCommand(r, (q.card.spec as { command: string }).command));
+}
+
+async function settleRunCardsOfRefusal(root: string, superId: SuperId, state: SuperState, refusalItem: SuperQueueItem, how: 'allowed' | 'not_needed'): Promise<void> {
+  const cards = runCardsSettledByRefusal(state, refusalItem);
+  if (!cards.length) return;
+  const ids = new Set(cards.map((q) => q.id));
+  // Done WITH its result line: the slot keeps it in its place and says what became of it.
+  try {
+    await writeSuper(root, superId, (s) => {
+      for (const q of s.queue) if (ids.has(q.id) && q.state !== 'done') { q.state = 'done'; q.delivery = how; }
+    });
+  } catch (err) {
+    console.warn(`[super-answer] run cards of ${refusalItem.id}: not closed: ${(err as Error).message}`);
+  }
+  // Their waits and card records close with them (no button acts on them after).
+  await ownerCardItemsLeft(superKey(root, superId), cards).catch(() => undefined);
+}
+
 async function closeItem(root: string, superId: SuperId, itemId: string): Promise<void> {
   try {
     await writeSuper(root, superId, (s) => { const q = s.queue.find((x) => x.id === itemId); if (q && q.state !== 'done') q.state = 'done'; });
@@ -520,6 +554,7 @@ async function answerLocked(root: string, superId: SuperId, req: OwnerAnswerRequ
       if (notNeeded) {
         if (item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id, item.card ? { postingSession: item.card.postingSession } : {});
         await closeItem(root, superId, item.id);
+        if (kind === 'refusal') await settleRunCardsOfRefusal(root, superId, state, item, 'not_needed');
         // A card's result still held leaves with it, its full form too (sahip-karti-yerinde K6).
         if (item.card) await ownerCardItemsLeft(superKey(root, superId), [item]).catch(() => undefined);
         return { ok: true, outcome: 'dismissed' };
@@ -527,7 +562,9 @@ async function answerLocked(root: string, superId: SuperId, req: OwnerAnswerRequ
       if (kind !== 'refusal' || a.kind !== 'refusal') return fail('not_offered', MSG.notOffered);
       const size = a.size ?? 'once';
       if (!offered(item).includes(size)) return fail('not_offered', MSG.notOffered);
-      return allowRefusal(root, superId, state, item, size);
+      const allowed = await allowRefusal(root, superId, state, item, size);
+      if (allowed.ok) await settleRunCardsOfRefusal(root, superId, state, item, 'allowed');
+      return allowed;
     }
     case 'ask': {
       if (a.kind !== 'question' && a.kind !== 'ask') return fail('invalid', MSG.invalid);
