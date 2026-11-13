@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { ApiAdapter, ApiError } from '../task-backend/api-adapter.js';
+import { githubApiAdapter } from './token-fallback.js';
 import { resolveGitHubCredential, type GitHubCredential } from './auth-store.js';
 import { canonicalRemote, parseRepoSlug, sanitizeRepoName } from './origin-setup.js';
 import { withGitCredentials } from './credentials.js';
@@ -59,10 +60,7 @@ function toSummary(r: GitHubApiRepo): GitHubRepoSummary {
 }
 
 function defaultAdapter(token: string): ApiAdapter {
-  return new ApiAdapter({
-    baseUrl: 'https://api.github.com',
-    authHeaders: () => ({ Authorization: `token ${token}` }),
-  });
+  return githubApiAdapter({ authHeaders: () => ({ Authorization: `token ${token}` }) });
 }
 
 /** Deterministic bounds: 3 pages × 100 = the newest 300 repos the user can push to. */

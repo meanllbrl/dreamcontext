@@ -1,3 +1,4 @@
+import { ApiAdapter, type ApiAdapterOptions } from '../task-backend/api-adapter.js';
 import {
   demoteProjectGitHubToken,
   readGlobalGitHubCredential,
@@ -77,6 +78,18 @@ export function classifyGitHubReject(
   if (/bad credentials/i.test(body)) return { kind: 'auth' };
   return { kind: 'forbidden' };
 }
+
+/**
+ * The ONE way to build a GitHub REST client: api.github.com with `classifyGitHubReject`, so a
+ * 403 is never read as a dead sign-in (an SSO org or a rate limit is `forbidden` /
+ * `rate_limited`, only a 401 or "bad credentials" is `auth`). Every GitHub caller uses this;
+ * a hand-built adapter would map every 403 to `auth` and raise the reconnect flag for nothing.
+ */
+export function githubApiAdapter(opts: Omit<ApiAdapterOptions, 'baseUrl' | 'classifyReject'>): ApiAdapter {
+  return new ApiAdapter({ ...opts, baseUrl: GITHUB_API_BASE_URL, classifyReject: classifyGitHubReject });
+}
+
+export const GITHUB_API_BASE_URL = 'https://api.github.com';
 
 /** Injectable deps so tests need no real git, network or fs. */
 export interface GitHubAuthSessionDeps {

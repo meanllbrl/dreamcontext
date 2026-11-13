@@ -612,6 +612,13 @@ export async function handleLauncherGithubRepos(
       sendJson(res, 401, { error: 'bad_token', ...gh });
       return;
     }
+    // A 403 is never the sign-in's fault: an SSO org, an org's OAuth-app approval, no access,
+    // or a rate limit. It names its real cause and raises no reconnect flag (criterion 5).
+    if (err instanceof ApiError && (err.kind === 'forbidden' || err.kind === 'rate_limited')) {
+      const gh = githubErrorPayload(err.kind, token.source, err.message);
+      sendJson(res, err.kind === 'rate_limited' ? 429 : 403, { error: err.kind, ...gh });
+      return;
+    }
     console.error('[launcher] github repos failed:', err);
     const detail = err instanceof Error ? err.message : 'unknown error';
     sendError(res, 502, 'github_error', `Could not list repositories: ${detail}`);

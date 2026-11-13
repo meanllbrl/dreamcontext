@@ -25,7 +25,7 @@ import {
   projectGitHubTokenState,
   readGlobalGitHubCredential,
 } from '../../src/lib/git-sync/auth-store.js';
-import { GitHubAuthSession, classifyGitHubReject } from '../../src/lib/git-sync/token-fallback.js';
+import { GitHubAuthSession, classifyGitHubReject, githubApiAdapter } from '../../src/lib/git-sync/token-fallback.js';
 import { classifySyncError, githubErrorPayload } from '../../src/lib/git-sync/failure.js';
 import { writeClickUpToken, writeGitHubToken } from '../../src/lib/task-backend/secrets.js';
 import { GitHubTaskBackend } from '../../src/lib/task-backend/github.js';
@@ -234,6 +234,35 @@ describe('C4 classification (GitHub only)', () => {
     expect(classifySyncError('remote: API rate limit exceeded').kind).toBe('rate_limited');
   });
 
+  // End review r1 (class github-403-read-as-dead-sign-in): the launcher's repo search built its
+  // own adapter, so an SSO 403 came back as `auth` and raised the reconnect flag.
+  it('every GitHub client reads a 403 through the classifier: SSO = forbidden, a spent limit backs off, only 401 = auth', async () => {
+    const saml = (async () => new Response('{"message":"Resource protected by organization SAML enforcement."}', { status: 403 })) as typeof fetch;
+    await expect(githubApiAdapter({ authHeaders: () => ({}), fetchImpl: saml, maxRetries: 0 }).request('GET', '/repos/acme/x'))
+      .rejects.toMatchObject({ kind: 'forbidden' });
+    let calls = 0;
+    const limited = (async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response('{"message":"API rate limit exceeded"}', { status: 403, headers: { 'x-ratelimit-remaining': '0', 'retry-after': '0.01' } })
+        : new Response('[]', { status: 200 });
+    }) as typeof fetch;
+    await expect(githubApiAdapter({ authHeaders: () => ({}), fetchImpl: limited }).request('GET', '/user/repos')).resolves.toEqual([]);
+    expect(calls).toBe(2);
+    const dead = (async () => new Response('{"message":"Bad credentials"}', { status: 401 })) as typeof fetch;
+    await expect(githubApiAdapter({ authHeaders: () => ({}), fetchImpl: dead, maxRetries: 0 }).request('GET', '/user'))
+      .rejects.toMatchObject({ kind: 'auth' });
+  });
+
+  it('the launcher reports to the reconnect flag only on `auth`; a 403 answers its own kind', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'routes', 'launcher.ts'), 'utf-8');
+    const at = src.indexOf('export async function handleLauncherGithubRepos');
+    const body = src.slice(at, src.indexOf('\n}\n', at));
+    expect(body.match(/reportGitHubAuthOutcome\(/g)?.length).toBe(2); // ok + auth
+    expect(body).toMatch(/err\.kind === 'auth'\) \{\s*\/\/ C3/);
+    expect(body).toContain("err.kind === 'forbidden' || err.kind === 'rate_limited'");
+  });
+
   it('a non-GitHub adapter keeps every 401/403 as auth (ClickUp unchanged)', async () => {
     const fetchImpl = (async () => new Response('{"err":"no"}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } })) as typeof fetch;
     const api = new ApiAdapter({ baseUrl: 'https://api.clickup.example', authHeaders: () => ({}), fetchImpl, maxRetries: 0 });
@@ -346,6 +375,10 @@ describe('criterion 1: task sync heals a dead project PAT onto the sign-in', () 
     const line = renderStaleRemoteLine({ ops: 12, tasks: 12, oldest: '2026-11-01' }, 'github');
     expect(line).toContain('Settings → GitHub → Reconnect');
     expect(line).not.toMatch(/dreamcontext (config|tasks)|token, then/);
+    // It names the credential GitHub refused (task criterion 1, end review r1 Minor).
+    expect(line).toContain('your GitHub sign-in');
+    expect(renderStaleRemoteLine({ ops: 1, tasks: 1, oldest: null }, 'github', 'project')).toContain("this project's own GitHub token");
+    expect(renderStaleRemoteLine({ ops: 1, tasks: 1, oldest: null }, 'github', 'env')).toContain('the GitHub token set outside the app');
   });
 });
 
@@ -387,6 +420,25 @@ describe('gate: no file outside auth-store.ts reads a GitHub token', () => {
         const src = readFileSync(p, 'utf-8');
         if (/env\[['"]?(GITHUB_TOKEN|GH_TOKEN)|process\.env\.(GITHUB_TOKEN|GH_TOKEN)|\[\s*'GITHUB_TOKEN'\s*,\s*'GH_TOKEN'\s*\]/.test(src)) offenders.push(rel);
         if (/\.github\?*\.token\b/.test(src)) offenders.push(rel);
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
+  });
+
+  it('nobody builds a GitHub REST client by hand: githubApiAdapter is the one way (403s classified)', () => {
+    const root = join(__dirname, '..', '..', 'src');
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir)) {
+        const p = join(dir, name);
+        if (name === 'vendor' || name === 'node_modules') continue;
+        if (statSync(p).isDirectory()) { walk(p); continue; }
+        if (!p.endsWith('.ts')) continue;
+        const rel = relative(root, p).split('\\').join('/');
+        if (rel === 'lib/git-sync/token-fallback.ts') continue;
+        const src = readFileSync(p, 'utf-8');
+        if (/new ApiAdapter\(\{[\s\S]{0,200}?api\.github\.com/.test(src)) offenders.push(rel);
       }
     };
     walk(root);

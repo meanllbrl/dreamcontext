@@ -2,6 +2,7 @@ import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
+import { resolveGitHubCredential } from '../../lib/git-sync/auth-store.js';
 import { homedir } from 'node:os';
 import { listApps } from '../../lib/apps/registry.js';
 import { countFindings } from '../../lib/apps/learn-queue.js';
@@ -207,6 +208,13 @@ function freshDefaults(): SleepState {
  * Read sleep state from disk. Returns defaults if file is missing or malformed.
  * Exported for use by snapshot and hook.
  */
+
+/** Which GitHub credential task sync uses now (after any heal): the one GitHub refused. */
+function refusedGitHubSource(contextRoot: string, backend: string): 'project' | 'global' | 'env' | null {
+  if (backend !== 'github') return null;
+  try { return resolveGitHubCredential({ projectRoot: dirname(contextRoot), purpose: 'tasks' })?.source ?? null; } catch { return null; }
+}
+
 export function readSleepState(root: string): SleepState {
   const filePath = getSleepPath(root);
   if (!existsSync(filePath)) {
@@ -1405,7 +1413,7 @@ export function registerSleepCommand(program: Command): void {
           if (taskSyncAuthFailed) {
             // GitHub: ONE line that names the one place to fix it (D7); others keep the detail.
             if (backend.name !== 'github') for (const e of report.errors.slice(0, 3)) warn(`  ${e}`);
-            warn(renderStaleRemoteLine(readTaskQueueDepth(root), backend.name));
+            warn(renderStaleRemoteLine(readTaskQueueDepth(root), backend.name, refusedGitHubSource(root, backend.name)));
           } else {
             if (report.conflicts.length > 0) {
               warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
@@ -1443,7 +1451,7 @@ export function registerSleepCommand(program: Command): void {
         if (isSyncAuthFailure(message)) {
           taskSyncAuthFailed = true;
           if (backendName !== 'github') warn(`Task sync: skipped — ${message}`);
-          warn(renderStaleRemoteLine(readTaskQueueDepth(root), backendName));
+          warn(renderStaleRemoteLine(readTaskQueueDepth(root), backendName, refusedGitHubSource(root, backendName)));
         } else {
           warn(`Task sync: skipped — ${message}`);
         }

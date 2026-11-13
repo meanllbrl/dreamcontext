@@ -17,7 +17,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { ApiAdapter, ApiError } from '../../task-backend/api-adapter.js';
 import { resolveLauncherGitHubToken } from '../../git-sync/github-browse.js';
 import { tokenFingerprint, type GitHubCredential } from '../../git-sync/auth-store.js';
-import { GitHubAuthSession, classifyGitHubReject } from '../../git-sync/token-fallback.js';
+import { GitHubAuthSession, githubApiAdapter } from '../../git-sync/token-fallback.js';
 import { withGitCredentials } from '../../git-sync/credentials.js';
 import { initHardRepo, installedGit } from './installed-git.js';
 
@@ -113,10 +113,8 @@ export class GitHubHost implements AppHost {
     this.token = c?.token ?? null;
     const session = c && typeof cred !== 'string' ? new GitHubAuthSession(c, 'browse', undefined) : null;
     this.session = session;
-    this.api = adapter ?? new ApiAdapter({
-      baseUrl: 'https://api.github.com',
+    this.api = adapter ?? githubApiAdapter({
       authHeaders: (): Record<string, string> => (this.token ? { Authorization: `token ${this.token}` } : {}),
-      classifyReject: classifyGitHubReject,
       ...(session ? {
         authObserver: {
           onSuccess: () => session.noteSuccess(),

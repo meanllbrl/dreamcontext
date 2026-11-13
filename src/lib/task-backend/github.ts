@@ -50,7 +50,7 @@ import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
 import { writeGitHubToken, maskToken } from './secrets.js';
 import { clearProjectGitHubDemotion, resolveGitHubCredential } from '../git-sync/auth-store.js';
-import { GitHubAuthSession, classifyGitHubReject, type GitHubAuthSessionDeps } from '../git-sync/token-fallback.js';
+import { GitHubAuthSession, githubApiAdapter, type GitHubAuthSessionDeps } from '../git-sync/token-fallback.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
@@ -142,7 +142,6 @@ export interface GitHubBackendDeps {
   authSessionDeps?: Partial<GitHubAuthSessionDeps>;
 }
 
-const GITHUB_BASE_URL = 'https://api.github.com';
 
 // GitHub's primary REST limit is 5000 requests/hour (~83/min). Pace BELOW it so
 // a large burst self-throttles under the ceiling rather than tipping into
@@ -280,11 +279,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (!session) {
         throw new Error('No GitHub token: sign in with GitHub in Settings → GitHub.');
       }
-      this.adapterInstance = new ApiAdapter({
-        baseUrl: GITHUB_BASE_URL,
+      this.adapterInstance = githubApiAdapter({
         // Read per request: the session swaps to the sign-in after a heal.
         authHeaders: () => githubAuthHeaders(session.token),
-        classifyReject: classifyGitHubReject,
         authObserver: {
           onSuccess: () => session.noteSuccess(),
           onReject: (kind) => session.handleReject(kind),
@@ -2576,8 +2573,7 @@ async function discoverGitHubReposInternal(
   token: string,
   deps: { fetchImpl?: typeof fetch } = {},
 ): Promise<DiscoveredRepo[]> {
-  const adapter = new ApiAdapter({
-    baseUrl: GITHUB_BASE_URL,
+  const adapter = githubApiAdapter({
     authHeaders: () => githubAuthHeaders(token),
     fetchImpl: deps.fetchImpl,
   });
