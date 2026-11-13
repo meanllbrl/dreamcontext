@@ -4,6 +4,7 @@ import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import type { SurveyRead } from '../chat/SurveyCard';
 import type { KnownCard, StageNow } from '../../../lib/turnCards';
+import { SUPER_QUESTION_EVENT, type SuperQuestionDetail } from './superUnread';
 
 /**
  * The one channel between the centre chat's event lines and the stage: a child's name in an
@@ -213,13 +214,17 @@ export function useSlotRunRequest(itemId: string): SlotRun | undefined {
   return useSyncExternalStore(subscribeSlotRuns, read, read);
 }
 
-/** Bring an item's card in the Super chat's slot into view (the bar's verbs, Show, the agenda's
- *  Waiting line). False when it is not drawn (the chat not on screen). */
+/** Bring an item's card in the Super chat into view (the bar's verbs, Show, the agenda's Waiting
+ *  line), wherever in the transcript it was posted. The Super pane takes the door (the question's
+ *  own jump, `SUPER_QUESTION_EVENT`) so its one scroll owner moves; elsewhere a plain scroll.
+ *  False when it is not drawn (the chat not on screen). */
 export function showOwnerSlot(itemId: string, root: ParentNode = document): boolean {
   const card = [...root.querySelectorAll<HTMLElement>('[data-testid="super-owner-card"]')].find((el) => el.dataset.item === itemId);
   if (!card || !card.isConnected) return false;
+  const detail: SuperQuestionDetail = { item: itemId };
+  const handled = !card.dispatchEvent(new CustomEvent(SUPER_QUESTION_EVENT, { bubbles: true, cancelable: true, detail }));
   const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  if (!handled) card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
   card.querySelector<HTMLElement>('input, button:not([disabled])')?.focus({ preventScroll: true });
   return true;
 }

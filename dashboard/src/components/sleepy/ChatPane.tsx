@@ -86,7 +86,7 @@ import type { SuperId, SuperQueueItem } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { OwnerCardSlot } from './super/OwnerCardSlot';
-import { anchorSettledCards, ownerCardItemsOf, placeOwnerCards } from './super/cardPlacement';
+import { anchorOwnerCards, ownerCardItemsOf, placeOwnerCards, tailHolds } from './super/cardPlacement';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
@@ -834,8 +834,9 @@ export function ChatPane({
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
   // The Super chat's question view: its open questions and the owner cards its children left.
   const superQuestionView = useSuperQuestions(superView ? session.claudeId : null);
-  // The one rule of where an owner card is drawn (cardPlacement.ts): a settled one in its place.
-  const settledOwnerCards = useMemo(() => placeOwnerCards(ownerCardItemsOf(superQuestionView)).settled, [superQuestionView]);
+  // The one rule of where an owner card is drawn (cardPlacement.ts): every one in its place in the
+  // transcript, where it arrived, waiting or settled; it scrolls with the chat like any message.
+  const placedOwnerCards = useMemo(() => placeOwnerCards(ownerCardItemsOf(superQuestionView)).all, [superQuestionView]);
   // The cards each Super turn put on the stage, by its answer (turnCards.ts, owner 2026-11-08): read
   // from the turn's own tool results, so they outlive the stage. An answer whose cards did not
   // change keeps its object, so a streaming token never re-renders an earlier answer.
@@ -2446,7 +2447,7 @@ export function ChatPane({
   // piece DRAWS (what it keeps, plus each recap card's body in its place), so a call folded into
   // an event line is not counted as drawn (the tail draws it), and one in a recap lands in its card.
   const questionCards = new Map<string, Array<AskRef & { live: boolean }>>();
-  /** Every item the Super chat draws, in reading order: where a settled owner card is placed. */
+  /** Every item the Super chat draws, in reading order: where an owner card is placed. */
   const drawnForCards: ChatItem[] = [];
   const foldSuper = <T extends ChatItem>(piece: T[]): T[] => {
     let kept = piece;
@@ -2471,7 +2472,7 @@ export function ChatPane({
     }
     // The phone's mirror draws them too (its cards come from /api/agent/super-questions).
     if (superView) for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
-    if (superView && settledOwnerCards.length) drawnForCards.push(...drawn);
+    if (superView && placedOwnerCards.length) drawnForCards.push(...drawn);
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
@@ -2564,13 +2565,13 @@ export function ChatPane({
     return ids.flatMap((id) => questionCards.get(id) ?? [])
       .map((c) => ({ ...c, live: c.live && latestAsk.get(c.item) === c.toolItemId }));
   };
-  // A settled owner card, under the last item drawn before it was posted (cardPlacement.ts).
-  let settledAt: Map<string, SuperQueueItem[]> | null = null;
+  // An owner card, under the last item drawn before it was posted (cardPlacement.ts).
+  let ownerCardsAt: Map<string, SuperQueueItem[]> | null = null;
   const settledOf = (seg: RunSegment<ChatItem>): SuperQueueItem[] => {
-    if (!settledOwnerCards.length) return [];
-    settledAt ??= anchorSettledCards(drawnForCards, settledOwnerCards);
+    if (!placedOwnerCards.length) return [];
+    ownerCardsAt ??= anchorOwnerCards(drawnForCards, placedOwnerCards);
     const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
-    return ids.flatMap((id) => settledAt!.get(id) ?? []);
+    return ids.flatMap((id) => ownerCardsAt!.get(id) ?? []);
   };
   const questionProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => [
     ...cardsOf(seg).map((c): StretchProbe => ({ key: `question:${c.toolItemId}`, step: false, invisible: false, actor: 'lead', running: false })),
@@ -2578,20 +2579,25 @@ export function ChatPane({
   ];
   /** The items that got a LIVE card above; every other open question goes to the tail. */
   const anchoredQuestions = new Set<string>();
+  /** The owner cards drawn in their place above; a waiting one with no place goes to the tail. */
+  const placedCards = new Set<string>();
   const questionNodes = (seg: RunSegment<ChatItem>): React.ReactNode[] => [
     ...cardsOf(seg).map((c) => {
       if (c.live) anchoredQuestions.add(c.item);
       return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} />;
     }),
-    ...settledOf(seg).map((q) => (
-      <OwnerCardSlot
-        key={`owner-card-${q.id}`}
-        item={q}
-        title={superQuestionView?.titleFor?.(q.sessionId) || q.member || q.ownerText || ''}
-        paused={false}
-        place="history"
-      />
-    )),
+    ...settledOf(seg).map((q) => {
+      placedCards.add(q.id);
+      return (
+        <OwnerCardSlot
+          key={`owner-card-${q.id}`}
+          item={q}
+          title={superQuestionView?.titleFor?.(q.sessionId) || q.member || q.ownerText || ''}
+          paused={tailHolds(q) && !!superQuestionView?.pausedFor?.(q.sessionId)}
+          place="history"
+        />
+      );
+    }),
   ];
   // The accruing tail is the last segment that SHOWS something, not the last segment. An
   // empty thinking block is re-emitted after the run it sat inside (see `segmentToolRuns`),
@@ -3249,7 +3255,7 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
-            {superView && <SuperQuestionTail session={session} anchored={anchoredQuestions} />}
+            {superView && <SuperQuestionTail session={session} anchored={anchoredQuestions} placedCards={placedCards} />}
             {askRouting?.phase === 'preparing' && <PreparingQuestionCard item={askRouting.item} />}
             {askRouting?.phase === 'degraded' && (
               <DegradedQuestionCard item={askRouting.item} onContinueInTerminal={onContinueInTerminal} />

@@ -1,8 +1,9 @@
 /**
- * Every interactive card in the Super chat leaves the TAIL once the thing it waited for ended,
- * and sits in its place in history, drawn once (owner 2026-11-13, the third stuck-card report in a
- * day: "bu tip takılı kalmalar çok can sıkıyor"; a teammate's finished run card stayed at the
- * bottom of the Super chat, twice). One walk per kind: waiting -> ended -> settled, in place, once.
+ * Every owner card in the Super chat is a message of the chat: drawn in its place, where it
+ * arrived, waiting or settled (owner 2026-11-14: a tall secret card stuck above the composer, "şu
+ * kartlar da kaymıyor altta kalıyor"), and drawn once (owner 2026-11-13: "bu tip takılı kalmalar
+ * çok can sıkıyor"; a finished run card stayed at the bottom of the Super chat, twice). The tail
+ * holds only a waiting card that has no place on screen.
  * The rule lives in super/cardPlacement.ts. Fictional jobs and commands (synthetic-fixtures).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -41,7 +42,7 @@ vi.mock('../../dashboard/src/components/sleepy/chat/InlineTerminal.js', () => ({
 
 const { SuperQuestionTail } = await import('../../dashboard/src/components/sleepy/super/SuperQuestionCard.js');
 const { publishSuperQuestions, _resetOwnerSlots, slotCardItems } = await import('../../dashboard/src/components/sleepy/super/superJobsStore.js');
-const { placeOwnerCards, anchorSettledCards, tailHolds, ownerCardItemsOf } = await import('../../dashboard/src/components/sleepy/super/cardPlacement.js');
+const { placeOwnerCards, anchorOwnerCards, tailHolds, ownerCardItemsOf } = await import('../../dashboard/src/components/sleepy/super/cardPlacement.js');
 const { openOwnerQuestions, openMemberMirrors } = await import('../../dashboard/src/components/sleepy/super/superQuestions.js');
 const { refusalItemsOf, _resetOwnerItems } = await import('../../dashboard/src/components/sleepy/super/ownerAnswer.js');
 const { _resetCardRecords } = await import('../../dashboard/src/lib/cardRecords.js');
@@ -77,17 +78,70 @@ const TRANSCRIPT: ChatItem[] = [
 ];
 
 let n = 0;
-const tail = (cards: SuperQueueItem[]) => {
+/** The chat's tail; `placed` = the owner cards the transcript drew in their place (none: every
+ *  waiting card has no place on screen, the tail's fallback). */
+const tail = (cards: SuperQueueItem[], placed: ReadonlySet<string> = new Set()) => {
   publishSuperQuestions('SUPER', {
     open: [], cards, superSession: undefined, sessionFor: () => undefined, titleFor: () => 'Cart release', pausedFor: () => false,
   } as never, `k${++n}`);
-  return renderToStaticMarkup(createElement(SuperQuestionTail, { session: { claudeId: 'SUPER' } as never, anchored: new Set() }));
+  return renderToStaticMarkup(createElement(SuperQuestionTail, { session: { claudeId: 'SUPER' } as never, anchored: new Set(), placedCards: placed }));
 };
 const cardsIn = (html: string) => (html.match(/data-testid="super-owner-card"/g) ?? []).length;
 
 beforeEach(() => { _resetOwnerItems(); _resetOwnerSlots(); _resetCardRecords(); publishSuperQuestions('SUPER', null); });
 
-describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then in its place', () => {
+describe('a waiting owner card is a message of the chat: in its place, never pinned to the bottom (owner 2026-11-14)', () => {
+  // The owner's screenshot, 14 Nov: a child's secret card with four fields arrived, he wrote
+  // "why do you want a key from me", the Super started answering, and the card stayed glued above
+  // the composer with his message and the Super's step ABOVE it, covering the chat.
+  const SECRET4 = { type: 'secret', id: 'golive', title: 'Stage 1: prod KV + payments', file: '.env.golive',
+    fields: [{ key: 'KV_URL' }, { key: 'KV_KEY' }, { key: 'KV_ADMIN_KEY' }, { key: 'PAY_READ_KEY' }] } as const;
+  const tall = (over: Partial<SuperQueueItem> = {}) => {
+    const base = card('secret', { id: 'q-golive', createdAt: 4_000, ...over });
+    return { ...base, card: { ...base.card!, spec: SECRET4 as never } } as SuperQueueItem;
+  };
+
+  it('a secret card arrives, the owner writes, the Super answers: the card stays where it arrived and scrolls away with the chat', () => {
+    const waiting = slotCardItems([tall()]);
+    const placed = placeOwnerCards(waiting);
+    // It waits on him (the bar says so), and it is drawn in its place all the same.
+    expect(placed.tail.map((q) => q.id)).toEqual(['q-golive']);
+    expect(placed.all.map((q) => q.id)).toEqual(['q-golive']);
+    // It arrived after a2; then he wrote and the Super answered.
+    const chat: ChatItem[] = [...TRANSCRIPT,
+      { kind: 'user', id: 'u3', text: 'why do you want a key from me?', ts: 5_000 },
+      { kind: 'text', id: 'a3', index: 0, text: 'The child needs it to read the live store.', done: true, ts: 5_500 }];
+    const at = anchorOwnerCards(chat, placed.all);
+    expect([...at.entries()].map(([k, v]) => [k, v.map((q) => q.id)])).toEqual([['a2', ['q-golive']]]);
+    // Nothing under his message or the answer: they read BELOW the card.
+    expect(at.has('u3')).toBe(false);
+    expect(at.has('a3')).toBe(false);
+    // The transcript drew it there, so the tail above the composer draws nothing.
+    expect(cardsIn(tail(waiting, new Set(['q-golive'])))).toBe(0);
+  });
+
+  it('every kind (run, secret, checklist, mcp) and a member mirror carrying a card: placed while waiting, never in the tail', () => {
+    for (const kind of Object.keys(SPECS) as Kind[]) {
+      _resetOwnerSlots();
+      const waiting = slotCardItems([card(kind, { createdAt: 4_000 })]);
+      expect([...anchorOwnerCards(TRANSCRIPT, placeOwnerCards(waiting).all).keys()]).toEqual(['a2']);
+      expect(cardsIn(tail(waiting, new Set([`q-${kind}`])))).toBe(0);
+    }
+    const mirror = card('run', { id: 'q-mm', kind: 'member', member: 'turing', of: 'owner', createdAt: 4_000 } as Partial<SuperQueueItem>);
+    expect(placeOwnerCards(ownerCardItemsOf({ members: [mirror] })).all.map((q) => q.id)).toEqual(['q-mm']);
+    publishSuperQuestions('SUPER', { open: [], members: [mirror], cards: [], superSession: undefined, sessionFor: () => undefined, titleFor: () => '', pausedFor: () => false } as never, `mm${++n}`);
+    const html = renderToStaticMarkup(createElement(SuperQuestionTail, { session: { claudeId: 'SUPER' } as never, anchored: new Set(), placedCards: new Set(['q-mm']) }));
+    expect(cardsIn(html)).toBe(0);
+  });
+
+  it('a waiting card with no place on screen (posted before the first drawn message) falls back to the tail, so the wait is never lost', () => {
+    const early = slotCardItems([tall({ createdAt: 500 })]);
+    expect(anchorOwnerCards(TRANSCRIPT, placeOwnerCards(early).all).size).toBe(0);
+    expect(cardsIn(tail(early, new Set()))).toBe(1);
+  });
+});
+
+describe('an owner card (run, secret, checklist, mcp): waiting (tail fallback), then in its place', () => {
   for (const kind of Object.keys(SPECS) as Kind[]) {
     it(`${kind}: waiting -> tail once; ended -> out of the tail, under the turn it was posted in, once`, () => {
       // Waiting on the owner: the tail draws it, once.
@@ -105,7 +159,7 @@ describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then
         // In history: under the last message from before it was posted (a1), not at the end.
         const placed = placeOwnerCards(queue);
         expect(placed.tail).toEqual([]);
-        const at = anchorSettledCards(TRANSCRIPT, placed.settled);
+        const at = anchorOwnerCards(TRANSCRIPT, placed.settled);
         expect([...at.keys()]).toEqual(['a1']);
         expect(at.get('a1')!.map((q) => q.id)).toEqual([`q-${kind}`]);
       }
@@ -135,7 +189,7 @@ describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then
 
   it('an undated row (time 0) never anchors a card', () => {
     const undated: ChatItem[] = [...TRANSCRIPT, { kind: 'text', id: 'z', index: 0, text: 'replayed', done: true, ts: 0 }];
-    expect([...anchorSettledCards(undated, [card('mcp', { state: 'done', delivery: 'sent' })]).keys()]).toEqual(['a1']);
+    expect([...anchorOwnerCards(undated, [card('mcp', { state: 'done', delivery: 'sent' })]).keys()]).toEqual(['a1']);
   });
 
   it('closed across a restart without a result line (a fresh window never saw it open): not drawn at all', () => {
@@ -155,7 +209,7 @@ describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then
 
   it('a card posted before the first message on screen has no place there: not drawn, never in the tail', () => {
     const early = card('secret', { state: 'done', delivery: 'sent', createdAt: 500 });
-    expect(anchorSettledCards(TRANSCRIPT, [early]).size).toBe(0);
+    expect(anchorOwnerCards(TRANSCRIPT, [early]).size).toBe(0);
   });
 
   it('a child\'s run card relayed into the Super chat: pressed (running), finished, then the Super talks on: never last (run-bildirim-hemen ek-1)', () => {
@@ -182,7 +236,7 @@ describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then
       { kind: 'text', id: 'a3', index: 0, text: 'The publish is waiting.', done: true, ts: 6_000 },
       { kind: 'text', id: 'a4', index: 0, text: 'The upload stopped.', done: true, ts: 7_000 }];
     expect(cardsIn(tail(done))).toBe(0);
-    const at = anchorSettledCards(later, placeOwnerCards(done).settled);
+    const at = anchorOwnerCards(later, placeOwnerCards(done).settled);
     expect([...at.keys()]).toEqual(['a2']);
     expect(at.has('a4')).toBe(false);
   });
@@ -205,7 +259,7 @@ describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then
     expect(cardsIn(tail(done))).toBe(0);
     const placed = placeOwnerCards(done);
     expect(placed.tail).toEqual([]);
-    const at = anchorSettledCards(chat, placed.settled);
+    const at = anchorOwnerCards(chat, placed.settled);
     // Each under the message from before it was posted; the chat's last message has none below it.
     expect([...at.entries()].map(([k, v]) => [k, v.map((q) => q.id)])).toEqual([['a2', ['q-run-1']], ['a3', ['q-run-2']], ['a4', ['q-run-3']]]);
     expect(at.has('a5')).toBe(false);
@@ -219,17 +273,17 @@ describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then
       const after = slotCardItems([card('run', { id, createdAt: 4_000, state: 'done', delivery: end })]);
       expect(after.map((q) => q.id)).toEqual([id]);
       expect(cardsIn(tail(after))).toBe(0);
-      expect([...anchorSettledCards(TRANSCRIPT, placeOwnerCards(after).settled).keys()]).toEqual(['a2']);
+      expect([...anchorOwnerCards(TRANSCRIPT, placeOwnerCards(after).settled).keys()]).toEqual(['a2']);
     }
   });
 
   it('a card posted after the last message sits under it, and stays there when the chat moves on', () => {
     const late = card('checklist', { state: 'done', delivery: 'sent', createdAt: 4_000 });
-    expect([...anchorSettledCards(TRANSCRIPT, [late]).keys()]).toEqual(['a2']);
+    expect([...anchorOwnerCards(TRANSCRIPT, [late]).keys()]).toEqual(['a2']);
     const later: ChatItem[] = [...TRANSCRIPT,
       { kind: 'user', id: 'u3', text: 'next', ts: 5_000 },
       { kind: 'text', id: 'a3', index: 0, text: 'On it.', done: true, ts: 5_500 }];
-    expect([...anchorSettledCards(later, [late]).keys()]).toEqual(['a2']);
+    expect([...anchorOwnerCards(later, [late]).keys()]).toEqual(['a2']);
   });
 });
 
