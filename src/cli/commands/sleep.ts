@@ -1504,7 +1504,7 @@ export function registerSleepCommand(program: Command): void {
       timer.lap('embeddings');
 
       // Cloud index refresh: only for a vault that consented to a cloud tier, detached and never
-      // awaited (the child enforces throttle, churn guard and the rolling spend cap itself).
+      // awaited (the child enforces the throttle and the rolling spend cap itself).
       try {
         const spawned = spawnCloudIndexRefresh(root, 'sleep');
         if (spawned.spawned) info(chalk.dim('Cloud recall index refresh started in the background.'));

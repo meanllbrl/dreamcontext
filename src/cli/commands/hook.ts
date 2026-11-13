@@ -1,4 +1,5 @@
 import { noteRunSession } from '../../lib/automations/run-session.js';
+import { readIndexStop } from '../../lib/embeddings/index-stop.js';
 import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, heavySuggestion } from '../../lib/run-budget.js';
 import { suiteRedOpen } from '../../lib/suite-record.js';
@@ -700,6 +701,19 @@ export function hybridHeaderLabel(timing: RecallTiming): string {
   return `${base} → ${served}: ${why}`;
 }
 
+/**
+ * A cloud tier whose automatic index updates stopped (a spend cap, a failure: embeddings/index-stop.ts)
+ * still answers, from the index as it last landed. The label says so, instead of a plain `cloud-index`
+ * that reads as current: `Hybrid · cloud-index · meaning index stale since 2026-11-01`. One meta-sized
+ * read; no parentheses or commas (scripts/hook-latency.ts parses the header). Idempotent.
+ */
+export function withStaleIndexLabel(label: string, root: string, timing: RecallTiming | null): string {
+  if (timing === null || timing.tier === 'local' || label.includes(' · meaning index stale')) return label;
+  const stop = readIndexStop(root);
+  if (stop === null) return label;
+  return `${label} · meaning index stale since ${(stop.asOf ?? stop.since).slice(0, 10)}`;
+}
+
 /** The header label when hybrid is selected but cannot run: still `BM25` first (scripts/hook-latency.ts counts by the first word), then why. */
 export function hybridNotReadyLabel(tier: RecallTier, reason: HybridNotReadyReason): string {
   return `BM25 · hybrid ${tier} not ready: ${reason.replace(/_/g, ' ')}`;
@@ -761,7 +775,7 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
     // older server: the in-process path below, exactly as before.
     if (recallMode === 'hybrid' && deps.viaDashboard !== null && env.DREAMCONTEXT_RECALL_VIA_SERVER !== '0') {
       const remote = await (deps.viaDashboard ?? recallViaDashboard)(prompt, root, { tier }).catch(() => null);
-      if (remote && remote.timing?.tier === tier) return remote;
+      if (remote && remote.timing?.tier === tier) return { ...remote, label: withStaleIndexLabel(remote.label, root, remote.timing) };
     }
     return hybridPromptRecall(prompt, root, tier, deps.home);
   }
@@ -787,7 +801,7 @@ export async function hybridPromptRecall(prompt: string, root: string, tier: Rec
     timing,
     maxInlineEmbed: HOOK_MAX_INLINE_EMBED,
   });
-  return { hits, label: hybridHeaderLabel(timing), haiku: false, timing };
+  return { hits, label: withStaleIndexLabel(hybridHeaderLabel(timing), root, timing), haiku: false, timing };
 }
 
 /** One recall hit as the dashboard sends it to the hook: what rendering and the access bump read. */

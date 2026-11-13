@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { CLOUD_DISCLOSURE_VERSION, eligibleTypesHash } from './embeddings/egress-rules.js';
 import { ensureSelfIgnoredDir } from './embeddings/ignored-dir.js';
+import { readIndexStop } from './embeddings/index-stop.js';
 import { spawnMarkerFromEnv } from './session-origin.js';
 import { voiceApiKey } from './voice/config.js';
 
@@ -36,9 +37,16 @@ export const EVAL_MAX_USD_ENV = 'DREAMCONTEXT_EVAL_MAX_USD';
 export const RERANK_MODELS: readonly RerankModel[] = ['voyageai/rerank-2.5', 'voyageai/rerank-2.5-lite'];
 /** What a corrupt usage file reads as: spend "at the ceiling", so every cap trips (fail closed). */
 export const AT_CEILING = Number.MAX_SAFE_INTEGER;
-/** Strikes after which automatic index builds stop (vector-store writes it into the meta file). */
+/** Consecutive churned automatic builds after which status and doctor REPORT churn (never a pause). */
 export const CHURN_STRIKE_LIMIT = 3;
-/** The meta file the churn guard is read from (written by vector-store.ts; read here for status only). */
+/**
+ * The churn rule the meta's strikes were counted under. 2: docs are keyed uniquely (recall.ts `docKey`),
+ * so a task's side files no longer evict each other. Strikes from rule 1 were that bug, not churn: a meta
+ * without rule 2 starts at zero, and its first build (re-embedding what the collision evicted) is the
+ * baseline, never a strike.
+ */
+export const CHURN_RULE = 2;
+/** The cloud index's meta file (written by vector-store.ts; read here for status only). */
 export const CLOUD_META_FILE = 'voyage-4.meta.json';
 
 export interface VaultCloudConsent {
@@ -497,16 +505,49 @@ export interface RecallCloudStatus {
   consentSurface: ConsentSurface | null;
   rerankModel: RerankModel | null;
   spend: RecallCloudSpend & { vaultLifetimeUsd: number; todayQueries: number; indexSpend24hUsd: number; evalSpentUsd: number };
-  churnGuard: boolean;
+  /**
+   * Report only: automatic builds kept re-embedding content embedded before (`strikes` in a row; the last
+   * build embedded `embedded`, `reembedded` of them seen before). Builds go on; the spend caps hold money.
+   */
+  churn: { strikes: number; embedded: number | null; reembedded: number | null } | null;
+  /** Automatic index updates are stopped (a spend cap, a failure): the meaning index is as of `asOf`. */
+  indexStop: { reason: string; since: string; asOf: string | null; estUsd: number | null; error: string | null } | null;
 }
 
-function churnGuardTripped(contextRoot: string): boolean {
+function churnReport(contextRoot: string): RecallCloudStatus['churn'] {
   try {
-    const meta = JSON.parse(readFileSync(join(contextRoot, '.embeddings', CLOUD_META_FILE), 'utf-8')) as { churnStrikes?: unknown };
-    return typeof meta.churnStrikes === 'number' && meta.churnStrikes >= CHURN_STRIKE_LIMIT;
+    const meta = JSON.parse(readFileSync(join(contextRoot, '.embeddings', CLOUD_META_FILE), 'utf-8')) as {
+      churnStrikes?: unknown; churnRule?: unknown; lastChurn?: { embedded?: unknown; reembedded?: unknown };
+    };
+    // Strikes from before the unique doc keys (rule 2) were the key collision, not churn.
+    if (meta.churnRule !== CHURN_RULE || typeof meta.churnStrikes !== 'number' || meta.churnStrikes < CHURN_STRIKE_LIMIT) return null;
+    const n = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+    return { strikes: meta.churnStrikes, embedded: n(meta.lastChurn?.embedded), reembedded: n(meta.lastChurn?.reembedded) };
   } catch {
-    return false;
+    return null;
   }
+}
+
+function indexStopReport(contextRoot: string): RecallCloudStatus['indexStop'] {
+  const s = readIndexStop(contextRoot);
+  return s ? { reason: s.reason, since: s.since, asOf: s.asOf, estUsd: s.estUsd, error: s.error } : null;
+}
+
+/** One plain sentence for a stopped index: since when it is stale and why (status and doctor). */
+export function indexStopSentence(s: NonNullable<RecallCloudStatus['indexStop']>): string {
+  const asOf = s.asOf ? s.asOf.slice(0, 10) : 'never built';
+  const why = s.reason === 'daily_index_cap'
+    ? 'the rolling 24 h index spend cap was reached'
+    : s.reason === 'max_usd'
+      ? `the update would cost about $${(s.estUsd ?? 0).toFixed(2)}, over the per-build cap`
+      : `the last automatic update failed (${s.error ?? 'error'})`;
+  return `automatic updates stopped on ${s.since.slice(0, 10)}, the meaning index is as of ${asOf}: ${why}. Update it with \`dreamcontext recall cloud index\` or the Update button.`;
+}
+
+/** The churn report (never a pause): how many builds in a row, and the last one's evidence. */
+export function churnSentence(c: NonNullable<RecallCloudStatus['churn']>): string {
+  const last = c.embedded !== null && c.reembedded !== null ? ` (the last embedded ${c.embedded}, ${c.reembedded} of them seen before)` : '';
+  return `the last ${c.strikes} automatic builds mostly re-embedded content embedded before${last}. Builds continue; the spend caps hold the cost.`;
 }
 
 /** Everything Settings, `status` and `doctor` may show. The key itself is never part of it. */
@@ -533,7 +574,8 @@ export function recallCloudStatus(contextRoot: string, home: string = homedir())
       indexSpend24hUsd: rollingIndexSpendUsd({}, home),
       evalSpentUsd: usage.evalSpentUsd,
     },
-    churnGuard: churnGuardTripped(contextRoot),
+    churn: churnReport(contextRoot),
+    indexStop: indexStopReport(contextRoot),
   };
 }
 

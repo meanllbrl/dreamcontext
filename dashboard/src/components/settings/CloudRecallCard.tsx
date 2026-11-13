@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { indexStopLine } from '../../lib/indexStop';
 import { useQueryClient } from '@tanstack/react-query';
 import { RequestError } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
@@ -304,7 +305,11 @@ function IndexBlock({ status, index, building, onBuild, describe }: {
       ) : (
         <span className="embed-model-status embed-model-status--muted">{t('settings.recall.cloud.index.not_built')}</span>
       )}
-      {status.churnGuard && <p className="settings-field-hint settings-field-hint--warn">{t('settings.recall.cloud.churn')}</p>}
+      {status.indexStop && (
+        <p className="settings-field-hint settings-field-hint--warn" data-testid="cloud-index-stopped">
+          {indexStopLine(status.indexStop, t)}
+        </p>
+      )}
       {!running && (
         <button type="button" className="embed-model-btn embed-model-btn--primary" disabled={building} onClick={onBuild}>
           {building ? t('settings.recall.cloud.enabling') : t(status.indexReady ? 'settings.recall.cloud.index.update' : 'settings.recall.cloud.index.build')}

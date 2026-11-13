@@ -7,7 +7,22 @@ import { AGENDA_SECTIONS, superNotepad, superUnanswered, type AgendaRow, type Jo
 import { showApprovalRow, superApprovalSentence, type SuperApproval } from './superApprovals';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { ownerSlotMounted, showOwnerSlot } from './superJobsStore';
+import { indexStopLine } from '../../../lib/indexStop';
 import './SuperAgenda.css';
+
+/** The row's machine detail (index-stop.ts writes JSON); an unreadable one still reads as a failed update. */
+function parseStopDetail(detail: string | undefined): { reason: string; asOf: string | null; estUsd: number | null } {
+  try {
+    const d = JSON.parse(detail ?? '') as { reason?: unknown; asOf?: unknown; estUsd?: unknown };
+    return {
+      reason: typeof d.reason === 'string' ? d.reason : 'failed',
+      asOf: typeof d.asOf === 'string' ? d.asOf : null,
+      estUsd: typeof d.estUsd === 'number' ? d.estUsd : null,
+    };
+  } catch {
+    return { reason: 'failed', asOf: null, estUsd: null };
+  }
+}
 import type { SuperQueueItem } from '../../../lib/superTypes';
 
 /** A Waiting line whose item is a card a child left (K7): it opens that card in the Super chat's
@@ -44,7 +59,7 @@ export function agendaOpensSlot(queue: readonly Pick<SuperQueueItem, 'id' | 'car
  * has the same "Write about this" (it asks the Super again through the composer) and, where the
  * owner's own window is (`onDropOwed`), "Gerek yok". The phone only reads them.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, recallRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
@@ -63,6 +78,11 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
    *  stalled, a plan to approve. They need no Super session; each opens its task. */
   taskRows?: OwnerInboxRow[];
   onOpenTask?: (slug: string) => void;
+  /** The cloud recall index stopped updating (a spend cap, a failure): one row, his Update runs it. */
+  recallRows?: OwnerInboxRow[];
+  onUpdateIndex?: (row: OwnerInboxRow) => void;
+  /** After his press: the update runs, or it failed (the row stays until a build lands). */
+  indexUpdate?: 'idle' | 'running' | 'failed';
   /** What waits for his approval on this Mac (AI Team members and routines, `superApprovals`),
    *  minus a member an open `approval` queue item already lists. Each brings its row of the
    *  Super's approval card into view (`onShowApproval`). */
@@ -95,7 +115,7 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   // (it needs his eye), so a small agenda never reads "0 waiting" while one is open.
   const tileCountOf = (sec: string) => countOf(sec) + (sec === 'waiting' ? unanswered.length : 0);
   // A folded Now line no longer counts as running; a Waiting one still waits on him, so it does.
-  const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length + approvals.length : 0);
+  const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length + recallRows.length + approvals.length : 0);
 
   if (variant === 'tile') {
     return (
@@ -279,6 +299,22 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
                 </button>
               </div>
             ))}
+            {sec === 'waiting' && recallRows.map((r) => {
+              const line = indexStopLine(parseStopDetail(r.detail), t);
+              return (
+                <div key={r.id} className="super-agenda-row" data-row={r.id} data-testid="super-agenda-row" data-state="waiting" data-kind="recall" data-chip={r.kind}>
+                  <button type="button" className="super-agenda-row-btn" onClick={() => onUpdateIndex?.(r)} disabled={!onUpdateIndex || indexUpdate === 'running'} title={t('aiteam.inbox.update-index')}>
+                    <span className="super-agenda-dot" aria-hidden />
+                    <span className="super-agenda-name" title={line}>{line}</span>
+                    <span className="super-agenda-meta">
+                      <span className="super-agenda-chip" data-kind="recall" data-state={indexUpdate}>
+                        {t(indexUpdate === 'running' ? 'super.agenda.index.running' : indexUpdate === 'failed' ? 'super.agenda.index.failed' : 'aiteam.inbox.update-index')}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
             {sec === 'waiting' && taskRows.map((r) => (
               <div key={r.id} className="super-agenda-row" data-row={r.id} data-testid="super-agenda-row" data-state="waiting" data-kind="task" data-chip={r.kind}>
                 <button type="button" className="super-agenda-row-btn" onClick={() => onOpenTask?.(r.ref)} title={tr(t, 'super.agenda.openTask', 'Open the task')}>

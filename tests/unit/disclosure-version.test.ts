@@ -17,7 +17,8 @@ const plan: CloudIndexPlan = {
 const status: RecallCloudStatus = {
   key: true, keySource: 'file', keyOrigin: 'manual', tier: 'local', consent: 'none', consentedAt: null, consentSurface: null, rerankModel: null,
   spend: { maxIndexUsd: 1, maxIndexUsd24h: 2, maxQueriesPerDay: 1000, maxEvalUsd: 5, vaultLifetimeUsd: 0, todayQueries: 0, indexSpend24hUsd: 0, evalSpentUsd: 0 },
-  churnGuard: false,
+  churn: null,
+  indexStop: null,
 };
 const render = (): string => [
   ...renderDisclosure('cloud-index', plan, status, null),

@@ -298,8 +298,22 @@ export function docFieldTermFreq(doc: CorpusDoc, term: string): number {
   return i < 0 ? 0 : cols.ff[i];
 }
 
-/** Stable identity for a corpus doc: `type/slug` (e.g. `knowledge/haiku-recall-architecture`). */
-export function docKey(doc: CorpusDoc): string { return `${doc.type}/${doc.slug}`; }
+/**
+ * Stable, UNIQUE identity for a corpus doc: `type/slug` (e.g. `knowledge/haiku-recall-architecture`).
+ * A task's side files are the exception: every task's `state/assets/<task>/plan-r1.md` has the slug
+ * `plan-r1`, and `state/archive/<slug>.md` shares its card's slug, so `type/slug` named up to 14 files
+ * with one key. Every keyed map kept only the last, the dense indexes evicted the rest each build and
+ * re-embedded them the next (the "churn" that froze the cloud index, 2026-11-01). They are keyed by
+ * their path under `state/` instead: `task/assets/<task>/plan-r1`, `task/archive/<slug>`. A card slug
+ * never contains `/`, so neither can collide with a card.
+ */
+export function docKey(doc: CorpusDoc): string {
+  if (doc.type === 'task') {
+    const side = /^state\/((?:assets|archive)\/.+?)(?:\.md)?$/.exec(doc.relPath.replace(/\\/g, '/'));
+    if (side) return `task/${side[1]}`;
+  }
+  return `${doc.type}/${doc.slug}`;
+}
 
 /** A doc's token count without forcing a cache-revived doc to materialise `tokens`. */
 export function tokenCountOf(doc: CorpusDoc): number {

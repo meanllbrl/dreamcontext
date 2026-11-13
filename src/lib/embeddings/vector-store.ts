@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { acquireFileLockWithin, releaseFileLock } from '../file-lock.js';
 import { docKey, type CorpusDoc } from '../recall.js';
 import {
-  CHURN_STRIKE_LIMIT,
+  CHURN_RULE,
   CLOUD_META_FILE,
   readRecallCloudConfig,
   readVaultTier,
@@ -15,6 +15,7 @@ import type { Chunk } from './chunker.js';
 import { buildEgressPayload, effectiveTier, isUnderEvalFrozenDir } from './egress.js';
 import { CLOUD_DISCLOSURE_VERSION, eligibleTypesHash, isCloudEligibleChunk, isCloudEligibleDoc, type WithheldRule } from './egress-rules.js';
 import { ensureSelfIgnoredDir } from './ignored-dir.js';
+import { clearIndexStop, noteIndexStop } from './index-stop.js';
 import { CloudRecallError, openRouterEmbed } from './openrouter.js';
 import { VOYAGE_4_PROFILE, type CloudProfileId } from './profiles.js';
 import type { DenseIndex, IndexedChunk } from './store.js';
@@ -39,8 +40,17 @@ export interface VectorMeta {
   spentUsd: number;
   updatedAt: string;
   lastAutoStartAt: string | null;
+  /**
+   * Consecutive automatic builds that mostly re-embedded content embedded before. A REPORT only
+   * (status and doctor show it with `lastChurn`); it never pauses a build (owner, 2026-11-12).
+   */
   churnStrikes: number;
+  /** The churn rule `churnStrikes` was counted under; an older or missing one restarts the count. */
+  churnRule?: number;
+  /** The last build's evidence: how many it embedded, and how many of those were embedded before. */
+  lastChurn?: { embedded: number; reembedded: number; at: string };
 }
+
 
 export interface BuildCloudIndexOpts {
   /** A label. Automatic builds are additionally throttled, churn-guarded and held to the rolling 24 h cap. */
@@ -64,7 +74,7 @@ export interface BuildCloudIndexResult {
   reused: number;
   evicted: number;
   spentUsd: number;
-  aborted: null | 'not_consented' | 'tier_local' | 'max_usd' | 'eval_cap' | 'daily_index_cap' | 'churn_guard' | 'lock_busy' | 'throttled';
+  aborted: null | 'not_consented' | 'tier_local' | 'max_usd' | 'eval_cap' | 'daily_index_cap' | 'lock_busy' | 'throttled';
 }
 
 export const AUTO_THROTTLE_MS = 30 * 60_000;
@@ -87,7 +97,7 @@ interface Manifest {
   rows: string[];
   /** docKey → the chunk hashes (in seq order) that have a row. */
   docs: Record<string, string[]>;
-  /** Hashes embedded at any time (survives pruning): the churn guard's memory. */
+  /** Hashes embedded at any time (survives pruning): the churn report's memory. */
   everEmbedded: string[];
 }
 
@@ -289,10 +299,13 @@ export async function buildCloudIndex(
     const auto = o.trigger === 'auto' && !evalActive;
 
     if (auto) {
-      if (priorMeta && priorMeta.churnStrikes >= CHURN_STRIKE_LIMIT) return { ...result, aborted: 'churn_guard' };
+      // No churn gate: the index never stops on its own judgement; spend is held by the two caps below.
       const last = priorMeta?.lastAutoStartAt ? Date.parse(priorMeta.lastAutoStartAt) : NaN;
       if (Number.isFinite(last) && Date.now() - last < AUTO_THROTTLE_MS) return { ...result, aborted: 'throttled' };
-      if (rollingIndexSpendUsd({}, home) >= cfg.spend.maxIndexUsd24h) return { ...result, aborted: 'daily_index_cap' };
+      if (rollingIndexSpendUsd({}, home) >= cfg.spend.maxIndexUsd24h) {
+        noteIndexStop(contextRoot, { reason: 'daily_index_cap', asOf: priorMeta?.updatedAt ?? null }, home);
+        return { ...result, aborted: 'daily_index_cap' };
+      }
     }
 
     const s = survey(contextRoot, corpus);
@@ -313,17 +326,23 @@ export async function buildCloudIndex(
 
     const maxUsd = o.maxUsd ?? cfg.spend.maxIndexUsd;
     const estUsd = (Math.ceil([...todo.values()].reduce((n, t) => n + t.chunk.text.length, 0) / 4) * 0.06) / 1e6;
-    if (estUsd > maxUsd) return { ...result, aborted: 'max_usd' };
+    if (estUsd > maxUsd) {
+      if (auto) noteIndexStop(contextRoot, { reason: 'max_usd', estUsd, asOf: priorMeta?.updatedAt ?? null }, home);
+      return { ...result, aborted: 'max_usd' };
+    }
 
     const startedAt = new Date().toISOString();
-    const meta = (strikes: number): Omit<VectorMeta, 'eligibleTotal' | 'coveredDocs' | 'updatedAt'> => ({
+    const meta = (strikes: number, lastChurn?: VectorMeta['lastChurn']): Omit<VectorMeta, 'eligibleTotal' | 'coveredDocs' | 'updatedAt'> => ({
       version: 1, profile, model: VOYAGE_4_PROFILE.docModel, dims: VOYAGE_4_PROFILE.dims,
       disclosureVersion: CLOUD_DISCLOSURE_VERSION, eligibleTypesHash: eligibleTypesHash(),
       spentUsd: (priorMeta?.spentUsd ?? 0) + result.spentUsd,
       lastAutoStartAt: auto ? startedAt : (priorMeta?.lastAutoStartAt ?? null),
       churnStrikes: strikes,
+      churnRule: CHURN_RULE,
+      ...(lastChurn ?? priorMeta?.lastChurn ? { lastChurn: lastChurn ?? priorMeta?.lastChurn } : {}),
     });
-    const strikesNow = o.trigger === 'explicit' && !evalActive ? 0 : (priorMeta?.churnStrikes ?? 0);
+    const baseline = priorMeta !== null && priorMeta.churnRule !== CHURN_RULE;
+    const strikesNow = (o.trigger === 'explicit' && !evalActive) || baseline ? 0 : (priorMeta?.churnStrikes ?? 0);
 
     const batchSize = Math.max(1, o.batchSize ?? 64);
     const checkpointEvery = Math.max(1, o.checkpointEvery ?? 10);
@@ -362,10 +381,18 @@ export async function buildCloudIndex(
       if (++batches % checkpointEvery === 0) persist(contextRoot, profile, s, vectors, prior, ever, false, meta(strikesNow));
     }
 
-    const churned = result.embedded > 0 && alreadyEmbeddedBefore / result.embedded > 0.5;
+    const churned = !baseline && result.embedded > 0 && alreadyEmbeddedBefore / result.embedded > 0.5;
     const strikes = churned ? strikesNow + 1 : result.embedded > 0 ? 0 : strikesNow;
-    const done = persist(contextRoot, profile, s, vectors, prior, ever, o.prune === true && result.aborted === null && failure === null, meta(strikes));
+    const lastChurn = result.embedded > 0 ? { embedded: result.embedded, reembedded: alreadyEmbeddedBefore, at: new Date().toISOString() } : undefined;
+    const done = persist(contextRoot, profile, s, vectors, prior, ever, o.prune === true && result.aborted === null && failure === null, meta(strikes, lastChurn));
     result.evicted = done.evicted;
+    if (!evalActive) {
+      // `persist` above stamped a fresh updatedAt even on a stopped build: the stop is as of the PRIOR landing.
+      const asOf = priorMeta?.updatedAt ?? null;
+      if (failure) noteIndexStop(contextRoot, { reason: 'failed', error: failure.kind, asOf }, home);
+      else if (result.aborted === null) clearIndexStop(contextRoot, home);
+      else if (result.aborted === 'max_usd') noteIndexStop(contextRoot, { reason: 'max_usd', estUsd, asOf }, home);
+    }
     if (failure) throw failure;
     return result;
   } finally {

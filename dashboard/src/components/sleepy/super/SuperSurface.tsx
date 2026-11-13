@@ -27,7 +27,9 @@ import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
 import { useTaskList } from '../../../hooks/useTasks';
-import { findAgent, useAgents, useOwnerInbox } from '../../../hooks/useAgents';
+import { findAgent, useAgents, useAnswerInbox, useOwnerInbox } from '../../../hooks/useAgents';
+import { INDEX_KEY, useCloudIndexStatus } from '../../../hooks/useCloudRecall';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAutomations } from '../../../hooks/useAutomations';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { superApprovals, showApprovalRow, agendaApprovals as agendaApprovalRows, showMemberApproval } from './superApprovals';
@@ -1049,7 +1051,19 @@ export function SuperSurface(props: SuperSurfaceProps) {
     }
     : undefined;
   // Task jobs waiting on the owner (M1, AI Team v2 C2): listed in Waiting on you, no session needed.
-  const taskRows = (useOwnerInbox().data ?? []).filter((r) => r.kind.startsWith('task-'));
+  const inboxRows = useOwnerInbox().data ?? [];
+  const taskRows = inboxRows.filter((r) => r.kind.startsWith('task-'));
+  // The cloud recall index stopped updating (owner 2026-11-12): never silent, his Update runs it.
+  const recallRows = member ? [] : inboxRows.filter((r) => r.kind === 'recall-index-stopped');
+  const answerInbox = useAnswerInbox();
+  // After his press the row stays until the build lands (the inbox poll then drops it): it says the
+  // update runs, or that it failed, never a button that seems to do nothing.
+  const [indexPressed, setIndexPressed] = useState(false);
+  const indexRun = useCloudIndexStatus(indexPressed && recallRows.length > 0).data;
+  const queryClient = useQueryClient();
+  const indexUpdate: 'idle' | 'running' | 'failed' = answerInbox.isPending || (indexPressed && indexRun?.state === 'building')
+    ? 'running'
+    : answerInbox.isError || (indexPressed && (indexRun?.state === 'error' || !!indexRun?.lastError)) ? 'failed' : 'idle';
   // What waits for his approval on this Mac (owner 2026-11-06): asked here, on the main Super's
   // screen, never only on the AI Team page. A member's own stage has its own band.
   const teamAgents = useAgents({ enabled: !member, pollEveryMs: 15_000 }).data;
@@ -1101,6 +1115,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onShowQuestion={showQuestion}
       onWriteAbout={writeAbout}
       taskRows={taskRows}
+      recallRows={recallRows}
+      indexUpdate={indexUpdate}
+      onUpdateIndex={remote ? undefined : (r) => { setIndexPressed(true); answerInbox.mutate({ id: r.id, action: 'update-index' }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: INDEX_KEY }) }); }}
       approvals={agendaApprovals}
       onShowApproval={showApproval}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}

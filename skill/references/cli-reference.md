@@ -469,13 +469,13 @@ Consent, key and index management for the opt-in cloud recall tiers; the default
 
 | Command | Description |
 |---|---|
-| `recall cloud status` | Tier, consent (`none` / `valid` / `re-consent-required`), consent surface, key presence and source, rerank model, index readiness and coverage, spend and caps, churn guard. Flags a dashboard-surface grant. `--json`. Safe for agents. |
+| `recall cloud status` | Tier, consent (`none` / `valid` / `re-consent-required`), consent surface, key presence and source, rerank model, index readiness and coverage, spend and caps, a stopped (stale) index and why, churn noticed (a report, never a pause). Flags a dashboard-surface grant. `--json`. Safe for agents. |
 | `recall cloud enable <tier>` | `<tier>` is `cloud-index` or `cloud`. Prints the disclosure, asks for confirmation (TTY only), records consent for this vault, sets recall mode to `hybrid`, and builds the index. Needs a recall key first. `--rerank <model>` (`rerank-2.5`, `rerank-2.5-lite` or `none`; `cloud` only, default `rerank-2.5-lite`; `cloud-index` never reranks), `--max-usd <n>` (spend cap for the first index build). |
 | `recall cloud disable` | Revoke consent for this vault; recall falls back to the local tier (recall mode stays `hybrid`). `--purge` also deletes the cloud index files. |
 | `recall cloud key set` | Store the recall key (0600) from a hidden prompt (TTY), or `--from-env <VAR>` (the NAME of an environment variable, never a value). Refused in a spawned session. |
 | `recall cloud key copy-voice` | Copy the Voice OpenRouter key into cloud recall after the confirm "Recall will spend your Voice OpenRouter credit". TTY only; refused in a spawned session. The Voice key is never used implicitly. |
 | `recall cloud key clear` | Remove the stored recall key; cloud tiers fall back to local until a key is set again. |
-| `recall cloud index` | Build or refresh this vault's cloud index (embeds only changed chunks, resumable). `--max-usd <n>` caps this build. Run by a person at a terminal it is an explicit build and clears the churn guard; otherwise the automatic guards apply (throttle, churn guard, rolling 24 h cap). `sleep done` spawns it detached with a hidden `--auto` flag. |
+| `recall cloud index` | Build or refresh this vault's cloud index (embeds only changed chunks, resumable). `--max-usd <n>` caps this build. Run by a person at a terminal it is an explicit build (past the rolling cap); otherwise the automatic guards apply (throttle, rolling 24 h cap). `sleep done` spawns it detached with a hidden `--auto` flag. |
 
 The key lives in `~/.dreamcontext/recall-cloud.json` (0600); `DREAMCONTEXT_RECALL_OPENROUTER_KEY` is the only env alternative. `OPENROUTER_API_KEY` and the Voice key are never read implicitly. Consent changes and key changes append to `~/.dreamcontext/recall-cloud-audit.log`.
 
