@@ -130,9 +130,16 @@ describe('C8: the learn paragraph is in every text an agent reads', () => {
     }
   });
 
-  for (const name of ['skill/SKILL.md', 'src/templates/CLAUDE.md', 'superBriefing()', 'CHAT_SURFACE_BRIEFING', 'AGENTS_MD_BODY', 'buildTurnLearningDirective', 'skill/references/knowledge-and-recall.md']) {
+  for (const name of ['skill/SKILL.md', 'src/templates/CLAUDE.md', 'AGENTS_MD_BODY', 'buildTurnLearningDirective', 'skill/references/knowledge-and-recall.md']) {
     it(`${name}: the receipt line is repeated verbatim`, () => {
       expect(TEXTS[name]!, name).toMatch(/receipt[\s\S]{0,40}verbatim|verbatim[\s\S]{0,40}receipt/);
+    });
+  }
+
+  // W2 L3 (C9): in the app's chat the receipt is the learned card, which shows his words and his Undo.
+  for (const name of ['superBriefing()', 'CHAT_SURFACE_BRIEFING', 'skill/SKILL.md', 'skill/references/knowledge-and-recall.md']) {
+    it(`${name}: in the app's chat the agent pastes the learned card`, () => {
+      expect(TEXTS[name]!, name).toMatch(/"type":"learned","id":"/);
     });
   }
 

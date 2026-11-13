@@ -11,7 +11,9 @@
  *    second confirm tap before its text goes as an owner turn; `task`/`knowledge`/`core` → their
  *    title line; `board`/`develop`/`file`/`reveal`/anything else → "<label> (Mac'te)";
  *  - `dream-view` `insight` → its title line (inline insight pictures are a follow-up);
- *    `agent-thread` → the member named; `automation` → "Onay bekliyor: <slug> · Mac'te".
+ *    `agent-thread` → the member named; `automation` → "Onay bekliyor: <slug> · Mac'te";
+ *    `learned` → the rule's own receipt line (`learn`'s line 2) with a "Geri al" button for an
+ *    active rule (learning loop C9); keeping or dropping a proposed one stays on the Mac.
  */
 import { escapeHtml, fenceTitle } from '../../lib/telegram/format.js';
 import { dreamHtmlPage, fenceBlocks } from '../../lib/telegram/render.js';
@@ -20,6 +22,9 @@ import { neutraliseHeaders } from '../../lib/telegram/inbound.js';
 import { pngFile, sendPictures, type Snapshotter } from './pictures.js';
 import { secretPending } from './present.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
+import { RULE_ID_RE, undoRule } from '../../lib/rules-store.js';
+import { ownerLine } from '../../cli/commands/learn.js';
+import { locateRule } from '../routes/learned.js';
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
@@ -76,6 +81,33 @@ export function viewLine(body: string): string | null {
   return null;
 }
 
+/** A `learned` view as its receipt line, plus whether its Undo button is offered (pure enough to test). */
+export function learnedMessage(contextRoot: string, body: string, home?: string): { line: string; id: string; undo: boolean } | null {
+  let v: Obj | null;
+  try { v = obj(JSON.parse(body)); } catch { return null; }
+  if (!v || v.type !== 'learned' || typeof v.id !== 'string' || !RULE_ID_RE.test(v.id)) return null;
+  const found = locateRule(contextRoot, v.id, home);
+  if (!found) return { line: 'Bu kural bu projede yok.', id: v.id, undo: false };
+  const active = found.view.status === 'active';
+  const line = ownerLine(found.view, found.replacedHeadline ?? undefined).replace(/ · yanlışsa "geri al" de$/, '');
+  return { line: found.view.status === 'proposed' ? `${line} · Mac'te tut ya da bırak` : line, id: v.id, undo: active };
+}
+
+/** The "Geri al" tap on a learned rule's Telegram line: his own chat, his tap. */
+export async function onLearnedButton(ab: ActiveBinding, data: Obj, home?: string): Promise<string> {
+  const id = typeof data.id === 'string' ? data.id : '';
+  if (!ab.contextRoot || !RULE_ID_RE.test(id)) return LINES.stale;
+  try {
+    const found = locateRule(ab.contextRoot, id, home);
+    if (!found) return 'Bu kural bu projede yok.';
+    const change = undoRule(found.ref, id, { by: 'owner', conversation: 'telegram' });
+    if (!change.ok) return change.reason.slice(0, 180);
+    return change.restored ? `↩ Geri alındı · eskisi geri geldi: "${change.restored.headline}"`.slice(0, 190) : '↩ Geri alındı';
+  } catch {
+    return 'Olmadı. Mac\'te deneyin.';
+  }
+}
+
 /** The answer's blocks, sent after its text. */
 export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text: string, sessionId: string, deps: BlocksDeps): Promise<void> {
   const pictures = !!(hub.telegramTurnOf(sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secretPending(sessionId);
@@ -105,6 +137,14 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
         await hub.send(ab, html, rows.length ? { reply_markup: { inline_keyboard: rows } } : {}).catch(() => {});
       }
     } else if (b.lang === 'dream-view') {
+      let learned: ReturnType<typeof learnedMessage> = null;
+      try { learned = ab.contextRoot ? learnedMessage(ab.contextRoot, b.body) : null; } catch { learned = null; }
+      if (learned?.undo) {
+        const sent = await hub.sendButtons(ab, escapeHtml(learned.line), [['Geri al']], { kind: 'confirm', singleUse: true }, { action: 'learned-undo', id: learned.id }).catch(() => null);
+        if (sent === null) await hub.reply(ab, learned.line);
+        continue;
+      }
+      if (learned) { await hub.reply(ab, learned.line); continue; }
       const line = viewLine(b.body);
       if (line) await hub.reply(ab, line);
     }

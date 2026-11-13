@@ -700,8 +700,8 @@ ${member ? '' : `- A text he approved that has not gone out yet (a message, a po
   is confirmed. Every handoff lists the files there by itself.
 `}- He states a standing rule or corrects how agents work, "remember" said or not:
   \`dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"\` in that turn
-  (\`--same <id>\` or \`--replaces <id>\` for one it has). Never stricter than his words. Repeat its
-  receipt's second line verbatim, here and on Telegram; never Claude's or Codex's own memory.
+  (\`--same <id>\` or \`--replaces <id>\` for one it has). Never stricter than his words. Paste its
+  receipt card (\`{"type":"learned","id":"<id>"}\`; Telegram shows it with Geri al); never Claude's or Codex's own memory.
 ${member ? '' : `- A global agent (this Mac's; \`agents list\` marks it) is an AI Team member too: \`super team ask\`
   it, never a child or a sub-agent.
 `}

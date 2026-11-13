@@ -174,6 +174,7 @@ import {
   handleAutomationsPhotoUpload,
   handleAutomationsSay,
 } from './routes/automations.js';
+import { handleLearnedDrop, handleLearnedGet, handleLearnedKeep, handleLearnedUndo } from './routes/learned.js';
 import {
   handleAgentsList,
   handleAgentsShow,
@@ -1080,6 +1081,11 @@ export function buildRouter(): Router {
   router.post('/api/automations/:slug/approve', handleAutomationsApprove);
   router.post('/api/automations/:slug/reject', handleAutomationsReject);
   router.get('/api/automations/:slug/card', handleAutomationsCard);
+  // The learned-rule card (learning loop C9): no list route and no page, only the card's own.
+  router.get('/api/learned/:id', handleLearnedGet);
+  router.post('/api/learned/:id/undo', handleLearnedUndo);
+  router.post('/api/learned/:id/keep', handleLearnedKeep);
+  router.post('/api/learned/:id/drop', handleLearnedDrop);
   router.post('/api/automations/:slug/enable', handleAutomationsEnable);
   router.post('/api/automations/:slug/disable', handleAutomationsDisable);
   // Distinct segment-count SHAPES from the bare `/:slug` routes above (see the

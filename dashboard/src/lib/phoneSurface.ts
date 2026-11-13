@@ -253,6 +253,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agents/:slug/permissions/remove',
   'POST /api/automations/dispatcher/install',
   'POST /api/automations/dispatcher/uninstall',
+  'POST /api/learned/:id/keep',
+  'POST /api/learned/:id/drop',
   'GET /api/app/machine',
   'GET /api/sleep-eval/labels',
   'POST /api/sleep-eval/labels',

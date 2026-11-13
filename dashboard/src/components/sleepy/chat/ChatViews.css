@@ -403,3 +403,55 @@
   padding: 0 var(--space-4);
 }
 .chat-autocard-foot .chat-autocard-note { padding: 0; flex: 1; min-width: 0; }
+
+/* ── learned-rule card ─────────────────────────────────────────────────────────────────────
+   The receipt of a rule he taught: the rule, where it holds, his own words, and his Undo.
+   Read from the rules store, never from the agent's block. */
+
+.chat-learnedcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+}
+.chat-learnedcard-state {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+}
+.chat-learnedcard-state[data-state='active'] { color: var(--color-success-ink); }
+.chat-learnedcard-state[data-state='proposed'] { color: var(--color-warning-ink); }
+.chat-learnedcard-scope,
+.chat-learnedcard-note,
+.chat-learnedcard-error {
+  margin: 0;
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-learnedcard-scope { color: var(--color-text-secondary); }
+.chat-learnedcard-note { color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+.chat-learnedcard-error { color: var(--color-error); }
+.chat-learnedcard-quote {
+  margin: 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--color-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.chat-learnedcard-date {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.chat-learnedcard-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+}

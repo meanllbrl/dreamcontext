@@ -171,7 +171,8 @@ export function ownerLine(v: RuleView, replacedHeadline?: string): string {
 }
 
 function receipt(_ctx: LearnContext, v: RuleView, opts: { replaced?: string; notice?: string | null } = {}): LearnOutcome {
-  // Line 2 is repeated verbatim on every surface: the app's `learned` card ships with W2.
+  // Line 2 is repeated verbatim on Telegram and in a terminal; in the app's chat the agent pastes the
+  // `learned` card instead (C9), which reads the record by the id on line 1.
   const lines = [`LEARNED ${v.id} ${v.status} ${v.scope}`, ownerLine(v, opts.replaced)];
   if (opts.notice) lines.push(opts.notice);
   return { code: 0, lines, id: v.id, status: v.status, scope: v.scope };
