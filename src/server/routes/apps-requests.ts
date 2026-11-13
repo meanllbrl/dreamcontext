@@ -25,8 +25,7 @@ import { LogoError } from '../../lib/apps/app-logo.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { PublishError } from '../../lib/apps/share/publish.js';
 import { InstallError } from '../../lib/apps/share/install.js';
-import { AppRequestError, appRequestByProposal, appRequestLogo, appRequestOpen, appRequestStatus, decideAppRequest, markAppRequestShown, openAppRequest, waitAppRequest, type CardSurface } from '../../lib/apps/share/app-request.js';
-import { ownerSaidHere } from '../../lib/apps/share/owner-said.js';
+import { AppRequestError, appRequestByProposal, appRequestLogo, appRequestStatus, decideAppRequest, markAppRequestShown, openAppRequest, waitAppRequest, type CardSurface } from '../../lib/apps/share/app-request.js';
 import { buildInstallPlan, buildLogoPlan, buildPublishPlan, buildUpdatePlan, type BuiltPlan } from '../../lib/apps/share/app-plan.js';
 import { realPath } from '../../lib/real-path.js';
 
@@ -109,19 +108,11 @@ export async function handleAppRequestCreate(req: IncomingMessage, res: ServerRe
         built = buildLogoPlan(ctx, rec, typeof b.logoPath === 'string' ? b.logoPath : '', { ownAppOnly: !!ownApp });
       }
     }
+    // Every install, publish, update and logo is his tap on its card (owner 2026-11-13: words he
+    // typed in the chat do not count; the card sits in that chat, one tap). Any `ownerSaid` field
+    // an older agent sends is ignored.
     const out = openAppRequest({ plan: built.plan, stillFresh: built.stillFresh, logo: built.logo ?? null, agentSessions });
-    // ek-3: an install he asked for in his own words, in THIS chat, is his yes. The server finds
-    // the words in its own ledger of what he typed here; the agent's claim alone decides nothing.
-    let ownerWords: 'approved' | 'not_found' | undefined;
-    let state = out.state;
-    if (action === 'install' && typeof b.ownerSaid === 'string' && b.ownerSaid.trim() && out.state === 'pending') {
-      const turn = ownerSaidHere({ home, projectRoot: realRoot(projectRootOf(contextRoot)), sessions: agentSessions, words: b.ownerSaid.slice(0, 500) });
-      const open = turn ? appRequestOpen(out.id) : null;
-      const decided = open ? await decideAppRequest({ id: out.id }, 'approve', { by: 'owner-words', hash: open.hash }) : null;
-      ownerWords = decided?.ok && decided.state === 'approved' ? 'approved' : 'not_found';
-      if (decided?.ok) state = decided.state;
-    }
-    sendJson(res, 200, { request: out.id, state, renewal: out.renewal, proposal: out.proposalId, ...(ownerWords ? { ownerWords } : {}) });
+    sendJson(res, 200, { request: out.id, state: out.state, renewal: out.renewal, proposal: out.proposalId });
   } catch (e) { fail(res, e); }
 }
 

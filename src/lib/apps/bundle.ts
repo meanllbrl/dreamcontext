@@ -27,7 +27,7 @@ import { homedir, tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { writeDefaultIcon } from './icon.js';
 import { decodePng, maskToTile } from './png.js';
-import { realPath } from '../real-path.js';
+import { keyPath, realPath } from '../real-path.js';
 
 export const APP_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$/;
@@ -44,7 +44,7 @@ const LSREGISTER =
 export function appHash(projectRoot: string, slug: string, installId?: string): string {
   let root = projectRoot;
   try {
-    root = realPath(projectRoot);
+    root = keyPath(projectRoot);
   } catch { /* a project that is gone still hashes */ }
   return createHash('sha256').update(installId ? `${root}\0${slug}\0${installId}` : `${root}\0${slug}`).digest('hex').slice(0, 16);
 }

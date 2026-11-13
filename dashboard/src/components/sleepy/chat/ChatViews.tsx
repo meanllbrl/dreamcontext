@@ -149,12 +149,12 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
     // report, so any other chat's agent reads the decision as the next message.
     case 'automation':
       return <AutomationApprovalCard spec={view} session={session} report={report} />;
-    // DERIVED: the receipt of a rule `dreamcontext learn` stored, his words and his Undo, read
-    // from the rules store by id (learning loop C9). His tap is reported into this conversation.
     // DERIVED: Onayla/Reddet on an app action an agent asked for, the notch's own decide route,
     // drawn in the chat that asked (app-kurulum-claude ek-4). A no is reported into this chat.
     case 'app-request':
       return <AppRequestCard spec={view} report={report} />;
+    // DERIVED: the receipt of a rule `dreamcontext learn` stored, his words and his Undo, read
+    // from the rules store by id (learning loop C9). His tap is reported into this conversation.
     case 'learned':
       return <LearnedCard spec={view} session={session} report={report} />;
     // Hoisted OUT of the transcript: a pin lives on the shelf docked to the composer, which is

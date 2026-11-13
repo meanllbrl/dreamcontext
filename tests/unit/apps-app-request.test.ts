@@ -23,7 +23,6 @@ import { clearSharedCache } from '../../src/lib/apps/share/shared.js';
 import { resetAppGrants } from '../../src/lib/apps/share/app-grant.js';
 import { RENEWAL_TITLE, findRequesterChat, resetAppRequests, setAppRequestDelivery } from '../../src/lib/apps/share/app-request.js';
 import { appendOwnerTurn, newOwnerTurnId } from '../../src/lib/owner-words.js';
-import { OWNER_SAID_WINDOW_MS, wordsIn } from '../../src/lib/apps/share/owner-said.js';
 import { listProposals, type ProposalView } from '../../src/lib/assistant/proposals.js';
 import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
 import { agentSessionId } from '../../src/lib/session-id.js';
@@ -496,63 +495,23 @@ describe('the [app onayı] line reaches the asking chat (delivery only)', () => 
   });
 });
 
-describe('his own words in the asking chat approve an install (app-kurulum-claude ek-3)', () => {
+describe('words he typed never approve an install: his tap on the card does (owner 2026-11-13, after review r1-r3)', () => {
   const TAB = 'tab-kurucu-super-1';
-  const said = (own: string, keys: string[] = [TAB], at = new Date()) => appendOwnerTurn({
-    at: at.toISOString(), turn: newOwnerTurnId(), vault: instProject, surface: 'super', via: 'composer', keys, session: keys[0] ?? '', own,
-  }, { home });
-  const askInstall = (ownerSaid: string, tab = TAB) => ask({ action: 'install', ref: 'yayinci/tahmin-app', ownerSaid }, { ...AGENT, 'x-dc-tab-session': tab }, instProject);
   async function shared() {
     const kur = host('kurucu');
     await kur.acceptInvitation((await kur.listInvitations())[0].id);
     process.env.DREAMCONTEXT_APPS_LOCAL_LOGIN = 'kurucu';
   }
 
-  it('words he typed in THIS chat: approved at once, no card, no chat line; the grant installs it', async () => {
+  it('even "Tahmin\'i kur" in this very chat, with an older agent\'s ownerSaid field: a pending card, no grant', async () => {
     await shared();
-    const sent: string[] = [];
-    setAppRequestDelivery(async (_c, text) => { sent.push(text); });
-    said("Funnel masası app'i benimle paylaşıldı, indir onu");
-    const r = await askInstall('indir onu');
-    expect(r.body).toMatchObject({ state: 'approved', ownerWords: 'approved' });
+    appendOwnerTurn({ at: new Date().toISOString(), turn: newOwnerTurnId(), vault: instProject, surface: 'super', via: 'composer', keys: [TAB], session: TAB, own: "Tahmin app'ini kur" }, { home });
+    const r = await ask({ action: 'install', ref: 'yayinci/tahmin-app', ownerSaid: "Tahmin app'ini kur" }, { ...AGENT, 'x-dc-tab-session': TAB }, instProject);
+    expect(r.body).toMatchObject({ state: 'pending' });
+    expect(r.body).not.toHaveProperty('ownerWords');
     expect(typeof r.body.proposal).toBe('string');
-    expect(listProposals().filter((p) => p.app)).toHaveLength(0);
-    const g = (await status(String(r.body.request))).body.grant as { id: string };
-    const go = await call(share.handleInstall, { body: { grant: g.id, ref: 'yayinci/tahmin-app' }, project: instProject });
-    expect(go.body.slug).toBe('tahmin');
-    await new Promise((res) => setImmediate(res));
-    expect(sent).toEqual([]);
-  });
-
-  it('a one-word yes counts ("onaylıyorum"); case and punctuation do not matter', async () => {
-    await shared();
-    said('Onaylıyorum!');
-    expect((await askInstall('onaylıyorum')).body).toMatchObject({ state: 'approved', ownerWords: 'approved' });
-  });
-
-  it("another chat's words, words he never typed, or words older than 30 minutes: the card, never an approval", async () => {
-    await shared();
-    said('kur bunu', ['tab-baska-sohbet']);
-    said('bunu kur', [TAB], new Date(Date.now() - OWNER_SAID_WINDOW_MS - 60_000));
-    for (const words of ['kur bunu', 'evet onaylıyorum', 'bunu kur']) {
-      resetAppRequests();
-      const r = await askInstall(words);
-      expect(r.body).toMatchObject({ state: 'pending', ownerWords: 'not_found' });
-      expect(card().verb).toBe('app-install');
-    }
-  });
-
-  it('no chat id on the request: nothing to match, the card', async () => {
-    await shared();
-    said('kur');
-    const r = await ask({ action: 'install', ref: 'yayinci/tahmin-app', ownerSaid: 'kur' }, AGENT, instProject);
-    expect(r.body).toMatchObject({ state: 'pending', ownerWords: 'not_found' });
-  });
-
-  it('words must stand as words: "kur" is not inside "kurulum" nor shorter than 3 letters', () => {
-    expect(wordsIn('kur', 'kurulum nasıl')).toBe(false);
-    expect(wordsIn('ok', 'ok')).toBe(false);
-    expect(wordsIn('indir onu', "app'i İNDİR, onu!")).toBe(true);
+    expect(card().verb).toBe('app-install');
+    expect((await status(String(r.body.request))).body.grant).toBeFalsy();
   });
 });
 

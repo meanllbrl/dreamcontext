@@ -61,7 +61,7 @@ export function splitValues(fields: ConfigField[], values: Record<string, string
   return { config, secrets };
 }
 
-export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: string; onClose: () => void; onDone: (slug: string) => void }) {
+export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: string; onClose: () => void; onDone: (slug: string, handedToClaude: boolean) => void }) {
   const api = useApi();
   const { bus, vault } = useVault();
   const t = useShareT();
@@ -103,10 +103,15 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
     try {
       const out = await api.ownerPost<{ slug: string }>('/apps/install', { previewId: pv.previewId, sha: pv.sha, ...splitValues(pv.config, values) });
       const missing = pv.config.filter((f) => f.required && !values[f.key]).map((f) => f.label);
-      onDone(out.slug);
+      // The chat that gets the settings must be the thing on screen: the app's page opens only
+      // when nothing was handed over (review r1: it covered the chat). A prompt that cannot be
+      // built (a bad slug) leaves the install done, with its page.
+      let prompt: string | null = null;
       if (toClaude && pv.config.length) {
-        askAgent(bus, settingsPrompt({ slug: out.slug, name: pv.name, about: pv.store?.readme.about ?? null, fields: pv.config, missing }), { fallback: { vault: vault ?? '', title: pv.name } });
+        try { prompt = settingsPrompt({ slug: out.slug, name: pv.name, about: pv.store?.readme.about ?? null, fields: pv.config, missing }); } catch { prompt = null; }
       }
+      onDone(out.slug, prompt !== null);
+      if (prompt !== null) askAgent(bus, prompt, { fallback: { vault: vault ?? '', title: pv.name } });
     } catch (e) { setErr(errText(e)); } finally { setBusy(null); }
   };
   const onInstall = () => { void install(true); };

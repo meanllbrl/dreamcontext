@@ -4,6 +4,7 @@ import { useApi } from '../../../context/VaultContext';
 import { CardHeader } from './molecules';
 import { APP_FAILURE, decide, type AppCard, type DecideOutcome } from '../../assistant/ProposalList';
 import type { AppRequestViewSpec } from '../../../lib/chatViewSpec';
+import { phoneAllows } from '../../../lib/phoneSurface';
 
 type RequestState = 'pending' | 'approved' | 'rejected' | 'expired' | 'stale' | 'replaced' | 'used';
 
@@ -34,7 +35,11 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
   const api = useApi();
   const queryClient = useQueryClient();
   const key = ['apps', 'request-card', spec.id];
+  // The card's routes are laptop-only: on the phone it is never read, and says where it waits
+  // (review r1: "this card is gone" there was false while it waited on the Mac).
+  const here = phoneAllows('GET', `/api/apps/requests/card/${encodeURIComponent(spec.id)}`);
   const q = useQuery({
+    enabled: here,
     queryKey: key,
     queryFn: () => api.get<{ state: RequestState; card: AppCard }>(`/apps/requests/card/${encodeURIComponent(spec.id)}`),
     retry: false,
@@ -67,6 +72,14 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
     setFailure(outcome);
   };
 
+  if (!here) {
+    return (
+      <div className="chat-viewcard chat-autocard" data-view-kind="app-request" data-state="elsewhere">
+        <CardHeader glyph="✋" title="Onay kartı" />
+        <p className="chat-autocard-note">Bu onay Mac'te bekliyor: Mac'teki bu sohbette ya da Telegram'da Onayla'ya basabilirsin.</p>
+      </div>
+    );
+  }
   if (q.isLoading) return <div className="chat-viewcard chat-autocard" data-view-kind="app-request"><CardHeader glyph="✋" title="Onay kartı yükleniyor" /></div>;
   if (q.isError || !q.data) {
     return (
@@ -90,9 +103,9 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
       {image && <img className="chat-appreq-image" src={image} alt={`${card.appName} için yeni logo`} />}
       <dl className="chat-autocard-facts">
         {card.lines.map((l, i) => (
-          <div key={i} style={{ display: 'contents' }} data-tone={l.tone}>
+          <div key={i} className="chat-appreq-line" data-tone={l.tone}>
             <dt>{l.label}</dt>
-            <dd className={l.tone ? `chat-appreq-${l.tone}` : undefined}>{l.value}</dd>
+            <dd>{l.value}</dd>
           </div>
         ))}
       </dl>

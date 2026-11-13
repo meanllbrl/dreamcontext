@@ -98,6 +98,8 @@ interface AppRequest {
   /** Where the card was really DRAWN, as each surface reported it (owner 2026-11-13, ek-4): the
    *  agent says "the card is on your screen" only from this, never from where it might be. */
   shown: Set<CardSurface>;
+  /** The card as drawn (Telegram gets it when the request is announced). */
+  view: () => AppCardView;
 }
 
 /** A surface that draws an app request card: the requester's chat, the notch, Telegram. */
@@ -258,7 +260,7 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
   const req: AppRequest = {
     id, proposalId: pv.id, plan, hash, renewHash, state: 'pending', createdAt: now, grant: null, spent: false,
     agentSessions: input.agentSessions ?? [], logo: input.logo ?? null, stillFresh: input.stillFresh,
-    shown: new Set(),
+    shown: new Set(), view,
   };
   requests.set(id, req);
   byProposal.set(pv.id, id);
@@ -266,8 +268,15 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
     // Onayla and Reddet settle the request first; only the clock or a quit lands here pending.
     if (req.state === 'pending' && d.outcome === 'declined' && (d.reason === 'timeout' || d.reason === 'shutdown')) { req.state = 'expired'; wake(id); }
   });
-  for (const fn of [...openedListeners]) { try { fn({ id, vault: plan.vault, view: view(), hash, logo: req.logo }); } catch { /* a listener's failure is its own */ } }
+  announceAppRequest(id);
   return { id, state: 'pending', renewal, proposalId: pv.id };
+}
+
+/** Tell the "opened" listeners (Telegram) about a request still pending; a no-op for any other state. */
+function announceAppRequest(id: string): void {
+  const r = requests.get(id);
+  if (!r || r.state !== 'pending') return;
+  for (const fn of [...openedListeners]) { try { fn({ id, vault: r.plan.vault, view: r.view(), hash: r.hash, logo: r.logo }); } catch { /* a listener's failure is its own */ } }
 }
 
 export type DecideResult =
@@ -278,7 +287,7 @@ export type DecideResult =
  * The owner decides (notch with the owner key, or a paired Telegram tap): the ONLY minting place.
  * The hash must be the card's; the plan's bound fact is rebuilt first (stale: no grant).
  */
-export async function decideAppRequest(ref: { id?: string; proposalId?: string }, action: 'approve' | 'reject', opts: { by: 'owner-page' | 'telegram' | 'owner-words'; hash: string; now?: number }): Promise<DecideResult> {
+export async function decideAppRequest(ref: { id?: string; proposalId?: string }, action: 'approve' | 'reject', opts: { by: 'owner-page' | 'telegram'; hash: string; now?: number }): Promise<DecideResult> {
   const id = ref.id ?? (ref.proposalId ? byProposal.get(ref.proposalId) : undefined);
   const r = id ? requests.get(id) : undefined;
   if (!r) return { ok: false, error: 'unknown' };
@@ -311,8 +320,7 @@ export async function decideAppRequest(ref: { id?: string; proposalId?: string }
   r.grant = { id: g.id, expiresAt: g.expiresAt };
   closeProposal(r.proposalId, { outcome: 'approved', text: r.plan.title });
   wake(r.id);
-  // His own words in the asking chat: the command that asked spends it at once; no chat line.
-  if (opts.by !== 'owner-words') void deliverApproval(r).catch(() => {});
+  void deliverApproval(r).catch(() => {});
   return { ok: true, state: 'approved' };
 }
 

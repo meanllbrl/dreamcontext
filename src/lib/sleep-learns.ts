@@ -24,7 +24,7 @@ import {
   deriveAll, eventsOf, personalStoreRef, projectStoreRef, readStore, supersedeFlags, weeklySayings,
   RulesStoreError, type RuleRecord, type RuleView,
 } from './rules-store.js';
-import { realPath } from './real-path.js';
+import { keyPath } from './real-path.js';
 
 // ─── Tool errors ────────────────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ export const TOOL_ERROR_MAX_AGE_DAYS = 45;
 /** The tally's file: machine-local, one per vault, never inside a synced folder. */
 export function toolErrorTallyFile(contextRoot: string, home: string = homedir()): string {
   let real = contextRoot;
-  try { real = realPath(contextRoot); } catch { /* not there yet */ }
+  try { real = keyPath(contextRoot); } catch { /* not there yet */ }
   const tag = createHash('sha256').update(real).digest('hex').slice(0, 16);
   return join(home, '.dreamcontext', 'sleep-tool-errors', `${tag}.json`);
 }

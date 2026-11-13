@@ -28,7 +28,7 @@ import {
   type BotBinding, type ForwardFile, type JournalEntry, type ManagedHistoryFile, type ManagedHistoryRow,
   type PollState, type TelegramScope, type TelegramTarget, type TurnsFile,
 } from './contract.js';
-import { realPath } from '../real-path.js';
+import { keyPath, realPath } from '../real-path.js';
 
 export type ConfigFile = 'bot.json' | 'poll.json' | 'turns.json' | 'forward.json';
 
@@ -40,7 +40,7 @@ export function telegramBase(home: string = homedir()): string {
 /** The scope of a project: sha256 of its context root's realpath, first 16 hex. */
 export function scopeOfContextRoot(contextRoot: string): TelegramScope {
   let real = contextRoot;
-  try { real = realPath(contextRoot); } catch { /* not there yet: the literal path */ }
+  try { real = keyPath(contextRoot); } catch { /* not there yet: the literal path */ }
   return createHash('sha256').update(real).digest('hex').slice(0, 16);
 }
 

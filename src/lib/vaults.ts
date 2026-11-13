@@ -125,7 +125,9 @@ export function addVault(name: string, dirPath: string, home?: string): Vault {
   }
 
   // Duplicate path check (compare resolved paths)
-  if (existing.some((v) => resolve(v.path) === resolved)) {
+  const realOf = (x: string): string => { try { return realPath(x); } catch { return resolve(x); } };
+  const realNew = realOf(resolved);
+  if (existing.some((v) => resolve(v.path) === resolved || realOf(v.path) === realNew)) {
     throw new VaultError(`Path is already registered: ${resolved}`);
   }
 

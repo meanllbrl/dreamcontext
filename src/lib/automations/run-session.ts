@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, sta
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { findTranscriptBySessionId } from '../transcript-locate.js';
-import { realPath } from '../real-path.js';
+import { keyPath } from '../real-path.js';
 
 /**
  * The Claude session of a run while it runs. The runner learns it only from the JSON printed at
@@ -38,7 +38,7 @@ function dir(home: string): string {
 
 function realRoot(contextRoot: string): string {
   const root = dirname(contextRoot);
-  try { return realPath(root); } catch { return root; }
+  try { return keyPath(root); } catch { return root; }
 }
 
 function runFile(contextRoot: string, slug: string, runId: string, home: string): string {

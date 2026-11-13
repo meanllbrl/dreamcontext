@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
-import { realPath } from './real-path.js';
+import { keyPath } from './real-path.js';
 
 /**
  * M2, the safe reader of synced or vault content. A synced file is written by whoever pushed it,
@@ -23,10 +23,11 @@ export function safeVaultPath(root: string, rel: string): string | null {
   const abs = join(root, clean);
   try {
     if (!lstatSync(abs).isFile()) return null;
-    const realRoot = realPath(root);
-    if (!inside(realRoot, realPath(abs))) return null;
+    const realRoot = keyPath(root);
+    if (!inside(realRoot, keyPath(abs))) return null;
     // A symlinked directory on the way in also resolves outside or elsewhere: compare the walk.
-    if (relative(realRoot, realPath(abs)) !== clean.split(sep).join(sep)) return null;
+    // keyPath keeps the case it was given, so this compares the walk, not the spelling (review r1).
+    if (relative(realRoot, keyPath(abs)) !== clean.split(sep).join(sep)) return null;
     return abs;
   } catch {
     return null;

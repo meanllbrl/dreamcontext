@@ -1811,6 +1811,7 @@ export function Notch() {
             <ProposalList
               failure={proposalFailure}
               proposals={proposals}
+              visible={drawnOpen && tab === 'now' && !convosOpen}
               keyed={!glance.some((c) => c.ask?.kind === 'permission')}
               onDecided={(id, notice) => { rawGate.forget('proposals'); setProposals((p) => p.filter((x) => x.id !== id)); if (notice) setAppNotice(notice); }}
             />

@@ -1,6 +1,6 @@
 /**
  * Shared-app verbs of `dreamcontext apps` (paylasilan-app-ler plan r3). Every tool (Claude, Codex,
- * Antigravity) calls these same verbs. An install runs on the owner's yes in the chat (his card, or his own words there: `apps install --ask`). What else is the OWNER's to decide (an update,
+ * Antigravity) calls these same verbs. An install runs on the owner's tap on its card, in the chat that asks (`apps install --ask`). What else is the OWNER's to decide (an update,
  * making a copy one's own, removing) is a click on the Apps page: the CLI shows the preview and
  * says where the click is. A publish is the owner's Publish click too, but Claude does it: the
  * click hands it a one-hour grant for that app, and `publish --go --grant` spends it.
@@ -132,20 +132,17 @@ export function requestCardBlock(proposalId: string): string {
   return ['```dream-view', JSON.stringify({ type: 'app-request', id: proposalId }), '```'].join('\n');
 }
 
-interface Opened { request: string; state: string; renewal?: boolean; proposal?: string; ownerWords?: 'approved' | 'not_found' }
+interface Opened { request: string; state: string; renewal?: boolean; proposal?: string }
 
-/** Opens a request card for the owner (or, with his own words in this chat, approves it at once). */
+/** Opens a request card for the owner (or answers with a grant he already gave for exactly this). */
 async function openRequest(p: ProjectRef, body: Record<string, unknown>, json: boolean | undefined): Promise<Opened> {
   const out = await appsApi(p, 'POST', '/api/apps/requests', body, { timeoutMs: 600_000, headers: requestHeaders() });
   const o: Opened = {
     request: String(out.request ?? ''), state: String(out.state ?? ''), renewal: out.renewal === true,
     ...(typeof out.proposal === 'string' ? { proposal: out.proposal } : {}),
-    ...(out.ownerWords === 'approved' || out.ownerWords === 'not_found' ? { ownerWords: out.ownerWords } : {}),
   };
   if (json) return o;
-  if (o.ownerWords === 'approved') info('The owner said yes in this chat, in his own words: approved, no card.');
-  else if (o.state === 'approved') info('The owner already approved exactly this, and the grant is still good.');
-  else if (o.ownerWords === 'not_found') info('Those words are not in a message the owner typed in this chat in the last 30 minutes, so he answers the card instead.');
+  if (o.state === 'approved') info('The owner already approved exactly this, and the grant is still good.');
   return o;
 }
 
@@ -345,16 +342,15 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
 
   apps
     .command('install <repo>')
-    .description('Install an app from a repo (owner/repo or its link): --ask installs it once the owner says yes (his card in this chat, or his own words with --owner-said); no flag = only the preview')
+    .description('Install an app from a repo (owner/repo or its link): --ask installs it once the owner taps Onayla on its card in this chat; no flag = only the preview')
     .option('--preview', 'Only the preview (the default)')
     .option('--ask', 'Install it with the owner\'s yes: a card he answers in this chat with one tap, then the install runs right here')
-    .option('--owner-said <words>', 'With --ask: his exact words in THIS chat that said yes ("kur", "onaylıyorum"); the server checks he typed them here, then no card is needed')
     .option('--set <key=value...>', 'With --ask: settings to fill at install (never keys)')
     .option('--wait <seconds>', 'Not used by --ask any more (it never blocks): wait with `apps grant <request> --wait 110` after your reply')
     .option('--go', 'Install now (needs --grant)')
     .option('--grant <id>', 'The one-time grant from the owner\'s Onayla')
     .option('--json', 'JSON output')
-    .action(async (repo: string, opts: { ask?: boolean; ownerSaid?: string; set?: string[]; wait?: string; go?: boolean; grant?: string; json?: boolean }) => {
+    .action(async (repo: string, opts: { ask?: boolean; set?: string[]; wait?: string; go?: boolean; grant?: string; json?: boolean }) => {
       try {
         const p = h.project();
         const spend = async (grant: string) => {
@@ -364,7 +360,6 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
           success(`Installed as ${slug}${out.renamed ? ' (renamed: that name was taken)' : ''}.`);
           info(installedNext(slug));
         };
-        if (opts.ownerSaid !== undefined && !opts.ask) throw new AppsClientError('owner_said_needs_ask', '--owner-said goes with --ask.');
         if (opts.ask) {
           const config: Record<string, string> = {};
           for (const kv of opts.set ?? []) {
@@ -372,9 +367,8 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
             if (i < 1) throw new AppsClientError('bad_set', `"${kv}" is not key=value`);
             config[kv.slice(0, i)] = kv.slice(i + 1);
           }
-          const said = (opts.ownerSaid ?? '').trim();
-          const o = await openRequest(p, { action: 'install', ref: repo, config, ...(said ? { ownerSaid: said } : {}) }, opts.json);
-          // Approved (his words, his tap, or a grant still good): the install runs here, now.
+          const o = await openRequest(p, { action: 'install', ref: repo, config }, opts.json);
+          // Approved (a grant still good for exactly this): the install runs here, now.
           if (o.state !== 'approved') { await sayPending(p, o, opts.json); return; }
           const a = await waitForOwner(p, o.request, 0, opts.json, true);
           if (a.state === 'approved' && a.grant?.id) await spend(a.grant.id);
@@ -396,7 +390,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         if (pv.facts.urls.length) console.log(`  addresses in its code: ${pv.facts.urls.slice(0, 10).join(', ')}`);
         if (pv.config.length) console.log(`  settings: ${pv.config.map((c) => `${c.key}${c.type === 'secret' ? ' (key)' : ''}`).join(', ')}`);
         if (!pv.gate.ok) error(`it cannot be installed: ${pv.gate.blocks.map((b) => `${b.file} (${b.label})`).join('; ')}`);
-        info(`Install it: \`dreamcontext apps install ${repo} --ask\` (add --owner-said \"<his words>\" when he already said yes in this chat).`);
+        info(`Install it: \`dreamcontext apps install ${repo} --ask\` (his card, in this chat, one tap).`);
       } catch (e) { h.fail(e); }
     });
 

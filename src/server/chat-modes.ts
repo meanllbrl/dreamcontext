@@ -638,10 +638,9 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   names to that list, never refuse it; a tool not ready: tell him the one step.
 - An app on this Mac may already answer: \`dreamcontext apps tools\`, then \`apps do <app> <tool>\` for one that
   reads. ${member ? 'One that changes runs only if your approved member file names it; else he runs it in the app.' : 'One that changes: `--confirm` after his yes, only in a turn he opened. Your children ask you.'}
-- He wants an app installed: \`dreamcontext apps install <owner/repo> --ask\` at once, one step, no preview or trial
-  runs; his own words here already asking or saying yes go in \`--owner-said "<his words>"\` and it installs. Else paste
-  the card it prints; say where a card is only from its \`Shown:\` line. Never "your yes is not enough". Then fill
-  its settings yourself (\`apps config <slug> --suggest\`), asking him only what you cannot find.
+- He wants an app installed: \`dreamcontext apps install <owner/repo> --ask\` at once, no preview or trial runs;
+  paste its card (one tap for him, even after he said yes); where it is comes only from \`Shown:\`. Then fill its
+  settings yourself (\`apps config <slug> --suggest\`), asking only what you cannot find.
 - Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets
   it): haiku \`low\` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,
   even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,

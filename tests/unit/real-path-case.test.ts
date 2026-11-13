@@ -75,3 +75,27 @@ describe('a registered project is found however its folder is spelled', () => {
     expect(ref.vault).toBe('kitup');
   });
 });
+
+describe('stored state keeps its key across the realPath change (review r1)', () => {
+  it('a per-project key hashes the path as given, so a vault registered under another spelling keeps its data', async () => {
+    if (!caseInsensitiveDisk()) return;
+    const { real, lower } = project();
+    const { keyPath } = await import('../../src/lib/real-path.js');
+    const { projectKey } = await import('../../src/lib/local-store.js');
+    const { appHash } = await import('../../src/lib/apps/bundle.js');
+    const { realpathSync } = await import('node:fs');
+    expect(keyPath(lower)).toBe(realpathSync(lower));
+    expect(keyPath(lower)).not.toBe(realPath(lower));
+    const { createHash } = await import('node:crypto');
+    expect(projectKey(lower)).toBe(createHash('sha256').update(realpathSync(lower), 'utf8').digest('hex').slice(0, 16));
+    expect(appHash(lower, 'tahmin')).not.toBe(appHash(real, 'tahmin'));
+  });
+
+  it('the same folder under two spellings is registered once', async () => {
+    if (!caseInsensitiveDisk()) return;
+    const { real, lower } = project();
+    const { addVault } = await import('../../src/lib/vaults.js');
+    addVault('ilk', real, home);
+    expect(() => addVault('ikinci', lower, home)).toThrow(/already registered/);
+  });
+});

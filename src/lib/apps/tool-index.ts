@@ -65,7 +65,7 @@ function appLine(app: NotInstalledApp): string {
   if (app.sharedWithMe === true) {
     // The repo comes from the shared catalog: only a plain owner/name goes on a command line.
     const install = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(app.repo)
-      ? `\`dreamcontext apps install ${app.repo} --ask\` (add --owner-said "<his words>" when he already asked for it in this chat; else it prints his one-tap card for your reply)`
+      ? `\`dreamcontext apps install ${app.repo} --ask\` (it prints his one-tap card for your reply)`
       : 'an app-install button';
     return `→ The project has the app ${name}, not installed on this Mac. Say: without it this takes longer or is approximate; offer to install it, or a Lab insight. When he wants it: ${install}. No preview first, no other way.`;
   }

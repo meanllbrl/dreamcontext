@@ -28,7 +28,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { withFileLockSync } from './file-lock.js';
 import { readPeople } from './people-store.js';
 import { resolveActivePerson } from './people-resolve.js';
-import { realPath } from './real-path.js';
+import { keyPath, realPath } from './real-path.js';
 
 // ─── Shape ──────────────────────────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ export function personalStoreRef(home: string = homedir()): StoreRef {
 
 export function projectStoreRef(contextRoot: string, home: string = homedir()): StoreRef {
   let real = contextRoot;
-  try { real = realPath(contextRoot); } catch { /* not there yet */ }
+  try { real = keyPath(contextRoot); } catch { /* not there yet */ }
   const tag = createHash('sha256').update(real).digest('hex').slice(0, 16);
   return {
     scope: 'project',

@@ -168,7 +168,10 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
     setSettingUp(true); setErr(null);
     try {
       const r = await api.get<{ fields: Array<{ key: string; type: string; label: string; required: boolean; help?: string; find?: string }> }>(`/apps/${encodeURIComponent(app.slug)}/config`);
-      askAgent(bus, settingsPrompt({ slug: app.slug, name: app.name, about: s?.about ?? null, fields: r.fields, missing: app.configMissingLabels ?? app.configMissing ?? [] }), { fallback: { vault, title: app.name } });
+      const prompt = settingsPrompt({ slug: app.slug, name: app.name, about: s?.about ?? null, fields: r.fields, missing: app.configMissingLabels ?? app.configMissing ?? [] });
+      // The chat must be on screen, as every other ask on this page does (review r1).
+      onClose();
+      askAgent(bus, prompt, { fallback: { vault, title: app.name } });
     } catch (e) { setErr((e as Error).message); } finally { setSettingUp(false); }
   };
   // Its error stands under Manage, beside the switch the owner just used.
@@ -275,7 +278,7 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
           // The app waits for its settings: say which, and hand them to Claude (app-kurulum-claude).
           <div className="app-card__note app-card__note--warn app-card__mcp">
             <span>{app.configMissingLabels?.length ? ts('share.card.settingsWaiting', { fields: app.configMissingLabels.join(', ') }) : t('share.card.settingsNeeded')}</span>
-            {canLaunch && <button type="button" className="app-card__launch" disabled={settingUp} onClick={() => void settingsToClaude()}>{t('share.card.handToClaude')}</button>}
+            {canLaunch && <button type="button" className="app-card__stop" disabled={settingUp} onClick={() => void settingsToClaude()}>{t('share.card.handToClaude')}</button>}
             {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
           </div>
         )}

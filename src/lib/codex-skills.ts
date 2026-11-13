@@ -24,7 +24,7 @@ import { findPackageDir } from './catalog.js';
 import { codexConfigArg, tomlString } from './t3-bridge/launch.js';
 import { SAFE_SKILL_NAME, copyToolSkills, skillName, type SkillsResult } from './tool-skills.js';
 import { toolText } from './tool-text.js';
-import { realPath } from './real-path.js';
+import { keyPath } from './real-path.js';
 
 export const codexToolDir = (home: string = homedir()): string => join(home, '.dreamcontext', 'codex');
 
@@ -65,7 +65,7 @@ const isRealFile = (p: string): boolean => {
 /** One folder per project, named by its real path. */
 function projectKey(cwd: string): string {
   let real = cwd;
-  try { real = realPath(cwd); } catch { /* the path as given */ }
+  try { real = keyPath(cwd); } catch { /* the path as given */ }
   return createHash('sha256').update(real).digest('hex').slice(0, 16);
 }
 

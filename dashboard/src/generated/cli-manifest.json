@@ -290,12 +290,11 @@
     },
     {
       "path": "apps install",
-      "desc": "Install an app from a repo (owner/repo or its link): --ask installs it once the owner says yes (his card in this chat, or his own words with --owner-said); no flag = only the preview",
+      "desc": "Install an app from a repo (owner/repo or its link): --ask installs it once the owner taps Onayla on its card in this chat; no flag = only the preview",
       "args": [
         "<repo>"
       ],
       "valueFlags": [
-        "--owner-said",
         "--set",
         "--wait",
         "--grant"

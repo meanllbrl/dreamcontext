@@ -24,3 +24,14 @@ export function realPath(p: string): string {
     return realpathSync(p);
   }
 }
+
+/**
+ * A path that NAMES stored state (a hash key, a folder name, a stored root): symlinks resolved,
+ * case kept as given, exactly as before {@link realPath} existed. Every per-project store on this
+ * Mac was keyed this way; switching a key to the on-disk case would orphan it on upgrade for any
+ * project registered under another spelling (review r1, app-kurulum-claude): a quiet Telegram
+ * bot, missing MCP servers, a new app data folder. Compare with {@link realPath}; key with this.
+ */
+export function keyPath(p: string): string {
+  return realpathSync(p);
+}

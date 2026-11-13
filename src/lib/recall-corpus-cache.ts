@@ -14,7 +14,7 @@ import {
   type CorpusSourceMemo,
   type CorpusType,
 } from './recall.js';
-import { realPath } from './real-path.js';
+import { keyPath } from './real-path.js';
 
 /**
  * Disk cache of the BUILT corpus, so the per-prompt recall hook (a fresh process every
@@ -77,7 +77,7 @@ export interface CachedCorpusOptions extends BuildCorpusOptions {
 export function peerCacheDir(peerRoot: string, home: string = homedir()): string {
   let real: string;
   try {
-    real = realPath(peerRoot);
+    real = keyPath(peerRoot);
   } catch {
     real = resolve(peerRoot);
   }
