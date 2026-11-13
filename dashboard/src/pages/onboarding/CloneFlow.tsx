@@ -14,11 +14,6 @@ import {
 import { isGitHubReconnectError, useAuthStatus } from '../../hooks/useBrainStatus';
 import { GitHubReconnect } from '../../components/brain/GitHubReconnect';
 import { RequestError } from '../../api/client';
-
-/** A GitHub 403/429 from the repo search: the server's sentence names the real reason (SSO, org approval, no access, rate limit). */
-function githubRefusal(e: unknown): string | null {
-  return e instanceof RequestError && (e.status === 403 || e.status === 429) && (e.code === 'forbidden' || e.code === 'rate_limited') ? e.message : null;
-}
 import { GitHubLogin } from '../../components/brain/GitHubLogin';
 import { openFolderPicker, pickerError } from '../../lib/desktop';
 
@@ -48,6 +43,12 @@ const POLL_MS = 700;
  * the destination is probed first so an existing folder gets "open it" / "use it" /
  * "choose another" instead of a dead-end error, and leaving the flow mid-clone cancels it.
  */
+
+/** A GitHub 403/429 from the repo search: the server's sentence names the real reason (SSO, org approval, no access, rate limit). */
+function githubRefusal(e: unknown): string | null {
+  return e instanceof RequestError && (e.status === 403 || e.status === 429) && (e.code === 'forbidden' || e.code === 'rate_limited') ? e.message : null;
+}
+
 export function CloneFlow({ defaultParent, onBack, onExistingProject, onBareFolder }: Props) {
   const { t } = useI18n();
   const { data: authStatus, isLoading: authLoading } = useAuthStatus();

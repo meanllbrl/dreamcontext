@@ -222,7 +222,7 @@ export interface GitHubErrorPayload {
 const GITHUB_ERROR_MESSAGES: Record<GitHubErrorKind, string> = {
   auth: `GitHub no longer accepts your sign-in. Reconnect in ${RECONNECT_PATH_EN}.`,
   forbidden: 'GitHub accepted your sign-in but refused this request.',
-  rate_limited: 'GitHub is limiting requests right now. It retries on its own in a few minutes.',
+  rate_limited: 'GitHub is limiting requests right now. Wait a few minutes, then try again.',
   helper: 'dreamcontext could not hand your GitHub sign-in to git on this Mac. Retry; if it repeats, restart the app.',
   no_token: 'Sign in with GitHub in Settings → GitHub.',
   desktop_only: 'GitHub is managed in the dreamcontext app.',
@@ -246,7 +246,7 @@ export function githubErrorPayload(
 export function githubForbiddenReason(detail?: string): string {
   const d = detail ?? '';
   if (/SAML|single sign-on|\bSSO\b/i.test(d)) {
-    return 'GitHub refused: this organization requires single sign-on. Authorize dreamcontext for it on GitHub (your Settings → Applications → dreamcontext → Grant), then try again.';
+    return 'GitHub refused: this organization requires single sign-on. Authorize your GitHub sign-in (or token) for the organization on GitHub, then try again.';
   }
   if (/OAuth App access restrictions|third-party application access|OAuth App.*restrict/i.test(d)) {
     return "GitHub refused: this organization has not approved the dreamcontext app. An owner of the organization approves it once on GitHub.";

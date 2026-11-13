@@ -185,11 +185,6 @@ async function runJob(contextRoot: string, job: SyncJobState, direction: SyncDir
   }
 }
 
-/**
- * After a fresh GitHub sign-in: drain the task queue of every registered project whose task
- * backend is GitHub and has one, one project at a time. Each run takes the ledger's own
- * cross-process lock, so a sleep syncing at the same moment waits instead of doubling.
- */
 /** How long the drain waits on one project's sync before calling it stuck and moving on. */
 export const DRAIN_JOB_LIMIT_MS = 10 * 60_000;
 
@@ -207,6 +202,8 @@ export interface DrainOutcome { vault: string; outcome: 'done' | 'stuck' | 'fail
  * After a sign-in: drain every GitHub task queue, one project at a time. Each sync gets
  * DRAIN_JOB_LIMIT_MS; past it the project is marked stuck (its sync keeps running, its queue
  * stays visible), one line goes to the log, and the next project's drain starts.
+ * Each run takes the ledger's own cross-process lock, so a sleep syncing at the same moment
+ * waits instead of doubling.
  */
 export async function drainGitHubTaskQueues(
   home?: string,
