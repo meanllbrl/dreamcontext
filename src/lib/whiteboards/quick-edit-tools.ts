@@ -14,7 +14,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { codexRunArgs } from '../t3-bridge/headless-envelope.js';
-import { QUICK_EDIT_SCHEMA, QUICK_MODEL } from './quick-edit.js';
+import { QUICK_EDIT_SCHEMA, QUICK_MEMORY_RULES, QUICK_MEMORY_RULES_NO_SEARCH, QUICK_MODEL } from './quick-edit.js';
 import type { QuickAttachment } from './quick-attachments.js';
 
 export type QuickTool = 'claude' | 'codex' | 'antigravity';
@@ -55,12 +55,13 @@ export function pickLabel(p: QuickPick): string {
  */
 export function quickToolPrompt(system: string, message: string, atts: readonly QuickAttachment[], cwd: string, nonce: string): string {
   const parts = [
-    system,
+    // This run cannot search: its system prompt carries the memory rules without the search.
+    system.replace(QUICK_MEMORY_RULES, QUICK_MEMORY_RULES_NO_SEARCH),
     '',
     '## The answer format',
     'You have no schema flag here: answer with ONE JSON object and nothing else, no prose and no code fence, valid against this JSON Schema:',
     JSON.stringify(QUICK_EDIT_SCHEMA),
-    'Read no file and run no command: everything you need is in this message.',
+    'Read no file and run no command: everything you need is in this message, the `memory` it carries included.',
     '',
     '---',
     '',

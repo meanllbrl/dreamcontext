@@ -55,19 +55,20 @@ interface Spawned {
   args: string[]; stdin?: string; resolve: (stdout: string) => void; child: EventEmitter & { pid: number }; killed: string[];
   /** A Codex / Antigravity run: the program, its timeout, its working folder, and the turn file read while it ran. */
   command?: { file: string; prefix: string[] }; timeoutMs?: number; cwd?: string; turn?: string; pictureOnDisk?: boolean;
+  env?: Record<string, string | undefined>;
 }
 let spawned: Spawned[] = [];
 let auto: ((args: string[]) => unknown) | null = null;
 const envelope = (answer: unknown) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', structured_output: answer, total_cost_usd: 0.004 });
 
-function fakeExec(args: string[], opts: { onSpawned?: (c: unknown, at: Date) => void; stdin?: string; command?: { file: string; prefix: string[] }; timeoutMs?: number; cwd?: string }): Promise<ClaudeExecution> {
+function fakeExec(args: string[], opts: { onSpawned?: (c: unknown, at: Date) => void; stdin?: string; command?: { file: string; prefix: string[] }; timeoutMs?: number; cwd?: string; env?: Record<string, string | undefined> }): Promise<ClaudeExecution> {
   return new Promise((resolve) => {
     const child = Object.assign(new EventEmitter(), { pid: 90000 + spawned.length });
     const turnArg = args.find((a) => a.startsWith('--prompt-file='));
     const turn = turnArg ? readFileSync(turnArg.slice('--prompt-file='.length), 'utf-8') : undefined;
     const pic = turn?.match(/^\[Picture 1: (.+)\]$/m)?.[1];
     const entry: Spawned = {
-      args, child, killed: [], stdin: opts.stdin, command: opts.command, timeoutMs: opts.timeoutMs, cwd: opts.cwd, turn,
+      args, child, killed: [], stdin: opts.stdin, command: opts.command, timeoutMs: opts.timeoutMs, cwd: opts.cwd, turn, env: opts.env,
       pictureOnDisk: pic ? (() => { try { return readFileSync(pic).length > 0; } catch { return false; } })() : undefined,
       resolve: (stdout) => resolve({ spawned: true, timedOut: false, exitCode: 0, stdout, stderrTail: '', startedAt: new Date(), finishedAt: new Date(), result: null }),
     };
@@ -148,7 +149,9 @@ describe('quick edit routes', () => {
     const args = spawned[0].args;
     expect(args[args.indexOf('--model') + 1]).toBe('sonnet');
     expect(args[args.indexOf('--effort') + 1]).toBe('medium');
-    expect(args[args.indexOf('--tools') + 1]).toBe('');
+    // Tools only to search the brain (quick-memory.ts); the envelope itself is pinned in the memory tests below.
+    expect(args[args.indexOf('--tools') + 1]).toBe('Read,Grep,Glob,Bash');
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
     // The journal survives a reload: `last` offers it, undo writes the inverse.
     const last = await call('GET', `/api/whiteboards/${slug}/quick-edit/last`);
     expect(last.body.edit.id).toBe(view.edit.id);
@@ -433,10 +436,13 @@ describe('quick edit model pick (owner 12 Nov: "maybe I will use Gemini on the w
     expect(sp.args[sp.args.indexOf('--model') + 1]).toBe('gpt-5.5');
     expect(sp.args).not.toContain('--tool');
     expect(sp.timeoutMs).toBe(120_000);
-    // The turn file sits in the run's own temp folder, which holds nothing else of the project.
+    // The turn file sits in the run's own temp folder, which holds nothing else of the project:
+    // Codex never searches the brain (it cannot deny a read by path; quick-memory.ts).
     const turnArg = sp.args.find((a) => a.startsWith('--prompt-file='))!;
     expect(turnArg.slice('--prompt-file='.length).startsWith(sp.cwd! + '/')).toBe(true);
     expect(sp.cwd).not.toContain(roots.a);
+    expect(sp.cwd).not.toContain(realpathSync(roots.a));
+    expect(sp.turn).not.toContain('dreamcontext memory recall');
     expect(sp.turn).toMatch(/^SYS\n/);
     expect(sp.turn).toContain('"notBoard"');
     expect(sp.turn).toContain('Request from the owner: yeşil yap');
@@ -496,5 +502,75 @@ describe('quick edit model pick (owner 12 Nov: "maybe I will use Gemini on the w
       expect((await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'x', ...bad })).status, JSON.stringify(bad)).toBe(400);
     }
     expect(spawned).toHaveLength(0);
+  });
+});
+
+describe('quick edit memory (owner 13 Nov: "quick edit\'e de memory olsun ve arama yapabilsin")', () => {
+  beforeEach(() => {
+    setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: true }), memory: async (_root, text) => `— Memory recall (BM25, top 1) —\n  [knowledge] knowledge/kargo.md\n    Why: ${text}` });
+  });
+
+  it('a Claude run carries the recall block as data, works in the brain, and may only read it and run recall', async () => {
+    auto = () => ({ reply: 'ok', notBoard: false, add: [] });
+    const slug = await boardWith([rect('A')]);
+    const view = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'kargo akışını çiz' })).body.job);
+    expect(view.state).toBe('done');
+    expect(typeof view.timing.memoryMs).toBe('number');
+    const sp = spawned[0];
+    const brain = realpathSync(roots.a);
+    expect(sp.cwd).toBe(brain);
+    const user = sp.args[sp.args.indexOf('-p') + 1];
+    expect(user).toMatch(/<memory-[0-9a-f]+>\n— Memory recall \(BM25, top 1\) —/);
+    expect(user.indexOf('Request from the owner: kargo akışını çiz')).toBeLessThan(user.indexOf('<memory-'));
+    const at = (flag: string) => sp.args[sp.args.indexOf(flag) + 1];
+    expect(at('--tools')).toBe('Read,Grep,Glob,Bash');
+    expect(at('--permission-mode')).toBe('dontAsk');
+    expect(at('--setting-sources')).toBe('');
+    // The allow list: reads held to the brain, Bash held to recall. Nothing that writes.
+    const from = sp.args.indexOf('--allowedTools') + 1;
+    const allowed = sp.args.slice(from, sp.args.indexOf('--disallowedTools'));
+    expect(allowed).toContain(`Read(/${brain}/knowledge/**/*.md)`);
+    expect(allowed).toContain('Bash(dreamcontext memory recall:*)');
+    expect(allowed.every((a) => a === 'Bash(dreamcontext memory recall:*)' || a.startsWith(`Read(/${brain}/`) || a.startsWith(`Grep(/${brain}/`) || a.startsWith(`Glob(/${brain}/`))).toBe(true);
+    const denied = sp.args.slice(sp.args.indexOf('--disallowedTools') + 1);
+    for (const t of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'Task', 'Agent']) expect(denied).toContain(t);
+    expect(denied).not.toContain('Bash');
+    for (const d of ['Read(//**/.env*)', 'Read(//**/.secrets.json)', 'Read(//**/lab/credentials.json)']) expect(denied).toContain(d);
+    // The brain's machine-local and private pages are never on the allow list (quick-readable.ts).
+    expect(allowed.some((a) => a.includes('/state/**') || a.includes('/agents/') || a.includes(`/${brain}/**/*.md`))).toBe(false);
+    // Its recall stays in this vault, through the running CLI.
+    expect(sp.env?.DREAMCONTEXT_RECALL_SCOPE).toBe('quick-edit');
+  });
+
+  it('no memory block when recall finds nothing; the run still has its search', async () => {
+    setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: true }), memory: async () => '' });
+    auto = () => ({ reply: 'ok', notBoard: false, add: [] });
+    const slug = await boardWith([rect('A')]);
+    await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'elma ekle' })).body.job);
+    const user = spawned[0].args[spawned[0].args.indexOf('-p') + 1];
+    expect(user).not.toContain('<memory-');
+    expect(spawned[0].args).toContain('Bash(dreamcontext memory recall:*)');
+  });
+
+  it('a brain folder a rule cannot hold keeps the old envelope: temp folder, no tools', async () => {
+    setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: true }), memory: async () => '', brain: () => null });
+    auto = () => ({ reply: 'ok', notBoard: false, add: [] });
+    const slug = await boardWith([rect('A')]);
+    await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'elma ekle' })).body.job);
+    const sp = spawned[0];
+    expect(sp.args[sp.args.indexOf('--tools') + 1]).toBe('');
+    expect(sp.args).not.toContain('--allowedTools');
+    expect(sp.cwd).not.toContain(roots.a);
+    expect(sp.env?.DREAMCONTEXT_RECALL_SCOPE).toBeUndefined();
+  });
+
+  it('a Codex run gets the same memory block in its turn, and no search', async () => {
+    setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: true }), bridge: () => ({ node: '/n/node', cli: '/c/cli.js' }), memory: async () => 'MEMBLOCK' });
+    const slug = await boardWith([rect('A')]);
+    await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'kargo', tool: 'codex', model: 'gpt-5.5' });
+    await pause(30);
+    expect(spawned[0].turn).toMatch(/<memory-[0-9a-f]+>\nMEMBLOCK\n/);
+    expect(spawned[0].cwd).not.toContain(realpathSync(roots.a));
+    spawned[0].resolve(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '{"reply":"ok","notBoard":false}' }));
   });
 });
