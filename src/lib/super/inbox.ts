@@ -1601,7 +1601,26 @@ export function superAskStillOpen(sessionId: string, abouts: readonly AgendaAbou
 // ─── The owed ledger: what opens and closes it from outside the pump ─────────────
 
 /** His message, without its reference headers and page block: what a `msg` debt's gist says. */
-function ownerGist(text: string): string {
+export function ownerGist(text: string): string {
+  // A tapped card answer is `[super answer] item=<id>` plus a line of instructions to the Super:
+  // internal text the owner never reads. Its gist is what HE picked or wrote, nothing else.
+  if (/^\[super answer\] item=/.test(text)) {
+    const picks: string[] = [];
+    // The question stays beside its pick: the gist also feeds the push/deploy grant's "his words"
+    // and the Super's owed blocks, where a bare "Evet" would answer nothing.
+    for (const m of text.matchAll(/("(?:[^"\\]|\\.)*")=("(?:[^"\\]|\\.)*")(?: notes: ("(?:[^"\\]|\\.)*"))?/g)) {
+      try {
+        const q = String(JSON.parse(m[1])).trim();
+        const pick = String(JSON.parse(m[2])).trim();
+        const note = m[3] ? String(JSON.parse(m[3])).trim() : '';
+        if (pick && pick !== '(no answer)') {
+          const a = note ? `${pick} (${note})` : pick;
+          picks.push(q && q !== 'answer' ? `${q} → ${a}` : a);
+        }
+      } catch { /* unreadable pick: skipped */ }
+    }
+    return cutGist(picks.join('; ') || '…', MAX_OWED_MSG_GIST);
+  }
   const { text: body } = splitPageContext(text);
   let out = '';
   let at = 0;

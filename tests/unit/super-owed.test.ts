@@ -26,7 +26,7 @@ import {
   closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, owedVisible, replyMarkRefs, nextOwedReveal,
 } from '../../src/lib/super/owed.js';
 import {
-  OWED_PREFIX, _resetSuperInbox, _superInboxDrained, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes,
+  OWED_PREFIX, _resetSuperInbox, _superInboxDrained, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes, ownerGist,
   superOwnerSpoke, superSaid, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
@@ -267,6 +267,16 @@ describe('the ledger in the running inbox', () => {
     s = await readSuperState(root);
     expect(openDebts(s).length).toBe(0);
     expect(superOwedBlock(SUPER, 'And the logo?')).toBeNull();
+  });
+
+  it('a tapped card answer is owed in his own words, never the internal [super answer] line', async () => {
+    await boot();
+    const text = '[super answer] item=q_ab12\nUser has answered your questions: "Which colour?"="Mor", "Ship it?"="Evet" notes: "bugün". You can now continue with the user\'s answers in mind.';
+    expect(ownerGist(text)).toBe('Which colour? → Mor; Ship it? → Evet (bugün)');
+    await superOwnerOwes(SUPER, text);
+    const d = openDebts(await readSuperState(root))[0];
+    expect(d.gist).toBe('Which colour? → Mor; Ship it? → Evet (bugün)');
+    expect(d.gist).not.toContain('[super answer]');
   });
 
   it('a natural end with his message unanswered brings ONE [super owed] turn, drawn as an event line; twice, then it is his to see', async () => {
