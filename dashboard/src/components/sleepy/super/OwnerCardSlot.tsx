@@ -1,14 +1,15 @@
-import { Suspense, lazy, useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi, useVaultId } from '../../../context/VaultContext';
-import { cardNotNeeded, refreshCards, useCardState, type CardStateView } from '../../../lib/cardRecords';
+import { cardNotNeeded, cardsReadCount, refreshCards, useCardState, type CardStateView } from '../../../lib/cardRecords';
 import type { RunCard as RunCardT } from '../chat/RunCard';
 import type { SecretCard as SecretCardT } from '../chat/SecretCard';
 import type { ChecklistCard as ChecklistCardT } from '../chat/ChatViews';
 import { CardHeader } from '../chat/molecules';
 import '../chat/AgentThreadCard.css';
 import { mountOwnerSlot, openJobRow, takeSlotRun, useSlotRunRequest } from './superJobsStore';
+import { tailHolds } from './cardPlacement';
 import { MAIN_RECORD, claimOwnerItem, releaseOwnerItem, visibleText } from './ownerAnswer';
 
 /**
@@ -31,11 +32,13 @@ export function deliveryLine(item: Pick<SuperQueueItem, 'delivery' | 'card'>, ch
 
 /**
  * What the slot's header says, from the item (the screen tells the truth): "<child> needs you"
- * only while the card waits on the owner; once his action has a result (`delivery`) or the item
- * closed, "<child>: done"; a child the Super ended, "<child>: ended".
+ * only while the card waits on the owner; once he pressed ▶ Run and it still runs (`running`),
+ * "<child>: running"; once his action has a result (`delivery`) or the item closed,
+ * "<child>: done"; a child the Super ended, "<child>: ended".
  */
 export function slotTitleKey(item: Pick<SuperQueueItem, 'state' | 'delivery'>): string {
   if (item.delivery === 'ended') return 'ownerCard.endedTitle';
+  if (item.delivery === 'running') return 'ownerCard.runningTitle';
   if (item.delivery || item.state === 'done') return 'ownerCard.doneTitle';
   return 'ownerCard.needsYouTitle';
 }
@@ -98,6 +101,11 @@ export function OwnerCardSlot({ item, title, paused, place = 'tail', cards = LAZ
     if ((open && !item.delivery) || !postingSession || cardState !== undefined) return;
     void refreshCards(postingSession, (p) => api.get<unknown>(p));
   }, [open, postingSession, item.delivery, api, cardState]);
+  // Settled = no longer held in the tail (cardPlacement's one rule): the run he pressed, if any,
+  // ended. The card is told how many reads of the child's cards this window had when it first saw
+  // that, so a cached copy read before it never re-attaches the ended run (hostRecord).
+  const settled = !tailHolds(item);
+  const settledAtRead = useMemo(() => (settled ? cardsReadCount(postingSession) : undefined), [settled, postingSession]);
   const runRequest = useSlotRunRequest(item.id);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -108,7 +116,7 @@ export function OwnerCardSlot({ item, title, paused, place = 'tail', cards = LAZ
   const kept = views.filter((v) => v.state === 'kept');
   const cutOff = views.some((v) => v.state === 'cut_off') || !!state?.cutOff;
   const line = deliveryLine(item, child, t);
-  const host = { record: handle, open };
+  const host = { record: handle, open, settledAtRead };
 
   const notNeeded = () => {
     if (busy || !claimOwnerItem(item.id)) return;

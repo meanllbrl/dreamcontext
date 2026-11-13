@@ -26,6 +26,11 @@ import type { ChatItem } from '../chatSession';
  * he can do: it is history, even before the record closes the item.
  */
 export function tailHolds(item: Pick<SuperQueueItem, 'state'> & { delivery?: SuperQueueItem['delivery'] }): boolean {
+  // A run he pressed and that still goes (`running`, run-bildirim-hemen) stays where he pressed it,
+  // its terminal live (a login or a y/n may still want his keys); it is no longer HIS to do
+  // (needsOwner says so), and it settles in its place at the exit, when the server's result line
+  // replaces `running` (the server never leaves `running` behind a run that ended).
+  if (item.delivery === 'running') return true;
   return item.state !== 'done' && !item.delivery;
 }
 

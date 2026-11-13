@@ -36,7 +36,7 @@
 
 import { outwardAction } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
-import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
 import type { OpenRequest, RequestResponse } from '../super/request-answer.js';
@@ -454,6 +454,41 @@ export function adoptOwnerWaits(sessionId: string, waits: ReadonlyArray<{ wait: 
   return answered;
 }
 
+/**
+ * The owner's action on card `kind:id` settles it, BY ID (sahip-karti-yerinde K4, K6), and a run
+ * card's action is also the refused call of that same shell command done by him (run-kart-altta):
+ * its refusal closes with it. Waits not held here yet (a woken child's still live only in the
+ * record) are marked answered by their ids. The ONE rule for his press (run-bildirim-hemen) and his
+ * run's receipt alike.
+ */
+function settleOwnerAction(e: ChatEntry, kind: OwnerCardKind, id: string, command: string): void {
+  const hit = (e.ownerWaits ?? []).filter((w) => w.kind === kind && w.id === id);
+  const settled = kind === 'run' ? refusalsOfCommand(command, e.ownerWaits ?? []) : [];
+  if (hit.length || settled.length) answerWaits(e, [...hit, ...settled]);
+  const notHeld = [
+    ...(hit.length ? [] : [`${kind}:${id}`]),
+    ...(kind === 'run' && !settled.length && command.trim() ? [`refusal:${refusalWaitId('Bash', command.trim())}`] : []),
+  ].filter((k) => !e.ownerAnswered?.includes(k));
+  if (notHeld.length) {
+    e.ownerAnswered = [...(e.ownerAnswered ?? []), ...notHeld].slice(-MAX_ANSWERED);
+    emitOwner(e);
+  }
+}
+
+/**
+ * THE OWNER ACTED on card `kind:id` (run-bildirim-hemen): his press of ▶ Run IS his answer, so the
+ * wait (and the refusal of the same command) is answered the moment the run STARTS, not when it
+ * exits. The card RECORD stays as it is (its run is live, its result still goes to the child at
+ * the exit); that is why this is not {@link dropOwnerWait}. False when no live entry holds the
+ * chat (a parked or restarted child): the Super record is closed by the caller then.
+ */
+export function ownerActedOnCard(sessionId: string, kind: OwnerCardKind, id: string, command = ''): boolean {
+  const e = entries.get(sessionId);
+  if (!e || e.status === 'gone') return false;
+  settleOwnerAction(e, kind, id, command);
+  return true;
+}
+
 /** The Super Agent closed an owner item (`super queue done`: he did it another way): the wait
  *  is answered, so it never comes back from the registry. */
 export function dropOwnerWait(sessionId: string, kind: OwnerWaitKind, id: string, opts: { postingSession?: string } = {}): void {
@@ -864,23 +899,7 @@ export function registerChat(init: {
       // A receipt the SERVER delivered for an owner-proven action (sahip-karti-yerinde K4, K6)
       // closes its own card BY ID, nothing else; one whose wait is already closed (a rerun, a
       // second checklist submit) closes nothing and is still delivered.
-      if (receipt) {
-        const hit = (e.ownerWaits ?? []).filter((w) => w.kind === receipt.kind && w.id === receipt.id);
-        // His run of the card is the refused call done by him: the refusal of that same command
-        // closes with it (owner-wait.ts `refusalsSettledByRun`, run-kart-altta).
-        const settled = receipt.kind === 'run' ? refusalsSettledByRun(text, e.ownerWaits ?? []) : [];
-        if (hit.length || settled.length) answerWaits(e, [...hit, ...settled]);
-        const notHeld = [
-          ...(hit.length ? [] : [`${receipt.kind}:${receipt.id}`]),
-          // Not held here yet (a woken child): its refusal of the same shell command, by its id.
-          ...(receipt.kind === 'run' && !settled.length && runReceiptCommand(text) ? [`refusal:${refusalWaitId('Bash', runReceiptCommand(text))}`] : []),
-        ].filter((k) => !e.ownerAnswered?.includes(k));
-        if (notHeld.length) {
-          // Not held here yet (a woken child's wait still lives only in the record): answered.
-          e.ownerAnswered = [...(e.ownerAnswered ?? []), ...notHeld].slice(-MAX_ANSWERED);
-          emitOwner(e);
-        }
-      }
+      if (receipt) settleOwnerAction(e, receipt.kind, receipt.id, receipt.kind === 'run' ? runReceiptCommand(text) : '');
       // HIS answer (his own words to the child, or a receipt the window wrote for his press)
       // clears what it answers; the Super Agent steering the child (a send the server noted for
       // it) clears nothing. A Telegram text clears nothing either (H1, J1). A turn the server wrote

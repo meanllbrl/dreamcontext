@@ -156,8 +156,13 @@ export function runReceiptCommand(text: string): string {
  * ("bastım ama hiçbir şey olmadı"). A refusal of any other call, or one whose input was cut, stays.
  */
 export function refusalsSettledByRun(text: string, open: readonly OwnerWait[]): OwnerWait[] {
-  const command = runReceiptCommand(text);
-  if (!command) return [];
+  return refusalsOfCommand(runReceiptCommand(text), open);
+}
+
+/** The refused calls of exactly this shell command (a run card's command: his press or his run's
+ *  receipt settles them, run-bildirim-hemen). */
+export function refusalsOfCommand(command: string, open: readonly OwnerWait[]): OwnerWait[] {
+  if (!command.trim()) return [];
   return open.filter((w) => w.kind === 'refusal' && !!w.refusal && sameShellCommand(w.refusal, command));
 }
 

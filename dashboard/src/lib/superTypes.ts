@@ -492,7 +492,9 @@ export type OwnerWakeOutcome = typeof OWNER_WAKE_OUTCOMES[number];
 
 // `allowed` / `not_needed`: a run card settled by his answer to the refusal of the same command
 // (run-kart-altta): Allow let the child run it itself; Not needed declined it.
-export const OWNER_DELIVERY_STATES = ['sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended', 'allowed', 'not_needed'] as const;
+// `running`: he pressed ▶ Run and it still runs; the result goes to the child at the exit
+// (run-bildirim-hemen).
+export const OWNER_DELIVERY_STATES = ['running', 'finished', 'sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended', 'allowed', 'not_needed'] as const;
 export type OwnerDeliveryState = typeof OWNER_DELIVERY_STATES[number];
 
 export interface OwnerResultFact {

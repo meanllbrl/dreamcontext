@@ -13,6 +13,7 @@ const { TEMPLATES } = vi.hoisted(() => ({
   TEMPLATES: {
     'ownerCard.needsYouTitle': '{name} needs you',
     'ownerCard.doneTitle': '{name}: done',
+    'ownerCard.runningTitle': '{name}: running',
     'ownerCard.endedTitle': '{name}: ended',
     'ownerCard.delivery.sent': 'Sent to {child}.',
     'ownerCard.delivery.ended': '{child} was ended; the Super has the result.',
@@ -44,6 +45,7 @@ const { placeOwnerCards, anchorSettledCards, tailHolds, ownerCardItemsOf } = awa
 const { openOwnerQuestions, openMemberMirrors } = await import('../../dashboard/src/components/sleepy/super/superQuestions.js');
 const { refusalItemsOf, _resetOwnerItems } = await import('../../dashboard/src/components/sleepy/super/ownerAnswer.js');
 const { _resetCardRecords } = await import('../../dashboard/src/lib/cardRecords.js');
+const { needsOwner } = await import('../../dashboard/src/components/sleepy/super/superHandover.js');
 type SuperQueueItem = import('../../dashboard/src/lib/superTypes.js').SuperQueueItem;
 type ChatItem = import('../../dashboard/src/components/sleepy/chatSession.js').ChatItem;
 
@@ -154,6 +156,71 @@ describe('an owner card (run, secret, checklist, mcp): waiting in the tail, then
   it('a card posted before the first message on screen has no place there: not drawn, never in the tail', () => {
     const early = card('secret', { state: 'done', delivery: 'sent', createdAt: 500 });
     expect(anchorSettledCards(TRANSCRIPT, [early]).size).toBe(0);
+  });
+
+  it('a child\'s run card relayed into the Super chat: pressed (running), finished, then the Super talks on: never last (run-bildirim-hemen ek-1)', () => {
+    // Posted after a2, waiting: the tail holds it, titled "needs you".
+    const waiting = card('run', { createdAt: 4_000 });
+    const h0 = tail(slotCardItems([waiting]));
+    expect(cardsIn(h0)).toBe(1);
+    expect(h0).toContain('Cart release needs you');
+    // He pressed ▶ Run: the server closes the item as `running` at the START. The card stays where
+    // he pressed it, its terminal live, but no longer says "needs you" (and needsOwner is false).
+    const runningItem = card('run', { id: 'q-run-pressed', createdAt: 4_000, state: 'done', delivery: 'running' });
+    const running = slotCardItems([runningItem]);
+    expect(running.map((q) => q.id)).toEqual(['q-run-pressed']);
+    const h1 = tail(running);
+    expect(cardsIn(h1)).toBe(1);
+    expect(h1).toContain('Cart release: running');
+    expect(h1).not.toContain('needs you');
+    expect(tailHolds({ state: 'done', delivery: 'running' })).toBe(true);
+    expect(needsOwner(runningItem)).toBe(false);
+    expect(placeOwnerCards(running).settled).toEqual([]);
+    // It finished (exit 1), the result went to the child, the Super posts two more messages.
+    const done = slotCardItems([card('run', { createdAt: 4_000, state: 'done', delivery: 'sent' })]);
+    const later: ChatItem[] = [...TRANSCRIPT,
+      { kind: 'text', id: 'a3', index: 0, text: 'The publish is waiting.', done: true, ts: 6_000 },
+      { kind: 'text', id: 'a4', index: 0, text: 'The upload stopped.', done: true, ts: 7_000 }];
+    expect(cardsIn(tail(done))).toBe(0);
+    const at = anchorSettledCards(later, placeOwnerCards(done).settled);
+    expect([...at.keys()]).toEqual(['a2']);
+    expect(at.has('a4')).toBe(false);
+  });
+
+  it('several relayed run cards finished in a row: each settles in its own place, none piles up at the bottom (owner 13 Nov: "bu terminaller birikiyor")', () => {
+    const relayed = (i: number, createdAt: number, over: Partial<SuperQueueItem> = {}) => {
+      const base = card('run', { id: `q-run-${i}`, createdAt, ...over });
+      return { ...base, card: { ...base.card!, cardRef: `run${i}`.padEnd(32, 'x'), spec: { ...SPECS.run, id: `deploy-${i}` } as never } } as SuperQueueItem;
+    };
+    const chat: ChatItem[] = [...TRANSCRIPT,
+      { kind: 'text', id: 'a3', index: 0, text: 'Merged; the deploy is next.', done: true, ts: 5_000 },
+      { kind: 'text', id: 'a4', index: 0, text: 'Prices are live.', done: true, ts: 7_000 },
+      { kind: 'text', id: 'a5', index: 0, text: 'Watching the deploy.', done: true, ts: 9_000 }];
+    // Seen waiting, then pressed (running), then finished: one after another.
+    slotCardItems([relayed(1, 4_000), relayed(2, 6_000), relayed(3, 8_000)]);
+    slotCardItems([relayed(1, 4_000, { state: 'done', delivery: 'running' }), relayed(2, 6_000, { state: 'done', delivery: 'running' }), relayed(3, 8_000)]);
+    const done = slotCardItems([1, 2, 3].map((i) => relayed(i, 2_000 + i * 2_000, { state: 'done', delivery: i === 2 ? 'finished' : 'sent' })));
+    expect(done.map((q) => q.id)).toEqual(['q-run-1', 'q-run-2', 'q-run-3']);
+    // Not one of them in the tail above the composer.
+    expect(cardsIn(tail(done))).toBe(0);
+    const placed = placeOwnerCards(done);
+    expect(placed.tail).toEqual([]);
+    const at = anchorSettledCards(chat, placed.settled);
+    // Each under the message from before it was posted; the chat's last message has none below it.
+    expect([...at.entries()].map(([k, v]) => [k, v.map((q) => q.id)])).toEqual([['a2', ['q-run-1']], ['a3', ['q-run-2']], ['a4', ['q-run-3']]]);
+    expect(at.has('a5')).toBe(false);
+  });
+
+  it('a fresh window that first sees the card RUNNING still draws it, in place, after the exit (sent or finished)', () => {
+    for (const end of ['sent', 'finished'] as const) {
+      _resetOwnerSlots();
+      const id = `q-fresh-${end}`;
+      expect(slotCardItems([card('run', { id, createdAt: 4_000, state: 'done', delivery: 'running' })]).map((q) => q.id)).toEqual([id]);
+      const after = slotCardItems([card('run', { id, createdAt: 4_000, state: 'done', delivery: end })]);
+      expect(after.map((q) => q.id)).toEqual([id]);
+      expect(cardsIn(tail(after))).toBe(0);
+      expect([...anchorSettledCards(TRANSCRIPT, placeOwnerCards(after).settled).keys()]).toEqual(['a2']);
+    }
   });
 
   it('a card posted after the last message sits under it, and stays there when the chat moves on', () => {
