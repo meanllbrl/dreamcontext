@@ -429,11 +429,20 @@ describe('sleep (integration)', () => {
     writeFileSync(join(ctx, 'state', '.brain-local.json'), JSON.stringify({ needsTaskSync: true }, null, 2));
 
     run('sleep add 2 Some work', tmpDir);
-    run('sleep done Consolidated, clearing the stale task-sync flag', tmpDir);
+    const out = run('sleep done Consolidated, clearing the stale task-sync flag', tmpDir);
+    // The task sync runs in the detached child `sleep done` starts (it never waits on a
+    // remote board); that child is what clears the flag, so wait for its report.
+    expect(out).toContain('runs in the background after brain sync');
+    const log = join(ctx, 'tmp', 'sleep', 'sync.log');
+    const until = Date.now() + 20_000;
+    while (Date.now() < until && !(existsSync(log) && readFileSync(log, 'utf-8').includes('Post-sleep sync finished'))) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+    expect(readFileSync(log, 'utf-8')).toContain('Post-sleep sync finished');
 
     const brainLocal = JSON.parse(readFileSync(join(ctx, 'state', '.brain-local.json'), 'utf-8'));
     expect(brainLocal.needsTaskSync).toBe(false);
-  });
+  }, 30_000);
 
   it('dreamcontext tasks sync clears a STALE needsTaskSync flag — the literal documented remedy resolves the nag', () => {
     // Default (local) task backend — sync() is a genuine no-op, no config needed.
