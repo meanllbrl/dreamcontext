@@ -665,3 +665,22 @@
 /* The tools line (app-araclari §5): a drift is the one part that needs action. */
 .app-card__drift { color: var(--color-warning-ink); }
 .app-card__muted { color: var(--color-text-secondary); font-weight: var(--font-weight-normal); }
+
+/* app-ux-genel: the settings form's labels and the author's hint under each field (K9). */
+.share-field > label > span {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+.share-field__hint { font-size: var(--font-size-xs); }
+
+/* Technical facts folded under one quiet line (K5). */
+.share-details { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.share-details > summary { cursor: pointer; padding: var(--space-1) 0; width: fit-content; }
+.share-details > summary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.share-details[open] > summary { margin-bottom: var(--space-2); }
+
+/* Who has my published app (K7): one line, then its two actions. */
+.pp-shared { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; }
+.pp-shared__who { margin: 0; font-size: var(--font-size-sm); color: var(--color-text); overflow-wrap: anywhere; }
+.pp-shared__acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }

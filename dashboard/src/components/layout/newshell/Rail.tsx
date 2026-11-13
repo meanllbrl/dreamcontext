@@ -40,7 +40,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
   const { vault, bus } = useVault();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
-  const { agentUnread, learningOff, showChat, chatRollup, chatOpen } = badges;
+  const { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting } = badges;
   const narrow = useIsNarrowWindow(600);
   const railRef = useRef<HTMLElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -53,6 +53,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
   const label = (page: Page) => t(PAGE_LABEL_KEY[page]);
   const badgeOf = (page: Page): 'dot' | null => {
     if (page === 'automations' && agentUnread > 0) return 'dot';
+    if (page === 'apps' && appsWaiting > 0) return 'dot';
     return null;
   };
   // A device shell offers no Settings (nor Project Relations) anywhere.

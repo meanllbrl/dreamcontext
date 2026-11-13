@@ -470,3 +470,11 @@
 /* Beats `.chat-autocard-facts dd` (review r1: the tone never painted); same weight as the notch. */
 .chat-autocard-facts .chat-appreq-line[data-tone='warn'] dd { color: var(--color-warning-ink); }
 .chat-autocard-facts .chat-appreq-line[data-tone='bad'] dd { color: var(--color-error-ink); font-weight: var(--font-weight-semibold); }
+
+/* app-ux-genel K5/K9: an approval card's and a key card's technical lines, folded. */
+.chat-appreq-details,
+.chat-secretcard-details { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.chat-appreq-details > summary,
+.chat-secretcard-details > summary { cursor: pointer; padding: var(--space-1) 0; width: fit-content; }
+.chat-appreq-details > summary:focus-visible,
+.chat-secretcard-details > summary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }

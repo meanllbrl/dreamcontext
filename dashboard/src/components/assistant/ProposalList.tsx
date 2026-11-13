@@ -21,7 +21,7 @@ export interface AppCard {
   appName: string;
   vault: string;
   title: string;
-  lines: Array<{ label: string; value: string; tone?: 'warn' | 'bad' }>;
+  lines: Array<{ label: string; value: string; tone?: 'warn' | 'bad'; key?: string; valueKey?: string; detail?: boolean }>;
   warn?: string;
   image?: string;
   renewal?: boolean;

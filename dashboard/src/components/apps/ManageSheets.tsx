@@ -25,6 +25,15 @@ export function ConfigSheet({ slug, name, iconSrc, onClose, onDone }: { slug: st
   const [reset, setReset] = useState(false);
   const [converting, setConverting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // The pick lists (K9): the same candidates `apps config --suggest` gives Claude. Without them the
+  // fields stay plain text, never blocked.
+  const [suggest, setSuggest] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    api.get<{ fields: Array<{ key: string; candidates: string[] }> }>(`/apps/${encodeURIComponent(slug)}/config/suggest`).then(
+      (r) => setSuggest(Object.fromEntries(r.fields.map((f) => [f.key, f.candidates]))),
+      () => setSuggest({}),
+    );
+  }, [api, slug]);
   useEffect(() => {
     api.get<{ fields: ConfigField[]; logo?: boolean }>(`/apps/${encodeURIComponent(slug)}/config`).then((r) => {
       setFields(r.fields);
@@ -79,7 +88,7 @@ export function ConfigSheet({ slug, name, iconSrc, onClose, onDone }: { slug: st
           <small className="share-muted">{t('share.config.logoHint')}</small>
         </div>
       )}
-      {fields && <ConfigInputs fields={fields} values={values} setValues={setValues} />}
+      {fields && <ConfigInputs fields={fields} values={values} setValues={setValues} suggest={suggest} />}
       {err && <p className="app-card__note app-card__note--bad">{err}</p>}
     </Sheet>
   );

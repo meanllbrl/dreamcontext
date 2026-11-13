@@ -191,8 +191,9 @@ export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLa
   const tn = useShareN();
   const [err, setErr] = useState<string | null>(null);
   const d = app.data;
-  // Unread (a server read failure): nothing to act on, nothing said that could be wrong.
-  if (!d || d.declared === null) return null;
+  // Unread (a server read failure): nothing to act on, nothing said that could be wrong. A brain
+  // that shares no team data (sync off, an in-tree brain) has nothing to say on every page (A02).
+  if (!d || d.declared === null || d.syncOff) return null;
   if (d.declared === false) {
     const installed = app.origin === 'installed';
     return (
@@ -226,7 +227,8 @@ export function AppDataLine({ app, canLaunch, onChanged }: { app: DataApp; canLa
         : t('apps.data.localLine');
   return (
     <>
-      <p className="app-card__note app-card__note--warn">
+      {/* A plain fact reads plain; only something to act on is tinted. */}
+      <p className={extra.length > 0 || d.mode === 'pending' ? 'app-card__note app-card__note--warn' : 'app-card__muted'}>
         {head}
         {extra.length > 0 && ` · ${extra.join(' · ')}`}
       </p>

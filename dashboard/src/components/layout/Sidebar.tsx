@@ -146,7 +146,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
 
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
-  const { agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
+  const { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting } = useNavBadges();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
   // `agents`/`automations` are deep-link aliases now (they open "Üyeleri yönet"): no row lights.
@@ -259,7 +259,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
               const off = page === 'hypotheses' && learningOff;
               const level: MaturityLevel | undefined = off ? 'off' : maturity;
               const tag = level ? t(`maturity.${level}`) : null;
-              const badgeCount = page === 'automations' ? agentUnread : 0;
+              const badgeCount = page === 'automations' ? agentUnread : page === 'apps' ? appsWaiting : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button

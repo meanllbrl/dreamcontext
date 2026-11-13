@@ -1,11 +1,18 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAgentFeed } from '../../hooks/useAutomations';
 import { useTheses } from '../../hooks/useTheses';
-import { useInstanceEvent } from '../../context/VaultContext';
+import { useApi, useInstanceEvent, useVault } from '../../context/VaultContext';
+import { isDesktop } from '../../lib/desktop';
+import { isPhoneSurface } from '../../lib/phoneSurface';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { AGENT_SURFACE_EXPANDED_EVENT, agentSurfaceSettings, onAgentSettings, readAgentSettings } from '../../lib/agentSettings';
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
+
+/** `GET /api/apps/shared/waiting` (app-ux-genel K1): what waits for this GitHub account. */
+export interface AppsWaiting { known: number; unknown: number; notInstalled: number; signedIn?: boolean }
+export const APPS_WAITING_KEY = 'apps-waiting';
 
 /**
  * What the project's navigation shows beside its rows: the AI Team's unread, whether the
@@ -46,5 +53,18 @@ export function useNavBadges() {
   // While the overlay covers the page, Chat is where the user IS — one active row, not two.
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
-  return { agentUnread, learningOff, showChat, chatRollup, chatOpen };
+  // Apps: a dot when something from a person this account works with waits (an invitation or a
+  // shared app not installed here). Asked when the window opens and again when Apps opens (K1);
+  // an invitation from an unknown GitHub account never lights it (S2); a failed check, no dot.
+  const api = useApi();
+  const { vault } = useVault();
+  const { data: waiting } = useQuery({
+    queryKey: [APPS_WAITING_KEY, vault],
+    queryFn: () => api.get<AppsWaiting>('/apps/shared/waiting'),
+    enabled: isDesktop() && !isPhoneSurface(),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const appsWaiting = waiting ? waiting.known + waiting.notInstalled : 0;
+  return { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting };
 }

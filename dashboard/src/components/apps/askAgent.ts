@@ -13,6 +13,17 @@ import { COMPOSER_PREFILL_EVENT } from '../sleepy/chat/Composer';
  * or its box already holds a draft) a new chat starts with the prompt, shown, the way a delegated task
  * does, so the click never does nothing visible. An explicit `missed` replaces it.
  */
+/**
+ * A job handed to Claude (app-ux-genel K6): Share, Publish the update, Let Claude set it up and the
+ * after-install settings each open a NEW chat tab named for the job, sent at once and brought to
+ * the front. Never a prefill into whatever chat is open: that landed differently every time and
+ * waited unsent. Resolves false when no chat could start (the caller says so where he clicked).
+ */
+export async function handOff(bus: EventTarget, vault: string, title: string, line: string): Promise<boolean> {
+  const pp = await preparePrompt(vault, line);
+  return requestDelegateAgent(bus, { title, prompt: pp.inline, promptToken: pp.token, bypass: false, reveal: true });
+}
+
 export function askAgent(
   bus: EventTarget,
   text: string,

@@ -60,7 +60,8 @@ describe('where sharing is not possible there is nothing to decide', () => {
     expect(html(createElement(AppDataNotices, { apps: [app], onChanged: () => {} }))).toBe('');
     const undec = { ...undecided('u'), data: { ...base, syncOff: true } };
     expect(html(createElement(AppDataTileLine, { app: undec, canLaunch: true }))).toBe('');
-    expect(html(createElement(AppDataLine, { app: undec, canLaunch: true, onChanged: () => {} }))).toContain('Shared data not decided yet');
+    // app-ux-genel A02: a brain that shares no team data says nothing about it on the app's page either.
+    expect(html(createElement(AppDataLine, { app: undec, canLaunch: true, onChanged: () => {} }))).toBe('');
   });
 
   it('the notice is back the moment sharing is possible', () => {

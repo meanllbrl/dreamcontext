@@ -236,7 +236,7 @@ describe('the windows that draw the Apps page hold the key', () => {
   it('every owner-only Apps click goes through ownerPost, the one call that sends the key', () => {
     const dash = join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'apps');
     const files = ['AppCard.tsx', 'ManageSheets.tsx', 'InstallSheet.tsx', 'SharedApps.tsx', 'AppDataNotice.tsx'].map((f) => readFileSync(join(dash, f), 'utf-8')).join('\n');
-    for (const path of ['/data-share', '/publish/grant', '/apps/shared/accept', '/apps/install', '/config', '/update', '/update/undo', '/auto-update', '/apps/trash/restore']) {
+    for (const path of ['/data-share', '/publish/grant', '/apps/shared/accept', '/apps/install', '/config', '/update', '/update/undo', '/auto-update', '/apps/trash/restore', '/share/invite']) {
       expect(files).toMatch(new RegExp(`ownerPost[^\\n]*${path.replace(/\//g, '\\/')}`));
     }
     expect(files).not.toMatch(/api\.post[^\n]*\/(data-share|publish\/grant|uninstall|detach|config|auto-update|update\/undo|shared\/accept|trash\/restore)['`]/);
