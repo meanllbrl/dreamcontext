@@ -2141,7 +2141,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // No window answered (an app in the background, field 2026-11-13): the server answers the
     // request the child still holds open itself, so the Super is never stuck on the window. The
     // `deadline` above makes a window that wakes later refuse the same verb.
-    const byServer = !r.ok && r.error === 'no_window' && answerPermissionByServer(child, requestId, behavior, message);
+    const byServer = !r.ok && windowGaveUp(r.error) && answerPermissionByServer(child, requestId, behavior, message);
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
     // The caller's own record (a member's Super closes its own child's item, never main's).
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
@@ -2200,7 +2200,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     // No window answered (field 2026-11-13: the app in the background): a running child gets the
     // words straight from the server, as the server's own turn, never the owner's.
-    const byServer = !r.ok && r.error === 'no_window' && isLiveChat(child) && !!crewHandle(child)?.sendServerTurn(text);
+    const byServer = !r.ok && windowGaveUp(r.error) && isLiveChat(child) && !!crewHandle(child)?.sendServerTurn(text);
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
     // question or permission card) or 'sent' (a new turn). The server's own turn is 'sent'.
@@ -3237,6 +3237,12 @@ export function childLastLine(texts: readonly string[], status: string): { line:
 function answerPermissionByServer(child: string, requestId: string, behavior: 'allow' | 'deny', message?: string): boolean {
   if (!pendingRequest(getChat(child), requestId)?.isPermission) return false;
   return crewHandle(child)?.answerPermission?.(requestId, behavior, message) === true;
+}
+
+/** The window delivered nothing and left it to the server: it never answered (`no_window`), or
+ *  it woke past the verb's deadline and refused it (`expired`, the 2 s before the timeout). */
+function windowGaveUp(error: string): boolean {
+  return error === 'no_window' || error === 'expired';
 }
 
 function isLiveChat(sid: string): boolean {

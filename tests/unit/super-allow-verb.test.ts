@@ -192,6 +192,18 @@ describe('no window answers (field 2026-11-13: the app in the background)', () =
     expect((await readSuperState(vaultA)).queue[0].state).toBe('done');
   });
 
+  it('super allow: a window that woke past the deadline (expired) leaves it to the server too', async () => {
+    askPermission(CHILD, true);
+    const answered: string[] = [];
+    const off = registerCrewHandle(CHILD, { sendServerTurn: () => true, answerPermission: (id) => { answered.push(id); return true; } });
+    answerWith = { ok: false, error: 'expired' };
+    const r = await allow(H(token(vaultA, 'sess-a', 'super')));
+    off();
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect(r.json.result).toMatchObject({ answered: 'allow', via: 'server' });
+    expect(answered).toEqual(['perm-1']);
+  });
+
   it('super allow: no process to answer it either → still 409 no_window, the item stays open', async () => {
     askPermission(CHILD, true);
     answerWith = { ok: false, error: 'no_window' };
