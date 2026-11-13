@@ -489,19 +489,99 @@ describe('commands (M4, N5, N6, P4)', () => {
     await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('<i>Paywall testi</i> · çalışıyor'))).toBe(true));
   });
 
-  it('/gundem: Bitti moves the line to done (no turn); Yaz makes the next text carry the agenda block', async () => {
-    const { sent } = chat();
-    await writeState({ pad: [{ id: 'n1', section: 'now', text: 'Paywall testini bitir', at: 1 }, { id: 'n2', section: 'now', text: 'Raporu yaz', at: 1 }], padSeq: 2 });
+  /** The newest edit of the agenda message: what the phone shows now (text + keyboard). */
+  const plain = (h: string) => h.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  const lastEdit = () => tg.calls.filter((c) => c.method === 'editMessageText').pop()!;
+  const keyboard = (c: { params: Record<string, unknown> }) => ((c.params.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] } | undefined)?.inline_keyboard ?? []);
+  function tapEdit(idx: number) {
+    const e = lastEdit();
+    const kb = keyboard(e).flat();
+    tg.push(TOKEN, { callback_query: { id: `cb${idx}${Math.random()}`, data: kb[idx].callback_data, from: { id: OWNER }, message: { message_id: e.params.message_id, chat: { id: OWNER, type: 'private' }, text: plain(String(e.params.text)) } } });
+  }
+  const agendaPad = [
+    { id: 'n1', section: 'now', text: 'Paywall testini bitir', at: 1 },
+    { id: 'n2', section: 'waiting', text: 'Pano Gönder ve al: iki kopyayla dene, sonra sonraki sürüme geç, sonra da ekran görüntülerine bak', at: 1 },
+    { id: 'n3', section: 'waiting', text: 'Raporu yaz', at: 1 },
+    { id: 'n4', section: 'done', text: 'Eski iş', at: 1 },
+  ];
+
+  it('/gundem: one message, a button per waiting line only, running and done as one quiet line', async () => {
+    chat();
+    await writeState({ pad: agendaPad, padSeq: 4 });
     tg.push(TOKEN, textUpdate(OWNER, '/gundem'));
-    await vi.waitFor(() => expect(buttonMsg('1 Bitti')).toBeTruthy());
-    tap(buttonMsg('1 Bitti'), 0);
-    await vi.waitFor(async () => { resetSuperIndex(); expect((await readSuperState(root)).pad?.find((p) => p.id === 'n1')?.section).toBe('done'); });
+    await vi.waitFor(() => expect(buttonMsg('Raporu yaz')).toBeTruthy());
+    const m = buttonMsg('Raporu yaz');
+    expect(m.params.text).toBe('<b>Seni bekleyen 2 iş</b>\n<i>1 iş sürüyor · bugün 1 iş bitti</i>');
+    const labels = keyboard(m).map((r) => r.map((b) => b.text));
+    expect(labels).toEqual([['Pano Gönder ve al: iki kopyayla dene, s…'], ['Raporu yaz']]);
+    expect(labels.flat().join()).not.toContain('Paywall');
+    for (const b of keyboard(m).flat()) expect(Buffer.byteLength(b.callback_data)).toBeLessThan(64);
+    expect(String(m.params.text)).not.toMatch(/\d\./);
+  });
+
+  it('tap a line: the same message shows it in full with Bitti / Yaz / back; back restores the list', async () => {
+    chat();
+    await writeState({ pad: agendaPad, padSeq: 4 });
+    tg.push(TOKEN, textUpdate(OWNER, '/gundem'));
+    await vi.waitFor(() => expect(buttonMsg('Raporu yaz')).toBeTruthy());
+    const m = buttonMsg('Raporu yaz');
+    tap(m, 0);
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'editMessageText')).toBe(true));
+    let e = lastEdit();
+    expect(e.params.message_id).toBe(m.result!.message_id);
+    expect(String(e.params.text)).toContain('<b>Pano Gönder ve al</b>\niki kopyayla dene, sonra sonraki sürüme geç, sonra da ekran görüntülerine bak');
+    expect(String(e.params.text)).toContain("Ocak'dan beri seni bekliyor");
+    expect(keyboard(e).map((r) => r.map((b) => b.text))).toEqual([['✓ Bitti', '✎ Yaz'], ['‹ Gündeme dön']]);
+    tapEdit(2);
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2));
+    e = lastEdit();
+    expect(String(e.params.text)).toBe('<b>Seni bekleyen 2 iş</b>\n<i>1 iş sürüyor · bugün 1 iş bitti</i>');
+    expect(keyboard(e)).toHaveLength(2);
+  });
+
+  it('Bitti moves the line to done (no turn); the list returns one shorter, then the empty state with no buttons', async () => {
+    const { sent } = chat();
+    await writeState({ pad: agendaPad, padSeq: 4 });
+    tg.push(TOKEN, textUpdate(OWNER, '/gundem'));
+    await vi.waitFor(() => expect(buttonMsg('Raporu yaz')).toBeTruthy());
+    tap(buttonMsg('Raporu yaz'), 1);           // Raporu yaz
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'editMessageText')).toBe(true));
+    tapEdit(0);                                  // ✓ Bitti
+    await vi.waitFor(async () => { resetSuperIndex(); expect((await readSuperState(root)).pad?.find((p) => p.id === 'n3')?.section).toBe('done'); });
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2));
+    let e = lastEdit();
+    expect(String(e.params.text)).toBe('<b>Seni bekleyen 1 iş</b>\n<i>✓ Raporu yaz bitti</i>');
+    expect(keyboard(e).map((r) => r[0].text)).toEqual(['Pano Gönder ve al: iki kopyayla dene, s…']);
     expect(sent).toHaveLength(0);
-    tap(buttonMsg('2 Yaz'), 3);
+    tapEdit(0);
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(3));
+    tapEdit(0);
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(4));
+    e = lastEdit();
+    expect(String(e.params.text)).toBe('<b>Seni bekleyen iş yok.</b>\n<i>✓ Pano Gönder ve al: iki kopyayla dene, s… bitti</i>');
+    expect(e.params.reply_markup).toBeUndefined();
+  });
+
+  it('Yaz makes the next text carry the agenda block', async () => {
+    const { sent } = chat();
+    await writeState({ pad: agendaPad, padSeq: 4 });
+    tg.push(TOKEN, textUpdate(OWNER, '/gundem'));
+    await vi.waitFor(() => expect(buttonMsg('Raporu yaz')).toBeTruthy());
+    tap(buttonMsg('Raporu yaz'), 1);
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'editMessageText')).toBe(true));
+    tapEdit(1);
     await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('⏳ <i>Yaz:'))).toBe(true));
     tg.push(TOKEN, textUpdate(OWNER, 'bunu yarına al'));
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(parseTelegramPrefix(sent[0]).body).toBe('[About agenda line note=n2 section=now]\nline: "Raporu yaz"\n\nbunu yarına al');
+    expect(parseTelegramPrefix(sent[0]).body).toBe('[About agenda line note=n3 section=waiting]\nline: "Raporu yaz"\n\nbunu yarına al');
+  });
+
+  it('/gundem with nothing waiting: the empty state, no buttons; Now lines never become buttons', async () => {
+    chat();
+    await writeState({ pad: [{ id: 'n1', section: 'now', text: 'Paywall testini bitir', at: 1 }, { id: 'n2', section: 'done', text: 'Bitmiş', at: 1 }], padSeq: 2 });
+    tg.push(TOKEN, textUpdate(OWNER, '/gundem'));
+    await vi.waitFor(() => expect(tg.texts()).toContain('<b>Seni bekleyen iş yok.</b>\n<i>1 iş sürüyor · bugün 1 iş bitti</i>'));
+    expect(tg.sent().filter((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('callback_data'))).toHaveLength(0);
   });
 
   it('Super off → Super\'i aç runs the window\'s own hand-over adopting nothing', async () => {
