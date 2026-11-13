@@ -194,15 +194,29 @@ describe('the question band in the dock', () => {
 
   it('finds a question\'s card inside the Super chat\'s own container, wherever it is homed', () => {
     const calls: string[] = [];
+    // No Super pane takes the door (the event is not cancelled): today's centre-and-focus.
+    let pane: ((detail: { item: string; landed?: string }) => boolean) | null = null;
     const card = (item: string, connected = true) => ({
       dataset: { item }, isConnected: connected,
       scrollIntoView: () => calls.push(`scroll:${item}`),
       querySelector: () => ({ focus: () => calls.push(`focus:${item}`) }),
+      dispatchEvent: (e: CustomEvent<{ item: string; landed?: string }>) => (pane ? pane(e.detail) : true),
     });
     const root = { querySelectorAll: (sel: string) => { calls.push(sel); return [card('q-1'), card('q-2')]; } };
     (globalThis as { window?: unknown }).window = {};
     expect(showQuestionCard('q-2', root as never)).toBe(true);
     expect(calls).toEqual(['[data-testid="super-question-card"]', 'scroll:q-2', 'focus:q-2']);
+    // The pane takes it (K1 = A, owner 2026-11-12): to unread information first, no focus on the card;
+    // to the card: focus, and no centring of its own (the pane landed it).
+    calls.length = 0;
+    pane = (d) => { d.landed = 'unread'; return false; };
+    expect(showQuestionCard('q-2', root as never)).toBe(true);
+    expect(calls).toEqual(['[data-testid="super-question-card"]']);
+    calls.length = 0;
+    pane = (d) => { d.landed = 'card'; return false; };
+    expect(showQuestionCard('q-2', root as never)).toBe(true);
+    expect(calls).toEqual(['[data-testid="super-question-card"]', 'focus:q-2']);
+    pane = null;
     expect(showQuestionCard('q-9', root as never)).toBe(false);
     const gone = { querySelectorAll: () => [card('q-1', false)] };
     expect(showQuestionCard('q-1', gone as never)).toBe(false);

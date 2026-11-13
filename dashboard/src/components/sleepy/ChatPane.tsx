@@ -21,7 +21,7 @@ import {
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
-  isHeadlessAgentShell, isTeammateRun,
+  isHeadlessAgentShell, isTeammateRun, contentTopOf,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
 import { isDreamcontextCommand, teamDoneRepeats, teamDoneText } from './chat/dreamCommand';
@@ -92,8 +92,10 @@ import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { SuperUnreadBar } from './super/SuperUnreadBar';
-import { useSuperUnread } from './super/useSuperUnread';
+import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
+import { useFollowUnread } from './super/useFollowUnread';
+import { landingFor, SUPER_QUESTION_EVENT, type SuperQuestionDetail, type UnreadUnit } from './super/superUnread';
 import './super/SuperSurface.css';
 import './chat/cards.css';
 import './chat/overlays.css';
@@ -169,8 +171,13 @@ const ANCHOR_CANDIDATES = 5;
  *  deliberately scroll-invariant: `rect.top` falls by exactly what `scrollTop` rises by, so
  *  the sum is the same number before and after any scroll — including the browser's own
  *  clamp during the commit being measured. */
-function contentTopOf(node: Element, scroller: HTMLElement): number {
-  return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+/** A row the anchor hold measures. `start`: an unread row held by its start, the reply strip
+ *  above it when there is one (`lineHostOf`), resolved on every measure: the strip can mount or
+ *  leave while the history settles, and the start is what must stay in view. */
+interface HoldCandidate { node: Element; top: number; start?: boolean }
+
+function holdTopOf(c: { node: Element; start?: boolean }, scroller: HTMLElement): number {
+  return contentTopOf(c.start && c.node instanceof HTMLElement ? lineHostOf(c.node) : c.node, scroller);
 }
 
 function safeStringify(v: unknown): string {
@@ -922,11 +929,50 @@ export function ChatPane({
     onSignIn().catch(() => { /* see above */ });
   }, [onSignIn]);
 
-  const scrollToBottom = useCallback(() => {
+  const setStick = useCallback((next: boolean) => {
+    stickRef.current = next;
+    if (next) followRowRef.current = null;
+    setPinned((prev) => (prev === next ? prev : next));
+    // Not every return to the bottom scrolls (a send at the bottom, a jump already there).
+    if (next) setComposerFolded(false);
+  }, []);
+
+  // The Super chat's follow (owner 2026-11-12, super/useFollowUnread.ts): the bottom wins only
+  // while the first unread's START stays in view. Created here, before the pin that asks it; its
+  // inputs are filled in once the unread marks exist, further down. Stable identities throughout.
+  const { follow, inputs: followInputs } = useFollowUnread(scrollRef, contentRef);
+  /** `captureAnchor` is defined further down; the cap re-takes the hold through this. */
+  const captureAnchorRef = useRef<() => void>(() => {});
+  /** The unread row a landing holds (the follow's cap, the reload's reveal, every unread jump): the
+   *  hold measures ITS START first, resolved on every measure (`lineHostOf`: a reply strip above it
+   *  when there is one, which can mount or leave while the history settles), so nothing changing
+   *  around it can slide that start out of view. Cleared by the reader's input, another jump, or
+   *  the view pinning again. */
+  const followRowRef = useRef<HTMLElement | null>(null);
+  /** The cap: when following the bottom would push the first unread's start above the view, write
+   *  its start once and leave the view unpinned and HELD there. True: it wrote (or started a
+   *  reveal that lands by itself), so the bottom write is skipped. */
+  const holdAtUnread = useCallback((el: HTMLElement, allowUp: boolean): boolean => {
+    const at = follow.target(el, allowUp);
+    if (!at) return false;
+    if ('reveal' in at) return true;
+    setStick(false);
+    followRowRef.current = at.node;
+    el.scrollTop = at.top;
+    prevTopRef.current = el.scrollTop;
+    restoreTopRef.current = el.scrollTop;
+    captureAnchorRef.current();
+    return true;
+  }, [follow, setStick]);
+
+  /** `allowUp`: the opened pane's first landing (marks loaded, back from the garage), the one
+   *  follow that may go up to the first unread; otherwise a pinned view only moves down. */
+  const scrollToBottom = useCallback((allowUp = false) => {
     const el = scrollRef.current;
     // A minimized pane's container is parked in the detached garage: it measures 0 and
     // cannot be scrolled. The observer below re-runs this the moment it is re-homed.
     if (!el || el.clientHeight === 0) return;
+    if (holdAtUnread(el, allowUp)) return;
     el.scrollTop = el.scrollHeight;
     prevTopRef.current = el.scrollTop;
     restoreTopRef.current = el.scrollTop;
@@ -948,22 +994,17 @@ export function ChatPane({
       repinFrameRef.current = 0;
       const now = scrollRef.current;
       if (!now || !stickRef.current || now.clientHeight === 0) return;
+      // The same target as the write above, or the cap would be undone a frame later.
+      if (holdAtUnread(now, false)) return;
       if (isAtBottom({ scrollTop: now.scrollTop, scrollHeight: now.scrollHeight, clientHeight: now.clientHeight })) return;
       now.scrollTop = now.scrollHeight;
       prevTopRef.current = now.scrollTop;
       restoreTopRef.current = now.scrollTop;
     });
-  }, []);
+  }, [holdAtUnread]);
 
   useEffect(() => () => {
     if (repinFrameRef.current) cancelAnimationFrame(repinFrameRef.current);
-  }, []);
-
-  const setStick = useCallback((next: boolean) => {
-    stickRef.current = next;
-    setPinned((prev) => (prev === next ? prev : next));
-    // Not every return to the bottom scrolls (a send at the bottom, a jump already there).
-    if (next) setComposerFolded(false);
   }, []);
 
   // A scroll event carries no hint of what caused it, and the transcript is a surface whose
@@ -1013,6 +1054,7 @@ export function ChatPane({
   const markActivity = useCallback(() => {
     lastActivityAtRef.current = performance.now();
     jumpHeldRef.current = false;
+    followRowRef.current = null;
     stopGlideRef.current();
   }, []);
   /** Pending settled-reveal timer, so a burst of scroll events keeps exactly one alive. */
@@ -1361,7 +1403,7 @@ export function ChatPane({
    *  a large block of entries is KNOWN to be landing above the reader, and therefore the only
    *  case where the height fallback in `holdAnchorSteady` is worth taking. */
   const heldAnchorRef = useRef<
-    { candidates: Array<{ node: Element; top: number }>; scrollHeight: number; prepend: boolean } | null
+    { candidates: HoldCandidate[]; scrollHeight: number; prepend: boolean } | null
   >(null);
 
   /**
@@ -1397,7 +1439,7 @@ export function ChatPane({
     const inner = contentRef.current;
     if (!el || !inner || el.clientHeight === 0) { heldAnchorRef.current = null; return; }
     const fold = el.getBoundingClientRect().top;
-    const candidates: Array<{ node: Element; top: number }> = [];
+    const candidates: HoldCandidate[] = [];
     const rows: Element[] = [];
     for (const child of Array.from(inner.children)) {
       // Never the "show earlier" button: it is the one row a reveal can DELETE rather than
@@ -1412,8 +1454,12 @@ export function ChatPane({
       if (runRows && runRows.length) rows.push(...Array.from(runRows));
       else rows.push(child);
     }
+    // The landed unread row first (followRowRef): held by its START, whichever element starts it.
+    const held = followRowRef.current;
+    if (held?.isConnected) candidates.push({ node: held, top: holdTopOf({ node: held, start: true }, el), start: true });
     for (const node of rows) {
       if (candidates.length >= ANCHOR_CANDIDATES) break;
+      if (node === held) continue;
       if (node.getBoundingClientRect().bottom <= fold) continue;
       candidates.push({ node, top: contentTopOf(node, el) });
     }
@@ -1423,6 +1469,8 @@ export function ChatPane({
       ? { candidates, scrollHeight: el.scrollHeight, prepend }
       : null;
   }, []);
+
+  captureAnchorRef.current = captureAnchor;
 
   /**
    * Put the reader back on their row if the content above them changed height. Called from
@@ -1452,7 +1500,7 @@ export function ChatPane({
     const delta = anchor
       ? anchorHoldCorrection({
         anchorTopBefore: anchor.top,
-        anchorTopAfter: contentTopOf(anchor.node, el),
+        anchorTopAfter: holdTopOf(anchor, el),
       })
       // Nothing the reader was looking at survived the commit — a rewind truncating the
       // transcript underneath a reveal. Total height is the WRONG measure (a streamed append
@@ -1474,7 +1522,7 @@ export function ChatPane({
     // perfectly leave the SAME numbers here — this is the truth either way, and recording it
     // is what makes the next call a no-op rather than a repeat of a correction already made.
     if (anchor) {
-      for (const c of held.candidates) if (c.node.isConnected) c.top = contentTopOf(c.node, el);
+      for (const c of held.candidates) if (c.node.isConnected) c.top = holdTopOf(c, el);
       held.scrollHeight = el.scrollHeight;
     } else {
       captureAnchor();
@@ -1815,7 +1863,9 @@ export function ChatPane({
   useEffect(() => {
     session.setTranscriptRepin(() => {
       const el = scrollRef.current;
-      if (stickRef.current) scrollToBottom();
+      // Back from the garage (the re-parent zeroed the offset): a landing, which may reveal the
+      // first unread above the window (plan r1 E2).
+      if (stickRef.current) scrollToBottom(!!el && el.scrollTop === 0 && restoreTopRef.current > 0);
       // Guarded on the value actually differing so a `fitAndResize` for a move that scrolled
       // nothing (the common case — it fires on every layout change, not just re-homes) writes
       // nothing at all.
@@ -2730,10 +2780,62 @@ export function ChatPane({
     isWalking: () => jumpHeldRef.current,
   });
   const { rowOf: unreadRowOf, look: lookAtUnread } = superUnread;
-  const goToUnread = useUnreadJump({ scrollRef, rowOf: unreadRowOf, look: lookAtUnread, measureTop: contentTopOf, landing: RAIL_CLEARANCE, flashMs: FLASH_MS, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef });
+  /** Prose lands under the rail's clearance; a question card whole when it fits, its top when not. */
+  const unreadLanding = useCallback((u: UnreadUnit, row: HTMLElement, sc: HTMLElement) => (
+    u.question ? landingFor('question', row.getBoundingClientRect().height, sc.clientHeight) : RAIL_CLEARANCE
+  ), []);
+  const holdUnreadRow = useCallback((row: HTMLElement) => { followRowRef.current = row; }, []);
+  const goToUnread = useUnreadJump({ scrollRef, rowOf: unreadRowOf, look: lookAtUnread, measureTop: contentTopOf, landingOf: unreadLanding, flashMs: FLASH_MS, holdRow: holdUnreadRow, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef });
+  followInputs.current = {
+    enabled: !!superView && !!superQuestionView,
+    items: unreadItems,
+    unread: superUnread.units,
+    rowOf: unreadRowOf,
+    measureTop: contentTopOf,
+    releaseToItem,
+    jump: goToUnread,
+    setStick,
+    jumpHeldRef,
+  };
+  // The opened pane's FIRST landing (marks loaded): straight to the first unread's start, even
+  // above the window. Then, while pinned, a new anchor (a read one handing over to the next, the
+  // marks arriving) is followed again, only ever down. Skipped once the reader has moved (r1 E9).
+  const anchorKeyNow = follow.anchorKey();
+  const unreadReady = superUnread.ready;
+  const historyPending = !!conv.historyPending;
+  const landedRef = useRef(false);
+  const openedAtRef = useRef(performance.now());
+  useLayoutEffect(() => {
+    // The first landing judges the WHOLE transcript: it waits, unspent, until the read marks are in,
+    // a resumed transcript has landed (live frames can come first, end review r2) and there is
+    // an anchor at all (end review r1).
+    if (!unreadReady || historyPending || !anchorKeyNow) return;
+    const first = !landedRef.current;
+    landedRef.current = true;
+    if (!stickRef.current || glideRef.current) return;
+    if (first && lastActivityAtRef.current > openedAtRef.current) return;
+    scrollToBottom(first);
+  }, [anchorKeyNow, unreadReady, historyPending, scrollToBottom]);
+  // The doors to a question (the band's Answer, the agenda's waiting row): showQuestionCard asks
+  // this pane through the event, and the pane says where it went (K1 = A).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !superView) return undefined;
+    const onDoor = (e: Event) => {
+      const detail = (e as CustomEvent<SuperQuestionDetail>).detail;
+      if (!detail?.item) return;
+      e.preventDefault();
+      followRowRef.current = null;
+      detail.landed = follow.door(detail.item);
+    };
+    el.addEventListener(SUPER_QUESTION_EVENT, onDoor);
+    return () => el.removeEventListener(SUPER_QUESTION_EVENT, onDoor);
+  }, [superView, follow]);
   const jumpToNextUnread = () => {
     const unit = superUnread.next();
     if (!unit) return;
+    follow.forgetDoor();
+    followRowRef.current = null;
     if (unit.itemId ? releaseToItem(unit.itemId) === null : !unreadRowOf(unit)) return;
     setStick(false);
     jumpHeldRef.current = true;
@@ -2745,6 +2847,9 @@ export function ChatPane({
   const goToLatest = () => {
     jumpHeldRef.current = false;
     stopGlideRef.current();
+    // The reader chose the end: what is above no longer holds the view (D2).
+    follow.passAll();
+    follow.forgetDoor();
     setStick(true);
     scrollToBottom();
     if (superView) refocusAfterBar();
@@ -2764,13 +2869,16 @@ export function ChatPane({
   // newest user message instead of plumbed through the composer, so EVERY send path counts —
   // composer submit, retry, a dropped file's re-issue, a delegated prompt.
   const lastUserItemId = lastOwnItem?.id;
+  /** The newest own message at mount: the re-arm runs on mount too, and that is no send (r1 C5). */
+  const sentIdRef = useRef(lastUserItemId);
   useLayoutEffect(() => {
     if (!lastUserItemId) return;
+    if (sentIdRef.current !== lastUserItemId) { sentIdRef.current = lastUserItemId; follow.passAll(); }
     jumpHeldRef.current = false;
     stopGlideRef.current();
     setStick(true);
     scrollToBottom();
-  }, [lastUserItemId, setStick, scrollToBottom]);
+  }, [lastUserItemId, setStick, scrollToBottom, follow]);
 
   // Stream-interrupted retry (state 12): resend the last user message. There is no
   // reconnect-and-resume machinery in this engine (see the plan's resolved risk) — for a
@@ -2810,8 +2918,17 @@ export function ChatPane({
               prevScrollTop: prevTopRef.current,
               userDriven: userDriving(),
             };
-            if (!jumpHeldRef.current) setStick(nextStickToBottom(stickRef.current, metrics));
-            setComposerFolded((prev) => nextComposerFolded(prev, stickRef.current, metrics));
+            // The reader's own input, fresh: what tells his arrival at the end from a clamp or the
+            // pane's own write (plan r1 C3/E4).
+            const readerMoving = metrics.userDriven || performance.now() - lastActivityAtRef.current < SCROLL_SETTLE_MS;
+            if (!jumpHeldRef.current) {
+              const stick = nextStickToBottom(stickRef.current, metrics);
+              if (stick && !stickRef.current && readerMoving) follow.passAll();
+              setStick(stick);
+            }
+            // In the Super chat the composer folds on his own scroll only, never on the follow's
+            // hold (a report landing must not fold it under him on a phone, r1 E7).
+            setComposerFolded((prev) => (superView && !readerMoving && !stickRef.current ? prev : nextComposerFolded(prev, stickRef.current, metrics)));
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
             syncRail();

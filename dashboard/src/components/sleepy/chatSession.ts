@@ -314,6 +314,10 @@ export interface ConversationModel {
    *  without shifting the positions `openBlocksByIndex`/`toolCardPos` recorded for live
    *  items. Rendered above `items` behind an "earlier conversation" divider. */
   history: ChatItem[];
+  /** True while a resumed session's transcript replay is still on its way (absent once it has
+   *  landed, empty or not, and on a fresh session). Live frames can arrive before it: whatever
+   *  must judge the whole transcript (the Super pane's first landing) waits for this to clear. */
+  historyPending?: boolean;
   pending: PendingItem[];
   /** Messages submitted while a turn was in flight, oldest first — drained one per turn by
    *  `maybeFlushQueue`. Editable and removable until they go out (see {@link ChatSession.enqueue}).
@@ -1329,6 +1333,7 @@ export function createChatSession(
 
   let conv: ConversationModel = {
     items: [], history: [], pending: [], queued: [], draft: '', draftEpoch: 0, capabilities: [], subAgents: [],
+    historyPending: resume || undefined,
     // A server-submitted prompt (delegation, promptToken, sleep/brain spawns) means a turn is
     // ALREADY in flight before this client sends anything — see `busy` below.
     turnStartedAt: serverSubmitsPrompt ? Date.now() : undefined,
@@ -3374,10 +3379,10 @@ export function createChatSession(
    *  shift positions the live reducer bookkeeping recorded. */
   async function seedHistory(): Promise<void> {
     const entries = await fetchTranscriptHistory();
-    if (disposed || !entries.length) return;
+    if (disposed) return;
     const items = entries.map(toChatItem).filter((x): x is ChatItem => !!x);
-    if (!items.length) return;
-    applyAndNotify(() => { conv = { ...conv, history: items }; });
+    // Settled either way: an empty or unreadable transcript is a seed too (historyPending).
+    applyAndNotify(() => { conv = { ...conv, history: items.length ? items : conv.history, historyPending: undefined }; });
   }
 
   /**

@@ -16,7 +16,9 @@ export function SuperUnreadBar({ unread, onJump, onBottom, onGone }: {
 }) {
   const { t } = useI18n();
   const shown = !!unread.edge && unread.count > 0;
-  const count = t('super.unread.count').replace('{n}', String(unread.count));
+  // The next one is a question card: the pill says so, not a count (owner 2026-11-12).
+  const asks = unread.nextQuestion;
+  const count = asks ? t('super.unread.question') : t('super.unread.count').replace('{n}', String(unread.count));
   const hadFocus = useRef(false);
   const goneRef = useRef(onGone);
   goneRef.current = onGone;
@@ -34,7 +36,7 @@ export function SuperUnreadBar({ unread, onJump, onBottom, onGone }: {
       <button type="button" className="super-unread-jump" data-testid="super-unread-jump" onClick={onJump}>
         <span aria-hidden>{unread.edge === 'up' ? '↑' : '↓'}</span>
         <span className="super-unread-count">{count}</span>
-        <span className="super-unread-go">· {t(unread.edge === 'up' ? 'super.unread.go' : 'super.unread.next')}</span>
+        <span className="super-unread-go">· {t(asks ? 'super.unread.goQuestion' : unread.edge === 'up' ? 'super.unread.go' : 'super.unread.next')}</span>
       </button>
       <button type="button" className="super-unread-side" data-testid="super-unread-all" onClick={unread.markAll}>{t('super.unread.markAll')}</button>
       {onBottom && (

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DWELL_MS, GLIDE_REACH, SAME_MESSAGE_MS, advanceDwell, chooseLine, firstMountedRow, glideEase, glideFrom, nextUnreadIndex, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
+  DWELL_MS, FOLLOW_SLACK, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, doorTarget, emptyPassed, followAnchor, followAnchors, followTop, landingFor, passAll, readSide, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, nextUnreadIndex, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
   type ReadMarks, type UnreadItem,
 } from '../../dashboard/src/components/sleepy/super/superUnread';
+import { BOTTOM_SLACK } from '../../dashboard/src/components/sleepy/chat/chatEntities';
 
 const text = (id: string, words: string, ts: number, done = true): UnreadItem => ({ kind: 'text', id, text: words, ts, done });
 const user = (id: string, words: string, ts: number): UnreadItem => ({ kind: 'user', id, text: words, ts });
@@ -40,6 +41,12 @@ describe('what counts as unread', () => {
     const before = units([user('e', '[super recap] back', 10)]);
     const after = units([user('e', '[super recap] back', 10), text('r', 'while you were away', 11)]);
     expect(unreadOf(after, marks(0, [{ key: before[0].key, ts: 10 }]))).toHaveLength(1);
+  });
+
+  it('a re-sent owed turn is bookkeeping unless the Super said something in it', () => {
+    const owed = '[super owed] items=1\n- owed=o2 kind=msg ref=abc at=23:04\n';
+    expect(units([user('u', 'go', 1), user('e', owed, 10)])).toEqual([]);
+    expect(units([user('u', 'go', 1), user('e', owed, 10), text('r', 'sorry, here it is', 11)]).map((u) => u.itemId)).toEqual(['e']);
   });
 
   it('a batch is keyed by its id, whatever its item lines say', () => {
@@ -248,5 +255,132 @@ describe("a member Super's turns for main Super are never the owner's unread (pl
   it('an open question still counts under a main batch (it is the record\'s, the owner\'s own)', () => {
     const got = unreadUnits([ev('e1', 'B1', 10)], { fold: true, ownerBatches: [], openQuestions: [{ id: 'q', createdAt: 11 }], mainBatches: ['B1'] });
     expect(got.map((u) => u.question)).toEqual(['q']);
+  });
+});
+
+describe('the follow never pushes an unread start out of view (owner 2026-11-12)', () => {
+  it("follows the bottom while the anchor's start stays in view, and holds at the start once it would not", () => {
+    // Fits: the report starts 300 px below where the bottom view begins.
+    expect(followTop(1000, 1300, PROSE_LANDING)).toEqual({ top: 1000, held: false });
+    // No anchor: the bottom, always.
+    expect(followTop(1000, null, PROSE_LANDING)).toEqual({ top: 1000, held: false });
+    // A report 600 px taller than the view: the view stops at its start, under the clearance. (Mutation: cap off.)
+    const r = followTop(1000, 400, PROSE_LANDING);
+    expect(r).toEqual({ top: 400 - PROSE_LANDING, held: true });
+    expect(400 - r.top).toBe(PROSE_LANDING);
+    // Never above the content's top, never below the bottom.
+    expect(followTop(1000, 20, PROSE_LANDING)).toEqual({ top: 0, held: true });
+    for (const a of [0, 100, 900, 1040, 5000]) expect(followTop(1000, a, PROSE_LANDING).top).toBeLessThanOrEqual(1000);
+  });
+
+  it('a pinned view only moves down: an anchor above its offset cannot pull it up (plan r1 C1)', () => {
+    // Pinned at 900, the anchor's start 300 px above: the view stays put, not 600 px up.
+    expect(followTop(1400, 300, PROSE_LANDING, 900)).toEqual({ top: 900, held: true });
+    // The live text starting just inside the view: held where it is, never above.
+    expect(followTop(2000, 920, PROSE_LANDING, 900).top).toBe(900);
+    // The opened pane's first landing passes no floor and may go up. (Mutation: floor ignored.)
+    expect(followTop(1400, 300, PROSE_LANDING).top).toBe(300 - PROSE_LANDING);
+  });
+
+  it('the follow slack is the pin\'s own (mirror, drift test)', () => {
+    expect(FOLLOW_SLACK).toBe(BOTTOM_SLACK);
+  });
+
+  it('a target within the slack of the bottom IS the bottom: a short reply stays pinned', () => {
+    // (Mutation: slack off would hold 10 px short of the bottom and show a Latest pill.)
+    expect(followTop(1000, 1000 - FOLLOW_SLACK + PROSE_LANDING + 10, PROSE_LANDING)).toEqual({ top: 1000, held: false });
+    expect(followTop(1000, 1000 - FOLLOW_SLACK + PROSE_LANDING - 10, PROSE_LANDING).held).toBe(true);
+  });
+
+  it('the anchor is the first unpassed unread in transcript order, then the live text, then a question', () => {
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'live' }];
+    const u = (itemId: string | null, question: string | null = null, ts = 1, key = `k${itemId ?? question}`) => ({ key, ts, itemId, question });
+    const none = emptyPassed();
+    const at = (a: ReturnType<typeof followAnchor>) => (a ? ('itemId' in a ? a.itemId : `q:${a.question}`) : null);
+    // Unread list sorted by time can disagree with the page: the page's order wins.
+    expect(at(followAnchor(items, [u('b', null, 1), u('a', null, 2)], none, null))).toBe('a');
+    expect(at(followAnchor(items, [u('b')], none, 'live'))).toBe('b');
+    expect(followAnchor(items, [], none, 'live')).toEqual({ itemId: 'live', unit: null });
+    // A question ranks after every item, however old.
+    expect(at(followAnchor(items, [u(null, 'q1', 0), u('b', null, 5)], none, null))).toBe('b');
+    expect(at(followAnchor(items, [u(null, 'q1')], none, null))).toBe('q:q1');
+    // Passed (the reader chose the end): never an anchor again. (Mutation: passed ignored.)
+    const passed = emptyPassed();
+    passAll(passed, [u('a'), u(null, 'q1')], 'live');
+    passAll(passed, [u('a'), u(null, 'q1')], 'live');
+    expect(passed.units).toHaveLength(2);
+    expect(followAnchor(items, [u('a'), u(null, 'q1')], passed, 'live')).toBeNull();
+    // A replay re-ids every row: the same message (key, time) under a new id stays passed. (Mutation: passed by id.)
+    expect(followAnchor([{ id: 'hist-9' }], [u('hist-9', null, 1, 'ka')], passed, null)).toBeNull();
+    // Passed while it streamed: the unit it becomes when it finishes is passed too. (Mutation: live pass dropped at done.)
+    const mid = emptyPassed();
+    passAll(mid, [], 'live');
+    expect(followAnchor(items, [u('live', null, 5)], mid, null)).toBeNull();
+    // A NEW message after the pass is followed.
+    expect(at(followAnchor([...items, { id: 'c' }], [u('a'), u('c', null, 9)], passed, null))).toBe('c');
+    // Every candidate, in order, for the pane to walk past one that draws no row.
+    expect(followAnchors(items, [u(null, 'q1'), u('b'), u('a')], none, 'live').map((a) => ('itemId' in a ? a.itemId : `q:${a.question}`))).toEqual(['a', 'b', 'live', 'q:q1']);
+    // A unit whose row the transcript does not hold yields no item anchor.
+    expect(followAnchor(items, [u('gone')], none, null)).toBeNull();
+  });
+
+  it('read needs the START: the end of a tall row filling the view is not seen', () => {
+    const view = { top: 0, bottom: 500 };
+    // Start 600 px above, the rest fills the view: mostly visible by the old rule, not seen now. (Mutation: start rule dropped.)
+    expect(startSeen({ top: -600, bottom: 600 }, view)).toBe(false);
+    expect(startInView({ top: -600, bottom: 600 }, view)).toBe(false);
+    expect(startSide({ top: -600, bottom: 600 }, view)).toBe('above');
+    // Its start on screen and it fills most of the view: seen.
+    expect(startSeen({ top: 40, bottom: 1200 }, view)).toBe(true);
+    // The slack: a first line a few px under the edge still counts.
+    expect(startInView({ top: -START_SLACK, bottom: 300 }, view)).toBe(true);
+    expect(startInView({ top: -START_SLACK - 1, bottom: 300 }, view)).toBe(false);
+    expect(startSide({ top: 500, bottom: 700 }, view)).toBe('below');
+    expect(startSide({ top: 499, bottom: 700 }, view)).toBe('in');
+  });
+
+  it('a jump goes to a tall unread whose start is above, even when it fills the view', () => {
+    const view = { top: 0, bottom: 500 };
+    expect(nextUnreadIndex([{ top: -600, bottom: 600 }], view)).toBe(0);
+    expect(nextUnreadIndex([{ top: 40, bottom: 600 }], view)).toBe(-1);
+  });
+
+  it('the reader\'s side: in only when seen, a start peeking in at the bottom is ahead', () => {
+    const view = { top: 0, bottom: 500 };
+    expect(readSide({ top: 484, bottom: 690 }, view)).toBe('below');
+    expect(readSide({ top: 64, bottom: 300 }, view)).toBe('in');
+    expect(readSide({ top: -600, bottom: 600 }, view)).toBe('above');
+    // The door does not count a peeking report as on screen: it lands on it before the card.
+    expect(doorTarget([{ top: 484, bottom: 690 }], { top: 700, bottom: 900 }, view)).toBe(0);
+  });
+
+  it('a jump does not pass an unread whose first line only peeks in at the bottom', () => {
+    // The report's start 16 px inside the bottom edge: not read where it is, so it is next, not
+    // the one after it (verify super-unread: the jump skipped it and scrolled it away unread).
+    const view = { top: 0, bottom: 500 };
+    expect(nextUnreadIndex([{ top: 484, bottom: 690 }, { top: 707, bottom: 913 }], view)).toBe(0);
+    // A tall one landed under the top is being read: nothing to jump to.
+    expect(nextUnreadIndex([{ top: 64, bottom: 1200 }], view)).toBe(-1);
+  });
+
+  it('a question card lands whole when it fits, its top when it does not', () => {
+    expect(landingFor('prose', 2000, 500)).toBe(PROSE_LANDING);
+    expect(landingFor('question', 300, 500)).toBe(PROSE_LANDING);
+    expect(landingFor('question', 470, 500)).toBe(30);
+    expect(landingFor('question', 584, 459)).toBe(12);
+  });
+
+  it('a door lands on the topmost unread above the card whose start is off screen, else on the card (K1 = A)', () => {
+    const view = { top: 0, bottom: 500 };
+    const card = { top: 300, bottom: 700 };
+    expect(doorTarget([{ top: -900, bottom: -200 }, { top: -150, bottom: 250 }], card, view)).toBe(0);
+    // Already on screen: the card.
+    expect(doorTarget([{ top: 20, bottom: 280 }], card, view)).toBe(-1);
+    // Below the card: not what the question rests on.
+    expect(doorTarget([{ top: 800, bottom: 900 }], card, view)).toBe(-1);
+    // Above the mounted window: first.
+    expect(doorTarget([{ top: -150, bottom: 250 }, null], card, view)).toBe(1);
+    expect(doorTarget([], card, view)).toBe(-1);
+    expect(SUPER_QUESTION_EVENT).toBe('dc:super-question');
   });
 });

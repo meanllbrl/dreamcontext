@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  isStreamGrowth,
+  isStreamGrowth, contentTopOf, screenScaleOf,
   toolGlyph, classifyReference, isPdfPath, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
@@ -2655,3 +2655,22 @@ describe('isStreamGrowth (CPU RCA K3)', () => {
     expect(isStreamGrowth(a, { ...model([user, text('Hello!')]), pending: [] })).toBe(false); // field changed
   });
 });
+
+describe('contentTopOf: a row\'s start in scroll pixels', () => {
+  const box = (top: number, height: number) => ({ top, height }) as DOMRect;
+  const scroller = (scale: number, scrollTop: number) => ({ offsetHeight: 500, scrollTop, getBoundingClientRect: () => box(100, 500 * scale) }) as unknown as HTMLElement;
+  const row = (screenTop: number) => ({ getBoundingClientRect: () => box(screenTop, 10) }) as unknown as Element;
+
+  it('untransformed: screen offset plus scrollTop', () => {
+    expect(contentTopOf(row(164), scroller(1, 7000))).toBe(7064);
+  });
+
+  it('inside a scaled ancestor (the opening animation) the screen offset is divided by the scale', () => {
+    // 64 layout px below the top read as 43.52 screen px at scale 0.68.
+    expect(contentTopOf(row(100 + 64 * 0.68), scroller(0.68, 7000))).toBeCloseTo(7064, 6);
+    expect(screenScaleOf({ offsetHeight: 0, getBoundingClientRect: () => box(0, 0) } as unknown as HTMLElement)).toBe(1);
+    // A fractional height against offsetHeight's whole pixel is rounding, not a transform.
+    expect(screenScaleOf({ offsetHeight: 560, getBoundingClientRect: () => box(0, 559.5) } as unknown as HTMLElement)).toBe(1);
+  });
+});
+
