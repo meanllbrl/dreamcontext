@@ -74,7 +74,9 @@ import { turnTrace } from './turnTrace';
 import { unlock as unlockCue, play as playCue } from './cuePlayer';
 import {
   beginNativeTake, endNativeTake, cancelNativeTake, onNativeLevel, probeNativeMic, nativeMicReady,
+  nativeInputName, type NativeTake,
 } from './nativeMic';
+import { openLiveInput, keepRunning, type LiveInput } from './micInput';
 
 /**
  * The constraint object: the voice-processing chain ON, one channel.
@@ -199,6 +201,61 @@ export function levelSlices(frame: Float32Array, step = LEVEL_SLICE): number[] {
 
 export type TakeVerdict = 'ok' | 'too-short' | 'silent';
 
+/**
+ * Below this, a take's loudest frame is digital silence (about -100 dBFS): no microphone in a
+ * room, however quiet, measures that low. The input is delivering nothing at all.
+ */
+export const DEAD_PEAK = 1e-5;
+
+/** {@link TakeVerdict}, plus the input that delivered nothing. */
+export type CaptureVerdict = TakeVerdict | 'no-signal';
+
+/**
+ * The verdict for a take, telling a microphone that delivered NOTHING apart from a tap and a
+ * quiet room. Pure, so it is tested without a microphone.
+ *
+ * ── WHY 'no-signal' EXISTS, 2026-11-13 ──────────────────────────────────────────────────────
+ * Reported: after the screen locked or headphones went in or out, dictation stopped typing.
+ * A dead input hands over no frames, or frames of exact zeros, and the gate named both a
+ * mistake of the owner's: no frames was "Hold" (a tap), zeros was "Nothing heard, closer to
+ * the mic". Neither is true and neither helps; the owner held the key, spoke, and was told to
+ * do what they had just done. Now the gate says the microphone got no sound, and which one.
+ *
+ * `heldMs` is how long the input was meant to be delivering (the press, less the device's
+ * opening); a hold that short is a tap whatever arrived.
+ */
+export function judgeCapture(c: {
+  heldMs: number; durationMs: number; frames: number; peak: number; floor: number;
+}): CaptureVerdict {
+  if (c.heldMs < MIN_TAKE_MS) return 'too-short';
+  if (c.frames === 0 || c.peak < DEAD_PEAK) return 'no-signal';
+  return judgeTake(c.durationMs, c.peak, c.frames > 1 ? c.floor : Infinity);
+}
+
+/** The verdict for a native take, from the body the shell handed over. */
+export function nativeTakeVerdict(got: Pick<NativeTake, 'rate' | 'samples' | 'openedMs' | 'wallMs'>): CaptureVerdict {
+  const { peak, floor, frames } = measureTake(got.samples, got.rate);
+  return judgeCapture({
+    heldMs: got.wallMs - (got.openedMs ?? 0),
+    durationMs: got.rate > 0 ? (got.samples.length / got.rate) * 1000 : 0,
+    frames, peak, floor,
+  });
+}
+
+/** A native take that failed: a shell that stopped answering is not a permission problem. */
+export function micFailureMessage(err: unknown): string {
+  return /did not answer/.test(String((err as { message?: string })?.message ?? err))
+    ? 'The microphone stopped answering. Try again; if it keeps happening, restart the app.'
+    : 'The microphone is not available. Check the permission in System Settings.';
+}
+
+/** What the owner is told when the input delivered nothing: which device, and what to do. */
+export function noSignalMessage(device: string | null | undefined): string {
+  const name = (device || '').trim();
+  return `${name ? `No sound reached the app from "${name}".` : 'No sound reached the app from the microphone.'}`
+    + ' Check the input in System Settings → Sound, or unplug and plug the headset in again.';
+}
+
 /** How far a take has got. See {@link stopVerdict} for why the phase is tracked separately
  *  from "is there a recorder". */
 export type TakePhase = 'idle' | 'opening' | 'recording' | 'uploading';
@@ -280,6 +337,9 @@ export type CaptureState =
   | 'transcribing'
   | 'too-short'
   | 'silent'
+  /** The input delivered nothing at all (a device gone after sleep, a headset swap): `error`
+   *  names the device. See {@link judgeCapture}. */
+  | 'no-signal'
   /** The Mac could not understand the take, twice, and sent nothing ("Anlayamadım"). */
   | 'garbled'
   | 'error'
@@ -320,6 +380,8 @@ export interface VoiceCapture {
   error: string;
   /** What whisper made of a `garbled` take — shown dimmed, as plain text, never sent. */
   heard: string;
+  /** The input that delivered nothing, on a `no-signal` take, when the OS named it. */
+  device: string;
   start: () => void;
   stop: () => void;
 }
@@ -364,9 +426,11 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
   const [heard, setHeard] = useState('');
+  const [device, setDevice] = useState('');
   const [attempt, setAttempt] = useState(0);
 
-  const streamRef = useRef<MediaStream | null>(null);
+  /** The WebKit take's input, re-opened in place when its device goes away (`micInput.ts`). */
+  const inputRef = useRef<LiveInput | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   /** The tape: every frame the graph handed us, at the device's own sample rate. */
   const chunksRef = useRef<Float32Array[]>([]);
@@ -438,8 +502,9 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
       tapRef.current = null;
     }
     // The macOS mic indicator stays lit for as long as ANY track is live.
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
+    inputRef.current?.close();
+    inputRef.current = null;
+    if (audioCtxRef.current) audioCtxRef.current.onstatechange = null;
     void audioCtxRef.current?.close().catch(() => {});
     audioCtxRef.current = null;
   }, []);
@@ -447,7 +512,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
   useEffect(() => () => {
     // Unmount CANCELS a take that is still opening, for exactly the reason `stop()` does.
     // `teardown()` alone is not enough here: during `opening` the stream has deliberately not
-    // been assigned to `streamRef` yet, so a `getUserMedia` that resolves after this component
+    // been assigned to `inputRef` yet, so a `getUserMedia` that resolves after this component
     // is gone would hand a live track to a coroutine whose teardown has already run — and the
     // mic indicator would stay lit with nothing left to switch it off. Narrow (it needs an
     // unmount while the OS permission dialog is up) and surfaced by review while checking the
@@ -539,28 +604,27 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
     const durationMs = Date.now() - startedAtRef.current;
     const deviceRate = audioCtxRef.current?.sampleRate ?? TARGET_SAMPLE_RATE;
     const frames = chunksRef.current;
-    // A take with no frames at all never reached the graph — an ABSENT meter, not a silent
-    // room — and a number nobody took must not veto a sentence. There is also nothing to
-    // upload in that case, so it degrades to `silent` below on emptiness alone.
-    const peak = meteredFramesRef.current > 0 ? peakRef.current : 1;
-    // Two frames at least: with one, the quietest frame IS the loudest and every take would
-    // be judged against its own peak. Unmeasured falls back to the old fixed floor.
-    const noise = meteredFramesRef.current > 1 ? floorRef.current : Infinity;
+    const device = inputRef.current?.label() ?? '';
     capturingRef.current = false;
     const wav = frames.length ? wavFromTake(frames, deviceRate) : null;
     chunksRef.current = [];
     teardown();
 
-    // No frame at all and released inside the tap window: a TAP (the press is what the owner
-    // did, so it is timed from the press), not a silent room. It earns the tap's one word and
-    // nudge, as on the native path (`frames === 0 ? 'too-short'`).
-    const verdict = wav ? judgeTake(durationMs, peak, noise)
-      : Date.now() - pressedAtRef.current < MIN_TAKE_MS ? 'too-short' : 'silent';
+    // A take held past the tap window that got no frame, or only digital zeros, is a dead
+    // input (`judgeCapture`), and says so with the device's name.
+    const verdict = judgeCapture({
+      heldMs: durationMs,
+      durationMs,
+      frames: meteredFramesRef.current,
+      peak: peakRef.current,
+      floor: floorRef.current,
+    });
     if (verdict !== 'ok' || !wav) {
       // NOTHING is uploaded. Not one invented sentence reaches the agent (AC5).
       inFlightRef.current = false;
       phaseRef.current = 'idle';
-      setState(verdict === 'too-short' ? 'too-short' : 'silent');
+      if (verdict !== 'too-short' && verdict !== 'silent') { setError(noSignalMessage(device)); setDevice(device); }
+      setState(verdict === 'too-short' || verdict === 'silent' ? verdict : 'no-signal');
       turnTrace.drop(vault, 'silent');
       return;
     }
@@ -603,14 +667,28 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
       let got;
       try {
         got = await endNativeTake(id);
-      } catch {
-        fail('The microphone is not available. Check the permission in System Settings.');
+      } catch (err) {
+        fail(micFailureMessage(err));
         return;
       }
       if (takeRef.current !== take) return;
-      const { peak, floor, frames } = measureTake(got.samples, got.rate);
       const durationMs = got.rate > 0 ? (got.samples.length / got.rate) * 1000 : 0;
-      const verdict = frames === 0 ? 'too-short' : judgeTake(durationMs, peak, frames > 1 ? floor : Infinity);
+      const verdict = nativeTakeVerdict(got);
+      if (verdict === 'no-signal') {
+        // Said at once; the device's name follows when the shell gives it, so a slow answer
+        // never leaves the button reading "Listening" after the release.
+        inFlightRef.current = false;
+        phaseRef.current = 'idle';
+        setError(noSignalMessage(null));
+        setState('no-signal');
+        turnTrace.drop(vault, 'silent');
+        void nativeInputName().then((name) => {
+          if (!name || takeRef.current !== take) return;
+          setError(noSignalMessage(name));
+          setDevice(name);
+        });
+        return;
+      }
       if (verdict !== 'ok') {
         inFlightRef.current = false;
         phaseRef.current = 'idle';
@@ -641,13 +719,13 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
       let begun: { id: number; sinceMs: number } | null;
       try {
         begun = await beginNativeTake();
-      } catch {
+      } catch (err) {
         begun = null;
         if (cancelled()) return;
         inFlightRef.current = false;
         phaseRef.current = 'idle';
         setState('error');
-        setError('The microphone is not available. Check the permission in System Settings.');
+        setError(micFailureMessage(err));
         return;
       }
       if (!begun) {
@@ -693,6 +771,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
     phaseRef.current = 'opening';
     setError('');
     setHeard('');
+    setDevice('');
     setElapsed(0);
     peakRef.current = 0;
     floorRef.current = Infinity;
@@ -731,7 +810,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
         ctx = new AudioContext();
       }
       audioCtxRef.current = ctx;
-      if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
+      keepRunning(ctx);
     } catch {
       audioCtxRef.current = null;
     }
@@ -740,48 +819,8 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
       /** True once `stop()` cancelled this take while the device was still opening. */
       const cancelled = () => takeRef.current !== take;
 
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: MIC });
-      } catch (err) {
-        // A constraint this device or engine will not take must not cost the take. Retried
-        // ONCE with no constraints at all: a take in the default chain beats no take.
-        if ((err as { name?: string })?.name === 'OverconstrainedError'
-          || (err as { name?: string })?.name === 'TypeError') {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          } catch {
-            if (cancelled()) return;
-            inFlightRef.current = false;
-            phaseRef.current = 'idle';
-            setState('error');
-            setError('The microphone is not available. Check the permission in System Settings.');
-            return;
-          }
-        } else {
-          if (cancelled()) return;
-          inFlightRef.current = false;
-          phaseRef.current = 'idle';
-          setState('error');
-          setError('The microphone is not available. Check the permission in System Settings.');
-          return;
-        }
-      }
-      if (cancelled()) {
-        // Released while the OS permission dialog was up. The tracks are stopped HERE rather
-        // than through `teardown()`, because `streamRef` was deliberately never assigned —
-        // this stream belongs to a take that no longer exists, and a later take's teardown
-        // must not be the thing that closes it.
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      streamRef.current = stream;
-
-      // ── The tape and the meter, on ONE node ─────────────────────────────────────────
-      // The context was opened in the gesture (see `start`'s head); it is only WIRED here,
-      // once there is a stream to wire to. Every frame is both recorded and measured, so the
-      // gate can never disagree with what was captured — the failure this replaced was
-      // exactly that disagreement.
+      // The context first: it was opened in the gesture, and without one there is nothing to
+      // wire a stream to, so the device is never opened for nothing.
       const ctx = audioCtxRef.current;
       if (!ctx) {
         teardown();
@@ -792,10 +831,53 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
         setError('This system cannot record audio.');
         return;
       }
-      if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
+      /** The node the CURRENT stream feeds; swapped when the input is re-opened. */
+      let source: MediaStreamAudioSourceNode | null = null;
+
+      let input: LiveInput | null;
+      try {
+        // The default input, with the constraint fallback, kept alive for this take: when its
+        // track ends (headphones out, lid closed, the Mac slept) the CURRENT default is opened
+        // in its place and wired into the same graph (`micInput.ts`).
+        input = await openLiveInput(navigator.mediaDevices, {
+          constraints: MIC,
+          live: () => takeRef.current === take,
+          onReplace: (next) => {
+            const tap = tapRef.current;
+            if (!tap) return;
+            try { source?.disconnect(); } catch { /* already gone */ }
+            source = ctx.createMediaStreamSource(next);
+            source.connect(tap);
+            keepRunning(ctx);
+          },
+        });
+      } catch {
+        if (cancelled()) return;
+        teardown();
+        inFlightRef.current = false;
+        phaseRef.current = 'idle';
+        setState('error');
+        setError('The microphone is not available. Check the permission in System Settings.');
+        return;
+      }
+      // Null: released while the OS permission dialog was up. Its tracks are already stopped,
+      // and `inputRef` was deliberately never assigned: a later take's teardown must not be
+      // the thing that closes a stream belonging to a take that no longer exists.
+      if (!input) return;
+      inputRef.current = input;
+
+      // ── The tape and the meter, on ONE node ─────────────────────────────────────────
+      // The context was opened in the gesture (see `start`'s head); it is only WIRED here,
+      // once there is a stream to wire to. Every frame is both recorded and measured, so the
+      // gate can never disagree with what was captured — the failure this replaced was
+      // exactly that disagreement.
+      // A context left `interrupted` or `suspended` (a sleep, a route change) delivers
+      // silence: resumed now, and again whenever it leaves `running` during the take.
+      keepRunning(ctx);
+      ctx.onstatechange = () => { if (capturingRef.current) keepRunning(ctx); };
 
       try {
-        const source = ctx.createMediaStreamSource(stream);
+        source = ctx.createMediaStreamSource(input.stream);
         // ~85 ms of audio whatever rate the context ended up at: small enough that a short
         // take still gets several frames, large enough not to spend the take in callback
         // overhead. Sized from the rate rather than hardcoded, because the context above now
@@ -890,6 +972,7 @@ export function useVoiceCapture({ vault, onTranscript, onLevel, maxMs, conv }: V
     busy: state === 'recording' || state === 'transcribing',
     error,
     heard,
+    device,
     start,
     stop,
   };

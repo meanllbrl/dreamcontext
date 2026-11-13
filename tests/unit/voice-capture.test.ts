@@ -294,16 +294,18 @@ describe('releasing the button (the orphaned-recorder race, found in review)', (
     const src = readFileSync('dashboard/src/lib/voice/useVoiceCapture.ts', 'utf-8');
     expect(src).toMatch(/const take = \+\+takeRef\.current/);
     expect(src).toMatch(/const cancelled = \(\) => takeRef\.current !== take/);
-    // Immediately after the device opens, and before anything is assigned to a ref that a
-    // LATER take's teardown would own.
-    const afterAwait = src.slice(src.indexOf('await navigator.mediaDevices.getUserMedia'));
-    const checkAt = afterAwait.indexOf('if (cancelled())');
-    const assignAt = afterAwait.indexOf('streamRef.current = stream');
-    expect(checkAt).toBeGreaterThan(-1);
-    expect(checkAt).toBeLessThan(assignAt);
-    // And the abandoned stream's tracks are stopped by hand, since `teardown()` reads
-    // `streamRef` and that was deliberately never assigned.
-    expect(afterAwait.slice(checkAt, assignAt)).toMatch(/stream\.getTracks\(\)\.forEach/);
+    // The device is opened by `micInput.openLiveInput`, which asks "still the take?" (`live`)
+    // right after its await and stops the abandoned stream's tracks itself, returning null;
+    // the hook returns on null BEFORE anything is assigned to a ref a LATER take's teardown
+    // would own. (`voice-device-change.test.ts` drives that branch with a fake MediaDevices.)
+    expect(src).toMatch(/live: \(\) => takeRef\.current === take/);
+    const afterAwait = src.slice(src.indexOf('await openLiveInput('));
+    const nullAt = afterAwait.indexOf('if (!input) return;');
+    const assignAt = afterAwait.indexOf('inputRef.current = input');
+    expect(nullAt).toBeGreaterThan(-1);
+    expect(nullAt).toBeLessThan(assignAt);
+    const lib = readFileSync('dashboard/src/lib/voice/micInput.ts', 'utf-8');
+    expect(lib).toMatch(/if \(!o\.live\(\)\) \{\s*current\.getTracks\(\)\.forEach\(\(t\) => t\.stop\(\)\);\s*return null;/);
   });
 });
 
@@ -318,7 +320,7 @@ describe('the RMS meter measures the take, or does not veto it', () => {
     // follows for the playback element.
     const start = src.slice(src.indexOf('const start = useCallback'));
     const ctxAt = start.indexOf('new AudioContext()');
-    const awaitAt = start.indexOf('await navigator.mediaDevices.getUserMedia');
+    const awaitAt = start.indexOf('await openLiveInput(');
     expect(ctxAt).toBeGreaterThan(-1);
     expect(ctxAt).toBeLessThan(awaitAt);
   });
@@ -329,7 +331,13 @@ describe('the RMS meter measures the take, or does not veto it', () => {
     // scored an RMS of 0 and the gate refused it as silence. The context is built after
     // `await getUserMedia`, so the press that started the take no longer counts as the
     // gesture the autoplay policy wants.
-    expect(src).toMatch(/if \(ctx\.state === 'suspended'\) void ctx\.resume\(\)/);
+    // Since 2026-11-13 through `keepRunning` (micInput.ts), which also resumes WebKit's own
+    // `interrupted` state after a sleep, and again whenever the context leaves `running`
+    // during a take (tested in voice-device-change.test.ts).
+    const start = src.slice(src.indexOf('const start = useCallback'));
+    expect(start.indexOf('keepRunning(ctx)')).toBeGreaterThan(-1);
+    expect(start.indexOf('keepRunning(ctx)')).toBeLessThan(start.indexOf('await openLiveInput('));
+    expect(src).toMatch(/ctx\.onstatechange = \(\) => \{ if \(capturingRef\.current\) keepRunning\(ctx\); \};/);
   });
 
   it('records and measures the SAME frame, so the gate cannot disagree with the tape', () => {
@@ -345,10 +353,12 @@ describe('the RMS meter measures the take, or does not veto it', () => {
     expect(src).toMatch(/meteredFramesRef\.current \+= 1;/);
   });
 
-  it('fails OPEN when the meter never measured — an absent number cannot refuse a sentence', () => {
-    // Same policy the missing-meter `catch` has always applied, now covering a meter that was
-    // present and reported nothing for reasons that have nothing to do with the room.
-    expect(src).toMatch(/const peak = meteredFramesRef\.current > 0 \? peakRef\.current : 1;/);
+  it('a take with no frame at all is a dead input, said as such, never a silent veto', () => {
+    // The meter and the tape are one node, so "the meter never measured" means nothing was
+    // recorded either: there is no sentence to refuse. Since 2026-11-13 that take is named
+    // (`no-signal`, with the device) instead of "nothing heard" (judgeCapture).
+    expect(src).toMatch(/frames: meteredFramesRef\.current,/);
+    expect(src).toMatch(/if \(c\.frames === 0 \|\| c\.peak < DEAD_PEAK\) return 'no-signal';/);
   });
 
   it('mutes the monitoring path — a ScriptProcessor must reach the destination to run', () => {

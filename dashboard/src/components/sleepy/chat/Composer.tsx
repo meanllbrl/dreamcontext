@@ -1804,8 +1804,8 @@ export function Composer({
   // The capture state, published for a surface that draws it bigger (lib/voice/voiceActivity.ts).
   useEffect(() => {
     if (!vault) return;
-    publishVoiceActivity({ vault, phase: voice.state, elapsed: voice.elapsed, attempt: voice.attempt, error: voice.error });
-  }, [vault, voice.state, voice.elapsed, voice.attempt, voice.error]);
+    publishVoiceActivity({ vault, phase: voice.state, elapsed: voice.elapsed, attempt: voice.attempt, error: voice.error, device: voice.device });
+  }, [vault, voice.state, voice.elapsed, voice.attempt, voice.error, voice.device]);
 
   /**
    * WHICH STATE THE CARD IS IN, as one word — the value the left rail is coloured by and the
@@ -1818,7 +1818,7 @@ export function Composer({
           // Below the two capture states: if the owner has started talking over the answer,
           // THEIR take is the live thing.
           : speaking ? 'speaking'
-            : (voice.state === 'error' || voice.state === 'unconfigured') ? 'trouble'
+            : (voice.state === 'error' || voice.state === 'unconfigured' || voice.state === 'no-signal') ? 'trouble'
               : 'idle';
 
   /** THE MIRROR: an overlay that marks the owner's @mentions, recomputed from the draft. */
@@ -2839,13 +2839,15 @@ export function Composer({
         {voiceEnabled && !voiceNotice && voice.state !== 'error' && voice.state !== 'unconfigured'
           && voice.state !== 'idle' && (
           <span className="chat-cmp-voice-note is-idle" data-garbled={voice.state === 'garbled' ? '' : undefined}
-            title={voice.state === 'garbled' && voice.heard ? voice.heard : undefined}>
+            title={voice.state === 'garbled' && voice.heard ? voice.heard
+              : voice.state === 'no-signal' ? voice.error || undefined : undefined}>
             {voice.state === 'recording' ? t('voice.note.listening')
               : voice.state === 'transcribing'
                 ? (voice.attempt > 0 ? t('voice.note.retry').replace('{n}', String(voice.attempt)).replace('{max}', String(STT_RETRIES)) : t('voice.note.transcribing'))
                 : voice.state === 'too-short' ? t('voice.note.tap')
                   : voice.state === 'silent' ? t('voice.note.silent')
-                    : t('voice.note.garbled')}
+                    : voice.state === 'no-signal' ? t('voice.note.noSignal')
+                      : t('voice.note.garbled')}
           </span>
         )}
         {/* What whisper made of a take nobody could understand: dimmed, plain text (it is the
@@ -2894,6 +2896,7 @@ export function Composer({
                     : voice.state === 'transcribing' ? 'Transcribing…'
                           : voice.state === 'too-short' ? 'Hold the button while you speak.'
                             : voice.state === 'silent' ? 'Nothing was heard in that take.'
+                            : voice.state === 'no-signal' ? (voice.error || 'No sound reached the app from the microphone.')
                               : voice.state === 'garbled' ? 'That take could not be understood, so nothing was sent. Say it again.'
                               : voice.state === 'unconfigured' ? (voice.error || 'Dictation is not installed — install it in Settings → Voice.')
                                 : voice.state === 'error' ? (voice.error || 'That take did not go through.')

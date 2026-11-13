@@ -20,7 +20,7 @@ import { useI18n } from '../../context/I18nContext';
  * property is written on the animation frame (the same discipline as `VoiceMeter`).
  */
 
-const SHOWN: ReadonlySet<VoiceActivity['phase']> = new Set(['recording', 'transcribing', 'error', 'silent', 'garbled', 'too-short']);
+const SHOWN: ReadonlySet<VoiceActivity['phase']> = new Set(['recording', 'transcribing', 'error', 'silent', 'no-signal', 'garbled', 'too-short']);
 /** How long a "did not hear that" / failure line stays before the overlay steps aside. */
 const NOTICE_MS = 2600;
 
@@ -49,7 +49,8 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
   }), [vault]);
 
   // A failure or a silent take is said, then the overlay steps aside.
-  const failing = act?.phase === 'error' || act?.phase === 'silent' || act?.phase === 'garbled' || act?.phase === 'too-short';
+  const failing = act?.phase === 'error' || act?.phase === 'silent' || act?.phase === 'no-signal'
+    || act?.phase === 'garbled' || act?.phase === 'too-short';
   useEffect(() => {
     if (!failing) { setNotice(false); return; }
     setNotice(true);
@@ -91,6 +92,11 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
     // Understood by nobody, twice, and nothing was sent: the owner is asked to say it again.
     title = t('voice.note.garbled');
     sub = '';
+  } else if (act.phase === 'no-signal') {
+    // The input delivered nothing (a device gone after sleep, a headset swap): said as such,
+    // never as "closer to the mic", and WHICH input, in the visible line when the OS named it.
+    title = t('voice.note.noSignal');
+    sub = act.device ? t('voice.overlay.fromDevice').replace('{device}', act.device) : t('voice.overlay.checkInput');
   } else if (act.phase === 'too-short') {
     // A tap: one word, and the orb nudges (notch.css) — not a second line telling the owner off.
     title = t('voice.note.tap');
@@ -101,7 +107,7 @@ export function ListeningOverlay({ vault, avatar, name, mode }: {
   }
 
   return (
-    <div className="dc-listen" data-phase={act.phase} role="status" aria-live="assertive" title={act.phase === 'error' ? act.error || undefined : undefined}>
+    <div className="dc-listen" data-phase={act.phase} role="status" aria-live="assertive" title={act.phase === 'error' || act.phase === 'no-signal' ? act.error || undefined : undefined}>
       <div className="dc-listen__orb" ref={orbRef}>
         <span className="dc-listen__ring dc-listen__ring--3" aria-hidden />
         <span className="dc-listen__ring dc-listen__ring--2" aria-hidden />

@@ -11,7 +11,7 @@
  * Keyed by vault, so the notch only listens to its own `__assistant__` composer.
  */
 
-export type VoicePhase = 'idle' | 'recording' | 'transcribing' | 'too-short' | 'silent' | 'garbled' | 'error' | 'unconfigured';
+export type VoicePhase = 'idle' | 'recording' | 'transcribing' | 'too-short' | 'silent' | 'no-signal' | 'garbled' | 'error' | 'unconfigured';
 
 export interface VoiceActivity {
   vault: string;
@@ -22,6 +22,8 @@ export interface VoiceActivity {
   attempt: number;
   /** The owner-facing reason, when `phase` is a failure. */
   error: string;
+  /** The input that delivered nothing, when `phase` is `no-signal` and the OS named it. */
+  device?: string;
 }
 
 const stateSubs = new Set<(a: VoiceActivity) => void>();
@@ -31,7 +33,7 @@ const latest = new Map<string, VoiceActivity>();
 export function publishVoiceActivity(a: VoiceActivity): void {
   const prev = latest.get(a.vault);
   if (prev && prev.phase === a.phase && prev.elapsed === a.elapsed && prev.attempt === a.attempt
-    && prev.error === a.error) return;
+    && prev.error === a.error && prev.device === a.device) return;
   latest.set(a.vault, a);
   for (const fn of [...stateSubs]) {
     try { fn(a); } catch { /* a drawer's failure is its own */ }

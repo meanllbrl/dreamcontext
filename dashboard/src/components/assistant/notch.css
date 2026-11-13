@@ -484,8 +484,11 @@ html:has(.dc-notch) #root {
 .dc-listen[data-phase='transcribing'] .dc-listen__ring--2,
 .dc-listen[data-phase='transcribing'] .dc-listen__ring--3 { opacity: 0.12; }
 @keyframes dc-listen-spin { from { transform: scale(0.7) rotate(0deg); } to { transform: scale(0.7) rotate(360deg); } }
+/* Every failure the overlay shows (its `failing` set): a dead input must never wear the live rings. */
 .dc-listen[data-phase='error'] .dc-listen__ring,
 .dc-listen[data-phase='silent'] .dc-listen__ring,
+.dc-listen[data-phase='no-signal'] .dc-listen__ring,
+.dc-listen[data-phase='garbled'] .dc-listen__ring,
 .dc-listen[data-phase='too-short'] .dc-listen__ring { border-color: var(--color-warning); opacity: 0.35; transform: scale(0.7); }
 @media (prefers-reduced-motion: reduce) {
   .dc-listen__ring { transition: none; }
