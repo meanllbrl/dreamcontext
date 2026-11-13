@@ -112,6 +112,7 @@ pub fn run() {
             mic::mic_take_begin,
             mic::mic_take_end,
             mic::mic_take_cancel,
+            mic::mic_input_name,
             mic_permission::mic_permission,
             mic_permission::mic_permission_request,
             mic_permission::mic_open_settings,

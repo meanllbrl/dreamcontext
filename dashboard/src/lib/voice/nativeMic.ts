@@ -29,6 +29,11 @@ const NOT_YET = 0xffffffff;
 /** Unknown until the first call answers; false once the shell said it has no such command. */
 let supported: boolean | null = null;
 
+/** How many `mic_take_begin` calls this page has sent. A begin that answers after its deadline
+ *  cancels its take only if it is still the LAST one sent: the shell hands the SAME id to every
+ *  claim of an open take, so a later press may already own it (found in review, 2026-11-13). */
+let beginsSent = 0;
+
 export function nativeMicAvailable(): boolean {
   return isDesktop() && supported !== false;
 }
@@ -63,6 +68,46 @@ export async function probeNativeMic(): Promise<boolean> {
   return supported;
 }
 
+/**
+ * How long a shell call may take before the take is given up. Opening is a thread spawn and
+ * ending is a join plus the samples, so both are normally milliseconds; a call that never
+ * answers (a CoreAudio device that vanished mid-close) would otherwise hold the composer's
+ * busy guard for good, and every later press would be refused without a word until a restart.
+ */
+export const BEGIN_DEADLINE_MS = 5_000;
+export const END_DEADLINE_MS = 20_000;
+
+/**
+ * `p`, or a rejection after `ms`. A value that lands after the deadline is handed to `late`
+ * (so a take opened too late is cancelled rather than left recording with nobody holding it).
+ */
+export function withDeadline<T>(p: Promise<T>, ms: number, late?: (v: T) => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      done = true;
+      reject(new Error('the microphone did not answer'));
+    }, ms);
+    p.then((v) => {
+      if (done) { late?.(v); return; }
+      done = true;
+      clearTimeout(timer);
+      resolve(v);
+    }, (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+/** May a begin that answered late cancel the take it got? Only when no begin was sent after it:
+ *  a later one was queued behind it in the shell and has claimed that same take. Pure. */
+export function lateBeginMayCancel(mine: number, sent: number): boolean {
+  return mine === sent;
+}
+
 /** True once the shell has proven it records natively. */
 export function nativeMicReady(): boolean {
   return isDesktop() && supported === true;
@@ -73,7 +118,12 @@ export function nativeMicReady(): boolean {
 export async function beginNativeTake(): Promise<{ id: number; sinceMs: number } | null> {
   if (!nativeMicAvailable()) return null;
   try {
-    const r = await invoke<{ id: number; sinceMs: number }>('mic_take_begin');
+    const mine = ++beginsSent;
+    const r = await withDeadline(
+      invoke<{ id: number; sinceMs: number }>('mic_take_begin'),
+      BEGIN_DEADLINE_MS,
+      (late) => { if (lateBeginMayCancel(mine, beginsSent)) void invoke('mic_take_cancel', { id: late.id }).catch(() => {}); },
+    );
     supported = true;
     return r;
   } catch (err) {
@@ -101,7 +151,7 @@ export function decodeNativeTake(buf: ArrayBuffer): NativeTake {
 }
 
 export async function endNativeTake(id: number): Promise<NativeTake> {
-  const body = await invoke<ArrayBuffer | number[]>('mic_take_end', { id });
+  const body = await withDeadline(invoke<ArrayBuffer | number[]>('mic_take_end', { id }), END_DEADLINE_MS);
   const buf = body instanceof ArrayBuffer ? body : new Uint8Array(body).buffer;
   return decodeNativeTake(buf);
 }
@@ -110,6 +160,18 @@ export async function endNativeTake(id: number): Promise<NativeTake> {
 export async function cancelNativeTake(id?: number): Promise<void> {
   if (!nativeMicAvailable()) return;
   try { await invoke('mic_take_cancel', { id: id ?? null }); } catch { /* nothing open */ }
+}
+
+/** The default input's name as macOS gives it, for "no sound reached the app from …". Null
+ *  when unknown, including under an older shell that has no `mic_input_name`. */
+export async function nativeInputName(): Promise<string | null> {
+  if (!nativeMicAvailable()) return null;
+  try {
+    const name = await withDeadline(invoke<string | null>('mic_input_name'), BEGIN_DEADLINE_MS);
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The live level (RMS) while a native take is open. Returns the unsubscribe. */
