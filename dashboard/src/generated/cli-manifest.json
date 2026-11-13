@@ -1401,7 +1401,7 @@
     },
     {
       "path": "config github-token",
-      "desc": "Store a GitHub token in the gitignored secrets file (never .config.json)",
+      "desc": "Advanced: store a project-only GitHub token (the GitHub sign-in in Settings → GitHub is the normal way; this token overrides it for this project)",
       "args": [
         "[token]"
       ],

@@ -284,7 +284,8 @@ describe('skill/references/brain-sync.md markers', () => {
   });
 
   it('documents token resolution + that gh/credential helpers are NOT used', () => {
-    expect(content).toContain('resolveBrainSyncToken');
+    // One resolver for every GitHub path since plan github-baglanti (2026-11-13).
+    expect(content).toContain('resolveGitHubCredential');
     expect(content).toContain('config github-token');
   });
 

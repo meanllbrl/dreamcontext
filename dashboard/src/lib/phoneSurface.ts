@@ -65,6 +65,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/brain/auth/device/start',
   'POST /api/brain/auth/device/poll',
   'POST /api/brain/auth/token',
+  'POST /api/brain/auth/project-token',
+  'DELETE /api/brain/auth/project-token',
   'POST /api/brain/auth/logout',
   'POST /api/brain/team/fetch',
   'POST /api/brain/sync',
