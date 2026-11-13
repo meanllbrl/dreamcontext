@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
 import { useApi, useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -122,6 +122,28 @@ interface Shown {
   ended: boolean;
   /** It ended with the server's exit frame: the process really finished. */
   exited: boolean;
+}
+
+/**
+ * The terminal of a run card. While the process lives it is the full terminal; once it ends the
+ * card shows the finished state compactly: the screen goes behind a Show output / Hide output
+ * toggle (still mounted, so the text is the same), and nothing in it blinks. A finished terminal
+ * that keeps its 300px and its cursor looked stuck (owner screenshot, 2026-11-13).
+ */
+function RunTerminal({ ended, ...term }: { ended: boolean } & ComponentProps<typeof InlineTerminal>) {
+  const [open, setOpen] = useState(false);
+  // No output, nothing to show: no toggle (a refused start keeps only its reason line).
+  const [hasOutput, setHasOutput] = useState(false);
+  return (
+    <>
+      {ended && hasOutput && (
+        <button type="button" className="chat-runcard-outtoggle" data-testid="run-card-output-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          {open ? 'Hide output' : 'Show output'}
+        </button>
+      )}
+      <InlineTerminal {...term} onOutput={() => setHasOutput(true)} collapsed={ended && !open} />
+    </>
+  );
 }
 
 /** The chat host: the server's record decides what can be done here; `runCardView` what it says. */
@@ -335,8 +357,9 @@ function ChatRunCard({ spec, host, folder, startRequest, onEnded, onStartRequest
       )}
 
       {shown && vault && (
-        <InlineTerminal
+        <RunTerminal
           key={shown.key}
+          ended={shown.ended}
           vault={vault}
           command={spec.command}
           card={shown.target}
@@ -434,8 +457,9 @@ function ThreadRunCard({ spec, report }: { spec: RunViewSpec; report?: (text: st
       {blocked && <p className="chat-runcard-note">{blocked}</p>}
 
       {phase !== 'idle' && vault && (
-        <InlineTerminal
+        <RunTerminal
           key={runNo}
+          ended={phase === 'done'}
           vault={vault}
           command={spec.command}
           cwd={spec.cwd}

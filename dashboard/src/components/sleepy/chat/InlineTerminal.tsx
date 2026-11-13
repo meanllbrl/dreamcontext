@@ -29,8 +29,11 @@ export type InlineTermStatus = 'connecting' | 'running' | 'exited' | 'failed';
 export type { CardTarget };
 
 export function InlineTerminal({
-  vault, command, cwd, card, mintTicket, rows = 14, onExit, onStatus,
+  vault, command, cwd, card, mintTicket, rows = 14, onExit, onStatus, onOutput, collapsed = false,
 }: {
+  /** The process ended and the owner has not asked for the output: the screen is hidden (kept
+   *  mounted, so Show brings the same text back). */
+  collapsed?: boolean;
   vault: string;
   command: string;
   cwd?: string;
@@ -45,9 +48,14 @@ export function InlineTerminal({
    *  a refused start (busy, no PTY, a closed card) never does. */
   onExit: (result: { code: number | null; tail: string; exited: boolean; opened: boolean; reason?: string }) => void;
   onStatus?: (status: InlineTermStatus) => void;
+  /** Fires ONCE, on the first output written to the screen: there is something to show. */
+  onOutput?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
+  // Something was written to the screen: an error line then sits UNDER the output, never in its
+  // place (a socket that errors after the run printed must not hide what it printed).
+  const [wrote, setWrote] = useState(false);
   // Everything below is per-MOUNT and must not re-run: a reconnect would run the command a
   // SECOND time. The effect has an empty dependency list on purpose and reads its inputs
   // from a ref — a card's command never changes under it (a different command is a
@@ -56,6 +64,9 @@ export function InlineTerminal({
   const argsRef = useRef({ vault, command, cwd, rows, card, mintTicket });
   const onExitRef = useRef(onExit);
   const onStatusRef = useRef(onStatus);
+  const onOutputRef = useRef(onOutput);
+  onOutputRef.current = onOutput;
+  const endedRef = useRef<() => void>(() => {});
   onExitRef.current = onExit;
   onStatusRef.current = onStatus;
 
@@ -76,6 +87,7 @@ export function InlineTerminal({
     const settle = (code: number | null, exited = false, reason?: string) => {
       if (settled) return;
       settled = true;
+      endedRef.current();
       onStatusRef.current?.(code === null ? 'failed' : 'exited');
       onExitRef.current({ code, tail: finishTail(tail), exited, opened, ...(reason ? { reason } : {}) });
     };
@@ -107,6 +119,7 @@ export function InlineTerminal({
       sock.onopen = () => { opened = true; onStatusRef.current?.('running'); sendResize(); };
       sock.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
+          if (!tail && ev.data) { setWrote(true); onOutputRef.current?.(); }
           tail = appendTail(tail, ev.data);
           term.write(ev.data);
           return;
@@ -146,6 +159,12 @@ export function InlineTerminal({
       connect();
     }
 
+    // The process is gone: no live cursor, no focus. A finished terminal that still blinks and
+    // holds the keyboard reads as stuck (owner, 2026-11-13).
+    endedRef.current = () => {
+      try { term.options.cursorBlink = false; term.write('\x1b[?25l'); term.blur(); } catch { /* mid-init */ }
+    };
+
     const dataSub = term.onData((data) => {
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
     });
@@ -173,7 +192,9 @@ export function InlineTerminal({
       // had any effect. The second pass lands after that settles. `center` because
       // `nearest` is satisfied by the sliver of terminal that is already showing, which is
       // exactly the state where nothing renders.
-      if (!userOpened) return;
+      // A process that already ended (a fast command, fonts late) takes neither the view nor the
+      // keyboard: the blur at settle must not be undone here.
+      if (!userOpened || settled) return;
       const reveal = () => { if (!disposed && host.isConnected) host.scrollIntoView({ block: 'center' }); };
       reveal();
       revealTimer = setTimeout(reveal, 250);
@@ -198,7 +219,8 @@ export function InlineTerminal({
   }, []);
 
   return (
-    <div className="chat-runterm">
+    // Collapsed: the whole terminal goes; with an error line, only the screen folds and the reason stays.
+    <div className={!collapsed ? 'chat-runterm' : error ? 'chat-runterm is-folded' : 'chat-runterm is-collapsed'} data-wrote={wrote ? 'true' : undefined} data-testid="run-terminal">
       <div className="chat-runterm-screen" ref={hostRef} />
       {error && <p className="chat-runterm-error">{error}</p>}
     </div>
