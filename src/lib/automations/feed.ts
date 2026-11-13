@@ -1,3 +1,4 @@
+import { ownerAskedRun } from '../notch-importance.js';
 import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { basename, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -70,6 +71,9 @@ export interface FeedMessage {
    *  pair that is always adjacent and always one-to-one. Later `user` entries
    *  are replies and stay in the thread. */
   ask: { text: string; at: string; app?: string } | null;
+  /** The run answers a message the OWNER wrote (`notch-importance.ts` `ownerAskedRun`): the
+   *  notch reads it, and the runner's banner reads the same predicate. */
+  ownerAsked: boolean;
   /** The body. Empty only when a run neither posted nor published. */
   text: string;
   /** Where `text` came from. `post` — the agent chose to say it. `result` —
@@ -513,6 +517,7 @@ export function buildFeedMessage(
     durationMs: run?.durationMs ?? null,
     costUsd: run?.costUsd ?? null,
     ask: ask ? { text: ask.text, at: ask.at, ...(ask.via === 'app' && ask.app ? { app: ask.app } : {}) } : null,
+    ownerAsked: ownerAskedRun(ordered[0]),
     text: body?.text ?? fallback ?? '',
     textFrom: body ? 'post' : failure ? 'error' : skipped ? 'skipped' : fallback ? 'result' : 'none',
     files: files.slice(0, FILES_PER_MESSAGE),

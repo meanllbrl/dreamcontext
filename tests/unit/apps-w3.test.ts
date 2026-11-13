@@ -195,10 +195,11 @@ describe('notch rows and the snapshot line', () => {
   it('one row per app, muted apps record nothing', () => {
     const home = tmp();
     _resetNotchInbox();
-    for (let i = 0; i < 41; i++) recordAppEvent({ vault: 'acme', projectRoot: '/p', slug: 'meta', name: 'Meta', body: `n${i}` }, home);
-    const rows = listNotchEvents(home).filter((e) => e.kind === 'app');
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ body: 'n40' });
+    let last: ReturnType<typeof recordAppEvent> = null;
+    for (let i = 0; i < 41; i++) last = recordAppEvent({ vault: 'acme', projectRoot: '/p', slug: 'meta', name: 'Meta', body: `n${i}` }, home);
+    expect(last).toMatchObject({ id: 'app:acme:meta', body: 'n40' });
+    // Owner, 2026-11-13: an app's notice is not notch news (notch-importance.ts); never listed.
+    expect(listNotchEvents(home).filter((e) => e.kind === 'app')).toHaveLength(0);
     setAppMuted('/p', 'meta', true, home);
     expect(recordAppEvent({ vault: 'acme', projectRoot: '/p', slug: 'meta', name: 'Meta', body: 'x' }, home)).toBeNull();
   });

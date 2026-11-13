@@ -37,6 +37,7 @@ import {
 import { MAX_PROMPT_BYTES, type AutomationManifest } from '../../src/lib/automations/types.js';
 import { NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from '../../src/lib/automations/notifier.js';
 import { writeSleepState } from '../../src/cli/commands/sleep.js';
+import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import type { SleepState } from '../../src/lib/sleep-consolidation.js';
 
 /** A minimal fake ChildProcess: a real EventEmitter with stdout/stderr streams
@@ -536,6 +537,35 @@ describe('runAutomation — completion notifications', () => {
     const onOk = vi.fn();
     await runToSuccess('notch-quiet-ok', onOk);
     expect(onOk.mock.calls[0][5]).toBe(false);
+  });
+
+  // Owner, 2026-11-13: only important news in the notch (notch-importance.ts). A routine's own
+  // post is a macOS notification even with the notch open; an answer to HIS message is notch news.
+  const runThatPosts = async (slug: string, notify: ReturnType<typeof vi.fn>, asked: boolean) => {
+    const manifest = createApproved(slug);
+    const runId = NOW.toISOString();
+    if (asked) appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: 'Bugün ne var?', via: 'dashboard' });
+    const { child, emitClose, emitStdout } = makeFakeChild(4322);
+    const runPromise = runAutomation(contextRoot, manifest.slug, { now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify, ...(asked ? { ask: 'Bugün ne var?' } : {}) });
+    appendThreadEntry(contextRoot, slug, { runId, kind: 'agent', text: 'Here is the digest.', via: 'runner' });
+    emitStdout(CLAUDE_JSON_OK);
+    emitClose(0);
+    return runPromise;
+  };
+
+  it('a scheduled run that posted is NOT notch news: its banner always goes', async () => {
+    registerVault('v');
+    const notify = vi.fn();
+    expect((await runThatPosts('notch-routine', notify, false)).status).toBe('ok');
+    expect(notify.mock.calls[0][1]).toBe('Here is the digest.');
+    expect(notify.mock.calls[0][5]).toBe(false);
+  });
+
+  it('a run answering the owner\'s own message IS notch news', async () => {
+    registerVault('v');
+    const notify = vi.fn();
+    expect((await runThatPosts('notch-asked', notify, true)).status).toBe('ok');
+    expect(notify.mock.calls[0][5]).toBe(true);
   });
 
   it('a failed run of an UNREGISTERED project is no notch notice: its banner always goes', async () => {
