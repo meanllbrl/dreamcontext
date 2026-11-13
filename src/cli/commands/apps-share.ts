@@ -179,7 +179,7 @@ export function sayAnswer(id: string, a: RequestAnswer): void {
   else if (state === 'expired') error('The request or its grant ran out. Run the same --ask command again: the owner sees a card and one tap gives a new hour.');
   else if (state === 'stale') error('The app changed after you asked, so nothing was approved. Run the same --ask command again.');
   else if (state === 'replaced') error('A newer request for the same app and action replaced this one: follow that one.');
-  else if (state === 'used' && a.stopped) error(`This grant was used, but only in part: ${a.stopped}. That part has its own card: follow it, never run this one again.`);
+  else if (state === 'used' && a.stopped) error(`This grant was used, but only in part: ${a.stopped}. Never run this one again: if a second card opened for that part, follow it; if none did, tell the owner plainly that nothing was installed and why.`);
   else if (state === 'used') error('This grant already ran. It is done: do not run it again.');
   else error('No such request (the app may have restarted). Run the same --ask command again.');
 }

@@ -24,6 +24,11 @@ export type InstallOutcome =
 
 const follows = new Map<string, Map<string, Follow>>();
 const outcomes = new Map<string, InstallOutcome[]>();
+/** The last failure of each repo (vault + repo), until it is installed again: the ONE place an
+ *  install's failure is read from (review r2): any sheet for that repo, a reopened one included,
+ *  and the Apps page's note. Never the sheet that happened to press Install. */
+const failures = new Map<string, string>();
+const failKey = (vault: string, fullName: string) => `${vault}\0${fullName.toLowerCase()}`;
 const subs = new Set<() => void>();
 let version = 0;
 
@@ -50,6 +55,7 @@ function mine(vault: string): Map<string, Follow> {
 /** The owner pressed Install (before the request goes). */
 export function followInstall(vault: string, fullName: string, f: { name: string; settings: number; way: SettingsWay }): void {
   mine(vault).set(keyOf(fullName), { ...f, at: Date.now(), answeredAt: null, error: null });
+  failures.delete(failKey(vault, fullName));
   tell();
 }
 
@@ -69,6 +75,7 @@ export function followsOf(vault: string): ReadonlyMap<string, Follow> {
 /** The follow is settled: its outcome (if any) waits for the Apps page. */
 export function settleInstall(vault: string, fullName: string, outcome: InstallOutcome | null): void {
   mine(vault).delete(keyOf(fullName));
+  if (outcome?.kind === 'failed') failures.set(failKey(vault, fullName), outcome.why);
   if (outcome) outcomes.set(vault, [...(outcomes.get(vault) ?? []), outcome]);
   tell();
 }
@@ -81,8 +88,13 @@ export function takeInstallOutcomes(vault: string): InstallOutcome[] {
   return list;
 }
 
+/** Why this repo's last install failed, or null (it is installing again, or never failed). */
+export function installFailureOf(vault: string, fullName: string): string | null {
+  return failures.get(failKey(vault, fullName)) ?? null;
+}
+
 /** Tests only. */
-export function resetInstallFollow(): void { follows.clear(); outcomes.clear(); tell(); }
+export function resetInstallFollow(): void { follows.clear(); outcomes.clear(); failures.clear(); tell(); }
 
 /** One row of the server's in-flight list (`GET /api/apps/install/status`). */
 export interface InstallRow { fullName: string; since: string; done?: { slug: string; settings: number } | { error: string; message?: string } }

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  answerInstall, followInstall, followsOf, resetInstallFollow, settleInstall, stepFollow, takeInstallOutcomes, type Follow,
+  answerInstall, followInstall, followsOf, installFailureOf, resetInstallFollow, settleInstall, stepFollow, takeInstallOutcomes, type Follow,
 } from '../../dashboard/src/components/apps/installFollow.js';
 import { sayAnswer, spendable } from '../../src/cli/commands/apps-share.js';
 
@@ -45,6 +45,19 @@ describe('the install follow (K8): one step per install, whoever is on screen', 
     expect(stepFollow(KEY, f, older, at + 1500)).toMatchObject({ kind: 'settle' });
     // A fast success the list has not caught up with yet is never dropped.
     expect(stepFollow(KEY, follow({ answeredAt: at + 1000 }), [], at + 900)).toEqual({ kind: 'wait' });
+  });
+
+  it('a failure is read from one place by any sheet for that repo, until it installs again (review r2)', () => {
+    followInstall('acme', REPO, { name: 'Hava Notu', settings: 2, way: 'claude' });
+    // The sheet that pressed Install closed; a sheet opened again for the same repo reads the same answer.
+    settleInstall('acme', REPO, { kind: 'failed', fullName: REPO, name: 'Hava Notu', why: 'The packages could not be installed.' });
+    expect(installFailureOf('acme', REPO.toUpperCase())).toBe('The packages could not be installed.');
+    expect(installFailureOf('other', REPO)).toBeNull();
+    // The page's note takes the same outcome, never skipped because a sheet is open.
+    expect(takeInstallOutcomes('acme')).toEqual([{ kind: 'failed', fullName: REPO, name: 'Hava Notu', why: 'The packages could not be installed.' }]);
+    // Pressing Install again clears it.
+    followInstall('acme', REPO, { name: 'Hava Notu', settings: 2, way: 'claude' });
+    expect(installFailureOf('acme', REPO)).toBeNull();
   });
 
   it('the store outlives any page: followed, answered, settled, and its outcome taken once', () => {
@@ -93,6 +106,9 @@ describe('every request state has its own line in the CLI (review r1)', () => {
 
   it('used in part: says what it held back', () => {
     sayAnswer('r1', { state: 'used', shown: [], stopped: 'MCP servers: posthog' });
-    expect(out.join('\n')).toContain('only in part: MCP servers: posthog');
+    const text = out.join('\n');
+    expect(text).toContain('only in part: MCP servers: posthog');
+    // No second card is promised: the gate block opens none.
+    expect(text).toContain('if none did, tell the owner plainly');
   });
 });

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { useApi } from '../../context/VaultContext';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useApi, useVaultId } from '../../context/VaultContext';
+import { installFailureOf, installFollowVersion, subscribeInstallFollow } from './installFollow';
 import { About, CanList, FactStrip, ProductTop, Shots, WhatsNew, shortDate, type CanLine, type StoreEntry } from './StorePage';
 import { Sheet, errText, useShareN, useShareT, type ConfigField, type GateFinding } from './Sheet';
 
@@ -95,6 +96,10 @@ export function InstallSheet({ initialRef, running, onStarted, onClose, onFinish
   const [understood, setUnderstood] = useState(false);
   const [busy, setBusy] = useState<'preview' | 'install' | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // An install's failure has one owner, the install follow: this sheet shows it whether it pressed
+  // Install or was opened again while that install ran (review r2).
+  const { vault } = useVaultId();
+  useSyncExternalStore(subscribeInstallFollow, installFollowVersion);
 
   // Every ask gets its own number: only the newest answer lands, so an older ask's error never
   // sits under a newer, valid preview (the same link asked twice races too).
@@ -116,6 +121,7 @@ export function InstallSheet({ initialRef, running, onStarted, onClose, onFinish
   const pageWhy = !pv ? null : !pv.gate.ok ? t('share.install.refused') : pv.public && !understood ? t('share.install.tick') : null;
   const elsewhere = !!pv && busy !== 'install' && !!running?.(pv.fullName);
   const installing = busy === 'install' || elsewhere;
+  const failed = pv && !installing ? installFailureOf(vault ?? '', pv.fullName) : null;
 
   // The install outlives this sheet (K8): once it is closed, or another app's sheet replaced it,
   // its answer must not close or touch whatever is open now. The follow reports the outcome.
@@ -132,8 +138,8 @@ export function InstallSheet({ initialRef, running, onStarted, onClose, onFinish
       onFinished(fullName, null);
       if (mounted.current) onClose();
     } catch (e) {
+      // The failure is told by the install follow (any sheet for this repo reads it), never here.
       onFinished(fullName, errText(e));
-      if (mounted.current) setErr(errText(e));
     } finally { if (mounted.current) setBusy(null); }
   };
 
@@ -153,8 +159,8 @@ export function InstallSheet({ initialRef, running, onStarted, onClose, onFinish
   // Under Install: what is happening (one calm line while it runs), what stops it, or the second way.
   const note = installing ? (
     <span className="share-muted pp-why" role="status">{t('share.install.working')} {t('share.install.busyWhy')}</span>
-  ) : (err || pageWhy) ? (
-    <span className={err ? 'app-card__note app-card__note--bad pp-why' : 'share-why pp-why'} role={err ? 'alert' : undefined}>{err ?? pageWhy}</span>
+  ) : (err || failed || pageWhy) ? (
+    <span className={err || failed ? 'app-card__note app-card__note--bad pp-why' : 'share-why pp-why'} role={err || failed ? 'alert' : undefined}>{err ?? (failed ? t('share.install.failedWhy', { why: failed }) : pageWhy)}</span>
   ) : pv && pv.config.length > 0 ? (
     <span className="share-muted pp-why pp-claude">
       {t('share.install.claudeNote')}{' '}

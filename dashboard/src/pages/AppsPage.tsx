@@ -143,11 +143,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   const followed = useSyncExternalStore(subscribeInstallFollow, installFollowVersion);
   useEffect(() => {
     for (const o of takeInstallOutcomes(vault ?? '')) {
-      if (o.kind === 'failed') {
-        // Its own sheet, still open, already says why.
-        if (installRef?.toLowerCase() !== o.fullName.toLowerCase()) setNote({ kind: 'installFailed', repo: o.name, why: o.why, retry: o.fullName });
-        continue;
-      }
+      if (o.kind === 'failed') { setNote({ kind: 'installFailed', repo: o.name, why: o.why, retry: o.fullName }); continue; }
       picked.current = true;
       setTabState('mine');
       openPage(o.slug, o.sheet);

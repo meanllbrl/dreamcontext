@@ -120,7 +120,7 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
   const { state, card } = q.data;
   const install = card.action === 'install';
   const image = card.image ? `${card.image}?vault=${encodeURIComponent(card.vault)}` : null;
-  const tone = state === 'used' ? 'approved' : state === 'pending' || state === 'approved' || state === 'running' ? 'waiting' : 'off';
+  const tone = state === 'used' && !q.data.stopped ? 'approved' : state === 'pending' || state === 'approved' || state === 'running' ? 'waiting' : 'off';
   const stateLine = state === 'pending' ? null
     : state === 'running' ? t(install ? 'appreq.state.running.install' : 'appreq.state.running')
     // Used, but only in part (an invitation accepted, its install held back): never "installed".
