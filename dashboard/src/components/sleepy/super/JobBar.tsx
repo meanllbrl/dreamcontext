@@ -6,7 +6,7 @@ import { requestOpenAgents } from '../../../lib/openAgents';
 import type { GrantSize, SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission } from '../chatSession';
 import {
-  directChildQuestion, optionsFit, ownerWaitOf, permissionSummary, type JobLook, type OptionsFit,
+  optionsFit, ownerWaitOf, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
 import {
   MAIN_RECORD, allowAnswer, allowedWaiting, callOf, claimOwnerItem, releaseOwnerItem, recordOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText, type GrantChoices, noAllowReasonKey } from './ownerAnswer';
@@ -193,9 +193,7 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
             ? <AllowedHead item={head} onOpen={() => (head.own ? onReplyToSuper() : onShowChild(head.sessionId))} />
             : head.kind === 'permission'
             ? <PermissionHead item={head} record={record} memberName={recordName} child={remote ? undefined : child} locked={locked} answerOnce={answerOnce} remote={remote} showOptions={showOptions} />
-            : head.kind === 'ask'
-              ? <QuestionHead item={head} text={head.ownerText ?? ''} root={superSession?.container} onReplyToSuper={onReplyToSuper} />
-              : head.kind === 'approval'
+            : head.kind === 'approval'
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
               : (head.kind === 'owner' || head.kind === 'member') && head.card
                 ? <CardHead item={head} paused={!!pausedFor?.(head.sessionId)} onOpen={() => (head.kind === 'member' ? requestOpenAgents({ slug: head.member ?? '' }) : onShowChild(head.sessionId))} />
@@ -209,35 +207,12 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
                 ? <StalledHead item={head} record={record} onOpen={() => onShowChild(head.sessionId)} />
               : head.kind === 'owner'
                 ? <OwnerHead text={head.ownerText ?? ''} onOpen={() => onShowChild(head.sessionId)} />
-              : directChildQuestion(head)
-                ? <ChildQuestionHead text={head.ownerText ?? t('super.queue.escalatedAlarm')} onOpen={() => onShowChild(head.sessionId)} />
-              : <QuestionHead item={head} text={head.ownerText ?? t('super.queue.escalatedAlarm')} root={superSession?.container} onReplyToSuper={onReplyToSuper} />}
+              // A question is asked in the chat as its card, never here (owner 2026-11-13): the
+              // band's head (bandHead) never holds one.
+              : null}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
       </div>
     </div>
-  );
-}
-
-/**
- * A question the owner answers (the super's own `ask`, or a child's question it escalated): its
- * words, and ONE button that takes him to its card in the super chat, the chat's own
- * AskUserQuestion card (SuperQuestionCard.tsx). The bar draws no answers of its own: a question
- * is asked one way, in one place (owner 2026-10-22).
- */
-function QuestionHead({ item, text, root, onReplyToSuper }: { item: SuperQueueItem; text: string; root?: HTMLElement; onReplyToSuper: () => void }) {
-  const { t } = useI18n();
-  return (
-    <>
-      <QueueText full={text}>{text}</QueueText>
-      <span className="super-queue-actions">
-        <button
-          type="button"
-          className="super-queue-btn super-queue-btn--option"
-          data-testid="super-queue-answer"
-          onClick={() => { if (!showQuestionCard(item.id, root)) onReplyToSuper(); }}
-        >{t('super.queue.answer')}</button>
-      </span>
-    </>
   );
 }
 
@@ -374,26 +349,6 @@ function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: bool
   );
 }
 
-/**
- * A child's own question, his from birth (`direct`, owner 2026-10-27): its words, and ONE button
- * that brings that child beside the centre, where the child's own AskUserQuestion card answers it
- * through the child's session. The Super hears it too; whoever answers first, the other's item
- * closes (the child leaves `asking`).
- */
-function ChildQuestionHead({ text, onOpen }: { text: string; onOpen: () => void }) {
-  const { t } = useI18n();
-  return (
-    <>
-      <QueueText full={text}>{text}</QueueText>
-      <span className="super-queue-actions">
-        <button type="button" className="super-queue-btn super-queue-btn--option" data-testid="super-queue-open-chat" onClick={onOpen}>
-          {t('super.queue.openChat')}
-        </button>
-      </span>
-    </>
-  );
-}
-
 /** The reveal in flight: a newer one (another click) supersedes it. */
 let revealSeq = 0;
 
@@ -423,21 +378,18 @@ export function showOwnerCard(wait: { kind: string; id: string } | undefined): v
   window.requestAnimationFrame(find);
 }
 
-/** Bring the question's card in the super chat into view and put the keyboard on it (the pane may
- *  first show unread information above it, `SUPER_QUESTION_EVENT`). False when
- *  no card is drawn (the chat not on screen): the caller falls back. The band's Answer and the
- *  agenda's Waiting row both open a question this one way. `root` is the Super session's own
+/** Bring the question's card in the super chat into view and put the keyboard on it (the pane's
+ *  own jump, `SUPER_QUESTION_EVENT`). False when no card is drawn (the chat not on screen): the
+ *  caller falls back. The agenda's Waiting row opens a question this one way. `root` is the Super session's own
  *  container (wherever it is homed: the stage centre or the dock); without it, the centre. */
 export function showQuestionCard(itemId: string, root?: ParentNode | null): boolean {
   const scope: ParentNode = root ?? document;
   const sel = root ? '[data-testid="super-question-card"]' : '[data-super-slot="centre"] [data-testid="super-question-card"]';
   const card = [...scope.querySelectorAll<HTMLElement>(sel)].find((el) => el.dataset.item === itemId);
   if (!card || !card.isConnected) return false;
-  // The Super pane takes the door (owner K1 = A, 2026-11-12): unread information above the card,
-  // off screen, is shown first and the next press brings the card; it says where it went.
+  // The Super pane takes the door: it goes straight to the card through its own scroll owner.
   const detail: SuperQuestionDetail = { item: itemId };
   const handled = !card.dispatchEvent(new CustomEvent(SUPER_QUESTION_EVENT, { bubbles: true, cancelable: true, detail }));
-  if (handled && detail.landed === 'unread') return true;
   if (!handled) {
     const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });

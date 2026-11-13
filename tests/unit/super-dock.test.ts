@@ -206,12 +206,8 @@ describe('the question band in the dock', () => {
     (globalThis as { window?: unknown }).window = {};
     expect(showQuestionCard('q-2', root as never)).toBe(true);
     expect(calls).toEqual(['[data-testid="super-question-card"]', 'scroll:q-2', 'focus:q-2']);
-    // The pane takes it (K1 = A, owner 2026-11-12): to unread information first, no focus on the card;
-    // to the card: focus, and no centring of its own (the pane landed it).
-    calls.length = 0;
-    pane = (d) => { d.landed = 'unread'; return false; };
-    expect(showQuestionCard('q-2', root as never)).toBe(true);
-    expect(calls).toEqual(['[data-testid="super-question-card"]']);
+    // The pane takes it (owner 2026-11-13): straight to the card, focus, and no centring of its own
+    // (the pane's own jump landed it).
     calls.length = 0;
     pane = (d) => { d.landed = 'card'; return false; };
     expect(showQuestionCard('q-2', root as never)).toBe(true);
@@ -222,7 +218,6 @@ describe('the question band in the dock', () => {
     expect(showQuestionCard('q-1', gone as never)).toBe(false);
     // The stage's agenda passes the same root.
     expect(read('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toMatch(/if \(showQuestionCard\(item, superSession\?\.container\)\) return;/);
-    expect(read('dashboard/src/components/sleepy/super/JobBar.tsx')).toMatch(/if \(!showQuestionCard\(item\.id, root\)\) onReplyToSuper\(\);/);
   });
 });
 

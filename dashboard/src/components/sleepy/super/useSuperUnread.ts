@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { ApiClient } from '../../../api/client';
 import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
-  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, nextUnreadIndex, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadUnits, withRead,
+  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
 import { dropSuperUnread, publishSuperUnread } from './superUnreadStore';
@@ -17,24 +17,17 @@ const GONE_TICKS = 4;
 const RETRY_MS = 3000;
 const MAX_RETRIES = 6;
 
-export type UnreadEdge = 'up' | 'down' | null;
-
 export interface SuperUnread {
   count: number;
-  /** What is unread, oldest first: the follow keeps the first one's start in view. */
+  /** What is unread, oldest first: the opening lands on the first one. */
   units: readonly UnreadUnit[];
-  /** The next jump goes to a question card: the pill names it (owner 2026-11-12). */
-  nextQuestion: boolean;
+  /** Unread messages lying below the view: the "↓ N yeni" button's number (owner 2026-11-13). */
+  below: number;
   /** The marks are loaded: what is unread is known (before that, nothing is). */
   ready: boolean;
-  /** Where the nearest unread out of view lies; null: all of it is on screen. */
-  edge: UnreadEdge;
-  /** Where the next jump goes. */
-  next: () => UnreadUnit | null;
   rowOf: (u: UnreadUnit) => HTMLElement | null;
   /** Look again now: a jump just landed. */
   look: () => void;
-  markAll: () => void;
 }
 
 /** One message: the same key at another time is another one. */
@@ -64,12 +57,13 @@ const spanOf = (el: HTMLElement): Span => {
 
 /**
  * The Super chat's read state on the live pane: marks loaded from and written to the server, the
- * dots and the divider painted as ATTRIBUTES on rows other components own (so this feature adds
- * no prop to a row or a card, and superUnread.css alone draws it), the dwell clock, the count.
+ * "Okunmamış" line painted as ATTRIBUTES on a row other components own (so this feature adds no
+ * prop to a row or a card, and superUnread.css alone draws it), the dwell clock, the count and
+ * how many unread messages lie below the view. No per-row dots (owner 2026-11-13).
  * Painting takes no layout room: a read never moves a row.
  * `enabled` false: nothing runs, no request, no timer.
  */
-export function useSuperUnread({ enabled, vault, superId = 'main', api, items, fold, ownerBatches, mainBatches, openQuestions, scrollRef, contentRef, dividerLabel, isPinned, isGliding, isWalking }: {
+export function useSuperUnread({ enabled, vault, superId = 'main', api, items, fold, ownerBatches, mainBatches, openQuestions, scrollRef, contentRef, dividerLabel, isPinned, isGliding }: {
   enabled: boolean;
   /** The project the rail's count goes to; null = this pane publishes none. */
   vault: string | null;
@@ -86,14 +80,11 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   contentRef: RefObject<HTMLElement | null>;
   dividerLabel: () => string;
   isPinned: () => boolean;
-  /** A jump is under way: nothing counts as seen and the bar holds still until it lands. */
+  /** A jump is under way: nothing counts as seen until it lands. */
   isGliding: () => boolean;
-  /** The reader has not moved since the last jump: the next one goes on from it. */
-  isWalking: () => boolean;
 }): SuperUnread {
   const [marks, setMarks] = useState<ReadMarks | null>(null);
-  const [edge, setEdge] = useState<UnreadEdge>(null);
-  const [nextQuestion, setNextQuestion] = useState(false);
+  const [below, setBelow] = useState(0);
   const pending = useRef<ReadMark[]>([]);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A member's marks are its own (`?superId=m:<slug>`); main's requests are unchanged.
@@ -113,7 +104,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   }, []);
 
   useEffect(() => {
-    if (!enabled) { setMarks(null); setEdge(null); setNextQuestion(false); pending.current = []; return undefined; }
+    if (!enabled) { setMarks(null); setBelow(0); pending.current = []; return undefined; }
     let live = true;
     const load = () => {
       void apiRef.current.get<unknown>('/agent/super-read').then((raw) => {
@@ -202,37 +193,13 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
     queueFlush();
   }, [queueFlush]);
 
-  // Every unit, by mark: never "everything before now", which would swallow what lands later.
-  const markAll = useCallback(() => {
-    markRead(unreadRef.current);
-    setEdge(null);
-    setNextQuestion(false);
-  }, [markRead]);
-
   const rowOfUnit = useCallback((u: UnreadUnit) => {
     const root = contentRef.current;
     return root ? rowOf(root, u) : null;
   }, [contentRef]);
 
-  const walkingRef = useRef(isWalking);
-  walkingRef.current = isWalking;
-  const walkedTo = useRef<HTMLElement | null>(null);
-  const next = useCallback((): UnreadUnit | null => {
-    const root = contentRef.current;
-    const scroller = scrollRef.current;
-    const units = unreadRef.current;
-    if (!root || !scroller) return units[0] ?? null;
-    const rows = units.map((u) => rowOf(root, u));
-    const from = walkingRef.current() && walkedTo.current?.isConnected ? spanOf(walkedTo.current) : null;
-    const unit = units[nextUnreadIndex(rows.map((el) => (el ? spanOf(el) : null)), viewOf(scroller), from)] ?? null;
-    walkedTo.current = unit ? rowOf(root, unit) : null;
-    return unit;
-  }, [contentRef, scrollRef]);
-
-  // Painted after every commit: a row the window just mounted has to get its dot before the
-  // browser draws it. Only what differs is touched, and a streaming token that changed no row
-  // stops before it measures anything.
-  const painted = useRef(new Set<HTMLElement>());
+  // Painted after every commit: a row the window just mounted has to get its line before the
+  // browser draws it. A streaming token that changed no row stops before it measures anything.
   const labelFor = useRef(dividerLabel);
   labelFor.current = dividerLabel;
   const pinnedRef = useRef(isPinned);
@@ -249,11 +216,6 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
     const rows = unreadRef.current.map((u) => rowOf(root, u));
     if (!force && rows.length === rowsThen.current.length && rows.every((el, i) => el === rowsThen.current[i])) return;
     rowsThen.current = rows;
-    const want = new Set<HTMLElement>();
-    for (const el of rows) if (el) want.add(el);
-    for (const el of painted.current) if (!want.has(el)) el.removeAttribute('data-unread');
-    for (const el of want) if (!el.hasAttribute('data-unread')) el.setAttribute('data-unread', '');
-    painted.current = want;
 
     const view = viewOf(scroller);
     const leadRow = rows[leadIndex(rows.map((el) => (el ? el.getBoundingClientRect().top : null)))] ?? null;
@@ -286,8 +248,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   const watching = hasUnread || lineShown;
   useEffect(() => {
     if (!watching) {
-      setEdge(null);
-      setNextQuestion(false);
+      setBelow(0);
       started.current = new Map();
       missing.current = new Map();
       return undefined;
@@ -317,13 +278,13 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
       const gone: UnreadUnit[] = [];
       // Rebuilt each look, so only a unit still waiting can keep the timer alive.
       const waiting = new Map<string, number>();
-      let next: UnreadEdge = null;
+      let under = 0;
       units.forEach((u, i) => {
         const el = rows[i];
         if (!el) {
           // Behind the window's ceiling it can be revealed; below the first mounted row there is
           // nothing to reveal (a block that drew nothing), and it must not hold a count for ever.
-          if (firstMounted < 0 || i < firstMounted) { next = 'up'; return; }
+          if (firstMounted < 0 || i < firstMounted) return;
           const n = (missing.current.get(unitId(u)) ?? 0) + 1;
           if (n >= GONE_TICKS && canRead) gone.push(u);
           else waiting.set(unitId(u), n);
@@ -333,18 +294,10 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
         // Seen needs the START on screen (owner 2026-11-12): the end of a tall message filling
         // the view is not a read, and its arrow points at where it begins.
         if (startSeen(row, view)) { visible.push(unitId(u)); return; }
-        const side = readSide(row, view);
-        if (side === 'above') next = 'up';
-        else if (next === null && side === 'below') next = 'down';
+        if (readSide(row, view) === 'below') under += 1;
       });
       missing.current = waiting;
-      // The arrow says where the next click goes: a walk goes on down past what it left above.
-      const walked = walkingRef.current() && walkedTo.current?.isConnected ? spanOf(walkedTo.current) : null;
-      if (walked && rows.some((el) => { const r = el && spanOf(el); return !!r && r.top > walked.top && readSide(r, view) === 'below'; })) next = 'down';
-      setEdge(next);
-      // A peek at where the next jump goes, never `next()` (that moves the walk).
-      const peek = next ? units[nextUnreadIndex(rows.map((el) => (el ? spanOf(el) : null)), view, walked)] : undefined;
-      setNextQuestion(!!peek?.question);
+      setBelow(under);
       const step = advanceDwell(started.current, canRead ? visible : [], Date.now());
       started.current = step.started;
       const seen = new Set(step.seen);
@@ -379,5 +332,5 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   useEffect(() => { tickRef.current(); }, [unreadKey]);
   const look = useCallback(() => { tickRef.current(); }, []);
 
-  return { count, units: unread, nextQuestion, ready: enabled && !!marks, edge, next, rowOf: rowOfUnit, look, markAll };
+  return { count, units: unread, below, ready: enabled && !!marks, rowOf: rowOfUnit, look };
 }

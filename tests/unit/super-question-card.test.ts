@@ -333,11 +333,9 @@ describe('ONE question component: the chat\'s own card, no look-alike', () => {
     expect(card).toMatch(/<SurveyReceipt unclear=\{answer\.unclear\} values=\{answer\.values\} \/>/);
   });
 
-  it('the job bar answers no question itself: one Answer button that shows the card', () => {
+  it('the job bar asks no question (owner 2026-11-13); showQuestionCard still opens the card', () => {
     const bar = src('dashboard/src/components/sleepy/super/JobBar.tsx');
-    expect(bar).not.toMatch(/super-ask-option|ownerOptionsOf|sendOwnerAnswer/);
-    expect(bar).toMatch(/data-testid="super-queue-answer"/);
-    expect(bar).toMatch(/if \(!showQuestionCard\(item\.id, root\)\) onReplyToSuper\(\);/);
+    expect(bar).not.toMatch(/super-ask-option|ownerOptionsOf|sendOwnerAnswer|super-queue-answer/);
     // The keyboard lands on the card's page (its focus target), motion as the owner prefers.
     expect(bar).toMatch(/card\.querySelector<HTMLElement>\('\.chat-surveycard-page:not\(\[inert\]\)'\)\?\.focus\(\{ preventScroll: true \}\);/);
     expect(bar).toMatch(/behavior: reduce \? 'auto' : 'smooth'/);

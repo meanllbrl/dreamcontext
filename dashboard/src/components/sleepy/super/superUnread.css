@@ -1,30 +1,8 @@
-/* The Super chat's unread marks. useSuperUnread paints these attributes on rows other components
-   own; every look of the feature is here.
+/* The Super chat's unread line. useSuperUnread paints its attribute on a row another component
+   owns; every look of the feature is here.
 
-   Nothing here takes layout room. A read flips these attributes while the owner is looking at the
-   rows, so a mark that pushed a row would move the text under the eyes, once a second.
-
-   The left of a row is not free: the reply groups' line runs there (.chat-reply-line). The dot
-   stands in the message's own top right corner, the line inside the column. */
-
-/* The dot: inside the message card's padding, so it needs no gutter at any width. */
-.chat-scroll-inner--reply [data-unread] { position: relative; }
-.chat-scroll-inner--reply .chat-msg-assistant-row[data-unread] > .chat-msg-assistant-body { position: relative; }
-/* One dot a message: a row with a card between its prose runs has several bodies, and a row of
-   cards has none. */
-.chat-scroll-inner--reply .chat-msg-assistant-row[data-unread] > .chat-msg-assistant-body:not(.chat-msg-assistant-body ~ .chat-msg-assistant-body)::after,
-.chat-scroll-inner--reply .chat-msg-assistant-row[data-unread]:not(:has(> .chat-msg-assistant-body))::before,
-.chat-scroll-inner--reply [data-unread]:not(.chat-msg-assistant-row)::before {
-  content: "";
-  position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-  pointer-events: none;
-}
+   Nothing here takes layout room: a mark that pushed a row would move the text under the eyes.
+   The "↓ N yeni" button is a .chat-jump (ChatPane.css); its live region is below. */
 
 /* The line, in the transcript's own gap above the row (.chat-scroll-inner: --space-4). */
 .chat-scroll-inner--reply [data-unread-first] { position: relative; }
@@ -46,54 +24,6 @@
     linear-gradient(var(--color-accent), var(--color-accent)) right center / calc(50% - 44px) 1px no-repeat;
 }
 
-/* The pill stands where "Latest" stands (.chat-jump) and takes its place while it shows. */
-.super-unread-bar {
-  position: absolute;
-  bottom: var(--space-3);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  max-width: calc(100% - var(--space-4));
-  padding: 2px;
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-full);
-  background: var(--color-bg-secondary);
-  box-shadow: var(--shadow-md);
-  font-size: var(--font-size-xs);
-  animation: chat-jump-in 0.15s ease-out;
-}
-@media (prefers-reduced-motion: reduce) { .super-unread-bar { animation: none; } }
-.super-unread-jump,
-.super-unread-side {
-  flex: none;
-  border: 0;
-  background: none;
-  font: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-full);
-}
-.super-unread-jump {
-  flex: 0 1 auto;
-  min-width: 0;
-  display: flex;
-  gap: var(--space-1);
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-.super-unread-go { overflow: hidden; text-overflow: ellipsis; }
-.super-unread-side {
-  color: var(--color-text-tertiary);
-  border-left: 1px solid var(--color-border);
-  border-radius: 0;
-}
-.super-unread-side:last-child { border-radius: 0 var(--radius-full) var(--radius-full) 0; }
-.super-unread-jump:hover,
-.super-unread-side:hover { color: var(--color-accent); }
-
 .super-unread-status {
   position: absolute;
   width: 1px;
@@ -103,18 +33,12 @@
   white-space: nowrap;
 }
 
-/* Under a finger the hit area grows, the pill does not: the same as .chat-reply-head. */
+/* Under a finger the button is short (~26px): its hit area reaches a step above and below. It is
+   already absolutely positioned (.chat-jump), so the extension anchors to it. */
 @media (hover: none) {
-  .super-unread-jump, .super-unread-side { position: relative; }
-  .super-unread-jump::after, .super-unread-side::after {
+  .super-new::after {
     content: "";
     position: absolute;
     inset: calc(-1 * var(--space-3)) 0;
   }
-}
-
-/* A phone has room for the count and the verbs, not the sentence. */
-@media (max-width: 480px) {
-  .super-unread-go { display: none; }
-  .super-unread-jump, .super-unread-side { padding: 6px 10px; }
 }

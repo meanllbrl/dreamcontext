@@ -111,6 +111,12 @@ export interface ChatUserItem {
    *  so the Super's `re:<ref>` answer links under this message. `text` never holds the sentinel. */
   ref?: string;
   source?: 'telegram';
+  /** Typed on the Super Agent's other surface (`owner_echo`), not sent from this pane: drawn like
+   *  any of his messages, but no send here, so it never moves this pane's view (scroll rule 1). */
+  echo?: true;
+  /** Sent by the queue's own drain (`maybeFlushQueue`), minutes after his press: the press moved
+   *  the Super view (ChatPane `onQueued`), so this arrival never moves it again (scroll rule 1). */
+  queued?: true;
 }
 export interface ChatTextItem {
   kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number;
@@ -2581,7 +2587,7 @@ export function createChatSession(
     if (ev.kind === 'owner-echo') {
       applyAndNotify(() => {
         const item: ChatUserItem = {
-          kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now(),
+          kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now(), echo: true,
           ...(ev.ref && ev.source === 'telegram' ? { ref: ev.ref, source: 'telegram' as const } : {}),
         };
         conv = { ...conv, items: [...conv.items, item] };
@@ -2685,6 +2691,7 @@ export function createChatSession(
       const item: ChatUserItem = {
         kind: 'user', id: nextItemId(), text: claim.body.trim() || clean, ts: Date.now(),
         ...(opts.steered ? { steered: true as const } : {}),
+        ...(draining ? { queued: true as const } : {}),
         ...(claim.ref ? { ref: claim.ref, source: 'telegram' as const } : {}),
       };
       conv = {
@@ -2907,6 +2914,8 @@ export function createChatSession(
     maybeFlushQueue();
   }
 
+  /** True only while the queue's drain writes a row (the `queued` mark on its item). */
+  let draining = false;
   /**
    * Send the next queued message if this is the moment for it. Called after every applied
    * socket frame (i.e. wherever a busy→idle edge can be observed) rather than from inside the
@@ -2923,6 +2932,11 @@ export function createChatSession(
    * turn a steer back into a wait-for-the-turn-to-end, which is the whole bug.
    */
   function maybeFlushQueue(): void {
+    const was = draining;
+    draining = true;
+    try { flushOne(); } finally { draining = was; }
+  }
+  function flushOne(): void {
     const owed = queue.nextAutoSteer(conv.queued, {
       busy: session.busy,
       asking: session.asking,
