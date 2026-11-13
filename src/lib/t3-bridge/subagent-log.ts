@@ -10,8 +10,9 @@
  * The first line names the project the thread ran in: the route serves a file only to the
  * project it belongs to, the way it serves the thread's own history.
  */
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { realPath } from '../real-path.js';
 
 const SAFE_ID = /^[a-z0-9-]{1,128}$/i;
 /** A thread id from a tool: Codex and Antigravity use UUIDs; nothing else is a folder name here. */
@@ -64,8 +65,8 @@ export function readSubagentLog(home: string, nativeThreadId: string, taskId: st
     const st = lstatSync(path);
     if (!st.isFile()) return null;
     // The file's folder must really be under the bridge's own: no link out of it, anywhere on the way.
-    const base = realpathSync(join(home, '.dreamcontext', 't3', 'subagents'));
-    if (!realpathSync(path).startsWith(base + sep)) return null;
+    const base = realPath(join(home, '.dreamcontext', 't3', 'subagents'));
+    if (!realPath(path).startsWith(base + sep)) return null;
     const raw = readFileSync(path, 'utf-8');
     const first = raw.slice(0, raw.indexOf('\n') + 1 || raw.length);
     const head = JSON.parse(first) as { type?: unknown; cwd?: unknown };
@@ -78,5 +79,5 @@ export function readSubagentLog(home: string, nativeThreadId: string, taskId: st
 
 function sameDir(a: string, b: string): boolean {
   if (a === b) return true;
-  try { return realpathSync(a) === realpathSync(b); } catch { return false; }
+  try { return realPath(a) === realPath(b); } catch { return false; }
 }

@@ -9,7 +9,7 @@
  * the hash echoed in the button record alone: a request decided on the Mac (or replaced, or
  * stale) answers "no longer valid" and mints nothing.
  */
-import { appRequestOpen, decideAppRequest, onAppRequestOpened, openAppRequests } from '../../lib/apps/share/app-request.js';
+import { appRequestOpen, decideAppRequest, markAppRequestShown, onAppRequestOpened, openAppRequests } from '../../lib/apps/share/app-request.js';
 import type { AppCardView } from '../../lib/assistant/proposals.js';
 import type { ButtonRecord } from '../../lib/telegram/contract.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
@@ -66,6 +66,8 @@ async function offer(hub: AppRequestHub, deps: AppRequestDeps, r: { id: string; 
     await hub.sendButtons(ab, appRequestHtml(r.view), [['Onayla', 'Reddet']],
       { kind: 'approval', requestId: r.id, singleUse: true },
       { appRequest: r.id, hash: r.hash });
+    // Sent: the agent may now say the card is on his Telegram (ek-4), never before.
+    markAppRequestShown({ id: r.id }, 'telegram');
   } catch {
     sent.delete(r.id);
   }

@@ -148,7 +148,7 @@ const BRIEFING_REST = `## The rest of the surface
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
   \`app-install\` takes a \`repo\` (\`owner/name\`): the Apps page's install sheet, when the hook offers it.
 
-## \`dream-view\` — the ten things HTML must NOT be
+## \`dream-view\` — the eleven things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -239,6 +239,14 @@ paste it as is. Name the slug only: the card reads the rest from its file.
 
 \`\`\`dream-view
 {"type":"automation","slug":"daily-digest"}
+\`\`\`
+
+**An app action that waits for the owner's yes** (install, publish, update, logo).
+\`dreamcontext apps … --ask\` prints it; paste it as is. He taps Onayla here. Say where a card is
+only from that command's \`Shown:\` line, never "on your screen" otherwise.
+
+\`\`\`dream-view
+{"type":"app-request","id":"0b1d3c97-6daf-4943-96d5-8614e7d0960e"}
 \`\`\`
 
 **An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.

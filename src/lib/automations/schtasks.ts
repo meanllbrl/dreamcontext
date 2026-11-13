@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -6,6 +6,7 @@ import { AutomationError, TICK_INTERVAL_SECONDS } from './types.js';
 import { whichOnPathWin32 } from '../claude-path.js';
 // Types only: launchd.ts delegates to this module on win32, so a runtime import back would be a cycle.
 import type { DispatcherTarget, ExecRunner, InstallCheck, InstallResult } from './launchd.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The Windows dispatcher — the Task Scheduler twin of launchd.ts. ONE per-user task,
@@ -41,7 +42,7 @@ export function windowsDispatcherXmlPath(home: string = homedir()): string {
 
 function safeRealpath(p: string): string {
   try {
-    return realpathSync(p);
+    return realPath(p);
   } catch {
     return p;
   }

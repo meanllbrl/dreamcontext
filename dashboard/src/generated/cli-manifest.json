@@ -290,7 +290,7 @@
     },
     {
       "path": "apps install",
-      "desc": "Preview an app from a repo (owner/repo or its link); --ask puts the install in front of the owner, --go with his grant installs it",
+      "desc": "Install an app from a repo (owner/repo or its link): --ask installs it once the owner taps Onayla on its card in this chat; no flag = only the preview",
       "args": [
         "<repo>"
       ],

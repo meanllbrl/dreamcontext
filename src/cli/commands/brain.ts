@@ -16,6 +16,7 @@ import {
 import { scrubStagedFiles, summarizeScrub } from '../../lib/git-sync/scrub.js';
 import { classifySyncError } from '../../lib/git-sync/failure.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
+import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import * as git from '../../lib/git-sync/git.js';
 import { GitSyncError } from '../../lib/git-sync/git.js';
 

@@ -213,7 +213,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
         />
       )}
       {pageApp && <AppPage key={pageApp.slug} app={pageApp} vault={vault ?? ''} canLaunch={canLaunch} onClose={() => setPageSlug(null)} onChanged={refresh} />}
-      {canLaunch && installRef !== null && <InstallSheet key={installRef} initialRef={installRef || undefined} onClose={() => setInstallRef(null)} onDone={(slug) => { setInstallRef(null); refresh(); setTab('mine'); setPageSlug(slug); }} />}
+      {canLaunch && installRef !== null && <InstallSheet key={installRef} initialRef={installRef || undefined} onClose={() => setInstallRef(null)} onDone={(slug, handedToClaude) => { setInstallRef(null); refresh(); setTab('mine'); if (!handedToClaude) setPageSlug(slug); }} />}
     </div>
   );
 }

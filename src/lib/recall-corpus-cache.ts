@@ -1,6 +1,6 @@
 import * as nodeBuffer from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -14,6 +14,7 @@ import {
   type CorpusSourceMemo,
   type CorpusType,
 } from './recall.js';
+import { keyPath } from './real-path.js';
 
 /**
  * Disk cache of the BUILT corpus, so the per-prompt recall hook (a fresh process every
@@ -76,7 +77,7 @@ export interface CachedCorpusOptions extends BuildCorpusOptions {
 export function peerCacheDir(peerRoot: string, home: string = homedir()): string {
   let real: string;
   try {
-    real = realpathSync(peerRoot);
+    real = keyPath(peerRoot);
   } catch {
     real = resolve(peerRoot);
   }

@@ -1,9 +1,10 @@
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, sep } from 'node:path';
 import { HANDOFF_FIELDS, type HandoffFields } from '../handoff-readiness.js';
 import { withTaskFileLock } from '../task-file-lock.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The Super Agent's own handoff record — ONE file, never a task (owner 2026-10-22: "Super
@@ -204,8 +205,8 @@ export function approvedTextLines(contextRoot: string, now: Date = new Date()): 
     const superDir = join(stateDir, '.super');
     const dir = join(contextRoot, SUPER_APPROVED_REL);
     if (!isRealDir(stateDir) || !isRealDir(superDir) || !isRealDir(dir)) return [];
-    const root = realpathSync(contextRoot);
-    if (!realpathSync(dir).startsWith(root + sep)) return [];
+    const root = realPath(contextRoot);
+    if (!realPath(dir).startsWith(root + sep)) return [];
 
     const files: { name: string; mtimeMs: number }[] = [];
     for (const name of readdirSync(dir)) {

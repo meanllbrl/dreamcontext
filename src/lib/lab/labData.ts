@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseDatasetBundle } from './dataset.js';
 import { FUNNEL_SET_KIND, parseFunnelSet } from './funnel.js';
 import { isSafeInsightSlug, labDir } from './store.js';
 import { LabError, type FunnelSet } from './types.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The snapshot store: `lab/data/<slug>.json`, shaped `{source, data}`.
@@ -105,8 +106,8 @@ function containedDataPath(contextRoot: string, slug: string): { path: string; e
   }
   const dir = join(labDir(contextRoot), LAB_DATA_DIR);
   if (existsSync(dir)) {
-    const expected = join(realpathSync(contextRoot), 'lab', LAB_DATA_DIR);
-    if (realpathSync(dir) !== expected) {
+    const expected = join(realPath(contextRoot), 'lab', LAB_DATA_DIR);
+    if (realPath(dir) !== expected) {
       throw new LabError(`lab/${LAB_DATA_DIR}/ resolves outside the vault: refusing to read or write snapshots there.`);
     }
   }
@@ -131,7 +132,7 @@ export function readLabSnapshot(contextRoot: string, slug: string): unknown | nu
  * never gets a `data/` created outside the vault.
  */
 function prepareDataDir(contextRoot: string): void {
-  const rootReal = realpathSync(contextRoot);
+  const rootReal = realPath(contextRoot);
   const steps: [string, string, string][] = [
     [labDir(contextRoot), join(rootReal, 'lab'), 'lab/'],
     [join(labDir(contextRoot), LAB_DATA_DIR), join(rootReal, 'lab', LAB_DATA_DIR), `lab/${LAB_DATA_DIR}/`],
@@ -144,7 +145,7 @@ function prepareDataDir(contextRoot: string): void {
       mkdirSync(dir); // its parent was verified one step earlier (or is the vault root)
       continue;
     }
-    if (st.isSymbolicLink() || !st.isDirectory() || realpathSync(dir) !== expected) {
+    if (st.isSymbolicLink() || !st.isDirectory() || realPath(dir) !== expected) {
       throw new LabError(`${name} resolves outside the vault (or is not a plain directory): refusing to write snapshots there.`);
     }
   }

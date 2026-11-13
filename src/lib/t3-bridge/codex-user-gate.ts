@@ -15,12 +15,13 @@
  * over: same definition (Codex's own hash), same trust, no second card (`carryGateToAccount`).
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, realpathSync, symlinkSync } from 'node:fs';
+import { existsSync, lstatSync, symlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { codexChildEnv, codexCommand } from '../codex-bin.js';
 import { spawnSpec } from '../win-cmd.js';
 import { isCodexAccountId, codexAccountHome } from './accounts.js';
+import { realPath } from '../real-path.js';
 
 /** A hook's command, in the file Codex reads. Its text is part of the hash Codex trusts. */
 export function codexHookCommand(event: string): string {
@@ -94,7 +95,7 @@ export function listCodexHooks(cwd: string, codexHome: string, rpc: Rpc = codexR
 }
 
 const realOf = (p: string): string => {
-  try { return realpathSync(p); } catch { return p; }
+  try { return realPath(p); } catch { return p; }
 };
 
 /** Exactly our hook, in exactly this home's user file: never a look-alike from anywhere else. */

@@ -21,21 +21,14 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  writeFileSync,
+  chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { withFileLockSync } from './file-lock.js';
 import { readPeople } from './people-store.js';
 import { resolveActivePerson } from './people-resolve.js';
+import { keyPath, realPath } from './real-path.js';
 
 // ─── Shape ──────────────────────────────────────────────────────────────────
 
@@ -211,7 +204,7 @@ export function personalStoreRef(home: string = homedir()): StoreRef {
 
 export function projectStoreRef(contextRoot: string, home: string = homedir()): StoreRef {
   let real = contextRoot;
-  try { real = realpathSync(contextRoot); } catch { /* not there yet */ }
+  try { real = keyPath(contextRoot); } catch { /* not there yet */ }
   const tag = createHash('sha256').update(real).digest('hex').slice(0, 16);
   return {
     scope: 'project',
@@ -238,10 +231,10 @@ function assertSafe(ref: StoreRef): void {
     if (isSymlink(p)) throw new RulesStoreError(`${p} is a symlink: refused`, 'unsafe');
   }
   if (ref.contextRoot && existsSync(ref.contextRoot)) {
-    const realRoot = realpathSync(ref.contextRoot);
+    const realRoot = realPath(ref.contextRoot);
     for (const p of [dirname(ref.file), dirname(ref.view)]) {
       if (!existsSync(p)) continue;
-      const real = realpathSync(p);
+      const real = realPath(p);
       if (real !== realRoot && !real.startsWith(realRoot + sep)) {
         throw new RulesStoreError(`${p} leaves the vault: refused`, 'unsafe');
       }
@@ -264,8 +257,8 @@ export function containedVaultFile(contextRoot: string, p: string): { abs: strin
   try { st = lstatSync(abs); } catch { throw new RulesStoreError(`${p}: no such file in this vault`, 'refused'); }
   if (st.isSymbolicLink()) throw new RulesStoreError(`${p} is a symlink: refused`, 'unsafe');
   if (!st.isFile()) throw new RulesStoreError(`${p} is not a file`, 'refused');
-  const realRoot = realpathSync(contextRoot);
-  const real = realpathSync(abs);
+  const realRoot = realPath(contextRoot);
+  const real = realPath(abs);
   if (!real.startsWith(realRoot + sep)) throw new RulesStoreError(`${p} is outside the vault: refused`, 'unsafe');
   return { abs: real, rel: relative(realRoot, real).split(sep).join('/') };
 }

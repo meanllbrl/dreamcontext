@@ -1,15 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
+  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { join, sep } from 'node:path';
 import { generateNKeysBetween } from 'fractional-indexing';
@@ -28,6 +19,7 @@ import {
 } from './errors.js';
 import type { WhiteboardElement } from './widgets.js';
 import { renameInGroupOrder } from './group-order.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The whiteboard store (D2, D4). Every board lives at
@@ -113,8 +105,8 @@ export function resolveWhiteboardPath(root: string, slug: string): { dir: string
     if (err instanceof WhiteboardNotFoundError) throw err;
     throw missing();
   }
-  const realBase = realpathSync(base);
-  const realFile = realpathSync(file);
+  const realBase = realPath(base);
+  const realFile = realPath(file);
   if (!realFile.startsWith(realBase + sep)) throw missing();
   return { dir, file };
 }
@@ -888,8 +880,8 @@ export function quickJournalPath(root: string, slug: string, opts: { create?: bo
   if (isSymlink(file)) throw refuse(`.locks/quick/${slug}.jsonl`);
   if (existsSync(file) && !lstatSync(file).isFile()) throw refuse(`.locks/quick/${slug}.jsonl`);
   if (existsSync(quick)) {
-    const realBase = realpathSync(base);
-    if (!realpathSync(quick).startsWith(realBase + sep)) throw refuse('.locks/quick');
+    const realBase = realPath(base);
+    if (!realPath(quick).startsWith(realBase + sep)) throw refuse('.locks/quick');
   }
   return file;
 }

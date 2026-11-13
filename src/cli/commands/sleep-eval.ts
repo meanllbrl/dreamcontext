@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { ensureContextRoot } from '../../lib/context-path.js';
@@ -19,6 +19,7 @@ import {
   writeReport,
 } from '../../lib/sleep-eval/report.js';
 import { FEEDBACK_REASONS, LABEL_CATEGORIES, sleepEvalRoot, type LabelCategory } from '../../lib/sleep-eval/types.js';
+import { realPath } from '../../lib/real-path.js';
 
 /**
  * `dreamcontext sleep eval …` — measure how sleep files tasks on a fixed set of this brain's
@@ -32,7 +33,7 @@ const CANDIDATE_TIMEOUT_MS = 10 * 60 * 1000;
 function cliRepoSha(): string | null {
   try {
     // The bin is a symlink (npm link/global install): resolve it, or this reads the wrong repo.
-    const repo = dirname(dirname(realpathSync(process.argv[1] ?? '')));
+    const repo = dirname(dirname(realPath(process.argv[1] ?? '')));
     return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
   } catch {
     return null;

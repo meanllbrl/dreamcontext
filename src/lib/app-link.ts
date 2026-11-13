@@ -1,6 +1,7 @@
-import { realpathSync } from 'node:fs';
+
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { listVaults, RESERVED_ASSISTANT_NAME, type Vault } from './vaults.js';
+import { realPath } from './real-path.js';
 
 /**
  * The `dreamcontext://` link WRITER, the Node half of the app's external entry point.
@@ -231,7 +232,7 @@ export function isValidAppLink(raw: string): boolean {
 // ─── Vault resolution ───────────────────────────────────────────────────────
 
 function realOrResolved(path: string): string {
-  try { return realpathSync(path); } catch { return resolve(path); }
+  try { return realPath(path); } catch { return resolve(path); }
 }
 
 /** Find the registered vault whose project directory is exactly `projectDir` (realpath). */

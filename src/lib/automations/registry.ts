@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
@@ -20,6 +20,7 @@ import { classifyAutomationSlot, contextRootOf } from '../agents/slot.js';
 import { assertOwned, currentLogin, foreignOwner } from '../agents/owner.js';
 import { GLOBAL_REGISTRY_KEY } from '../agents/scope.js';
 import { overlayApprovedText, pruneApprovedTexts, readApprovedText, saveApprovedText } from './approved-text.js';
+import { realPath } from '../real-path.js';
 
 /**
  * Automations registry — the machine-local approval tripwire + project
@@ -273,7 +274,7 @@ export function writeAutomationsRegistry(registry: AutomationsRegistry, home?: s
  */
 function tryRealpath(p: string): string {
   try {
-    return realpathSync(p);
+    return realPath(p);
   } catch {
     // Not resolvable (does not exist yet, or unreadable): fall back to the
     // input. A lookup that throws would be worse than one that misses.

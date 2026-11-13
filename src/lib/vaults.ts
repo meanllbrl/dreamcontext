@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { realPath } from './real-path.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -124,7 +125,9 @@ export function addVault(name: string, dirPath: string, home?: string): Vault {
   }
 
   // Duplicate path check (compare resolved paths)
-  if (existing.some((v) => resolve(v.path) === resolved)) {
+  const realOf = (x: string): string => { try { return realPath(x); } catch { return resolve(x); } };
+  const realNew = realOf(resolved);
+  if (existing.some((v) => resolve(v.path) === resolved || realOf(v.path) === realNew)) {
     throw new VaultError(`Path is already registered: ${resolved}`);
   }
 
@@ -195,7 +198,7 @@ export function resolveVaultContextRoot(arg: string, home: string = homedir(), o
   // Its path is refused like its name: `--vault ~/.dreamcontext/assistant` is the same vault.
   const hidden = join(home, '.dreamcontext', 'assistant');
   if (!opts.ownAssistant && (resolved === hidden || resolved.startsWith(`${hidden}/`)
-    || (existsSync(resolved) && existsSync(hidden) && realpathSync(resolved) === realpathSync(hidden)))) {
+    || (existsSync(resolved) && existsSync(hidden) && realPath(resolved) === realPath(hidden)))) {
     throw new VaultError(`"${arg}" is the dreamcontext Assistant, not a project vault.`);
   }
 

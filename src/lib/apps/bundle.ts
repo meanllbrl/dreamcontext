@@ -21,22 +21,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
+  chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { writeDefaultIcon } from './icon.js';
 import { decodePng, maskToTile } from './png.js';
+import { keyPath, realPath } from '../real-path.js';
 
 export const APP_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$/;
@@ -53,7 +44,7 @@ const LSREGISTER =
 export function appHash(projectRoot: string, slug: string, installId?: string): string {
   let root = projectRoot;
   try {
-    root = realpathSync(projectRoot);
+    root = keyPath(projectRoot);
   } catch { /* a project that is gone still hashes */ }
   return createHash('sha256').update(installId ? `${root}\0${slug}\0${installId}` : `${root}\0${slug}`).digest('hex').slice(0, 16);
 }
@@ -361,8 +352,8 @@ export function removeAppBundle(home: string, slug: string, hash: string, exec: 
   if (!existsSync(path)) return false;
   try {
     if (lstatSync(path).isSymbolicLink()) return false;
-    const real = realpathSync(path);
-    const parent = realpathSync(appsBundleDir(home));
+    const real = realPath(path);
+    const parent = realPath(appsBundleDir(home));
     if (real !== join(parent, `${slug}-${hash.slice(0, 6)}.app`)) return false;
     try { exec(LSREGISTER, ['-u', real]); } catch { /* unregister is a hint */ }
     rmSync(real, { recursive: true, force: true });

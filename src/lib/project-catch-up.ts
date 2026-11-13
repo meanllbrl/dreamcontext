@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { detectInstalledPlatforms } from './catalog.js';
@@ -14,6 +14,7 @@ import { listVaults, type Vault } from './vaults.js';
 import { compareVersions } from './version-check.js';
 import { readSleepState } from '../cli/commands/sleep.js';
 import { refreshToolKits, type KitProject } from './tool-kits-refresh.js';
+import { realPath } from './real-path.js';
 
 /**
  * A project's installed files follow the installed CLI on their own (owner 2026-10-31: the
@@ -228,7 +229,7 @@ export function diskBusyReason(projectRoot: string, now: number, home: string = 
  */
 export function devOrCachedCli(entry: string): boolean {
   let dir = dirname(entry);
-  try { dir = dirname(realpathSync(entry)); } catch { /* judged as written */ }
+  try { dir = dirname(realPath(entry)); } catch { /* judged as written */ }
   if (/[/\\](_npx|src-tauri[/\\]target)[/\\]/.test(`${dir}/`)) return true;
   for (let i = 0; i < 4; i++) {
     if (existsSync(join(dir, '.git'))) return true;

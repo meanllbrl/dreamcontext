@@ -95,7 +95,16 @@ interface AppRequest {
   logo: Buffer | null;
   /** Rebuilds the plan's bound fact at approve time: false = stale, no grant. */
   stillFresh: () => Promise<boolean>;
+  /** Where the card was really DRAWN, as each surface reported it (owner 2026-11-13, ek-4): the
+   *  agent says "the card is on your screen" only from this, never from where it might be. */
+  shown: Set<CardSurface>;
+  /** The card as drawn (Telegram gets it when the request is announced). */
+  view: () => AppCardView;
 }
+
+/** A surface that draws an app request card: the requester's chat, the notch, Telegram. */
+export type CardSurface = 'chat' | 'notch' | 'telegram';
+export const CARD_SURFACES: readonly CardSurface[] = ['chat', 'notch', 'telegram'];
 
 export const REQUEST_LIFETIME_MS = APP_PROPOSAL_TIMEOUT_MS;
 export const REJECT_COOLDOWN_MS = 10 * 60_000;
@@ -207,7 +216,7 @@ export interface OpenInput {
  * the same plan answers with that one (asking twice opens no second card). An approved request
  * whose grant ran out unused, same plan, inside a day, makes this card a renewal (D9).
  */
-export function openAppRequest(input: OpenInput): { id: string; state: RequestState; renewal: boolean } {
+export function openAppRequest(input: OpenInput): { id: string; state: RequestState; renewal: boolean; proposalId: string } {
   const now = input.now ?? Date.now();
   sweep(now);
   const slot = slotOf(input.plan);
@@ -217,7 +226,7 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
   let renewal = false;
   for (const r of requests.values()) {
     if (slotOf(r.plan) !== slot || r.renewHash !== renewHash || r.spent) continue;
-    if (r.state === 'approved' && r.grant && r.grant.expiresAt > now) return { id: r.id, state: 'approved', renewal: false };
+    if (r.state === 'approved' && r.grant && r.grant.expiresAt > now) return { id: r.id, state: 'approved', renewal: false, proposalId: r.proposalId };
     if (stateOf(r, now) === 'expired' && r.grant && now - r.createdAt <= REQUEST_LIFETIME_MS) renewal = true;
   }
   const open = [...requests.values()].filter((r) => r.state === 'pending');
@@ -251,6 +260,7 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
   const req: AppRequest = {
     id, proposalId: pv.id, plan, hash, renewHash, state: 'pending', createdAt: now, grant: null, spent: false,
     agentSessions: input.agentSessions ?? [], logo: input.logo ?? null, stillFresh: input.stillFresh,
+    shown: new Set(), view,
   };
   requests.set(id, req);
   byProposal.set(pv.id, id);
@@ -258,8 +268,15 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
     // Onayla and Reddet settle the request first; only the clock or a quit lands here pending.
     if (req.state === 'pending' && d.outcome === 'declined' && (d.reason === 'timeout' || d.reason === 'shutdown')) { req.state = 'expired'; wake(id); }
   });
-  for (const fn of [...openedListeners]) { try { fn({ id, vault: plan.vault, view: view(), hash, logo: req.logo }); } catch { /* a listener's failure is its own */ } }
-  return { id, state: 'pending', renewal };
+  announceAppRequest(id);
+  return { id, state: 'pending', renewal, proposalId: pv.id };
+}
+
+/** Tell the "opened" listeners (Telegram) about a request still pending; a no-op for any other state. */
+function announceAppRequest(id: string): void {
+  const r = requests.get(id);
+  if (!r || r.state !== 'pending') return;
+  for (const fn of [...openedListeners]) { try { fn({ id, vault: r.plan.vault, view: r.view(), hash: r.hash, logo: r.logo }); } catch { /* a listener's failure is its own */ } }
 }
 
 export type DecideResult =
@@ -308,13 +325,39 @@ export async function decideAppRequest(ref: { id?: string; proposalId?: string }
 }
 
 /** What `GET /api/apps/requests/:id` answers. The grant only to whoever holds the request id. */
-export function appRequestStatus(id: string, now = Date.now()): { state: RequestState | 'unknown'; grant?: { id: string; expiresAt: string; command: string } } {
+export function appRequestStatus(id: string, now = Date.now()): { state: RequestState | 'unknown'; shown?: CardSurface[]; grant?: { id: string; expiresAt: string; command: string } } {
   sweep(now);
   const r = requests.get(id);
   if (!r) return { state: 'unknown' };
   const state = stateOf(r, now);
-  if (state === 'approved' && r.grant) return { state, grant: { id: r.grant.id, expiresAt: new Date(r.grant.expiresAt).toISOString(), command: spendCommand(r.plan, r.grant.id) } };
-  return { state };
+  const shown = CARD_SURFACES.filter((s) => r.shown.has(s));
+  if (state === 'approved' && r.grant) return { state, shown, grant: { id: r.grant.id, expiresAt: new Date(r.grant.expiresAt).toISOString(), command: spendCommand(r.plan, r.grant.id) } };
+  return { state, shown };
+}
+
+/**
+ * A surface DREW this request's card (the chat card and the notch row on mount, Telegram once its
+ * message went out). Only a pending request records it; the answer is a display fact for the
+ * agent, never authority (nothing is approved or minted here). False: no such pending card.
+ */
+export function markAppRequestShown(ref: { id?: string; proposalId?: string }, where: CardSurface): boolean {
+  const id = ref.id ?? (ref.proposalId ? byProposal.get(ref.proposalId) : undefined);
+  const r = id ? requests.get(id) : undefined;
+  if (!r || r.state !== 'pending' || !CARD_SURFACES.includes(where)) return false;
+  r.shown.add(where);
+  return true;
+}
+
+/** The request behind a card (its proposal id), for the chat card: its state and plan hash. */
+export function appRequestByProposal(proposalId: string, now = Date.now()): { id: string; state: RequestState; hash: string; view: AppCardView } | null {
+  sweep(now);
+  const id = byProposal.get(proposalId);
+  const r = id ? requests.get(id) : undefined;
+  if (!r) return null;
+  return {
+    id: r.id, state: stateOf(r, now), hash: r.hash,
+    view: { action: r.plan.body.action, appName: r.plan.appName, vault: r.plan.vault, title: r.plan.title, lines: r.plan.lines, ...(r.plan.warn ? { warn: r.plan.warn } : {}), ...(r.logo ? { image: `/api/apps/requests/${r.proposalId}/logo` } : {}), ...(r.plan.renewal ? { renewal: true } : {}), hash: r.hash },
+  };
 }
 
 /** Wait up to `seconds` for the owner (capped); answers at once once decided or over the cap. */

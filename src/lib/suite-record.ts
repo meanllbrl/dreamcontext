@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { contentTree, distFingerprint, receiptsDir } from './check-receipt.js';
 import { packageScripts } from './run-budget.js';
+import { realPath } from './real-path.js';
 
 /**
  * The suite record: what a whole-suite run proved, kept per worktree, branch and suite target.
@@ -573,7 +574,7 @@ export function suiteRedOpen(cwd: string): boolean {
 
 /** The toplevel as records key it (real path). */
 export function recordToplevel(toplevel: string): string {
-  try { return realpathSync(toplevel); } catch { return toplevel; }
+  try { return realPath(toplevel); } catch { return toplevel; }
 }
 
 // ─── base reds: what was already red on a commit (audit OR-2) ────────────────

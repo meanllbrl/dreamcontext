@@ -1,12 +1,5 @@
 import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
+  existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -14,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { AutomationError, DISPATCHER_LABEL, LOG_ROTATE_BYTES, TICK_INTERVAL_SECONDS } from './types.js';
 import { inspectWindowsDispatcher, installWindowsDispatcher, uninstallWindowsDispatcher } from './schtasks.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The launchd dispatcher — install/uninstall lifecycle for the ONE global
@@ -109,7 +103,7 @@ function xmlEscape(s: string): string {
 
 function safeRealpath(p: string): string {
   try {
-    return realpathSync(p);
+    return realPath(p);
   } catch {
     return p;
   }

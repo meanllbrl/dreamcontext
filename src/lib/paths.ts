@@ -1,5 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { relative, sep, type PlatformPath } from 'node:path';
+import { realPath } from './real-path.js';
 
 /**
  * `abs` relative to `root`, with forward slashes: the shape every manifest key, recall id,
@@ -20,5 +21,5 @@ export function relPosix(root: string, abs: string, pathApi: Pick<PlatformPath, 
  * Elsewhere: realpathSync, exactly as before.
  */
 export function canonicalPath(path: string, platform: NodeJS.Platform = process.platform): string {
-  return platform === 'win32' ? realpathSync.native(path) : realpathSync(path);
+  return platform === 'win32' ? realpathSync.native(path) : realPath(path);
 }

@@ -33,13 +33,13 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation', 'learned'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation', 'learned', 'app-request'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec | McpViewSpec
   | PinViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec
-  | AutomationViewSpec | LearnedViewSpec;
+  | AutomationViewSpec | LearnedViewSpec | AppRequestViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -293,6 +293,18 @@ export interface AutomationViewSpec {
  */
 export interface LearnedViewSpec {
   type: 'learned';
+  id: string;
+}
+
+/**
+ * `type: "app-request"` — the owner's Onayla/Reddet on an app action an agent asked for
+ * (`dreamcontext apps install|publish|update|logo --ask` prints the block). DERIVED, like
+ * `automation`: the block names the card id and nothing else; the card reads the plan the server
+ * built (`GET /api/apps/requests/card/:id`) and decides through the same route as the notch, so
+ * one yes anywhere closes every copy (owner 2026-11-13, app-kurulum-claude ek-4).
+ */
+export interface AppRequestViewSpec {
+  type: 'app-request';
   id: string;
 }
 
@@ -911,6 +923,26 @@ function validateAutomation(obj: Record<string, unknown>, notices: string[]): { 
 }
 
 // ---------------------------------------------------------------------------------------
+// type: "app-request"
+// ---------------------------------------------------------------------------------------
+
+/** The card's proposal id (a UUID, `crypto.randomUUID` in src/lib/assistant/proposals.ts). */
+const APP_REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ASSERTED_APP_REQUEST_KEYS = ['title', 'text', 'app', 'lines', 'action', 'approved'] as const;
+
+function validateAppRequest(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!APP_REQUEST_ID_RE.test(id)) {
+    notices.push('An app-request block was skipped — its "id" is missing or is not a card id (`dreamcontext apps … --ask` prints the block).');
+    return { view: null, notices };
+  }
+  if (ASSERTED_APP_REQUEST_KEYS.some((k) => obj[k] !== undefined)) {
+    notices.push('An app-request block described the request itself — that was ignored. The card reads it from the server.');
+  }
+  return { view: { type: 'app-request', id }, notices };
+}
+
+// ---------------------------------------------------------------------------------------
 // type: "learned"
 // ---------------------------------------------------------------------------------------
 
@@ -1040,6 +1072,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'title': return validateTitle(parsed, notices);
       case 'automation': return validateAutomation(parsed, notices);
       case 'learned': return validateLearned(parsed, notices);
+      case 'app-request': return validateAppRequest(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

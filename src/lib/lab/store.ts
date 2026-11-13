@@ -1,6 +1,7 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import fg from '../glob.js';
+import { realPath } from '../real-path.js';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
 import { today } from '../id.js';
 import { writeCredentialsExample } from './required-credentials.js';
@@ -86,8 +87,8 @@ export function resolveContainedLabFile(contextRoot: string, kind: LabFileKind, 
   try {
     const st = lstatSync(path);
     if (st.isSymbolicLink() || !st.isFile()) return null;
-    const expected = join(realpathSync(contextRoot), 'lab', dir, `${slug}${ext}`);
-    return realpathSync(path) === expected ? path : null;
+    const expected = join(realPath(contextRoot), 'lab', dir, `${slug}${ext}`);
+    return realPath(path) === expected ? path : null;
   } catch {
     return null;
   }

@@ -14,7 +14,7 @@
  * repeated after a failure); a different text citing the same turn is a new record.
  */
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
@@ -78,6 +78,7 @@ import {
 } from '../../lib/rules-store.js';
 import { redactSecrets } from '../../lib/telegram/format.js';
 import { inspectSleepLock, type SleepState } from '../../lib/sleep-consolidation.js';
+import { realPath } from '../../lib/real-path.js';
 
 // ─── Context ────────────────────────────────────────────────────────────────
 
@@ -478,7 +479,7 @@ export function sleepInProgress(ctx: Pick<LearnContext, 'contextRoot' | 'now'>):
 }
 
 function sameRealPath(a: string, b: string): boolean {
-  try { return realpathSync(a) === realpathSync(b); } catch { return false; }
+  try { return realPath(a) === realPath(b); } catch { return false; }
 }
 
 function storeFailure(e: unknown): LearnOutcome {

@@ -58,8 +58,7 @@
 
 import { createHash } from 'node:crypto';
 import {
-  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync,
-  writeFileSync,
+  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import fg from './glob.js';
@@ -67,6 +66,7 @@ import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import matter from 'gray-matter';
 import { foldAscii } from './fold-ascii.js';
 import { HOOK_OUTPUT_MAX_CHARS } from './snapshot-budget.js';
+import { realPath } from './real-path.js';
 
 // ─── Folding ────────────────────────────────────────────────────────────────
 
@@ -406,8 +406,8 @@ export function isReadablePatternFile(file: string, dir: string): boolean {
     const link = lstatSync(file);
     if (link.isSymbolicLink() || !link.isFile()) return false;
     if (link.size > MAX_PATTERN_FILE_BYTES) return false;
-    const real = realpathSync(file);
-    const realDir = realpathSync(dir);
+    const real = realPath(file);
+    const realDir = realPath(dir);
     return real === realDir || real.startsWith(realDir + sep);
   } catch {
     // Unreadable or vanished between glob and stat — not ours to open.

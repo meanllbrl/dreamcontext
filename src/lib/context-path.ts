@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { realPath } from './real-path.js';
 
 const CONTEXT_DIR = '_dream_context';
 const MAX_WALK_UP = 5;
@@ -12,7 +13,7 @@ export const TASK_WORKTREE_ENV = 'DREAMCONTEXT_TASK_WORKTREE';
 
 function realOrNull(p: string): string | null {
   try {
-    return realpathSync(p);
+    return realPath(p);
   } catch {
     return null;
   }

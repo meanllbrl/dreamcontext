@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ownerKey } from '../../lib/desktop';
 
 /** One pending proposal (GET /api/assistant/proposals — src/lib/assistant/proposals.ts). */
@@ -69,7 +69,7 @@ export async function decide(id: string, action: 'approve' | 'edit' | 'reject', 
   }
 }
 
-const APP_FAILURE: Partial<Record<DecideOutcome, string>> = {
+export const APP_FAILURE: Partial<Record<DecideOutcome, string>> = {
   changed: 'Kart değişti. Yeniden bak.',
   stale: 'App bu kart açıldıktan sonra değişti; hiçbir şey onaylanmadı. Agent yeniden sorar.',
   refused: 'Onaylamak için uygulamanın yeni sürümü gerekiyor. Güncelle ya da reddet.',
@@ -77,11 +77,19 @@ const APP_FAILURE: Partial<Record<DecideOutcome, string>> = {
 };
 
 /** An agent's app request: the plan as lines, a red line for what cannot be undone, Onayla/Reddet. */
-function AppRequestRow({ p, failure, onDecided }: { p: Proposal & { app: AppCard }; failure?: DecideOutcome; onDecided: (id: string, notice?: string) => void }) {
+function AppRequestRow({ p, failure, onDecided, visible }: { p: Proposal & { app: AppCard }; failure?: DecideOutcome; onDecided: (id: string, notice?: string) => void; visible: boolean }) {
   const [busy, setBusy] = useState(false);
   const [ownFailure, setOwnFailure] = useState<DecideOutcome | undefined>();
   const failed = ownFailure ?? failure;
   const a = p.app;
+  // Drawn on the notch: the agent may now say so (ek-4), only once the panel really shows it
+  // (review r1: a folded notch mounts the list behind `hidden`). Once per card; a failure stays silent.
+  useEffect(() => {
+    if (!visible) return;
+    void fetch(`/api/apps/requests/card/${encodeURIComponent(p.id)}/shown`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ where: 'notch' }),
+    }).catch(() => {});
+  }, [p.id, visible]);
   const act = async (action: 'approve' | 'reject') => {
     setBusy(true);
     setOwnFailure(undefined);
@@ -162,11 +170,11 @@ function ProposalRow({ p, keyed, failure, onDecided }: { p: Proposal; keyed: boo
 
 /** The actions the assistant wants to take that need the owner's yes first. */
 /** `keyed`: Y / N act on the first proposal (Notch.tsx owns the keys), so its row shows them. */
-export function ProposalList({ proposals, keyed = false, failure, onDecided }: { proposals: Proposal[]; keyed?: boolean; failure?: { id: string; outcome: DecideOutcome } | null; onDecided: (id: string, notice?: string) => void }) {
+export function ProposalList({ proposals, keyed = false, failure, onDecided, visible = true }: { proposals: Proposal[]; keyed?: boolean; failure?: { id: string; outcome: DecideOutcome } | null; onDecided: (id: string, notice?: string) => void; /** Really on screen (not behind `hidden`): only then is a card reported drawn. */ visible?: boolean }) {
   return (
     <ul className="dc-proposals" aria-label="Waiting for your approval">
       {proposals.map((p, i) => p.app && APP_REQUEST_VERBS.has(p.verb)
-        ? <AppRequestRow key={p.id} p={p as Proposal & { app: AppCard }} failure={p.id === failure?.id ? failure.outcome : undefined} onDecided={onDecided} />
+        ? <AppRequestRow key={p.id} p={p as Proposal & { app: AppCard }} failure={p.id === failure?.id ? failure.outcome : undefined} onDecided={onDecided} visible={visible} />
         : <ProposalRow key={p.id} p={p} keyed={keyed && i === 0} failure={p.id === failure?.id ? failure.outcome : undefined} onDecided={onDecided} />)}
     </ul>
   );

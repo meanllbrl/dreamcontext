@@ -1,23 +1,11 @@
 import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  realpathSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { assertConfinedConfigDir, isRealHomeConfigDir } from './claude-accounts.js';
+import { realPath } from './real-path.js';
 
 /**
  * A per-account `CLAUDE_CONFIG_DIR` sandbox — the directory that makes N accounts signed in
@@ -279,7 +267,7 @@ function healRealEntry(linkPath: string, target: string, realClaudeDir: string, 
 
 function mergeStaged(staging: string, isDir: boolean, target: string, realClaudeDir: string, entry: string, backupRoot: string): void {
   if (!lexists(target) && isDir) mkdirSync(target, { recursive: true });
-  if (lexists(target) && realpathSync(target) !== join(realpathSync(realClaudeDir), entry)) {
+  if (lexists(target) && realPath(target) !== join(realPath(realClaudeDir), entry)) {
     throw new Error(`${target} does not resolve inside ${realClaudeDir}`);
   }
 

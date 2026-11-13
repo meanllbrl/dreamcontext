@@ -16,7 +16,8 @@ import { hybridVaultSearch, toWireQueryHit } from '../../cli/commands/memory.js'
 import { minTier, resolvePromptTier, type RecallTier } from '../../lib/recall-cloud-config.js';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { isLoopback } from './agent-spawn-shared.js';
-import { realpathSync } from 'node:fs';
+import { realPath } from '../../lib/real-path.js';
+
 
 // Every channel the engine can produce — derived from CORPUS_TYPES, never
 // re-listed here. The previous hardcoded five silently dropped `objective`,
@@ -195,7 +196,7 @@ export async function handleRecallPromptPost(
     sendError(res, 400, 'bad_request', 'prompt and root are required');
     return;
   }
-  const real = (p: string) => { try { return realpathSync(p); } catch { return null; } };
+  const real = (p: string) => { try { return realPath(p); } catch { return null; } };
   if (real(root) === null || real(root) !== real(contextRoot)) {
     sendError(res, 409, 'other_vault', 'This server is not serving that vault.');
     return;

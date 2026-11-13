@@ -19,9 +19,10 @@
  * here writes; the callers own the refusal.
  */
 
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import { countCheckboxes, isPlaceholderLine } from './markdown.js';
+import { realPath } from './real-path.js';
 
 /** One thing the handoff is missing, phrased as the fix. */
 export interface HandoffGap {
@@ -251,8 +252,8 @@ export function drawingFileCheck(contextRoot: string): (relPath: string) => bool
       const abs = resolve(projectRoot, relPath);
       const st = lstatSync(abs);
       if (st.isSymbolicLink() || !st.isFile()) return false;
-      const realRoot = realpathSync(projectRoot);
-      const real = realpathSync(abs);
+      const realRoot = realPath(projectRoot);
+      const real = realPath(abs);
       return real === realRoot || real.startsWith(realRoot + sep);
     } catch {
       return false;

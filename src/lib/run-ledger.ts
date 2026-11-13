@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { heavyRepoDir } from './builder-tools.js';
 import { currentScope } from './run-budget.js';
+import { realPath } from './real-path.js';
 
 /**
  * Where a Develop run's minutes went, from records and never from memory: `builder open` starts
@@ -39,7 +40,7 @@ export interface Where { branch?: string; toplevel?: string }
 
 const whereOf = (cwd: string): Where => {
   const out: Where = {};
-  try { out.toplevel = realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { /* not a repo */ }
+  try { out.toplevel = realPath(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()); } catch { /* not a repo */ }
   try { const b = execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); if (b) out.branch = b; } catch { /* detached */ }
   return out;
 };

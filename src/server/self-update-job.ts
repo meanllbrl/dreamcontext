@@ -4,13 +4,14 @@
 // only ASKS: the shared state file's 6 h throttle decides whether a check runs, and a deferred
 // check (a chat was mid-turn) is simply asked again on the next tick.
 
-import { realpathSync } from 'node:fs';
+
 import { readDreamcontextVersionFromDisk } from '../lib/manifest.js';
 import { cliPackageVersion } from '../lib/npm-target.js';
 import { runSelfUpdateCheck, type SelfUpdateDeps } from '../lib/self-update.js';
 import { compareVersions } from '../lib/version-check.js';
 import { anyChatBusy } from './chat-activity.js';
 import { startUpgradeRun } from './upgrade-job.js';
+import { realPath } from '../lib/real-path.js';
 
 export const SELF_UPDATE_FIRST_TICK_MS = 90_000;
 export const SELF_UPDATE_TICK_MS = 30 * 60_000;
@@ -47,7 +48,7 @@ export function selfUpdateJobDisabledReason(
   return null;
 }
 
-const real = (p: string): string => { try { return realpathSync(p); } catch { return p; } };
+const real = (p: string): string => { try { return realPath(p); } catch { return p; } };
 
 /**
  * The version the desktop ready watch compares with the running one: this process's own

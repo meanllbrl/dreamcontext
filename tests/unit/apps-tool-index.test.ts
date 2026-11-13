@@ -88,8 +88,10 @@ describe('the app tools block', () => {
 
     writeSharedSnapshot(home, { currentLogin: 'me', at: new Date().toISOString(), repos: ['acme/crm'] });
     const shared = block('how does the revenue pipeline look for customers?')!;
-    expect(shared).toContain('offer to install it (an app-install button)');
-    expect(shared).toContain('Never install it yourself.');
+    expect(shared).toContain('offer to install it, or a Lab insight');
+    // One step, his card or his own words (app-kurulum-claude ek-1 b): never a dead end.
+    expect(shared).toContain('`dreamcontext apps install acme/crm --ask`');
+    expect(shared).not.toContain('Never install it yourself.');
 
     writeSharedSnapshot(home, { currentLogin: 'me', at: new Date().toISOString(), repos: ['acme/other'] });
     const notShared = block('how does the revenue pipeline look for customers?')!;

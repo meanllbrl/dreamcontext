@@ -19,8 +19,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync,
-  readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeSync,
+  chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -29,6 +28,7 @@ import {
   type BotBinding, type ForwardFile, type JournalEntry, type ManagedHistoryFile, type ManagedHistoryRow,
   type PollState, type TelegramScope, type TelegramTarget, type TurnsFile,
 } from './contract.js';
+import { keyPath, realPath } from '../real-path.js';
 
 export type ConfigFile = 'bot.json' | 'poll.json' | 'turns.json' | 'forward.json';
 
@@ -40,7 +40,7 @@ export function telegramBase(home: string = homedir()): string {
 /** The scope of a project: sha256 of its context root's realpath, first 16 hex. */
 export function scopeOfContextRoot(contextRoot: string): TelegramScope {
   let real = contextRoot;
-  try { real = realpathSync(contextRoot); } catch { /* not there yet: the literal path */ }
+  try { real = keyPath(contextRoot); } catch { /* not there yet: the literal path */ }
   return createHash('sha256').update(real).digest('hex').slice(0, 16);
 }
 
@@ -98,8 +98,8 @@ function checkChain(base: string, file: string): ReadRefusal | null {
     if (last && st.nlink > 1) return 'hardlink';
   }
   try {
-    const realBase = realpathSync(base);
-    const real = realpathSync(file);
+    const realBase = realPath(base);
+    const real = realPath(file);
     if (!real.startsWith(realBase + sep)) return 'outside';
   } catch { return 'absent'; }
   return null;

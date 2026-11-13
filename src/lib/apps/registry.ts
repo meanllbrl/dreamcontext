@@ -11,11 +11,12 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, sep } from 'node:path';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { APP_SLUG_RE, appHash } from './bundle.js';
+import { realPath } from '../real-path.js';
 
 export interface AppRecord {
   slug: string;
@@ -107,7 +108,7 @@ export function appRootFor(projectRoot: string, slug: string): string {
 
 /** realpath, resolving the nearest existing ancestor for a path that does not exist yet. */
 export function real(p: string): string {
-  try { return realpathSync(p); } catch { /* not there yet */ }
+  try { return realPath(p); } catch { /* not there yet */ }
   const parent = dirname(p);
   return parent === p ? p : join(real(parent), basename(p));
 }

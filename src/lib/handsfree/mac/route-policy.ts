@@ -701,6 +701,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/apps/requests': deny(SECRET),
   'GET /api/apps/requests/:id': deny(SECRET),
   'GET /api/apps/requests/:id/logo': deny(WINDOW),
+  'GET /api/apps/requests/card/:proposal': deny(WINDOW),
+  'POST /api/apps/requests/card/:proposal/shown': deny(WINDOW),
 };
 
 /** The row for a matched route (`method` as registered, `path` the registered pattern), or

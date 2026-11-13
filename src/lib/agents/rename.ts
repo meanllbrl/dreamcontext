@@ -1,5 +1,5 @@
 import { renameOrForgetAgentTaskJobs } from './task-jobs.js';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import * as git from '../git-sync/git.js';
 import { renameAgentStage } from '../local-store.js';
@@ -14,6 +14,7 @@ import { currentLogin, ownedBy } from './owner.js';
 import { isSafeAutomationSlug, parseManifestFrontmatter } from './slot.js';
 import { isGlobalAgentHere } from './scope.js';
 import { AGENTS_DIR } from './types.js';
+import { realPath } from '../real-path.js';
 
 /**
  * Rename ONE machine's copy of an agent or automation (B1-8): the same-slug collision, where a
@@ -39,8 +40,8 @@ export interface RenameOptions {
 
 function insideVault(contextRoot: string, abs: string): boolean {
   try {
-    const root = realpathSync(contextRoot);
-    const real = realpathSync(abs);
+    const root = realPath(contextRoot);
+    const real = realPath(abs);
     const rel = relative(root, real);
     return rel !== '' && !rel.startsWith('..') && !rel.split(sep).includes('..');
   } catch {

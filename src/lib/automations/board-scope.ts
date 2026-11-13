@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { boardHoldIn, checkApproval, getAgentEntry, type ApprovalEntry } from './registry.js';
@@ -14,6 +14,7 @@ import {
   type ApprovalUse,
   type AutomationManifest,
 } from './types.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The permission envelope of a BOARD-ONLY agent: one whose manifest names a `whiteboard` AND says
@@ -314,7 +315,7 @@ function ensureRealDir(path: string): string | null {
 
 function realHome(): string {
   try {
-    return realpathSync(homedir());
+    return realPath(homedir());
   } catch {
     return homedir();
   }
@@ -333,7 +334,7 @@ export function prepareScopePaths(root: string, scope: BoardScope): ScopePathsRe
     scratch = null;
   };
   try {
-    const realRoot = realpathSync(root);
+    const realRoot = realPath(root);
     const relOutput = outputRootDir(realRoot).slice(realRoot.length + 1).split(/[\\/]/);
     let cursor = realRoot;
     for (const segment of [...relOutput, scope.self]) {
@@ -346,7 +347,7 @@ export function prepareScopePaths(root: string, scope: BoardScope): ScopePathsRe
     if (linked) return { ok: false, reason: linked };
 
     const userHome = realHome();
-    scratch = mkdtempSync(join(realpathSync(tmpdir()), 'dc-board-'));
+    scratch = mkdtempSync(join(realPath(tmpdir()), 'dc-board-'));
     const created: string = scratch;
     const bad =
       forbiddenPathReason('output folder', outputSelf) ??

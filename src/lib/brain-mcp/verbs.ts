@@ -13,8 +13,9 @@
  * `apps tools` is here and only reads; the one way to drive an installed app is the separate
  * `app` tool (server.ts), and its gate is the dashboard server's (`gateAppCall`).
  */
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { realPath } from '../real-path.js';
 
 /**
  * Verb paths a call may start with. `tasks handoff` is the Eco record (§4d). Every entry is a LEAF
@@ -65,7 +66,7 @@ function looksLikePath(a: string): boolean {
  */
 export function confinedToVault(p: string, vault: string): boolean {
   let realVault: string;
-  try { realVault = realpathSync(vault); } catch { return false; }
+  try { realVault = realPath(vault); } catch { return false; }
   const abs = resolve(realVault, p.startsWith('~') ? '/nonexistent-home-path' : p);
   const rel = relative(realVault, abs);
   if (rel === '' ) return true;

@@ -14,7 +14,7 @@
  *   more sessions on two or more days go to sleep-state, which writes one Known Issues line each.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readOwnerTurns, occasion, type OwnerTurnLine } from './owner-words.js';
@@ -24,6 +24,7 @@ import {
   deriveAll, eventsOf, personalStoreRef, projectStoreRef, readStore, supersedeFlags, weeklySayings,
   RulesStoreError, type RuleRecord, type RuleView,
 } from './rules-store.js';
+import { keyPath } from './real-path.js';
 
 // ─── Tool errors ────────────────────────────────────────────────────────────
 
@@ -97,7 +98,7 @@ export const TOOL_ERROR_MAX_AGE_DAYS = 45;
 /** The tally's file: machine-local, one per vault, never inside a synced folder. */
 export function toolErrorTallyFile(contextRoot: string, home: string = homedir()): string {
   let real = contextRoot;
-  try { real = realpathSync(contextRoot); } catch { /* not there yet */ }
+  try { real = keyPath(contextRoot); } catch { /* not there yet */ }
   const tag = createHash('sha256').update(real).digest('hex').slice(0, 16);
   return join(home, '.dreamcontext', 'sleep-tool-errors', `${tag}.json`);
 }

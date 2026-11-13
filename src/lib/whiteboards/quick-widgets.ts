@@ -14,7 +14,7 @@
  * Placement (`placeQuickWidgets`) runs inside the apply: in the chosen area at the widgets'
  * natural size, else beside the selection or the content, never on top of anything.
  */
-import { lstatSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, statSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { elementBBox, liveElements, unionBBox, type BBox } from './ops.js';
 import { nextIndices } from './store.js';
@@ -25,6 +25,7 @@ import {
   WIDGET_GRID, isCardColor, isWidgetKind, isWidgetSize, pageRefKind,
   type CardColor, type WhiteboardElement, type WidgetKind, type WidgetPayload, type WidgetSize,
 } from './widgets.js';
+import { realPath } from '../real-path.js';
 
 export const QUICK_WIDGET_MAX = 4;
 export const QUICK_WIDGET_TITLE_MAX = 120;
@@ -94,7 +95,7 @@ export function projectFileInside(root: string, rel: string): boolean {
   if (parts.some((p) => p === '' || p === '.' || p === '..')) return false;
   const project = dirname(root);
   let realProject: string;
-  try { realProject = realpathSync(project); } catch { return false; }
+  try { realProject = realPath(project); } catch { return false; }
   let cur = project;
   try {
     for (const p of parts) {
@@ -102,7 +103,7 @@ export function projectFileInside(root: string, rel: string): boolean {
       if (lstatSync(cur).isSymbolicLink()) return false;
     }
     if (!statSync(cur).isFile()) return false;
-    const real = realpathSync(cur);
+    const real = realPath(cur);
     return real === realProject || real.startsWith(realProject + sep);
   } catch {
     return false;

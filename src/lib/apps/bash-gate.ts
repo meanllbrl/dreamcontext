@@ -10,13 +10,14 @@
  * before classifying, so `"--vault"` and `--va""ult` are flags.
  */
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative } from 'node:path';
 import { checkAppDataChain, scanAppData } from './data-dir.js';
 import { appPullHeld } from './data-conflicts.js';
 import { getApp } from './registry.js';
 import { appHash } from './bundle.js';
+import { realPath } from '../real-path.js';
 
 /** What the gate knows about one chat, written at spawn under the `chats/**` write deny. */
 export interface BashGateContext {
@@ -176,7 +177,7 @@ function listedVerb(part: readonly string[], ctx: BashGateContext): ListedVerb |
 function realInside(root: string, path: string): boolean {
   try {
     if (!isAbsolute(path) || !existsSync(path)) return false;
-    const r = relative(realpathSync(root), realpathSync(path));
+    const r = relative(realPath(root), realPath(path));
     return !r.startsWith('..') && !isAbsolute(r);
   } catch {
     return false;

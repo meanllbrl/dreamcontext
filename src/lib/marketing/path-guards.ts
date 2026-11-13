@@ -3,9 +3,10 @@
  * to block direct edits/writes that should only happen via `mk init` or
  * the user editing `.env` manually outside an agent session.
  */
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { basename, dirname, resolve, sep } from 'node:path';
 import { resolveContextRoot } from '../context-path.js';
+import { realPath } from '../real-path.js';
 
 /**
  * Returns true if `filePath` resolves to `_dream_context/marketing/.env`
@@ -37,7 +38,7 @@ export function isMarketingEnvPath(filePath: string, from?: string): boolean {
 }
 
 function realpathOrSelf(p: string): string {
-  try { return existsSync(p) ? realpathSync(p) : p; }
+  try { return existsSync(p) ? realPath(p) : p; }
   catch { return p; }
 }
 
@@ -55,7 +56,7 @@ function realpathOfNearestAncestor(p: string): string {
   }
   if (!current || current === sep) return p;
   try {
-    const real = realpathSync(current);
+    const real = realPath(current);
     return tail.length === 0 ? real : real + sep + tail.join(sep);
   } catch {
     return p;

@@ -22,6 +22,7 @@ import { installApp, previewInstall } from '../../src/lib/apps/share/install.js'
 import { clearSharedCache } from '../../src/lib/apps/share/shared.js';
 import { resetAppGrants } from '../../src/lib/apps/share/app-grant.js';
 import { RENEWAL_TITLE, findRequesterChat, resetAppRequests, setAppRequestDelivery } from '../../src/lib/apps/share/app-request.js';
+import { appendOwnerTurn, newOwnerTurnId } from '../../src/lib/owner-words.js';
 import { listProposals, type ProposalView } from '../../src/lib/assistant/proposals.js';
 import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
 import { agentSessionId } from '../../src/lib/session-id.js';
@@ -180,7 +181,7 @@ describe('publish: ask, Onayla, spend once', () => {
     expect(JSON.stringify(listProposals())).not.toContain(String(r.body.request));
 
     // Before Onayla the request holds no grant.
-    expect((await status(String(r.body.request))).body).toEqual({ state: 'pending' });
+    expect((await status(String(r.body.request))).body).toEqual({ state: 'pending', shown: [] });
     expect((await decide(p, 'approve')).body).toMatchObject({ ok: true, state: 'approved' });
     expect(listProposals().filter((x) => x.app)).toHaveLength(0);
     const s = (await status(String(r.body.request))).body as { state: string; grant: { id: string; command: string } };
@@ -246,7 +247,7 @@ describe('forging and drift fail', () => {
       expect(d.status).toBe(403);
       expect(d.body.error).toBe('owner_page_only');
     }
-    expect((await status(String(r.body.request))).body).toEqual({ state: 'pending' });
+    expect((await status(String(r.body.request))).body).toEqual({ state: 'pending', shown: [] });
     expect(card().id).toBe(p.id);
   });
 
@@ -256,7 +257,7 @@ describe('forging and drift fail', () => {
     const d = await decide(card(), 'approve', OWNER, 'f'.repeat(64));
     expect(d.status).toBe(409);
     expect(d.body.error).toBe('card_changed');
-    expect((await status(String(r.body.request))).body).toEqual({ state: 'pending' });
+    expect((await status(String(r.body.request))).body).toEqual({ state: 'pending', shown: [] });
   });
 
   it('files changed after the card: stale at Onayla (no grant), and stale at the spend', async () => {
@@ -266,7 +267,7 @@ describe('forging and drift fail', () => {
     const d = await decide(card(), 'approve');
     expect(d.status).toBe(409);
     expect(d.body.error).toBe('stale_request');
-    expect((await status(String(r.body.request))).body).toEqual({ state: 'stale' });
+    expect((await status(String(r.body.request))).body).toEqual({ state: 'stale', shown: [] });
 
     const g = await approvedGrant({ action: 'publish', slug: 'tahmin' });
     commitChange('public/app.js', 'export const x = 4;\n');
@@ -303,7 +304,7 @@ describe('Reddet, the hour and the day', () => {
     commitChange('public/app.js', 'export const x = 2;\n');
     const r = await ask({ action: 'publish', slug: 'tahmin' });
     expect((await decide(card(), 'reject')).body).toMatchObject({ ok: true, state: 'rejected' });
-    expect((await status(String(r.body.request))).body).toEqual({ state: 'rejected' });
+    expect((await status(String(r.body.request))).body).toEqual({ state: 'rejected', shown: [] });
     const again = await ask({ action: 'publish', slug: 'tahmin' });
     expect(again.status).toBe(429);
     expect(again.body.error).toBe('cooldown');
@@ -315,7 +316,7 @@ describe('Reddet, the hour and the day', () => {
     commitChange('public/app.js', 'export const x = 2;\n');
     const g = await approvedGrant({ action: 'publish', slug: 'tahmin' });
     vi.setSystemTime(new Date('2026-11-09T11:01:00Z'));
-    expect((await status(g.request)).body).toEqual({ state: 'expired' });
+    expect((await status(g.request)).body).toEqual({ state: 'expired', shown: [] });
     const old = await call(share.handlePublish, { params: { slug: 'tahmin' }, body: { grant: g.grant } });
     expect(old.status).toBe(403);
     const r = await ask({ action: 'publish', slug: 'tahmin' });
@@ -491,5 +492,58 @@ describe('the [app onayı] line reaches the asking chat (delivery only)', () => 
     await new Promise((res) => setImmediate(res));
     const g = (await status(String(r.body.request))).body.grant as { id: string };
     expect(sent).toEqual([{ chat: 'tab-codex-1', text: `[app onayı] tahmin için yayın onaylandı. Bir kez çalıştır: dreamcontext apps publish tahmin --go --grant ${g.id}` }]);
+  });
+});
+
+describe('words he typed never approve an install: his tap on the card does (owner 2026-11-13, after review r1-r3)', () => {
+  const TAB = 'tab-kurucu-super-1';
+  async function shared() {
+    const kur = host('kurucu');
+    await kur.acceptInvitation((await kur.listInvitations())[0].id);
+    process.env.DREAMCONTEXT_APPS_LOCAL_LOGIN = 'kurucu';
+  }
+
+  it('even "Tahmin\'i kur" in this very chat, with an older agent\'s ownerSaid field: a pending card, no grant', async () => {
+    await shared();
+    appendOwnerTurn({ at: new Date().toISOString(), turn: newOwnerTurnId(), vault: instProject, surface: 'super', via: 'composer', keys: [TAB], session: TAB, own: "Tahmin app'ini kur" }, { home });
+    const r = await ask({ action: 'install', ref: 'yayinci/tahmin-app', ownerSaid: "Tahmin app'ini kur" }, { ...AGENT, 'x-dc-tab-session': TAB }, instProject);
+    expect(r.body).toMatchObject({ state: 'pending' });
+    expect(r.body).not.toHaveProperty('ownerWords');
+    expect(typeof r.body.proposal).toBe('string');
+    expect(card().verb).toBe('app-install');
+    expect((await status(String(r.body.request))).body.grant).toBeFalsy();
+  });
+});
+
+describe('the card in the chat, and where it is really drawn (app-kurulum-claude ek-4)', () => {
+  const cardGet = (proposal: string) => call(requests.handleAppRequestCard, { method: 'GET', params: { proposal } });
+  const shown = (proposal: string, where: unknown) => call(requests.handleAppRequestShown, { params: { proposal }, body: { where } });
+
+  it('the chat card reads the plan by its id; shown lists only the surfaces that reported drawing it', async () => {
+    commitChange('public/app.js', 'export const x = 2;\n');
+    const r = await ask({ action: 'publish', slug: 'tahmin' });
+    const proposal = String(r.body.proposal);
+    expect(proposal).toBe(card().id);
+    const c = await cardGet(proposal);
+    expect(c.status).toBe(200);
+    expect(c.body.state).toBe('pending');
+    expect((c.body.card as { title: string }).title).toBe('Yeni sürümü yayınla');
+    expect((await status(String(r.body.request))).body.shown).toEqual([]);
+
+    expect((await shown(proposal, 'chat')).body).toEqual({ ok: true });
+    expect((await shown(proposal, 'telegram')).status).toBe(400);
+    expect((await shown(proposal, 'anywhere')).status).toBe(400);
+    expect((await status(String(r.body.request))).body.shown).toEqual(['chat']);
+
+    // One yes anywhere closes every copy: the chat card then reads it as approved.
+    await decide(card(), 'approve');
+    expect((await cardGet(proposal)).body.state).toBe('approved');
+    expect((await shown(proposal, 'notch')).body).toEqual({ ok: false });
+  });
+
+  it('an unknown card id: 404, nothing marked', async () => {
+    expect((await cardGet('0b1d3c97-6daf-4943-96d5-8614e7d0960e')).status).toBe(404);
+    expect((await shown('0b1d3c97-6daf-4943-96d5-8614e7d0960e', 'chat')).body).toEqual({ ok: false });
+    expect((await cardGet('not-a-uuid')).status).toBe(404);
   });
 });

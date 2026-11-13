@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import fg from '../glob.js';
 import matter from 'gray-matter';
 import { isSafeInsightSlug, labDir, resolveContainedLabFile, type LabFileKind } from './store.js';
 import { LabError, MAX_HTML_BYTES } from './types.js';
 import type { FrameKind } from './frameOps.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The per-vault custom HTML block library: `lab/blocks/<slug>.md`, frontmatter
@@ -85,7 +86,7 @@ export function revOf(text: string): string {
 export function ensureContainedLabDir(contextRoot: string, sub: string): string {
   const dir = join(labDir(contextRoot), sub);
   mkdirSync(dir, { recursive: true });
-  if (realpathSync(dir) !== join(realpathSync(contextRoot), 'lab', sub)) {
+  if (realPath(dir) !== join(realPath(contextRoot), 'lab', sub)) {
     throw new LabError(`Refusing to write: lab/${sub}/ resolves outside the vault.`);
   }
   return dir;

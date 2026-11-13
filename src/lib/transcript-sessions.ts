@@ -28,11 +28,12 @@
  * shapes are the norm, never an error.
  */
 
-import { closeSync, existsSync, fstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { userPromptOf } from './transcript-history.js';
 import { listClaudeAccounts } from './claude-accounts.js';
+import { realPath } from './real-path.js';
 
 /** One past conversation, as the history picker shows it. */
 export interface PastSession {
@@ -502,7 +503,7 @@ export function resolveProjectDirs(projectRoot: string, home: string = homedir()
   const add = (dir: string | null) => {
     if (!dir) return;
     let real = dir;
-    try { real = realpathSync(dir); } catch { return; }
+    try { real = realPath(dir); } catch { return; }
     if (seen.has(real)) return;
     seen.add(real);
     out.push(dir);

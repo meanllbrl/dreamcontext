@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile, type Stats } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile, type Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
@@ -51,6 +51,7 @@ import {
   sanitizeExecCommand, sanitizeRelativeDir,
 } from './agent-spawn-shared.js';
 import { dictationState } from '../../lib/voice/dictationInstall.js';
+import { realPath } from '../../lib/real-path.js';
 
 // Re-exported so src/server/index.ts's existing import keeps working unchanged —
 // the prompt-token mint/redeem store now lives in agent-spawn-shared.ts (shared
@@ -530,8 +531,8 @@ export async function handleAgentInstallStatus(
  */
 export function resolveContainedDir(projectRoot: string, relDir: string): string | null {
   try {
-    const root = realpathSync(projectRoot);
-    const target = realpathSync(join(root, relDir));
+    const root = realPath(projectRoot);
+    const target = realPath(join(root, relDir));
     if (target !== root && !target.startsWith(root + sep)) return null;
     return lstatSync(target).isDirectory() ? target : null;
   } catch {

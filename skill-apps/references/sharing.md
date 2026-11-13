@@ -53,12 +53,17 @@ that choice: you cannot turn a private click into a public publish (403 `grant_s
    `dc.config()` (page or backend) or `process.env.DC_CONFIG`:
    ```json
    "config": [
-     { "key": "insight", "type": "insight", "label": "Which insight to watch", "required": true },
+     { "key": "insight", "type": "insight", "label": "Which insight to watch", "required": true,
+       "find": "a lab insight of this project whose name has 'revenue'" },
      { "key": "META_TOKEN", "type": "secret", "label": "Meta token" }
    ]
    ```
    Types: `text`, `number`, `choice` (+ `choices`), `secret` (a `.env` key, capitals), `insight`,
    `objective`, `agent`, `task-tag`, `mcp-tool`. A required empty setting keeps the app from starting.
+   Installing hands the settings to Claude, not to a form: give every field Claude could find on
+   the installer's Mac a `find` line (where: a skill and its section, an MCP server, a brain file, a
+   lab insight). `help` is the person's placeholder; `find` is Claude's. Ask for a secret only when
+   nothing on the Mac holds it.
    Fill the owner's own values with `dreamcontext apps config <slug> --set insight=<slug>` (never a
    secret; a key is the owner's: the secret card, or `apps secret <slug> <KEY>` in his terminal).
 3. Write or refresh `README.md`, the store page (SKILL.md: tagline, What it does, Screenshots),
@@ -102,10 +107,15 @@ When the work needs one of these and no grant came with your prompt, ask; never 
    `dreamcontext apps install <owner/repo> --ask [--set key=value]`,
    `dreamcontext apps update <slug> --ask [--how merge|set-aside]`, or
    `dreamcontext apps logo <slug> <absolute path to a PNG or JPG> --ask`. The server builds the
-   plan from its own reads and shows him ONE card (the notch; Telegram while he is away) with
-   exactly what would happen: where it goes and to whom, the changed files, every permission
-   change, what a merge would lose, the picture itself. The command waits 60 s for him by default (`--wait <s>`, at most 110).
-2. Wait: still waiting, run `dreamcontext apps grant <request> --wait 100`. Rejected: stop, and do
+   plan from its own reads and opens ONE card with exactly what would happen: where it goes and to
+   whom, the changed files, every permission change, what a merge would lose, the picture itself.
+   The command prints a `dream-view` `app-request` block: put it in your reply as is, and he taps
+   Onayla right there in the chat. Say in one line why it needs his tap, even when he already said
+   yes in words (the tap is what proves it was him, for exactly this plan); never "your word is not enough".
+2. Where the card is: ONLY the `Shown:` line of the command or of `apps grant` says it (the chat,
+   the notch, Telegram: each reports when it really drew the card). "Shown: nowhere yet" means it
+   is on no screen: never tell him it is on the notch or Telegram then.
+   Wait after your reply: `dreamcontext apps grant <request> --wait 100`. Rejected: stop, and do
    not ask again for 10 minutes (and only if something changed).
 3. Spend: on Onayla you get one command with a one-hour, one-time grant (a chat line `[app onayı]`
    brings the same). Run it once, as given. It runs the plan he saw, nothing you add: flags on the
@@ -121,12 +131,16 @@ sürüm var." and "Güncellemeyi yayınla", which hands you the same job as Shar
 ## Installing (the installer's side)
 
 - `dreamcontext apps shared`: invitations and apps shared with this account.
-- `dreamcontext apps install <owner/repo|link>`: the preview (who wrote it, what it runs, the
-  addresses its code names, the settings it asks for). Installing is the owner's click, or his
-  Onayla on your `--ask` card, which also shows: "This app was written by X. It runs on your Mac
-  with your permissions."
-- `dreamcontext apps config <slug> --suggest`: candidates from THIS project for each setting; fill
-  them with `--set`. The installed app's keys go in the same way as the owner's own.
+- He asks for an app: go straight to `dreamcontext apps install <owner/repo|link> --ask`, one
+  step, no preview first and no trial runs: the card it prints goes in your reply, and his one tap
+  installs it right here, even when he already asked for it in words. The preview alone
+  (`apps install <repo>` with no flag) is for "what is this app?", not for installing.
+- Right after the install, in the same chat, its settings are yours to fill:
+  `dreamcontext apps config <slug> --suggest` lists each field, its `find it:` hint and candidates
+  from this project. Fill every value you can find on this Mac (brain, skills, MCP, lab) with
+  `--set key=value`; a key goes through a `secret` card naming `"app":"<slug>"` (the value never
+  enters the chat); ask him one plain question only for what you cannot find. Until the required
+  fields are filled the app waits, and its card says so.
 
 An installed app lives in `<project>-apps/installed/<slug>/` and runs like the owner's own apps.
 You (and the app's own assistant) may change its code: the copy is then "changed", and an update

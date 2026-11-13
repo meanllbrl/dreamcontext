@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { realpathSync, unlinkSync } from 'node:fs';
+import { unlinkSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import chalk from 'chalk';
 import fg from '../../lib/glob.js';
@@ -9,6 +9,7 @@ import { readFrontmatter } from '../../lib/frontmatter.js';
 import { pendingInboxCount, listConsumedEntries } from '../../lib/federation-inbox.js';
 import { refreshPeerSummaries } from '../../lib/federation-peer-summary.js';
 import { header, success, info, warn } from '../../lib/format.js';
+import { realPath } from '../../lib/real-path.js';
 
 /**
  * Federation is READ-ONLY (live reference). A connection means "this vault may
@@ -196,7 +197,7 @@ export function findFederatedCopies(contextRoot: string, originVault?: string): 
   // /var → /private/var) and only a TRUE escape out of knowledge/ is rejected.
   let guard: string;
   try {
-    guard = realpathSync(knowledgeDir) + sep;
+    guard = realPath(knowledgeDir) + sep;
   } catch {
     return [];
   }
@@ -204,7 +205,7 @@ export function findFederatedCopies(contextRoot: string, originVault?: string): 
   for (const file of files) {
     try {
       // Resolve symlinks and reject anything that escapes the knowledge dir.
-      if (!realpathSync(file).startsWith(guard)) continue;
+      if (!realPath(file).startsWith(guard)) continue;
       const { data } = readFrontmatter(file);
       if (data.federated !== true) continue;
       const origin =

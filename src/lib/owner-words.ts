@@ -15,20 +15,12 @@
  */
 import { randomBytes } from 'node:crypto';
 import {
-  closeSync,
-  fchmodSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  writeSync,
+  closeSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { tokenize } from './recall.js';
+import { realPath } from './real-path.js';
 
 export type OwnerTurnVia = 'composer' | 'phone' | 'telegram';
 export const OWNER_TURN_VIAS: readonly OwnerTurnVia[] = ['composer', 'phone', 'telegram'];
@@ -134,7 +126,7 @@ export function appendOwnerTurn(line: OwnerTurnLine, opts: { home?: string } = {
 }
 
 function realOrSelf(path: string): string {
-  try { return realpathSync(path); } catch { return path; }
+  try { return realPath(path); } catch { return path; }
 }
 
 /**

@@ -5,11 +5,12 @@
  * the T3 state root. Tool cards are not kept.
  */
 import { isUnattendedRun } from '../transcript-sessions.js';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ChatHistoryItem } from '../transcript-history.js';
 import { tabsByThread } from './codex-sessions.js';
+import { realPath } from '../real-path.js';
 
 const THREAD_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const MAX_TEXT = 200_000;
@@ -18,7 +19,7 @@ export const MAX_CARRY = 16_000;
 
 export const threadsDir = (home: string): string => join(home, '.dreamcontext', 't3', 'threads');
 const fileOf = (id: string, home: string): string | null => (THREAD_RE.test(id) ? join(threadsDir(home), `${id}.jsonl`) : null);
-const real = (p: string): string | null => { try { return realpathSync(p); } catch { return null; } };
+const real = (p: string): string | null => { try { return realPath(p); } catch { return null; } };
 
 export function recordThreadTurn(id: string, cwd: string, role: Turn['role'], text: string, home: string = homedir(), account = '', from = ''): void {
   const file = fileOf(id, home);

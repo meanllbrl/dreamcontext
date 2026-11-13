@@ -10,10 +10,11 @@
  * measured as the bytes that go to the child. Anything else is refused with a plain line.
  */
 import { randomBytes } from 'node:crypto';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileIdFor, imageBox, imageSize, makeImageElement, sniffImageType, writeBoardFile, type ImageMime } from './files.js';
 import type { Placeable } from './quick-widgets.js';
+import { realPath } from '../real-path.js';
 
 export const QUICK_ATTACH_MAX = 6;
 /** A picture's own bytes: base64 of it stays under the model's 5 MB per image. */
@@ -53,7 +54,7 @@ export function dropName(path: string): string {
 export function readQuickAttachments(root: string, paths: readonly string[]): QuickAttachment[] {
   if (paths.length > QUICK_ATTACH_MAX) throw new QuickAttachmentRefusal('too_big', String(paths.length));
   let dropDir: string;
-  try { dropDir = realpathSync(join(root, 'tmp', 'agent-drops')); } catch { dropDir = ''; }
+  try { dropDir = realPath(join(root, 'tmp', 'agent-drops')); } catch { dropDir = ''; }
   const out: QuickAttachment[] = [];
   let text = 0;
   for (const p of paths) {
@@ -64,7 +65,7 @@ export function readQuickAttachments(root: string, paths: readonly string[]): Qu
     try {
       const st = lstatSync(p);
       if (st.isSymbolicLink() || !st.isFile()) throw new Error('not a plain file');
-      real = realpathSync(p);
+      real = realPath(p);
       size = st.size;
     } catch {
       throw new QuickAttachmentRefusal('gone', name);
