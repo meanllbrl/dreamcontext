@@ -27,6 +27,7 @@ import { NOT_SENT, cardOut, notSentLine, type CardContext, type CardOut } from '
 import { caption, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { noticeHtml } from '../../lib/telegram/system-lines.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
+import { superMediaRoots } from './media-roots.js';
 
 export const PRESENT_SETTLE_MS = 1_000;
 export const MAX_PRESENTED = 10;
@@ -156,7 +157,10 @@ export function wirePresenter(hub: TelegramHub, deps: PresenterDeps): () => void
     if (!ab) return;
     const p = pending.get(e.sessionId) ?? { key: ab.key, verbs: [], telegram: false };
     p.verbs.push(e);
-    if (hub.telegramTurnOf(e.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) p.telegram = true;
+    // The same rule as its text (hub.onAssistantText): a Telegram turn, streaming, or the owner on
+    // Telegram, whose every owner-facing section goes there (owner 2026-11-13: a result told on
+    // Telegram whose screenshots stayed on the Mac stage).
+    if (hub.telegramTurnOf(e.sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target) || hub.onTelegram(ab)) p.telegram = true;
     pending.set(e.sessionId, p);
   });
   // An event turn that answers a Telegram ref counts as a Telegram turn (M1).
@@ -187,7 +191,7 @@ export function wirePresenter(hub: TelegramHub, deps: PresenterDeps): () => void
     const shown = picked.cards.slice(0, MAX_PRESENTED);
     const ctx: CardContext = {
       contextRoot: ab.contextRoot, sessionId, pictures: !secretPending(sessionId), tunnelHost: deps.tunnelHost?.() ?? null,
-      snapshot: deps.snapshot, isGitIgnored: deps.isGitIgnored,
+      snapshot: deps.snapshot, isGitIgnored: deps.isGitIgnored, mediaRoots: await superMediaRoots(ab.contextRoot),
       ...(deps.renderInsight ? { renderInsight: (id: string) => deps.renderInsight!(ab, sessionId, id) } : {}),
     };
     const outs: CardOut[] = [];

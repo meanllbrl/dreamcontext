@@ -16,7 +16,7 @@ import { TG_UPLOAD_MAX_BYTES } from './contract.js';
 
 export type OutboundRefusal =
   | 'not_absolute' | 'missing' | 'symlink' | 'not_file' | 'hardlink' | 'outside_root'
-  | 'git_dir' | 'secret_class' | 'gitignored' | 'too_large' | 'changed';
+  | 'git_dir' | 'secret_class' | 'gitignored' | 'too_large' | 'changed' | 'not_media';
 
 /** Credential files `SAFE_TO_GITIGNORE` does not name (it is about one-click gitignoring). */
 const EXTRA_SECRET = /(^|\/)(\.netrc|\.npmrc|\.pypirc|\.pgpass|\.htpasswd|\.git-credentials|[^/]*\.kdbx|[^/]*\.ovpn)$|(^|\/)\.(ssh|gnupg|aws|docker)\//i;
@@ -24,6 +24,14 @@ const EXTRA_SECRET = /(^|\/)(\.netrc|\.npmrc|\.pypirc|\.pgpass|\.htpasswd|\.git-
 export interface ClassifyOptions {
   /** Containment roots: the project root and its linked repos (realpath'ed here). */
   roots: readonly string[];
+  /**
+   * Roots where only a MEDIA file may leave (a picture, clip or PDF whose bytes are what its name
+   * says, `mediaMagicOk`), the git-ignore rule not applied: the folders a Super shows the owner
+   * pictures from that are not the project (owner 2026-11-13, "telegramdan attıklarını"): its linked
+   * repos, every git worktree of the project and of those repos, the OS temp folder. Every other
+   * rule (symlink, hardlink, `.git`, the secret class, the size cap, containment by realpath) applies.
+   */
+  mediaRoots?: readonly string[];
   /** The project root whose `_dream_context/tmp/` is exempt from the gitignore rule. */
   projectRoot?: string;
   /** Injectable for tests; defaults to `git check-ignore`. */
@@ -32,7 +40,7 @@ export interface ClassifyOptions {
 }
 
 export type Classified =
-  | { ok: true; real: string; root: string; rel: string; size: number; dev: number; ino: number }
+  | { ok: true; real: string; root: string; rel: string; size: number; dev: number; ino: number; mediaOnly?: boolean }
   | { ok: false; reason: OutboundRefusal };
 
 /**
@@ -50,7 +58,7 @@ export function gitIgnoredOrUnproven(cwd: string, relPath: string): boolean {
 }
 
 /** Pictures, clips and PDFs: what a Super shows on its stage. */
-const MEDIA_FILE = /\.(png|jpe?g|gif|webp|mp4|m4v|mov|webm|pdf)$/i;
+export const MEDIA_FILE = /\.(png|jpe?g|gif|webp|mp4|m4v|mov|webm|pdf)$/i;
 /**
  * The project's own working folders, git-ignored by design (machine-local), where agents put the
  * pictures they show the owner: an app's data (`_dream_context/apps/<slug>/`, apps/data-dir.ts),
@@ -88,7 +96,16 @@ export function classifyOutbound(path: string, opts: ClassifyOptions): Classifie
     const rr = realOrNull(r);
     if (rr && (real.startsWith(rr + sep))) { if (!root || rr.length > root.length) root = rr; }
   }
-  if (!root) return { ok: false, reason: 'outside_root' };
+  let mediaOnly = false;
+  if (!root) {
+    for (const r of opts.mediaRoots ?? []) {
+      const rr = realOrNull(r);
+      if (rr && rr !== sep && real.startsWith(rr + sep)) { if (!root || rr.length > root.length) root = rr; }
+    }
+    if (!root) return { ok: false, reason: 'outside_root' };
+    if (!MEDIA_FILE.test(real)) return { ok: false, reason: 'not_media' };
+    mediaOnly = true;
+  }
   const rel = relative(root, real).split(sep).join('/');
   // APFS ignores case by default: `.GIT/config` IS `.git/config`.
   if (rel.split('/').some((seg) => seg.toLowerCase() === '.git')) return { ok: false, reason: 'git_dir' };
@@ -96,10 +113,10 @@ export function classifyOutbound(path: string, opts: ClassifyOptions): Classifie
   const projectReal = opts.projectRoot ? realOrNull(opts.projectRoot) : null;
   const working = projectReal !== null && root === projectReal && ignoredButSendable(rel);
   const ignored = opts.isGitIgnored ?? gitIgnoredOrUnproven;
-  if (!working && ignored(root, rel)) return { ok: false, reason: 'gitignored' };
+  if (!mediaOnly && !working && ignored(root, rel)) return { ok: false, reason: 'gitignored' };
   const max = opts.maxBytes ?? TG_UPLOAD_MAX_BYTES;
   if (st.size > max) return { ok: false, reason: 'too_large' };
-  return { ok: true, real, root, rel, size: st.size, dev: st.dev, ino: st.ino };
+  return { ok: true, real, root, rel, size: st.size, dev: st.dev, ino: st.ino, mediaOnly };
 }
 
 export interface OutboundFile { name: string; data: Buffer; rel: string }
@@ -122,9 +139,29 @@ export function readOutbound(path: string, opts: ClassifyOptions): { ok: true; f
       if (n <= 0) break;
       off += n;
     }
-    return { ok: true, file: { name: basename(c.real), data: data.subarray(0, off), rel: c.rel } };
+    const bytes = data.subarray(0, off);
+    // Outside the project only what IS a picture, clip or PDF leaves, by its bytes, not its name.
+    if (c.mediaOnly && !mediaMagicOk(c.real, bytes)) return { ok: false, reason: 'not_media' };
+    return { ok: true, file: { name: basename(c.real), data: bytes, rel: c.rel } };
   } finally {
     closeSync(fd);
+  }
+}
+
+/** The file's first bytes are the kind its extension names (PNG, JPEG, GIF, WebP, PDF, an
+ *  ISO-BMFF clip: mp4/m4v/mov, WebM). Anything else under a media-only root stays on the Mac. */
+export function mediaMagicOk(name: string, b: Buffer): boolean {
+  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+  const at = (off: number, hex: string): boolean => b.length >= off + hex.length / 2 && b.subarray(off, off + hex.length / 2).toString('hex') === hex;
+  switch (ext) {
+    case 'png': return at(0, '89504e470d0a1a0a');
+    case 'jpg': case 'jpeg': return at(0, 'ffd8ff');
+    case 'gif': return at(0, '474946383761') || at(0, '474946383961');
+    case 'webp': return at(0, '52494646') && at(8, '57454250');
+    case 'pdf': return at(0, '255044462d');
+    case 'mp4': case 'm4v': case 'mov': return at(4, '66747970') || at(4, '6d6f6f76') || at(4, '77696465') || at(4, '6d646174');
+    case 'webm': return at(0, '1a45dfa3');
+    default: return false;
   }
 }
 
@@ -145,6 +182,7 @@ export const REFUSAL_WHY: Record<OutboundRefusal, string> = {
   gitignored: 'yalnız bu Mac\'te tutulan bir klasörde',
   too_large: 'Telegram için çok büyük',
   changed: 'okunurken değişti; tekrar iste',
+  not_media: 'resim, video ya da PDF değil, gönderilmez',
 };
 
 /** One line the bot shows instead of a refused file (no path beyond the base name). */

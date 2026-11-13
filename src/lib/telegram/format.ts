@@ -258,9 +258,92 @@ export function telegramHtmlToPlain(html: string): string {
   }).replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 }
 
+// ─── Markdown pictures ──────────────────────────────────────────────────────
+
+/** `![alt](src)`, `![alt](<src with spaces>)`, an optional "title". Code spans are matched first
+ *  (the first alternative) so a picture written inside backticks stays text. */
+const IMAGE_OR_CODE = /`[^`\n]+`|!\[([^\]\n]*)\]\((?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\)/g;
+
+export interface MarkdownImage { alt: string; src: string; web: boolean }
+
+const isWebSrc = (src: string): boolean => /^https?:\/\//i.test(src);
+function localSrc(src: string): string {
+  const s = src.replace(/^file:\/\//i, '');
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
+/** Each line of `md` outside a code fence, with its index (`fn` returns the replacement). */
+function mapProseLines(md: string, fn: (line: string) => string | null): string[] {
+  const out: string[] = [];
+  let fence: string | null = null;
+  for (const line of md.split('\n')) {
+    const f = /^[ \t]*(```|~~~)/.exec(line);
+    if (fence) { if (line.trim().startsWith(fence)) fence = null; out.push(line); continue; }
+    if (f) { fence = f[1]; out.push(line); continue; }
+    const r = fn(line);
+    if (r !== null) out.push(r);
+  }
+  return out;
+}
+
+/**
+ * The pictures a text shows (`![alt](path)`), outside code fences and code spans, in order. The
+ * hub sends each local one as a photo after the text (`blocks.ts`); a web one stays a link in
+ * the text. Owner 2026-11-13: a child's screenshot in the Super's answer reached the phone as
+ * nothing at all.
+ */
+export function markdownImages(md: string): MarkdownImage[] {
+  const found: MarkdownImage[] = [];
+  mapProseLines(stripReplyMarks(md), (line) => {
+    for (const m of line.matchAll(IMAGE_OR_CODE)) {
+      if (m[0].startsWith('`')) continue;
+      const raw = (m[2] ?? m[3] ?? '').trim();
+      if (!raw) continue;
+      const web = isWebSrc(raw);
+      found.push({ alt: m[1].trim(), src: web ? raw : localSrc(raw), web });
+    }
+    return line;
+  });
+  return found;
+}
+
+/** A picture's name for a caption or a line: its alt text, else its file name. */
+export function imageName(img: Pick<MarkdownImage, 'alt' | 'src'>): string {
+  const alt = img.alt.replace(/^\.+$/, '').trim();
+  return alt || img.src.split(/[\\/]/).pop() || 'resim';
+}
+
+/** The text with its pictures rewritten: a web picture → a link; a local one → nothing in
+ *  `'hub'` mode (the hub sends the picture itself after the text), else "Resim: name (Mac'te)".
+ *  A line left with nothing but its list marker goes. */
+/** Where a removed picture stood, until the line is tidied (never in a written text). */
+const GONE = '\u0002';
+function picturesOut(md: string, mode: 'mac' | 'hub'): string {
+  return mapProseLines(md, (line) => {
+    let touched = false;
+    const next = line.replace(IMAGE_OR_CODE, (m: string, alt: string | undefined, a: string | undefined, b: string | undefined) => {
+      if (m.startsWith('`')) return m;
+      const raw = (a ?? b ?? '').trim();
+      if (!raw) return m;
+      touched = true;
+      const name = imageName({ alt: alt ?? '', src: isWebSrc(raw) ? raw : localSrc(raw) });
+      if (isWebSrc(raw)) return `[${name.replace(/[[\]]/g, '')}](${raw})`;
+      return mode === 'hub' ? GONE : `Resim: ${name} (Mac'te)`;
+    });
+    if (!touched) return next;
+    // Markup that wrapped ONLY a removed picture (`**![a](p)**`, `~~…~~`, `==…==`) goes with it (a
+    // bare `~~~~` would open a code fence that swallows the rest); markup of the words around it stays.
+    let tidy = next.replace(new RegExp(`(^|\\s)(\\*\\*|~~|==)\\s*${GONE}\\s*\\2(?=\\s|$|[.,;:!?)])`, 'g'), '$1').split(GONE).join('').replace(/(\S) {2,}/g, '$1 ').replace(/[ \t]+$/, '');
+    if (!/^\s/.test(line)) tidy = tidy.trimStart();
+    // A line left with only its list marker, a heading mark, a quote mark or punctuation goes.
+    if (line.trim() && /^\s*(?:[-*+>#|]|\d{1,3}[.)])*\s*[:.,;–|-]?\s*$/.test(tidy)) return null;
+    return tidy;
+  }).join('\n');
+}
+
 /** Markdown (a Super/member text) → Telegram HTML. Reply marks are stripped first. */
 export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): string {
-  const lines = stripReplyMarks(md).split('\n');
+  const lines = picturesOut(stripReplyMarks(md), opts.blocks ?? 'mac').split('\n');
   const out: string[] = [];
   // Readability on a phone (owner 2026-11-10, "okuması çok güç"): a sub-item gets its own marker
   // and a visible indent, a group that had sub-items is followed by a blank line, and a heading
@@ -366,7 +449,9 @@ export function foldLong(html: string): string {
 
 /** The whole pipeline for one outbound text: redact, format, split. */
 export function toTelegramMessages(md: string, opts: FormatOptions = {}): string[] {
-  return splitTelegramHtml(markdownToTelegramHtml(redactSecrets(md), opts));
+  // A message with no visible text (a quote or strike that held only a picture the hub sends
+  // itself) is not sent: Telegram refuses it, and that refusal would skip the pictures after it.
+  return splitTelegramHtml(markdownToTelegramHtml(redactSecrets(md), opts)).filter((h) => telegramHtmlToPlain(h).trim() !== '');
 }
 
 // ─── Splitting ──────────────────────────────────────────────────────────────
