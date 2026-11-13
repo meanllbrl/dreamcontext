@@ -530,7 +530,7 @@ describe('commands (M4, N5, N6, P4)', () => {
     let e = lastEdit();
     expect(e.params.message_id).toBe(m.result!.message_id);
     expect(String(e.params.text)).toContain('<b>Pano Gönder ve al</b>\niki kopyayla dene, sonra sonraki sürüme geç, sonra da ekran görüntülerine bak');
-    expect(String(e.params.text)).toContain("Ocak'dan beri seni bekliyor");
+    expect(String(e.params.text)).toContain("Ocak'tan beri seni bekliyor");
     expect(keyboard(e).map((r) => r.map((b) => b.text))).toEqual([['✓ Bitti', '✎ Yaz'], ['‹ Gündeme dön']]);
     tapEdit(2);
     await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2));

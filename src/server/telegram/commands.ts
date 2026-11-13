@@ -60,7 +60,8 @@ interface AgendaLine { id: string; section: string; text: string; at?: number }
 /** One message holds this many lines (Telegram: 100 buttons, 2-digit button index). */
 const AGENDA_MAX = 30;
 const AGENDA_LABEL = 40;
-const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+/** Month + the ablative suffix Turkish needs after it (Ocak'tan, Eylül'den). */
+const MONTHS = ["Ocak'tan", "Şubat'tan", "Mart'tan", "Nisan'dan", "Mayıs'tan", "Haziran'dan", "Temmuz'dan", "Ağustos'tan", "Eylül'den", "Ekim'den", "Kasım'dan", "Aralık'tan"];
 
 /** The tapped line in full: its first words bold when it reads "title: rest"; its age only when it is old. */
 function itemHtml(row: AgendaLine, nowMs: number): string {
@@ -69,7 +70,7 @@ function itemHtml(row: AgendaLine, nowMs: number): string {
   const text = cut > 0 && cut <= 60 ? `<b>${escapeHtml(full.slice(0, cut))}</b>\n${escapeHtml(full.slice(cut + 2))}` : `<b>${escapeHtml(full)}</b>`;
   if (!row.at || nowMs - row.at < 24 * 3600_000) return text;
   const d = new Date(row.at);
-  return `${text}\n<i>${d.getDate()} ${MONTHS[d.getMonth()]}'dan beri seni bekliyor</i>`;
+  return `${text}\n<i>${d.getDate()} ${MONTHS[d.getMonth()]} beri seni bekliyor</i>`;
 }
 
 export interface CommandsDeps {
@@ -202,8 +203,7 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
       if (idx === 0) {
         const r = await padMove(ab.contextRoot, row.id, 'done');
         if (!r.found) return LINES.stale;
-        await showList(ab, rec.messageId, row.text);
-        return CMD_LINES.doneBtn;
+        return (await showList(ab, rec.messageId, row.text)) ? CMD_LINES.doneBtn : `${CMD_LINES.doneBtn} (Mac'te de görünür)`;
       }
       if (idx !== 1) return LINES.stale;
       const block = agendaNoteBlock(row.id, row.section, row.text);
