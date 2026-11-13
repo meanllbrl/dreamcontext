@@ -147,7 +147,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
       } else await hub.reply(ab, out.line);
     }
     if (!items.length) return;
-    const { unsent } = await sendPictures(ab, items, { heading: (n) => (n === 1 ? 'Soruyla ilgili resim:' : `Soruyla ilgili ${n} resim:`) });
+    const { unsent } = await sendPictures(ab, items, true);
     if (unsent.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join('; ')}`);
   }
 

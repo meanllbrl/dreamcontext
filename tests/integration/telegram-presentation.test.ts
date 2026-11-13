@@ -151,10 +151,11 @@ describe('stage presentations (L1, L2, N1)', () => {
     const album = tg.calls.find((c) => c.method === 'sendMediaGroup')!;
     const items = JSON.parse(String(album.params.media)) as { type: string; caption?: string }[];
     expect(items.map((i) => i.type)).toEqual(['photo', 'photo', 'photo']);
-    // Each picture names itself, numbered in the album's order; one numbered list follows.
+    // Each picture names itself, numbered in the album's order; no listing message follows.
     expect(items.map((i) => i.caption)).toEqual(['1 · Resim C', '2 · Resim A', '3 · Resim B']);
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith('<b>Film şeridi, 3 resim:</b>'))).toBe(true));
-    expect(tg.texts().find((t) => t.startsWith('<b>Film şeridi, 3 resim:</b>'))).toBe('<b>Film şeridi, 3 resim:</b>\n1. Resim C\n2. Resim A\n3. Resim B');
+    await drained(80);
+    // No separate "Film şeridi, 3 resim: 1. ..." listing message (owner 2026-11-13).
+    expect(tg.texts().some((t) => /\d resim:/.test(t))).toBe(false);
     expect(tg.texts().some((t) => /Resim [ABC] · Resim/.test(t))).toBe(false);
     await drained(80);
     // Every card arrived as a photo: no phone line at all.

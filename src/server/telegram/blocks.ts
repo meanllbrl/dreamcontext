@@ -148,7 +148,7 @@ export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text
   }
   let sent = 0;
   if (items.length) {
-    const r = await sendPictures(ab, items, { heading: (n) => (n === 1 ? 'Resim:' : `${n} resim:`) });
+    const r = await sendPictures(ab, items, true);
     sent = r.sent.length;
     for (const m of r.unsent) lines.push(notSentLine('Resim: ', m.title, NOT_SENT.refused));
   }
