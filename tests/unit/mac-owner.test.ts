@@ -158,12 +158,12 @@ describe('every owner input on the Mac passes the one call; nothing released lat
   });
 
   it('path 1, ⏎ while a card is open: the refused steer queues it, after the call', () => {
-    after('if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true });');
+    after('if (!session.steer(message)) enqueue({ steerWhenPossible: true });');
   });
 
   it('path 2, ⌥⏎ adds to the queue, after the call (also on a taken-back remote tab)', () => {
-    after("if (mode === 'queue') session.enqueue(message);");
-    expect(commit.lastIndexOf("if (mode === 'queue') session.enqueue(message);")).toBeGreaterThan(called);
+    after("if (mode === 'queue') enqueue();");
+    expect(commit.lastIndexOf("if (mode === 'queue') enqueue();")).toBeGreaterThan(called);
   });
 
   it('path 3, a sleeping tab: its first message goes through the composer\'s sendVia, after the call', () => {

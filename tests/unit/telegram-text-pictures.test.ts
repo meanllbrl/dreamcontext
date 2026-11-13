@@ -207,13 +207,14 @@ describe('end to end: the Super answer with pictures reaches the fake bot', () =
       await sendAnswerBlocks(hub, ab, text, 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [worktree, shots], isGitIgnored: () => true });
 
       const methods = bot.hits.map((h) => h.method);
-      expect(methods).toEqual(['sendMessage', 'sendMediaGroup', 'sendMessage', 'sendMessage']);
-      const [first, album, list, why] = bot.hits;
+      // No separate "Sahnede N resim" listing any more (owner 2026-11-13): each picture's own caption names it.
+      expect(methods).toEqual(['sendMessage', 'sendMediaGroup', 'sendMessage']);
+      const [first, album, why] = bot.hits;
       expect(first.body).toContain('Terminal takılması çözüldü');
       expect(first.body).not.toContain('](');
       expect(album.files).toEqual(['light-03-run-failed-collapsed.png', 'klasor.png', 'cocuk.png']);
       expect(album.body).toContain('1 · başarısız run kapanmış');
-      expect(list.body).toContain('Klasörler');
+      expect(album.body).toContain('2 · Klasörler');
       expect(why.body).toContain('Resim: uzak (gönderilmedi: proje klasörünün dışında');
       expect(why.body).toContain('Resim: sahte (gönderilmedi: resim, video ya da PDF değil');
       expect(why.body).toContain('Resim: yok (gönderilmedi: dosya bulunamadı');

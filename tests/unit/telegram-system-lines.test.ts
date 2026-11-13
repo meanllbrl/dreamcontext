@@ -63,7 +63,8 @@ describe('telegram system lines', () => {
       LINES.bound('Ali'), LINES.unbound(),
       HF_LINES.macOn, HF_LINES.notSetup, HF_LINES.telegramOn, HF_LINES.linkOn('https://a.trycloudflare.com'), HF_LINES.newLink('https://a.trycloudflare.com'),
       HF_LINES.notOn, HF_LINES.ended('telefon bağlantısı koptu', true), HF_LINES.battery, HF_LINES.heat, HF_LINES.noGrant,
-      ...Object.values(CMD_LINES).map((v) => (typeof v === 'function' ? v('x') : v)),
+      // A button caption (`*Btn`) is a glyph and a word, not a sentence: the agenda's own buttons.
+      ...Object.entries(CMD_LINES).filter(([k]) => !k.endsWith('Btn')).map(([, v]) => (typeof v === 'function' ? v('x') : v)),
       RUN_LINES.noPhone, RUN_LINES.refused, RUN_LINES.secretHere, PHONE_LINES.starting, PHONE_LINES.offer, TOO_LARGE_LINE,
     ];
     it('no embedded emoji (the helper adds it) and no newline', () => {

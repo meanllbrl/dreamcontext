@@ -51,7 +51,7 @@ function code(src: string): string {
 describe('the pinned shelf is not in the scroller', () => {
   it('mounts PinShelf after .chat-transcript closes, and never inside it', () => {
     const src = read(CHAT_PANE);
-    const transcriptOpen = src.indexOf('className="chat-transcript"');
+    const transcriptOpen = src.indexOf("'chat-transcript'");
     const mount = src.indexOf('<PinShelf');
     // LAST occurrence: `<Composer` is also named in a doc comment ~1200 lines above the render
     // site, and anchoring on the first hit would compare the mount against prose.

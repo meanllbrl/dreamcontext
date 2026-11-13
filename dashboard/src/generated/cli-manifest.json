@@ -3950,6 +3950,11 @@
       "args": []
     },
     {
+      "path": "sleep sync-after",
+      "desc": "Post-sleep brain sync then task sync, in that order (started in the background by sleep done)",
+      "args": []
+    },
+    {
       "path": "snapshot",
       "desc": "Output a context snapshot for SessionStart hook (plain text, no colors)",
       "args": [],
