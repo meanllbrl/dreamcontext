@@ -1281,6 +1281,11 @@ export interface CrewHandle {
    *  channel (sahip-karti-yerinde K6): resolves true once the registry has seen that frame (the
    *  wait closed by its card id), false when it could not go in. Only the server calls it. */
   sendOwnerReceipt?(text: string, mark: OwnerReceiptMark): Promise<boolean>;
+  /** Answer a TOOL permission the process holds open right now (never a question), the way the
+   *  window's Allow/Deny does: an allow runs the call exactly as asked. False when that request
+   *  is not open here. For `super allow` when the window does not answer (field 2026-11-13: an
+   *  app in the background held a Bypass child's permission for minutes). Only the server. */
+  answerPermission?(requestId: string, behavior: 'allow' | 'deny', message?: string): boolean;
   /** The PATH the process really runs with (its login shell's, read once at spawn), or null while
    *  unknown: a grant resolves its interpreter with it, the way the session's hook will. */
   sessionPath?(): string | null;

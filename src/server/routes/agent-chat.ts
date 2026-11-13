@@ -154,6 +154,7 @@ import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
   knownMcpServers, mcpCardServers, mcpDrift, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
+import { permissionAnswerFrame } from '../../lib/super/permission-answer.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
@@ -2928,6 +2929,15 @@ export function startChatSession(
         });
       },
       sessionPath: () => crewSeat.sessionPath(),
+      // A tool permission answered by the server (`super allow` when no window answers): the
+      // window's own `answer` frame, so the registry and the replay set settle the same way.
+      answerPermission: (requestId, behavior, message) => {
+        if (!alive || handedOff) return false;
+        const frame = permissionAnswerFrame(outstandingAsks.get(requestId)?.line, requestId, behavior, message);
+        if (!frame) return false;
+        onWsMessage(JSON.stringify(frame));
+        return true;
+      },
     })
     : () => { /* not a crew process */ };
   // Live edge (K6): what is held for this crew child (a card result, a cut-off notice) goes in

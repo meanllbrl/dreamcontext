@@ -6,6 +6,7 @@
  * is a PERMISSION card still pending. A question or a plan approval is never answered here.
  */
 import type { PendingItem } from '../chatSession';
+import { pastDeadline } from '../windowVerbs';
 
 export type SuperAllowResult = { ok: true } | { ok: false; error: string };
 
@@ -24,6 +25,9 @@ export function superAllow(
   const requestId = typeof args.requestId === 'string' ? args.requestId : '';
   const behavior = args.behavior === 'allow' || args.behavior === 'deny' ? args.behavior : null;
   if (!behavior || !requestId) return { ok: false, error: 'bad_request' };
+  // Past its deadline the server answered the child itself (no window answered in time, field
+  // 2026-11-13): a window that wakes late must not answer it twice.
+  if (pastDeadline(args)) return { ok: false, error: 'expired' };
   if (!child || !isChild(child)) return { ok: false, error: 'not_a_child' };
   const cs = chatOf(child);
   if (!cs) return { ok: false, error: 'child_not_open' };
