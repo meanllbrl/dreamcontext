@@ -174,13 +174,33 @@ export function codexLeanMcpArgs(path: string, o: { node: string; cli: string })
   return out.join(' ');
 }
 
-/** The server names in `codex mcp list --json`: every config and form Codex itself merged. Null = unreadable. */
-export function parseCodexMcpList(stdout: string): string[] | null {
+/** One server `codex mcp list --json` shows: its name, whether Codex starts it, and how it is reached. */
+export interface CodexListedServer {
+  readonly name: string;
+  /** False only when Codex says so: an absent field reads as on, the wider side. */
+  readonly enabled: boolean;
+  readonly command?: string;
+  readonly url?: string;
+}
+
+/** The servers in `codex mcp list --json`: every config, plugin and form Codex itself merged. Null = unreadable. */
+export function parseCodexMcpList(stdout: string): CodexListedServer[] | null {
   try {
     const rows = JSON.parse(stdout) as unknown;
     if (!Array.isArray(rows)) return null;
-    const names = rows.map((r) => (r as { name?: unknown })?.name);
-    return names.every((n): n is string => typeof n === 'string') ? names : null;
+    const out: CodexListedServer[] = [];
+    for (const r of rows) {
+      const row = (r && typeof r === 'object' ? r : {}) as { name?: unknown; enabled?: unknown; transport?: { command?: unknown; url?: unknown } | null };
+      if (typeof row.name !== 'string') return null;
+      const t = row.transport && typeof row.transport === 'object' ? row.transport : {};
+      out.push({
+        name: row.name,
+        enabled: row.enabled !== false,
+        ...(typeof t.command === 'string' && t.command ? { command: t.command } : {}),
+        ...(typeof t.url === 'string' && t.url ? { url: t.url } : {}),
+      });
+    }
+    return out;
   } catch {
     return null;
   }
@@ -203,14 +223,30 @@ export function leanMcpNames(path: string | undefined): string[] {
  * 0.164), so each server Codex lists is switched off by name. `keep` is what this surface was
  * given. Web search runs at OpenAI, outside the sandbox's network rule, so it goes too.
  *
- * Null when a server cannot be switched off (`codex` could not list them, or a name `-c` cannot
- * address, like one with a dot): the caller refuses the run, since a server left on is wider.
+ * A server a Codex plugin brings (the ChatGPT app's `cua_repl`, `codex_app`) is not in config.toml:
+ * a lone `-c mcp_servers.<name>.enabled=false` makes a table with no transport, and Codex then
+ * refuses its whole config ("invalid transport in `mcp_servers.<name>`", app-server exit 1,
+ * measured on codex-cli 0.164). So each switch-off carries the transport Codex listed, and a
+ * server Codex already lists as off is left alone. For a plugin's server the override replaces
+ * its whole entry (its args read empty), which is harmless: the entry is off.
+ *
+ * Null when a server cannot be switched off (`codex` could not list them, a name `-c` cannot
+ * address, like one with a dot, or a server on with no transport to name): the caller refuses
+ * the run, since a server left on is wider.
  */
-export function codexStrictArgs(listed: readonly string[] | null, keep: readonly string[]): string | null {
+export function codexStrictArgs(listed: readonly CodexListedServer[] | null, keep: readonly string[]): string | null {
   if (!listed) return null;
-  const off = listed.filter((n) => !keep.includes(n));
-  if (off.some((n) => !/^[A-Za-z0-9_-]{1,64}$/.test(n))) return null;
-  return [...off.map((n) => codexConfigArg(`mcp_servers.${n}.enabled`, 'false')), codexConfigArg('web_search', '"disabled"')].join(' ');
+  const out: string[] = [];
+  for (const s of listed) {
+    if (keep.includes(s.name) || !s.enabled) continue;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(s.name)) return null;
+    const at = (field: string): string => `mcp_servers.${s.name}.${field}`;
+    if (s.command) out.push(codexConfigArg(at('command'), tomlString(s.command)));
+    else if (s.url) out.push(codexConfigArg(at('url'), tomlString(s.url)));
+    else return null;
+    out.push(codexConfigArg(at('enabled'), 'false'));
+  }
+  return [...out, codexConfigArg('web_search', '"disabled"')].join(' ');
 }
 
 /** T3's Claude driver: its `--append-system-prompt-file` launch argument carries our briefing. */
