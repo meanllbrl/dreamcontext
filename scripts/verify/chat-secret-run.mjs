@@ -39,6 +39,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,6 +54,9 @@ const PROJ = join(SCRATCH, 'proj');
 
 /** The canary. If this string is ever readable outside `.env`, the feature is broken. */
 const SECRET_VALUE = 'SEKRET-CANARY-1a2b3c4d5e6f';
+/** The owner key the shell would hand the server (stdin) and the page (`invoke('owner_key')`):
+ *  a card's ▶ mints its ticket with it. */
+const OWNER_KEY = randomBytes(32).toString('hex');
 
 // ─── the scripted `claude` ────────────────────────────────────────────────────────────
 //
@@ -60,7 +64,8 @@ const SECRET_VALUE = 'SEKRET-CANARY-1a2b3c4d5e6f';
 // handed, which is what the assertions read.
 const STANDIN = `#!${process.execPath}
 /** Scripted stand-in for \`claude -p --input-format stream-json\` — see scripts/verify/chat-secret-run.mjs. */
-const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+// Every assistant message carries a uuid, as the real CLI's do: the server keys its card records on it.
+const out = (o) => process.stdout.write(JSON.stringify(o.type === 'assistant' && !o.uuid ? { ...o, uuid: globalThis.crypto.randomUUID() } : o) + '\\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const inbox = [];
 let busy = false, turn = 0, pendingPermission = '';
@@ -107,17 +112,30 @@ function askPermission() {
 async function runTurn(prompt) {
   busy = true;
   turn++;
+  if (prompt === 'FAIL') {
+    // A command that FAILS, like the owner's \`git merge\` (exit 128): its card must still close,
+    // stop blinking, and hand the error back to the agent.
+    out({ type: 'system', subtype: 'init', session_id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'bypassPermissions', slash_commands: ['compact'] });
+    const block = ['Run the merge.', '', '\\u0060\\u0060\\u0060dream-view',
+      JSON.stringify({ type: 'run', id: 'merge', command: 'echo "fatal: Exiting because of an unresolved conflict." >&2; exit 128', why: 'it is yours' }),
+      '\\u0060\\u0060\\u0060'].join('\\n');
+    out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'FAIL-CARD\\n\\n' + block }] } });
+    out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 10 }, session_id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b' });
+    busy = false;
+    pump();
+    return;
+  }
   if (prompt.includes('PERM')) {
-    out({ type: 'system', subtype: 'init', session_id: 'verify-session', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'default', slash_commands: ['compact'] });
+    out({ type: 'system', subtype: 'init', session_id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'default', slash_commands: ['compact'] });
     askPermission();
     return; // busy stays true: the turn ends when the permission is answered
   }
-  out({ type: 'system', subtype: 'init', session_id: 'verify-session', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'bypassPermissions', slash_commands: ['compact'] });
+  out({ type: 'system', subtype: 'init', session_id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b', model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'bypassPermissions', slash_commands: ['compact'] });
   let text;
   if (turn === 1) text = 'TURN-ONE\\n\\n' + SECRET_BLOCK + '\\n\\n' + RUN_BLOCK + '\\n\\n' + TRACKED_BLOCK;
   else text = 'TURN-' + turn + ' RECEIVED<<<' + prompt + '>>>';
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
-  out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 10 }, session_id: 'verify-session' });
+  out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 10 }, session_id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b' });
   busy = false;
   pump();
 }
@@ -141,7 +159,7 @@ process.stdin.on('data', (c) => {
       const r = o.response.response || {};
       out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text',
         text: 'PERM-ANSWER<<<' + (r.behavior || '?') + '::' + (r.message || '') + '>>>' }] } });
-      out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 10 }, session_id: 'verify-session' });
+      out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 10 }, session_id: '6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b' });
       busy = false;
       pump();
       continue;
@@ -199,9 +217,10 @@ async function startServer(port) {
   const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
   const srv = spawn(process.execPath, [join(REPO, 'dist', 'index.js'), 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ,
-    env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_OWNER_KEY_STDIN: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+  srv.stdin.end(`${OWNER_KEY}\n`);
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
@@ -227,13 +246,13 @@ async function runTheme(chromium, base, theme, report) {
   // `invoke` rejects, which is the degradation path the app already handles everywhere.
   // The PTY itself is NOT faked — the server runs with DREAMCONTEXT_DESKTOP=1 and the
   // process on the other end of that socket is real.
-  await page.addInitScript(() => {
+  await page.addInitScript((key) => {
     window.__TAURI_INTERNALS__ = {
-      invoke: (cmd) => Promise.reject(new Error(`Command ${cmd} not found`)),
+      invoke: (cmd) => (cmd === 'owner_key' ? Promise.resolve(key) : Promise.reject(new Error(`Command ${cmd} not found`))),
       transformCallback: (cb) => cb,
       metadata: {},
     };
-  });
+  }, OWNER_KEY);
   page.on('pageerror', (e) => report.note(`[page error] ${String(e).slice(0, 160)}`));
   // The RUN card's ▶ is gated on `isDesktop()` — the PTY bridge is desktop-only — and
   // `isDesktop()` is a one-line check for Tauri's injected bridge. A plain Chromium has
@@ -243,13 +262,13 @@ async function runTheme(chromium, base, theme, report) {
   // `invoke` rejects, which is the degradation path the app already handles everywhere.
   // The PTY itself is NOT faked — the server runs with DREAMCONTEXT_DESKTOP=1 and the
   // process on the other end of that socket is real.
-  await page.addInitScript(() => {
+  await page.addInitScript((key) => {
     window.__TAURI_INTERNALS__ = {
-      invoke: (cmd) => Promise.reject(new Error(`Command ${cmd} not found`)),
+      invoke: (cmd) => (cmd === 'owner_key' ? Promise.resolve(key) : Promise.reject(new Error(`Command ${cmd} not found`))),
       transformCallback: (cb) => cb,
       metadata: {},
     };
-  });
+  }, OWNER_KEY);
   page.on('pageerror', (e) => report.note(`[page error] ${String(e).slice(0, 160)}`));
   // VERIFY_DEBUG=1 traces the exec socket frame by frame. Kept because it is what separated
   // two failures that looked identical from the outside: output ARRIVING on the socket but
@@ -301,6 +320,22 @@ async function runTheme(chromium, base, theme, report) {
       await pane().screenshot({ path: file });
     } catch { report.note(`· could not capture ${name}`); }
   };
+  // A FINISHED card reads finished: the terminal is collapsed behind Show output, holds no
+  // keyboard focus, and draws no cursor (owner screenshot 2026-11-13: it looked stuck).
+  const finishedCardChecks = async (card, chip) => {
+    ok(`${chip}: the terminal collapses once the process ends`,
+      await until(async () => (await card.locator('.chat-runterm.is-collapsed').count()) === 1, 5000));
+    ok(`${chip}: a Show output toggle is offered`, (await card.locator('[data-testid="run-card-output-toggle"]').innerText()).includes('Show output'));
+    ok(`${chip}: the finished terminal holds no focus`,
+      await card.evaluate((el) => !el.querySelector('.chat-runterm')?.contains(document.activeElement)));
+    await card.locator('[data-testid="run-card-output-toggle"]').click();
+    ok(`${chip}: shown again, it draws no cursor`,
+      await until(async () => (await card.locator('.chat-runterm:not(.is-collapsed)').count()) === 1, 3000)
+      && (await card.locator('.xterm-cursor').count()) === 0
+      && (await card.locator('.xterm.focus').count()) === 0,
+      `cursor=${await card.locator('.xterm-cursor').count()} focus=${await card.locator('.xterm.focus').count()}`);
+    await card.locator('[data-testid="run-card-output-toggle"]').click();
+  };
 
   console.log(`\n═══ ${theme} ═══`);
   await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
@@ -337,6 +372,11 @@ async function runTheme(chromium, base, theme, report) {
   ok('the card states, before anything is typed, that the value does not reach the agent',
     (await vis('.chat-secretcard').first().innerText()).replace(/\s+/g, ' ').includes('Not sent to the agent'));
 
+  // VERIFY_ONLY=run skips the secret half (its submit is one agent turn, so the run half's turn
+  // numbers shift by one).
+  const secretHalf = process.env.VERIFY_ONLY !== 'run';
+  const turn = (n) => `TURN-${secretHalf ? n : n - 1}`;
+  if (secretHalf) {
   // ── 2/3 — the write, and the canary ───────────────────────────────────────────────
   console.log('── secret: where the value goes, and where it does not');
   await field.fill(SECRET_VALUE);
@@ -383,6 +423,7 @@ async function runTheme(chromium, base, theme, report) {
   ok('…and nothing was written into the tracked file',
     readFileSync(join(PROJ, '.env.tracked'), 'utf-8') === 'ALREADY=here\n');
   await shot('secret-tracked-refused', tracked);
+  }
 
   // ── 5/6/7 — the run card ──────────────────────────────────────────────────────────
   console.log('── run: a real process, typed into, reporting back');
@@ -390,6 +431,9 @@ async function runTheme(chromium, base, theme, report) {
   ok('the command is shown in full before anything runs',
     (await runCard.locator('.chat-runcard-cmd').innerText()).includes('read line'));
   await runCard.scrollIntoViewIfNeeded();
+  ok('the card offers ▶ Run (its record and folder are read)',
+    await until(async () => (await runCard.getByRole('button', { name: /Run/ }).count()) === 1, 15000),
+    `state=${await runCard.getAttribute('data-card-state')} text=${(await runCard.innerText()).replace(/\s+/g, ' ').slice(0, 200)}`);
   await runCard.getByRole('button', { name: /Run/ }).click();
   ok('a terminal opens inside the card', await until(async () => (await vis('.chat-runterm .xterm').count()) > 0, 15000));
   // Read the terminal through its OWN row container rather than the card's `innerText`:
@@ -413,12 +457,38 @@ async function runTheme(chromium, base, theme, report) {
   await shot('run-terminal-live', runCard);
   ok('the card reports the exit code', await until(async () => /exit 0/.test(await runCard.innerText()), 20000),
     (await runCard.innerText()).replace(/\s+/g, ' ').slice(0, 200));
-  ok('THE TURN CONTINUES BY ITSELF — the agent was handed the outcome', await waitText('TURN-3'));
+  ok('THE TURN CONTINUES BY ITSELF — the agent was handed the outcome', await waitText(turn(3)));
   await waitIdle();
   const afterRun = await lastAnswer();
   ok('…including the command and its exit code', afterRun.includes('ran in chat') && afterRun.includes('exit 0'), afterRun.slice(0, 200));
   ok('…and the output it printed', afterRun.includes('GOT:pong'), afterRun.slice(0, 200));
   await shot('run-reported-back', vis('.chat-msg-assistant-row').last());
+  await finishedCardChecks(runCard, 'exit 0');
+
+  // ── 7b — a FAILING run (owner screenshot 2026-11-13: `git merge` exit 128 left the terminal
+  // open with a blinking cursor) closes the same way and still reaches the agent.
+  console.log('── run: a failing command closes and reports back');
+  await vis('.chat-cmp-input').first().click();
+  await vis('.chat-cmp-input').first().fill('FAIL');
+  await page.keyboard.press('Enter');
+  ok('the failing run card is drawn', await waitText('FAIL-CARD'));
+  await waitIdle();
+  const failCard = vis('.chat-runcard').last();
+  await failCard.scrollIntoViewIfNeeded();
+  await failCard.getByRole('button', { name: /Run/ }).click();
+  ok('the failing card reports exit 128', await until(async () => /exit 128/.test(await failCard.innerText()), 20000),
+    (await failCard.innerText()).replace(/\s+/g, ' ').slice(0, 200));
+  ok('THE TURN CONTINUES after a FAILED run', await waitText('[ran in chat]', 20000) && await until(async () => /exit 128/.test(await lastAnswer()), 20000),
+    (await lastAnswer()).slice(0, 200));
+  await waitIdle();
+  ok('…the agent got the error line', (await lastAnswer()).includes('unresolved conflict'), (await lastAnswer()).slice(0, 240));
+  await finishedCardChecks(failCard, 'exit 128');
+  await shot('run-failed-collapsed', failCard);
+  await failCard.locator('[data-testid="run-card-output-toggle"]').click();
+  ok('Show output brings the failed run\'s text back',
+    await until(async () => /unresolved conflict/.test(await failCard.locator('.xterm-rows').innerText()), 5000));
+  await shot('run-failed-output-shown', failCard);
+  await failCard.locator('[data-testid="run-card-output-toggle"]').click();
 
   // ── 8 — the output switch ─────────────────────────────────────────────────────────
   console.log('── run: the output switch is real');
@@ -435,7 +505,7 @@ async function runTheme(chromium, base, theme, report) {
   await page.keyboard.type('SECOND-RUN-OUTPUT');
   await page.keyboard.press('Enter');
   ok('the second run also finishes', await until(async () => /exit 0/.test(await runCard.innerText()), 20000));
-  ok('the agent hears about it', await waitText('TURN-4'));
+  ok('the agent hears about it', await waitText(turn(6)));
   await waitIdle();
   const afterSecond = await lastAnswer();
   ok('with the switch off, the OUTPUT is withheld', !afterSecond.includes('GOT:SECOND-RUN-OUTPUT'), afterSecond.slice(0, 200));
