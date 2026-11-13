@@ -101,10 +101,10 @@ a picture.
 him ask for the plan, 2026-10-29): its report card holds the problem in one sentence, 3-6 short
 bullets of what will be done, his decisions, cost or risk in money (never time); your text gives
 the same summary, past 2-4 sentences. With no report card shown, or a preview that is a text to
-read, the card still goes, with a `warning`. **A plan child's question is about its plan**:
-its own card opens with the plan's summary (a Plan chat's card without one goes back
-to it, on every tool); escalating it, write the plan as a report card and `super queue ask <item>
-"<question>" --show <its card>`, else the reply carries a `warning`.
+read, the card still goes, with a `warning`. **A plan child's question waits on YOU**, never on his bar
+(2026-11-13): its card opens with the plan's summary; put it to him in one turn: report card,
+summary in your text, then `super queue ask <item> "<decision>" --show <its card>` last (refused
+without a report card). A child's chat is no report.
 
 **A report on a plan or on options is drawn, never written** (2026-10-31, the owner on a written
 plan: "görsel olarak görmek istiyorum, bu tip yazılı işi sevmem"): screen mockups, options side by
