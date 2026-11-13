@@ -59,6 +59,12 @@ export interface DelegateAgentDetail {
    * Reveal replaces the screen you left with the screen you actually wanted.
    */
   reveal?: boolean;
+  /**
+   * One job, one chat: a live tab with this exact title that is still working is shown again
+   * instead of starting a second agent on the same job (a publish pressed twice raced two agents
+   * on one app, owner 2026-11-13). A finished or dormant tab never blocks a new start.
+   */
+  reuse?: boolean;
   /** Set to true by the AgentSurface listener once it has actually spawned the session.
    *  Left false when its guards reject (not desktop / prereqs missing / surface disabled),
    *  or when no surface is mounted to listen at all. */
@@ -182,4 +188,18 @@ export async function delegateTaskToAgent(
     title: args.title, prompt: inline, promptToken: token, bypass: args.bypass,
     model: args.model, reveal: args.reveal,
   });
+}
+
+/**
+ * The tab a `reuse` delegate shows instead of starting another: same title, not dormant, and its
+ * agent still working (`working` answers for the tab's session). Null: start a new one.
+ */
+export function reusableTab(
+  list: readonly { id: string; title: string; dormant?: boolean }[],
+  title: string,
+  working: (id: string) => boolean,
+): string | null {
+  const want = title.trim();
+  if (!want) return null;
+  return list.find((m) => !m.dormant && m.title.trim() === want && working(m.id))?.id ?? null;
 }

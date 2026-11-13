@@ -51,7 +51,7 @@ then `## What it does`, `## Screenshots` (at most 3 images in `store/`) and `## 
 | Bring its data back | `dreamcontext apps restore <slug> [--list] [--at <stamp>]` (backend stopped) |
 | Re-add a removed app | `dreamcontext apps new <slug>` (its code and data come back) |
 | Check what a publish would send | `dreamcontext apps publish <slug> [--public]` |
-| Publish it (after the owner pressed Share) | `dreamcontext apps publish <slug> --go --grant <id> --note "…"` (the grant is in his prompt) |
+| Publish it (after the owner pressed Share) | `dreamcontext apps publish <slug> --go --grant <id> --note "…"` (the grant is in his prompt; with the Super on, the Super runs it as one child per app). Keep every What's new entry and its number |
 | Publish to a NEW repo (old one gone, public, or foreign history) | `dreamcontext apps publish <slug> --go --grant <id> --fresh [--repo <name>]` (his Share click's grant) |
 | Ask the owner for a publish, install, update or logo | `dreamcontext apps publish|update <slug> --ask`, `apps install <owner/repo> --ask`, `apps logo <slug> <file> --ask`; then `apps grant <request> --wait 100`; on Onayla run the one command it returns |
 | Fill an app's settings | `dreamcontext apps config <slug> [--suggest] [--set key=value]` (keys: `apps secret`, the owner's) |

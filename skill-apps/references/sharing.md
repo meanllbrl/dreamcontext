@@ -39,7 +39,9 @@ the owner lets go one by one: ask him in the chat, then pass their ids with `--a
 ## Publishing (the owner pressed Share)
 
 His click on the app's page opens a grant on this Mac for THAT app, for one hour and one publish,
-and puts a prompt in Chat with it. There is no publish form: you do all of it. **Share** opens a
+and puts a prompt in Chat with it. With his Super Agent on, the job goes to the Super instead:
+it runs it as ONE child he sees on its stage, and while one publishes an app, a second press
+shows that child, never starts another (two agents on one app overwrite each other's cleanup). There is no publish form: you do all of it. **Share** opens a
 private publish (people he invites); **Share publicly** a public one (for good). The grant holds
 that choice: you cannot turn a private click into a public publish (403 `grant_scope`).
 
@@ -60,7 +62,10 @@ that choice: you cannot turn a private click into a public publish (403 `grant_s
    Fill the owner's own values with `dreamcontext apps config <slug> --set insight=<slug>` (never a
    secret; a key is the owner's: the secret card, or `apps secret <slug> <KEY>` in his terminal).
 3. Write or refresh `README.md`, the store page (SKILL.md: tagline, What it does, Screenshots),
-   then commit. What's new comes from `--note`.
+   then commit. What's new comes from `--note`. Keep every What's new entry and its number:
+   reword a line that names a person, never delete, merge or renumber entries. The next version
+   is one more than the highest number there, so a trimmed list sends the app back to an old
+   number (a cleaned list once took one from 51 to 5).
 4. `dreamcontext apps publish <slug> [--public]` again: the gate is the last hard stop. Fix every
    block in the app; never work around one.
 5. Ask the owner ONE question, only for what you cannot decide: the GitHub usernames to invite (a

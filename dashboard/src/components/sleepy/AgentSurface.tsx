@@ -47,7 +47,7 @@ import {
 } from './AgentSetup';
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
-import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
+import { DELEGATE_AGENT_EVENT, reusableTab, type DelegateAgentDetail } from '../../lib/delegateAgent';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
 import { setFocusedChat } from '../../lib/focusedChat';
 import { raiseAskAttention } from '../../lib/attention';
@@ -3067,6 +3067,17 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // agent launches on it; `explicitBypass` honours the composer's own checkbox over the
     // remembered chat default (see `spawn`).
     const model = detail.model ?? '';
+    // One job, one chat: the same job still running in a tab is shown, never started twice.
+    const again = detail.reuse ? reusableTab(sessionListRef.current, title, (id) => {
+      const live = sessions.current.get(id) as { busy?: boolean; asking?: boolean } | undefined;
+      return !!(live?.busy || live?.asking);
+    }) : null;
+    if (again) {
+      setSuperView('panes');
+      if (minimizedIds.includes(again)) restoreMinimized(again); else focusSession(again);
+      setExpanded(true);
+      return true;
+    }
     if (!admitTab()) return false;
     const s = spawn(detail.bypass, undefined, false, claudeKind, detail.prompt, model, serverCurrent, detail.promptToken, false, '', true);
     setSessionList((prev) => [...prev, { id: s.id, title, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
@@ -3088,6 +3099,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
         setActivePaneId(apid);
       }
+      // The panes, not the Super's stage: on a handed-over project the chats are hidden while
+      // the stage shows, and a revealed agent would work where nobody looks.
+      setSuperView('panes');
       setExpanded(true);
       return true;
     }
@@ -3099,7 +3113,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     s.minimized = true;
     setMinimizedIds((prev) => (prev.includes(s.id) ? prev : [...prev, s.id]));
     return true;
-  }, [caps, agentSettings.enabled, spawn, serverCurrent, panes, activePaneId, claudeKind, claudeReady]);
+  }, [caps, agentSettings.enabled, spawn, serverCurrent, panes, activePaneId, claudeKind, claudeReady, minimizedIds, restoreMinimized, focusSession]);
 
   // Synchronous ACK: dispatch runs listeners inline, so writing `accepted` back onto the
   // detail is visible to `requestDelegateAgent` the moment it returns.

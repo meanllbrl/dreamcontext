@@ -6,7 +6,8 @@ import { ConfigSheet, ConfirmSheet, Sheet, UpdateSheet, useShareT } from './Shar
 import { AppIcon } from './AppIcon';
 import { About, CanList, FactStrip, ProductTop, Shots, WhatsNew, shortDate, type CanLine, type StoreEntry } from './StorePage';
 import { askAgent } from './askAgent';
-import { publishPrompt } from './publishPrompt';
+import { routePublish } from './publishHandoff';
+import { openSuperFromPage, readSuperPresence, sendFromPage } from '../../lib/superPageBridge';
 import { preparePrompt } from '../../lib/agentPrompt';
 import { requestDelegateAgent } from '../../lib/delegateAgent';
 import { confirmAction } from '../../lib/desktop';
@@ -165,9 +166,10 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
   /**
    * Share (Publish) hands the publish to Claude (owner 2026-11-06): no form. The click opens the
    * one-hour grant for this app, then a develop chat on screen gets the prompt that has Claude
-   * clean, write the store page, run the gate and publish with the CLI. Never the Super (app
-   * onay karti): a publish is work for a chat of its own, so with the Super on screen a new chat
-   * opens. `update`: the band's "Publish the update"; its error shows in the band.
+   * clean, write the store page, run the gate and publish with the CLI. With the Super Agent on
+   * (owner 2026-11-13, paylas-prompt) the job goes to the Super, which runs it as one child he
+   * sees on its stage; a Window tab he never looks at started it unseen, once per press. Never
+   * the Super's composer itself. `update`: the band's "Publish the update"; its error shows in the band.
    */
   const [handing, setHanding] = useState(false);
   const handToClaude = async (visibility: 'private' | 'public', update = false) => {
@@ -179,20 +181,28 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
     setBandErr(null); setManageErr(null); setHanding(true);
     try {
       const g = await api.ownerPost<{ grant: string; visibility: 'private' | 'public' }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, { visibility });
-      const prompt = publishPrompt({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null, update });
-      askAgent(bus, prompt, {
-        notSuper: true,
-        taken: () => { setHanding(false); onClose(); },
-        // No chat on screen can take it (none open, or its box holds a draft): a new chat starts
-        // with the prompt, shown, the way a delegated task does.
-        missed: () => {
-          void preparePrompt(vault, prompt).then((pp) => {
-            setHanding(false);
-            if (requestDelegateAgent(bus, { title: ts('store.publish.tab', { name: app.name }), prompt: pp.inline, promptToken: pp.token, bypass: false, reveal: true })) onClose();
-            else fail(t('store.publish.missed'));
-          }, (e) => { setHanding(false); fail((e as Error).message); });
-        },
+      // With the Super on, the job is the Super's (publishHandoff.ts): he works on its screen.
+      const route = routePublish({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null, update }, {
+        superOn: !!readSuperPresence(bus)?.on,
+        sendToSuper: (text) => sendFromPage(bus, text),
+        showSuper: () => openSuperFromPage(bus),
+        toChat: (prompt) => askAgent(bus, prompt, {
+          notSuper: true,
+          taken: () => { setHanding(false); onClose(); },
+          // No chat on screen can take it (none open, or its box holds a draft): a new chat starts
+          // with the prompt, shown, the way a delegated task does; a publish of this app still
+          // running in a chat is shown again instead (`reuse`), never a second one.
+          missed: () => {
+            void preparePrompt(vault, prompt).then((pp) => {
+              setHanding(false);
+              if (requestDelegateAgent(bus, { title: ts('store.publish.tab', { name: app.name }), prompt: pp.inline, promptToken: pp.token, bypass: false, reveal: true, reuse: true })) onClose();
+              else fail(t('store.publish.missed'));
+            }, (e) => { setHanding(false); fail((e as Error).message); });
+          },
+        }),
       });
+      if (route.to === 'super') { setHanding(false); onClose(); }
+      else if (route.to === 'refused') { setHanding(false); fail(t(`whiteboard.field.${route.reason}`)); }
     } catch (e) { setHanding(false); fail((e as Error).message); }
   };
   const toggleAuto = async (on: boolean) => {
