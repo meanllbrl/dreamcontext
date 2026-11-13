@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ensureGitignoreEntries } from './gitignore.js';
 import { defaultGitTrackedCheck, gitIgnoresPath, type GitTrackedCheck } from './git-tracked.js';
+import { realPath } from './real-path.js';
 
 /**
  * The dotenv writer behind the Chat surface's `dream-view` SECRET card — the one path in
@@ -261,8 +262,8 @@ export function writeEnvSecrets(
   let rootReal: string;
   let parentReal: string;
   try {
-    rootReal = realpathSync(projectRoot);
-    parentReal = realpathSync(dirname(target));
+    rootReal = realPath(projectRoot);
+    parentReal = realPath(dirname(target));
   } catch {
     throw new SecretWriteError('bad_file', `The directory for "${rel}" does not exist.`);
   }

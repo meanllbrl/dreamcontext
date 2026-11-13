@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { GIT_SAFE_ARGS } from '../super/worktrees.js';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { today } from '../id.js';
@@ -16,6 +16,7 @@ import {
   type TaskClaim, type TaskJobView, type TaskMeta,
 } from './task-jobs.js';
 import { openTaskCheck, raiseTaskRow, setTaskStatus } from './task-starter.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The two verbs a task step's own run calls (AI Team v2 C1-10, C1-12):
@@ -73,7 +74,7 @@ function checkDeliveredFile(raw: string, cwd: string, workspace: string): { path
   if (!st.isFile()) return no('file_not_regular', `${oneDataLine(raw, 120)} is not a regular file.`);
   let realFile: string;
   let realWs: string;
-  try { realFile = realpathSync(abs); realWs = realpathSync(workspace); } catch { return no('file_outside', `${oneDataLine(raw, 120)} could not be resolved.`); }
+  try { realFile = realPath(abs); realWs = realPath(workspace); } catch { return no('file_outside', `${oneDataLine(raw, 120)} could not be resolved.`); }
   if (!within(realFile, realWs)) return no('file_outside', `${oneDataLine(raw, 120)} is outside your workspace.`);
   if (/^\.env/i.test(basename(realFile))) return no('file_env', 'An .env file is never handed in.');
   const ignored = spawnSync('git', [...GIT_SAFE_ARGS, 'check-ignore', '-q', '--', relative(realWs, realFile)], { cwd: realWs, stdio: 'ignore' });

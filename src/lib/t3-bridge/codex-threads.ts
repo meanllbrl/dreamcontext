@@ -7,9 +7,10 @@
  * this project's only when that cwd, realpath'd, IS the project (realpath'd). Anything that
  * cannot be resolved is NOT owned: callers refuse it (403), never serve it.
  */
-import { closeSync, existsSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { realPath } from '../real-path.js';
 
 /** A Codex thread id (a UUID). Anything else is never used to build a path. */
 export const CODEX_THREAD_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -53,7 +54,7 @@ export function codexRolloutCwd(rolloutPath: string): string | null {
 }
 
 const real = (p: string): string | null => {
-  try { return realpathSync(p); } catch { return null; }
+  try { return realPath(p); } catch { return null; }
 };
 
 export type CodexOwnership = 'owned' | 'foreign' | 'unresolvable';

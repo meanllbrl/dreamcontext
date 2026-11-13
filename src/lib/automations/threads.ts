@@ -1,6 +1,5 @@
 import {
-  appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync,
-  realpathSync, renameSync, rmSync, writeFileSync,
+  appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -34,6 +33,7 @@ import {
   type ThreadSystemEvent,
   type ThreadVia,
 } from './types.js';
+import { realPath } from '../real-path.js';
 
 /**
  * Automations — the thread store. An agent's channel, as append-only markdown
@@ -487,8 +487,8 @@ export function resolvesInsideBrain(contextRoot: string, abs: string): boolean {
   try {
     if (!existsSync(abs)) return true;
     if (lstatSync(abs).isSymbolicLink()) return false;
-    const realRoot = realpathSync(resolve(contextRoot));
-    const real = realpathSync(abs);
+    const realRoot = realPath(resolve(contextRoot));
+    const real = realPath(abs);
     return real.startsWith(realRoot + sep);
   } catch {
     // Vanished or unreadable between the checks — refuse rather than guess.

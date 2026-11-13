@@ -21,7 +21,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
@@ -31,6 +31,7 @@ import { CODEX_PRIMARY_ID, codexAccountHome, codexInstanceSettings, isCodexAccou
 import { bridgeNode } from './t3-bridge/node-floor.js';
 import { recordLimitPoints } from './usage-records.js';
 import type { UsageLimitWire, UsageLimitsResponse } from './claude-usage.js';
+import { realPath } from './real-path.js';
 
 export { CODEX_PRIMARY_ID, isCodexAccountId };
 
@@ -557,8 +558,8 @@ function confinedCodexHome(id: string, home: string): { dir: string; realRoot: s
   try { st = lstatSync(dir); } catch { return null; }
   if (!st.isDirectory() || st.isSymbolicLink()) throw new CodexAccountError('not_confined', 'The account folder is not a plain folder; nothing was deleted.', 409);
   let realRoot: string;
-  try { realRoot = realpathSync(root); } catch { throw new CodexAccountError('not_confined', 'The accounts folder is missing; nothing was deleted.', 409); }
-  if (realpathSync(dir) !== join(realRoot, id)) {
+  try { realRoot = realPath(root); } catch { throw new CodexAccountError('not_confined', 'The accounts folder is missing; nothing was deleted.', 409); }
+  if (realPath(dir) !== join(realRoot, id)) {
     throw new CodexAccountError('not_confined', 'The account folder is not inside ~/.dreamcontext/codex-accounts; nothing was deleted.', 409);
   }
   return { dir, realRoot };
@@ -566,7 +567,7 @@ function confinedCodexHome(id: string, home: string): { dir: string; realRoot: s
 
 /** `path`'s parent is always a real folder inside the root: links are unlinked, never entered. */
 function removeTreeNoFollow(path: string, mustStartWith: string): void {
-  if (!(realpathSync(dirname(path)) + sep).startsWith(mustStartWith)) {
+  if (!(realPath(dirname(path)) + sep).startsWith(mustStartWith)) {
     throw new CodexAccountError('not_confined', 'Refused to delete outside the account folder.', 409);
   }
   const st = lstatSync(path);

@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { WhiteboardNotFoundError, WhiteboardValidationError } from './errors.js';
 import { resolveWhiteboardPath } from './store.js';
 import { isValidFileId } from './validate.js';
 import { newElementId, randomInteger, type WhiteboardElement } from './widgets.js';
+import { realPath } from '../real-path.js';
 
 /**
  * A board's pictures (owner, 2026-10-06: "free Excalidraw images, files stored in the board's
@@ -155,8 +156,8 @@ export function readBoardFile(root: string, slug: string, id: string): { bytes: 
   const { boardDir, dir } = filesDirOf(root, slug);
   const found = findBoardFile(dir, id);
   if (!found) throw new WhiteboardNotFoundError(`no picture '${id}' on board '${slug}'`);
-  const real = realpathSync(found.file);
-  if (!real.startsWith(realpathSync(boardDir) + sep)) throw new WhiteboardNotFoundError(`no picture '${id}' on board '${slug}'`);
+  const real = realPath(found.file);
+  if (!real.startsWith(realPath(boardDir) + sep)) throw new WhiteboardNotFoundError(`no picture '${id}' on board '${slug}'`);
   return { bytes: readFileSync(found.file), mimeType: found.mimeType, file: found.file };
 }
 

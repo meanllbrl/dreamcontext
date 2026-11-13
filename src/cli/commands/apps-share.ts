@@ -1,6 +1,6 @@
 /**
  * Shared-app verbs of `dreamcontext apps` (paylasilan-app-ler plan r3). Every tool (Claude, Codex,
- * Antigravity) calls these same verbs. What is the OWNER's to decide (an install, an update,
+ * Antigravity) calls these same verbs. An install runs on the owner's yes in the chat (his card, or his own words there: `apps install --ask`). What else is the OWNER's to decide (an update,
  * making a copy one's own, removing) is a click on the Apps page: the CLI shows the preview and
  * says where the click is. A publish is the owner's Publish click too, but Claude does it: the
  * click hands it a one-hour grant for that app, and `publish --go --grant` spends it.
@@ -71,20 +71,48 @@ function waitSeconds(raw: string | undefined): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(110, Math.floor(n))) : 60;
 }
 
-/** Waits for the owner's answer to a request and says what to do next, in so many words. */
-async function waitForOwner(p: ProjectRef, id: string, seconds: number, json: boolean | undefined): Promise<void> {
+interface RequestAnswer { state: string; shown: string[]; grant?: { id?: string; command?: string; expiresAt?: string } }
+
+const SURFACE_WORDS: Record<string, string> = { chat: 'in this chat', notch: 'on the notch', telegram: 'on his Telegram' };
+
+/**
+ * Where the card really is, from the server's own record of the surfaces that DREW it (ek-4,
+ * owner 2026-11-13: an agent told him "the card is on your notch" and there was none). Never a
+ * guess at where it might be.
+ */
+export function shownLine(shown: readonly string[]): string {
+  const where = shown.map((s) => SURFACE_WORDS[s]).filter(Boolean);
+  return where.length
+    ? `Shown: the card is drawn ${where.join(' and ')}. Only these places are true to name.`
+    : 'Shown: nowhere yet. It is NOT on his screen: never say it is on the notch, Telegram or anywhere else.';
+}
+
+/** Waits for the owner's answer to a request; `quiet` leaves an approval's saying to the caller. */
+async function waitForOwner(p: ProjectRef, id: string, seconds: number, json: boolean | undefined, quiet: boolean | 'silent' = false): Promise<RequestAnswer> {
   const r = await appsApi(p, 'GET', `/api/apps/requests/${encodeURIComponent(id)}?wait=${seconds}`, undefined, { timeoutMs: (seconds + 20) * 1000, headers: requestHeaders() });
-  if (json) { console.log(JSON.stringify({ request: id, ...r }, null, 2)); return; }
-  const state = String(r.state ?? 'unknown');
-  const grant = r.grant as { command?: string; expiresAt?: string } | undefined;
-  if (state === 'approved' && grant?.command) {
+  const answer: RequestAnswer = {
+    state: String(r.state ?? 'unknown'),
+    shown: Array.isArray(r.shown) ? r.shown.filter((x): x is string => typeof x === 'string') : [],
+    ...(r.grant ? { grant: r.grant as RequestAnswer['grant'] } : {}),
+  };
+  if (quiet === 'silent' || (quiet && answer.state === 'approved' && answer.grant?.id)) return answer;
+  if (json) { console.log(JSON.stringify({ request: id, ...r }, null, 2)); return answer; }
+  sayAnswer(id, answer);
+  return answer;
+}
+
+/** What to do next, in so many words. */
+function sayAnswer(id: string, a: RequestAnswer): void {
+  const state = a.state;
+  if (state === 'approved' && a.grant?.command) {
     success('The owner approved it. Run this once, exactly (the grant is good for one hour):');
-    console.log(`  ${grant.command}`);
+    console.log(`  ${a.grant.command}`);
     return;
   }
   if (state === 'pending') {
-    info('The card waits for the owner. Wait again with:');
-    console.log(`  dreamcontext apps grant ${id} --wait 110`);
+    info('The card waits for the owner.');
+    console.log(shownLine(a.shown));
+    console.log(`Wait again with: dreamcontext apps grant ${id} --wait 110`);
     return;
   }
   process.exitCode = 2;
@@ -96,20 +124,64 @@ async function waitForOwner(p: ProjectRef, id: string, seconds: number, json: bo
   else error('No such request (the app may have restarted). Run the same --ask command again.');
 }
 
-/** Opens a request card for the owner, then waits for his answer. */
-async function askOwner(p: ProjectRef, body: Record<string, unknown>, wait: string | undefined, json: boolean | undefined): Promise<void> {
+/**
+ * The card the owner answers IN this chat, with one tap (owner 2026-11-13, app-kurulum-claude):
+ * the agent pastes this block as is, so he never has to find the notch or another screen.
+ */
+export function requestCardBlock(proposalId: string): string {
+  return ['```dream-view', JSON.stringify({ type: 'app-request', id: proposalId }), '```'].join('\n');
+}
+
+interface Opened { request: string; state: string; renewal?: boolean; proposal?: string; ownerWords?: 'approved' | 'not_found' }
+
+/** Opens a request card for the owner (or, with his own words in this chat, approves it at once). */
+async function openRequest(p: ProjectRef, body: Record<string, unknown>, json: boolean | undefined): Promise<Opened> {
   const out = await appsApi(p, 'POST', '/api/apps/requests', body, { timeoutMs: 600_000, headers: requestHeaders() });
-  const id = String(out.request ?? '');
-  if (!json) {
-    if (out.state === 'approved') info('The owner already approved exactly this, and the grant is still good.');
-    else info(out.renewal ? 'The grant ran out unused: the owner sees "Süresi doldu: yeniden onaylıyor musun?".' : 'A card went to the owner (the notch, and Telegram while he is away).');
+  const o: Opened = {
+    request: String(out.request ?? ''), state: String(out.state ?? ''), renewal: out.renewal === true,
+    ...(typeof out.proposal === 'string' ? { proposal: out.proposal } : {}),
+    ...(out.ownerWords === 'approved' || out.ownerWords === 'not_found' ? { ownerWords: out.ownerWords } : {}),
+  };
+  if (json) return o;
+  if (o.ownerWords === 'approved') info('The owner said yes in this chat, in his own words: approved, no card.');
+  else if (o.state === 'approved') info('The owner already approved exactly this, and the grant is still good.');
+  else if (o.ownerWords === 'not_found') info('Those words are not in a message the owner typed in this chat in the last 30 minutes, so he answers the card instead.');
+  return o;
+}
+
+/**
+ * A pending request: the card block for this chat, the true "where is it", and the next command.
+ * The command never blocks here: the card reaches his chat only with the agent's reply.
+ */
+async function sayPending(p: ProjectRef, o: Opened, json: boolean | undefined): Promise<void> {
+  // A beat for the notch and Telegram to report a card they drew.
+  const a = await waitForOwner(p, o.request, 2, json, 'silent');
+  if (json) { console.log(JSON.stringify({ ...o, shown: a.shown, card: o.proposal ? requestCardBlock(o.proposal) : null }, null, 2)); return; }
+  if (a.state !== 'pending') { sayAnswer(o.request, a); return; }
+  if (o.renewal) info('The grant ran out unused: the card asks "Süresi doldu: yeniden onaylıyor musun?".');
+  console.log(shownLine(a.shown));
+  if (o.proposal) {
+    console.log('Put this card in your reply, as is: it is drawn right there and he approves it with one tap. Say in one line why it needs his yes (it runs code someone else wrote, on his Mac). Never say his word is not enough.');
+    console.log(requestCardBlock(o.proposal));
   }
-  await waitForOwner(p, id, waitSeconds(wait), json);
+  console.log(`After your reply: dreamcontext apps grant ${o.request} --wait 110 (its Shown: line is the only truth about where the card is).`);
+}
+
+/** Opens a request card for the owner; an approval (still good) is said at once. */
+async function askOwner(p: ProjectRef, body: Record<string, unknown>, _wait: string | undefined, json: boolean | undefined): Promise<void> {
+  const o = await openRequest(p, body, json);
+  if (o.state === 'approved') { await waitForOwner(p, o.request, 0, json); return; }
+  await sayPending(p, o, json);
 }
 
 function gateFailure(slug: string, e: unknown): AppsClientError | null {
   if (e instanceof AppsClientError && e.code === 'gate_blocked') return new AppsClientError(e.code, `${e.message} Run \`dreamcontext apps publish ${slug}\` for the report.`);
   return null;
+}
+
+/** After an install: the settings are Claude's to fill next, in the same chat. */
+export function installedNext(slug: string): string {
+  return `Now its settings, in this chat: \`dreamcontext apps config ${slug} --suggest\` lists each one with where to find it. Fill every value you can find on this Mac yourself (\`apps config ${slug} --set key=value\`); a key (secret) goes through a secret card naming "app":"${slug}", never into the chat; ask the owner one plain question only for what you cannot find.`;
 }
 
 export function registerAppsShareCommands(apps: Command, h: Helpers): void {
@@ -128,7 +200,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--tagline <text>', "The store page's one line (README tagline:)")
     .option('--confirm-name <name>', "Not needed with a grant (the owner's \"Share publicly\" click confirms a public app)")
     .option('--ask', 'Ask the owner: a card with exactly what goes (an update of a published app keeps its visibility and invitees); Onayla gives you a one-time grant')
-    .option('--wait <seconds>', 'With --ask: wait this long for the owner (default 60, at most 110)')
+    .option('--wait <seconds>', 'Not used by --ask any more (it never blocks): wait with `apps grant <request> --wait 110` after your reply')
     .option('--no-catalog', "With --ask: keep the app off this project's brain list")
     .option('--json', 'JSON output')
     .action(async (slug: string, opts: { public?: boolean; repo?: string; go?: boolean; fresh?: boolean; grant?: string; invite?: string[]; approve?: string[]; note?: string; tagline?: string; confirmName?: string; ask?: boolean; wait?: string; catalog?: boolean; json?: boolean }) => {
@@ -221,6 +293,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         const missing = missingRequired(fields, values, rec.root);
         const rows = fields.map((f) => ({
           key: f.key, type: f.type, label: f.label, required: f.required,
+          ...(f.help ? { help: f.help } : {}), ...(f.find ? { find: f.find } : {}),
           ...(f.type === 'secret' ? { set: secrets.has(f.key) } : { value: values[f.key] ?? null }),
           ...(opts.suggest ? { candidates: suggestions(rec.projectRoot, f.type) } : {}),
         }));
@@ -229,6 +302,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         for (const r of rows) {
           const v = 'set' in r ? (r.set ? '(set in .env)' : '(not set: `dreamcontext apps secret ' + slug + ' ' + r.key + '`)') : r.value === null ? '(empty)' : JSON.stringify(r.value);
           console.log(`${r.required ? '*' : ' '} ${r.key} [${r.type}] ${r.label}: ${v}`);
+          if ('find' in r && r.find) console.log(`    find it: ${r.find}`);
           if ('candidates' in r && r.candidates && r.candidates.length) console.log(`    candidates: ${r.candidates.slice(0, 20).join(', ')}`);
         }
         if (missing.length) error(`required and empty: ${missing.join(', ')} (the app does not start until they are filled)`);
@@ -271,17 +345,26 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
 
   apps
     .command('install <repo>')
-    .description('Preview an app from a repo (owner/repo or its link); --ask puts the install in front of the owner, --go with his grant installs it')
+    .description('Install an app from a repo (owner/repo or its link): --ask installs it once the owner says yes (his card in this chat, or his own words with --owner-said); no flag = only the preview')
     .option('--preview', 'Only the preview (the default)')
-    .option('--ask', 'Ask the owner: a card with who wrote it, what it runs and its settings; Onayla gives you a one-time grant')
+    .option('--ask', 'Install it with the owner\'s yes: a card he answers in this chat with one tap, then the install runs right here')
+    .option('--owner-said <words>', 'With --ask: his exact words in THIS chat that said yes ("kur", "onaylıyorum"); the server checks he typed them here, then no card is needed')
     .option('--set <key=value...>', 'With --ask: settings to fill at install (never keys)')
-    .option('--wait <seconds>', 'With --ask: wait this long for the owner (default 60, at most 110)')
+    .option('--wait <seconds>', 'Not used by --ask any more (it never blocks): wait with `apps grant <request> --wait 110` after your reply')
     .option('--go', 'Install now (needs --grant)')
     .option('--grant <id>', 'The one-time grant from the owner\'s Onayla')
     .option('--json', 'JSON output')
-    .action(async (repo: string, opts: { ask?: boolean; set?: string[]; wait?: string; go?: boolean; grant?: string; json?: boolean }) => {
+    .action(async (repo: string, opts: { ask?: boolean; ownerSaid?: string; set?: string[]; wait?: string; go?: boolean; grant?: string; json?: boolean }) => {
       try {
         const p = h.project();
+        const spend = async (grant: string) => {
+          const out = await appsApi(p, 'POST', '/api/apps/install', { grant, ref: repo }, { timeoutMs: 900_000, headers: requestHeaders() });
+          if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+          const slug = String(out.slug);
+          success(`Installed as ${slug}${out.renamed ? ' (renamed: that name was taken)' : ''}.`);
+          info(installedNext(slug));
+        };
+        if (opts.ownerSaid !== undefined && !opts.ask) throw new AppsClientError('owner_said_needs_ask', '--owner-said goes with --ask.');
         if (opts.ask) {
           const config: Record<string, string> = {};
           for (const kv of opts.set ?? []) {
@@ -289,14 +372,17 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
             if (i < 1) throw new AppsClientError('bad_set', `"${kv}" is not key=value`);
             config[kv.slice(0, i)] = kv.slice(i + 1);
           }
-          await askOwner(p, { action: 'install', ref: repo, config }, opts.wait, opts.json);
+          const said = (opts.ownerSaid ?? '').trim();
+          const o = await openRequest(p, { action: 'install', ref: repo, config, ...(said ? { ownerSaid: said } : {}) }, opts.json);
+          // Approved (his words, his tap, or a grant still good): the install runs here, now.
+          if (o.state !== 'approved') { await sayPending(p, o, opts.json); return; }
+          const a = await waitForOwner(p, o.request, 0, opts.json, true);
+          if (a.state === 'approved' && a.grant?.id) await spend(a.grant.id);
           return;
         }
         if (opts.go) {
-          if (!opts.grant) throw new AppsClientError('grant_missing', `Installing needs the owner's yes: \`dreamcontext apps install ${repo} --ask\`, then the command his Onayla gives you.`);
-          const out = await appsApi(p, 'POST', '/api/apps/install', { grant: opts.grant, ref: repo }, { timeoutMs: 900_000, headers: requestHeaders() });
-          if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
-          success(`Installed as ${String(out.slug)}${out.renamed ? ' (renamed: that name was taken)' : ''}. Its keys, if it asks for any, are the owner's to type on its Settings.`);
+          if (!opts.grant) throw new AppsClientError('grant_missing', `Installing needs the owner's yes: \`dreamcontext apps install ${repo} --ask\`.`);
+          await spend(opts.grant);
           return;
         }
         const pv = await previewInstall({ home: homedir(), projectRoot: p.projectRoot, ref: repo });
@@ -310,7 +396,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         if (pv.facts.urls.length) console.log(`  addresses in its code: ${pv.facts.urls.slice(0, 10).join(', ')}`);
         if (pv.config.length) console.log(`  settings: ${pv.config.map((c) => `${c.key}${c.type === 'secret' ? ' (key)' : ''}`).join(', ')}`);
         if (!pv.gate.ok) error(`it cannot be installed: ${pv.gate.blocks.map((b) => `${b.file} (${b.label})`).join('; ')}`);
-        info(`Installing is the owner's yes: \`dreamcontext apps install ${repo} --ask\` (or his click on the Apps page).`);
+        info(`Install it: \`dreamcontext apps install ${repo} --ask\` (add --owner-said \"<his words>\" when he already said yes in this chat).`);
       } catch (e) { h.fail(e); }
     });
 
@@ -320,7 +406,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--check', 'Check now (the default)')
     .option('--ask', 'Ask the owner: a card with the new version, every permission change and what your changes risk; Onayla gives you a one-time grant')
     .option('--how <how>', 'With --ask, for a copy with its own changes: merge, or set-aside (kept aside in a patch)')
-    .option('--wait <seconds>', 'With --ask: wait this long for the owner (default 60, at most 110)')
+    .option('--wait <seconds>', 'Not used by --ask any more (it never blocks): wait with `apps grant <request> --wait 110` after your reply')
     .option('--apply', 'Apply now (needs --grant)')
     .option('--grant <id>', 'The one-time grant from the owner\'s Onayla')
     .option('--json', 'JSON output')
@@ -354,7 +440,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .command('logo <slug> [file]')
     .description("Ask the owner to make a PNG or JPEG this app's logo on this Mac (--ask); --grant with his grant sets it")
     .option('--ask', 'Ask the owner: a card with the picture itself; Onayla gives you a one-time grant')
-    .option('--wait <seconds>', 'With --ask: wait this long for the owner (default 60, at most 110)')
+    .option('--wait <seconds>', 'Not used by --ask any more (it never blocks): wait with `apps grant <request> --wait 110` after your reply')
     .option('--grant <id>', 'The one-time grant from the owner\'s Onayla: sets exactly the picture he saw')
     .option('--json', 'JSON output')
     .action(async (slug: string, file: string | undefined, opts: { ask?: boolean; wait?: string; grant?: string; json?: boolean }) => {

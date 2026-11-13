@@ -7,7 +7,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { realpathSync } from 'node:fs';
+
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { requireLocalDesktop } from './agent-spawn-shared.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
@@ -33,6 +33,7 @@ import { catalogEntryFor, removeCatalogEntry, upsertCatalogEntry } from '../../l
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { installApp, InstallError, listTrash, previewInstall, restoreFromTrash, uninstallApp } from '../../lib/apps/share/install.js';
 import { applyUpdate, checkUpdate, detachApp, setAutoUpdate, undoUpdate, type ApplyHow } from '../../lib/apps/share/update.js';
+import { realPath } from '../../lib/real-path.js';
 
 type Params = Record<string, string>;
 
@@ -93,7 +94,7 @@ function staleRequest(res: ServerResponse, held: Held): void {
 }
 
 function realRoot(p: string): string {
-  try { return realpathSync(p); } catch { return p; }
+  try { return realPath(p); } catch { return p; }
 }
 
 function sendFailure(res: ServerResponse, e: unknown): void {
@@ -110,13 +111,15 @@ export function shareStatus(rec: AppRecord): Record<string, unknown> {
   const m = readManifest(rec.root);
   const fields = m.ok ? m.manifest.config : [];
   const values = readAppConfig(appsHomeDir(), rec.configId);
+  const missing = fields.length ? missingRequired(fields, values, rec.root) : [];
   return {
     origin: rec.origin ?? 'own',
     source: rec.source ? { fullName: rec.source.fullName, owner: rec.source.owner, mode: rec.source.mode, public: rec.source.public, autoUpdate: rec.source.autoUpdate, available: rec.source.available?.sha ?? null, problem: rec.source.problem ?? null, lastCheck: rec.source.lastCheck ?? null, lastUpdate: rec.source.lastUpdate ?? null } : null,
     provenance: rec.origin === 'installed' && !rec.source && rec.provenance ? { fullName: rec.provenance.fullName } : null,
     publish: rec.publish && rec.publish.lastSha ? { fullName: rec.publish.fullName, public: rec.publish.public, at: rec.publish.at } : null,
     configCount: fields.length,
-    configMissing: fields.length ? missingRequired(fields, values, rec.root) : [],
+    configMissing: missing,
+    configMissingLabels: missing.map((k) => fields.find((f) => f.key === k)?.label ?? k),
   };
 }
 

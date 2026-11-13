@@ -106,6 +106,7 @@ import { titleFromBrief } from '../../lib/super/remote-view.js';
 import { ledgerPath, readLedger, testMinutesToday, type LedgerRow, type TestMinutes } from '../../lib/run-ledger.js';
 import { noteStageVerb, STAGE_VERBS, type StageVerbEvent } from '../../lib/super/stage-events.js';
 import { padMove } from '../../lib/super/pad-move.js';
+import { realPath } from '../../lib/real-path.js';
 
 /**
  * The Super Agent's routes (task chat-gets-a-super-agent-mode…, plan-r7 D4).
@@ -554,7 +555,7 @@ function childTestMinutes(now: number): (worktree: string, branch?: string) => T
       const path = ledgerPath(worktree);
       let rows = ledgers.get(path);
       if (!rows) { rows = readLedger(path); ledgers.set(path, rows); }
-      return testMinutesToday(rows, { toplevel: realpathSync(worktree), ...(branch ? { branch } : {}) }, day.getTime(), now);
+      return testMinutesToday(rows, { toplevel: realPath(worktree), ...(branch ? { branch } : {}) }, day.getTime(), now);
     } catch {
       return null;
     }

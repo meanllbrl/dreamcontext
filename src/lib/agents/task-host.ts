@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { today } from '../id.js';
 import { insertToSection } from '../markdown.js';
@@ -27,6 +27,7 @@ import {
 } from './task-starter.js';
 import { fanOutDelivered, type NotifyFn } from './task-delivery.js';
 import { approvedRunTarget } from '../automations/approved-run-target.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The task host (AI Team v2 C1-3): the detached `dreamcontext tasks run-job <slug> --run <id>`
@@ -65,7 +66,7 @@ export interface TaskHostResult {
 }
 
 function realOr(p: string): string {
-  try { return realpathSync(p); } catch { return p; }
+  try { return realPath(p); } catch { return p; }
 }
 
 /** git in a workspace the agent wrote: no hooks, no fsmonitor, no signing (GIT_SAFE_ARGS). Only

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { listVaults } from '../vaults.js';
@@ -9,6 +9,7 @@ import { isSafeSessionId } from '../transcript-locate.js';
 import { parseTranscriptHistory } from '../transcript-history.js';
 import { ASSISTANT_VAULT, assistantProjectRoot } from './home.js';
 import { isAppRunSession } from '../automations/history.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The Assistant READS every project's brain itself (owner, 2026-10-17): "it should not have to
@@ -211,11 +212,11 @@ export function readBrainFile(
   const home = opts.home ?? homedir();
   const b = brains(home).find((x) => x.label.toLowerCase() === vault.toLowerCase());
   if (!b) throw new BrainReadError('unknown_vault', `"${vault}" is not a registered project (see \`dreamcontext assistant projects\`).`);
-  const root = realpathSync(b.contextRoot);
+  const root = realPath(b.contextRoot);
   const raw = path.trim().replace(/^_dream_context[\\/]/, '');
   const target = isAbsolute(raw) ? resolve(raw) : resolve(b.contextRoot, raw);
   if (!existsSync(target)) throw new BrainReadError('not_found', `No file "${path}" in ${b.label}'s brain.`);
-  const real = realpathSync(target);
+  const real = realPath(target);
   if (real !== root && !real.startsWith(root + sep)) {
     throw new BrainReadError('outside_brain', `"${path}" is outside ${b.label}'s brain; only files under its _dream_context/ can be read.`);
   }

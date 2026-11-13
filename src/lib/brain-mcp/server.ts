@@ -12,13 +12,14 @@
  * outside its vault is named or reached.
  */
 import { spawn } from 'node:child_process';
-import { realpathSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { BrainVerbError, checkBrainArgs } from './verbs.js';
 import { callClaim } from '../apps/call-claim.js';
 import { projectAppTools } from '../apps/tools.js';
+import { realPath } from '../real-path.js';
 
 export const BRAIN_SERVER_NAME = 'dreamcontext';
 const CALL_TIMEOUT_MS = 60_000;
@@ -44,8 +45,8 @@ export interface BrainRoots { project: string; vault: string }
 
 /** Realpath the root once; the vault must be a real folder inside it. Throws when it is not. */
 export function resolveBrainRoots(root: string): BrainRoots {
-  const project = realpathSync(root);
-  const vault = realpathSync(join(project, '_dream_context'));
+  const project = realPath(root);
+  const vault = realPath(join(project, '_dream_context'));
   if (!statSync(vault).isDirectory()) throw new Error(`${vault} is not a folder`);
   return { project, vault };
 }

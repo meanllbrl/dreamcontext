@@ -1,4 +1,4 @@
-import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { basename, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
@@ -10,6 +10,7 @@ import type {
   AutomationManifest, AutomationQuestion, RunEvent, ThreadEntry, ThreadSummaryRow,
 } from './types.js';
 import { relPosix } from '../paths.js';
+import { realPath } from '../real-path.js';
 
 /**
  * The FEED — what `#agents` actually shows.
@@ -270,7 +271,7 @@ export function readRunAnswer(contextRoot: string, slug: string, runId: string):
   const outputPath = runDocumentPath(contextRoot, run ?? null);
   if (!outputPath) return null;
   try {
-    const raw = readFileSync(realpathSync(outputPath), 'utf-8');
+    const raw = readFileSync(realPath(outputPath), 'utf-8');
     const truncated = raw.length > ANSWER_READ_BYTES;
     const body = (truncated ? raw.slice(0, ANSWER_READ_BYTES) : raw)
       .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
@@ -300,8 +301,8 @@ export function runDocumentPath(contextRoot: string, run: RunEvent | null): stri
   try {
     const link = lstatSync(outputPath);
     if (link.isSymbolicLink() || !link.isFile() || link.size === 0) return null;
-    const real = realpathSync(outputPath);
-    const realRoot = realpathSync(contextRoot);
+    const real = realPath(outputPath);
+    const realRoot = realPath(contextRoot);
     return real.startsWith(realRoot + sep) ? outputPath : null;
   } catch {
     return null;
@@ -327,7 +328,7 @@ export function readRunHead(contextRoot: string, run: RunEvent | null): string |
     const st = statSync(path);
     const hit = runHeads.get(path);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.line;
-    const fd = openSync(realpathSync(path), 'r');
+    const fd = openSync(realPath(path), 'r');
     let head: string;
     try {
       const buf = Buffer.alloc(Math.min(RUN_HEAD_BYTES, st.size));

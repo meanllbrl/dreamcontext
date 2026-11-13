@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ownerKey } from '../../lib/desktop';
 
 /** One pending proposal (GET /api/assistant/proposals — src/lib/assistant/proposals.ts). */
@@ -69,7 +69,7 @@ export async function decide(id: string, action: 'approve' | 'edit' | 'reject', 
   }
 }
 
-const APP_FAILURE: Partial<Record<DecideOutcome, string>> = {
+export const APP_FAILURE: Partial<Record<DecideOutcome, string>> = {
   changed: 'Kart değişti. Yeniden bak.',
   stale: 'App bu kart açıldıktan sonra değişti; hiçbir şey onaylanmadı. Agent yeniden sorar.',
   refused: 'Onaylamak için uygulamanın yeni sürümü gerekiyor. Güncelle ya da reddet.',
@@ -82,6 +82,12 @@ function AppRequestRow({ p, failure, onDecided }: { p: Proposal & { app: AppCard
   const [ownFailure, setOwnFailure] = useState<DecideOutcome | undefined>();
   const failed = ownFailure ?? failure;
   const a = p.app;
+  // Drawn on the notch: the agent may now say so (ek-4). Once per card; a failure stays silent.
+  useEffect(() => {
+    void fetch(`/api/apps/requests/card/${encodeURIComponent(p.id)}/shown`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ where: 'notch' }),
+    }).catch(() => {});
+  }, [p.id]);
   const act = async (action: 'approve' | 'reject') => {
     setBusy(true);
     setOwnFailure(undefined);

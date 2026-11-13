@@ -16,8 +16,9 @@
  * the cutoff move, never the newest `keep`; an undated entry is never moved. The PRD gains one
  * pointer line naming where its older entries went.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { realPath } from './real-path.js';
 
 export const ARCHIVE_FEATURES_REL = 'knowledge/archive/features';
 export const COMPACT_POINTER_MARK = '<!-- features-compact -->';
@@ -167,8 +168,8 @@ export function compactFeature(
   refuseLink(prdPath);
   // The PRD must really live under this vault's knowledge/features/: a symlinked folder on the
   // way (or a symlinked features/) would aim the rewrite at another checkout.
-  const featuresReal = realpathSync(join(contextRoot, 'knowledge', 'features'));
-  const prdReal = realpathSync(prdPath);
+  const featuresReal = realPath(join(contextRoot, 'knowledge', 'features'));
+  const prdReal = realPath(prdPath);
   if (lstatSync(join(contextRoot, 'knowledge', 'features')).isSymbolicLink() || !prdReal.startsWith(featuresReal + sep)) {
     throw new Error(`refusing to compact ${prdPath}: it is not inside this vault's knowledge/features/ without a symlink`);
   }

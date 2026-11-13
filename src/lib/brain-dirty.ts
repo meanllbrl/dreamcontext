@@ -9,8 +9,9 @@
  */
 
 import { join, relative, resolve, sep } from 'node:path';
-import { realpathSync } from 'node:fs';
+
 import { statusPorcelainTracked, repoToplevel } from './git-sync/git.js';
+import { realPath } from './real-path.js';
 
 export interface BrainDirtyReport {
   /** Repo-relative paths under the brain dir that are uncommitted (tracked-dirty
@@ -81,7 +82,7 @@ export function collectBrainDirty(
   // that don't exist) — a mismatch there degrades to "no paths", never a throw.
   const physical = (p: string): string => {
     try {
-      return realpathSync(resolve(p));
+      return realPath(resolve(p));
     } catch {
       return resolve(p);
     }

@@ -26,7 +26,7 @@
  * and who wrote it (rules in usage-readers.ts `humanTurn`, `firstTurnKind`). A record's uuid goes
  * in the same key list, so a forked session's copied prompts are counted once.
  */
-import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -36,6 +36,7 @@ import {
   claudeInjection, claudeLimitHit, claudeSleepMark, claudeSuperSends, firstPromptText, firstTurnKind, humanTurn, initialCodexState,
   originOfFirstPrompt, parseClaudeRecord, turnKind, parseCodexRecord, type CodexScanState, type LimitHit, type PromptKind, type SessionOrigin, type UsageLine,
 } from './usage-readers.js';
+import { realPath } from './real-path.js';
 
 export const LEDGER_VERSION = 3;
 /** Rows older than this leave the cache: the widest range the screen shows is 90 days. */
@@ -152,7 +153,7 @@ export function ledgerRoots(home: string = homedir()): ScanRoot[] {
   const seen = new Set<string>();
   const add = (dir: string, tool: ScanRoot['tool']) => {
     let real: string;
-    try { real = realpathSync(dir); } catch { return; }
+    try { real = realPath(dir); } catch { return; }
     if (seen.has(real)) return;
     seen.add(real);
     roots.push({ dir: real, tool });

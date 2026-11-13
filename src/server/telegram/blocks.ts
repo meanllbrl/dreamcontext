@@ -69,7 +69,7 @@ export function actionsMessage(body: string, tunnelHost: string | null = null): 
   return out;
 }
 
-/** A `dream-view` the hub draws (insight, agent-thread, automation) as one line. */
+/** A `dream-view` the hub draws (insight, agent-thread, automation, app-request) as one line. */
 export function viewLine(body: string): string | null {
   let v: Obj | null;
   try { v = obj(JSON.parse(body)); } catch { return null; }
@@ -78,6 +78,8 @@ export function viewLine(body: string): string | null {
   if (v.type === 'insight') return `Insight: ${id || 'kart'} (Mac'te)`;
   if (v.type === 'agent-thread') return `${id || 'Üye'}: konuşma Mac'te`;
   if (v.type === 'automation') return `✋ Onay bekliyor: ${id || 'rutin'} · ${LINES.waitingOnMac}`;
+  // The Onayla/Reddet buttons ride their own message (telegram/app-requests.ts) when he is away.
+  if (v.type === 'app-request') return `✋ App onayı bekliyor · ${LINES.waitingOnMac}`;
   return null;
 }
 

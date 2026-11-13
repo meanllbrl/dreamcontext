@@ -29,7 +29,7 @@ import { dropEmbedToken } from './embed-token.js';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, lstatSync, realpathSync, statSync } from 'node:fs';
+import { createReadStream, lstatSync, statSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { carriesCloudflareHeaders } from '../phone-origin.js';
@@ -40,6 +40,7 @@ import { GATEWAY_SECRET_HEADER, type AppRuntime } from '../../lib/apps/superviso
 import { narrowPageBody, narrowPageResponse, pageRouteDecision, deniedForEveryone, type RouteMatcher } from '../../lib/apps/page-routes.js';
 import { updateApp } from '../../lib/apps/registry.js';
 import { writeShot, SHOT_MAX_BYTES } from '../../lib/apps/shots.js';
+import { realPath } from '../../lib/real-path.js';
 
 const ENTER_TTL_MS = 60_000;
 const SNAPSHOT_WAIT_MS = 10_000;
@@ -513,9 +514,9 @@ export class AppGateway {
     const notFound = () => errorPage(res, 404, 'Not found', rel);
     if (!target) { notFound(); return; }
     try {
-      const realPub = realpathSync(pub);
+      const realPub = realPath(pub);
       if (lstatSync(target).isSymbolicLink()) { notFound(); return; }
-      const real = realpathSync(target);
+      const real = realPath(target);
       const r = relative(realPub, real);
       if (!r || r.startsWith('..') || r.split(sep).some((s) => s.startsWith('.'))) { notFound(); return; }
       const st = statSync(real);

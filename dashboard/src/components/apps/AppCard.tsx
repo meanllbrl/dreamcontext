@@ -6,6 +6,7 @@ import { ConfigSheet, ConfirmSheet, Sheet, UpdateSheet, useShareT } from './Shar
 import { AppIcon } from './AppIcon';
 import { About, CanList, FactStrip, ProductTop, Shots, WhatsNew, shortDate, type CanLine, type StoreEntry } from './StorePage';
 import { askAgent } from './askAgent';
+import { settingsPrompt } from './settingsPrompt';
 import { publishPrompt } from './publishPrompt';
 import { preparePrompt } from '../../lib/agentPrompt';
 import { requestDelegateAgent } from '../../lib/delegateAgent';
@@ -47,6 +48,8 @@ export interface AppRow {
   unpublished?: boolean;
   configCount?: number;
   configMissing?: string[];
+  /** The same fields by their labels, for the card's "Waiting for settings: …" line. */
+  configMissingLabels?: string[];
   /** Its team data (app-veri-ortak K9): mode, counts, the paths awaiting the owner, a pull landing. */
   data?: AppDataView;
 }
@@ -158,6 +161,16 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
     setErr(null); setUndoing(true);
     try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/update/undo`, {}); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setUndoing(false); }
   };
+  // "Let Claude set it up": the settings, their hints and what is still empty go to a chat.
+  const [settingUp, setSettingUp] = useState(false);
+  const settingsToClaude = async () => {
+    if (settingUp) return;
+    setSettingUp(true); setErr(null);
+    try {
+      const r = await api.get<{ fields: Array<{ key: string; type: string; label: string; required: boolean; help?: string; find?: string }> }>(`/apps/${encodeURIComponent(app.slug)}/config`);
+      askAgent(bus, settingsPrompt({ slug: app.slug, name: app.name, about: s?.about ?? null, fields: r.fields, missing: app.configMissingLabels ?? app.configMissing ?? [] }), { fallback: { vault, title: app.name } });
+    } catch (e) { setErr((e as Error).message); } finally { setSettingUp(false); }
+  };
   // Its error stands under Manage, beside the switch the owner just used.
   const [manageErr, setManageErr] = useState<string | null>(null);
   // The band's own error: it stands under the band's button, where the owner clicked.
@@ -259,8 +272,10 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
         )}
         {following && app.source!.problem && <p className="app-card__note app-card__note--warn">{t(`share.card.problem.${app.source!.problem}`)}</p>}
         {(app.configMissing?.length ?? 0) > 0 && (
+          // The app waits for its settings: say which, and hand them to Claude (app-kurulum-claude).
           <div className="app-card__note app-card__note--warn app-card__mcp">
-            <span>{t('share.card.settingsNeeded')}</span>
+            <span>{app.configMissingLabels?.length ? ts('share.card.settingsWaiting', { fields: app.configMissingLabels.join(', ') }) : t('share.card.settingsNeeded')}</span>
+            {canLaunch && <button type="button" className="app-card__launch" disabled={settingUp} onClick={() => void settingsToClaude()}>{t('share.card.handToClaude')}</button>}
             {canLaunch && <button type="button" className="app-card__stop" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>}
           </div>
         )}

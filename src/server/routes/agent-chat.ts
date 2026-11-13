@@ -836,7 +836,7 @@ export function backgroundOutputPath(cwd: string, conversationId: string, taskId
   const uuid = sanitizeUuid(conversationId);
   if (!id || !uuid) return null;
   let real: string;
-  try { real = realpathSync(cwd); } catch { real = cwd; }
+  try { real = realPath(cwd); } catch { real = cwd; }
   const slug = real.replace(/\//g, '-');
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
   return join('/tmp', `claude-${uid}`, slug, uuid, 'tasks', `${id}.output`);
@@ -3135,7 +3135,7 @@ export function startChatSession(
   });
   /** The project root whose brain this chat runs in, resolved; '' when it has none. */
   const ledgerVault = ((): string => {
-    try { return existsSync(contextRoot) ? realpathSync(projectRoot) : ''; } catch { return ''; }
+    try { return existsSync(contextRoot) ? realPath(projectRoot) : ''; } catch { return ''; }
   })();
   /** Every id the server has for this chat (G1's `sameConversation`): the pin (also the tab id
    *  `tabSessionEnv` hands the child), the resumed or pinned session, the tool's mapped thread, the
@@ -6042,6 +6042,7 @@ import { titleFromOwnerMessage } from '../../lib/chat-tab-title-nudge.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { phoneReadsAsRun, phoneRunItems } from '../../lib/automations/run-chat.js';
 import { approvedRunTarget } from '../../lib/automations/approved-run-target.js';
+import { realPath } from '../../lib/real-path.js';
 
 export {
   parseTranscriptHistory,
@@ -6827,7 +6828,7 @@ function requireGrantOwner(req: IncomingMessage, res: ServerResponse): boolean {
 }
 
 function vaultRealPath(contextRoot: string): string {
-  try { return realpathSync(contextRoot); } catch { return resolve(contextRoot); }
+  try { return realPath(contextRoot); } catch { return resolve(contextRoot); }
 }
 
 /**

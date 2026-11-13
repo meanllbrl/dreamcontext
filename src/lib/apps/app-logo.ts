@@ -12,11 +12,12 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { sniffImageType } from '../image-sniff.js';
 import { pngSize } from './png.js';
 import { appsHome } from './registry.js';
+import { realPath } from '../real-path.js';
 
 /** The upload's cap: a 1024 photo-like PNG fits with room; the Dock never needs more. */
 export const MAX_LOGO_BYTES = 5 * 1024 * 1024;
@@ -45,7 +46,7 @@ export function appLogoPath(home: string, configId: string | undefined): string 
   let realDir: string;
   try {
     if (lstatSync(dir).isSymbolicLink()) return null;
-    realDir = realpathSync(dir);
+    realDir = realPath(dir);
   } catch {
     return null;
   }
@@ -54,7 +55,7 @@ export function appLogoPath(home: string, configId: string | undefined): string 
     try {
       const st = lstatSync(p);
       if (!st.isFile()) continue;
-      const r = realpathSync(p);
+      const r = realPath(p);
       if (!r.startsWith(realDir + sep)) continue;
       return p;
     } catch { /* not this one */ }
@@ -91,10 +92,10 @@ export function logoBytes(buf: Buffer): { data: Buffer; ext: '.png' | '.jpg' } {
 export function readAgentLogoFile(path: string, roots: readonly string[]): { data: Buffer; ext: '.png' | '.jpg'; type: 'image/png' | 'image/jpeg' } {
   if (typeof path !== 'string' || !path.trim() || !isAbsolute(path)) throw new LogoError('logo_unsafe', 'Name the image by its absolute path.');
   let real: string;
-  try { real = realpathSync(path); } catch { throw new LogoError('logo_unsafe', 'That file is not there.'); }
+  try { real = realPath(path); } catch { throw new LogoError('logo_unsafe', 'That file is not there.'); }
   const inside = roots.some((r) => {
     let rr: string;
-    try { rr = realpathSync(r); } catch { return false; }
+    try { rr = realPath(r); } catch { return false; }
     const rel = relative(rr, real);
     return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
   });

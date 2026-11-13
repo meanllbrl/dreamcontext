@@ -334,7 +334,7 @@ import {
   handlePublishGrant, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleAppLogoSet, handleAppLogoReset, handleUpdateCheck, handleUpdateUndo,
   handleUpdateApply, handleAutoUpdate, handleDetach, handleUninstall,
 } from './routes/apps-share.js';
-import { handleAppRequestCreate, handleAppRequestLogo, handleAppRequestStatus } from './routes/apps-requests.js';
+import { handleAppRequestCard, handleAppRequestCreate, handleAppRequestLogo, handleAppRequestShown, handleAppRequestStatus } from './routes/apps-requests.js';
 import { setAppRequestDelivery } from '../lib/apps/share/app-request.js';
 import { relayCommand } from '../lib/assistant/relay.js';
 import { isSuperManaged } from '../lib/super/inbox.js';
@@ -556,6 +556,8 @@ export function buildRouter(): Router {
   router.post('/api/apps/trash/restore', handleTrashRestore);
   // An agent's request for an app action (app-onay-karti C3): before the `:slug` routes.
   router.post('/api/apps/requests', handleAppRequestCreate);
+  router.get('/api/apps/requests/card/:proposal', handleAppRequestCard);
+  router.post('/api/apps/requests/card/:proposal/shown', handleAppRequestShown);
   router.get('/api/apps/requests/:id/logo', handleAppRequestLogo);
   router.get('/api/apps/requests/:id', handleAppRequestStatus);
   router.post('/api/apps/:slug/publish/grant', handlePublishGrant);
@@ -1193,7 +1195,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

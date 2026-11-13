@@ -17,12 +17,13 @@
 
 import { createHash } from 'node:crypto';
 import {
-  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync,
+  existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { acquireFileLockWithin, releaseFileLock } from './file-lock.js';
 import { TASK_SLUG_RE } from './task-slug.js';
 import { ledgerProblem, PLAN_NAME_RE, type Ledger, type LedgerReadResult } from './plan-ledger.js';
+import { realPath } from './real-path.js';
 
 export const PLANS_REL = join('tmp', 'plans');
 
@@ -56,8 +57,8 @@ export function assertSafePath(root: string, p: string): void {
     if (!existsSync(cur) && !isDanglingLink(cur)) return;
     if (lstatSync(cur).isSymbolicLink()) throw new PlanStoreError(`Refused: ${cur} is a symlink.`);
   }
-  const realRoot = realpathSync(root);
-  const real = realpathSync(p);
+  const realRoot = realPath(root);
+  const real = realPath(p);
   if (real !== realRoot && !real.startsWith(realRoot + sep)) throw new PlanStoreError(`Refused: ${p} resolves outside the vault.`);
 }
 

@@ -1,6 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, realpathSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -69,6 +69,7 @@ import {
   isDestructiveAllowed,
   type ConsolidationDepth,
 } from '../../lib/sleep-consolidation.js';
+import { realPath } from '../../lib/real-path.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -288,7 +289,7 @@ const SAFE_NAME_RE = /^[^/\\]+$/;
 function nearestAncestorInsideHome(dir: string, home: string): boolean {
   let realHome: string;
   try {
-    realHome = realpathSync(home);
+    realHome = realPath(home);
   } catch {
     return false;
   }
@@ -300,7 +301,7 @@ function nearestAncestorInsideHome(dir: string, home: string): boolean {
   }
   let realAncestor: string;
   try {
-    realAncestor = realpathSync(current);
+    realAncestor = realPath(current);
   } catch {
     return false;
   }

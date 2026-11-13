@@ -40,12 +40,12 @@
  * run so each vault is cleaned at most once a day. Best effort: errors are logged, never thrown.
  */
 import {
-  appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmdirSync,
-  truncateSync, unlinkSync, writeFileSync,
+  appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, truncateSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { listVaults } from './vaults.js';
 import { listRegisteredProjects } from './automations/registry.js';
+import { realPath } from './real-path.js';
 
 export const TMP_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 export const TMP_CLEAN_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -216,7 +216,7 @@ export function cleanTmp(contextRoot: string, opts: TmpCleanOptions = {}): TmpCl
     const st = lstatSync(tmpRoot);
     if (st.isSymbolicLink()) return { ...result, skipped: 'symlink' };
     if (!st.isDirectory()) return { ...result, skipped: 'missing' };
-    realTmp = realpathSync(tmpRoot);
+    realTmp = realPath(tmpRoot);
   } catch {
     return { ...result, skipped: 'missing' };
   }
@@ -248,7 +248,7 @@ export function cleanTmp(contextRoot: string, opts: TmpCleanOptions = {}): TmpCl
         try {
           // The parent must still resolve inside tmp and the entry still be a plain file: a folder
           // swapped for a link mid-walk never sends an unlink outside tmp.
-          if (!inside(realTmp, realpathSync(dirname(abs)))) { result.errors.push(`outside tmp: ${rel}`); continue; }
+          if (!inside(realTmp, realPath(dirname(abs)))) { result.errors.push(`outside tmp: ${rel}`); continue; }
           const again = lstatSync(abs);
           if (again.isSymbolicLink() || !again.isFile()) continue;
           unlinkSync(abs);
@@ -291,7 +291,7 @@ function removeEmptiedDirs(tmpRoot: string, realTmp: string, dirs: Set<string>, 
     try {
       const st = lstatSync(dir);
       if (st.isSymbolicLink() || !st.isDirectory()) continue;
-      if (!inside(realTmp, realpathSync(dir))) continue;
+      if (!inside(realTmp, realPath(dir))) continue;
       if (readdirSync(dir).length > 0) continue;
       rmdirSync(dir);
       result.dirsRemoved.push(rel);

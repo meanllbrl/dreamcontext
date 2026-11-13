@@ -11,13 +11,14 @@
  * sure every path stays inside the app (`safeAppPath`) and every text is one clean line.
  */
 
-import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { APP_SLUG_RE } from './bundle.js';
 import { safeAppPath } from './safe-path.js';
 import { parseScheduleDetailed } from '../automations/schedule.js';
 import { readToolsOf } from '../agents/read-tools.js';
 import { parseDataDecl, type DataDecl } from './data-share.js';
+import { realPath } from '../real-path.js';
 
 export const MANIFEST_FILE = 'dreamcontext-app.json';
 /** The app assistant's role: this literal name at the app root, never configurable, so an edit to
@@ -110,6 +111,10 @@ export interface ConfigField {
   label: string;
   required: boolean;
   help?: string;
+  /** For Claude, not the person: where on this Mac the value is found (a skill, a brain file, an
+   *  MCP server, a lab insight). Installing hands the settings to Claude, who fills what it can
+   *  find this way and asks only for the rest (owner 2026-11-13, app-kurulum-claude). */
+  find?: string;
   choices?: string[];
 }
 
@@ -331,7 +336,7 @@ export function parseManifest(text: string, appRoot: string | null): ManifestRes
     if (!Array.isArray(raw.config)) err('config', 'not a list', 'Write config as a list of {"key","type","label","required?"}.');
     else raw.config.slice(0, 40).forEach((c, i) => {
       const f = `config[${i}]`;
-      if (!isObj(c)) { err(f, 'not an object', 'Each setting is {"key","type","label","required?","help?","choices?"}.'); return; }
+      if (!isObj(c)) { err(f, 'not an object', 'Each setting is {"key","type","label","required?","help?","find?","choices?"}.'); return; }
       const type = c.type as ConfigType;
       if (!(CONFIG_TYPES as readonly string[]).includes(type as string)) { err(`${f}.type`, 'unknown type', `Use one of ${CONFIG_TYPES.join(', ')}.`); return; }
       const key = typeof c.key === 'string' ? c.key : '';
@@ -348,6 +353,7 @@ export function parseManifest(text: string, appRoot: string | null): ManifestRes
       config.push({
         key, type, label, required: c.required === true,
         ...(typeof c.help === 'string' && cleanText(c.help, 200) ? { help: cleanText(c.help, 200) } : {}),
+        ...(typeof c.find === 'string' && cleanText(c.find, 300) ? { find: cleanText(c.find, 300) } : {}),
         ...(choices ? { choices } : {}),
       });
     });
@@ -454,8 +460,8 @@ export function roleFileProblem(appRoot: string): ManifestProblem | null {
   try { st = lstatSync(file); } catch { return missing; }
   if (st.isSymbolicLink() || !st.isFile()) return { field: ROLE_FILE, problem: 'not a plain file (a symlink or a folder)', fix: `Replace it with a real ${ROLE_FILE} at the app root.` };
   try {
-    const realRoot = realpathSync(appRoot);
-    const r = relative(realRoot, realpathSync(file));
+    const realRoot = realPath(appRoot);
+    const r = relative(realRoot, realPath(file));
     if (r !== ROLE_FILE) return { field: ROLE_FILE, problem: 'outside the app folder', fix: `Replace it with a real ${ROLE_FILE} at the app root.` };
   } catch { return missing; }
   return null;
@@ -465,8 +471,8 @@ export function roleFileProblem(appRoot: string): ManifestProblem | null {
 export function insideRoot(root: string, rel: string): string | null {
   if (isAbsolute(rel)) return null;
   try {
-    const realRoot = realpathSync(root);
-    const real = realpathSync(join(realRoot, rel));
+    const realRoot = realPath(root);
+    const real = realPath(join(realRoot, rel));
     const r = relative(realRoot, real);
     if (!r || r.startsWith('..') || isAbsolute(r) || r.split(sep).some((s) => s.startsWith('.'))) return null;
     return real;

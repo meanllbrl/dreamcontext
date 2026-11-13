@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import { dirname, join, relative, isAbsolute, sep } from 'node:path';
 import { createRisks } from '../agents/amendments.js';
 import { globalAgentsDir } from '../agents/scope.js';
@@ -9,6 +9,7 @@ import { readLocalJson, updateLocalJson } from '../local-store.js';
 import { approveAutomation, changedApprovalFields, checkApproval } from './registry.js';
 import { listAutomations } from './store.js';
 import type { AutomationManifest } from './types.js';
+import { realPath } from '../real-path.js';
 
 /**
  * THE UPGRADE STEP of "only what arrives from outside asks" (owner 2026-11-07).
@@ -99,7 +100,7 @@ function gitReadiness(projectRoot: string): Readiness {
 }
 
 function realOr(p: string): string {
-  try { return realpathSync(p); } catch { return p; }
+  try { return realPath(p); } catch { return p; }
 }
 
 function inside(parent: string, child: string): boolean {

@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
-import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { findTranscriptBySessionId } from './transcript-locate.js';
 import { TEAMMATE_SESSION_RE } from './goal-live.js';
+import { realPath } from './real-path.js';
 
 /**
  * A headless builder (`claude -p --session-id <uuid>`) as a TEAMMATE: its brief, its steps and
@@ -232,8 +233,8 @@ export function readTeammateTranscript(session: string, home: string = homedir()
   if (!path) return null;
   try {
     if (!lstatSync(path).isFile()) return null;
-    const root = realpathSync(join(home, '.claude', 'projects'));
-    const real = realpathSync(path);
+    const root = realPath(join(home, '.claude', 'projects'));
+    const real = realPath(path);
     if (!real.startsWith(root + sep)) return null;
     const fd = openSync(real, 'r');
     try {

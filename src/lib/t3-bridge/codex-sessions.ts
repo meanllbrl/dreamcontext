@@ -7,13 +7,14 @@
  * A thread a tab ran under keeps the tab's id as its row id, so the list knows it is open and a
  * pick lands on that tab; its name is the tab's remembered name.
  */
-import { closeSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { UUID_RE } from '../agent-session-map.js';
 import { foldCase, isUnattendedRun, matchSnippet, oneLine, promptLabel, type PastSession } from '../transcript-sessions.js';
 import { firstCodexUserText, parseCodexRolloutHistory } from './codex-history.js';
 import { CODEX_THREAD_RE, codexRolloutCwd, findCodexRollout } from './codex-threads.js';
+import { realPath } from '../real-path.js';
 
 export type CodexPastSession = PastSession & { tool: 'codex'; unattended: boolean };
 
@@ -117,7 +118,7 @@ export function clearCodexSessionCache(): void {
 }
 
 const real = (p: string): string | null => {
-  try { return realpathSync(p); } catch { return null; }
+  try { return realPath(p); } catch { return null; }
 };
 
 /** Thread id → the tab that last ran it, from the tab map (`state/.agent-session-map/<tab>.json`). */

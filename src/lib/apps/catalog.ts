@@ -10,11 +10,12 @@
  * skips the entry, every text is one clean line.
  */
 
-import { closeSync, constants, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, lstatSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
 import { APP_SLUG_RE } from './bundle.js';
 import { cleanText, effectOf, type AppManifest, type ToolEffect } from './manifest.js';
+import { realPath } from '../real-path.js';
 
 export const CATALOG_FILE = 'app-catalog.json';
 export const CATALOG_TOOLS_MAX = 12;
@@ -40,7 +41,7 @@ function catalogPath(contextRoot: string): string | null {
   try {
     const st = lstatSync(file);
     if (st.isSymbolicLink() || !st.isFile()) return null;
-    const r = relative(realpathSync(contextRoot), realpathSync(file));
+    const r = relative(realPath(contextRoot), realPath(file));
     if (r !== CATALOG_FILE || isAbsolute(r)) return null;
     return file;
   } catch {

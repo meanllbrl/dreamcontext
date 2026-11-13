@@ -24,10 +24,11 @@
  * The target is resolved through its nearest existing folder (`realpath`), so a link planted in
  * `/tmp` that points into the home is judged by where it really lands.
  */
-import { realpathSync } from 'node:fs';
+
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, resolve, sep } from 'node:path';
 import { bypassNeedsOwner } from '../t3-bridge/policy.js';
+import { realPath } from '../real-path.js';
 
 const READS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
 const WRITES = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
@@ -57,7 +58,7 @@ function realOf(abs: string): string {
   let at = abs;
   let rest = '';
   for (;;) {
-    try { return join(realpathSync(at), rest); } catch { /* not there yet */ }
+    try { return join(realPath(at), rest); } catch { /* not there yet */ }
     const up = dirname(at);
     if (up === at) return abs;
     rest = rest ? join(basename(at), rest) : basename(at);

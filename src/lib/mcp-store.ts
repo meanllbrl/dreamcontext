@@ -1,13 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  closeSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync,
-  chmodSync, statSync,
+  closeSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync, chmodSync, statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { listClaudeAccounts } from './claude-accounts.js';
 import { FORBIDDEN_KEYS } from './super/lean-mcp.js';
 import type { McpOutsideServer } from './mcp-wire.js';
+import { realPath } from './real-path.js';
 
 /**
  * Where dreamcontext keeps the MCP servers every Claude account on this computer uses
@@ -94,7 +94,7 @@ export function projectStoresDir(home: string = homedir()): string {
 
 /** The real path of a project root, falling back to its resolved form when it does not exist. */
 export function realProjectRoot(projectRoot: string): string {
-  try { return realpathSync(projectRoot); } catch { return resolve(projectRoot); }
+  try { return realPath(projectRoot); } catch { return resolve(projectRoot); }
 }
 
 export function projectStorePath(projectRoot: string, home: string = homedir()): string {

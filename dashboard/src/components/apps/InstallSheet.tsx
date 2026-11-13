@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { useApi } from '../../context/VaultContext';
+import { useApi, useVault } from '../../context/VaultContext';
+import { askAgent } from './askAgent';
+import { settingsPrompt } from './settingsPrompt';
 import { AppIcon } from './AppIcon';
 import { About, CanList, FactStrip, ProductTop, Shots, WhatsNew, shortDate, type CanLine, type StoreEntry } from './StorePage';
 import { Sheet, errText, useShareN, useShareT, type ConfigField, type GateFinding } from './Sheet';
 
-/** Install as a store page (app-paylasim-magaza r2 section 1); settings are its second step. */
+/**
+ * Install as a store page (app-paylasim-magaza r2 section 1). Its settings are Claude's by default
+ * (owner 2026-11-13, app-kurulum-claude: "kişi bunu girmez ki"): Install installs at once and hands
+ * the settings to Claude in a chat; "I'll fill the settings myself" is the second way, and no
+ * required field blocks the install (the app waits for them, its card says so).
+ */
 
 interface Preview {
   previewId: string; fullName: string; sha: string; publisher: string; publisherSince: string | null; repoUpdated: string | null; public: boolean;
@@ -56,6 +63,7 @@ export function splitValues(fields: ConfigField[], values: Record<string, string
 
 export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: string; onClose: () => void; onDone: (slug: string) => void }) {
   const api = useApi();
+  const { bus, vault } = useVault();
   const t = useShareT();
   const tn = useShareN();
   const [ref, setRef] = useState(initialRef ?? '');
@@ -84,20 +92,24 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
   const opened = useRef(false);
   useEffect(() => { if (initialRef && !opened.current) { opened.current = true; void preview(initialRef); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  const missing = pv ? pv.config.filter((f) => f.required && !values[f.key]).map((f) => f.label) : [];
-  // On the page, Install waits only for what the page asks (the gate, the tick); the settings come next.
+  // Install waits only for what the page asks (the gate, the tick); never for a setting.
   const pageWhy = !pv ? null : !pv.gate.ok ? t('share.install.refused') : pv.public && !understood ? t('share.install.tick') : null;
-  const why = pageWhy ?? (missing.length ? t('share.install.fill', { fields: missing.join(', ') }) : null);
+  const why = pageWhy;
 
-  const install = async () => {
+  /** `toClaude`: the settings go to Claude right after (the default way). */
+  const install = async (toClaude: boolean) => {
     if (!pv) return;
     setBusy('install'); setErr(null);
     try {
       const out = await api.ownerPost<{ slug: string }>('/apps/install', { previewId: pv.previewId, sha: pv.sha, ...splitValues(pv.config, values) });
+      const missing = pv.config.filter((f) => f.required && !values[f.key]).map((f) => f.label);
       onDone(out.slug);
+      if (toClaude && pv.config.length) {
+        askAgent(bus, settingsPrompt({ slug: out.slug, name: pv.name, about: pv.store?.readme.about ?? null, fields: pv.config, missing }), { fallback: { vault: vault ?? '', title: pv.name } });
+      }
     } catch (e) { setErr(errText(e)); } finally { setBusy(null); }
   };
-  const onInstall = () => { if (pv && pv.config.length && step === 'page') setStep('settings'); else void install(); };
+  const onInstall = () => { void install(true); };
 
   const f = pv?.facts;
   const st = pv?.store;
@@ -119,7 +131,7 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
         <>
           {why && <span className="share-why">{why}</span>}
           <button type="button" className="app-card__stop" onClick={() => setStep('page')}>{t('store.back')}</button>
-          <button type="button" className="app-card__launch" disabled={!!why || busy !== null} onClick={() => void install()}>{busy === 'install' ? t('share.install.installing') : t('share.install.go')}</button>
+          <button type="button" className="app-card__launch" disabled={!!why || busy !== null} onClick={() => void install(false)}>{busy === 'install' ? t('share.install.installing') : t('share.install.go')}</button>
         </>
       ) : !pv ? <button type="button" className="app-card__stop" onClick={onClose}>{t('share.cancel')}</button> : undefined
     }>
@@ -139,7 +151,12 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
             by={pv.publisher}
             tagline={st?.readme.tagline}
             actions={<>{installBtn}<span className="app-chip">{chip}</span>{st?.readme.category && <span className="app-chip">{st.readme.category}</span>}</>}
-            note={(err || pageWhy) && <span className={err ? 'app-card__note app-card__note--bad pp-why' : 'share-why pp-why'} role={err ? 'alert' : undefined}>{err ?? pageWhy}</span>}
+            note={(err || pageWhy) ? <span className={err ? 'app-card__note app-card__note--bad pp-why' : 'share-why pp-why'} role={err ? 'alert' : undefined}>{err ?? pageWhy}</span> : pv.config.length > 0 ? (
+              <span className="share-muted pp-why pp-claude">
+                {t('share.install.claudeNote')}{' '}
+                <button type="button" className="share-link" disabled={busy !== null} onClick={() => setStep('settings')}>{t('share.install.selfFill')}</button>
+              </span>
+            ) : null}
           />
           <FactStrip facts={facts} />
           <Shots shots={st?.shots ?? []} sub={t('store.shots.from')} />
@@ -173,7 +190,7 @@ export function InstallSheet({ initialRef, onClose, onDone }: { initialRef?: str
       {pv && step === 'settings' && pv.config.length > 0 && (
         <section className="share-report">
           <div className="pp-mini"><AppIcon src={pv.icon ?? null} name={pv.name} slug={pv.slug} size={44} /><span>{t('share.config.title')}</span></div>
-          <p className="share-muted">{t('share.config.where')}</p>
+          <p className="share-muted">{t('share.config.where')} {t('share.install.laterNote')}</p>
           <ConfigInputs fields={pv.config} values={values} setValues={setValues} />
         </section>
       )}

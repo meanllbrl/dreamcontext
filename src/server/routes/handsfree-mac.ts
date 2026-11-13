@@ -4,7 +4,7 @@ import { carriesOwnOrigin } from '../owner-page.js';
 import { hasOwnerKey } from '../owner-key.js';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { PowerRunner } from '../../lib/handsfree/mac/power.js';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import type { Router } from '../router.js';
@@ -30,6 +30,7 @@ import { MacModeError, MacSession, type MacSessionDeps } from '../../lib/handsfr
 import { isValidHostname } from '../../lib/handsfree/mac/tunnel.js';
 import { MAC_THERMAL_STATES, type MacErrorCode, type MacThermalState } from '../../lib/handsfree/mac/contract.js';
 import { PHONE_LOG_INTERVAL_MS, PHONE_LOG_MAX_BYTES, parsePhoneLog, writePhoneLog } from '../../lib/handsfree/mac/phone-log.js';
+import { realPath } from '../../lib/real-path.js';
 
 /**
  * Mac mode's routes (`/api/handsfree/mac/*`): the desktop's Hands-free sheet and the CLI drive
@@ -98,7 +99,7 @@ function notify(title: string, body: string): void {
  * on the owner's real machine state.
  */
 function homeInTmp(): boolean {
-  try { return resolve(realpathSync(homedir())).startsWith(resolve(realpathSync(tmpdir())) + '/'); } catch { return false; }
+  try { return resolve(realPath(homedir())).startsWith(resolve(realPath(tmpdir())) + '/'); } catch { return false; }
 }
 
 /**

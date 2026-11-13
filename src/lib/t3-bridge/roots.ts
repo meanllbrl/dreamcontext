@@ -4,9 +4,10 @@
  * (`writableRoots`: never `~/.dreamcontext`, never home itself); this only lists them.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { resolveLinkedRepos } from '../linked-repos.js';
+import { realPath } from '../real-path.js';
 
 const MAX_ROOTS = 32;
 
@@ -25,7 +26,7 @@ function gitWorktrees(repo: string): string[] {
 
 function gitCommonDir(repo: string): string | null {
   try {
-    return realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo, encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+    return realPath(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo, encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim());
   } catch {
     return null;
   }
@@ -40,7 +41,7 @@ function gitCommonDir(repo: string): string | null {
 export function isWorktreeOf(commonDir: string, folder: string): boolean {
   try {
     const gitdir = /^gitdir: (.+)$/m.exec(readFileSync(join(folder, '.git'), 'utf-8'))?.[1]?.trim();
-    return !!gitdir && realpathSync(resolve(folder, gitdir)).startsWith(join(commonDir, 'worktrees') + sep);
+    return !!gitdir && realPath(resolve(folder, gitdir)).startsWith(join(commonDir, 'worktrees') + sep);
   } catch {
     return false; // a real repo's `.git` is a folder; anything unreadable is no worktree
   }
@@ -53,7 +54,7 @@ export function ownWorktrees(project: string, o: { worktrees?: (repo: string) =>
   const out: string[] = [];
   for (const w of (o.worktrees ?? gitWorktrees)(project)) {
     let folder = w;
-    try { folder = realpathSync(w); } catch { continue; }
+    try { folder = realPath(w); } catch { continue; }
     if (isWorktreeOf(common, folder) && !out.includes(folder)) out.push(folder);
   }
   return out.slice(0, MAX_ROOTS);
@@ -66,7 +67,7 @@ export function linkedWritableRoots(
   const out: string[] = [];
   const add = (p: string): void => {
     let real = p;
-    try { real = realpathSync(p); } catch { return; } // a checkout that is gone is no root
+    try { real = realPath(p); } catch { return; } // a checkout that is gone is no root
     if (!out.includes(real)) out.push(real);
   };
   try {
@@ -77,7 +78,7 @@ export function linkedWritableRoots(
       if (!common) continue;
       for (const w of (o.worktrees ?? gitWorktrees)(repo.path)) {
         let folder = w;
-        try { folder = realpathSync(w); } catch { continue; }
+        try { folder = realPath(w); } catch { continue; }
         if (isWorktreeOf(common, folder)) add(folder);
       }
     }

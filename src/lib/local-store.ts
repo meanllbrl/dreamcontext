@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acquireFileLock } from './file-lock.js';
+import { realPath } from './real-path.js';
 
 /**
  * M0, the machine-local store: `~/.dreamcontext/local/<projectKey>/`.
@@ -28,7 +29,7 @@ const LOCK_WAIT_MS = 3_000;
 
 function realOr(path: string): string {
   try {
-    return realpathSync(path);
+    return realPath(path);
   } catch {
     return path;
   }

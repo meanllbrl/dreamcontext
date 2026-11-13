@@ -8,12 +8,13 @@
  * Nothing lands until it passed: npm's own record of what it fetched must name the official
  * registry and the sha512 pinned in `codex-pin.ts`, and the program must answer `--version`.
  */
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { managedCodexBin, managedCodexBinDir, managedCodexRoot, managedCodexVersion } from '../codex-bin.js';
 import { CODEX_PIN, type CodexPlatform } from '../codex-pin.js';
 import { DownloadError, type downloadVerified } from './download.js';
 import { managedNodeRoot, managedNpmGlobal } from './platform.js';
+import { realPath } from '../real-path.js';
 
 export interface CodexInstallResult {
   ok: boolean;
@@ -126,7 +127,7 @@ export async function installManagedCodex(e: CodexInstallEnv): Promise<CodexInst
   mkdirSync(managedCodexBinDir(e.home), { recursive: true });
   sweepStale(root);
   // The real path: npm keys its record relative to it, and a symlinked home would prefix the keys.
-  const partial = realpathSync(mkdtempSync(join(root, '.partial-')));
+  const partial = realPath(mkdtempSync(join(root, '.partial-')));
   const previous = managedCodexVersion(e.home);
   const staged = `${managedCodexBin(e.home)}.${process.pid}.new`;
   let aside: string | null = null;

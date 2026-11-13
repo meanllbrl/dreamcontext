@@ -1,12 +1,13 @@
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV, AutomationError } from './types.js';
+import { realPath } from '../real-path.js';
 
 /** The real path of `dir`, or null when it is unset or does not resolve. */
 function realDir(dir: string | undefined): string | null {
   if (!dir) return null;
   try {
-    return realpathSync(dir);
+    return realPath(dir);
   } catch {
     return null;
   }
@@ -47,7 +48,7 @@ export function scopedReadablePath(
   let real: string;
   try {
     if (lstatSync(file).isSymbolicLink()) refuse('is a symlink');
-    real = realpathSync(file);
+    real = realPath(file);
   } catch (err) {
     if (err instanceof AutomationError) throw err;
     throw new AutomationError(`${flag} not found: ${file}`);

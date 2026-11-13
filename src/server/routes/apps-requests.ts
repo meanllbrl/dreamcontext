@@ -14,7 +14,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { realpathSync } from 'node:fs';
+
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { requireLocalDesktop } from './agent-spawn-shared.js';
 import { holdOpen } from '../hold-open.js';
@@ -25,8 +25,10 @@ import { LogoError } from '../../lib/apps/app-logo.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { PublishError } from '../../lib/apps/share/publish.js';
 import { InstallError } from '../../lib/apps/share/install.js';
-import { AppRequestError, appRequestLogo, appRequestStatus, openAppRequest, waitAppRequest } from '../../lib/apps/share/app-request.js';
+import { AppRequestError, appRequestByProposal, appRequestLogo, appRequestOpen, appRequestStatus, decideAppRequest, markAppRequestShown, openAppRequest, waitAppRequest, type CardSurface } from '../../lib/apps/share/app-request.js';
+import { ownerSaidHere } from '../../lib/apps/share/owner-said.js';
 import { buildInstallPlan, buildLogoPlan, buildPublishPlan, buildUpdatePlan, type BuiltPlan } from '../../lib/apps/share/app-plan.js';
+import { realPath } from '../../lib/real-path.js';
 
 type Params = Record<string, string>;
 
@@ -37,7 +39,7 @@ const REQUEST_ID = /^[A-Za-z0-9_-]{20,40}$/;
 const PROPOSAL_ID = /^[0-9a-f-]{36}$/;
 
 function realRoot(p: string): string {
-  try { return realpathSync(p); } catch { return p; }
+  try { return realPath(p); } catch { return p; }
 }
 
 /** The app an app's own assistant may ask for, from its `x-dc-run` claim (narrowing only). */
@@ -108,7 +110,18 @@ export async function handleAppRequestCreate(req: IncomingMessage, res: ServerRe
       }
     }
     const out = openAppRequest({ plan: built.plan, stillFresh: built.stillFresh, logo: built.logo ?? null, agentSessions });
-    sendJson(res, 200, { request: out.id, state: out.state, renewal: out.renewal });
+    // ek-3: an install he asked for in his own words, in THIS chat, is his yes. The server finds
+    // the words in its own ledger of what he typed here; the agent's claim alone decides nothing.
+    let ownerWords: 'approved' | 'not_found' | undefined;
+    let state = out.state;
+    if (action === 'install' && typeof b.ownerSaid === 'string' && b.ownerSaid.trim() && out.state === 'pending') {
+      const turn = ownerSaidHere({ home, projectRoot: realRoot(projectRootOf(contextRoot)), sessions: agentSessions, words: b.ownerSaid.slice(0, 500) });
+      const open = turn ? appRequestOpen(out.id) : null;
+      const decided = open ? await decideAppRequest({ id: out.id }, 'approve', { by: 'owner-words', hash: open.hash }) : null;
+      ownerWords = decided?.ok && decided.state === 'approved' ? 'approved' : 'not_found';
+      if (decided?.ok) state = decided.state;
+    }
+    sendJson(res, 200, { request: out.id, state, renewal: out.renewal, proposal: out.proposalId, ...(ownerWords ? { ownerWords } : {}) });
   } catch (e) { fail(res, e); }
 }
 
@@ -132,4 +145,28 @@ export async function handleAppRequestLogo(req: IncomingMessage, res: ServerResp
   if (!hit) { sendError(res, 404, 'no_logo', 'No such logo card.'); return; }
   res.writeHead(200, { 'Content-Type': hit.type, 'Content-Length': hit.data.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(hit.data);
+}
+
+const SURFACES: readonly CardSurface[] = ['chat', 'notch'];
+
+/** GET /api/apps/requests/card/:proposal: the chat card's plan and state (the notch reads the same plan). */
+export async function handleAppRequestCard(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const id = params.proposal ?? '';
+  const hit = PROPOSAL_ID.test(id) ? appRequestByProposal(id) : null;
+  if (!hit) { sendError(res, 404, 'no_card', 'No such app request card.'); return; }
+  sendJson(res, 200, { state: hit.state, card: hit.view });
+}
+
+/**
+ * POST /api/apps/requests/card/:proposal/shown {where: chat|notch}: a surface DREW the card
+ * (ek-4). A display fact for the agent's "the card is on your screen", never authority.
+ */
+export async function handleAppRequestShown(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const id = params.proposal ?? '';
+  const where = SURFACES.find((s) => s === b.where);
+  if (!PROPOSAL_ID.test(id) || !where) { sendError(res, 400, 'bad_request', 'A card id and where it is drawn (chat or notch).'); return; }
+  sendJson(res, 200, { ok: markAppRequestShown({ proposalId: id }, where) });
 }

@@ -9,10 +9,11 @@
  * fstat must be the file that was classified (no swap between check and read).
  */
 import { execFileSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { SAFE_TO_GITIGNORE } from '../secret-files.js';
 import { TG_UPLOAD_MAX_BYTES } from './contract.js';
+import { realPath } from '../real-path.js';
 
 export type OutboundRefusal =
   | 'not_absolute' | 'missing' | 'symlink' | 'not_file' | 'hardlink' | 'outside_root'
@@ -70,7 +71,7 @@ export function ignoredButSendable(rel: string): boolean {
 }
 
 function realOrNull(p: string): string | null {
-  try { return realpathSync(p); } catch { return null; }
+  try { return realPath(p); } catch { return null; }
 }
 
 /** The verdict for one path. Pure apart from lstat/realpath and the gitignore probe. */

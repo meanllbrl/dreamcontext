@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { lstatSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chalk from 'chalk';
@@ -81,6 +81,7 @@ import {
   type WikiCardView,
   type WikiNav,
 } from '../../lib/whiteboards/nav.js';
+import { realPath } from '../../lib/real-path.js';
 
 /**
  * `dreamcontext whiteboard` — the agent's hands on a board. Every write goes through
@@ -188,7 +189,7 @@ function assertBoardInScope(slug: string): void {
 function realDir(dir: string | null | undefined): string | null {
   if (!dir) return null;
   try {
-    return realpathSync(dir);
+    return realPath(dir);
   } catch {
     return null;
   }
@@ -229,7 +230,7 @@ function assertFileInScope(file: string, flag = '--file'): string {
   let real: string;
   try {
     if (lstatSync(file).isSymbolicLink()) refuse('is a symlink');
-    real = realpathSync(file);
+    real = realPath(file);
   } catch (err) {
     if (err instanceof WhiteboardValidationError) throw err;
     throw new WhiteboardValidationError(`cannot read ${flag} '${file}': ${(err as Error).message}`);

@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { heavyStep, shellSegments } from './run-budget.js';
 import { distAllowed, pruneSuiteRecords } from './suite-record.js';
+import { realPath } from './real-path.js';
 
 /**
  * Check receipts: the same check on the same code does not run twice.
@@ -96,7 +97,7 @@ function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
 }
 
 export function gitToplevel(cwd: string): string | null {
-  try { return realpathSync(git(cwd, ['rev-parse', '--show-toplevel'])); } catch { return null; }
+  try { return realPath(git(cwd, ['rev-parse', '--show-toplevel'])); } catch { return null; }
 }
 
 /** Where receipts live: the repo's common git dir, so every worktree of one repo shares them. */
@@ -148,7 +149,7 @@ function unquote(w: string): string {
 
 function inside(top: string, p: string): boolean {
   let real: string;
-  try { real = realpathSync(p); } catch { real = resolve(p); }
+  try { real = realPath(p); } catch { real = resolve(p); }
   return real === top || real.startsWith(top + sep);
 }
 
@@ -161,7 +162,7 @@ export function planShellReceipt(cwd: string, command: string, scripts: Record<s
   if (!toplevel) return { skip: 'not a git repo' };
   const owned = exitNotOwned(command);
   if (owned) return { skip: owned };
-  let dir = realpathSync(cwd);
+  let dir = realPath(cwd);
   let kind: ReceiptKind | null = null;
   const rank: Record<ReceiptKind, number> = { tsc: 0, tests: 1, build: 2 };
   for (const raw of shellSegments(command)) {
@@ -197,7 +198,7 @@ export function planShellReceipt(cwd: string, command: string, scripts: Record<s
     if (!kind || rank[k] > rank[kind]) kind = k;
   }
   if (!kind) return { skip: 'no check in the command' };
-  return { plan: { kind, toplevel, cwdRel: relKey(toplevel, realpathSync(cwd)), command: normalizeCommand(command, toplevel) } };
+  return { plan: { kind, toplevel, cwdRel: relKey(toplevel, realPath(cwd)), command: normalizeCommand(command, toplevel) } };
 }
 
 /** The receipt plan for one `builder test` step: `npx <argv>` in `cwd`. */
@@ -207,9 +208,9 @@ export function planArgvReceipt(cwd: string, argv: string[]): PlanResult {
   const kind: ReceiptKind | null = argv[0] === 'tsc' ? (argv.includes('--noEmit') ? 'tsc' : 'build') : argv[0] === 'vitest' || argv[0] === 'jest' ? 'tests' : null;
   if (!kind) return { skip: `${argv[0]} is not a known check` };
   if (argv.some((a) => /^(?:--changed|--onlyChanged|-o|--lastCommit|--since|--changedSince)(?:=|$)/.test(a))) return { skip: 'it picks tests from git history, not only the content' };
-  const cwdReal = realpathSync(cwd);
+  const cwdReal = realPath(cwd);
   if (argv.some((a) => { const p = a.replace(/^--?[\w-]+=/, ''); return (isAbsolute(p) || /(?:^|\/)\.\.(?:\/|$)/.test(p)) && !/^--outputFile=/.test(a) && !inside(toplevel, resolve(cwdReal, p)); })) return { skip: 'a path out of the repo' };
-  return { plan: { kind, toplevel, cwdRel: relKey(toplevel, realpathSync(cwd)), command: normalizeCommand(argv.join(' '), toplevel) } };
+  return { plan: { kind, toplevel, cwdRel: relKey(toplevel, realPath(cwd)), command: normalizeCommand(argv.join(' '), toplevel) } };
 }
 
 const relKey = (top: string, p: string): string => relative(top, p).split(sep).join('/') || '.';

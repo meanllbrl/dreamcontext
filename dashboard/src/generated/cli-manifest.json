@@ -290,11 +290,12 @@
     },
     {
       "path": "apps install",
-      "desc": "Preview an app from a repo (owner/repo or its link); --ask puts the install in front of the owner, --go with his grant installs it",
+      "desc": "Install an app from a repo (owner/repo or its link): --ask installs it once the owner says yes (his card in this chat, or his own words with --owner-said); no flag = only the preview",
       "args": [
         "<repo>"
       ],
       "valueFlags": [
+        "--owner-said",
         "--set",
         "--wait",
         "--grant"

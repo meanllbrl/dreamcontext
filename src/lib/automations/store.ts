@@ -1,6 +1,6 @@
 import { isCodexAccountId } from '../t3-bridge/accounts.js';
 import { isInstanceAccountId } from '../instance-accounts.js';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { withFileLockSync } from '../file-lock.js';
 import matter from 'gray-matter';
@@ -88,6 +88,7 @@ import {
   type Schedule,
   type ScheduleSlot,
   type Weekday, type RunTool } from './types.js';
+import { realPath } from '../real-path.js';
 
 /**
  * Automations store — mirrors `src/lib/lab/store.ts`. Manifests are FLAT at
@@ -593,8 +594,8 @@ export function resolveAutomationPhoto(contextRoot: string, raw: string | null):
     // brain often lives under `/var/…`, itself a symlink to `/private/var/…`,
     // so realpath'ing only the file would compare two different spellings of
     // the same directory and refuse every honest photo.
-    const realDir = realpathSync(dir);
-    const real = realpathSync(abs);
+    const realDir = realPath(dir);
+    const real = realPath(abs);
     if (!real.startsWith(realDir + sep)) return null;
     // A regular file, never a directory or a device — `readFileSync` on a
     // fifo would hang the request thread.

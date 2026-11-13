@@ -1,9 +1,10 @@
 import { extname, join } from 'node:path';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { parseSchedule } from '../automations/schedule.js';
 import type { ScheduleSlot } from '../automations/types.js';
 import { cleanText, type AppManifest } from './manifest.js';
 import { parseStoreReadme, storeReadiness, type StoreReadiness, type StoreReadme } from './store-readme.js';
+import { realPath } from '../real-path.js';
 
 /**
  * What a store page says about an app (app-paylasim-magaza r2): the "What it can do" lines come
@@ -91,8 +92,8 @@ export function readAppFile(root: string, rel: string, max: number): Buffer | nu
     const p = join(root, rel);
     const st = lstatSync(p);
     if (!st.isFile() || st.isSymbolicLink() || st.size > max) return null;
-    const real = realpathSync(p);
-    const base = realpathSync(root);
+    const real = realPath(p);
+    const base = realPath(root);
     if (!real.startsWith(base + '/')) return null;
     return readFileSync(real);
   } catch {

@@ -9,7 +9,7 @@ import { useI18n } from '../../context/I18nContext';
  */
 
 export interface GateFinding { id: string; rule: string; file: string; line?: number; label: string; term?: string }
-export interface ConfigField { key: string; type: string; label: string; required: boolean; help?: string; choices?: string[]; value?: string | number | null; set?: boolean }
+export interface ConfigField { key: string; type: string; label: string; required: boolean; help?: string; find?: string; choices?: string[]; value?: string | number | null; set?: boolean }
 
 export const errText = (e: unknown) => (e as Error)?.message ?? String(e);
 

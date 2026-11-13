@@ -62,7 +62,13 @@ function toolLine(app: InstalledApp, tool: InstalledTool): string {
 
 function appLine(app: NotInstalledApp): string {
   const name = quote(app.name);
-  if (app.sharedWithMe === true) return `→ The project has the app ${name}, not installed on this Mac. Say: without it this takes longer or is approximate; offer to install it (an app-install button) or a Lab insight. Never install it yourself.`;
+  if (app.sharedWithMe === true) {
+    // The repo comes from the shared catalog: only a plain owner/name goes on a command line.
+    const install = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(app.repo)
+      ? `\`dreamcontext apps install ${app.repo} --ask\` (add --owner-said "<his words>" when he already asked for it in this chat; else it prints his one-tap card for your reply)`
+      : 'an app-install button';
+    return `→ The project has the app ${name}, not installed on this Mac. Say: without it this takes longer or is approximate; offer to install it, or a Lab insight. When he wants it: ${install}. No preview first, no other way.`;
+  }
   if (app.sharedWithMe === false) return `→ The project has the app ${name}, but it is not shared with this account: ask ${app.publishedBy ?? 'its publisher'} to share it. No install button.`;
   return `→ The project has the app ${name}, not installed on this Mac: without it this takes longer or is approximate. Suggest a look at "Shared Apps" on the Apps page, or a Lab insight. No install button.`;
 }
