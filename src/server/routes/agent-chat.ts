@@ -153,7 +153,7 @@ import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  knownMcpServers, mcpCardServers, mcpDrift, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
+  connectorListSettled, connectorListSettleMs, knownMcpServers, mcpCardServers, mcpDrift, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { openRequest } from '../../lib/super/request-answer.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
@@ -3630,17 +3630,49 @@ export function startChatSession(
   let mcpLastAt = 0;
   let mcpSettleTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpTurnTimer: ReturnType<typeof setTimeout> | null = null;
+  /** One reading once the CLI's connector-list retries are over, so an outage line reaches the
+   *  next prompt without waiting for a turn to end. */
+  let mcpListTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpConnecting: string | null = null;
   /** A turn ended: the next settled reading checks the Super's MCP set against the project's. */
   let mcpDriftDue = false;
   /** Connectors this process restarts for; its successor never restarts for them again. */
   const mcpFollowedNow: string[] = [];
+  /** `apiKeySource` from this child's `system:init` (`none` on a claude.ai sign-in): an API key
+   *  takes precedence over the sign-in and no claude.ai connector loads (CLI 2.1.323). */
+  let chatApiKeySource = '';
+  /** A chat that carries the account's claude.ai connectors: not a lean child (it names its own
+   *  set), an app's own assistant, a scoped card or a bridge tool. */
+  const mcpCarriesConnectors = !opts.leanMcp && !app?.own && !scopedCard && !bridgeTool;
+  /**
+   * The tab's health file, the hook's only source. Beyond the rows: the account's connectors this
+   * chat does not carry (owner 2026-11-13, claude.ai's outage), so the hook says why, never a bare
+   * "no connection". A cause the env or init proves it says at once; "claude.ai did not answer"
+   * only once this child's init was seen (its `apiKeySource` known) and the CLI's own list retries
+   * are over. Called on every reading and again on init (init arrives after the first stdin frame).
+   */
+  const mcpWriteHealth = (servers: McpLiveServer[]): void => {
+    if (!mcpTab) return;
+    let unloaded: string[] = [];
+    let unloadedFresh: string[] = [];
+    if (mcpCarriesConnectors && mcpAccount) {
+      try {
+        const cells = readStatusCache()[mcpAccount]?.cells;
+        unloaded = unloadedConnectors(servers, cells, Date.now(), null);
+        unloadedFresh = unloadedConnectors(servers, cells);
+      } catch { /* unknown: says nothing */ }
+    }
+    writeMcpHealth(contextRoot, mcpTab, servers, Date.now(), {
+      unloaded, unloadedFresh, apiKeySource: chatApiKeySource,
+      listSettled: chatApiKeySource !== '' && connectorListSettled(mcpSpawnedAt),
+    });
+  };
   const mcpPublish = (servers: McpLiveServer[]): void => {
     mcpLast = servers;
     mcpLastAt = Date.now();
     sendMeta({ subtype: 'mcp_status', servers, at: mcpLastAt });
     if (mcpDriftDue) followMcpDrift(servers);
-    if (mcpTab) writeMcpHealth(contextRoot, mcpTab, servers);
+    mcpWriteHealth(servers);
     // A lean child sees only its subset: not the account's truth, so it writes no cell. Nor does a
     // Codex or Antigravity chat: the cache is Claude's account's.
     if (mcpAccount && !opts.leanMcp && !app?.own && !bridgeTool) {
@@ -3668,7 +3700,12 @@ export function startChatSession(
     };
     void tick();
   };
+  if (mcpTab && mcpCarriesConnectors) {
+    mcpListTimer = setTimeout(() => { mcpListTimer = null; void mcpPoll(); }, Math.max(0, mcpSpawnedAt + connectorListSettleMs() - Date.now()) + 1000);
+    mcpListTimer.unref?.();
+  }
   const mcpStop = (): void => {
+    if (mcpListTimer) { clearTimeout(mcpListTimer); mcpListTimer = null; }
     if (mcpSettleTimer) { clearTimeout(mcpSettleTimer); mcpSettleTimer = null; }
     if (mcpTurnTimer) { clearTimeout(mcpTurnTimer); mcpTurnTimer = null; }
     mcpConnecting = null;
@@ -4455,6 +4492,12 @@ export function startChatSession(
       // read is the right price for closing that direction against a future CLI change.
       if (obj.type === 'system' && obj.subtype === 'init' && typeof obj.session_id === 'string') {
         observedConversation = obj.session_id;
+      }
+      if (obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && typeof obj.apiKeySource === 'string') {
+        const first = chatApiKeySource === '';
+        chatApiKeySource = obj.apiKeySource || 'none';
+        // The cause init proves (a Console sign-in, an apiKeyHelper) reaches the hook now.
+        if (first && mcpLast) { try { mcpWriteHealth(mcpLast); } catch { /* the next reading writes it */ } }
       }
       // The conversation id joins the crew binding (it can change without a respawn), and the
       // mode it reports is told to the registry.
