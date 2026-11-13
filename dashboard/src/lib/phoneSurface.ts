@@ -304,6 +304,13 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/apps/requests/:id/logo',
   'GET /api/apps/requests/card/:proposal',
   'POST /api/apps/requests/card/:proposal/shown',
+  'POST /api/apps/requests/card/:proposal/receipt',
+  'GET /api/apps/shared/waiting',
+  'GET /api/apps/install/status',
+  'POST /api/apps/:slug/publish/grant/check',
+  'GET /api/apps/:slug/config/suggest',
+  'GET /api/apps/:slug/share/people',
+  'POST /api/apps/:slug/share/invite',
 ];
 
 /** A registered pattern as a matcher (the router's own rule). */

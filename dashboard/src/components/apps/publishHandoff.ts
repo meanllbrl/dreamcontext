@@ -1,4 +1,4 @@
-import { publishPrompt, superPublishAsk, type PublishHandoff } from './publishPrompt';
+import { publishPrompt, superPublishAsk, type PublishHandoff, type Say } from './publishPrompt';
 import type { SuperPageRefusal, SuperPageSendResult } from '../../lib/superPageBridge';
 
 /**
@@ -18,16 +18,18 @@ export type PublishRoute = { to: 'super' } | { to: 'chat' } | { to: 'refused'; r
 
 export function routePublish(h: PublishHandoff, deps: {
   superOn: boolean;
+  /** The owner's language: the one line a chat gets, and the Super's brief, say the app and the grant. */
+  say: Say;
   sendToSuper: (text: string) => SuperPageSendResult;
   showSuper: () => void;
   toChat: (prompt: string) => void;
 }): PublishRoute {
   if (deps.superOn) {
-    const res = deps.sendToSuper(superPublishAsk(h));
+    const res = deps.sendToSuper(superPublishAsk(h, deps.say));
     if (res.accepted) { deps.showSuper(); return { to: 'super' }; }
     // Turned off between the read and the send: the owner's surface is Chat again.
     if (res.reason !== 'off') return { to: 'refused', reason: res.reason };
   }
-  deps.toChat(publishPrompt(h));
+  deps.toChat(publishPrompt(h, deps.say));
   return { to: 'chat' };
 }

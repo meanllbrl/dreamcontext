@@ -6,9 +6,17 @@ import { GitHubReconnect } from '../brain/GitHubReconnect';
 
 // ─── Shared Apps ────────────────────────────────────────────────────────────────────
 
+export interface SharedInvitation {
+  id: string; fullName: string; repoId: string; inviter: string;
+  /** S2: someone this account works with (the brain repo, apps installed from shares, people I invited). */
+  known: boolean;
+  /** The readable name ("Toplanti Notu"), until the manifest can be read after acceptance. */
+  title: string;
+}
+
 export interface SharedList {
   signedIn: boolean; login: string | null; host: string; problem?: string;
-  invitations: Array<{ id: string; fullName: string; inviter: string }>;
+  invitations: SharedInvitation[];
   shared: Array<{ fullName: string; owner: string; name: string | null; tagline?: string | null; public: boolean; installed?: string }>;
 }
 
@@ -16,48 +24,61 @@ export interface SharedList {
 export interface InstalledLook { slug: string; name: string; icon: string | null; update: boolean }
 
 /**
- * The Shared Apps tab (app-paylasim-magaza r2 section 2): invitations on top, then every app
- * shared with this account. The button says the state: Get, Open, or Update. A row opens the app's
- * page: the install page for one not here yet, its own page for one installed.
+ * The Shared Apps tab (app-paylasim-magaza r2 section 2; app-ux-genel K1, K2, S2): invitations on
+ * top, each with its readable name, who shared it and ONE Kur (it accepts the invitation and opens
+ * the install page); an invitation from a GitHub account this account does not work with sits
+ * apart and says so. Then every app shared with this account: Get, Open, or Update.
  */
-export function SharedApps({ list, err, reconnect = false, loading, installedLook, onRefresh, onInstall, onOpen, onAccepted }: {
+export function SharedApps({ list, err, reconnect = false, loading, installedLook, installing, onRefresh, onInstall, onOpen, onAccepted }: {
   list: SharedList | null; err: string | null; loading: boolean;
   /** The list failed because GitHub rejected the sign-in: one click signs in again (plan D4). */
   reconnect?: boolean;
   installedLook: (slug: string) => InstalledLook | null;
+  /** The server's in-flight installs (K8): the row says "Installing…" while one runs. */
+  installing: (fullName: string) => boolean;
   onRefresh: () => void; onInstall: (fullName: string) => void; onOpen: (slug: string) => void; onAccepted: () => void;
 }) {
   const api = useApi();
   const t = useShareT();
   const [accepting, setAccepting] = useState<string | null>(null);
   const [acceptErr, setAcceptErr] = useState<string | null>(null);
-  const accept = async (id: string) => {
+  // Kur on an invitation is the owner's click (K2): accept exactly it, then the install page.
+  const kur = async (i: SharedInvitation) => {
     if (accepting) return;
-    setAccepting(id); setAcceptErr(null);
-    try { await api.ownerPost('/apps/shared/accept', { id }); onAccepted(); } catch (e) { setAcceptErr(errText(e)); } finally { setAccepting(null); }
+    setAccepting(i.id); setAcceptErr(null);
+    try { await api.ownerPost('/apps/shared/accept', { id: i.id }); onAccepted(); onInstall(i.fullName); } catch (e) { setAcceptErr(errText(e)); } finally { setAccepting(null); }
   };
   const repoName = (fullName: string) => fullName.split('/').pop() ?? fullName;
+  const known = list?.invitations.filter((i) => i.known) ?? [];
+  const unknown = list?.invitations.filter((i) => !i.known) ?? [];
+  const invRow = (i: SharedInvitation) => {
+    const busy = accepting === i.id || installing(i.fullName);
+    return (
+      <li key={i.id} className="store-row">
+        <AppIcon src={null} name={i.title} slug={repoName(i.fullName).replace(/-app$/, '')} size={64} />
+        <div className="store-row__t">
+          <p className="store-row__nm">{i.title}</p>
+          <p className="store-row__by">{i.known ? t('share.shared.invited', { who: i.inviter }) : t('store.inv.unknown', { who: i.inviter })}</p>
+        </div>
+        <button type="button" className={i.known ? 'app-tile__btn app-tile__btn--primary' : 'app-tile__btn'} disabled={accepting !== null || busy} onClick={() => void kur(i)}>
+          {busy ? t('store.inv.installing') : t('share.install.go')}
+        </button>
+      </li>
+    );
+  };
   return (
     <div className="apps-store">
       {loading && !list && <p className="apps-page__muted">{t('share.checking')}</p>}
-      {(err || acceptErr) && <p className="app-card__note app-card__note--bad">{err ?? acceptErr}</p>}
+      {(err || acceptErr) && <p className="app-card__note app-card__note--bad">{acceptErr ?? err}</p>}
       {list && !list.signedIn && <p className="apps-page__muted">{t('share.shared.signIn')}</p>}
       {((list && !list.signedIn) || reconnect) && (
         <GitHubReconnect connect={!!list && !list.signedIn} className="app-tile__btn app-tile__btn--primary" onDone={onRefresh} />
       )}
       {list?.problem && <p className="app-card__note app-card__note--warn">{list.problem}</p>}
-      {list && list.invitations.length > 0 && (
+      {known.length > 0 && (
         <section className="apps-shelf" aria-labelledby="apps-inv-h">
           <div className="apps-shelf__head"><h2 id="apps-inv-h">{t('store.invitations')}</h2></div>
-          <ul className="store-list">
-            {list.invitations.map((i) => (
-              <li key={i.id} className="store-row">
-                <AppIcon src={null} name={repoName(i.fullName).replace(/-app$/, '').replace(/-/g, ' ')} slug={repoName(i.fullName)} size={64} />
-                <div className="store-row__t"><p className="store-row__nm">{repoName(i.fullName)}</p><p className="store-row__by">{t('share.shared.invited', { who: i.inviter })}</p></div>
-                <button type="button" className="app-tile__btn app-tile__btn--primary" disabled={accepting !== null} onClick={() => void accept(i.id)}>{t('share.shared.accept')}</button>
-              </li>
-            ))}
-          </ul>
+          <ul className="store-list">{known.map(invRow)}</ul>
         </section>
       )}
       {list?.signedIn && (
@@ -66,13 +87,14 @@ export function SharedApps({ list, err, reconnect = false, loading, installedLoo
             <h2 id="apps-shared-h">{t('share.shared.title')}</h2>
             <button type="button" className="share-link" onClick={onRefresh}>{t('share.shared.refresh')}</button>
           </div>
-          {!list.shared.length && <p className="apps-page__muted">{t('share.shared.empty')}</p>}
+          {!list.shared.length && !list.invitations.length && <p className="apps-page__muted">{t('share.shared.empty')}</p>}
           {list.shared.length > 0 && (
             <ul className="store-list">
               {list.shared.map((s) => {
                 const look = s.installed ? installedLook(s.installed) : null;
                 const name = look?.name ?? s.name ?? repoName(s.fullName);
                 const open = () => (s.installed ? onOpen(s.installed) : onInstall(s.fullName));
+                const busy = !s.installed && installing(s.fullName);
                 return (
                   <li key={s.fullName} className="store-row">
                     <button type="button" className="store-row__open" onClick={open}>
@@ -83,12 +105,19 @@ export function SharedApps({ list, err, reconnect = false, loading, installedLoo
                         {s.tagline && <span className="store-row__tg">{s.tagline}</span>}
                       </span>
                     </button>
-                    <button type="button" className="app-tile__btn" onClick={open}>{!s.installed ? t('store.get') : look?.update ? t('share.card.update') : t('store.open')}</button>
+                    <button type="button" className="app-tile__btn" disabled={busy} onClick={open}>{busy ? t('store.inv.installing') : !s.installed ? t('store.get') : look?.update ? t('share.card.update') : t('store.open')}</button>
                   </li>
                 );
               })}
             </ul>
           )}
+        </section>
+      )}
+      {/* S2: outside input from people this account does not work with: apart, said plainly, never the dot. */}
+      {unknown.length > 0 && (
+        <section className="apps-shelf" aria-labelledby="apps-inv-unknown-h">
+          <div className="apps-shelf__head"><h2 id="apps-inv-unknown-h">{t('store.inv.unknownTitle')}</h2></div>
+          <ul className="store-list">{unknown.map(invRow)}</ul>
         </section>
       )}
     </div>

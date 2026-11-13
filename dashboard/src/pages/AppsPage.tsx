@@ -5,12 +5,15 @@ import { isDesktop } from '../lib/desktop';
 import { isPhoneSurface } from '../lib/phoneSurface';
 import { useIsNewShell } from '../lib/uxMode';
 import { PageBar } from '../components/layout/PageBar';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { APP_REPO_RE } from '../components/sleepy/chat/chatActions';
-import { AppPage, AppTile, SetupLine, appIconSrc, type AppRow } from '../components/apps/AppCard';
+import { AppPage, AppTile, SetupLine, appIconSrc, type AppRow, type ShareOpen } from '../components/apps/AppCard';
 import { InstallSheet, SharedApps, TrashList, type SharedList } from '../components/apps/ShareSheets';
 import { askAgent } from '../components/apps/askAgent';
+import { INSTALL_STATUS_KEY, type InstallStatus } from '../components/apps/InstallFollower';
+import { answerInstall, followInstall, installFollowVersion, subscribeInstallFollow, takeInstallOutcomes } from '../components/apps/installFollow';
+import { APPS_WAITING_KEY, type AppsWaiting } from '../hooks/useAppsWaiting';
 import { AppDataNotices } from '../components/apps/AppDataNotice';
 import { updateCheckDue } from '../components/apps/updateCheck';
 import { revealPath } from '../lib/reveal';
@@ -32,6 +35,7 @@ type AppOther =
 
 type Tab = 'mine' | 'shared';
 
+
 export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   const api = useApi();
   const { vault, bus } = useVault();
@@ -51,17 +55,23 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   const fromOthers = apps.filter((a) => a.origin === 'installed');
   const openNote = (id: string) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'knowledge', id });
   const revealData = (path: string) => { void revealPath(api, path, 'reveal'); };
-  const [tab, setTab] = useState<Tab>('mine');
+  const [tab, setTabState] = useState<Tab>('mine');
+  // The owner's own pick of a tab wins over "open on Shared" (K1).
+  const picked = useRef(false);
+  const setTab = (next: Tab) => { picked.current = true; setTabState(next); };
   // Install: `''` = the link sheet, a repo name = an app from Shared Apps.
   const [installRef, setInstallRef] = useState<string | null>(null);
   const [pageSlug, setPageSlug] = useState<string | null>(null);
+  const [pageSheet, setPageSheet] = useState<ShareOpen>(null);
+  const openPage = (slug: string, sheet: ShareOpen = null) => { setPageSheet(sheet); setPageSlug(slug); };
   const refresh = () => void qc.invalidateQueries({ queryKey: key });
   const appsKey = apps.map((a) => `${a.slug}:${a.origin ?? ''}:${a.source ? 'f' : ''}`).join(',');
 
   // A chat's `app-install` button (app-araclari §5): `install:<owner/name>`. The install sheet
   // opens only for a repo "Shared with you" lists; anything else says who to ask. Never installs.
   // Each outcome says its own truth: only a repo neither shared nor invited is "ask the publisher".
-  const [note, setNote] = useState<{ kind: 'notShared' | 'invited' | 'signIn' | 'macOnly' | 'installed' | 'failed'; repo: string } | null>(null);
+  // `installFailed`: an install he started ended without the app (K8), with its plain reason.
+  const [note, setNote] = useState<{ kind: 'notShared' | 'invited' | 'signIn' | 'macOnly' | 'installed' | 'failed' | 'installFailed'; repo: string; why?: string; retry?: string } | null>(null);
   const asked = useRef('');
   useFocusTarget(focus, (id) => {
     const repo = id.startsWith('install:') ? id.slice('install:'.length) : '';
@@ -101,16 +111,54 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
 
   // Shared Apps is read once for the tab's count (pending invitations) and the tab itself.
   const sharedKey = ['apps-shared', vault, appsKey];
+  // K1: opening Apps asks fresh once (invitations are never cached on the server anyway).
+  const freshOnce = useRef(false);
   const shared = useQuery({
     queryKey: sharedKey,
-    queryFn: () => api.get<SharedList>('/apps/shared'),
+    queryFn: () => {
+      const fresh = !freshOnce.current;
+      freshOnce.current = true;
+      return api.get<SharedList>(fresh ? '/apps/shared?refresh=1' : '/apps/shared');
+    },
     enabled: canLaunch,
     staleTime: 60_000,
   });
   const refreshShared = async () => {
     try { qc.setQueryData(sharedKey, await api.get<SharedList>('/apps/shared?refresh=1')); } catch { void shared.refetch(); }
+    void qc.invalidateQueries({ queryKey: [APPS_WAITING_KEY, vault] });
   };
-  const invitations = shared.data?.invitations.length ?? 0;
+  // Only invitations from people this account works with are counted (S2).
+  const invitations = shared.data?.invitations.filter((i) => i.known).length ?? 0;
+
+  // K1: the rail's dot is checked again when Apps opens; Apps opens on Shared when something from
+  // a known person waits (an invitation, or a shared app not installed here), unless he picked a tab.
+  useEffect(() => { if (canLaunch) void qc.invalidateQueries({ queryKey: [APPS_WAITING_KEY, vault] }); }, [canLaunch, qc, vault]);
+  const waiting = qc.getQueryData<AppsWaiting>([APPS_WAITING_KEY, vault]);
+  const waitingNow = invitations + (shared.data?.shared.filter((x) => !x.installed).length ?? 0) || (waiting ? waiting.known + waiting.notInstalled : 0);
+  useEffect(() => {
+    if (!picked.current && waitingNow > 0) setTabState('shared');
+  }, [waitingNow]);
+
+  // K8: installs keep running when the sheet closes or he leaves Apps. `InstallFollower` (mounted
+  // with the project) does the next step once; what it leaves for this page lands here: a
+  // failure in plain words, or the app's page to open (its settings sheet for "I'll fill them in").
+  const followed = useSyncExternalStore(subscribeInstallFollow, installFollowVersion);
+  useEffect(() => {
+    for (const o of takeInstallOutcomes(vault ?? '')) {
+      if (o.kind === 'failed') { setNote({ kind: 'installFailed', repo: o.name, why: o.why, retry: o.fullName }); continue; }
+      picked.current = true;
+      setTabState('mine');
+      openPage(o.slug, o.sheet);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followed, vault]);
+  const status = useQuery({
+    queryKey: [INSTALL_STATUS_KEY, vault],
+    queryFn: () => api.get<InstallStatus>('/apps/install/status'),
+    enabled: canLaunch,
+    refetchInterval: (q) => (q.state.data?.installs.some((i) => !i.done) ? 1500 : false),
+  });
+  const runningInstall = (fullName: string) => !!status.data?.installs.some((i) => !i.done && i.fullName.toLowerCase() === fullName.toLowerCase());
   const pageApp = pageSlug ? apps.find((a) => a.slug === pageSlug) ?? null : null;
   const installedLook = (slug: string) => {
     const a = apps.find((x) => x.slug === slug);
@@ -121,7 +169,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
     <section className="apps-shelf" aria-labelledby={id}>
       <div className="apps-shelf__head"><h2 id={id}>{title}</h2></div>
       <div className="apps-tiles">
-        {rows.map((a) => <AppTile key={a.slug} app={a} vault={vault ?? ''} canLaunch={canLaunch} onOpen={() => setPageSlug(a.slug)} onChanged={refresh} />)}
+        {rows.map((a) => <AppTile key={a.slug} app={a} vault={vault ?? ''} canLaunch={canLaunch} onOpen={() => openPage(a.slug)} onChanged={refresh} />)}
       </div>
     </section>
   );
@@ -150,8 +198,9 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
       )}
       {note && (
         <p className="app-card__note app-card__note--warn" role="status">
-          {t(`apps.install.${note.kind}`).replace('{repo}', note.repo)}{' '}
+          {t(`apps.install.${note.kind}`).replace('{repo}', note.repo).replace('{why}', note.why ?? '')}{' '}
           {note.kind === 'signIn' && <><GitHubReconnect connect className="share-link" onDone={() => setNote(null)} />{' '}</>}
+          {note.retry && <button type="button" className="share-link" onClick={() => { const r = note.retry!; setNote(null); setInstallRef(r); }}>{t('apps.install.retry')}</button>}{' '}
           <button type="button" className="share-link" onClick={() => setNote(null)}>{t('apps.install.dismiss')}</button>
         </p>
       )}
@@ -207,13 +256,23 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
           loading={shared.isLoading}
           installedLook={installedLook}
           onRefresh={() => void refreshShared()}
+          installing={runningInstall}
           onInstall={(fullName) => setInstallRef(fullName)}
-          onOpen={(slug) => setPageSlug(slug)}
+          onOpen={(slug) => openPage(slug)}
           onAccepted={() => { void refreshShared(); refresh(); }}
         />
       )}
-      {pageApp && <AppPage key={pageApp.slug} app={pageApp} vault={vault ?? ''} canLaunch={canLaunch} onClose={() => setPageSlug(null)} onChanged={refresh} />}
-      {canLaunch && installRef !== null && <InstallSheet key={installRef} initialRef={installRef || undefined} onClose={() => setInstallRef(null)} onDone={(slug, handedToClaude) => { setInstallRef(null); refresh(); setTab('mine'); if (!handedToClaude) setPageSlug(slug); }} />}
+      {pageApp && <AppPage key={pageApp.slug} app={pageApp} vault={vault ?? ''} canLaunch={canLaunch} initialSheet={pageSheet} onClose={() => { setPageSlug(null); setPageSheet(null); }} onChanged={refresh} />}
+      {canLaunch && installRef !== null && (
+        <InstallSheet
+          key={installRef}
+          initialRef={installRef || undefined}
+          running={runningInstall}
+          onStarted={({ fullName, ...rest }) => followInstall(vault ?? '', fullName, rest)}
+          onClose={() => setInstallRef(null)}
+          onFinished={(fullName, error) => { answerInstall(vault ?? '', fullName, error); void status.refetch(); }}
+        />
+      )}
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { parseStoreReadme } from '../store-readme.js';
 import { readCatalog } from '../catalog.js';
 import { readAgentLogoFile } from '../app-logo.js';
 import type { AppHost } from './host.js';
+import { UNKNOWN_INVITER_TR, type MarkedInvitation } from './inviters.js';
 import { buildPublishTree, changedSincePublish, defaultPublishNote, lastPublishedFiles, publishDate, PublishError } from './publish.js';
 import { InstallError, previewInstall, previewStillThere } from './install.js';
 import { checkUpdate, localUpdateFacts } from './update.js';
@@ -172,29 +173,98 @@ export async function buildInstallPlan(ctx: PlanContext & { projectRoot: string 
   const allowed = new Set(pv.config.filter((f) => f.type !== 'secret').map((f) => f.key));
   const config: Record<string, string> = {};
   for (const [k, val] of Object.entries(input.config ?? {})) if (allowed.has(k) && typeof val === 'string') config[k] = v(val, 200);
-  const f = pv.facts;
-  const lines: AppCardLine[] = [
-    { label: 'Yazan', value: `${v(pv.publisher, 60)}${pv.publisherSince ? ` (GitHub'da ${pv.publisherSince.slice(0, 4)} yılından beri)` : ''}` },
-    { label: 'Repo', value: v(pv.fullName) },
-    { label: 'Repo türü', value: pv.public ? 'Herkese açık' : 'Özel' },
-    { label: 'Lisans', value: v(pv.license, 40) },
-    { label: 'Çalıştırır', value: f.backend ? v(f.backend, 120) : 'Arka uç yok (yalnız sayfa)' },
-  ];
-  if (f.build) lines.push({ label: 'Derleme', value: v(f.build, 120) });
-  if (f.mcp.length) lines.push({ label: 'MCP sunucuları', value: listValue(f.mcp), tone: 'warn' });
-  if (f.schedules) lines.push({ label: 'Zamanlanmış iş', value: String(f.schedules) });
-  if (f.dependencies) lines.push({ label: 'npm bağımlılığı', value: String(f.dependencies) });
-  if (f.urls.length) lines.push({ label: 'Kodundaki adresler', value: listValue(f.urls, 6) });
-  for (const [k, val] of Object.entries(config)) lines.push({ label: `Ayar: ${v(k, 40)}`, value: val });
-  const secrets = pv.config.filter((c) => c.type === 'secret').map((c) => c.key);
-  if (secrets.length) lines.push({ label: 'Anahtarlar', value: `${listValue(secrets)} (sonra sen girersin)` });
+  const lines = installLines(pv, config);
   const plan: ActionPlan = {
     vault: ctx.vault, projectRoot: ctx.projectRoot, key: pv.fullName.toLowerCase(), appName: v(pv.name, 80),
     title: 'Kur', lines,
-    warn: 'Bu app senin Mac\'inde senin izinlerinle çalışır.',
     body: { action: 'install', fullName: pv.fullName, previewId: pv.previewId, sha: pv.sha, config },
   };
   return { plan, stillFresh: async () => previewStillThere(ctx.home, pv.previewId, pv.sha) };
+}
+
+/** The licence in words (K5): never the raw kind. */
+const LICENCE: Record<string, { key: string; tr: string }> = {
+  none: { key: 'licence.none', tr: 'Lisans yok: yalnız kullanabilirsin' },
+  restricted: { key: 'licence.restricted', tr: 'Kullanabilirsin, başkasıyla paylaşamazsın' },
+  unknown: { key: 'licence.unknown', tr: 'Lisansı tanınmadı' },
+};
+function licenceLine(kind: string): AppCardLine {
+  const known = LICENCE[kind];
+  return known
+    ? { key: 'licence', label: 'Lisans', value: known.tr, valueKey: known.key }
+    : { key: 'licence', label: 'Lisans', value: `${v(kind, 40)} (açık lisans: paylaşabilirsin)`, valueKey: 'licence.open' };
+}
+
+/**
+ * An install card's lines (K5): who wrote it and where it runs first, in words; what it reaches
+ * (MCP servers, risky actions) as warnings; the technical facts (repo, what it runs, packages,
+ * addresses) under Details. Each line has a key the chat card translates.
+ */
+export function installLines(pv: Awaited<ReturnType<typeof previewInstall>>, config: Record<string, string>): AppCardLine[] {
+  const f = pv.facts;
+  const lines: AppCardLine[] = [
+    { key: 'by', label: 'Yazan', value: `${v(pv.publisher, 60)}${pv.publisherSince ? ` (GitHub'da ${pv.publisherSince.slice(0, 4)} yılından beri)` : ''}` },
+    { key: 'where', label: 'Nerede çalışır', value: 'Senin Mac\'inde, senin izinlerinle', valueKey: 'where.mac' },
+    licenceLine(pv.license),
+  ];
+  if (f.mcp.length) lines.push({ key: 'mcp', label: 'MCP sunucuları', value: listValue(f.mcp), tone: 'warn' });
+  if (f.dangerActions) lines.push({ key: 'danger', label: 'Dikkat isteyen işlem', value: String(f.dangerActions), tone: 'warn' });
+  if (f.schedules) lines.push({ key: 'schedules', label: 'Zamanlanmış iş', value: String(f.schedules) });
+  for (const [k, val] of Object.entries(config)) lines.push({ key: 'setting', label: `Ayar: ${v(k, 40)}`, value: val });
+  const secrets = pv.config.filter((c) => c.type === 'secret').map((c) => c.key);
+  if (secrets.length) lines.push({ key: 'keys', label: 'Anahtarlar', value: `${listValue(secrets)} (kurulumdan sonra, ayrı kartla)` });
+  lines.push({ key: 'repo', label: 'Repo', value: v(pv.fullName), detail: true });
+  lines.push({ key: 'runs', label: 'Çalıştırır', value: f.backend ? v(f.backend, 120) : 'Arka uç yok (yalnız sayfa)', ...(f.backend ? {} : { valueKey: 'runs.none' }), detail: true });
+  if (f.build) lines.push({ key: 'build', label: 'Derleme', value: v(f.build, 120), detail: true });
+  if (f.dependencies) lines.push({ key: 'packages', label: 'npm paketi', value: String(f.dependencies), detail: true });
+  if (f.urls.length) lines.push({ key: 'urls', label: 'Kodundaki adresler', value: listValue(f.urls, 6), detail: true });
+  return lines;
+}
+
+/** What stops an invitation install after acceptance for a second, sha-bound card (K2). */
+export function inviteWarnList(pv: Awaited<ReturnType<typeof previewInstall>>): string[] {
+  const out: string[] = [];
+  if (!pv.gate.ok) out.push(`kurulamaz: ${pv.gate.blocks.map((b) => b.label).slice(0, 3).join('; ')}`);
+  if (pv.facts.mcp.length) out.push(`MCP sunucuları: ${pv.facts.mcp.slice(0, 5).join(', ')}`);
+  if (pv.facts.dangerActions) out.push(`${pv.facts.dangerActions} dikkat isteyen işlem`);
+  if (pv.facts.npmProblem) out.push(`paket sorunu: ${pv.facts.npmProblem}`);
+  return out;
+}
+
+// ─── Install from an invitation (K2) ────────────────────────────────────────────────
+
+export interface InviteContext extends PlanContext { projectRoot: string; host: AppHost }
+
+/**
+ * The card of an install from an invitation not accepted yet. Its lines come from the host's
+ * invitation only (the content cannot be read before acceptance): who invited, known or not
+ * (S2), the readable name, where it runs, and that the content is checked after the yes.
+ * Fresh = the same invitation (id and repo id) is still listed for this login.
+ */
+export async function buildInviteInstallPlan(ctx: InviteContext, inv: MarkedInvitation, input: { config?: Record<string, unknown> }): Promise<BuiltPlan> {
+  const config: Record<string, string> = {};
+  // No manifest yet: plain values only, the spend keeps those the manifest allows.
+  for (const [k, val] of Object.entries(input.config ?? {}).slice(0, 30)) if (/^[A-Za-z0-9_.-]{1,60}$/.test(k) && typeof val === 'string') config[k] = v(val, 200);
+  const lines: AppCardLine[] = [
+    inv.known
+      ? { key: 'invitedBy', label: 'Davet eden', value: v(inv.inviter, 60) }
+      : { key: 'invitedByUnknown', label: 'Davet eden', value: `${v(inv.inviter, 60)} (${UNKNOWN_INVITER_TR})`, tone: 'warn' },
+    { key: 'where', label: 'Nerede çalışır', value: 'Senin Mac\'inde, senin izinlerinle', valueKey: 'where.mac' },
+    { key: 'checked', label: 'İçerik', value: 'Onaylarsan daveti kabul edip içeriğine bakar. MCP sunucusu, dikkat isteyen işlem ya da paket sorunu çıkarsa kurmadan durur, ayrı bir kartla sorar.', valueKey: 'checked.after' },
+  ];
+  for (const [k, val] of Object.entries(config)) lines.push({ key: 'setting', label: `Ayar: ${v(k, 40)}`, value: val });
+  lines.push({ key: 'repo', label: 'Repo', value: v(inv.fullName), detail: true });
+  const plan: ActionPlan = {
+    vault: ctx.vault, projectRoot: ctx.projectRoot, key: inv.fullName.toLowerCase(), appName: v(inv.title, 80),
+    title: 'Daveti kabul et ve kur', lines,
+    ...(inv.known ? {} : { warn: `Bu davet ${UNKNOWN_INVITER_TR}ndan geliyor.` }),
+    body: { action: 'install-invite', fullName: inv.fullName, repoId: inv.repoId, invitationId: inv.id, inviter: inv.inviter, known: inv.known, config },
+  };
+  const stillFresh = async () => {
+    const now = await ctx.host.listInvitations().catch(() => null);
+    return !!now?.some((x) => x.id === inv.id && x.repoId === inv.repoId && x.fullName.toLowerCase() === inv.fullName.toLowerCase());
+  };
+  return { plan, stillFresh };
 }
 
 // ─── Logo ───────────────────────────────────────────────────────────────────────────

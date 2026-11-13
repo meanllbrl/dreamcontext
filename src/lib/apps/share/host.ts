@@ -22,6 +22,8 @@ import { withGitCredentials } from '../../git-sync/credentials.js';
 import { initHardRepo, installedGit } from './installed-git.js';
 
 export const APP_TOPIC = 'dreamcontext-app';
+/** Invitees READ a shared app; they never push to it (S1, an invariant a test pins). */
+export const ADD_PERMISSION = 'pull' as const;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const REPO_RE = /^[A-Za-z0-9._-]{1,100}$/;
 
@@ -47,7 +49,16 @@ export interface HostUser {
 export interface Invitation {
   id: string;
   fullName: string;
+  /** The repo's own id (GitHub `repository.id`): a request binds to it, so a renamed or
+   *  recreated repo under the same name is a different invitation. */
+  repoId: string;
   inviter: string;
+}
+
+/** Who can read one of my repos, and who still has my invitation to it (K7). */
+export interface RepoPeople {
+  collaborators: string[];
+  pending: string[];
 }
 
 export class HostError extends Error {
@@ -64,7 +75,10 @@ export interface AppHost {
   createRepo(name: string, opts: { private: boolean; description: string }): Promise<RepoInfo>;
   setTopics(fullName: string, topics: string[]): Promise<void>;
   setVisibility(fullName: string, isPublic: boolean): Promise<void>;
+  /** Adds a READ-ONLY collaborator (`pull`): a shared app is never writable by its invitees. */
   addCollaborator(fullName: string, login: string): Promise<void>;
+  /** The people of one repo the signed-in account can see (its own repos: also the pending ones). */
+  repoPeople(fullName: string): Promise<RepoPeople>;
   listAppRepos(): Promise<RepoInfo[]>;
   listInvitations(): Promise<Invitation[]>;
   acceptInvitation(id: string): Promise<void>;
@@ -171,7 +185,17 @@ export class GitHubHost implements AppHost {
   async addCollaborator(fullName: string, login: string): Promise<void> {
     const { owner, repo } = splitFullName(fullName);
     if (!NAME_RE.test(login)) throw new HostError('bad_name', `"${login}" is not a GitHub login`);
-    await this.req('PUT', `/repos/${owner}/${repo}/collaborators/${login}`, { body: { permission: 'pull' } });
+    await this.req('PUT', `/repos/${owner}/${repo}/collaborators/${login}`, { body: { permission: ADD_PERMISSION } });
+  }
+  async repoPeople(fullName: string): Promise<RepoPeople> {
+    const { owner, repo } = splitFullName(fullName);
+    const rows = await this.req<Array<{ login: string }>>('GET', `/repos/${owner}/${repo}/collaborators`, { query: { per_page: 100, affiliation: 'direct' } });
+    // The pending list is the repo admin's only; anyone else reads collaborators alone.
+    const inv = await this.req<Array<{ invitee?: { login: string } }>>('GET', `/repos/${owner}/${repo}/invitations`, { query: { per_page: 100 } }).catch(() => []);
+    return {
+      collaborators: (rows ?? []).map((r) => r.login).filter((l) => NAME_RE.test(l)),
+      pending: (inv ?? []).map((r) => r.invitee?.login ?? '').filter((l) => NAME_RE.test(l)),
+    };
   }
   async listAppRepos(): Promise<RepoInfo[]> {
     this.need();
@@ -185,8 +209,8 @@ export class GitHubHost implements AppHost {
   }
   async listInvitations(): Promise<Invitation[]> {
     this.need();
-    const rows = await this.req<Array<{ id: number; repository: { full_name: string }; inviter?: { login: string } }>>('GET', '/user/repository_invitations');
-    return (rows ?? []).map((r) => ({ id: String(r.id), fullName: r.repository.full_name, inviter: r.inviter?.login ?? '' }));
+    const rows = await this.req<Array<{ id: number; repository: { id: number; full_name: string }; inviter?: { login: string } }>>('GET', '/user/repository_invitations');
+    return (rows ?? []).map((r) => ({ id: String(r.id), fullName: r.repository.full_name, repoId: String(r.repository.id), inviter: r.inviter?.login ?? '' }));
   }
   async acceptInvitation(id: string): Promise<void> {
     this.need();
@@ -222,7 +246,7 @@ interface LocalMeta {
   private: boolean;
   topics: string[];
   collaborators: string[];
-  invitations: Array<{ id: string; login: string; inviter: string }>;
+  invitations: Array<{ id: string; login: string; inviter: string; permission?: string }>;
   createdAt: string;
   description: string;
 }
@@ -280,8 +304,14 @@ export class LocalHost implements AppHost {
   async addCollaborator(fullName: string, login: string): Promise<void> {
     const o = this.own(fullName);
     if (!NAME_RE.test(login)) throw new HostError('bad_name', 'bad login');
-    if (!o.m.collaborators.includes(login) && !o.m.invitations.some((i) => i.login === login)) o.m.invitations.push({ id: String(Date.now() % 1e9 + o.m.invitations.length), login, inviter: o.owner });
+    if (!o.m.collaborators.includes(login) && !o.m.invitations.some((i) => i.login === login)) o.m.invitations.push({ id: String(Date.now() % 1e9 + o.m.invitations.length), login, inviter: o.owner, permission: ADD_PERMISSION });
     this.writeMeta(o.owner, o.repo, o.m);
+  }
+  async repoPeople(fullName: string): Promise<RepoPeople> {
+    const { owner, repo } = splitFullName(fullName);
+    const m = this.readMeta(owner, repo);
+    if (!m || !this.canRead(owner, m)) throw new HostError('not_found', 'not found');
+    return { collaborators: [...m.collaborators], pending: owner === this.login ? m.invitations.map((i) => i.login) : [] };
   }
   private *all(): Generator<{ owner: string; repo: string; m: LocalMeta }> {
     if (!existsSync(this.dir)) return;
@@ -306,7 +336,7 @@ export class LocalHost implements AppHost {
   async listInvitations(): Promise<Invitation[]> {
     const me = this.need();
     const out: Invitation[] = [];
-    for (const { owner, repo, m } of this.all()) for (const i of m.invitations) if (i.login === me) out.push({ id: i.id, fullName: `${owner}/${repo}`, inviter: i.inviter });
+    for (const { owner, repo, m } of this.all()) for (const i of m.invitations) if (i.login === me) out.push({ id: i.id, fullName: `${owner}/${repo}`, repoId: m.id, inviter: i.inviter });
     return out;
   }
   async acceptInvitation(id: string): Promise<void> {

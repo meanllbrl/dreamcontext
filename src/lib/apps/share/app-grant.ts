@@ -8,7 +8,7 @@
  *
  * One live grant per (project, app key, action); a newer one replaces the older (its id then
  * answers `replaced`). An hour to spend it. `done(true)` spends it (the id answers `used` for
- * another hour), `done(false)` frees it for a retry inside the same hour (the gate stopped it).
+ * another hour; a reason with it says what the spend held back), `done(false)` frees it for a retry inside the same hour (the gate stopped it).
  * Memory only: a restart drops every grant, and no file an agent can write can make one.
  */
 
@@ -37,7 +37,7 @@ const grants = new Map<string, Grant>();
 const spent = new Map<string, Gone[]>();
 /** Ids a newer grant on the same slot replaced: "the owner opened a newer one". */
 const replaced = new Map<string, Gone[]>();
-const spentListeners = new Set<(requestId: string) => void>();
+const spentListeners = new Set<(requestId: string, stopped: string | null) => void>();
 
 const slotOf = (projectRoot: string, key: string, action: AppAction) => `${projectRoot}\0${key}\0${action}`;
 
@@ -58,8 +58,23 @@ function sweep(now: number): void {
   for (const map of [spent, replaced]) for (const [k, list] of map) { const live = list.filter((x) => x.until > now); if (live.length) map.set(k, live); else map.delete(k); }
 }
 
-/** A grant spent by a bound request: the request module marks its request used. */
-export function onAppGrantSpent(fn: (requestId: string) => void): () => void {
+/** A bound grant's run (K4): taken, or let go with the spend's reason (null: refused before it
+ *  ran, e.g. a stale check, so nothing failed). The request module turns these into card states. */
+export type GrantRunEvent = { kind: 'taken' } | { kind: 'released'; reason: string | null };
+const runListeners = new Set<(requestId: string, e: GrantRunEvent) => void>();
+export function onAppGrantRun(fn: (requestId: string, e: GrantRunEvent) => void): () => void {
+  runListeners.add(fn);
+  return () => { runListeners.delete(fn); };
+}
+function tellRun(requestId: string | null, e: GrantRunEvent): void {
+  if (!requestId) return;
+  for (const fn of [...runListeners]) { try { fn(requestId, e); } catch { /* a listener's failure is its own */ } }
+}
+
+/** A grant spent by a bound request: the request module marks its request used. `stopped` is the
+ *  part the yes did NOT do (an invitation accepted, its install held back for its own card): the
+ *  card must say that, never "installed". */
+export function onAppGrantSpent(fn: (requestId: string, stopped: string | null) => void): () => void {
   spentListeners.add(fn);
   return () => { spentListeners.delete(fn); };
 }
@@ -93,6 +108,13 @@ export function mintAppGrant(input: MintInput): { id: string; expiresAt: number;
   return { id: g.id, expiresAt: g.expiresAt, visibility: g.visibility };
 }
 
+/** The visibility of this slot's live grant (`apps job` says it), or null: never takes or extends it. */
+export function peekAppGrant(projectRoot: string, key: string, action: AppAction, id: unknown, now = Date.now()): GrantVisibility | null {
+  if (typeof id !== 'string' || !id) return null;
+  const g = grants.get(slotOf(projectRoot, key, action));
+  return g && sameId(id, g.id) && g.expiresAt > now ? g.visibility : null;
+}
+
 /** True when `id` is the live grant of this slot. Constant time on the id. */
 export function checkAppGrant(projectRoot: string, key: string, action: AppAction, id: unknown, now = Date.now()): boolean {
   if (typeof id !== 'string' || !id) return false;
@@ -101,7 +123,7 @@ export function checkAppGrant(projectRoot: string, key: string, action: AppActio
 }
 
 export type TakeResult =
-  | { ok: true; plan: ActionPlan | null; visibility: GrantVisibility; requestId: string | null; done: (sent: boolean, fullName?: string | null) => void }
+  | { ok: true; plan: ActionPlan | null; visibility: GrantVisibility; requestId: string | null; done: (sent: boolean, fullName?: string | null, reason?: string | null) => void }
   | { ok: false; why: AppGrantRefusal; fullName?: string | null; at?: string };
 
 /**
@@ -125,17 +147,19 @@ export function takeAppGrant(input: { projectRoot: string; key: string; action: 
   if (g.busy) return { ok: false, why: 'running' };
   if (g.expiresAt <= now) { grants.delete(slot); return { ok: false, why: 'expired' }; }
   g.busy = true;
+  tellRun(g.requestId, { kind: 'taken' });
   return {
     ok: true,
     plan: g.plan,
     visibility: g.visibility,
     requestId: g.requestId,
-    done: (sent: boolean, fullName: string | null = null) => {
+    done: (sent: boolean, fullName: string | null = null, reason: string | null = null) => {
       if (grants.get(slot) !== g) return;
-      if (!sent) { g.busy = false; return; }
+      if (!sent) { g.busy = false; tellRun(g.requestId, { kind: 'released', reason }); return; }
       grants.delete(slot);
       remember(spent, slot, { id: g.id, until: g.expiresAt + APP_GRANT_TTL_MS, fullName, at: new Date(now).toISOString() }, now);
-      if (g.requestId) for (const fn of [...spentListeners]) { try { fn(g.requestId); } catch { /* a listener's failure is its own */ } }
+      const stopped = reason ? reason : null;
+      if (g.requestId) for (const fn of [...spentListeners]) { try { fn(g.requestId, stopped); } catch { /* a listener's failure is its own */ } }
     },
   };
 }

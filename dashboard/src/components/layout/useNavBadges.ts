@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAgentFeed } from '../../hooks/useAutomations';
 import { useTheses } from '../../hooks/useTheses';
 import { useInstanceEvent } from '../../context/VaultContext';
+import { useAppsWaiting } from '../../hooks/useAppsWaiting';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { AGENT_SURFACE_EXPANDED_EVENT, agentSurfaceSettings, onAgentSettings, readAgentSettings } from '../../lib/agentSettings';
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
@@ -46,5 +47,7 @@ export function useNavBadges() {
   // While the overlay covers the page, Chat is where the user IS — one active row, not two.
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
-  return { agentUnread, learningOff, showChat, chatRollup, chatOpen };
+  // Apps: a dot when something from a person this account works with waits (K1, S2).
+  const appsWaiting = useAppsWaiting();
+  return { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting };
 }

@@ -331,11 +331,11 @@ import {
 } from './routes/apps.js';
 import { closeAllGateways, configureGateways } from './apps/gateway.js';
 import {
-  handleSharedList, handleSharedAccept, handleInstallPreview, handleInstall, handleTrashList, handleTrashRestore,
-  handlePublishGrant, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleAppLogoSet, handleAppLogoReset, handleUpdateCheck, handleUpdateUndo,
+  handleSharedList, handleSharedWaiting, handleInstallStatus, handleSharedAccept, handleInstallPreview, handleInstall, handleTrashList, handleTrashRestore,
+  handlePublishGrant, handlePublishGrantCheck, handleAppConfigSuggest, handleSharePeople, handleShareInvite, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleAppLogoSet, handleAppLogoReset, handleUpdateCheck, handleUpdateUndo,
   handleUpdateApply, handleAutoUpdate, handleDetach, handleUninstall,
 } from './routes/apps-share.js';
-import { handleAppRequestCard, handleAppRequestCreate, handleAppRequestLogo, handleAppRequestShown, handleAppRequestStatus } from './routes/apps-requests.js';
+import { handleAppRequestCard, handleAppRequestCreate, handleAppRequestLogo, handleAppRequestReceipt, handleAppRequestShown, handleAppRequestStatus } from './routes/apps-requests.js';
 import { setAppRequestDelivery } from '../lib/apps/share/app-request.js';
 import { relayCommand } from '../lib/assistant/relay.js';
 import { isSuperManaged } from '../lib/super/inbox.js';
@@ -553,6 +553,8 @@ export function buildRouter(): Router {
   router.post('/api/apps/embed-check', handleAppsEmbedCheck);
   // Shared apps (src/server/routes/apps-share.ts): the fixed paths first.
   router.get('/api/apps/shared', handleSharedList);
+  router.get('/api/apps/shared/waiting', handleSharedWaiting);
+  router.get('/api/apps/install/status', handleInstallStatus);
   router.post('/api/apps/shared/accept', handleSharedAccept);
   router.post('/api/apps/install/preview', handleInstallPreview);
   router.post('/api/apps/install', handleInstall);
@@ -562,12 +564,17 @@ export function buildRouter(): Router {
   router.post('/api/apps/requests', handleAppRequestCreate);
   router.get('/api/apps/requests/card/:proposal', handleAppRequestCard);
   router.post('/api/apps/requests/card/:proposal/shown', handleAppRequestShown);
+  router.post('/api/apps/requests/card/:proposal/receipt', handleAppRequestReceipt);
   router.get('/api/apps/requests/:id/logo', handleAppRequestLogo);
   router.get('/api/apps/requests/:id', handleAppRequestStatus);
+  router.post('/api/apps/:slug/publish/grant/check', handlePublishGrantCheck);
   router.post('/api/apps/:slug/publish/grant', handlePublishGrant);
   router.get('/api/apps/:slug/store', handleAppStore);
   router.post('/api/apps/:slug/publish', handlePublish);
+  router.get('/api/apps/:slug/config/suggest', handleAppConfigSuggest);
   router.get('/api/apps/:slug/config', handleAppConfigGet);
+  router.get('/api/apps/:slug/share/people', handleSharePeople);
+  router.post('/api/apps/:slug/share/invite', handleShareInvite);
   router.post('/api/apps/:slug/config', handleAppConfigSet);
   router.post('/api/apps/:slug/logo', handleAppLogoSet);
   router.post('/api/apps/:slug/logo/reset', handleAppLogoReset);
@@ -1751,8 +1758,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // An approved app request: one "[app onayı]" line into the requester's own chat (D10). A
     // Super child is the Super's to steer: its CLI wait carries the grant instead.
     setAppRequestDelivery(async (chat, text) => {
-      if (isSuperManaged(chat.sessionId)) return;
-      await relayCommand('send', { sessionId: chat.sessionId, vault: chat.vault, text });
+      if (isSuperManaged(chat.sessionId)) return true;
+      return (await relayCommand('send', { sessionId: chat.sessionId, vault: chat.vault, text })).ok;
     });
     // The Super Agent's in-memory index and inbox come up BEFORE the server listens, so before
     // any chat can register (plan-r7 D16): a handed-over child's first question is already

@@ -15,7 +15,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { APP_PROPOSAL_TIMEOUT_MS, closeProposal, createProposal, setProposalApp, type AppCardLine, type AppCardView, type AppRequestVerb } from '../../assistant/proposals.js';
 import { getChat, listChats, type ChatEntry } from '../../assistant/chat-registry.js';
-import { APP_GRANT_TTL_MS, mintAppGrant, onAppGrantSpent, type AppAction, type GrantVisibility } from './app-grant.js';
+import { APP_GRANT_TTL_MS, mintAppGrant, onAppGrantRun, onAppGrantSpent, type AppAction, type GrantVisibility } from './app-grant.js';
 
 export type { AppAction };
 
@@ -56,6 +56,22 @@ export interface InstallPlan {
   sha: string;
   config: Record<string, string>;
 }
+/**
+ * An install from an invitation not accepted yet (app-ux-genel K2): a pending invitation gives no
+ * read access, so there is no sha to bind to. The plan binds to the invitation itself (its id AND
+ * its repo's id); the spend accepts exactly it, previews, and installs only when the content has
+ * nothing on the warn list; otherwise it stops and a normal sha-bound card shows the facts.
+ */
+export interface InviteInstallPlan {
+  action: 'install-invite';
+  fullName: string;
+  repoId: string;
+  invitationId: string;
+  inviter: string;
+  /** S2: computed by the server from `knownInviters`, never the agent's word. */
+  known: boolean;
+  config: Record<string, string>;
+}
 export interface LogoPlan {
   action: 'logo';
   slug: string;
@@ -63,7 +79,13 @@ export interface LogoPlan {
   type: 'image/png' | 'image/jpeg';
 }
 
-export type ActionBody = PublishPlan | UpdatePlan | InstallPlan | LogoPlan;
+export type ActionBody = PublishPlan | UpdatePlan | InstallPlan | InviteInstallPlan | LogoPlan;
+export type BodyAction = ActionBody['action'];
+
+/** The grant slot a body spends: an invitation install is an install. */
+export function grantActionOf(action: BodyAction): AppAction {
+  return action === 'install-invite' ? 'install' : action;
+}
 
 export interface ActionPlan {
   vault: string;
@@ -78,7 +100,9 @@ export interface ActionPlan {
   body: ActionBody;
 }
 
-export type RequestState = 'pending' | 'approved' | 'rejected' | 'expired' | 'stale' | 'replaced' | 'used';
+/** `running` and `failed` come from the run itself (K4): the grant was taken, or its spend ended
+ *  with a reason; never from the decision. */
+export type RequestState = 'pending' | 'approved' | 'running' | 'failed' | 'rejected' | 'expired' | 'stale' | 'replaced' | 'used';
 
 interface AppRequest {
   id: string;
@@ -90,6 +114,16 @@ interface AppRequest {
   createdAt: number;
   grant: { id: string; expiresAt: number } | null;
   spent: boolean;
+  /** K4: the run's own facts. `running` while its grant is held; `failed` the last spend's plain
+   *  reason (a retry inside the hour clears it); `delivered` whether the "[app onayı]" line reached
+   *  the asking chat (null: not settled yet); `receipt` the one chat card that posted it instead. */
+  running: boolean;
+  failed: string | null;
+  /** A spend that used the yes but held part of it back (an invitation accepted, its install
+   *  stopped for its own card): the plain reason. The card says "accepted, not installed". */
+  stopped: string | null;
+  delivered: boolean | null;
+  receipt: boolean;
   /** The requester's chat ids (tab pin id, agent session id): delivery only. */
   agentSessions: string[];
   logo: Buffer | null;
@@ -112,7 +146,9 @@ export const MAX_OPEN_REQUESTS = 10;
 export const MAX_WAITERS = 16;
 export const MAX_WAIT_S = 110;
 
-const VERB: Record<AppAction, AppRequestVerb> = { publish: 'app-publish', update: 'app-update', install: 'app-install', logo: 'app-logo' };
+const VERB: Record<BodyAction, AppRequestVerb> = { publish: 'app-publish', update: 'app-update', install: 'app-install', 'install-invite': 'app-install', logo: 'app-logo' };
+/** What the card view calls the action (an invitation install draws as an install). */
+const viewAction = (a: BodyAction): AppAction => grantActionOf(a);
 export const RENEWAL_TITLE = 'Süresi doldu: yeniden onaylıyor musun?';
 
 const requests = new Map<string, AppRequest>();
@@ -122,15 +158,29 @@ const waiters = new Map<string, Set<() => void>>();
 let waiting = 0;
 type Opened = (r: { id: string; vault: string; view: AppCardView; hash: string; logo: Buffer | null }) => void;
 const openedListeners = new Set<Opened>();
-type Deliver = (chat: ChatEntry, text: string) => Promise<void>;
+/** Resolves true when the line reached the chat (the notch relayed it), false when it did not. */
+type Deliver = (chat: ChatEntry, text: string) => Promise<boolean>;
 let deliver: Deliver | null = null;
 
 const slotOf = (p: Pick<ActionPlan, 'projectRoot' | 'key' | 'body'>) => `${p.projectRoot}\0${p.key}\0${p.body.action}`;
 
-onAppGrantSpent((requestId) => {
+onAppGrantSpent((requestId, stopped) => {
   const r = requests.get(requestId);
-  if (r) { r.spent = true; r.state = 'used'; }
+  if (r) { r.spent = true; r.state = 'used'; r.running = false; r.failed = null; r.stopped = stopped ? cleanReason(stopped) : null; }
 });
+onAppGrantRun((requestId, event) => {
+  const r = requests.get(requestId);
+  if (!r) return;
+  if (event.kind === 'taken') { r.running = true; r.failed = null; return; }
+  r.running = false;
+  if (event.reason) r.failed = cleanReason(event.reason);
+});
+
+/** A spend's reason, as one short plain line (never a stack, never a path past its name). */
+function cleanReason(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
 
 /** Canonical JSON: keys sorted, so one plan always hashes the same. */
 function canonical(v: unknown): string {
@@ -186,7 +236,9 @@ function wake(id: string): void {
 
 /** The state an agent reads: an approved grant that ran out unused reads `expired`. */
 function stateOf(r: AppRequest, now: number): RequestState {
+  if (r.state === 'approved' && r.running) return 'running';
   if (r.state === 'approved' && r.grant && r.grant.expiresAt <= now && !r.spent) return 'expired';
+  if (r.state === 'approved' && r.failed) return 'failed';
   return r.state;
 }
 
@@ -195,7 +247,7 @@ export function spendCommand(plan: ActionPlan, grant: string): string {
   const b = plan.body;
   if (b.action === 'publish') return `dreamcontext apps publish ${b.slug} --go --grant ${grant}`;
   if (b.action === 'update') return `dreamcontext apps update ${b.slug} --apply --grant ${grant}`;
-  if (b.action === 'install') return `dreamcontext apps install ${b.fullName} --go --grant ${grant}`;
+  if (b.action === 'install' || b.action === 'install-invite') return `dreamcontext apps install ${b.fullName} --go --grant ${grant}`;
   return `dreamcontext apps logo ${b.slug} --grant ${grant}`;
 }
 
@@ -242,7 +294,7 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
   const id = randomBytes(18).toString('base64url');
   const pid = { value: '' };
   const view = (): AppCardView => ({
-    action: plan.body.action, appName: plan.appName, vault: plan.vault, title: plan.title, lines: plan.lines,
+    action: viewAction(plan.body.action), appName: plan.appName, vault: plan.vault, title: plan.title, lines: plan.lines,
     ...(plan.warn ? { warn: plan.warn } : {}),
     ...(input.logo ? { image: `/api/apps/requests/${pid.value}/logo` } : {}),
     ...(plan.renewal ? { renewal: true } : {}),
@@ -252,13 +304,14 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
   const { view: pv, decision } = createProposal({
     verb: VERB[plan.body.action], target: `${plan.vault} · ${plan.appName}`, text: plan.title,
     provenance: 'an agent asks for an app action; Onayla lets it do exactly this, once',
-    app: { action: plan.body.action, appName: plan.appName, vault: plan.vault, title: plan.title, lines: plan.lines, hash },
+    app: { action: viewAction(plan.body.action), appName: plan.appName, vault: plan.vault, title: plan.title, lines: plan.lines, hash },
   }, REQUEST_LIFETIME_MS);
   // The proposal store keeps its own copy of the view; the image path needs the proposal id.
   pid.value = pv.id;
   setProposalApp(pv.id, view());
   const req: AppRequest = {
     id, proposalId: pv.id, plan, hash, renewHash, state: 'pending', createdAt: now, grant: null, spent: false,
+    running: false, failed: null, stopped: null, delivered: null, receipt: false,
     agentSessions: input.agentSessions ?? [], logo: input.logo ?? null, stillFresh: input.stillFresh,
     shown: new Set(), view,
   };
@@ -312,7 +365,7 @@ export async function decideAppRequest(ref: { id?: string; proposalId?: string }
   }
   const now = opts.now ?? Date.now();
   const visibility = r.plan.body.action === 'publish' ? r.plan.body.visibility : 'private';
-  const g = mintAppGrant({ projectRoot: r.plan.projectRoot, key: r.plan.key, action: r.plan.body.action, plan: r.plan, visibility, requestId: r.id, now });
+  const g = mintAppGrant({ projectRoot: r.plan.projectRoot, key: r.plan.key, action: grantActionOf(r.plan.body.action), plan: r.plan, visibility, requestId: r.id, now });
   if (!g) {
     r.state = 'pending';
     return { ok: false, error: 'running' };
@@ -320,19 +373,21 @@ export async function decideAppRequest(ref: { id?: string; proposalId?: string }
   r.grant = { id: g.id, expiresAt: g.expiresAt };
   closeProposal(r.proposalId, { outcome: 'approved', text: r.plan.title });
   wake(r.id);
-  void deliverApproval(r).catch(() => {});
+  // Settles `delivered` (K4); the decide never waits on the relay.
+  void deliverApproval(r).then((ok) => { r.delivered = ok; }, () => { r.delivered = false; });
   return { ok: true, state: 'approved' };
 }
 
 /** What `GET /api/apps/requests/:id` answers. The grant only to whoever holds the request id. */
-export function appRequestStatus(id: string, now = Date.now()): { state: RequestState | 'unknown'; shown?: CardSurface[]; grant?: { id: string; expiresAt: string; command: string } } {
+export function appRequestStatus(id: string, now = Date.now()): { state: RequestState | 'unknown'; shown?: CardSurface[]; failed?: string; stopped?: string; grant?: { id: string; expiresAt: string; command: string } } {
   sweep(now);
   const r = requests.get(id);
   if (!r) return { state: 'unknown' };
   const state = stateOf(r, now);
   const shown = CARD_SURFACES.filter((s) => r.shown.has(s));
-  if (state === 'approved' && r.grant) return { state, shown, grant: { id: r.grant.id, expiresAt: new Date(r.grant.expiresAt).toISOString(), command: spendCommand(r.plan, r.grant.id) } };
-  return { state, shown };
+  // A failed spend keeps its grant for a retry inside the hour: the agent still gets it.
+  const grant = (state === 'approved' || state === 'failed') && r.grant ? { grant: { id: r.grant.id, expiresAt: new Date(r.grant.expiresAt).toISOString(), command: spendCommand(r.plan, r.grant.id) } } : {};
+  return { state, shown, ...(state === 'failed' && r.failed ? { failed: r.failed } : {}), ...(state === 'used' && r.stopped ? { stopped: r.stopped } : {}), ...grant };
 }
 
 /**
@@ -349,14 +404,18 @@ export function markAppRequestShown(ref: { id?: string; proposalId?: string }, w
 }
 
 /** The request behind a card (its proposal id), for the chat card: its state and plan hash. */
-export function appRequestByProposal(proposalId: string, now = Date.now()): { id: string; state: RequestState; hash: string; view: AppCardView } | null {
+export function appRequestByProposal(proposalId: string, now = Date.now()): { id: string; state: RequestState; hash: string; view: AppCardView; failed?: string; stopped?: string; receiptOwed?: boolean } | null {
   sweep(now);
   const id = byProposal.get(proposalId);
   const r = id ? requests.get(id) : undefined;
   if (!r) return null;
+  const state = stateOf(r, now);
   return {
-    id: r.id, state: stateOf(r, now), hash: r.hash,
-    view: { action: r.plan.body.action, appName: r.plan.appName, vault: r.plan.vault, title: r.plan.title, lines: r.plan.lines, ...(r.plan.warn ? { warn: r.plan.warn } : {}), ...(r.logo ? { image: `/api/apps/requests/${r.proposalId}/logo` } : {}), ...(r.plan.renewal ? { renewal: true } : {}), hash: r.hash },
+    id: r.id, state, hash: r.hash,
+    ...(state === 'failed' && r.failed ? { failed: r.failed } : {}),
+    ...(state === 'used' && r.stopped ? { stopped: r.stopped } : {}),
+    ...(state === 'approved' && r.delivered === false && !r.receipt ? { receiptOwed: true } : {}),
+    view: { action: viewAction(r.plan.body.action), appName: r.plan.appName, vault: r.plan.vault, title: r.plan.title, lines: r.plan.lines, ...(r.plan.warn ? { warn: r.plan.warn } : {}), ...(r.logo ? { image: `/api/apps/requests/${r.proposalId}/logo` } : {}), ...(r.plan.renewal ? { renewal: true } : {}), hash: r.hash },
   };
 }
 
@@ -409,7 +468,7 @@ export function appRequestOpen(id: string): { hash: string } | null {
 export function openAppRequests(): Array<{ id: string; vault: string; view: AppCardView; hash: string; logo: Buffer | null }> {
   return [...requests.values()].filter((r) => r.state === 'pending').sort((a, b) => a.createdAt - b.createdAt).map((r) => ({
     id: r.id, vault: r.plan.vault, hash: r.hash, logo: r.logo,
-    view: { action: r.plan.body.action, appName: r.plan.appName, vault: r.plan.vault, title: r.plan.title, lines: r.plan.lines, ...(r.plan.warn ? { warn: r.plan.warn } : {}), hash: r.hash },
+    view: { action: viewAction(r.plan.body.action), appName: r.plan.appName, vault: r.plan.vault, title: r.plan.title, lines: r.plan.lines, ...(r.plan.warn ? { warn: r.plan.warn } : {}), hash: r.hash },
   }));
 }
 
@@ -431,18 +490,45 @@ export function findRequesterChat(sessionId: string | null, vault: string): Chat
 
 export function setAppRequestDelivery(fn: Deliver | null): void { deliver = fn; }
 
-const ACTION_WORD: Record<AppAction, string> = { publish: 'yayın', update: 'güncelleme', install: 'kurulum', logo: 'logo' };
+const ACTION_WORD: Record<BodyAction, string> = { publish: 'yayın', update: 'güncelleme', install: 'kurulum', 'install-invite': 'kurulum', logo: 'logo' };
 
 /** Fixed words, the app's key and the command; never agent text (D6). */
 export function approvalLine(plan: ActionPlan, grant: string): string {
   return `[app onayı] ${plan.key} için ${ACTION_WORD[plan.body.action]} onaylandı. Bir kez çalıştır: ${spendCommand(plan, grant)}`;
 }
 
-async function deliverApproval(r: AppRequest): Promise<void> {
-  if (!deliver || !r.grant) return;
+/** The chat card's receipt (K4, S6): fixed words, the app's key and the request's own read
+ *  command. It carries NO grant: `apps grant <request>` hands it to whoever holds the id. */
+export function receiptLine(plan: ActionPlan, requestId: string): string {
+  return `[app onayı] ${plan.key} için ${ACTION_WORD[plan.body.action]} onaylandı. Şimdi çalıştır: dreamcontext apps grant ${requestId}`;
+}
+
+async function deliverApproval(r: AppRequest): Promise<boolean> {
+  if (!deliver || !r.grant) return false;
   const chat = r.agentSessions.map((s) => findRequesterChat(s, r.plan.vault)).find(Boolean) ?? null;
-  if (!chat) return;
-  await deliver(chat, approvalLine(r.plan, r.grant.id));
+  if (!chat) return false;
+  return deliver(chat, approvalLine(r.plan, r.grant.id));
+}
+
+/**
+ * A chat card claims the receipt (K4): the owner's yes came from somewhere (this card, the notch,
+ * Telegram) but the "[app onayı]" line did not reach the asking chat. The first claim wins and
+ * gets the line to post; any later one, and any request whose line was delivered, gets null.
+ */
+export function claimAppRequestReceipt(proposalId: string, now = Date.now()): { line: string } | { error: 'unknown' | 'not_owed' | 'claimed' } {
+  const id = byProposal.get(proposalId);
+  const r = id ? requests.get(id) : undefined;
+  if (!r) return { error: 'unknown' };
+  if (r.receipt) return { error: 'claimed' };
+  const live = r.state === 'approved' && !!r.grant && !r.spent && r.grant.expiresAt > now;
+  if (!live || r.delivered !== false) return { error: 'not_owed' };
+  r.receipt = true;
+  return { line: receiptLine(r.plan, r.id) };
+}
+
+/** The chats a request was asked from: a follow-up card the spend opens goes to the same chat. */
+export function requestSessionsOf(requestId: string): string[] {
+  return [...(requests.get(requestId)?.agentSessions ?? [])];
 }
 
 /** Tests only: restart drops every request (G8). */

@@ -1,17 +1,16 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useApi, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { ConfigSheet, ConfirmSheet, Sheet, UpdateSheet, useShareT } from './ShareSheets';
 import { AppIcon } from './AppIcon';
 import { About, CanList, FactStrip, ProductTop, Shots, WhatsNew, shortDate, type CanLine, type StoreEntry } from './StorePage';
-import { askAgent } from './askAgent';
+import { askAgent, handOff } from './askAgent';
 import { routePublish } from './publishHandoff';
 import { openSuperFromPage, readSuperPresence, sendFromPage } from '../../lib/superPageBridge';
 import { settingsPrompt } from './settingsPrompt';
-import { preparePrompt } from '../../lib/agentPrompt';
-import { requestDelegateAgent } from '../../lib/delegateAgent';
 import { confirmAction } from '../../lib/desktop';
+import { copyPreservingUnicode } from '../../lib/clipboard';
 import { AppDataLine, AppDataTileLine, type AppDataView } from './AppDataNotice';
 
 /** One app as `GET /api/apps` returns it (src/server/routes/apps.ts `publicStatus`). */
@@ -55,7 +54,7 @@ export interface AppRow {
   data?: AppDataView;
 }
 
-type ShareOpen = 'config' | 'update' | 'detach' | 'uninstall' | null;
+export type ShareOpen = 'config' | 'update' | 'detach' | 'uninstall' | null;
 
 function when(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -83,8 +82,13 @@ function tileBadge(app: AppRow): { key: string; tone: 'warn' | 'accent' | 'plain
   if (app.state === 'error') return { key: 'store.badge.problem', tone: 'warn' };
   if (app.origin === 'installed' && app.source?.available) return { key: 'store.badge.update', tone: 'accent' };
   if (app.origin === 'installed' && !app.source && app.provenance) return { key: 'store.badge.ownCopy', tone: 'plain' };
-  if (app.publish) return { key: app.publish.public ? 'store.badge.public' : 'store.badge.shared', tone: 'plain' };
   return null;
+}
+
+/** An own published app's tile line (K7): shared, public, or a newer version not out yet. */
+function sharedLine(app: AppRow): string | null {
+  if (!app.publish || (app.origin === 'installed' && app.source)) return null;
+  return app.unpublished ? 'store.tile.unpublished' : app.publish.public ? 'store.tile.public' : 'store.tile.shared';
 }
 
 /** Launch or stop: the tile's Open and the page's Open/Stop share it. */
@@ -111,7 +115,8 @@ export function AppTile({ app, vault, canLaunch, onOpen, onChanged }: { app: App
   const live = (app.windows ?? 0) > 0;
   const { busy, err, run } = useRun(app.slug, onChanged);
   const badge = tileBadge(app);
-  const sub = app.origin === 'installed' && app.source ? ts('store.by', { who: app.source.owner }) : `${t(`apps.state.${state}`)}${live ? ` · ${t('apps.windowOpen')}` : ''}`;
+  const shared = sharedLine(app);
+  const sub = app.origin === 'installed' && app.source ? ts('store.by', { who: app.source.owner }) : shared && !live && state !== 'running' && state !== 'error' ? t(shared) : `${t(`apps.state.${state}`)}${live ? ` · ${t('apps.windowOpen')}` : ''}`;
   return (
     <article className="app-tile" data-state={state}>
       <button type="button" className="app-tile__open" onClick={onOpen} aria-label={ts('store.openPage', { name: app.name })}>
@@ -142,12 +147,12 @@ interface OwnStore { tagline: string | null; category: string | null; about: str
  * An app's own page: the same store page an installer sees, with Open and the rare actions
  * (share, settings, updates, my own copy, uninstall) and every note the old card carried.
  */
-export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: AppRow; vault: string; canLaunch: boolean; onClose: () => void; onChanged: () => void }) {
+export function AppPage({ app, vault, canLaunch, initialSheet = null, onClose, onChanged }: { app: AppRow; vault: string; canLaunch: boolean; initialSheet?: ShareOpen; onClose: () => void; onChanged: () => void }) {
   const api = useApi();
   const { bus } = useVault();
   const { t } = useI18n();
   const ts = useShareT();
-  const [sheet, setSheet] = useState<ShareOpen>(null);
+  const [sheet, setSheet] = useState<ShareOpen>(initialSheet);
   const installed = app.origin === 'installed';
   const following = installed && !!app.source;
   const state = stateOf(app);
@@ -162,17 +167,14 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
     setErr(null); setUndoing(true);
     try { await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/update/undo`, {}); onChanged(); } catch (e) { setErr((e as Error).message); } finally { setUndoing(false); }
   };
-  // "Let Claude set it up": the settings, their hints and what is still empty go to a chat.
+  // "Let Claude set it up" (K6): a new chat named for the app, one line; the steps are `apps job`.
   const [settingUp, setSettingUp] = useState(false);
   const settingsToClaude = async () => {
     if (settingUp) return;
     setSettingUp(true); setErr(null);
     try {
-      const r = await api.get<{ fields: Array<{ key: string; type: string; label: string; required: boolean; help?: string; find?: string }> }>(`/apps/${encodeURIComponent(app.slug)}/config`);
-      const prompt = settingsPrompt({ slug: app.slug, name: app.name, about: s?.about ?? null, fields: r.fields, missing: app.configMissingLabels ?? app.configMissing ?? [] });
-      // The chat must be on screen, as every other ask on this page does (review r1).
-      onClose();
-      askAgent(bus, prompt, { fallback: { vault, title: app.name } });
+      if (await handOff(bus, vault, ts('handoff.settingsTab', { name: app.name }), settingsPrompt(app.slug, ts))) onClose();
+      else setErr(t('store.publish.missed'));
     } catch (e) { setErr((e as Error).message); } finally { setSettingUp(false); }
   };
   // Its error stands under Manage, beside the switch the owner just used.
@@ -188,34 +190,31 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
    * the Super's composer itself. `update`: the band's "Publish the update"; its error shows in the band.
    */
   const [handing, setHanding] = useState(false);
-  const handToClaude = async (visibility: 'private' | 'public', update = false) => {
+  const [topErr, setTopErr] = useState<string | null>(null);
+  const handToClaude = async (visibility: 'private' | 'public', update = false, top = false) => {
     if (handing) return;
-    const fail = update ? setBandErr : setManageErr;
+    const fail = update ? setBandErr : top ? setTopErr : setManageErr;
     // Public is for good: the owner's own yes, one line, before anything is handed over. A new
     // version of an app that is already public asks nothing: it changes no one's access.
     if (visibility === 'public' && !(update && app.publish?.public) && !(await confirmAction({ title: ts('share.public.confirmTitle', { name: app.name }), body: t('share.public.confirmBody'), confirmLabel: t('share.card.sharePublic') }))) return;
-    setBandErr(null); setManageErr(null); setHanding(true);
+    setBandErr(null); setManageErr(null); setTopErr(null); setHanding(true);
     try {
       const g = await api.ownerPost<{ grant: string; visibility: 'private' | 'public' }>(`/apps/${encodeURIComponent(app.slug)}/publish/grant`, { visibility });
       // With the Super on, the job is the Super's (publishHandoff.ts): he works on its screen.
-      const route = routePublish({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null, update }, {
+      // Otherwise (K6) a chat of its own, named for the job, sent and on screen, never a prefill
+      // into whatever chat is open; a publish of this app still running there is shown again
+      // (`reuse`), never a second one.
+      const route = routePublish({ slug: app.slug, name: app.name, grant: g.grant, visibility: g.visibility, published: app.publish ?? null, update: update && !!app.publish }, {
         superOn: !!readSuperPresence(bus)?.on,
+        say: ts,
         sendToSuper: (text) => sendFromPage(bus, text),
         showSuper: () => openSuperFromPage(bus),
-        toChat: (prompt) => askAgent(bus, prompt, {
-          notSuper: true,
-          taken: () => { setHanding(false); onClose(); },
-          // No chat on screen can take it (none open, or its box holds a draft): a new chat starts
-          // with the prompt, shown, the way a delegated task does; a publish of this app still
-          // running in a chat is shown again instead (`reuse`), never a second one.
-          missed: () => {
-            void preparePrompt(vault, prompt).then((pp) => {
-              setHanding(false);
-              if (requestDelegateAgent(bus, { title: ts('store.publish.tab', { name: app.name }), prompt: pp.inline, promptToken: pp.token, bypass: false, reveal: true, reuse: true })) onClose();
-              else fail(t('store.publish.missed'));
-            }, (e) => { setHanding(false); fail((e as Error).message); });
-          },
-        }),
+        toChat: (line) => {
+          void handOff(bus, vault, ts('handoff.publishTab', { name: app.name }), line, { reuse: true }).then((ok) => {
+            setHanding(false);
+            if (ok) onClose(); else fail(t('store.publish.missed'));
+          });
+        },
       });
       if (route.to === 'super') { setHanding(false); onClose(); }
       else if (route.to === 'refused') { setHanding(false); fail(t(`whiteboard.field.${route.reason}`)); }
@@ -252,13 +251,16 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
           <>
             <button type="button" className="app-card__launch pp-btn-lg" disabled={busy !== null} onClick={() => void run('launch')}>{busy === 'launch' ? t('apps.opening') : live ? t('apps.focus') : t('store.open')}</button>
             {app.hasBackend && state !== 'stopped' && <button type="button" className="app-card__stop" disabled={busy !== null} onClick={() => void run('stop')}>{t('apps.stop')}</button>}
-            {app.publish && <span className="app-chip">{ts(app.publish.public ? 'share.card.publishedPublic' : 'share.card.published', { repo: app.publish.fullName })}</span>}
+            {/* Share sits beside Open (K7): an own app not shared yet. A shared one says so below. */}
+            {!following && !app.publish && <button type="button" className="app-card__stop" disabled={handing} onClick={() => void handToClaude('private', false, true)}>{t('share.card.share')}</button>}
             {s?.category && <span className="app-chip">{s.category}</span>}
           </>
         ) : <span className="app-card__mac-only">{t('apps.macOnly')}</span>}
       />
       <FactStrip facts={facts} />
       <div className="pp-notes-block">
+        {canLaunch && !following && app.publish && <SharedWith app={app} vault={vault} />}
+        {topErr && <p className="app-card__note app-card__note--bad" role="alert">{topErr}</p>}
         <AppDataLine app={app} canLaunch={canLaunch} onChanged={onChanged} />
         {!following && app.publish && app.unpublished && canLaunch && (
           <div className="app-card__note app-card__note--accent app-card__mcp">
@@ -353,7 +355,6 @@ export function AppPage({ app, vault, canLaunch, onClose, onChanged }: { app: Ap
             <label className="share-link share-link--check"><input type="checkbox" checked={app.source!.autoUpdate} onChange={(e) => void toggleAuto(e.target.checked)} /> {t('share.card.autoUpdate')}</label>
           )}
           <div className="app-card__share">
-            {(!installed || !following) && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('private')}>{t('share.card.share')}</button>}
             {(!installed || !following) && !app.publish?.public && <button type="button" className="share-link" disabled={handing} onClick={() => void handToClaude('public')}>{t('share.card.sharePublic')}</button>}
             {/* Every app has Settings now: the owner's own logo is one of them. */}
             <button type="button" className="share-link" onClick={() => setSheet('config')}>{t('share.card.settings')}</button>
@@ -396,6 +397,68 @@ export function SetupLine({ setup, apps, onChanged }: { setup?: { scheduler: boo
       )}
       {notes.map((n) => <p key={n} className="app-card__note app-card__note--warn">{n}</p>)}
       {err && <p className="app-card__note app-card__note--bad">{err}</p>}
+    </div>
+  );
+}
+
+interface SharePeople { published: boolean; fullName?: string; public?: boolean; people?: string[]; pending?: string[]; problem?: string }
+
+/**
+ * Who has my published app (K7): "Shared with: ali-kaya, ayse-demir (invited)", one host read when
+ * the page opens. Copy the invite message (plain text built here, no link) and add one more person
+ * to the version already out, with no new publish. A public app has no list: anyone with the link.
+ */
+function SharedWith({ app, vault }: { app: AppRow; vault: string }) {
+  const api = useApi();
+  const ts = useShareT();
+  const key = ['app-share-people', vault, app.slug];
+  const q = useQuery({ queryKey: key, queryFn: () => api.get<SharePeople>(`/apps/${encodeURIComponent(app.slug)}/share/people`), staleTime: 30_000, retry: false });
+  const [copied, setCopied] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [login, setLogin] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  if (app.publish?.public) return <p className="app-card__muted pp-shared">{ts('share.card.sharedPublicLine')}</p>;
+  const d = q.data;
+  const names = [...(d?.people ?? []), ...(d?.pending ?? []).map((p) => ts('share.card.invitePending', { who: p }))];
+  const copy = async () => {
+    const ok = await copyPreservingUnicode(ts('share.card.inviteText', { name: app.name }));
+    setCopied(ok);
+    if (ok) window.setTimeout(() => setCopied(false), 2000);
+  };
+  const invite = async (e: FormEvent) => {
+    e.preventDefault();
+    const who = login.trim().replace(/^@/, '');
+    if (!who || busy) return;
+    setBusy(true); setErr(null); setDone(null);
+    try {
+      await api.ownerPost(`/apps/${encodeURIComponent(app.slug)}/share/invite`, { login: who });
+      setDone(ts('share.card.added', { who })); setLogin(''); setAdding(false);
+      void q.refetch();
+    } catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="pp-shared">
+      <p className="pp-shared__who">
+        {q.isLoading ? ts('share.checking') : d?.problem ? ts('share.card.peopleProblem', { why: d.problem }) : names.length ? ts('share.card.sharedWith', { who: names.join(', ') }) : ts('share.card.sharedNobody')}
+      </p>
+      <div className="pp-shared__acts">
+        <button type="button" className="app-card__stop" onClick={() => void copy()}>{copied ? ts('share.card.copied') : ts('share.card.copyInvite')}</button>
+        {!adding && <button type="button" className="share-link" onClick={() => { setAdding(true); setDone(null); }}>{ts('share.card.addPerson')}</button>}
+      </div>
+      {adding && (
+        <form className="share-row pp-shared__add" onSubmit={(e) => void invite(e)}>
+          <label className="share-field share-field--grow">
+            <span>{ts('share.card.addPersonLabel')}</span>
+            <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="off" autoFocus placeholder="ali-kaya" />
+          </label>
+          <button type="submit" className="app-card__stop" disabled={busy || !login.trim()}>{ts('share.card.addPersonGo')}</button>
+          <button type="button" className="share-link" onClick={() => { setAdding(false); setErr(null); }}>{ts('share.cancel')}</button>
+        </form>
+      )}
+      {done && <p className="app-card__muted" role="status">{done}</p>}
+      {err && <p className="app-card__note app-card__note--bad" role="alert">{err}</p>}
     </div>
   );
 }

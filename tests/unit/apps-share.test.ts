@@ -264,7 +264,7 @@ describe('install, update, my own copy, uninstall', () => {
   };
 
   it('installs outside the app folder with its own hash and settings; a private repo needs access', async () => {
-    await expect(previewInstall({ home, projectRoot: instProject, ref: 'yayinci/tahmin-app', host: host('baskasi') })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(previewInstall({ home, projectRoot: instProject, ref: 'yayinci/tahmin-app', host: host('baskasi') })).rejects.toMatchObject({ code: 'not_shared' });
     const { inst } = await installed();
     expect(inst.origin).toBe('installed');
     expect(inst.root).toBe(join(realpathSync(`${instProject}-apps`), 'installed', 'tahmin'));

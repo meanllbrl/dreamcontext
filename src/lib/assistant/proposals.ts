@@ -27,7 +27,17 @@ export function isAppRequestVerb(v: unknown): v is AppRequestVerb {
 }
 
 /** One line of an app request card: the server's label, a value (agent words only ever here). */
-export interface AppCardLine { label: string; value: string; tone?: 'warn' | 'bad' }
+export interface AppCardLine {
+  label: string;
+  value: string;
+  tone?: 'warn' | 'bad';
+  /** A stable id the chat card translates (app-ux-genel K5); `label` stays the Turkish fallback
+   *  the notch and Telegram draw. `valueKey` names a server word (a licence, a yes/no) the same way. */
+  key?: string;
+  valueKey?: string;
+  /** Technical fact: under the card's Details fold. */
+  detail?: boolean;
+}
 
 /** What an app request card shows; its hash is the action plan's (C3). No request id here: any
  *  local process can read the proposal list. */

@@ -147,19 +147,24 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   if (phase === 'saved' && result) {
     return (
       <div className="chat-viewcard chat-secretcard" data-phase="saved" data-view-kind="secret" data-view-id={spec.id}>
-        <CardHeader glyph="✓" title={spec.title} aside={<span className="chat-secretcard-file">{result.file}</span>} />
+        <CardHeader glyph="✓" title={spec.title} aside={<span className="chat-secretcard-file">{spec.app ?? t('secret.saved')}</span>} />
         <ul className="chat-secretcard-receipt">
-          {result.written.map((w) => (
-            <li key={w.key}>
-              <code>{w.key}</code> {w.action} · {w.chars} chars · <span className="chat-secretcard-fp">sha256:{w.fingerprint}</span>
-              {w.duplicate && <> · the file had this key twice; the last one was rewritten</>}
-            </li>
-          ))}
-          {result.gitignoreAdded && <li>{result.gitignoreAdded} added to .gitignore</li>}
+          {result.written.map((w) => <li key={w.key}><code>{w.key}</code> {w.action}</li>)}
         </ul>
-        <p className="chat-secretcard-note">
-          Written to <code>{result.file}</code> (0600). The agent was told the key and the fingerprint, not the value.
-        </p>
+        <p className="chat-secretcard-note">{spec.app ? t('secret.app.promise') : t('secret.promise')}</p>
+        {/* The proof for whoever wants it (app-ux-genel K9): where, how long, which fingerprint. */}
+        <details className="chat-secretcard-details">
+          <summary>{t('secret.details')}</summary>
+          <ul className="chat-secretcard-receipt">
+            {result.written.map((w) => (
+              <li key={w.key}>
+                <code>{w.key}</code> · <code>{result.file}</code> (0600) · {w.chars} chars · <span className="chat-secretcard-fp">sha256:{w.fingerprint}</span>
+                {w.duplicate && <> · the file had this key twice; the last one was rewritten</>}
+              </li>
+            ))}
+            {result.gitignoreAdded && <li>{result.gitignoreAdded} added to .gitignore</li>}
+          </ul>
+        </details>
       </div>
     );
   }
@@ -171,8 +176,28 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   const unfillable = !!sessionId && (!loaded || (phone && !record));
   if (closed) {
     const saved = record?.closedBy === 'done';
+    // An app's key card (K9): every closed phase speaks plainly and names the app; the file only
+    // under Details. The same card after a reload must read like it did before.
+    if (spec.app) {
+      const why = saved ? 'secret.app.promise'
+        : record?.closedBy === 'superseded' ? 'secret.app.closed.superseded'
+          : record?.closedBy === 'dropped' ? 'secret.app.closed.dropped'
+            : 'secret.app.closed.unknown';
+      return (
+        <div className="chat-viewcard chat-secretcard" data-phase={saved ? 'saved' : 'closed'} data-closed-by={record?.closedBy} data-view-kind="secret" data-view-id={spec.id}>
+          <CardHeader glyph={saved ? '✓' : '🔑'} title={spec.title} aside={<span className="chat-secretcard-file">{spec.app}</span>} />
+          <p className="chat-secretcard-note">{t(why)}</p>
+          <details className="chat-secretcard-details">
+            <summary>{t('secret.details')}</summary>
+            <ul className="chat-secretcard-receipt">
+              {spec.fields.map((f) => <li key={f.key}><code>{f.key}</code> · <code>{spec.file}</code></li>)}
+            </ul>
+          </details>
+        </div>
+      );
+    }
     const note = saved
-      ? <>Already saved to <code>{spec.file}</code>. The agent was told the key, not the value.</>
+      ? <>{<>Already saved to <code>{spec.file}</code>. The agent was told the key, not the value.</>}</>
       : record?.closedBy === 'superseded'
         ? <>Nothing was saved here. The agent posted a newer copy of this card further down.</>
         : record?.closedBy === 'dropped'
@@ -188,7 +213,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
 
   return (
     <div className="chat-viewcard chat-secretcard" data-phase={phase} data-view-kind="secret" data-view-id={spec.id}>
-      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file" data-testid="secret-card-folder" title={folder?.path}>{spec.app ? `${spec.app} · ${spec.file}` : cardFolderText(shownFolder.folder, spec) ? `${cardFolderText(shownFolder.folder, spec)} · ${spec.file}` : spec.file}</span>} />
+      <CardHeader glyph="🔑" title={spec.title} aside={<span className="chat-secretcard-file" data-testid="secret-card-folder" title={folder?.path}>{spec.app ? spec.app : cardFolderText(shownFolder.folder, spec) ? `${cardFolderText(shownFolder.folder, spec)} · ${spec.file}` : spec.file}</span>} />
       {spec.intro && <p className="chat-secretcard-intro">{spec.intro}</p>}
       {reentry && <p className="chat-secretcard-note" data-testid="secret-card-reentry">{t('ownerCard.secretAgain')}</p>}
 
@@ -226,7 +251,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
             card and the checklist's secret field — and it stays visible while the value is
             being typed, which is when it matters. */}
         <p className="chat-secretcard-note">
-          Saved straight to <code>{spec.file}</code> by the app. Not sent to the agent, not in this chat.
+          {spec.app ? t('secret.app.promise') : <>Saved straight to <code>{spec.file}</code> by the app. Not sent to the agent, not in this chat.</>}
         </p>
         {/* No folder drawn, no Save: nothing would say where the file is written. */}
         {!noFolder && (
@@ -237,7 +262,7 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
             onClick={() => { void submit(); }}
             disabled={!filled || phase === 'saving' || unfillable}
           >
-            {phase === 'saving' ? 'Saving…' : spec.submitLabel ?? `Save to ${spec.file}`}
+            {phase === 'saving' ? (spec.app ? t('secret.saving') : 'Saving…') : spec.submitLabel ?? (spec.app ? t('secret.save') : `Save to ${spec.file}`)}
           </button>
         )}
       </div>
