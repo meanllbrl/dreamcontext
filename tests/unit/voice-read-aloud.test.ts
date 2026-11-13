@@ -341,7 +341,9 @@ describe('the speech switch is persisted in agent-ui.json (each launch is a new 
 describe('a frameless release inside the tap window is too-short, not silent', () => {
   const capture = code(read('dashboard/src/lib/voice/useVoiceCapture.ts'));
   it('finishTake: no frame + released before MIN_TAKE_MS from the press → too-short', () => {
-    expect(capture).toMatch(/const verdict = wav \? judgeTake\(durationMs, peak, noise\)\s*: Date\.now\(\) - pressedAtRef\.current < MIN_TAKE_MS \? 'too-short' : 'silent';/);
+    // 2026-11-13 (ses-cihaz-degisimi): the gate is judgeCapture; a hold under the tap window is a tap whatever arrived.
+    expect(capture).toMatch(/const verdict = judgeCapture\(\{\s*heldMs: durationMs,/);
+    expect(capture).toMatch(/if \(c\.heldMs < MIN_TAKE_MS\) return 'too-short';/);
   });
   it('a release while the device was still opening: a tap says so, a long press goes back to rest', () => {
     expect(capture).toMatch(/setState\(Date\.now\(\) - pressedAtRef\.current < MIN_TAKE_MS \? 'too-short' : 'idle'\);/);

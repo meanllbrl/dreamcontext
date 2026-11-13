@@ -413,9 +413,12 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * actual 10,778.
    * 2026-11-13 (0.41.20 cut, ogrenme-dongusu-w1): his rules, `dreamcontext learn` and its `learned`
    * receipt card, one paragraph everywhere. Ceiling -> 11500; actual 11,464.
+   * 2026-11-13 (0.41.21 cut, app-kurulum-claude-2): the `app-request` card an app action that waits
+   * for the owner's yes is pasted as (and the dream-view heading counts eleven). Ceiling -> 12000;
+   * actual 11,807.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11500);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12000);
   });
 
   /**
@@ -426,7 +429,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11464)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11807)).toBeLessThanOrEqual(20);
   });
 
   /**
