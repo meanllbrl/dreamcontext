@@ -29,8 +29,11 @@ export type InlineTermStatus = 'connecting' | 'running' | 'exited' | 'failed';
 export type { CardTarget };
 
 export function InlineTerminal({
-  vault, command, cwd, card, mintTicket, rows = 14, onExit, onStatus,
+  vault, command, cwd, card, mintTicket, rows = 14, onExit, onStatus, collapsed = false,
 }: {
+  /** The process ended and the owner has not asked for the output: the screen is hidden (kept
+   *  mounted, so Show brings the same text back). */
+  collapsed?: boolean;
   vault: string;
   command: string;
   cwd?: string;
@@ -56,6 +59,7 @@ export function InlineTerminal({
   const argsRef = useRef({ vault, command, cwd, rows, card, mintTicket });
   const onExitRef = useRef(onExit);
   const onStatusRef = useRef(onStatus);
+  const endedRef = useRef<() => void>(() => {});
   onExitRef.current = onExit;
   onStatusRef.current = onStatus;
 
@@ -76,6 +80,7 @@ export function InlineTerminal({
     const settle = (code: number | null, exited = false, reason?: string) => {
       if (settled) return;
       settled = true;
+      endedRef.current();
       onStatusRef.current?.(code === null ? 'failed' : 'exited');
       onExitRef.current({ code, tail: finishTail(tail), exited, opened, ...(reason ? { reason } : {}) });
     };
@@ -146,6 +151,12 @@ export function InlineTerminal({
       connect();
     }
 
+    // The process is gone: no live cursor, no focus. A finished terminal that still blinks and
+    // holds the keyboard reads as stuck (owner, 2026-11-13).
+    endedRef.current = () => {
+      try { term.options.cursorBlink = false; term.write('\x1b[?25l'); term.blur(); } catch { /* mid-init */ }
+    };
+
     const dataSub = term.onData((data) => {
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
     });
@@ -198,7 +209,7 @@ export function InlineTerminal({
   }, []);
 
   return (
-    <div className="chat-runterm">
+    <div className={collapsed ? 'chat-runterm is-collapsed' : 'chat-runterm'} data-testid="run-terminal">
       <div className="chat-runterm-screen" ref={hostRef} />
       {error && <p className="chat-runterm-error">{error}</p>}
     </div>
