@@ -16,7 +16,6 @@ import {
 import { scrubStagedFiles, summarizeScrub } from '../../lib/git-sync/scrub.js';
 import { classifySyncError } from '../../lib/git-sync/failure.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
-import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import * as git from '../../lib/git-sync/git.js';
 import { GitSyncError } from '../../lib/git-sync/git.js';
 
@@ -151,16 +150,11 @@ export function registerBrainCommand(program: Command): void {
           resume: opts.resume,
           headless: opts.headless,
         });
-        // A CLI sync is a real git op too — reconcile the global sign-in flag off
-        // its result so a working sync clears a stale "reconnect" banner (the
-        // server route is no longer the only path that keeps the flag honest).
-        reconcileBrainSyncSuccess(result.action);
         if (opts.json) console.log(JSON.stringify({ action: result.action, note: result.note ?? null }));
         else renderBrainSyncResult(result);
         if (result.action === 'invalid-flag' || result.action === 'blocked-scrub' || result.action === 'app-data-held' || result.action === 'session-files-held') process.exitCode = 1;
       } catch (err) {
         const projectRoot = dirname(contextRoot);
-        reconcileBrainSyncFailure((err as Error).message, projectRoot);
         if (opts.json) {
           console.log(JSON.stringify({ action: 'error', note: (err as Error).message ?? String(err) }));
           process.exitCode = 1;

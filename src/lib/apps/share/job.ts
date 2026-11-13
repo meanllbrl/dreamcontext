@@ -62,7 +62,7 @@ export function publishJob(j: PublishJob): string {
     '',
     `1. Read every file that would go out: \`dreamcontext apps publish ${j.slug}${flag}\` lists them. Open each one; look at the pixels of every image and screenshot.`,
     "2. Find personal or business data: names, customers, e-mails, keys, real numbers, home paths, account ids, sample data that is real. Clean it in the app's own folder (a fixed target moves into the manifest `config` template; sample data becomes made up) and commit.",
-    '3. Write or refresh README.md, the store page: the tagline, What it does, Screenshots (at most 3 in store/, nothing personal). Commit. What's new comes from --note. Keep every What's new entry and its number: reword a line that names a person, never delete, merge or renumber entries (the next version is one more than the highest number there).',
+    '3. Write or refresh README.md, the store page: the tagline, What it does, Screenshots (at most 3 in store/, nothing personal). Commit. What\'s new comes from --note. Keep every What\'s new entry and its number: reword a line that names a person, never delete, merge or renumber entries (the next version is one more than the highest number there).',
     `4. Run \`dreamcontext apps publish ${j.slug}${flag}\` again: the gate is the last hard stop. Fix every block in the app; never work around one.`,
     pub
       ? '5. Ask him ONE question only for the generic-word lines from the report he may let go.'
