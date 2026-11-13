@@ -126,14 +126,25 @@ describe('the slot (K7)', () => {
     expect(requestSlotRun('q1', RUN.command)).toBe(false);
   });
 
-  it('the agenda line and the bar verbs bring the slot card into view', () => {
+  it('the agenda line and the bar verbs bring the slot card into view, wherever it was posted', () => {
     let scrolled = false;
-    const el = { dataset: { item: 'q1' }, isConnected: true, scrollIntoView: () => { scrolled = true; }, querySelector: () => null };
+    let doors: string[] = [];
+    // `paneTakes`: the Super pane answers the door (its one scroll owner goes to the card).
+    const cardEl = (paneTakes: boolean) => ({
+      dataset: { item: 'q1' }, isConnected: true, scrollIntoView: () => { scrolled = true; }, querySelector: () => null,
+      dispatchEvent: (e: CustomEvent<{ item: string }>) => { doors.push(`${e.type}:${e.detail.item}`); if (paneTakes) e.preventDefault(); return !e.defaultPrevented; },
+    });
     (globalThis as { window?: unknown }).window = { matchMedia: () => ({ matches: false }) };
-    const root = { querySelectorAll: () => [el] } as unknown as ParentNode;
-    expect(showOwnerSlot('q1', root)).toBe(true);
+    const rootOf = (el: unknown) => ({ querySelectorAll: () => [el] } as unknown as ParentNode);
+    // In the Super pane: the pane's door moves its scroll, never a second scroll of the page.
+    expect(showOwnerSlot('q1', rootOf(cardEl(true)))).toBe(true);
+    expect(doors).toEqual(['dc:super-question:q1']);
+    expect(scrolled).toBe(false);
+    // Nothing takes the door: a plain scroll into view.
+    doors = [];
+    expect(showOwnerSlot('q1', rootOf(cardEl(false)))).toBe(true);
     expect(scrolled).toBe(true);
-    expect(showOwnerSlot('q9', root)).toBe(false);
+    expect(showOwnerSlot('q9', rootOf(cardEl(false)))).toBe(false);
   });
 });
 

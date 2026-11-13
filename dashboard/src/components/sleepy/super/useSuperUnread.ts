@@ -34,9 +34,10 @@ export interface SuperUnread {
 const unitId = (u: UnreadUnit) => `${u.key}|${u.ts}`;
 
 function rowOf(root: HTMLElement, u: UnreadUnit): HTMLElement | null {
-  return root.querySelector<HTMLElement>(u.itemId
-    ? `[data-item-id="${CSS.escape(u.itemId)}"]`
-    : `[data-testid="super-question-card"][data-item="${CSS.escape(u.question ?? '')}"]`);
+  if (u.itemId) return root.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(u.itemId)}"]`);
+  // A question's card, or an owner card a child left (it is a message of the chat, in its place).
+  const q = CSS.escape(u.question ?? '');
+  return root.querySelector<HTMLElement>(`[data-testid="super-question-card"][data-item="${q}"], [data-testid="super-owner-card"][data-item="${q}"]`);
 }
 
 /** The line stands in the gap above a message, so above its reply strip when it wears one. */

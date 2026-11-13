@@ -150,22 +150,28 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
   return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} />);
 }
 
+const NONE_PLACED: ReadonlySet<string> = new Set();
+
 /**
  * Every OPEN question whose asking call is not drawn above (folded into an event line, behind
  * "Show earlier messages", compacted away, or asked in a way the transcript cannot read): at the
  * chat's end, so the question is always in the chat.
  */
-export function SuperQuestionTail({ session, anchored }: {
+export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED }: {
   session: ChatSession;
   /** The item ids that already have a live card in the rendered transcript. */
   anchored: ReadonlySet<string>;
+  /** The owner-card items drawn in their place in the transcript (cardPlacement.ts); none = every
+   *  waiting one has no place on screen. */
+  placedCards?: ReadonlySet<string>;
 }) {
   const view = useSuperQuestions(session.claudeId);
   if (!view) return null;
   const rest = view.open.filter((q) => !anchored.has(q.id));
-  // Only what waits on the owner NOW: a settled card (a child's, or a member's mirror carrying
-  // one) is drawn in its place in the transcript (cardPlacement.ts), never here.
-  const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.map((q) => q.id));
+  // An owner card (a child's, or a member's mirror carrying one) is drawn in its place in the
+  // transcript (cardPlacement.ts). Here only one that still waits on the owner and has no place on
+  // screen (posted behind "Show earlier messages"), so the wait is never lost.
+  const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.filter((q) => !placedCards.has(q.id)).map((q) => q.id));
   const members = (view.members ?? []).filter((q) => !q.card || waiting.has(q.id));
   const cards = (view.cards ?? []).filter((q) => waiting.has(q.id));
   if (!rest.length && !members.length && !cards.length) return null;
