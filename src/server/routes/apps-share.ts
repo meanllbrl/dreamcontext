@@ -24,16 +24,18 @@ import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { publishApp, PublishError, RESHARE_OK } from '../../lib/apps/share/publish.js';
 import { mintPublishGrant } from '../../lib/apps/share/publish-grant.js';
-import { takeAppGrant, type AppAction, type TakeResult } from '../../lib/apps/share/app-grant.js';
-import { requestLogoBytes, type ActionPlan } from '../../lib/apps/share/app-request.js';
-import { updateStillBound } from '../../lib/apps/share/app-plan.js';
+import { peekAppGrant, takeAppGrant, type AppAction, type TakeResult } from '../../lib/apps/share/app-grant.js';
+import { openAppRequest, requestLogoBytes, requestSessionsOf, type ActionPlan } from '../../lib/apps/share/app-request.js';
+import { buildInstallPlan, inviteWarnList, updateStillBound } from '../../lib/apps/share/app-plan.js';
 import { parseAppRepoRef } from '../../lib/apps/share/host.js';
-import { clearSharedCache, listShared } from '../../lib/apps/share/shared.js';
+import { clearSharedCache, listShared, sharedWaiting } from '../../lib/apps/share/shared.js';
+import { clearInvitersCache } from '../../lib/apps/share/inviters.js';
 import { catalogEntryFor, removeCatalogEntry, upsertCatalogEntry } from '../../lib/apps/catalog.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
-import { installApp, InstallError, listTrash, previewInstall, restoreFromTrash, uninstallApp } from '../../lib/apps/share/install.js';
+import { installApp, InstallError, installProgress, listTrash, previewInstall, restoreFromTrash, trackInstall, uninstallApp } from '../../lib/apps/share/install.js';
 import { applyUpdate, checkUpdate, detachApp, setAutoUpdate, undoUpdate, type ApplyHow } from '../../lib/apps/share/update.js';
 import { realPath } from '../../lib/real-path.js';
+import { configSuggestions } from '../../lib/apps/config-suggest.js';
 
 type Params = Record<string, string>;
 
@@ -158,6 +160,18 @@ export async function handlePublishGrant(req: IncomingMessage, res: ServerRespon
   sendJson(res, 200, { grant: g.id, visibility: g.visibility, expiresAt: new Date(g.expiresAt).toISOString() });
 }
 
+/** POST /api/apps/:slug/publish/grant/check {grant}: the visibility of a live publish grant, for
+ *  `apps job` (K6). Holding the grant is the proof; nothing is taken, extended or minted. */
+export async function handlePublishGrantCheck(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const visibility = peekAppGrant(rec.projectRoot, rec.slug, 'publish', b.grant);
+  if (!visibility) { sendError(res, 403, 'grant_unknown', 'This grant is not a live publish grant for this app (used, replaced, run out, or the app restarted). Ask the owner to press Paylaş again.'); return; }
+  sendJson(res, 200, { visibility });
+}
+
 /**
  * POST /api/apps/:slug/publish: the push. The owner's page, or Claude holding the grant his
  * Publish click opened for THIS app (`grant` in the body). Anything else: 403 owner_page_only.
@@ -250,12 +264,31 @@ export async function handleSharedList(req: IncomingMessage, res: ServerResponse
   } catch (e) { sendFailure(res, e); }
 }
 
+/** GET /api/apps/shared/waiting: what waits for this account (K1), read fresh each time. The
+ *  rail dot is drawn from `known + notInstalled` only (S2: an unknown inviter lights nothing). */
+export async function handleSharedWaiting(req: IncomingMessage, res: ServerResponse, _p: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  holdOpen(req);
+  try {
+    const host = resolveAppHost(appsHomeDir());
+    if (!host.signedIn) { sendJson(res, 200, { known: 0, unknown: 0, notInstalled: 0, signedIn: false }); return; }
+    sendJson(res, 200, { ...(await sharedWaiting(host, { projectRoot: realRoot(projectRootOf(contextRoot)), home: appsHomeDir() })), signedIn: true });
+  } catch (e) { sendFailure(res, e); }
+}
+
+/** GET /api/apps/install/status: the installs running or just finished (K8), any page reads it. */
+export async function handleInstallStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  sendJson(res, 200, { installs: installProgress() });
+}
+
 export async function handleSharedAccept(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!ownerOnly(req, res)) return;
   const b = (await parseJsonBody(req)) ?? {};
   try {
     await resolveAppHost(appsHomeDir()).acceptInvitation(String(b.id ?? ''));
     clearSharedCache();
+    clearInvitersCache();
     sendJson(res, 200, { ok: true });
   } catch (e) { sendFailure(res, e); }
 }
@@ -287,12 +320,16 @@ export async function handleInstall(req: IncomingMessage, res: ServerResponse, _
   const gate = ownerOrGrant(req, res, { projectRoot, key, action: 'install' }, b.grant);
   if (!gate) return;
   const held = gate.owner ? null : gate.held;
+  const invite = held ? bodyOf(held.plan, 'install-invite') : null;
   const bound = held ? bodyOf(held.plan, 'install') : null;
-  if (held && !bound) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for an install.'); return; }
+  if (held && !bound && !invite) { held.done(false); sendError(res, 403, 'owner_page_only', 'This grant is not for an install.'); return; }
+  const settingsOf = (rec: AppRecord) => { const m = readManifest(rec.root); return m.ok ? m.manifest.config.length : 0; };
+  if (held && invite) { await spendInviteInstall(req, res, held, invite, projectRoot, settingsOf); return; }
   try {
     const vault = listVaults(appsHomeDir()).find((v) => realRoot(v.path) === projectRoot)?.name;
     if (!vault) { held?.done(false); sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
-    const { rec, renamed } = await installApp(bound ? {
+    const fullName = bound?.fullName ?? (typeof b.ref === 'string' ? parseAppRepoRef(b.ref) : null) ?? String(b.previewId ?? 'app');
+    const { rec, renamed } = await trackInstall(fullName, () => installApp(bound ? {
       // The previewed sha and the settings the card showed; never a key (secrets stay the owner's).
       home: appsHomeDir(), projectRoot, vault, previewId: bound.previewId, sha: bound.sha, config: bound.config,
     } : {
@@ -300,18 +337,138 @@ export async function handleInstall(req: IncomingMessage, res: ServerResponse, _
       previewId: String(b.previewId ?? ''), sha: String(b.sha ?? ''),
       config: b.config && typeof b.config === 'object' ? (b.config as Record<string, unknown>) : undefined,
       secrets: b.secrets && typeof b.secrets === 'object' ? (b.secrets as Record<string, unknown>) : undefined,
-    });
+    }), settingsOf);
     held?.done(true, rec.slug);
     clearSharedCache();
-    sendJson(res, 200, { ok: true, slug: rec.slug, renamed });
+    sendJson(res, 200, { ok: true, slug: rec.slug, renamed, settings: settingsOf(rec) });
   } catch (e) {
-    held?.done(false);
-    if (held && e instanceof InstallError && (e.code === 'stale_preview' || e.code === 'preview_gone')) { sendError(res, 409, 'stale_request', `The app changed since the owner approved this install: nothing was installed. ${ASK_AGAIN}`); return; }
+    if (held && e instanceof InstallError && (e.code === 'stale_preview' || e.code === 'preview_gone')) { held.done(false); sendError(res, 409, 'stale_request', `The app changed since the owner approved this install: nothing was installed. ${ASK_AGAIN}`); return; }
+    held?.done(false, null, failureReason(e));
     sendFailure(res, e);
   }
 }
 
+/** The plain reason a spend failed, for the card's "Olmadı: <neden>" (K4). */
+function failureReason(e: unknown): string {
+  return e instanceof InstallError || e instanceof HostError || e instanceof PublishError ? e.message : 'something went wrong';
+}
+
+/**
+ * The spend of an invitation install (K2, S1): the grant is the owner's yes to THIS invitation.
+ * It is accepted only when its id and repo id still match one addressed to the signed-in account;
+ * then the content is read like any preview. The install runs only when nothing on the warn list
+ * shows (MCP servers, risky actions, a package problem, a gate block); otherwise nothing is
+ * installed, the invitation stays accepted (read only), and a normal sha-bound card opens in the
+ * same chat with exactly those facts.
+ */
+async function spendInviteInstall(req: IncomingMessage, res: ServerResponse, held: Held, invite: Extract<ActionPlan['body'], { action: 'install-invite' }>, projectRoot: string, settingsOf: (rec: AppRecord) => number): Promise<void> {
+  const home = appsHomeDir();
+  const host = resolveAppHost(home);
+  try {
+    const vault = listVaults(home).find((v) => realRoot(v.path) === projectRoot)?.name;
+    if (!vault) { held.done(false); sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
+    const open = await host.listInvitations();
+    const inv = open.find((i) => i.id === invite.invitationId && i.repoId === invite.repoId && i.fullName.toLowerCase() === invite.fullName.toLowerCase());
+    if (!inv) {
+      // Already accepted (a retry inside the hour) reads the repo; anything else is gone.
+      const repo = await host.getRepo(invite.fullName).catch(() => null);
+      if (!repo || repo.repoId !== invite.repoId) { held.done(false); sendError(res, 409, 'stale_request', `That invitation is no longer there: nothing was accepted or installed. ${ASK_AGAIN}`); return; }
+    } else {
+      await host.acceptInvitation(inv.id);
+      clearSharedCache();
+      clearInvitersCache();
+    }
+    const pv = await previewInstall({ home, projectRoot, ref: invite.fullName, host });
+    if (pv.repoId !== invite.repoId) { held.done(false); sendError(res, 409, 'stale_request', `The repo behind that invitation changed: nothing was installed. ${ASK_AGAIN}`); return; }
+    const warn = inviteWarnList(pv);
+    if (warn.length) {
+      // The yes covered the acceptance; what the content holds needs its own look.
+      held.done(true, invite.fullName);
+      if (!pv.gate.ok) { sendJson(res, 409, { error: 'gate_blocked', message: `The invitation is accepted, but this app holds something an app may not, so nothing was installed: ${warn.join('; ')}.` }); return; }
+      const built = await buildInstallPlan({ home, vault, contextRoot: '', projectRoot }, invite.fullName, { config: invite.config });
+      const out = openAppRequest({ plan: built.plan, stillFresh: built.stillFresh, agentSessions: held.requestId ? requestSessionsOf(held.requestId) : [] });
+      sendJson(res, 200, { ok: false, needsLook: true, accepted: true, warn, request: out.id, state: out.state, proposal: out.proposalId });
+      return;
+    }
+    const { rec, renamed } = await trackInstall(invite.fullName, () => installApp({ home, projectRoot, vault, previewId: pv.previewId, sha: pv.sha, config: invite.config }), settingsOf);
+    held.done(true, rec.slug);
+    clearSharedCache();
+    sendJson(res, 200, { ok: true, slug: rec.slug, renamed, accepted: true, settings: settingsOf(rec) });
+  } catch (e) {
+    held.done(false, null, failureReason(e));
+    sendFailure(res, e);
+  }
+}
+
+// ─── Who it is shared with (K7) ─────────────────────────────────────────────────────
+
+const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+
+/** An own app, published privately: the only kind "Kişi ekle" invites to (S7). */
+function ownPrivatePublished(rec: AppRecord): string | null {
+  if (rec.origin === 'installed' && (rec.source || !rec.provenance)) return null;
+  if (!rec.publish?.lastSha || rec.publish.public) return null;
+  return rec.publish.fullName;
+}
+
+/** GET /api/apps/:slug/share/people: who can install my published app, and who still has my
+ *  invitation (one host read per page open). Nothing for an app that is not mine or not out. */
+export async function handleSharePeople(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  holdOpen(req);
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const own = !(rec.origin === 'installed' && (rec.source || !rec.provenance));
+  if (!own || !rec.publish?.lastSha) { sendJson(res, 200, { published: false }); return; }
+  try {
+    const host = resolveAppHost(appsHomeDir());
+    const me = (await host.me()).login.toLowerCase();
+    const p = await host.repoPeople(rec.publish.fullName);
+    sendJson(res, 200, {
+      published: true, fullName: rec.publish.fullName, public: rec.publish.public,
+      people: p.collaborators.filter((l) => l.toLowerCase() !== me), pending: p.pending,
+    });
+  } catch (e) {
+    sendJson(res, 200, { published: true, fullName: rec.publish.fullName, public: rec.publish.public, problem: e instanceof HostError ? e.message : 'GitHub did not answer' });
+  }
+}
+
+/**
+ * POST /api/apps/:slug/share/invite {login} (K7, S7): one more person for the version already out,
+ * with no new publish. The owner's page only; my own app, published privately; the login checked
+ * before any host call; read-only access (`addCollaborator` is `pull`, S1).
+ */
+export async function handleShareInvite(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!ownerOnly(req, res)) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const login = typeof b.login === 'string' ? b.login.trim().replace(/^@/, '') : '';
+  if (!LOGIN_RE.test(login)) { sendError(res, 400, 'bad_login', 'That is not a GitHub username.'); return; }
+  const fullName = ownPrivatePublished(rec);
+  if (!fullName) { sendError(res, 409, 'not_invitable', rec.publish?.public ? 'This app is public: anyone with the link installs it, no invitation needed.' : 'Only your own app, already shared privately, takes one more person this way.'); return; }
+  try {
+    const host = resolveAppHost(appsHomeDir());
+    if (login.toLowerCase() === (await host.me()).login.toLowerCase()) { sendError(res, 400, 'bad_login', 'That is your own account.'); return; }
+    if (!(await host.user(login))) { sendError(res, 404, 'no_such_user', `GitHub has no user "${login}".`); return; }
+    await host.addCollaborator(fullName, login);
+    clearInvitersCache();
+    sendJson(res, 200, { ok: true, invited: login });
+  } catch (e) { sendFailure(res, e); }
+}
+
 // ─── Settings and keys ──────────────────────────────────────────────────────────────
+
+/** GET /api/apps/:slug/config/suggest (K9): each setting's candidates from this project, the same
+ *  list `apps config --suggest` prints. Names only. */
+export async function handleAppConfigSuggest(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  if (!ownerOnly(req, res)) return;
+  const rec = findAppFor(contextRoot, params.slug, res);
+  if (!rec) return;
+  const m = readManifest(rec.root);
+  const fields = m.ok ? m.manifest.config : [];
+  sendJson(res, 200, { fields: fields.filter((f) => f.type !== 'secret').map((f) => ({ key: f.key, candidates: configSuggestions(rec.projectRoot, f) })) });
+}
 
 export async function handleAppConfigGet(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;

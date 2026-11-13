@@ -432,7 +432,8 @@ describe('install and update', () => {
     expect(p.verb).toBe('app-install');
     expect(lineOf(p, 'Yazan')).toContain('yayinci');
     expect(lineOf(p, 'Çalıştırır')).toBeTruthy();
-    expect(p.app!.warn).toBe('Bu app senin Mac\'inde senin izinlerinle çalışır.');
+    expect(lineOf(p, 'Nerede çalışır')).toBe('Senin Mac\'inde, senin izinlerinle');
+    expect(p.app!.lines.find((l) => l.label === 'Çalıştırır')?.detail).toBe(true);
     await decide(p, 'approve');
     const g = (await status(String(r.body.request))).body.grant as { id: string; command: string };
     expect(g.command).toBe(`dreamcontext apps install yayinci/tahmin-app --go --grant ${g.id}`);
@@ -485,7 +486,7 @@ describe('the [app onayı] line reaches the asking chat (delivery only)', () => 
     expect(findRequesterChat(sid, 'kurucu')).toBeNull();
 
     const sent: Array<{ chat: string; text: string }> = [];
-    setAppRequestDelivery(async (chat, text) => { sent.push({ chat: chat.sessionId, text }); });
+    setAppRequestDelivery(async (chat, text) => { sent.push({ chat: chat.sessionId, text }); return true; });
     commitChange('public/app.js', 'export const x = 2;\n');
     const r = await ask({ action: 'publish', slug: 'tahmin' }, { ...AGENT, 'x-dc-agent-session': sid! });
     await decide(card(), 'approve');

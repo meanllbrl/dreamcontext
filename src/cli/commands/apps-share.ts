@@ -8,12 +8,11 @@
 
 import type { Command } from 'commander';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { readdirSync } from 'node:fs';
 import { error, info, success } from '../../lib/format.js';
 import { AppsClientError, appsApi, requestHeaders, type ProjectRef } from '../../lib/apps/client.js';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { readManifest, type AppManifest, type ConfigField } from '../../lib/apps/manifest.js';
+import { readAppFile } from '../../lib/apps/store-facts.js';
 import { getApp, updateAppShare, type AppRecord } from '../../lib/apps/registry.js';
 import { ConfigError, missingRequired, newConfigId, presentSecretKeys, readAppConfig, setAppConfig } from '../../lib/apps/app-config.js';
 import { writeEnvSecrets } from '../../lib/env-secrets.js';
@@ -21,7 +20,12 @@ import { resolveAppHost } from '../../lib/apps/share/host.js';
 import { buildPublishTree, changedSincePublish, lastPublishedFiles, publishLogin, PublishError } from '../../lib/apps/share/publish.js';
 import type { GateReport } from '../../lib/apps/share/gate.js';
 import { listShared } from '../../lib/apps/share/shared.js';
-import { previewInstall } from '../../lib/apps/share/install.js';
+import { matchShared, previewInstall, type NameMatch } from '../../lib/apps/share/install.js';
+import { parseAppRepoRef } from '../../lib/apps/share/host.js';
+import { configSuggestions } from '../../lib/apps/config-suggest.js';
+import { publishJob, settingsJob } from '../../lib/apps/share/job.js';
+import { parseStoreReadme } from '../../lib/apps/store-readme.js';
+import { UNKNOWN_INVITER_TR } from '../../lib/apps/share/inviters.js';
 import { checkUpdate } from '../../lib/apps/share/update.js';
 
 interface Helpers {
@@ -37,9 +41,11 @@ function appOf(p: ProjectRef, slug: string): { rec: AppRecord; manifest: AppMani
   return { rec, manifest: m.manifest };
 }
 
-export function printGateReport(r: GateReport): void {
-  console.log(`Would send ${r.send.length} file(s), ${Math.round(r.totalBytes / 1024)} KB:`);
-  for (const f of r.send) console.log(`  + ${f.path}`);
+/** `changed`: a new version lists only what changed since the last publish (the rest is the same). */
+export function printGateReport(r: GateReport, changed?: readonly string[] | null): void {
+  console.log(`Would send ${r.send.length} file(s), ${Math.round(r.totalBytes / 1024)} KB${changed ? `, ${changed.length} changed since the last publish` : ''}:`);
+  const only = changed ? new Set(changed) : null;
+  for (const f of r.send) if (!only || only.has(f.path)) console.log(`  + ${f.path}`);
   if (r.notSent.length) {
     console.log('Not sent:');
     for (const f of r.notSent) console.log(`  - ${f.path} (${f.why})`);
@@ -55,13 +61,48 @@ export function printGateReport(r: GateReport): void {
   console.log(r.ok ? 'Gate: clear.' : `Gate: ${r.blocks.length} to fix, ${r.unapproved.length} to approve.`);
 }
 
-function suggestions(projectRoot: string, type: ConfigField['type']): string[] {
-  const ctx = join(projectRoot, '_dream_context');
-  const ls = (dir: string, ext?: string) => { try { return readdirSync(dir).filter((f) => !f.startsWith('.') && (!ext || f.endsWith(ext))).map((f) => (ext ? f.slice(0, -ext.length) : f.replace(/\.md$/, ''))); } catch { return []; } };
-  if (type === 'insight') return ls(join(ctx, 'lab', 'insights'), '.md');
-  if (type === 'objective') return ls(join(ctx, 'core', 'objectives'), '.md');
-  if (type === 'agent') return ls(join(ctx, 'agents'));
-  return [];
+function suggestions(projectRoot: string, f: Pick<ConfigField, 'type' | 'choices'>): string[] {
+  return configSuggestions(projectRoot, f);
+}
+
+/** An app named by the owner (K3), against what is shared with this account and its invitations. */
+type Resolved = { fullName: string; invitation?: { from: string; known: boolean } } | { done: true };
+
+async function resolveAppArg(p: ProjectRef, text: string, json: boolean | undefined): Promise<Resolved> {
+  const direct = parseAppRepoRef(text);
+  let list: Parameters<typeof matchShared>[1] | null = null;
+  try { list = await appsApi(p, 'GET', '/api/apps/shared', undefined, { timeoutMs: 120_000 }) as unknown as Parameters<typeof matchShared>[1]; } catch { list = null; }
+  const already = (fullName: string) => list?.shared.find((s) => s.fullName.toLowerCase() === fullName.toLowerCase() && s.installed)?.installed;
+  if (direct) {
+    const slug = already(direct);
+    if (slug) { sayInstalled(slug, json); return { done: true }; }
+    const inv = list?.invitations.find((i) => i.fullName.toLowerCase() === direct.toLowerCase());
+    return { fullName: direct, ...(inv ? { invitation: { from: inv.inviter, known: inv.known } } : {}) };
+  }
+  if (!list) throw new AppsClientError('no_shared_list', `Could not read what is shared with you, so "${text}" cannot be found by name. Use its owner/repo, or open Apps → Shared with you.`);
+  const hits = matchShared(text, list);
+  if (!hits.length) throw new AppsClientError('no_match', `Nothing named "${text}" is shared with you or waiting as an invitation. \`dreamcontext apps shared\` lists what is.`);
+  const one = hits.length === 1 ? hits[0]! : null;
+  if (one?.installed) { sayInstalled(one.installed, json); return { done: true }; }
+  // S2: one match from someone this account works with proceeds; several, or any from an unknown
+  // inviter, are listed and open nothing (the owner says which, or installs from Apps).
+  if (one && one.known) return { fullName: one.fullName, ...(one.kind === 'invitation' ? { invitation: { from: one.from, known: true } } : {}) };
+  process.exitCode = 2;
+  if (json) { console.log(JSON.stringify({ error: one ? 'unknown_inviter' : 'several', matches: hits }, null, 2)); return { done: true }; }
+  error(one ? `"${text}" is an invitation from ${UNKNOWN_INVITER_TR} (${one.from}): nothing was opened.` : `"${text}" matches ${hits.length} apps: nothing was opened.`);
+  for (const m of hits) console.log(`  ${matchLine(m)}`);
+  info(one ? 'Tell the owner who invited him and ask whether he knows them. To go on anyway, install it by its owner/repo: his card shows the same warning.' : 'Ask the owner which one, then install it by its owner/repo.');
+  return { done: true };
+}
+
+function matchLine(m: NameMatch): string {
+  return `${m.fullName}  "${m.name}"  ${m.kind === 'invitation' ? `invitation from ${m.from}${m.known ? '' : ` (${UNKNOWN_INVITER_TR})`}` : `shared by ${m.from}`}${m.installed ? `  (installed as ${m.installed})` : ''}`;
+}
+
+function sayInstalled(slug: string, json: boolean | undefined): void {
+  if (json) { console.log(JSON.stringify({ installed: slug }, null, 2)); return; }
+  success(`Already installed as ${slug}: nothing to install.`);
+  info(`Its settings: \`dreamcontext apps config ${slug}\`; a newer version: \`dreamcontext apps update ${slug}\`; it opens from its page in Apps.`);
 }
 
 
@@ -247,11 +288,8 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         const changed = last ? changedSincePublish(pv.files, last) : null;
         if (opts.json) { console.log(JSON.stringify({ repoName: pv.repoName, fullName: pv.fullName, license: pv.license, ...(changed ? { changed } : {}), report: pv.report }, null, 2)); return; }
         info(`${pv.manifest.name} → ${pv.fullName ?? `${login}/${pv.repoName}`} (${visibility}, licence ${pv.license})`);
-        if (changed) {
-          if (!changed.length) info('Nothing changed since the last publish.');
-          else { console.log(`Changed since the last publish (${changed.length}):`); for (const c of changed) console.log(`  ${c}`); }
-        }
-        printGateReport(pv.report);
+        if (changed && !changed.length) info('Nothing changed since the last publish.');
+        printGateReport(pv.report, changed);
         info(rec.publish?.lastSha
           ? `A new version: \`dreamcontext apps publish ${slug} --ask\` (visibility and invitees stay; --note says what changed).`
           : `Ready? \`dreamcontext apps publish ${slug} --ask\` puts it in front of the owner (or --go --grant <id> with the grant his Share click gave you).`);
@@ -261,6 +299,32 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         if (g) h.fail(g);
         h.fail(e);
       }
+    });
+
+  apps
+    .command('job <slug>')
+    .description("The steps of the job the Apps page handed you for this app: with --grant, the publish its Paylaş click opened; without, its settings after an install")
+    .option('--grant <id>', "The publish grant named in the line you were handed")
+    .action(async (slug: string, opts: { grant?: string }) => {
+      try {
+        const p = h.project();
+        const { rec, manifest } = appOf(p, slug);
+        if (opts.grant) {
+          const g = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/publish/grant/check`, { grant: opts.grant }, { headers: requestHeaders() });
+          const published = rec.publish?.lastSha ? { fullName: rec.publish.fullName, public: rec.publish.public } : null;
+          console.log(publishJob({ slug, name: manifest.name, grant: opts.grant, visibility: g.visibility === 'public' ? 'public' : 'private', published }));
+          return;
+        }
+        if (!manifest.config.length) { info(`${slug} asks for no settings: there is nothing to set up. Tell the owner it is ready to open from its page in Apps.`); return; }
+        const values = readAppConfig(homedir(), rec.configId);
+        const readme = readAppFile(rec.root, 'README.md', 256 * 1024);
+        const about = readme ? parseStoreReadme(readme.toString('utf-8').slice(0, 64 * 1024)).about : null;
+        console.log(settingsJob({
+          slug, name: manifest.name, about,
+          fields: manifest.config.map((f) => ({ key: f.key, type: f.type, label: f.label, required: f.required, ...(f.help ? { help: f.help } : {}), ...(f.find ? { find: f.find } : {}) })),
+          missing: missingRequired(manifest.config, values, rec.root),
+        }));
+      } catch (e) { h.fail(e); }
     });
 
   apps
@@ -292,7 +356,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
           key: f.key, type: f.type, label: f.label, required: f.required,
           ...(f.help ? { help: f.help } : {}), ...(f.find ? { find: f.find } : {}),
           ...(f.type === 'secret' ? { set: secrets.has(f.key) } : { value: values[f.key] ?? null }),
-          ...(opts.suggest ? { candidates: suggestions(rec.projectRoot, f.type) } : {}),
+          ...(opts.suggest ? { candidates: suggestions(rec.projectRoot, f) } : {}),
         }));
         if (opts.json) { console.log(JSON.stringify({ fields: rows, missing }, null, 2)); return; }
         if (!fields.length) { info(`${slug} asks for no settings.`); return; }
@@ -302,7 +366,8 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
           if ('find' in r && r.find) console.log(`    find it: ${r.find}`);
           if ('candidates' in r && r.candidates && r.candidates.length) console.log(`    candidates: ${r.candidates.slice(0, 20).join(', ')}`);
         }
-        if (missing.length) error(`required and empty: ${missing.join(', ')} (the app does not start until they are filled)`);
+        // Empty required settings are the normal state right after an install (K9): said, not an error.
+        if (missing.length) info(`ℹ still to fill (required): ${missing.join(', ')}. The app opens once they are filled.`);
       } catch (e) {
         if (e instanceof ConfigError) h.fail(new AppsClientError(e.code, e.message));
         h.fail(e);
@@ -331,9 +396,9 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--json', 'JSON output')
     .action(async (opts: { json?: boolean }) => {
       try {
-        const r = await listShared(resolveAppHost(homedir()), { force: true });
+        const r = await listShared(resolveAppHost(homedir()), { force: true, projectRoot: h.project().projectRoot });
         if (opts.json) { console.log(JSON.stringify(r, null, 2)); return; }
-        for (const i of r.invitations) console.log(`invitation  ${i.fullName} from ${i.inviter} (accept on the Apps page)`);
+        for (const i of r.invitations) console.log(`invitation  ${i.fullName}  "${i.title}" from ${i.inviter}${i.known ? '' : ` (${UNKNOWN_INVITER_TR})`}: \`dreamcontext apps install ${i.fullName} --ask\` accepts and installs on his yes`);
         for (const a of r.shared) console.log(`shared      ${a.fullName}  ${a.name ?? ''}${a.installed ? '  (installed)' : ''}`);
         for (const a of r.mine) console.log(`published   ${a.fullName}  ${a.name ?? ''}`);
         if (!r.invitations.length && !r.shared.length && !r.mine.length) info('Nothing in Shared Apps yet.');
@@ -341,8 +406,8 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     });
 
   apps
-    .command('install <repo>')
-    .description('Install an app from a repo (owner/repo or its link): --ask installs it once the owner taps Onayla on its card in this chat; no flag = only the preview')
+    .command('install <app>')
+    .description('Install an app shared with you: its name as the owner says it ("Toplantı Notu"), owner/repo or its link. --ask installs it once the owner taps Onayla on its card in this chat (an invitation is accepted by the same yes); no flag = only the preview')
     .option('--preview', 'Only the preview (the default)')
     .option('--ask', 'Install it with the owner\'s yes: a card he answers in this chat with one tap, then the install runs right here')
     .option('--set <key=value...>', 'With --ask: settings to fill at install (never keys)')
@@ -350,12 +415,26 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--go', 'Install now (needs --grant)')
     .option('--grant <id>', 'The one-time grant from the owner\'s Onayla')
     .option('--json', 'JSON output')
-    .action(async (repo: string, opts: { ask?: boolean; set?: string[]; wait?: string; go?: boolean; grant?: string; json?: boolean }) => {
+    .action(async (app: string, opts: { ask?: boolean; set?: string[]; wait?: string; go?: boolean; grant?: string; json?: boolean }) => {
       try {
         const p = h.project();
+        let repo = app;
+        let invitation: { from: string; known: boolean } | undefined;
+        if (!opts.go) {
+          const r = await resolveAppArg(p, app, opts.json);
+          if ('done' in r) return;
+          repo = r.fullName;
+          invitation = r.invitation;
+        }
         const spend = async (grant: string) => {
           const out = await appsApi(p, 'POST', '/api/apps/install', { grant, ref: repo }, { timeoutMs: 900_000, headers: requestHeaders() });
           if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+          if (out.needsLook) {
+            // K2: the invitation is accepted; its content holds something on the warn list.
+            info(`The invitation is accepted, but nothing was installed: ${(out.warn as string[] | undefined ?? []).join('; ')}. That needs its own look.`);
+            await sayPending(p, { request: String(out.request ?? ''), state: String(out.state ?? ''), ...(typeof out.proposal === 'string' ? { proposal: out.proposal } : {}) }, opts.json);
+            return;
+          }
           const slug = String(out.slug);
           success(`Installed as ${slug}${out.renamed ? ' (renamed: that name was taken)' : ''}.`);
           info(installedNext(slug));
@@ -379,6 +458,13 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
           await spend(opts.grant);
           return;
         }
+        if (invitation) {
+          // A pending invitation cannot be read before it is accepted (K2): the card does both.
+          if (opts.json) { console.log(JSON.stringify({ invitation: { fullName: repo, ...invitation } }, null, 2)); return; }
+          info(`${repo} is an invitation from ${invitation.from}${invitation.known ? '' : ` (${UNKNOWN_INVITER_TR})`}, not accepted yet: its content can be read only after he says yes.`);
+          info(`Install it: \`dreamcontext apps install ${repo} --ask\`: one card; his yes accepts the invitation, checks the content and installs (anything risky stops for a second card).`);
+          return;
+        }
         const pv = await previewInstall({ home: homedir(), projectRoot: p.projectRoot, ref: repo });
         if (opts.json) { console.log(JSON.stringify(pv, null, 2)); return; }
         info(`${pv.name} by ${pv.publisher} (${pv.fullName}, ${pv.public ? 'public' : 'private'}, licence ${pv.license})`);
@@ -390,7 +476,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
         if (pv.facts.urls.length) console.log(`  addresses in its code: ${pv.facts.urls.slice(0, 10).join(', ')}`);
         if (pv.config.length) console.log(`  settings: ${pv.config.map((c) => `${c.key}${c.type === 'secret' ? ' (key)' : ''}`).join(', ')}`);
         if (!pv.gate.ok) error(`it cannot be installed: ${pv.gate.blocks.map((b) => `${b.file} (${b.label})`).join('; ')}`);
-        info(`Install it: \`dreamcontext apps install ${repo} --ask\` (his card, in this chat, one tap).`);
+        info(`Install it: \`dreamcontext apps install ${pv.fullName} --ask\` (his card, in this chat, one tap).`);
       } catch (e) { h.fail(e); }
     });
 

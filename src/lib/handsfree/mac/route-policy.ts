@@ -701,6 +701,15 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/apps/requests/:id/logo': deny(WINDOW),
   'GET /api/apps/requests/card/:proposal': deny(WINDOW),
   'POST /api/apps/requests/card/:proposal/shown': deny(WINDOW),
+  // app-ux-genel: the chat card's receipt, what waits, install progress, the job's grant check,
+  // settings candidates, who has my app and one more person. All the Mac's.
+  'POST /api/apps/requests/card/:proposal/receipt': deny(WINDOW),
+  'GET /api/apps/shared/waiting': deny(WINDOW),
+  'GET /api/apps/install/status': deny(WINDOW),
+  'POST /api/apps/:slug/publish/grant/check': deny(SECRET),
+  'GET /api/apps/:slug/config/suggest': deny(WINDOW),
+  'GET /api/apps/:slug/share/people': deny(WINDOW),
+  'POST /api/apps/:slug/share/invite': deny(WINDOW),
 };
 
 /** The row for a matched route (`method` as registered, `path` the registered pattern), or

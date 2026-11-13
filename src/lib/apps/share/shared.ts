@@ -2,7 +2,8 @@
  * Shared Apps (paylasilan-app-ler plan r2 K3; named so in app-paylasim-magaza r2): the signed-in account's repos that carry the
  * `dreamcontext-app` topic, split into what others shared with you and what you published, plus
  * invitations not accepted yet. Each app's name is read from its manifest (at most 30 reads a
- * refresh). Cached 15 minutes; a refresh is the owner's.
+ * refresh). The app list is cached 15 minutes (a refresh is the owner's); invitations are read
+ * on every call (app-ux-genel K1), each marked known or unknown by its inviter (S2).
  */
 
 import { homedir } from 'node:os';
@@ -13,6 +14,7 @@ import { listApps } from '../registry.js';
 import { parseManifest } from '../manifest.js';
 import { parseStoreReadme } from '../store-readme.js';
 import { HostError, type AppHost, type Invitation } from './host.js';
+import { knownInviters, markInvitations, type MarkedInvitation } from './inviters.js';
 
 export interface SharedApp {
   fullName: string;
@@ -31,7 +33,8 @@ export interface SharedList {
   signedIn: boolean;
   login: string | null;
   host: 'github' | 'local';
-  invitations: Invitation[];
+  /** Never cached (K1); each says whether its inviter is someone this account works with (S2). */
+  invitations: MarkedInvitation[];
   shared: SharedApp[];
   mine: SharedApp[];
   at: string;
@@ -58,7 +61,6 @@ export async function listShared(host: AppHost, opts: { force?: boolean; project
   else {
     value = empty(login);
     try {
-      value.invitations = await host.listInvitations();
       const repos = await host.listAppRepos();
       let reads = 0;
       for (const r of repos) {
@@ -81,9 +83,29 @@ export async function listShared(host: AppHost, opts: { force?: boolean; project
       try { writeSharedSnapshot(opts.home ?? homedir(), { currentLogin: login, at: value.at, repos: [...value.shared, ...value.mine].map((r) => r.fullName) }); } catch { /* the hook says "unknown" */ }
     }
   }
-  if (!opts.projectRoot) return value;
+  // K1: invitations are never served from the cache; a cached list gets this moment's invitations.
+  let invitations: Invitation[] = [];
+  let problem = value.problem;
+  try { invitations = await host.listInvitations(); } catch (e) { problem = problem ?? (e instanceof HostError ? e.message : 'GitHub did not answer'); }
+  const known = await knownInviters({ host, home: opts.home ?? homedir(), projectRoot: opts.projectRoot ?? '', login, mine: value.mine.map((m) => m.fullName) }).catch(() => new Set<string>());
+  const fresh: SharedList = { ...value, invitations: markInvitations(invitations, known), ...(problem ? { problem } : {}) };
+  if (!opts.projectRoot) return fresh;
   const installed = new Map(listApps(opts.home ?? homedir(), opts.projectRoot).filter((a) => a.origin === 'installed').map((a) => [a.source?.fullName ?? a.provenance?.fullName ?? '', a.slug]));
-  return { ...value, shared: value.shared.map((s) => (installed.has(s.fullName) ? { ...s, installed: installed.get(s.fullName) } : s)) };
+  return { ...fresh, shared: fresh.shared.map((s) => (installed.has(s.fullName) ? { ...s, installed: installed.get(s.fullName) } : s)) };
+}
+
+/**
+ * What waits for this account (K1): invitations from known and from unknown inviters, plus the
+ * shared apps not installed here yet. The rail dot reads `known + notInstalled` only.
+ */
+export async function sharedWaiting(host: AppHost, opts: { projectRoot: string; home?: string }): Promise<{ known: number; unknown: number; notInstalled: number; problem?: string }> {
+  const list = await listShared(host, opts);
+  return {
+    known: list.invitations.filter((i) => i.known).length,
+    unknown: list.invitations.filter((i) => !i.known).length,
+    notInstalled: list.shared.filter((s) => !s.installed).length,
+    ...(list.problem ? { problem: list.problem } : {}),
+  };
 }
 
 // ─── The hook's offline copy (app-araclari plan r3 §3b) ─────────────────────────────

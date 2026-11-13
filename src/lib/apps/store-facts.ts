@@ -47,7 +47,7 @@ export function canLines(m: Pick<AppManifest, 'actions' | 'schedules' | 'config'
   const out: CanLine[] = [];
   for (const a of m.actions.slice(0, 12)) out.push({ kind: 'action', text: cleanText(a.title || a.id, 80) });
   for (const s of m.schedules.slice(0, 6)) out.push({ kind: 'schedule', text: scheduleText(s.schedule, s.id) });
-  if (m.config.length) out.push({ kind: 'settings', text: m.config.slice(0, 8).map((f) => cleanText(f.label || f.key, 40)).join(', ') });
+  if (m.config.length) out.push({ kind: 'settings', text: m.config.map((f) => cleanText(f.label || f.key, 40)).join(', ') });
   if (m.agent?.member) out.push({ kind: 'agent', text: `AI Team member "${cleanText(m.agent.member, 40)}"` });
   else if (m.agent?.own) out.push({ kind: 'agent', text: 'Its own assistant' });
   return out;

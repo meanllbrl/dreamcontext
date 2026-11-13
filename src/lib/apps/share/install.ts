@@ -80,6 +80,8 @@ export interface InstallPreview {
   previewId: string;
   host: 'github' | 'local';
   fullName: string;
+  /** The repo's own id: an invitation install checks it is the repo the invitation named. */
+  repoId: string;
   sha: string;
   publisher: string;
   publisherSince: string | null;
@@ -184,7 +186,93 @@ async function readableRepo(home: string, fullName: string, host?: AppHost): Pro
       if (repo) return { host: h, repo };
     } catch (e) { if (!(e instanceof HostError) || e.code === 'rate_limited') throw e; }
   }
-  throw new InstallError('not_found', `${fullName} was not found, or you have no access to it. A private app needs its owner's invitation first; if you have one, sign in again in Settings → GitHub.`);
+  throw await notShared(tries[0]!, fullName);
+}
+
+/**
+ * No access (K2): a pending invitation is accepted inside the install, so this is a repo with no
+ * invitation for this account either. Said with the login, so the owner knows which account the
+ * sharer must name; never "sign in again" (that was wrong advice: signing in changes nothing).
+ */
+async function notShared(host: AppHost, fullName: string): Promise<InstallError> {
+  const login = host.signedIn ? await host.me().then((u) => u.login, () => null) : null;
+  if (!login) return new InstallError('not_signed_in', `${fullName} is private or not there. Sign in with GitHub first (Settings → GitHub); a public app installs without it.`);
+  return new InstallError('not_shared', `${fullName} is not shared with you, or your GitHub account is a different one (${login}). Ask the person who shared it to share it with this account.`);
+}
+
+// ─── In-flight installs (K8) ────────────────────────────────────────────────────────
+
+export interface InstallProgress {
+  fullName: string;
+  since: string;
+  done?: { slug: string; settings: number } | { error: string };
+}
+
+const inflight = new Map<string, InstallProgress & { at: number }>();
+const KEEP_DONE_MS = 10 * 60_000;
+
+/** Runs one install and keeps its progress where any page can read it (keyed by fullName),
+ *  so closing the install sheet never loses it. A second install of the same repo while one runs
+ *  is refused. */
+export async function trackInstall<T extends { rec: AppRecord }>(fullName: string, run: () => Promise<T>, settingsOf: (rec: AppRecord) => number = () => 0): Promise<T> {
+  const key = fullName.toLowerCase();
+  const now = Date.now();
+  for (const [k, e] of inflight) if (e.done && now - e.at > KEEP_DONE_MS) inflight.delete(k);
+  const cur = inflight.get(key);
+  if (cur && !cur.done) throw new InstallError('install_running', `${cur.fullName} is being installed right now.`);
+  const entry: InstallProgress & { at: number } = { fullName, since: new Date(now).toISOString(), at: now };
+  inflight.set(key, entry);
+  try {
+    const out = await run();
+    entry.done = { slug: out.rec.slug, settings: settingsOf(out.rec) };
+    entry.at = Date.now();
+    return out;
+  } catch (e) {
+    entry.done = { error: e instanceof InstallError ? e.code : 'failed' };
+    entry.at = Date.now();
+    throw e;
+  }
+}
+
+export function installProgress(): InstallProgress[] {
+  const now = Date.now();
+  return [...inflight.values()].filter((e) => !e.done || now - e.at <= KEEP_DONE_MS).map(({ at: _at, ...e }) => e);
+}
+
+/** Tests only. */
+export function resetInstallProgress(): void { inflight.clear(); }
+
+// ─── Find by name (K3) ──────────────────────────────────────────────────────────────
+
+/** Case-, accent- and punctuation-blind form of a name ("Toplantı Notu" = "toplanti-notu-app"). */
+export function nameKey(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}+/gu, '').toLocaleLowerCase('tr').replace(/ı/g, 'i').replace(/[-_]app$/, '').replace(/[^a-z0-9]+/g, '');
+}
+
+export interface NameMatch {
+  kind: 'shared' | 'invitation';
+  fullName: string;
+  name: string;
+  /** An invitation's inviter, else the owner. */
+  from: string;
+  known: boolean;
+  installed?: string;
+}
+
+/** Every shared app and invitation whose manifest name, repo name or readable name is `text`. */
+export function matchShared(text: string, list: { shared: Array<{ fullName: string; owner: string; name: string | null; installed?: string }>; invitations: Array<{ fullName: string; inviter: string; known: boolean; title: string }> }): NameMatch[] {
+  const k = nameKey(text);
+  if (!k) return [];
+  const out: NameMatch[] = [];
+  for (const s of list.shared) {
+    const repo = s.fullName.split('/')[1] ?? '';
+    if ([s.name ?? '', repo].some((n) => n && nameKey(n) === k)) out.push({ kind: 'shared', fullName: s.fullName, name: s.name ?? repo, from: s.owner, known: true, ...(s.installed ? { installed: s.installed } : {}) });
+  }
+  for (const i of list.invitations) {
+    const repo = i.fullName.split('/')[1] ?? '';
+    if ([i.title, repo].some((n) => n && nameKey(n) === k)) out.push({ kind: 'invitation', fullName: i.fullName, name: i.title, from: i.inviter, known: i.known });
+  }
+  return out;
 }
 
 export async function previewInstall(opts: { home: string; projectRoot: string; ref: string; host?: AppHost }): Promise<InstallPreview> {
@@ -222,7 +310,7 @@ export async function previewInstall(opts: { home: string; projectRoot: string; 
   const icon = iconPath && !isDefaultIconBytes(blob(iconPath), m.slug, m.name) ? imageDataUrl(iconPath, blob(iconPath), ICON_MAX_BYTES) : null;
   const store = storePage(readme, m, blob);
   return {
-    previewId, host: host.kind, fullName: repo.fullName, sha, publisher: repo.owner, publisherSince: publisherUser?.createdAt ?? null,
+    previewId, host: host.kind, fullName: repo.fullName, repoId: repo.repoId, sha, publisher: repo.owner, publisherSince: publisherUser?.createdAt ?? null,
     repoCreated: repo.createdAt, repoUpdated: repo.pushedAt, public: !repo.private, name: m.name, slug: m.slug,
     license: licenseKind(files.find((f) => f.path === 'LICENSE')?.data.toString('utf-8') ?? null),
     warning: installWarning(repo.owner), facts, config: m.config,

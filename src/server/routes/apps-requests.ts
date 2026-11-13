@@ -25,8 +25,10 @@ import { LogoError } from '../../lib/apps/app-logo.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
 import { PublishError } from '../../lib/apps/share/publish.js';
 import { InstallError } from '../../lib/apps/share/install.js';
-import { AppRequestError, appRequestByProposal, appRequestLogo, appRequestStatus, decideAppRequest, markAppRequestShown, openAppRequest, waitAppRequest, type CardSurface } from '../../lib/apps/share/app-request.js';
-import { buildInstallPlan, buildLogoPlan, buildPublishPlan, buildUpdatePlan, type BuiltPlan } from '../../lib/apps/share/app-plan.js';
+import { AppRequestError, appRequestByProposal, appRequestLogo, appRequestStatus, claimAppRequestReceipt, markAppRequestShown, openAppRequest, waitAppRequest, type CardSurface } from '../../lib/apps/share/app-request.js';
+import { buildInstallPlan, buildInviteInstallPlan, buildLogoPlan, buildPublishPlan, buildUpdatePlan, type BuiltPlan } from '../../lib/apps/share/app-plan.js';
+import { parseAppRepoRef } from '../../lib/apps/share/host.js';
+import { listShared } from '../../lib/apps/share/shared.js';
 import { realPath } from '../../lib/real-path.js';
 
 type Params = Record<string, string>;
@@ -89,7 +91,16 @@ export async function handleAppRequestCreate(req: IncomingMessage, res: ServerRe
       const vault = listVaults(home).find((v) => realRoot(v.path) === projectRoot)?.name;
       if (!vault) { sendError(res, 409, 'no_vault', 'This project is not registered.'); return; }
       const config = b.config && typeof b.config === 'object' && !Array.isArray(b.config) ? (b.config as Record<string, unknown>) : {};
-      built = await buildInstallPlan({ home, vault, contextRoot, projectRoot }, String(b.ref ?? ''), { config });
+      // K2: a repo with a pending invitation for this account installs from the invitation (the
+      // one card both accepts and installs); every other repo is previewed and bound to its sha.
+      const host = resolveAppHost(home);
+      const fullName = parseAppRepoRef(String(b.ref ?? ''));
+      const inv = fullName && host.signedIn
+        ? (await listShared(host, { projectRoot, home }).catch(() => null))?.invitations.find((i) => i.fullName.toLowerCase() === fullName.toLowerCase()) ?? null
+        : null;
+      built = inv
+        ? await buildInviteInstallPlan({ home, vault, contextRoot, projectRoot, host }, inv, { config })
+        : await buildInstallPlan({ home, vault, contextRoot, projectRoot }, String(b.ref ?? ''), { config });
     } else {
       const slug = typeof b.slug === 'string' ? b.slug : '';
       if (ownApp && slug !== ownApp) { sendError(res, 403, 'not_your_app', 'An app\'s own assistant asks for its own app only.'); return; }
@@ -146,7 +157,22 @@ export async function handleAppRequestCard(req: IncomingMessage, res: ServerResp
   const id = params.proposal ?? '';
   const hit = PROPOSAL_ID.test(id) ? appRequestByProposal(id) : null;
   if (!hit) { sendError(res, 404, 'no_card', 'No such app request card.'); return; }
-  sendJson(res, 200, { state: hit.state, card: hit.view });
+  sendJson(res, 200, { state: hit.state, card: hit.view, ...(hit.failed ? { failed: hit.failed } : {}), ...(hit.receiptOwed ? { receiptOwed: true } : {}) });
+}
+
+/**
+ * POST /api/apps/requests/card/:proposal/receipt (K4): the owner said yes but the "[app onayı]"
+ * line never reached the asking chat (no notch to relay it). The chat card drawing this request
+ * claims the receipt ONCE and posts the line into its own chat; a second claim is 409. The line
+ * carries no grant (S6), only `apps grant <request>`.
+ */
+export async function handleAppRequestReceipt(req: IncomingMessage, res: ServerResponse, params: Params): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  const id = params.proposal ?? '';
+  if (!PROPOSAL_ID.test(id)) { sendError(res, 400, 'bad_request', 'A card id.'); return; }
+  const out = claimAppRequestReceipt(id);
+  if ('line' in out) { sendJson(res, 200, { line: out.line }); return; }
+  sendError(res, out.error === 'unknown' ? 404 : 409, out.error, out.error === 'claimed' ? 'Another card already posted this receipt.' : 'Nothing to post: the line already reached the chat, or the request is not approved.');
 }
 
 /**

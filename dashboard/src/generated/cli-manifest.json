@@ -290,13 +290,23 @@
     },
     {
       "path": "apps install",
-      "desc": "Install an app from a repo (owner/repo or its link): --ask installs it once the owner taps Onayla on its card in this chat; no flag = only the preview",
+      "desc": "Install an app shared with you: its name as the owner says it (\"Toplantı Notu\"), owner/repo or its link. --ask installs it once the owner taps Onayla on its card in this chat (an invitation is accepted by the same yes); no flag = only the preview",
       "args": [
-        "<repo>"
+        "<app>"
       ],
       "valueFlags": [
         "--set",
         "--wait",
+        "--grant"
+      ]
+    },
+    {
+      "path": "apps job",
+      "desc": "The steps of the job the Apps page handed you for this app: with --grant, the publish its Paylaş click opened; without, its settings after an install",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
         "--grant"
       ]
     },

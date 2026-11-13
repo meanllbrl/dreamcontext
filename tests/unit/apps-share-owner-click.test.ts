@@ -249,10 +249,10 @@ describe('the windows that draw the Apps page hold the key', () => {
  * nobody classified fails here, so an action can never slip in beside the owner's gate.
  */
 describe('every POST under /api/apps/ is classified', () => {
-  const OWNER_ONLY = ['/api/apps/:slug/data-share', '/api/apps/shared/accept', '/api/apps/trash/restore', '/api/apps/:slug/publish/grant', '/api/apps/:slug/config', '/api/apps/:slug/logo/reset', '/api/apps/:slug/update/undo', '/api/apps/:slug/auto-update', '/api/apps/:slug/detach', '/api/apps/:slug/uninstall'];
+  const OWNER_ONLY = ['/api/apps/:slug/data-share', '/api/apps/shared/accept', '/api/apps/trash/restore', '/api/apps/:slug/publish/grant', '/api/apps/:slug/config', '/api/apps/:slug/logo/reset', '/api/apps/:slug/update/undo', '/api/apps/:slug/auto-update', '/api/apps/:slug/detach', '/api/apps/:slug/uninstall', '/api/apps/:slug/share/invite'];
   const OWNER_OR_GRANT = ['/api/apps/install', '/api/apps/:slug/publish', '/api/apps/:slug/logo', '/api/apps/:slug/update'];
   /** Their own gates: a launch or embed token, the app's own chat, or only a read or an ask. */
-  const AGENT_OPEN = ['/api/apps/launch-window', '/api/apps/embed-check', '/api/apps/install/preview', '/api/apps/requests', '/api/apps/requests/card/:proposal/shown', '/api/apps/:slug/update/check', '/api/apps/:slug/launch', '/api/apps/:slug/say', '/api/apps/:slug/chats/close', '/api/apps/:slug/chats/title', '/api/apps/:slug/stop', '/api/apps/:slug/snapshot', '/api/apps/:slug/call', '/api/apps/:slug/mcp-request', '/api/apps/:slug/schedules/:id', '/api/apps/:slug/sync-pause'];
+  const AGENT_OPEN = ['/api/apps/launch-window', '/api/apps/embed-check', '/api/apps/install/preview', '/api/apps/requests', '/api/apps/requests/card/:proposal/shown', '/api/apps/requests/card/:proposal/receipt', '/api/apps/:slug/publish/grant/check', '/api/apps/:slug/update/check', '/api/apps/:slug/launch', '/api/apps/:slug/say', '/api/apps/:slug/chats/close', '/api/apps/:slug/chats/title', '/api/apps/:slug/stop', '/api/apps/:slug/snapshot', '/api/apps/:slug/call', '/api/apps/:slug/mcp-request', '/api/apps/:slug/schedules/:id', '/api/apps/:slug/sync-pause'];
   const index = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'index.ts'), 'utf-8');
   const posts = [...index.matchAll(/router\.post\('(\/api\/apps\/[^']+)',\s*(\w+)\)/g)].map((m) => ({ path: m[1], handler: m[2] }));
   // Owner routes live in apps-share.ts and apps.ts (the team-data consent): both are read.
