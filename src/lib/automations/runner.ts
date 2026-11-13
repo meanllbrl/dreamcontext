@@ -10,6 +10,7 @@ import { GLOBAL_REGISTRY_KEY, safeMemberWrite, underGlobalAgents } from '../agen
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
 import { superRunQuiet } from './super-quiet.js';
 import { notchListsAgent } from '../notch-state.js';
+import { agentRunNews, notchShowsNews, type NotchNews } from '../notch-importance.js';
 import { recordNotification } from '../notification-log.js';
 import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
@@ -49,6 +50,7 @@ import { enqueueFire } from './queue.js';
 import { writeScheduleItem } from '../super/schedule-queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
 import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
+import type { ThreadEntry } from './types.js';
 import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from './history.js';
 import { appRunBrief, type AppRunBrief } from '../apps/brief.js';
 import { fireSlotLabel, formatLocalFire, formatSchedule } from './schedule.js';
@@ -589,6 +591,19 @@ function lastAgentPost(
     logFn(`automation "${slug}": could not read the thread for the banner — ${(err as Error).message}`);
     return null;
   }
+}
+
+/**
+ * This run as the notch classifier reads it (`notch-importance.ts` `agentRunNews`): the same
+ * facts the feed reads for its notch row, so the banner and the row never disagree. Read
+ * failure = the run's first entry is unknown (not asked).
+ */
+function runNews(contextRoot: string, slug: string, runId: string, status: string, needsYou: boolean): NotchNews {
+  let first: ThreadEntry | null = null;
+  try {
+    for (const e of readThreadRun(contextRoot, slug, runId)) if (!first || e.id < first.id) first = e;
+  } catch { first = null; }
+  return agentRunNews({ firstEntry: first, status, needsYou });
 }
 
 export function composePrompt(
@@ -2137,14 +2152,21 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
           clickFile,
           automationLink(contextRoot, slug, clickFile, home),
           // The notch lists a run's POST (feed `textFrom: 'post'`), not a bare "document
-          // written": only a run that posted is a notch notice.
-          posted !== null && notchListsAgent(contextRoot, slug, home),
+          // written": only a run that posted is a notch notice, and only when it is news he
+          // waits for (`notch-importance.ts`): an answer to his message or a verdict it owes.
+          // A routine that ran fine is a macOS notification, even with the notch open.
+          posted !== null
+            && notchShowsNews(runNews(contextRoot, slug, fireIso, params.status, !!params.reviewCardId))
+            && notchListsAgent(contextRoot, slug, home),
         );
       } else {
         // Capped like the success body. `error` can carry a STDERR_TAIL_BYTES
         // (4 KB) stderr tail, and an unbounded banner is macOS's problem to
         // truncate — badly, mid-word, with no ellipsis.
         const reason = params.error ?? `the run ended ${params.status}`;
+        // The feed lists this run when it posted or wrote a failure reason (`textFrom` post or
+        // error), and the classifier reads its status: a failed or timed-out run is news.
+        const listedPost = !!params.error || lastAgentPost(contextRoot, slug, fireIso, logFn) !== null;
         notifyFn(
           `${bannerTitle(manifest)} — ${params.status}`,
           reason.length <= NOTIFY_BODY_MAX_CHARS
@@ -2155,7 +2177,9 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
           automationLink(contextRoot, slug, params.outputPath, home),
           // The notch lists a failed or timed-out run's reason (feed `textFrom: 'error'`);
           // a blocked or deferred one is no notch row, so its banner goes.
-          (params.status === 'failed' || params.status === 'timeout') && !!params.error && notchListsAgent(contextRoot, slug, home),
+          listedPost
+            && notchShowsNews(runNews(contextRoot, slug, fireIso, params.status, false))
+            && notchListsAgent(contextRoot, slug, home),
         );
       }
     }

@@ -9,6 +9,7 @@ import { readMutedAutomations } from '../lib/assistant/notch-inbox.js';
 import { agentActivities } from './automation-job.js';
 import { listInboxRows } from '../lib/owner-inbox.js';
 import { taskHeadOfRow } from '../lib/agents/task-starter.js';
+import { notchShowsNews, runFailed, type NotchNews } from '../lib/notch-importance.js';
 
 /**
  * The automation half of the notch inbox: every registered project's agents, joined at read
@@ -66,6 +67,8 @@ export interface AutomationPost {
   textFrom: string;
   text: string;
   needsYou: boolean;
+  /** The run answers a message the owner wrote to it (feed `ask`): he is waiting for it. */
+  asked: boolean;
   /** What "seen" advances the watermark to. */
   newestId: string;
 }
@@ -120,6 +123,11 @@ export function speakerTitle(agentTitle: string | null | undefined, title: strin
   return `${who} · ${title}`;
 }
 
+/** A feed message as the classifier reads it: the same facts the runner's banner reads. */
+export function postNews(m: { ownerAsked: boolean; needsYou: boolean; status: string }): NotchNews {
+  return { kind: 'agent-post', asked: m.ownerAsked, needsYou: m.needsYou, failed: runFailed(m.status) };
+}
+
 export function unreadAutomationPosts(now = Date.now()): AutomationPost[] {
   if (postsCache && now - postsCache.at < POSTS_TTL_MS) return postsCache.value;
   const muted = readMutedAutomations();
@@ -131,12 +139,15 @@ export function unreadAutomationPosts(now = Date.now()): AutomationPost[] {
     for (const m of feed.messages) {
       if (!m.unread || !m.newestId || mutedHere.has(m.slug)) continue;
       if (!(m.textFrom === 'post' || m.textFrom === 'error' || m.needsYou)) continue;
+      // Only what needs him or what he waits for (`notch-importance.ts`): a routine that ran
+      // fine went out as a macOS notification and is read in its channel.
+      if (!notchShowsNews(postNews(m))) continue;
       out.push({
         key: `${p.vault}::${m.slug}::${m.runId}`,
         vault: p.vault, slug: m.slug, title: speakerTitle(m.agentTitle, m.title), hasPhoto: m.hasPhoto, runId: m.runId,
         at: m.at, status: m.status, textFrom: m.textFrom,
         text: clip(m.question?.text ? plainPostText(m.question.text) : plainPostText(m.text)),
-        needsYou: m.needsYou, newestId: m.newestId,
+        needsYou: m.needsYou, asked: m.ownerAsked, newestId: m.newestId,
       });
     }
   }
@@ -172,7 +183,7 @@ export function ownerTaskRows(): OwnerTaskRow[] {
     let rows: ReturnType<typeof listInboxRows> = [];
     try { rows = listInboxRows(v.path); } catch { continue; }
     for (const r of rows) {
-      if (!r.kind.startsWith('task-')) continue;
+      if (!r.kind.startsWith('task-') || !notchShowsNews({ kind: 'task-row', row: r.kind })) continue;
       // The task's slug now (found by id): a rename since the row was raised still opens it.
       let task = r.ref;
       try { task = taskHeadOfRow(join(v.path, '_dream_context'), r)?.slug ?? r.ref; } catch { /* the raised slug */ }

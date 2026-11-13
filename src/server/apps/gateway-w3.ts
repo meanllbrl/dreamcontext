@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gatewayDashboardPort, gatewayTheme, registerGatewayRoute, type AppGateway } from './gateway.js';
 import { recordAppEvent } from '../../lib/assistant/notch-inbox.js';
+import { notchShowsNews } from '../../lib/notch-importance.js';
 import { APP_SOUND_HELP, notifyFromApp, resolveAppSound } from '../../lib/apps/app-notify.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { cleanText } from '../../lib/apps/manifest.js';
@@ -138,9 +139,13 @@ registerGatewayRoute('/__dc/notify', { cookie: true, bearer: true }, async (gw: 
   // its page. The history row is a link: the path stays here, behind a one-time nonce.
   if (path && gw.runtime.liveWindows() === 0) gw.pendingPath = path;
   const historyLink = appHistoryLink(rec.vault, rec.slug, path ? issueLinkNonce(rec.hash, path) : null);
-  const wantBanner = body.banner !== false;
-  const wantNotch = body.notch !== false;
   // The notch row first: a notice the open notch shows goes out as no banner (owner, 2026-11-09).
+  // An app's notice is not notch news (owner, 2026-11-13, `notch-importance.ts`): it is a macOS
+  // notification, so no row is recorded and the banner always goes, even when the app asked for
+  // the notch only (`banner: false`): a notice must reach him somewhere.
+  const notchNews = notchShowsNews({ kind: 'app' });
+  const wantNotch = body.notch !== false && notchNews;
+  const wantBanner = body.banner !== false || !wantNotch;
   const notch = wantNotch ? !!recordAppEvent({ vault: rec.vault, projectRoot: rec.projectRoot, slug: rec.slug, name: title, body: text }, homeDir) : false;
   let banner: { banner: true; via: 'app' | 'dreamcontext' } | { banner: false; reason: string } = { banner: false, reason: 'not asked' };
   if (wantBanner) {

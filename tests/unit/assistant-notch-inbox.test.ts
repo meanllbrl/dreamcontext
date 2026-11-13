@@ -33,7 +33,7 @@ const { spawnModelFor } = await import('../../src/server/routes/agent-chat.js');
 const { DEFAULT_ASSISTANT_CONFIG, sanitizeConfigPatch } = await import('../../src/lib/assistant/home.js');
 const { splitNotchCue, stripNotchCue, readingTimeMs } = await import('../../dashboard/src/lib/notchCue');
 const { sttRetryable, STT_RETRIES } = await import('../../dashboard/src/lib/voice/useVoiceCapture');
-const { freshStarts, assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
+const { assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
 
 function makeRes() {
   let status = 0;
@@ -194,11 +194,20 @@ describe('account notices (notch-inbox.ts)', () => {
     }));
     inbox.syncAccountRejections(HOME, now);
     inbox.syncAccountRejections(HOME, now);                       // seen once only
+    // The limit alone stopped a turn: it is notch news, named.
+    const limit = inbox.listNotchEvents(HOME, now + 100).filter((e) => e.kind === 'account');
+    expect(limit).toHaveLength(1);
+    expect(limit[0]).toMatchObject({ account: 'work@x.com', toAccount: null, window: 'session' });
+    expect(accountLine(readInbox({ events: limit }).notices[0] as Parameters<typeof accountLine>[0])).toMatch(/^work@x\.com hit its 5-hour limit · back at \d\d:\d\d$/);
+    // The switch it caused merges into that ONE row; the work went on, so it leaves the notch
+    // (owner, 2026-11-13: only important news there) and goes out as a macOS notification.
+    const banners: string[] = [];
+    inbox.setSuperFinishBanner((_t, body) => { banners.push(body); });
     inbox.recordAccountSwitch({ fromAccountId: 'work', toAccountId: 'home', vault: 'acme', sessionId: 's-1' }, now + 500);
-    const rows = inbox.listNotchEvents(HOME, now + 600).filter((e) => e.kind === 'account');
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ account: 'work@x.com', toAccount: 'me@y.com', window: 'session', vault: 'acme', sessionId: 's-1' });
-    const line = accountLine(readInbox({ events: rows }).notices[0] as Parameters<typeof accountLine>[0]);
+    expect(inbox.listNotchEvents(HOME, now + 600).filter((e) => e.kind === 'account')).toHaveLength(0);
+    expect(banners).toHaveLength(1);
+    expect(banners[0]).toContain('me@y.com');
+    const line = accountLine({ id: 'a', kind: 'account', at: now, account: 'work@x.com', toAccount: 'me@y.com', window: 'session', until: now + 3_600_000, exhausted: false, vault: 'acme', sessionId: 's-1' });
     expect(line).toMatch(/^work@x\.com hit its 5-hour limit → switched to me@y\.com · back at \d\d:\d\d$/);
   });
 
@@ -206,6 +215,43 @@ describe('account notices (notch-inbox.ts)', () => {
     inbox.recordAccountSwitch({ fromAccountId: 'home', toAccountId: null, exhausted: true, vault: null, sessionId: null });
     const n = readInbox({ events: inbox.listNotchEvents(HOME) }).notices[0];
     expect(n.kind === 'account' && accountLine(n)).toMatch(/^Every account is at its limit/);
+  });
+
+  // Owner, 2026-11-13: only important news in the notch. A move the work went on through is a
+  // macOS notification (always posted, `notchShows` false), not a notch row; a stop stays.
+  it('a switch that kept the work going leaves the notch and goes to macOS, once per wall', () => {
+    const banners: Array<{ title: string; body: string; notchShows: boolean | undefined }> = [];
+    inbox.setSuperFinishBanner((title, body, _link, _sound, notchShows) => { banners.push({ title, body, notchShows }); });
+    const now = Date.now();
+    inbox.recordAccountSwitch({ fromAccountId: 'work', toAccountId: 'home', vault: 'acme', sessionId: 's-1' }, now);
+    inbox.recordAccountSwitch({ fromAccountId: 'work', toAccountId: 'home', vault: 'acme', sessionId: 's-1' }, now + 1000);
+    expect(inbox.listNotchEvents(HOME, now + 2000).filter((e) => e.kind === 'account')).toHaveLength(0);
+    expect(banners).toHaveLength(1);
+    expect(banners[0].notchShows).toBe(false);
+    expect(banners[0].body).toContain('work@x.com');
+    expect(banners[0].body).toContain('me@y.com');
+    expect(banners[0].title).toContain('acme');
+  });
+
+  it('every account at its limit stays in the notch and posts no extra banner', () => {
+    const banners: string[] = [];
+    inbox.setSuperFinishBanner((title) => { banners.push(title); });
+    inbox.recordAccountSwitch({ fromAccountId: 'home', toAccountId: null, exhausted: true, vault: 'acme', sessionId: null });
+    expect(inbox.listNotchEvents(HOME).filter((e) => e.kind === 'account')).toHaveLength(1);
+    expect(banners).toHaveLength(0);
+  });
+
+  it('a dismissed row never comes back on the next read', () => {
+    inbox.recordAccountSwitch({ fromAccountId: 'home', toAccountId: null, exhausted: true, vault: null, sessionId: null });
+    const id = inbox.listNotchEvents(HOME)[0].id;
+    expect(inbox.dismissNotchEvent(id)).toBe(true);
+    expect(inbox.listNotchEvents(HOME)).toHaveLength(0);
+    expect(inbox.listNotchEvents(HOME)).toHaveLength(0);
+  });
+
+  it('an app notice is never a notch row', () => {
+    inbox.recordAppEvent({ vault: 'acme', projectRoot: '/p', slug: 'meta', name: 'Meta', body: 'hi' }, HOME);
+    expect(inbox.listNotchEvents(HOME).filter((e) => e.kind === 'app')).toHaveLength(0);
   });
 });
 
@@ -283,13 +329,6 @@ describe('a Super job at work (notchModel.ts)', () => {
     const row = { vault: 'korus', slug: 'desk', title: 'Desk', since: 1, runId: 'r' };
     const { running } = readInbox({ running: [{ ...row, superJob: true }, { ...row, slug: 'plain', superJob: 'yes' }] });
     expect(running.map((r) => r.superJob)).toEqual([true, undefined]);
-    const seen = new Set<string>();
-    expect(freshStarts(running, seen)).toEqual([running[1]]);
-    expect(seen.size).toBe(2);
-    const other = { ...running[0], slug: 'other', superJob: true as const };
-    expect(freshStarts([other], seen)).toEqual([]);
-    expect(seen.size).toBe(3);
-    expect(freshStarts([other, running[1]], seen)).toEqual([]);
   });
 });
 

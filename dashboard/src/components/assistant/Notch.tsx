@@ -17,8 +17,8 @@ import { AgentAvatar, InboxList } from './InboxList';
 import { ListeningOverlay } from './ListeningOverlay';
 import { NOTCH_GROW_EASE, drawsOpen, islandClip, planMotion, type IslandRect, type MotionPhase, type MotionRequest } from './notchMotion';
 import {
-  EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, freshStarts, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
-  PEEK_TTL_MS, noticeKey, offScreenAsks, peekTtlMs, permissionWord, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
+  EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
+  PEEK_TTL_MS, noticeKey, offScreenAsks, peekTtlMs, permissionWord, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
   createRawGate, startsFresh, QUIET_EAR_W, beadCount, quietEarWidth, quietSignal,
 } from './notchModel';
@@ -432,6 +432,23 @@ async function hideWindow(): Promise<void> {
   } catch { /* no runtime */ }
 }
 
+/** Where the prompts the notch already raised are kept across a reload (`readSeenAsks`). */
+const SEEN_ASKS_KEY = 'dc.notch.seenAsks';
+
+/** The prompts the notch already raised, as the last run left them (`sessionId:askId`). */
+function readSeenAsks(): Set<string> {
+  try {
+    const v: unknown = JSON.parse(window.localStorage.getItem(SEEN_ASKS_KEY) ?? '[]');
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 300).slice(0, 200) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeSeenAsks(keys: Set<string>): void {
+  try { window.localStorage.setItem(SEEN_ASKS_KEY, JSON.stringify([...keys].slice(0, 200))); } catch { /* private mode: in memory only */ }
+}
+
 /** The inbox row an event peek is about, so acting on the row folds its peek too. */
 function peekId(p: PeekItem): string | null {
   if (p.kind === 'notice') return p.notice.id;
@@ -740,11 +757,16 @@ export function Notch() {
   const peekAsks = offScreenAsks(glance, inbox.lookingAtSession);
   const peekAsksRef = useRef(peekAsks);
   peekAsksRef.current = peekAsks;
-  const seenAsks = useRef<Set<string>>(new Set());
+  // Kept across a reload and a restart (owner, 2026-11-13: a prompt he closed with × came back
+  // when the notch reloaded, because this set lived only in memory). Only the prompts still
+  // waiting are kept, so it never grows.
+  const seenAsks = useRef<Set<string>>(readSeenAsks());
   useEffect(() => {
     const keys = askKeys ? askKeys.split('|') : [];
     const fresh = peekAsksRef.current.some((c) => !seenAsks.current.has(askKey(c)));
-    for (const k of keys) seenAsks.current.add(k);
+    // Pruned to the prompts still waiting; an empty list (nothing waits, or the first poll has
+    // not landed yet) leaves the kept ones alone, so a reload cannot wipe them before they load.
+    if (keys.length) { seenAsks.current = new Set(keys); writeSeenAsks(seenAsks.current); }
     if (fresh && canPeekRef.current) setPeek('ask');
     if (!keys.length) setPeek((p) => (p === 'ask' ? null : p));
   }, [askKeys]);
@@ -794,7 +816,7 @@ export function Notch() {
   // `id` is the announcement (a notice's `noticeKey`: each turn of a chat is its own finish),
   // `row` the inbox row it speaks for.
   const [peekQueue, setPeekQueue] = useState<Array<{ id: string; row: string; item: PeekItem }>>([]);
-  const seenInbox = useRef<{ booted: boolean; ids: Set<string>; runs: Set<string> }>({ booted: false, ids: new Set(), runs: new Set() });
+  const seenInbox = useRef<{ booted: boolean; ids: Set<string> }>({ booted: false, ids: new Set() });
   useEffect(() => {
     const seen = seenInbox.current;
     const fresh: Array<{ id: string; row: string; item: PeekItem }> = [];
@@ -811,18 +833,14 @@ export function Notch() {
     // A key dies once the server stops listing it: an unread row stays listed for hours, so
     // nothing is announced twice, and the set does not grow with every turn of every chat.
     for (const k of [...seen.ids]) if (!listedKeys.has(k)) seen.ids.delete(k);
-    const liveRuns = new Set(inbox.running.map(runKey));
-    const starts: Array<{ id: string; item: PeekItem }> = [];
-    for (const r of freshStarts(inbox.running, seen.runs)) starts.push({ id: `run:${runKey(r)}`, item: { kind: 'started', run: r } });
-    for (const k of [...seen.runs]) if (!liveRuns.has(k)) seen.runs.delete(k);
+    // An agent STARTING a run is not notch news (owner, 2026-11-13; `notch-importance.ts`
+    // `run-started`): no peek. The working faces still show on the pill and under "Now".
     if (!seen.booted) { seen.booted = true; return; }   // what was already there at launch is listed, not announced
-    // Server order is newest first; the queue speaks oldest first. A start is news only when
-    // nothing else is: it never waits in the queue behind (or ahead of) a finish or a post.
+    // Server order is newest first; the queue speaks oldest first.
     const arrivals = fresh.reverse();
     // A newer turn of a chat still waiting in the queue replaces the older one's announcement.
     const rows = new Set(arrivals.map((a) => a.row));
     if (arrivals.length) setPeekQueue((q) => enqueuePeeks(q.filter((x) => !rows.has(x.row)), arrivals));
-    else if (starts.length && canPeekRef.current && !peekReasonRef.current) { setEventPeek(starts[0].item); setPeek('event'); }
   }, [inbox]);
   // Drain: the next waiting arrival speaks once the peek is free. One the owner already acted on
   // (opened, dismissed, gone from the server) is dropped instead of announced late.

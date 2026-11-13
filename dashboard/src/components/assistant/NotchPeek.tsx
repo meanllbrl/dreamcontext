@@ -1,5 +1,6 @@
 import { AppIcon } from './AppIcon';
 import { forwardRef, useState } from 'react';
+import { useI18n } from '../../context/I18nContext';
 import { answerPermission, dismissHandoff, type AnswerFailure } from './GlanceList';
 import { AgentAvatar, dismissNotice, markPostSeen, muteAutomation, openAutomation, openChat } from './InboxList';
 import {
@@ -43,6 +44,23 @@ export function peekItem(chats: GlanceChat[], handoffs: Handoff[], finishedId: s
   return { kind: 'summary', chats, handoffs };
 }
 
+/**
+ * The owner is done with this peek: the × and every "Seen" / "Dismiss" button are ONE action
+ * (owner, 2026-11-13: "çarpıya da basıldığında seen olarak algılanmalı ki tekrar tekrar aynı
+ * bildirim çıkmasın"). It is written where it is kept, so a reload, a restart or the next poll
+ * never brings it back: a post advances its thread's read watermark, a notice leaves the
+ * server's inbox, a closed hand-off is cleared. A prompt (permission, question) stays waiting
+ * under "Now" until it is answered; the notch remembers it was seen (`Notch.tsx`, seen asks).
+ */
+export function markPeekSeen(item: PeekItem): void {
+  switch (item.kind) {
+    case 'post': void markPostSeen(item.post); return;
+    case 'notice': void dismissNotice(item.notice.id); return;
+    case 'finished': if (handoffPhase(item.handoff) === 'closed') dismissHandoff(item.handoff.sessionId); return;
+    default: return;
+  }
+}
+
 export const NotchPeek = forwardRef<HTMLDivElement, {
   item: PeekItem;
   /** An assistant exists to talk to. Without one the notch only notifies: no "ask" buttons,
@@ -53,7 +71,10 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
   onOpenChat: () => void;
   onDone: () => void;
 }>(function NotchPeek({ item, assistant, onFailed, onOpenChat, onDone }, ref) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
+  /** × = seen: the same write the Seen / Dismiss buttons make, then the peek folds. */
+  const seen = () => { markPeekSeen(item); onDone(); };
   const answer = async (sessionId: string, ask: GlanceChat['ask'], choice: 'allow' | 'deny') => {
     if (!ask) return;
     setBusy(true);
@@ -65,7 +86,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
   return (
     <div className="dc-peek" ref={ref} data-kind={item.kind}>
       {item.kind !== 'summary' && item.kind !== 'progress' && (
-        <button type="button" className="dc-peek__close" aria-label="Not now" title="Not now" onClick={onDone}>×</button>
+        <button type="button" className="dc-peek__close" aria-label={t('notch.peek.seen')} title={t('notch.peek.seen')} onClick={seen}>×</button>
       )}
       {item.kind === 'permission' && item.chat.ask && (
         <>
@@ -99,7 +120,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
             <button type="button" className="dc-glance__btn dc-glance__btn--primary" onClick={() => { openChat(item.handoff.vault, item.handoff.sessionId); onDone(); }}>Open {item.handoff.vault}</button>
             {assistant && <button type="button" className="dc-peek__quiet" onClick={onOpenChat}>Follow up</button>}
             {handoffPhase(item.handoff) === 'closed' && (
-              <button type="button" className="dc-peek__quiet" onClick={() => { dismissHandoff(item.handoff.sessionId); onDone(); }}>Clear</button>
+              <button type="button" className="dc-peek__quiet" onClick={seen}>Clear</button>
             )}
           </div>
         </>
@@ -123,7 +144,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
               void dismissNotice(item.notice.id);
               onDone();
             }}>Open the chat</button>
-            <button type="button" className="dc-peek__quiet" onClick={() => { void dismissNotice(item.notice.id); onDone(); }}>Dismiss</button>
+            <button type="button" className="dc-peek__quiet" onClick={seen}>Dismiss</button>
           </div>
         </>
       )}
@@ -141,7 +162,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
               void dismissNotice(item.notice.id);
               onDone();
             }}>Open</button>
-            <button type="button" className="dc-peek__quiet" onClick={() => { void dismissNotice(item.notice.id); onDone(); }}>Dismiss</button>
+            <button type="button" className="dc-peek__quiet" onClick={seen}>Dismiss</button>
           </div>
         </>
       )}
@@ -160,7 +181,7 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
           {item.post.text && <p className="dc-peek__text">{item.post.text}</p>}
           <div className="dc-glance__actions">
             <button type="button" className="dc-glance__btn dc-glance__btn--primary" onClick={() => { openAutomation(item.post.vault, item.post.slug); void markPostSeen(item.post); onDone(); }}>Open</button>
-            <button type="button" className="dc-peek__quiet" onClick={() => { void markPostSeen(item.post); onDone(); }}>Seen</button>
+            <button type="button" className="dc-peek__quiet" onClick={seen}>{t('notch.peek.seen')}</button>
             <button type="button" className="dc-peek__quiet" onClick={() => { void muteAutomation(item.post.vault, item.post.slug, true); onDone(); }}>Ignore {item.post.title}</button>
           </div>
         </>

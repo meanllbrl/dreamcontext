@@ -11,6 +11,7 @@ import { memberOfSuperId } from '../super/store.js';
 import { getAgent } from '../agents/store.js';
 import { NOTIFY_SOUND_OK } from '../automations/notifier.js';
 import { buildAppLink } from '../app-link.js';
+import { accountSwitchBanner, notchShowsNews } from '../notch-importance.js';
 
 /**
  * The notch's INBOX: the things that happened while the owner was looking somewhere else.
@@ -225,8 +226,9 @@ function onChange({ entry, from }: ChatChange): void {
 // ─── The Super Agent's banner ───────────────────────────────────────────────────────
 
 /** Posts a routable macOS banner (and its Notifications-window row). Set by the server at
- *  boot (desktop only: `notifyViaBundle`); null = no banners, only the notch row. */
-export type FinishBannerPoster = (title: string, body: string, link: string | null, sound?: string) => void;
+ *  boot (desktop only: `notifyViaBundle`); null = no banners, only the notch row. `notchShows`
+ *  (`notch-importance.ts`): the notch draws it too, so an open notch holds the banner back. */
+export type FinishBannerPoster = (title: string, body: string, link: string | null, sound?: string, notchShows?: boolean) => void;
 let finishBanner: FinishBannerPoster | null = null;
 
 export function setSuperFinishBanner(fn: FinishBannerPoster | null): void {
@@ -248,14 +250,14 @@ function bannerParts(ev: FinishedEvent): { link: string | null; body: string } {
 function postSuperFinish(ev: FinishedEvent): void {
   if (!finishBanner) return;
   const { link, body } = bannerParts(ev);
-  try { finishBanner(`Super Agent · ${ev.vault}`, body || 'Replied.', link); } catch { /* the notch row still stands */ }
+  try { finishBanner(`Super Agent · ${ev.vault}`, body || 'Replied.', link, undefined, notchShowsNews({ kind: 'super-reply' })); } catch { /* the notch row still stands */ }
 }
 
 /** A member Super's reply to him: titled with the member, with sound (plan r4 D6). */
 function postMemberFinish(ev: FinishedEvent): void {
   if (!finishBanner) return;
   const { link, body } = bannerParts(ev);
-  try { finishBanner(`${ev.member ?? 'Member'} · ${ev.vault}`, body || 'Replied.', link, NOTIFY_SOUND_OK); } catch { /* the notch row still stands */ }
+  try { finishBanner(`${ev.member ?? 'Member'} · ${ev.vault}`, body || 'Replied.', link, NOTIFY_SOUND_OK, notchShowsNews({ kind: 'super-reply' })); } catch { /* the notch row still stands */ }
 }
 
 /** The member a super session belongs to, by its title (slug when it has none); null for main's. */
@@ -322,7 +324,25 @@ export function recordAccountSwitch(input: {
     sessionId: input.sessionId ?? prev?.sessionId ?? null,
   };
   push(ev);
+  // A move the work went on through is not notch news (`notch-importance.ts`): it is a macOS
+  // notification, once per wall (a merge into a row that already named its new account is not).
+  if (ev.toAccountId && !prev?.toAccountId && !notchShowsNews(accountNews(ev))) postAccountSwitch(ev);
   return ev;
+}
+
+/** An account row as the classifier reads it. */
+export function accountNews(e: Pick<AccountEvent, 'toAccountId' | 'exhausted'>): { kind: 'account'; switched: boolean; exhausted: boolean } {
+  return { kind: 'account', switched: !!e.toAccountId, exhausted: e.exhausted };
+}
+
+function postAccountSwitch(ev: AccountEvent, home: string = homedir()): void {
+  if (!finishBanner || !ev.toAccountId) return;
+  let accounts: ReturnType<typeof listClaudeAccounts> = [];
+  try { accounts = listClaudeAccounts(home); } catch { accounts = []; }
+  const { title, body } = accountSwitchBanner(accountName(ev.accountId, accounts), accountName(ev.toAccountId, accounts), ev.vault);
+  let link: string | null = null;
+  if (ev.vault && ev.sessionId) { try { link = buildAppLink({ kind: 'session', vault: ev.vault, claudeId: ev.sessionId }); } catch { link = null; } }
+  try { finishBanner(title, body, link, undefined, false); } catch { /* best effort */ }
 }
 
 /**
@@ -358,12 +378,21 @@ function accountName(id: string, accounts: ReturnType<typeof listClaudeAccounts>
   return a?.email || a?.organizationName || id;
 }
 
-/** Every live event, newest first, account ids resolved to names. */
+/** Is this row notch news (`notch-importance.ts`)? A finish is the owner's own chat or a Super
+ *  reply (both awaited); an account row only when the work stopped; an app's notice never. */
+export function notchShowsEvent(e: NotchEvent): boolean {
+  if (e.kind === 'finished') return notchShowsNews({ kind: e.member || isHandedOverSuperSession(e.sessionId) ? 'super-reply' : 'chat-finished' });
+  if (e.kind === 'account') return notchShowsNews(accountNews(e));
+  if (e.kind === 'app') return notchShowsNews({ kind: 'app' });
+  return notchShowsNews({ kind: 'other' });
+}
+
+/** Every live event the notch shows, newest first, account ids resolved to names. */
 export function listNotchEvents(home: string = homedir(), now = Date.now()): Array<FinishedEvent | AccountEventView | AppEvent> {
   prune(now);
   let accounts: ReturnType<typeof listClaudeAccounts> = [];
   try { accounts = listClaudeAccounts(home); } catch { accounts = []; }
-  return events.map((e) => (e.kind === 'account'
+  return events.filter(notchShowsEvent).map((e) => (e.kind === 'account'
     ? { ...e, account: accountName(e.accountId, accounts), toAccount: e.toAccountId ? accountName(e.toAccountId, accounts) : null }
     : e));
 }

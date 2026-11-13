@@ -623,7 +623,8 @@ export function buildRouter(): Router {
   // The Super Agent's reply while handed over is also a banner a click routes to its stage.
   // A member's reply comes with sound (plan r4 D6); main's own stays silent.
   // The notch draws that reply as a row, so an open notch holds the banner back (notchShows).
-  setSuperFinishBanner((title, body, link, sound) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link, notchShows: true, ...(sound ? { sound } : {}) }); });
+  // The same poster carries news the notch does not show (an account move): `notchShows` false.
+  setSuperFinishBanner((title, body, link, sound, notchShows = true) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link, notchShows, ...(sound ? { sound } : {}) }); });
   // A question the Super Agent puts to the owner reaches him whatever page the window shows.
   // The notch glance lists the queue head. While the notch is on screen no banner is posted,
   // the history row still is, and this says `held`: not a channel in `via` (he may not have
