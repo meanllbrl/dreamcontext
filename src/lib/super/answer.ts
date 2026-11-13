@@ -16,7 +16,7 @@ import { crewHandle, dropOwnerWait, getChat, pendingRequest, type PendingQuestio
 import { sendHubCommand, sendSuperCommand, superTokenOfSession, tokenOfSession } from '../window-control.js';
 import { isReservedId, okMember, readSuperState, superIdOfMember, superKey } from './store.js';
 import {
-  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, itemCall, type CallBirth, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
+  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, itemCall, type CallBirth, mootSuperCall, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
 } from './inbox.js';
 import { addToOutbox } from './outbox.js';
 import { eligible } from '../grants/eligible.js';
@@ -259,6 +259,7 @@ const MSG = {
   noWindow: 'Its chat is not open on the Mac: open it there to answer.',
   phoneRefusal: 'Allow it on Telegram or the Mac.',
   changed: 'The request changed after it was shown: look at it again before you allow it.',
+  moot: 'Nothing to run: the question this call answers was already answered, so it was closed.',
 } as const;
 
 /** The key of a call as a surface showed it (sha256 of tool and input): what Telegram keeps on
@@ -373,6 +374,13 @@ async function allowRefusal(root: string, superId: SuperId, state: SuperState, i
   const r = item.wait?.refusal;
   // A cut input, or a call a settings rule forbids (the rule wins anyway): nothing to allow.
   if (!r || !r.whole || r.source === 'rule') return fail('not_offered', MSG.notOffered);
+  // A call that can no longer matter (the child is not asking what it answers): closed with a
+  // short note, never a turn into the session (field 2026-11-13).
+  if (mootSuperCall(r.tool, r.input)) {
+    await closeItem(root, superId, item.id);
+    if (item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
+    return fail('already_answered', MSG.moot);
+  }
   const now = Date.now();
   const grant = buildGrant(root, state, item, size, { tool: r.tool, input: r.input, ...(r.category ? { category: r.category } : {}), ...(r.scriptSha ? { scriptSha: r.scriptSha } : {}), ...(r.interpreter ? { interpreter: r.interpreter } : {}), ...(r.cwd ? { cwd: r.cwd } : {}) }, now);
   if (!grant) return fail('not_offered', MSG.notOffered);

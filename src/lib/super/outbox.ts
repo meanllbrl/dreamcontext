@@ -29,7 +29,7 @@ import { MAX_READ_BYTES, type SuperState } from './types.js';
  * for it to arrive. Only an item from an EARLIER run (the app was quit, the window's memory is
  * gone) is sent from here (end review: two deliverers raced on the same idle edge).
  */
-export interface OutboxItem { id: string; child: string; text: string; at: number; boot?: string }
+export interface OutboxItem { id: string; child: string; text: string; at: number; boot?: string; first?: true }
 
 /** This server run. */
 export const OUTBOX_BOOT = randomBytes(6).toString('hex');
@@ -52,7 +52,8 @@ async function readOutboxFile(file: string): Promise<{ root: string | null; item
     if (!Array.isArray(raw?.items)) return { root, items: [] };
     return { root, items: raw.items.filter((x): x is OutboxItem => !!x && typeof x === 'object'
       && typeof (x as OutboxItem).id === 'string' && typeof (x as OutboxItem).child === 'string'
-      && typeof (x as OutboxItem).text === 'string' && typeof (x as OutboxItem).at === 'number') };
+      && typeof (x as OutboxItem).text === 'string' && typeof (x as OutboxItem).at === 'number')
+      .map((x) => (x.first === true ? x : { id: x.id, child: x.child, text: x.text, at: x.at, ...(typeof x.boot === 'string' ? { boot: x.boot } : {}) })) };
   } catch {
     return { root: null, items: [] };
   }
@@ -91,6 +92,41 @@ export async function addToOutbox(contextRoot: string, child: string, text: stri
   const item: OutboxItem = { id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text, at: now, boot: opts.server ? SERVER_KEPT_BOOT : OUTBOX_BOOT };
   await updateOutbox(contextRoot, (items) => [...items, item]);
   return item;
+}
+
+/**
+ * A delegated child's FIRST prompt, kept until its transcript shows a turn (field 2026-11-13: a job
+ * delegated 20 seconds before an app restart never reached its child, and the relaunch told it
+ * only "continue your job", which it had never been given). This run's window delivers it as the
+ * child's first turn; the pump drops it once any turn of the child's is on disk. Only after a
+ * relaunch, with no turn seen, is it sent from here, with {@link FIRST_PROMPT_LEAD} before it.
+ */
+export async function keepFirstPrompt(contextRoot: string, child: string, text: string, now = Date.now()): Promise<OutboxItem> {
+  const item: OutboxItem = { id: `o-${now.toString(36)}-${randomBytes(3).toString('hex')}`, child, text, at: now, boot: OUTBOX_BOOT, first: true };
+  await updateOutbox(contextRoot, (items) => [...items.filter((i) => !(i.child === child && i.first)), item]);
+  return item;
+}
+
+/** The line before a first prompt the restart kept from its child. */
+export const FIRST_PROMPT_LEAD = '[dreamcontext] The app was restarted just after this job was given to you, before it reached you, so nothing of it has run yet. Here it is now:\n\n';
+
+/**
+ * At a relaunch, of these children (cut mid-job): those whose first prompt is kept and never
+ * reached them (no turn of theirs on disk). Their job never began, so they get that prompt, never
+ * a "continue". A kept first prompt that did arrive is dropped here.
+ */
+export async function firstPromptsLost(contextRoot: string, children: readonly string[], transcript: (sid: string) => string | null): Promise<Set<string>> {
+  const lost = new Set<string>();
+  const want = new Set(children);
+  const firsts = (await readOutbox(contextRoot)).filter((i) => i.first && want.has(i.child));
+  if (!firsts.length) return lost;
+  const arrived = new Set<string>();
+  for (const i of firsts) {
+    if (await anyTurnInTranscript(transcript(i.child), i.at)) arrived.add(i.id);
+    else lost.add(i.child);
+  }
+  if (arrived.size) await updateOutbox(contextRoot, (all) => all.filter((i) => !arrived.has(i.id)));
+  return lost;
 }
 
 /** What a child that was asking when the app went down is sent once it is back and idle. */
@@ -196,22 +232,48 @@ async function userTextsSince(path: string | null, at: number): Promise<string[]
     const tail = await readTail(path, MAX_READ_BYTES);
     const lines = tail.text.split('\n');
     if (tail.truncated) lines.shift();
-    for (const line of lines) {
-      if (!line.includes('"user"')) continue;
-      let obj: Record<string, unknown>;
-      try { obj = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
-      if (obj.type !== 'user' || obj.isSidechain === true || obj.isMeta === true) continue;
-      // Claude Code's own lines (a background task the quit stopped, reported on resume): no one wrote them.
-      if (obj.promptSource === 'system' || (obj.origin as { kind?: unknown } | undefined)?.kind === 'task-notification') continue;
-      const ts = typeof obj.timestamp === 'string' ? Date.parse(obj.timestamp) : NaN;
-      if (Number.isFinite(ts) && ts < at) continue;
-      const content = (obj.message as { content?: unknown } | undefined)?.content;
-      const texts = typeof content === 'string' ? [content]
-        : Array.isArray(content) ? (content as Array<Record<string, unknown>>).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text as string) : [];
-      out.push(...texts.filter((t) => t.trim()));
-    }
+    out.push(...userTextsIn(lines, at));
   } catch { /* unreadable: not seen */ }
   return out;
+}
+
+/** The user-turn texts among transcript lines, written at or after `at`. */
+function userTextsIn(lines: readonly string[], at: number): string[] {
+  const out: string[] = [];
+  for (const line of lines) {
+    if (!line.includes('"user"')) continue;
+    let obj: Record<string, unknown>;
+    try { obj = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    if (obj.type !== 'user' || obj.isSidechain === true || obj.isMeta === true) continue;
+    // Claude Code's own lines (a background task the quit stopped, reported on resume): no one wrote them.
+    if (obj.promptSource === 'system' || (obj.origin as { kind?: unknown } | undefined)?.kind === 'task-notification') continue;
+    const ts = typeof obj.timestamp === 'string' ? Date.parse(obj.timestamp) : NaN;
+    if (Number.isFinite(ts) && ts < at) continue;
+    const content = (obj.message as { content?: unknown } | undefined)?.content;
+    const texts = typeof content === 'string' ? [content]
+      : Array.isArray(content) ? (content as Array<Record<string, unknown>>).filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text as string) : [];
+    out.push(...texts.filter((t) => t.trim()));
+  }
+  return out;
+}
+
+/** Any turn of the child's own written at or after `at`, read from the transcript's HEAD (a first
+ *  prompt is its first turn, and a long first turn can push it out of any tail). */
+async function anyTurnInTranscript(path: string | null, at: number): Promise<boolean> {
+  if (!path) return false;
+  let text = '';
+  try {
+    const fh = await fsp.open(path, 'r');
+    try {
+      const buf = Buffer.alloc(MAX_READ_BYTES);
+      const { bytesRead } = await fh.read(buf, 0, MAX_READ_BYTES, 0);
+      text = buf.subarray(0, bytesRead).toString('utf-8');
+    } finally { await fh.close(); }
+  } catch { return false; }
+  const isTurn = (t: string) => !/^\s*<(command-name|local-command-[a-z]+|task-notification)>/.test(t);
+  if (userTextsIn(text.split('\n'), at).some(isTurn)) return true;
+  // A head longer than the read (unlikely): the tail may still show a turn.
+  return (await userTextsSince(path, at)).some(isTurn);
 }
 
 /** Did `text` reach the child's transcript after `at`? Reads only the bounded tail. */
@@ -225,6 +287,8 @@ export async function arrivedInTranscript(path: string | null, text: string, at:
  *  {@link RESUME_TEXT}), ANY turn reached the child since it was kept: the owner or the super
  *  answered or restarted it meanwhile (review). */
 async function mootInTranscript(path: string | null, item: OutboxItem): Promise<boolean> {
+  // A first prompt: any turn of the child's means its job began (the brief, or a word since).
+  if (item.first) return anyTurnInTranscript(path, item.at);
   const texts = await userTextsSince(path, item.at);
   // A slash command's echo (`/model` on resume) is no answer either.
   return RELAUNCH_TEXTS.has(item.text)
@@ -296,7 +360,7 @@ export async function pumpOutbox(contextRoot: string, child?: string, deps: Outb
       // This run's window still holds it in its queue: never a second deliverer.
       if (item.boot === boot) continue;
       if (!token || sentTo.has(item.child) || !deps.isIdle(item.child)) continue;
-      const how = await deps.send(token, item.child, item.text).catch(() => null);
+      const how = await deps.send(token, item.child, item.first ? `${FIRST_PROMPT_LEAD}${item.text}` : item.text).catch(() => null);
       if (how === 'sent' || how === 'steered') { done.add(item.id); out.delivered.push(item.id); sentTo.add(item.child); }
       // Queued again: this run's window owns it now.
       else if (how === 'queued') { adopted.add(item.id); sentTo.add(item.child); }

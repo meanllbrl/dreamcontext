@@ -31,7 +31,8 @@ import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
-import { REASK_TEXT, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
+import { REASK_TEXT, firstPromptsLost, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
+import { liveTranscriptPath } from '../transcript-locate.js';
 import { settleAskShows } from './ask-show.js';
 import {
   STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, crewHandle, dropOwnerWait, getChat, onChatChange, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, ownerWaitOrigin, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
@@ -3000,12 +3001,16 @@ const allowTurns = new Map<string, number>();
  * mirror is born again, the Super hears it), so he is never locked out of answering it. Pure over
  * the draft; returns the replaced item ids and the new ones.
  */
-export function reofferDraft(s: SuperState, sid: string, held: ReadonlySet<string>, now: number, root?: string): Array<{ old: string; next: string }> {
-  const out: Array<{ old: string; next: string }> = [];
+export function reofferDraft(s: SuperState, sid: string, held: ReadonlySet<string>, now: number, root?: string, moot: (tool: string, input: string) => boolean = mootSuperCall): Array<{ old: string; next: string; moot?: true }> {
+  const out: Array<{ old: string; next: string; moot?: true }> = [];
   for (const q of [...s.queue]) {
     if (q.sessionId !== sid || q.state === 'done' || q.allowed === undefined || q.kind !== 'owner' || q.wait?.kind !== 'refusal') continue;
     if (!held.has(q.wait.id)) continue;
     q.state = 'done';
+    // A call that can no longer matter (an answer to a question nobody asks any more) is never
+    // asked again: it closes here, so one Allow is one delivery (field 2026-11-13: an answered
+    // `super answer` was offered, allowed and delivered three times).
+    if (q.wait.refusal && moot(q.wait.refusal.tool, q.wait.refusal.input)) { out.push({ old: q.id, next: '', moot: true }); continue; }
     const next = newQueueId();
     const line = (q.ownerText ?? '').startsWith(`${ALLOWED_WAITING_TEXT}: `) ? (q.ownerText as string).slice(ALLOWED_WAITING_TEXT.length + 2) : q.ownerText;
     const { allowed: _a, batch: _b, attempts: _t, exits: _e, owedAt: _o, ...rest } = q;
@@ -3028,13 +3033,41 @@ async function reofferStaleAllows(key: string, sid: string): Promise<void> {
   let probe: SuperState;
   try { probe = await readSuperState(key, superSanitizeOpts()); } catch { return; }
   if (!reofferDraft(structuredClone(probe), sid, held, Date.now()).length) return;
-  let moved: Array<{ old: string; next: string }> = [];
-  await writeSuper(key, (d) => { moved = reofferDraft(d, sid, held, Date.now(), key); });
+  let moved: Array<{ old: string; next: string; moot?: true }> = [];
+  let mootWaits: string[] = [];
+  await writeSuper(key, (d) => {
+    moved = reofferDraft(d, sid, held, Date.now(), key);
+    const mootIds = new Set(moved.filter((m) => m.moot).map((m) => m.old));
+    mootWaits = d.queue.filter((q) => mootIds.has(q.id) && q.wait?.kind === 'refusal').map((q) => q.wait!.id);
+  });
   // The grants of the item that was allowed are stale: removed, so nothing allows it unseen.
   const olds = new Set(moved.map((m) => m.old));
   for (const g of listGrants()) if (g.item && olds.has(g.item)) removeGrant(g.id);
   for (const id of olds) allowedOnce.delete(id);
+  // A moot call's refusal wait goes too, so no respawn or sync brings its item back.
+  for (const w of mootWaits) dropOwnerWait(sid, 'refusal', w);
   if (moved.length) void pumpSuper(key);
+}
+
+/** `dreamcontext super answer|allow <child> <requestId>` anywhere in a shell command. */
+const SUPER_REPLY_CALL = /(?:^|[\s;&|(])dreamcontext\s+super\s+(?:answer|allow)\s+["']?([0-9a-f-]{36})["']?\s+["']?([A-Za-z0-9_.:-]{1,200})["']?/;
+
+/**
+ * Can this refused call no longer matter? Today: an answer or an Allow of a child's request
+ * (`dreamcontext super answer|allow <child> <requestId>`) that the child is not asking any more,
+ * because it was answered another way (the owner's own card) or the child moved on. Anything else:
+ * false (unknown = it may still matter).
+ */
+export function mootSuperCall(tool: string, input: string): boolean {
+  if (tool !== 'Bash' || typeof input !== 'string') return false;
+  const m = SUPER_REPLY_CALL.exec(input);
+  if (!m) return false;
+  // Only a command that is ALL about that answer (a `cd`, Super verbs, a pipe through tail/jq):
+  // one that also does something else (`… && git push`) may still matter, and is offered as before.
+  const quiet = input.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '""').replace(/\d*>>?(?:&\d+|\s*[^\s;&|]+)/g, ' ');
+  const parts = quiet.split(/[;|&\n]/).map((x) => x.trim()).filter(Boolean);
+  if (!parts.every((x) => /^(?:cd\s|dreamcontext\s+super\s|tail\b|head\b|jq\b|cat\b|echo\b|true\b)/.test(x))) return false;
+  return !pendingRequest(getChat(m[1]), m[2]);
 }
 
 /** A crew turn ended: if it carried an Allow, was the allowed call taken? */
@@ -4640,7 +4673,15 @@ async function resumeCutChildren(key: string, s: SuperState, parked?: (sessionId
   // is told to go on; an asking one gets its question asked again, never "continue" without its
   // answer (review: a member's asking child, or one whose question item had closed).
   const asking = cut.filter((sid) => s.children[sid].row === 'asking');
-  const working = cut.filter((sid) => s.children[sid].row !== 'asking');
+  let working = cut.filter((sid) => s.children[sid].row !== 'asking');
+  // A child whose first prompt never reached it (delegated just before the restart): its kept
+  // prompt is what it gets (outbox.ts `keepFirstPrompt`), never "continue" a job it never had.
+  try {
+    const lost = await firstPromptsLost(key, working, (sid) => liveTranscriptPath(rootOf(key), sid));
+    working = working.filter((sid) => !lost.has(sid));
+  } catch (err) {
+    console.warn(`[super] ${key}: the first prompts the restart may have cut were not checked: ${(err as Error).message}`);
+  }
   try {
     await keepWorkAcrossRelaunch(key, asking, now, REASK_TEXT);
     await keepWorkAcrossRelaunch(key, working, now);

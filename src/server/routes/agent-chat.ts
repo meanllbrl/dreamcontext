@@ -3827,6 +3827,10 @@ export function startChatSession(
     const receipt = !tgSource ? ownerReceiptTurns.get(text) : undefined;
     if (receipt) ownerReceiptTurns.delete(text);
     const serverTurn = !tgSource && !!crewSeat?.takeServerTurn(text);
+    // Words the server wrote itself (an Allow's turn, through the crew handle or the outbox): no
+    // message of his, so no owner ref, no debt, no origin (field 2026-11-13: an Allow turn sat in
+    // `<super-owed>` under its own hash after the Super had answered it).
+    const serverWritten = serverTurn || (!tgSource && isServerTurnText(text));
     registry?.userSent(text, tgSource ? { source: tgSource }
       : receipt ? { server: true, ownerReceipt: receipt.mark }
         // A turn the server wrote through the crew handle closes nothing (K4 attribution).
@@ -3858,7 +3862,7 @@ export function startChatSession(
     // Every owner message to the Super Agent carries its reference, so its answer can open with
     // `<!-- re:<ref> -->` and the window draws which message it answers (replyMark.ts). Hashed
     // from the exact text the window sent; a slash command is no message of his.
-    if (isSuper && !text.startsWith('/')) content.push({ type: 'text', text: tgRef ? ownerMsgBlock(text, { ref: tgRef, via: 'telegram' }) : ownerMsgBlock(text) });
+    if (isSuper && !text.startsWith('/') && !serverWritten) content.push({ type: 'text', text: tgRef ? ownerMsgBlock(text, { ref: tgRef, via: 'telegram' }) : ownerMsgBlock(text) });
     // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
     // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
     if (isSuper && !text.startsWith('/')) {
@@ -3928,14 +3932,14 @@ export function startChatSession(
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
     // command is no message of his: it answers none.
-    if (isSuper) noteSuperOwnerMsg(chatRegistryId, text.startsWith('/') ? null : tgRef ?? msgRef(text));
+    if (isSuper) noteSuperOwnerMsg(chatRegistryId, text.startsWith('/') || serverWritten ? null : tgRef ?? msgRef(text));
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
-    if (isSuper && wrote && !text.startsWith('/') && !serverContinue) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
+    if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
 import { emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { superRestorePlan } from '../../dashboard/src/components/sleepy/superRestore';
-import { OUTBOX_BOOT, REASK_TEXT, RESUME_TEXT, _resetSuperOutbox, addToOutbox, dropFromOutbox, arrivedInTranscript, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
+import { FIRST_PROMPT_LEAD, OUTBOX_BOOT, REASK_TEXT, RESUME_TEXT, _resetSuperOutbox, addToOutbox, firstPromptsLost, keepFirstPrompt, dropFromOutbox, arrivedInTranscript, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch, pumpOutbox, readOutbox, type OutboxDeps } from '../../src/lib/super/outbox.js';
 import { _resetChatParkForTests, parkChat, parkedSince, registerParkable } from '../../src/server/chat-park.js';
 
 const child = (sid: string, extra: Record<string, unknown> = {}) => ({ sessionId: sid, brief: sid, adopted: false, startedAt: 1, ...extra });
@@ -280,6 +280,65 @@ describe('the super send outbox', () => {
       expect(sent).toEqual([]);
       expect(await readOutbox(root)).toEqual([]);
     });
+  });
+});
+
+describe('a delegated job cut by a restart before it reached its child (field 2026-11-13)', () => {
+  let root: string;
+  let transcript: string;
+  beforeEach(() => {
+    _resetSuperOutbox();
+    root = mkdtempSync(join(tmpdir(), 'outbox-first-'));
+    transcript = join(root, 't.jsonl');
+  });
+  afterEach(() => { _resetSuperOutbox(); rmSync(root, { recursive: true, force: true }); });
+  const line = (o: Record<string, unknown>) => `${JSON.stringify({ type: 'user', timestamp: new Date(2000).toISOString(), ...o })}\n`;
+  const deps = (boot: string) => {
+    const sent: Array<[string, string]> = [];
+    const d: OutboxDeps = {
+      boot, isIdle: () => true, isChild: () => true, superToken: () => 'tok', transcript: () => transcript,
+      send: async (_t, c, text) => { sent.push([c, text]); return 'sent'; },
+    };
+    return { d, sent };
+  };
+
+  it('the run that delegated never sends it (the window does); once a turn is on disk it is dropped', async () => {
+    await keepFirstPrompt(root, 'c1', 'Read the brief and fix it.', 1000);
+    const same = deps(OUTBOX_BOOT);
+    await pumpOutbox(root, undefined, same.d);
+    expect(same.sent).toEqual([]);
+    expect(await readOutbox(root)).toHaveLength(1);
+    writeFileSync(transcript, line({ message: { content: [{ type: 'text', text: 'Read the brief and fix it.' }] } }));
+    expect((await pumpOutbox(root, undefined, same.d)).dropped).toHaveLength(1);
+    expect(await readOutbox(root)).toEqual([]);
+  });
+
+  it('a relaunch with no turn of the child on disk: the job is lost, it gets its prompt (with the lead), never a bare continue', async () => {
+    await keepFirstPrompt(root, 'c1', 'Read the brief and fix it.', 1000);
+    // No transcript at all, as on the field: the restart came before the first turn was written.
+    expect([...await firstPromptsLost(root, ['c1', 'c2'], () => null)]).toEqual(['c1']);
+    // The relaunch keeps a continue only for c2 (inbox.ts resumeCutChildren filters c1 out).
+    await keepWorkAcrossRelaunch(root, ['c2'], 1500);
+    // Resume's own continue-less lines arrive, no turn of anyone's.
+    writeFileSync(transcript, line({ promptSource: 'system', origin: { kind: 'task-notification' }, message: { content: '<task-notification><status>stopped</status></task-notification>' } }));
+    const later = deps('later-run');
+    await pumpOutbox(root, 'c1', later.d);
+    expect(later.sent).toEqual([['c1', `${FIRST_PROMPT_LEAD}Read the brief and fix it.`]]);
+    expect(later.sent.some(([, t]) => t === RESUME_TEXT)).toBe(false);
+    expect((await readOutbox(root)).map((i) => i.child)).toEqual(['c2']);
+  });
+
+  it('a relaunch after the prompt did arrive: not lost, the kept copy is dropped, the continue goes as before', async () => {
+    await keepFirstPrompt(root, 'c1', 'Read the brief and fix it.', 1000);
+    writeFileSync(transcript, line({ message: { content: [{ type: 'text', text: 'Read the brief and fix it.' }] } }));
+    expect((await firstPromptsLost(root, ['c1'], () => transcript)).size).toBe(0);
+    expect(await readOutbox(root)).toEqual([]);
+  });
+
+  it('one kept first prompt per child (a second delegate to the same id replaces it)', async () => {
+    await keepFirstPrompt(root, 'c1', 'one', 1000);
+    await keepFirstPrompt(root, 'c1', 'two', 1001);
+    expect((await readOutbox(root)).map((i) => i.text)).toEqual(['two']);
   });
 });
 
