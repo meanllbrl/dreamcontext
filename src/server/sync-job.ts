@@ -190,17 +190,53 @@ async function runJob(contextRoot: string, job: SyncJobState, direction: SyncDir
  * backend is GitHub and has one, one project at a time. Each run takes the ledger's own
  * cross-process lock, so a sleep syncing at the same moment waits instead of doubling.
  */
-export async function drainGitHubTaskQueues(home?: string): Promise<void> {
+/** How long the drain waits on one project's sync before calling it stuck and moving on. */
+export const DRAIN_JOB_LIMIT_MS = 10 * 60_000;
+
+/** Projects whose post-sign-in sync ran past the limit, with that job: stuck while it still runs. */
+const stuckDrains = new Map<string, { status: string }>();
+export function isDrainStuck(contextRoot: string): boolean {
+  const job = stuckDrains.get(contextRoot);
+  if (job && job.status !== 'running') stuckDrains.delete(contextRoot);
+  return !!job && job.status === 'running';
+}
+
+export interface DrainOutcome { vault: string; outcome: 'done' | 'stuck' | 'failed' }
+
+/**
+ * After a sign-in: drain every GitHub task queue, one project at a time. Each sync gets
+ * DRAIN_JOB_LIMIT_MS; past it the project is marked stuck (its sync keeps running, its queue
+ * stays visible), one line goes to the log, and the next project's drain starts.
+ */
+export async function drainGitHubTaskQueues(
+  home?: string,
+  opts: { limitMs?: number; pollMs?: number; start?: (contextRoot: string) => { job: { status: string } } } = {},
+): Promise<DrainOutcome[]> {
+  const limit = opts.limitMs ?? DRAIN_JOB_LIMIT_MS;
+  const poll = opts.pollMs ?? 1000;
+  const out: DrainOutcome[] = [];
   for (const vault of listVaults(home)) {
+    const contextRoot = join(vault.path, '_dream_context');
     try {
-      const contextRoot = join(vault.path, '_dream_context');
       if (!existsSync(contextRoot)) continue;
       if (readSetupConfig(vault.path)?.taskBackend !== 'github') continue;
       if (readTaskQueueDepth(contextRoot).ops === 0) continue;
-      const { job } = startSyncJob(contextRoot, 'sync');
-      while (job.status === 'running') await new Promise((r) => setTimeout(r, 1000));
+      const { job } = (opts.start ?? ((root: string) => startSyncJob(root, 'sync')))(contextRoot);
+      const until = Date.now() + limit;
+      while (job.status === 'running' && Date.now() < until) await new Promise((r) => setTimeout(r, poll));
+      if (job.status === 'running') {
+        stuckDrains.set(contextRoot, job);
+        const depth = readTaskQueueDepth(contextRoot);
+        console.warn(`[github] task sync for ${vault.name} is still running after ${Math.round(limit / 60_000)} min; ${depth.ops} change(s) still queued. Moving on to the next project.`);
+        out.push({ vault: vault.name, outcome: 'stuck' });
+        continue;
+      }
+      stuckDrains.delete(contextRoot);
+      out.push({ vault: vault.name, outcome: job.status === 'success' ? 'done' : 'failed' });
     } catch {
       // One project's trouble never stops the next one's drain.
+      out.push({ vault: vault.name, outcome: 'failed' });
     }
   }
+  return out;
 }

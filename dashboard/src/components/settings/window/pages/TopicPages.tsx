@@ -82,6 +82,15 @@ function GitHubChip({ state }: { state: GitHubAccessState }) {
   return null;
 }
 
+/** The open project's GitHub task queue in one sentence: what waits, since when, or that it is stuck. */
+function queueNote(auth: AuthStatus | undefined, t: (k: string) => string): string | null {
+  const q = auth?.taskQueue;
+  if (!q || q.ops === 0) return null;
+  const base = t(q.stuck ? 'github.queue.stuck' : q.oldest ? 'github.queue.since' : 'github.queue.waiting')
+    .replace('{n}', String(q.ops)).replace('{tasks}', String(q.tasks)).replace('{date}', q.oldest ?? '');
+  return base;
+}
+
 /** What one project token row says: the open project overrides the sign-in, or it was healed. */
 function projectTokenNote(auth: AuthStatus | undefined, t: (k: string) => string): string | null {
   if (auth?.projectToken === 'active') return t('github.uses.ownToken');
@@ -142,7 +151,8 @@ export function GitHubPage() {
       </SettingGroup>
       <SettingGroup title={t('github.uses.title')} note={t('github.uses.note')}>
         {uses.map((u) => {
-          const note = u.project ? projectNote : null;
+          const queue = u.id === 'gh-mirror' ? queueNote(auth, t) : null;
+          const note = [u.project ? projectNote : null, queue].filter(Boolean).join(' ') || null;
           return (
             <SettingRow
               key={u.id}

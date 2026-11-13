@@ -71,6 +71,12 @@ export interface AuthStatus {
    * for this project, `demoted` = GitHub rejected it and the sign-in took over.
    */
   projectToken?: 'none' | 'active' | 'demoted';
+  /**
+   * The open project's GitHub task queue (null when its tasks do not mirror to GitHub): changes
+   * waiting to sync, how many tasks, since when, and whether the post-sign-in drain gave up
+   * waiting on a sync that is still running.
+   */
+  taskQueue?: { ops: number; tasks: number; oldest: string | null; stuck: boolean } | null;
 }
 
 export interface ScrubBlock {

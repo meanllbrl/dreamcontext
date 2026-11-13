@@ -234,5 +234,22 @@ export function githubErrorPayload(
   detail?: string,
 ): GitHubErrorPayload {
   const reconnect = (kind === 'auth' && (source === 'global' || source == null)) || kind === 'no_token';
-  return { kind, reconnect, message: GITHUB_ERROR_MESSAGES[kind], ...(detail ? { detail: detail.slice(0, 300) } : {}) };
+  const message = kind === 'forbidden' ? githubForbiddenReason(detail) : GITHUB_ERROR_MESSAGES[kind];
+  return { kind, reconnect, message, ...(detail ? { detail: detail.slice(0, 300) } : {}) };
+}
+
+/**
+ * A 403 in plain words, from GitHub's own reason in the response body: the org's SSO, the
+ * org's OAuth-app approval, or plain no access. Never "sign in again": none of these is fixed
+ * by reconnecting.
+ */
+export function githubForbiddenReason(detail?: string): string {
+  const d = detail ?? '';
+  if (/SAML|single sign-on|\bSSO\b/i.test(d)) {
+    return 'GitHub refused: this organization requires single sign-on. Authorize dreamcontext for it on GitHub (your Settings → Applications → dreamcontext → Grant), then try again.';
+  }
+  if (/OAuth App access restrictions|third-party application access|OAuth App.*restrict/i.test(d)) {
+    return "GitHub refused: this organization has not approved the dreamcontext app. An owner of the organization approves it once on GitHub.";
+  }
+  return "GitHub refused: your account has no access to this repository or organization.";
 }

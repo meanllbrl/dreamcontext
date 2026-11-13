@@ -23,7 +23,9 @@ import {
   resolveGitHubCredential,
 } from '../../lib/git-sync/auth-store.js';
 import { writeGitHubToken, removeProjectGitHubToken } from '../../lib/task-backend/secrets.js';
-import { drainGitHubTaskQueues } from '../sync-job.js';
+import { drainGitHubTaskQueues, isDrainStuck } from '../sync-job.js';
+import { readTaskQueueDepth } from '../../lib/sleep-cycle-tools.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 
 /**
  * `/api/brain/auth/*` — the app-global "sign into dreamcontext with GitHub"
@@ -240,6 +242,11 @@ export async function handleBrainAuthStatus(
   const oauthConfigured = isOAuthAppConfigured();
   // C5: whether the OPEN project overrides the sign-in with its own token, and its state.
   const projectToken = contextRoot ? projectGitHubTokenState(dirname(contextRoot)) : 'none';
+  // The open project's GitHub task queue: what waits to sync, and whether the post-sign-in
+  // drain gave up waiting on it (Settings → GitHub shows both).
+  const taskQueue = contextRoot && readSetupConfig(dirname(contextRoot))?.taskBackend === 'github'
+    ? { ...readTaskQueueDepth(contextRoot), stuck: isDrainStuck(contextRoot) }
+    : null;
 
   // C1 without a project: the sign-in, else env (never read here directly).
   const cred = resolveGitHubCredential({ purpose: 'browse', home: authHome });
@@ -253,14 +260,15 @@ export async function handleBrainAuthStatus(
       needsReconnect: readGlobalGitHubNeedsReconnect(authHome),
       oauthConfigured,
       projectToken,
+      taskQueue,
     });
     return;
   }
   if (cred?.source === 'env') {
-    sendJson(res, 200, { connected: true, source: 'env', oauthConfigured, projectToken });
+    sendJson(res, 200, { connected: true, source: 'env', oauthConfigured, projectToken, taskQueue });
     return;
   }
-  sendJson(res, 200, { connected: false, source: null, oauthConfigured, projectToken });
+  sendJson(res, 200, { connected: false, source: null, oauthConfigured, projectToken, taskQueue });
 }
 
 // ─── POST /api/brain/auth/token (PAT fallback) ───────────────────────────────

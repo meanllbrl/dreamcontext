@@ -13,6 +13,12 @@ import {
 } from '../../hooks/useLauncher';
 import { isGitHubReconnectError, useAuthStatus } from '../../hooks/useBrainStatus';
 import { GitHubReconnect } from '../../components/brain/GitHubReconnect';
+import { RequestError } from '../../api/client';
+
+/** A GitHub 403/429 from the repo search: the server's sentence names the real reason (SSO, org approval, no access, rate limit). */
+function githubRefusal(e: unknown): string | null {
+  return e instanceof RequestError && (e.status === 403 || e.status === 429) && (e.code === 'forbidden' || e.code === 'rate_limited') ? e.message : null;
+}
 import { GitHubLogin } from '../../components/brain/GitHubLogin';
 import { openFolderPicker, pickerError } from '../../lib/desktop';
 
@@ -236,7 +242,7 @@ export function CloneFlow({ defaultParent, onBack, onExistingProject, onBareFold
                 {repos.isLoading && <p className="ob-hint">{t('onboarding.clone.loading')}</p>}
                 {repos.isError && (isGitHubReconnectError(repos.error) ? (
                   <p className="ob-hint">{t('github.line.expired')} <GitHubReconnect onDone={() => void repos.refetch()} /></p>
-                ) : <p className="ob-hint">{t('onboarding.clone.loadFailed')}</p>)}
+                ) : <p className="ob-hint">{githubRefusal(repos.error) ?? t('onboarding.clone.loadFailed')}</p>)}
                 {!repos.isLoading && !repos.isError && (repos.data?.repos.length ?? 0) === 0 && (
                   <p className="ob-hint">{t('onboarding.clone.none')}</p>
                 )}

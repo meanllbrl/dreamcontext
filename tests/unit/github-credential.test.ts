@@ -449,3 +449,43 @@ describe('gate: no file outside auth-store.ts reads a GitHub token', () => {
     expect(new ApiError('forbidden', 'x', 403).kind).toBe('forbidden');
   });
 });
+
+describe('before the cut: the three small gaps', () => {
+  it('a launcher 403 names GitHub\'s real reason: SSO, org approval, or no access', () => {
+    expect(githubErrorPayload('forbidden', 'global', 'Forbidden (403): {"message":"Resource protected by organization SAML enforcement."}').message).toMatch(/single sign-on/);
+    expect(githubErrorPayload('forbidden', 'global', 'Forbidden (403): {"message":"Although you appear to have the correct authorization credentials, the `acme` organization has enabled OAuth App access restrictions"}').message).toMatch(/not approved the dreamcontext app/);
+    expect(githubErrorPayload('forbidden', 'global', 'Forbidden (403): {"message":"Must have admin rights to Repository."}').message).toMatch(/no access/);
+    for (const d of ['SAML', 'OAuth App access restrictions', 'x']) expect(githubErrorPayload('forbidden', 'global', d).reconnect).toBe(false);
+    expect(githubErrorPayload('rate_limited').message).toMatch(/limiting requests/);
+  });
+
+  it('the post-sign-in drain gives up waiting on a stuck sync, says so once, and moves on', async () => {
+    const { drainGitHubTaskQueues, isDrainStuck } = await import('../../src/server/sync-job.js');
+    const { addVault } = await import('../../src/lib/vaults.js');
+    const ctx = join(project, '_dream_context');
+    writeFileSync(join(ctx, 'state', '.config.json'), JSON.stringify({ taskBackend: 'github' }));
+    writeFileSync(join(ctx, 'state', '.tasks-queue.json'), JSON.stringify([{ slug: 'a', ts: Date.parse('2026-11-01') }, { slug: 'a', ts: Date.parse('2026-11-02') }]));
+    addVault('ghc-drain', project, home);
+    const job = { status: 'running' };
+    const warned: string[] = [];
+    const warn = console.warn;
+    console.warn = (m: string) => { warned.push(m); };
+    try {
+      const out = await drainGitHubTaskQueues(home, { limitMs: 30, pollMs: 5, start: () => ({ job }) });
+      expect(out).toEqual([{ vault: 'ghc-drain', outcome: 'stuck' }]);
+    } finally { console.warn = warn; }
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toMatch(/still running after .* 2 change\(s\) still queued/);
+    expect(isDrainStuck(ctx)).toBe(true);
+    job.status = 'success';
+    expect(isDrainStuck(ctx)).toBe(false);
+    const done = await drainGitHubTaskQueues(home, { limitMs: 30, pollMs: 5, start: () => ({ job: { status: 'success' } }) });
+    expect(done).toEqual([{ vault: 'ghc-drain', outcome: 'done' }]);
+  });
+
+  it('auth status carries the open project\'s GitHub task queue for Settings → GitHub', () => {
+    const route = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'routes', 'brain-auth.ts'), 'utf-8');
+    expect(route).toContain("{ ...readTaskQueueDepth(contextRoot), stuck: isDrainStuck(contextRoot) }");
+    expect(route.match(/taskQueue[,\s}]/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+});
