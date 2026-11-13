@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
-  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, type WindowIdentity,
+  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, type WindowIdentity, type WindowResult,
 } from '../../lib/window-control.js';
 import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
@@ -87,6 +87,7 @@ import { noteDismissed } from '../../lib/super/proactive.js';
 import { RECORD_FULL_MESSAGE, cardCounts, cardOutcome, makeRoom, noCardWarnings, roomPossible } from '../../lib/super/room.js';
 import { childIsLive, isLiveChatCard } from '../../lib/super/live.js';
 import { activityOf, crewHandle, dropOwnerWait, getChat, onChatChange, pendingRequest } from '../../lib/assistant/chat-registry.js';
+import { permissionResponse, questionResponse, type OpenRequest, type RequestResponse } from '../../lib/super/request-answer.js';
 import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
@@ -2093,12 +2094,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       : [];
     const text = typeof b.text === 'string' && b.text.trim() ? b.text.slice(0, MAX_OWNER_TEXT) : undefined;
     if (!choices.length && !text) { refuse(res, 400, 'invalid_args', 'give an option label or --text'); return; }
-    const r = await sendSuperCommand(c.token, 'answer', { child, requestId, choices, ...(text ? { text } : {}) });
-    if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
+    const r = await sendSuperCommand(c.token, 'answer', { child, requestId, choices, ...(text ? { text } : {}), deadline: windowDeadline() });
+    // No window answered: the server answers the card itself, built as the window builds it.
+    const byServer = serverDelivers(r, () => answerByServer(child, requestId, (req) => questionResponse(req, choices, text)));
+    if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const q of s.queue) if (q.sessionId === child && q.requestId === requestId && q.kind === 'question') q.state = 'done';
     });
-    ok(res, { child, requestId, answered: true });
+    ok(res, { child, requestId, answered: true, ...(byServer ? { via: 'server' } : {}) });
   },
 
   // A Bypass child's residual permission, answered by its Super (task super-bypass-taki…). The
@@ -2139,9 +2142,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       child, requestId, behavior, ...(message ? { message } : {}), deadline: windowDeadline(),
     });
     // No window answered (an app in the background, field 2026-11-13): the server answers the
-    // request the child still holds open itself, so the Super is never stuck on the window. The
-    // `deadline` above makes a window that wakes later refuse the same verb.
-    const byServer = !r.ok && windowGaveUp(r.error) && answerPermissionByServer(child, requestId, behavior, message);
+    // request the child still holds open itself (`serverDelivers`).
+    const byServer = serverDelivers(r, () => answerByServer(child, requestId, (req) => permissionResponse(req, behavior, message)));
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
     // The caller's own record (a member's Super closes its own child's item, never main's).
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
@@ -2200,7 +2202,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     // No window answered (field 2026-11-13: the app in the background): a running child gets the
     // words straight from the server, as the server's own turn, never the owner's.
-    const byServer = !r.ok && windowGaveUp(r.error) && isLiveChat(child) && !!crewHandle(child)?.sendServerTurn(text);
+    const byServer = serverDelivers(r, () => isLiveChat(child) && !!crewHandle(child)?.sendServerTurn(text));
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the message did not reach the child'); return; }
     // The window says how: 'steered' (into the running turn), 'queued' (behind an open
     // question or permission card) or 'sent' (a new turn). The server's own turn is 'sent'.
@@ -3233,16 +3235,23 @@ export function childLastLine(texts: readonly string[], status: string): { line:
   return { line, limit };
 }
 
-/** `super allow`'s fallback: the child's own process answers its open permission (no window). */
-function answerPermissionByServer(child: string, requestId: string, behavior: 'allow' | 'deny', message?: string): boolean {
-  if (!pendingRequest(getChat(child), requestId)?.isPermission) return false;
-  return crewHandle(child)?.answerPermission?.(requestId, behavior, message) === true;
+/**
+ * THE fallback of every Super verb that writes into a child through the window (`super allow`,
+ * `super answer`, `super send`; field 2026-11-13: with the app in the background the window
+ * answered none of them for minutes). Only when the window delivered nothing: it never answered
+ * (`no_window`), or it woke past the verb's `deadline` (`windowDeadline`) and refused it
+ * (`expired`). Every one of these verbs carries that deadline, so a window waking later refuses
+ * too and the server's delivery is the only one. `deliver`: the server's own, true when it went in.
+ */
+function serverDelivers(r: WindowResult, deliver: () => boolean): boolean {
+  return !r.ok && (r.error === 'no_window' || r.error === 'expired') && deliver();
 }
 
-/** The window delivered nothing and left it to the server: it never answered (`no_window`), or
- *  it woke past the verb's deadline and refused it (`expired`, the 2 s before the timeout). */
-function windowGaveUp(error: string): boolean {
-  return error === 'no_window' || error === 'expired';
+/** A request the child's own process still holds open, answered by the server (`respond` builds
+ *  the answer from it as the window's card would, request-answer.ts, or refuses it). */
+function answerByServer(child: string, requestId: string, respond: (req: OpenRequest) => RequestResponse | null): boolean {
+  if (!pendingRequest(getChat(child), requestId)) return false;
+  return crewHandle(child)?.answerRequest?.(requestId, respond) === true;
 }
 
 function isLiveChat(sid: string): boolean {

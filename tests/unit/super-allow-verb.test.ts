@@ -5,7 +5,7 @@
  * that waits for the owner, only from a signed-in phone socket.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -14,7 +14,7 @@ import { WINDOW_TIMEOUT_MS, deliverSuperResult, deliverWindowResult, mintWindowT
 import { readSuperState, resetSuperIndex, SUPER_STATE_REL } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.js';
 import { _resetChatRegistry, registerChat, registerCrewHandle } from '../../src/lib/assistant/chat-registry.js';
-import { permissionAnswerFrame } from '../../src/lib/super/permission-answer.js';
+import { openRequest, permissionResponse, questionResponse, type OpenRequest, type RequestResponse } from '../../src/lib/super/request-answer.js';
 import { pastDeadline } from '../../dashboard/src/components/sleepy/windowVerbs.js';
 import { superAllow } from '../../dashboard/src/components/sleepy/super/superAllow.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
@@ -171,22 +171,47 @@ describe('super allow: which permission', () => {
   });
 });
 
-describe('no window answers (field 2026-11-13: the app in the background)', () => {
-  it('super allow: the server answers the open permission itself, with a deadline on the window\'s copy', async () => {
-    askPermission(CHILD, true);
-    const answered: Array<[string, string, string | undefined]> = [];
+describe('no window answers: ONE server fallback for allow, answer and send (field 2026-11-13: the app in the background)', () => {
+  const QUESTION = { question: 'Which date format?', header: 'Format', options: [{ label: 'ISO' }, { label: 'Local' }], multiSelect: false };
+  /** A child process as the crew handle sees it: its open requests, answered through `respond`. */
+  function fakeProcess(open: Record<string, OpenRequest>) {
+    const written: Array<{ requestId: string } & RequestResponse> = [];
+    const turns: string[] = [];
     const off = registerCrewHandle(CHILD, {
-      sendServerTurn: () => true,
-      answerPermission: (requestId, behavior, message) => { answered.push([requestId, behavior, message]); return true; },
+      sendServerTurn: (text) => { turns.push(text); return true; },
+      answerRequest: (requestId, respond) => {
+        const req = open[requestId];
+        const r = req ? respond(req) : null;
+        if (!r) return false;
+        written.push({ requestId, ...r });
+        return true;
+      },
     });
+    return { written, turns, off };
+  }
+  const askQuestion = () => {
+    const h = registerChat({ sessionId: CHILD, conversationId: CHILD, vault: 'acme', mode: 'basic' });
+    h.userSent('go');
+    h.observe({ type: 'control_request', request_id: 'q-1', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [QUESTION] }, tool_use_id: 'tu-q' } });
+    return h;
+  };
+  async function answer(t: string, body: Record<string, unknown>) {
+    const r = res();
+    await handleSuperVerb(req({ headers: H(t), body: { child: CHILD, requestId: 'q-1', ...body } }), r, { verb: 'answer' });
+    return r;
+  }
+
+  it('super allow: the server answers the open permission itself; the window\'s copy carries a deadline', async () => {
+    askPermission(CHILD, true);
+    const p = fakeProcess({ 'perm-1': { toolName: 'Bash', input: { command: 'rm -rf x' } } });
     answerWith = { ok: false, error: 'no_window' };
     const before = Date.now();
     const r = await allow(H(token(vaultA, 'sess-a', 'super')));
-    off();
+    p.off();
     expect(r.status, JSON.stringify(r.json)).toBe(200);
     expect(r.json.result).toMatchObject({ child: CHILD, requestId: 'perm-1', answered: 'allow', via: 'server' });
-    expect(answered).toEqual([['perm-1', 'allow', undefined]]);
-    const deadline = frames.find((f) => f.frame.subtype === 'super_command')?.frame.args.deadline as number;
+    expect(p.written).toEqual([{ requestId: 'perm-1', behavior: 'allow', updatedInput: { command: 'rm -rf x' } }]);
+    const deadline = frames.find((f) => f.frame.verb === 'allow')?.frame.args.deadline as number;
     expect(deadline).toBeGreaterThan(before);
     expect(deadline).toBeLessThan(before + WINDOW_TIMEOUT_MS);
     expect((await readSuperState(vaultA)).queue[0].state).toBe('done');
@@ -194,14 +219,12 @@ describe('no window answers (field 2026-11-13: the app in the background)', () =
 
   it('super allow: a window that woke past the deadline (expired) leaves it to the server too', async () => {
     askPermission(CHILD, true);
-    const answered: string[] = [];
-    const off = registerCrewHandle(CHILD, { sendServerTurn: () => true, answerPermission: (id) => { answered.push(id); return true; } });
+    const p = fakeProcess({ 'perm-1': { toolName: 'Bash', input: { command: 'rm -rf x' } } });
     answerWith = { ok: false, error: 'expired' };
-    const r = await allow(H(token(vaultA, 'sess-a', 'super')));
-    off();
-    expect(r.status, JSON.stringify(r.json)).toBe(200);
-    expect(r.json.result).toMatchObject({ answered: 'allow', via: 'server' });
-    expect(answered).toEqual(['perm-1']);
+    const r = await allow(H(token(vaultA, 'sess-a', 'super')), { child: CHILD, requestId: 'perm-1', deny: true, why: 'outside its worktree' });
+    p.off();
+    expect(r.json.result).toMatchObject({ answered: 'deny', via: 'server' });
+    expect(p.written).toEqual([{ requestId: 'perm-1', behavior: 'deny', message: 'Denied by the Super Agent: outside its worktree' }]);
   });
 
   it('super allow: no process to answer it either → still 409 no_window, the item stays open', async () => {
@@ -213,39 +236,69 @@ describe('no window answers (field 2026-11-13: the app in the background)', () =
     expect((await readSuperState(vaultA)).queue[0].state).not.toBe('done');
   });
 
+  it('super answer: the server answers the card itself, built as the window builds it', async () => {
+    askQuestion();
+    const p = fakeProcess({ 'q-1': { toolName: 'AskUserQuestion', input: { questions: [QUESTION] } } });
+    answerWith = { ok: false, error: 'no_window' };
+    const r = await answer(token(vaultA, 'sess-a', 'super'), { choices: ['ISO'], text: 'for the export only' });
+    p.off();
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect(r.json.result).toMatchObject({ child: CHILD, requestId: 'q-1', answered: true, via: 'server' });
+    expect(p.written).toEqual([{
+      requestId: 'q-1', behavior: 'allow',
+      updatedInput: { questions: [QUESTION], answers: { 'Which date format?': 'ISO' }, annotations: { 'Which date format?': { notes: 'for the export only' } } },
+    }]);
+    expect(typeof frames.find((f) => f.frame.verb === 'answer')?.frame.args.deadline).toBe('number');
+  });
+
+  it('super answer: a label the card does not offer is never written by the server', async () => {
+    askQuestion();
+    const p = fakeProcess({ 'q-1': { toolName: 'AskUserQuestion', input: { questions: [QUESTION] } } });
+    answerWith = { ok: false, error: 'no_window' };
+    const r = await answer(token(vaultA, 'sess-a', 'super'), { choices: ['Made up'] });
+    p.off();
+    expect(r.status).toBe(409);
+    expect(p.written).toEqual([]);
+  });
+
   it('super send: a running child gets the words as the server\'s own turn', async () => {
     registerChat({ sessionId: CHILD, conversationId: CHILD, vault: 'acme', mode: 'basic' });
-    const turns: string[] = [];
-    const off = registerCrewHandle(CHILD, { sendServerTurn: (text) => { turns.push(text); return true; } });
+    const p = fakeProcess({});
     answerWith = { ok: false, error: 'no_window' };
-    const t = token(vaultA, 'sess-a', 'super');
     const r = res();
-    await handleSuperVerb(req({ headers: H(t), body: { child: CHILD, text: 'Read the brief' } }), r, { verb: 'send' });
-    off();
+    await handleSuperVerb(req({ headers: H(token(vaultA, 'sess-a', 'super')), body: { child: CHILD, text: 'Read the brief' } }), r, { verb: 'send' });
+    p.off();
     expect(r.status, JSON.stringify(r.json)).toBe(200);
     expect(r.json.result).toMatchObject({ child: CHILD, delivered: 'sent', via: 'server' });
-    expect(turns).toEqual(['Read the brief']);
+    expect(p.turns).toEqual(['Read the brief']);
     expect(typeof frames.find((f) => f.frame.verb === 'send')?.frame.args.deadline).toBe('number');
   });
 });
 
-describe('the server\'s permission answer frame and the window\'s deadline', () => {
+describe('the shared answer builder (request-answer.ts) and the window\'s deadline', () => {
   const line = (o: Record<string, unknown> = {}) => JSON.stringify({
     type: 'control_request', request_id: 'perm-1',
     request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' }, ...o },
   });
-  it('an allow runs the call as asked; a deny carries its reason', () => {
-    expect(permissionAnswerFrame(line(), 'perm-1', 'allow')).toEqual({ type: 'answer', requestId: 'perm-1', behavior: 'allow', updatedInput: { command: 'ls' } });
-    expect(permissionAnswerFrame(line(), 'perm-1', 'deny', 'no')).toEqual({ type: 'answer', requestId: 'perm-1', behavior: 'deny', message: 'no' });
+  it('reads only the open request it names', () => {
+    expect(openRequest(line(), 'perm-1')).toEqual({ toolName: 'Bash', input: { command: 'ls' } });
+    expect(openRequest(line(), 'perm-2')).toBeNull();
+    expect(openRequest(undefined, 'perm-1')).toBeNull();
+    expect(openRequest('not json', 'perm-1')).toBeNull();
+    expect(openRequest(line({ input: null }), 'perm-1')).toBeNull();
+    expect(openRequest(line({ subtype: 'interrupt' }), 'perm-1')).toBeNull();
   });
-  it('never a question, another request, or a line that is no open permission', () => {
-    expect(permissionAnswerFrame(line({ tool_name: 'AskUserQuestion' }), 'perm-1', 'allow')).toBeNull();
-    expect(permissionAnswerFrame(line(), 'perm-2', 'allow')).toBeNull();
-    expect(permissionAnswerFrame(undefined, 'perm-1', 'allow')).toBeNull();
-    expect(permissionAnswerFrame('not json', 'perm-1', 'allow')).toBeNull();
-    expect(permissionAnswerFrame(line({ input: null }), 'perm-1', 'allow')).toBeNull();
+  it('a permission answer is never a question\'s, and a question answer never a permission\'s', () => {
+    const bash = { toolName: 'Bash', input: { command: 'ls' } };
+    const ask = { toolName: 'AskUserQuestion', input: { questions: [{ question: 'Q?', options: [{ label: 'A' }] }] } };
+    expect(permissionResponse(bash, 'allow')).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
+    expect(permissionResponse(bash, 'deny', 'no')).toEqual({ behavior: 'deny', message: 'no' });
+    expect(permissionResponse(ask, 'allow')).toBeNull();
+    expect(questionResponse(bash, ['A'])).toBeNull();
+    expect(questionResponse(ask, ['A'])).toEqual({ behavior: 'allow', updatedInput: { ...ask.input, answers: { 'Q?': 'A' } } });
+    expect(questionResponse(ask, ['B'])).toBeNull();
   });
-  it('a window that wakes past the deadline refuses send and allow', () => {
+  it('the window refuses a late allow, send and answer', () => {
     const past = { deadline: Date.now() - 1 };
     expect(pastDeadline(past)).toBe(true);
     expect(pastDeadline({ deadline: Date.now() + 60_000 })).toBe(false);
@@ -253,8 +306,12 @@ describe('the server\'s permission answer frame and the window\'s deadline', () 
     const chat = { getModel: () => ({ pending: [{ kind: 'permission', requestId: 'perm-1', input: {} }] as never }), answer: () => true };
     expect(superAllow({ child: CHILD, requestId: 'perm-1', behavior: 'allow', ...past }, () => true, () => chat)).toEqual({ ok: false, error: 'expired' });
     expect(superAllow({ child: CHILD, requestId: 'perm-1', behavior: 'allow' }, () => true, () => chat)).toEqual({ ok: true });
+    const surface = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'sleepy', 'AgentSurface.tsx'), 'utf-8');
+    const answerBranch = surface.slice(surface.indexOf("if (verb === 'answer') {"), surface.indexOf("if (verb === 'allow') {"));
+    expect(answerBranch).toMatch(/if \(pastDeadline\(args\)\) return \{ ok: false, error: 'expired' \}/);
   });
 });
+
 
 describe('the phone\'s Allow / Deny (POST /api/agent/super-permission)', () => {
   const ownerItem = () => makeVault('acme', { session: 'sess-a', enabled: true, children: { [CHILD]: kid(CHILD) }, queue: [permItem({ toSuper: undefined, state: 'pending' })] });

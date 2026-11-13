@@ -154,7 +154,7 @@ import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
   knownMcpServers, mcpCardServers, mcpDrift, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
-import { permissionAnswerFrame } from '../../lib/super/permission-answer.js';
+import { openRequest } from '../../lib/super/request-answer.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
 import { runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import {
@@ -2929,13 +2929,15 @@ export function startChatSession(
         });
       },
       sessionPath: () => crewSeat.sessionPath(),
-      // A tool permission answered by the server (`super allow` when no window answers): the
-      // window's own `answer` frame, so the registry and the replay set settle the same way.
-      answerPermission: (requestId, behavior, message) => {
+      // An open request answered by the server (`super allow`/`super answer` when no window
+      // answers): the window's own `answer` frame, so the registry and the replay set settle
+      // the same way.
+      answerRequest: (requestId, respond) => {
         if (!alive || handedOff) return false;
-        const frame = permissionAnswerFrame(outstandingAsks.get(requestId)?.line, requestId, behavior, message);
-        if (!frame) return false;
-        onWsMessage(JSON.stringify(frame));
+        const req = openRequest(outstandingAsks.get(requestId)?.line, requestId);
+        const r = req ? respond(req) : null;
+        if (!r) return false;
+        onWsMessage(JSON.stringify({ type: 'answer', requestId, ...r }));
         return true;
       },
     })

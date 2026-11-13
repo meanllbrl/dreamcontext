@@ -39,6 +39,7 @@ import { closeCardsById, noteAssistantCards } from '../cards/records.js';
 import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalWait, refusalWaitId, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
+import type { OpenRequest, RequestResponse } from '../super/request-answer.js';
 import {
   parseTelegramPrefix, telegramSideSource, TG_PENDING_REF_TTL_MS,
   type ChatInjector, type InjectedSource, type PendingTelegramRef, type PendingTelegramRefStore, type TelegramRefDropped,
@@ -1281,11 +1282,12 @@ export interface CrewHandle {
    *  channel (sahip-karti-yerinde K6): resolves true once the registry has seen that frame (the
    *  wait closed by its card id), false when it could not go in. Only the server calls it. */
   sendOwnerReceipt?(text: string, mark: OwnerReceiptMark): Promise<boolean>;
-  /** Answer a TOOL permission the process holds open right now (never a question), the way the
-   *  window's Allow/Deny does: an allow runs the call exactly as asked. False when that request
-   *  is not open here. For `super allow` when the window does not answer (field 2026-11-13: an
-   *  app in the background held a Bypass child's permission for minutes). Only the server. */
-  answerPermission?(requestId: string, behavior: 'allow' | 'deny', message?: string): boolean;
+  /** Answer a request the process holds open right now, the way the window's card does:
+   *  `respond` builds the answer from the request (request-answer.ts) or refuses it (null).
+   *  False when that request is not open here or `respond` refused. For `super allow` and
+   *  `super answer` when the window does not answer (field 2026-11-13: an app in the background
+   *  held a Bypass child's permission for minutes). Only the server. */
+  answerRequest?(requestId: string, respond: (req: OpenRequest) => RequestResponse | null): boolean;
   /** The PATH the process really runs with (its login shell's, read once at spawn), or null while
    *  unknown: a grant resolves its interpreter with it, the way the session's hook will. */
   sessionPath?(): string | null;
