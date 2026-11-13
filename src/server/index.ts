@@ -335,7 +335,7 @@ import {
   handlePublishGrant, handlePublishGrantCheck, handleAppConfigSuggest, handleSharePeople, handleShareInvite, handlePublish, handleAppStore, handleAppConfigGet, handleAppConfigSet, handleAppLogoSet, handleAppLogoReset, handleUpdateCheck, handleUpdateUndo,
   handleUpdateApply, handleAutoUpdate, handleDetach, handleUninstall,
 } from './routes/apps-share.js';
-import { handleAppRequestCard, handleAppRequestCreate, handleAppRequestLogo, handleAppRequestReceipt, handleAppRequestShown, handleAppRequestStatus } from './routes/apps-requests.js';
+import { handleAppRequestCard, handleAppRequestCreate, handleAppRequestLogo, handleAppRequestReceipt, handleAppRequestShown, handleAppRequestStatus, handleAppRequestWaiting } from './routes/apps-requests.js';
 import { setAppRequestDelivery } from '../lib/apps/share/app-request.js';
 import { relayCommand } from '../lib/assistant/relay.js';
 import { isSuperManaged } from '../lib/super/inbox.js';
@@ -562,6 +562,7 @@ export function buildRouter(): Router {
   router.post('/api/apps/trash/restore', handleTrashRestore);
   // An agent's request for an app action (app-onay-karti C3): before the `:slug` routes.
   router.post('/api/apps/requests', handleAppRequestCreate);
+  router.get('/api/apps/requests/waiting', handleAppRequestWaiting);
   router.get('/api/apps/requests/card/:proposal', handleAppRequestCard);
   router.post('/api/apps/requests/card/:proposal/shown', handleAppRequestShown);
   router.post('/api/apps/requests/card/:proposal/receipt', handleAppRequestReceipt);

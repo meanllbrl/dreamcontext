@@ -27,6 +27,7 @@ import { listProposals, type ProposalView } from '../../src/lib/assistant/propos
 import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
 import { agentSessionId } from '../../src/lib/session-id.js';
 import { requestHeaders } from '../../src/lib/apps/client.js';
+import { pendingGuidance, shownLine } from '../../src/cli/commands/apps-share.js';
 import * as share from '../../src/server/routes/apps-share.js';
 import * as requests from '../../src/server/routes/apps-requests.js';
 import { handleAssistantProposalDecide } from '../../src/server/routes/assistant.js';
@@ -546,5 +547,72 @@ describe('the card in the chat, and where it is really drawn (app-kurulum-claude
     expect((await cardGet('0b1d3c97-6daf-4943-96d5-8614e7d0960e')).status).toBe(404);
     expect((await shown('0b1d3c97-6daf-4943-96d5-8614e7d0960e', 'chat')).body).toEqual({ ok: false });
     expect((await cardGet('not-a-uuid')).status).toBe(404);
+  });
+});
+
+describe('the Super Agent screen holds every waiting card, pasted or not (owner 2026-11-13, onay-karti-yok)', () => {
+  const waiting = (project?: string) => call(requests.handleAppRequestWaiting, { method: 'GET', url: '/api/apps/requests/waiting', project });
+  const shown = (proposal: string, where: unknown) => call(requests.handleAppRequestShown, { params: { proposal }, body: { where } });
+  const SUPER_ID = '66666666-6666-4666-8666-666666666666';
+  afterEach(async () => { (await import('../../src/lib/super/store.js')).resetSuperIndex(); });
+
+  it('a job asks and never pastes its block: the card is still on its project\'s Super screen, one tap closes it', async () => {
+    commitChange('public/app.js', 'export const x = 2;\n');
+    // A Super job (not the Super's own chat) asks; nothing draws the card in any chat.
+    const r = await ask({ action: 'publish', slug: 'tahmin' }, { ...AGENT, 'x-dc-agent-session': 'is-cocugu-1' });
+    expect(r.body).toMatchObject({ state: 'pending', superScreen: false });
+    const proposal = String(r.body.proposal);
+
+    // The Super screen of THIS project lists it; another project's lists nothing.
+    const w = await waiting();
+    expect(w.status).toBe(200);
+    expect(w.body).toEqual({ cards: [proposal] });
+    expect(JSON.stringify(w.body)).not.toContain(String(r.body.request));
+    expect((await waiting(instProject)).body).toEqual({ cards: [] });
+
+    // Drawn there: the agent's Shown line may now name the Super screen, and only that.
+    expect((await shown(proposal, 'super')).body).toEqual({ ok: true });
+    expect((await status(String(r.body.request))).body.shown).toEqual(['super']);
+
+    // An agent can never press it for him: no owner key, 403, the card still waits.
+    expect((await decide(card(), 'approve', AGENT)).status).toBe(403);
+    expect((await waiting()).body).toEqual({ cards: [proposal] });
+
+    // His tap: approved, and the card leaves the screen.
+    expect((await decide(card(), 'approve')).body).toMatchObject({ ok: true, state: 'approved' });
+    expect((await waiting()).body).toEqual({ cards: [] });
+  });
+
+  it('the guidance never says more than Shown: no block only when the Super screen REPORTED drawing it (review r1)', () => {
+    const P = '0b1d3c97-6daf-4943-96d5-8614e7d0960e';
+    const block = (lines: string[]) => lines.some((l) => l.includes('"type":"app-request"'));
+    // The Super's own chat, the screen drew it: one card, no second copy.
+    expect(block(pendingGuidance({ proposal: P, superScreen: true }, ['super']))).toBe(false);
+    expect(shownLine(['super'])).toContain('on his Super Agent screen');
+    // The Super's own chat, nothing drew it (the phone, an unfocused window, another page): paste.
+    expect(block(pendingGuidance({ proposal: P, superScreen: true }, []))).toBe(true);
+    expect(block(pendingGuidance({ proposal: P, superScreen: true }, ['notch']))).toBe(true);
+    // Any other chat (a job, a tab): always the block, drawn or not.
+    expect(block(pendingGuidance({ proposal: P, superScreen: false }, ['super']))).toBe(true);
+  });
+
+  it('the Super itself asks: told the screen draws it, so it pastes no second copy', async () => {
+    const { SUPER_STATE_REL, primeSuperIndex } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    const ctx = ctxOf(pubProject);
+    mkdirSync(join(ctx, 'state'), { recursive: true });
+    writeFileSync(join(ctx, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER_ID, enabled: true }));
+    await primeSuperIndex([ctx]);
+    commitChange('public/app.js', 'export const x = 3;\n');
+    const r = await ask({ action: 'publish', slug: 'tahmin' }, { ...AGENT, 'x-dc-agent-session': SUPER_ID });
+    expect(r.body).toMatchObject({ state: 'pending', superScreen: true });
+    expect((await waiting()).body).toEqual({ cards: [String(r.body.proposal)] });
+    // The same Super asking for ANOTHER project's install is not on its own screen: it pastes.
+    resetAppRequests();
+    const kur = host('kurucu');
+    await kur.acceptInvitation((await kur.listInvitations())[0].id);
+    process.env.DREAMCONTEXT_APPS_LOCAL_LOGIN = 'kurucu';
+    const other = await ask({ action: 'install', ref: 'yayinci/tahmin-app' }, { ...AGENT, 'x-dc-agent-session': SUPER_ID }, instProject);
+    expect(other.body).toMatchObject({ state: 'pending', superScreen: false });
   });
 });

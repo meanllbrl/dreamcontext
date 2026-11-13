@@ -242,7 +242,7 @@ paste it as is. Name the slug only: the card reads the rest from its file.
 \`\`\`
 
 **An app action that waits for the owner's yes** (install, publish, update, logo).
-\`dreamcontext apps … --ask\` prints it; paste it as is. He taps Onayla here. Say where a card is
+\`dreamcontext apps … --ask\` prints it; paste it as is when it prints one. He taps Onayla. Say where a card is
 only from that command's \`Shown:\` line, never "on your screen" otherwise.
 
 \`\`\`dream-view
