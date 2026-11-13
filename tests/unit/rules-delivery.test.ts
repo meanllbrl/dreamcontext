@@ -174,6 +174,11 @@ describe('rules-delivery: before something that cannot be taken back (criterion 
     expect(bash('/usr/bin/git push')).toBe('git push');
     expect(bash('npm -w pkg publish')).toBe('npm publish');
     expect(bash('gh -R o/r pr merge 3')).toBe('gh pr merge');
+    expect(bash('git -c user.name="A B" push')).toBe('git push');
+    expect(bash('env X=1 git push')).toBe('git push');
+    expect(bash('time git push')).toBe('git push');
+    expect(bash('npm --access public publish')).toBe('npm publish');
+    expect(bash('yarn npm publish')).toBe('npm publish');
     expect(actKind('mcp__slack__send_message', {})).toBe('send');
     expect(actKind('mcp__slack__read_channel', {})).toBeNull();
     expect(actKind('Read', { file_path: 'x' })).toBeNull();

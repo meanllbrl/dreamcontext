@@ -19,6 +19,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readOwnerTurns, occasion, type OwnerTurnLine } from './owner-words.js';
 import { detectRememberIntent } from './remember-intent.js';
+import { ACT_REFUSAL_LEAD } from './rules-delivery.js';
 import {
   deriveAll, eventsOf, personalStoreRef, projectStoreRef, readStore, supersedeFlags, weeklySayings,
   RulesStoreError, type RuleRecord, type RuleView,
@@ -77,7 +78,7 @@ export function toolErrorsOf(rec: Record<string, unknown>): ToolError[] {
     const source = notFound ? (text.split('\n').find((l) => /command not found/i.test(l)) ?? text) : text;
     // Not a defect: the harness refusing a call (`<tool_use_error>`) or dreamcontext's own stop
     // before an irreversible act, which repeats by design.
-    if (/^\s*<tool_use_error>/.test(source) || source.includes('Not run yet: this is `')) continue;
+    if (/^\s*<tool_use_error>/.test(source) || source.includes(ACT_REFUSAL_LEAD)) continue;
     const line = foldErrorLine(source);
     if (line) out.push({ at, line });
   }

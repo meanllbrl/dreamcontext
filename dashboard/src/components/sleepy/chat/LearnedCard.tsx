@@ -71,8 +71,12 @@ export function LearnedCard({ spec, session, report }: {
       report?.(tapReport(res.card, op));
     } catch (err) {
       setPhase(err instanceof RequestError && err.code === 'owner_page_only' ? 'refused' : 'failed');
-      // The rule may have moved under the card (undone in another window): show its real state.
-      void queryClient.invalidateQueries({ queryKey: key });
+      // The rule may have moved under the card (undone in another window): show its real state,
+      // and drop the "try again" line once there is nothing left to retry.
+      const before = q.data.card.status;
+      await queryClient.invalidateQueries({ queryKey: key });
+      const now = queryClient.getQueryData<{ card: LearnedCardFacts }>(key)?.card.status;
+      if (now && now !== before) setPhase('idle');
     }
     // `key` is rebuilt every render from the id; the id is what it depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,7 +85,7 @@ export function LearnedCard({ spec, session, report }: {
   if (q.isLoading) {
     return <div className="chat-viewcard chat-learnedcard" data-view-kind="learned"><CardHeader glyph="✓" title={t('chat.learned.loading')} /></div>;
   }
-  if (q.isError || !q.data) {
+  if (!q.data) {
     const gone = q.error instanceof RequestError && q.error.status === 404;
     return (
       <div className="chat-viewcard chat-learnedcard" data-view-kind="learned" data-state="missing">

@@ -283,14 +283,17 @@ const fold = (s: string): string => foldAscii(s).toLowerCase();
  * never read as the command itself.
  */
 function simpleCommands(command: string): string[][] {
-  const unquoted = command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ' __q__ ');
+  const unquoted = command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '__q__');
   return unquoted.split(/[;&|\n()]+/).map((seg) => seg.trim().split(/\s+/).filter(Boolean)).filter((t) => t.length > 0);
 }
+
+/** Words that run the next one as the command (`sudo git push`, `env X=1 git push`). */
+const PREFIX_WORDS: readonly string[] = ['sudo', 'command', 'exec', 'env', 'time', 'nohup', 'nice'];
 
 /** Options that take the next word as their value, per binary (`git -C dir`, `npm -w pkg`). */
 const VALUE_OPTIONS: Record<string, readonly string[]> = {
   git: ['-C', '-c', '--git-dir', '--work-tree', '--namespace'],
-  npm: ['-w', '--workspace', '--prefix', '--registry', '--tag', '--otp'],
+  npm: ['-w', '--workspace', '--prefix', '--registry', '--tag', '--otp', '--access'],
   pnpm: ['-C', '--dir', '-F', '--filter', '--registry', '--tag', '--otp'],
   yarn: ['--cwd'],
   gh: ['-R', '--repo'],
@@ -303,7 +306,7 @@ const VALUE_OPTIONS: Record<string, readonly string[]> = {
  */
 function positionals(t: readonly string[], bin: string): string[] | null {
   let i = 0;
-  while (i < t.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t[i]!) || t[i] === 'sudo' || t[i] === 'command' || t[i] === 'exec')) i += 1;
+  while (i < t.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t[i]!) || PREFIX_WORDS.includes(t[i]!))) i += 1;
   const head = t[i];
   if (!head || (head !== bin && !head.endsWith(`/${bin}`))) return null;
   const takesValue = VALUE_OPTIONS[bin] ?? [];
@@ -332,7 +335,9 @@ export function actKind(toolName: string, toolInput: Record<string, unknown>): A
     if (!command) return null;
     for (const t of simpleCommands(command)) {
       for (const bin of ['npm', 'pnpm', 'yarn']) {
-        if (positionals(t, bin)?.[0] === 'publish') return 'npm publish';
+        const pos = positionals(t, bin);
+        // `yarn npm publish` is Yarn 2+'s publish.
+        if (pos?.[0] === 'publish' || (bin === 'yarn' && pos?.[0] === 'npm' && pos[1] === 'publish')) return 'npm publish';
       }
       const git = positionals(t, 'git');
       if (git?.[0] === 'push') return 'git push';
@@ -406,11 +411,14 @@ function actDelivery(root: string, input: DeliverInput, active: RuleView[]): Del
   return sized({ always: [], moment: lines, matched: [], considered: active.length + patterns.length });
 }
 
+/** The first words of the stop before an act; sleep's tool-error tally skips results that carry it. */
+export const ACT_REFUSAL_LEAD = 'Not run yet: this is `';
+
 /** The refusal's reason before an act: the opened text, then "run it again once this holds". */
 export function actRefusal(kind: ActKind, d: Delivery): string | null {
   if (d.moment.length === 0) return null;
   return [
-    `Not run yet: this is \`${kind}\`, which cannot be taken back, and his rules for it say:`,
+    `${ACT_REFUSAL_LEAD}${kind}\`, which cannot be taken back, and his rules for it say:`,
     ...d.moment,
     'Do what they say first, then run the same call again once this holds (it is not stopped twice in this session).',
   ].join('\n');
