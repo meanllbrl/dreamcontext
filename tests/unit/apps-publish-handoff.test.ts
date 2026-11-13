@@ -67,7 +67,7 @@ describe('the update publish (Güncellemeyi yayınla)', () => {
     expect(i18n).toContain('"share.card.publishUpdate": "Güncellemeyi yayınla"');
   });
 
-  it('a publish handoff never lands in the Super composer: it falls through to a new chat', () => {
+  it('without the Super, a publish handoff never lands in a Super composer: it falls through to a new chat', () => {
     expect(read('dashboard/src/components/apps/AppCard.tsx')).toMatch(/askAgent\(bus, prompt, \{\s*notSuper: true,/);
     expect(read('dashboard/src/components/sleepy/chat/Composer.tsx')).toMatch(/if \(superView && detail\.notSuper\) return;/);
   });
@@ -87,7 +87,7 @@ describe('the Share button', () => {
     expect(card).toMatch(/visibility === 'public' && !\(update && app\.publish\?\.public\) && !\(await confirmAction\(/);
     expect(card).toMatch(/askAgent\(bus, prompt, \{/);
     // No chat on screen can take it: a new chat starts with it, shown.
-    expect(card).toMatch(/requestDelegateAgent\(bus, \{ title: ts\('store\.publish\.tab'[\s\S]*?reveal: true \}\)\) onClose\(\)/);
+    expect(card).toMatch(/requestDelegateAgent\(bus, \{ title: ts\('store\.publish\.tab'[\s\S]*?reveal: true, reuse: true \}\)\) onClose\(\)/);
   });
 
   it('the push stays the owner\'s page or his grant; the grant route is the owner page only', () => {
