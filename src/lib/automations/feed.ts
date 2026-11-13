@@ -576,9 +576,70 @@ export function runUnread(
   return { unread: fresh > 0, unreadPosts: fresh > 0 ? Math.max(1, freshPosts) : 0, newestId };
 }
 
-/** How many newest DAY FILES (distinct days) the feed reads per slug — exported so the pane's
- *  history counts unread inside exactly the feed's window. */
-export const FEED_UNREAD_DAYS = FEED_DAY_WINDOW;
+/** The open `flow-hitl` question of each run, keyed `<slug>::<runId>`, in ONE read of the store.
+ *  An `approval` question is the manifest-diff ask raised BEFORE a run, so it belongs to no run.
+ *  A store that cannot be read gives an empty map: it costs the chips, never the caller. */
+export function openQuestionsByRun(contextRoot: string): Map<string, AutomationQuestion> {
+  const out = new Map<string, AutomationQuestion>();
+  try {
+    for (const q of allPendingQuestions(contextRoot)) {
+      if (q.kind !== 'flow-hitl') continue;
+      const key = `${q.slug}::${q.runFiredAt}`;
+      if (!out.has(key)) out.set(key, q);
+    }
+  } catch {
+    // see above
+  }
+  return out;
+}
+
+/**
+ * THE unread window, one rule for every count of a run: the feed (its chips, bars and the sidebar
+ * badge), the inbox Telegram and the notch read from it, and an agent's history pane. Anchored on
+ * the run's LAST activity, never on when it started: a run fired three weeks ago and answered
+ * today is inside, whole, everywhere. A run stopped on an open question record (`held`) is inside
+ * however old, so a real question never falls out and vanishes. Inside, EVERY entry of the run
+ * counts; outside, none does. Two readers that each applied the window their own way (one by day
+ * file, one by entry) counted the same run differently.
+ *
+ * "Any entry inside" is the same test as "the newest entry inside", without assuming the order.
+ */
+export function runInUnreadWindow(entries: readonly ThreadEntry[], cutoffDay: string, held = false): boolean {
+  if (held) return true;
+  for (const e of entries) {
+    const t = Date.parse(e.at);
+    if (!Number.isNaN(t) && threadDateStamp(new Date(t)) >= cutoffDay) return true;
+  }
+  return false;
+}
+
+/** A run's unread state under the window: `runUnread` over the whole run when it is inside, over
+ *  nothing when it is not. `newestId` is always the run's newest entry. */
+export function runWindowUnread(
+  entries: readonly ThreadEntry[],
+  watermark: string | null,
+  inWindow: boolean,
+  quiet?: ReadonlySet<string>,
+): { unread: boolean; unreadPosts: number; newestId: string | null } {
+  const u = runUnread(entries, inWindow ? watermark : null, quiet);
+  return inWindow ? u : { unread: false, unreadPosts: 0, newestId: u.newestId };
+}
+
+/** The local calendar day a run was fired (its id IS its fire time), or null for an id that is
+ *  not a time: the day file its first entry sits in, so a reader knows how far back to read. */
+function fireDayOf(runId: string): string | null {
+  const t = Date.parse(runId);
+  return Number.isNaN(t) ? null : threadDateStamp(new Date(t));
+}
+
+function groupByRun(entries: readonly ThreadEntry[]): Map<string, ThreadEntry[]> {
+  const byRun = new Map<string, ThreadEntry[]>();
+  for (const e of entries) {
+    const list = byRun.get(e.runId);
+    if (list) list.push(e); else byRun.set(e.runId, [e]);
+  }
+  return byRun;
+}
 
 /**
  * The whole channel, oldest message first — the reading order of a chat, with
@@ -610,16 +671,7 @@ export function buildFeed(
   // `flow-hitl` only: an `approval` question is the manifest-diff ask raised
   // BEFORE a run, so it belongs to no run in this feed and answering it is a
   // different screen's job.
-  const questionByRun = new Map<string, AutomationQuestion>();
-  try {
-    for (const q of allPendingQuestions(contextRoot)) {
-      if (q.kind !== 'flow-hitl') continue;
-      const key = `${q.slug}::${q.runFiredAt}`;
-      if (!questionByRun.has(key)) questionByRun.set(key, q);
-    }
-  } catch {
-    // A question store that cannot be read costs the chips, never the feed.
-  }
+  const questionByRun = openQuestionsByRun(contextRoot);
 
   for (const manifest of manifests) {
     const hasPhoto = resolveAutomationPhoto(contextRoot, manifest.photo) !== null;
@@ -637,20 +689,29 @@ export function buildFeed(
     // a real question never falls out of the window and vanishes.
     const openDays = [...questionByRun.entries()]
       .filter(([k]) => k.startsWith(`${manifest.slug}::`))
-      .map(([k]) => {
-        const t = Date.parse(k.slice(manifest.slug.length + 2));
-        return Number.isNaN(t) ? '' : threadDateStamp(new Date(t));
-      })
+      .map(([k]) => fireDayOf(k.slice(manifest.slug.length + 2)) ?? '')
       .filter((d) => d !== '' && d < cutoffDay)
       .sort();
-    const all = readThread(contextRoot, manifest.slug, { fromDay: openDays[0] ?? cutoffDay });
-    // A run stays when ANY of its entries is inside the window (an old run answered today is
-    // alive again) or when an open question record points at it.
+    const fromDay = openDays[0] ?? cutoffDay;
+    let all = readThread(contextRoot, manifest.slug, { fromDay });
+    // The window is `runInUnreadWindow`'s, the pane's own: a run whose last activity is inside
+    // counts WHOLE. An old run answered today has its first entries in a day file this read
+    // skipped; only then, read the OLDER days alone, back to a day before its fire day (a synced
+    // machine west of this one names its files a day earlier), and merge them in.
     const liveRuns = new Set<string>();
-    for (const e of all) {
-      const t = Date.parse(e.at);
-      if ((!Number.isNaN(t) && threadDateStamp(new Date(t)) >= cutoffDay)
-        || questionByRun.has(`${manifest.slug}::${e.runId}`)) liveRuns.add(e.runId);
+    let reachBack: string | null = fromDay;
+    for (const [runId, list] of groupByRun(all)) {
+      if (!runInUnreadWindow(list, cutoffDay, questionByRun.has(`${manifest.slug}::${runId}`))) continue;
+      liveRuns.add(runId);
+      const t = Date.parse(runId);
+      const fire = Number.isNaN(t) ? null : threadDateStamp(new Date(t - 86_400_000));
+      if (fire === null) reachBack = null;
+      else if (reachBack !== null && fire < reachBack) reachBack = fire;
+    }
+    if (reachBack !== fromDay) {
+      const older = readThread(contextRoot, manifest.slug, { beforeDay: fromDay, ...(reachBack === null ? {} : { fromDay: reachBack }) });
+      const seen = new Set(all.map((e) => e.id));
+      all = [...older.filter((e) => !seen.has(e.id)), ...all].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     }
     const entries = all.filter((e) => liveRuns.has(e.runId));
     if (entries.length === 0) continue;
@@ -659,11 +720,7 @@ export function buildFeed(
     const cache = readAutomationCache(contextRoot, manifest.slug);
     const runsByFire = new Map((cache?.history ?? []).map((e) => [e.firedAt, e]));
 
-    const byRun = new Map<string, ThreadEntry[]>();
-    for (const e of entries) {
-      const list = byRun.get(e.runId);
-      if (list) list.push(e); else byRun.set(e.runId, [e]);
-    }
+    const byRun = groupByRun(entries);
 
     // Counted in MESSAGES, the unit the reader sees: each unread post, and a run that posted
     // nothing counts once (its card still says what happened). The runner's own bookkeeping

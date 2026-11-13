@@ -294,6 +294,8 @@ export interface ReadThreadOptions {
   /** Read only day files dated on or after this YYYY-MM-DD (an I/O bound for a run whose
    *  entries cannot be older than its fire day). */
   fromDay?: string;
+  /** Read only day files dated BEFORE this YYYY-MM-DD: the older part a caller has not read yet. */
+  beforeDay?: string;
 }
 
 /**
@@ -323,6 +325,7 @@ export function readThread(contextRoot: string, slug: string, opts: ReadThreadOp
     }
   }
   if (opts.fromDay && /^\d{4}-\d{2}-\d{2}$/.test(opts.fromDay)) files = files.filter((f) => f.slice(0, 10) >= opts.fromDay!);
+  if (opts.beforeDay && /^\d{4}-\d{2}-\d{2}$/.test(opts.beforeDay)) files = files.filter((f) => f.slice(0, 10) < opts.beforeDay!);
 
   const byId = new Map<string, ThreadEntry>();
   for (const name of files) {
