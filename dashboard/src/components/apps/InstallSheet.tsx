@@ -159,8 +159,9 @@ export function InstallSheet({ initialRef, running, onStarted, onClose, onFinish
   // Under Install: what is happening (one calm line while it runs), what stops it, or the second way.
   const note = installing ? (
     <span className="share-muted pp-why" role="status">{t('share.install.working')} {t('share.install.busyWhy')}</span>
-  ) : (err || failed || pageWhy) ? (
-    <span className={err || failed ? 'app-card__note app-card__note--bad pp-why' : 'share-why pp-why'} role={err || failed ? 'alert' : undefined}>{err ?? (failed ? t('share.install.failedWhy', { why: failed }) : pageWhy)}</span>
+  ) : (err || pageWhy || failed) ? (
+    // A disabled Install keeps its reason in view, ahead of an earlier failure.
+    <span className={err || (failed && !pageWhy) ? 'app-card__note app-card__note--bad pp-why' : 'share-why pp-why'} role={err || (failed && !pageWhy) ? 'alert' : undefined}>{err ?? pageWhy ?? t('share.install.failedWhy', { why: failed ?? '' })}</span>
   ) : pv && pv.config.length > 0 ? (
     <span className="share-muted pp-why pp-claude">
       {t('share.install.claudeNote')}{' '}
