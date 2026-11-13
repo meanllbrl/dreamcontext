@@ -182,7 +182,7 @@ describe('ChatPane draws the recap as a card, open after every reload', () => {
 
   it('a segment that draws nothing does not open the card; a streaming turn keeps its run live', () => {
     expect(pane).toMatch(/const shows = \(seg: RunSegment<ChatItem>\) => seg\.kind === 'run' \|\| shapeOf\(seg\.item\)\.draw !== 'nothing';/);
-    expect(pane).toMatch(/\.filter\(\(seg\) => shows\(seg\) \|\| cardsOf\(seg\)\.length > 0\)/);
+    expect(pane).toMatch(/\.filter\(\(seg\) => shows\(seg\) \|\| cardsOf\(seg\)\.length > 0 \|\| settledOf\(seg\)\.length > 0\)/);
     // The live run is the last segment that SHOWS something, never an invisible one carrying a card.
     expect(pane).toMatch(/while \(tail >= 0 && !shows\(body\[tail\]\)\) tail -= 1;/);
     expect(pane).toMatch(/itemNode\(seg\.item, stretches\.get\(seg\.item\.id\), accruing\)/);

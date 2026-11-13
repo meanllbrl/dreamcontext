@@ -28,6 +28,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readF
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isSessionUuid, type CardRecordEntry } from '../../lib/cards/records.js';
+import { ownerPressedRun, ownerRunEnded } from '../../lib/super/inbox.js';
 import { buildInterruptedReport } from '../../lib/run-report.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import type { RunReport } from '../../lib/telegram/contract.js';
@@ -187,6 +188,11 @@ export const runDelivery: RunDelivery = {
     }
     holdReport(run.sessionId, run.runId, run.cardRef, text, true);
   },
+  acted(run: Run, record: CardRecordEntry) {
+    // His press of ▶ Run IS his answer (run-bildirim-hemen): the ONE place that decides it
+    // (inbox `ownerPressedRun`); every "needs you" surface reads what it closes.
+    void ownerPressedRun(run.sessionId, run.cardRef, record.id, run.command).catch(() => undefined);
+  },
   hold(run: Run, _record: CardRecordEntry, report: RunReport) {
     const crew = ownerCardLookup(run.sessionId, run.cardRef);
     // Same id: the placeholder goes. Before the record closes (the registry calls this first).
@@ -198,7 +204,9 @@ export const runDelivery: RunDelivery = {
     if (crew) {
       // Held already (`hold`, before the record closed): delivered to the child that asked (its
       // successor after a hand-off), whichever surface started the run.
-      lastCrewDelivery = deliverOwnerReceipt(crew.target).catch(() => 'held');
+      // Then no "running" outlives the run, wherever its result went (held included).
+      lastCrewDelivery = deliverOwnerReceipt(crew.target).catch(() => 'held' as const)
+        .then(async (r) => { await ownerRunEnded(run.sessionId, run.cardRef).catch(() => undefined); return r; });
       return;
     }
     void deliverReport(run, report).catch(() => { /* held on disk; the next mount sends it */ });

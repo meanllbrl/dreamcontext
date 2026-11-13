@@ -8,8 +8,8 @@ import { sessionCheckout } from '../session-cwd.js';
 import { cwdInRoots } from '../grants/binding.js';
 import { listGrants, pruneRecordGrants, removeGrant } from '../grants/store.js';
 import { readRoutineFacts, routineNeeds, type RoutineFacts, type RoutineNeed } from '../automations/needs.js';
-import { isOwnerCardKind, stalledWait, type OwnerWait } from './owner-wait.js';
-import { cardHandleOf } from '../cards/records.js';
+import { isOwnerCardKind, sameShellCommand, stalledWait, type OwnerWait } from './owner-wait.js';
+import { cardHandleOf, getCard } from '../cards/records.js';
 import { redactSecrets } from '../telegram/format.js';
 import {
   commandFromHandles, deliverOwnerReceipt, deliverableOwnerReceipts, dropOwnerReceipts, holdOwnerReceipt, isReceiptTarget, markOwnerReceiptDelivered, readOwnerReceipts, receiptTargetOf,
@@ -35,7 +35,7 @@ import { REASK_TEXT, firstPromptsLost, keepQuestionsAcrossRelaunch, keepWorkAcro
 import { liveTranscriptPath } from '../transcript-locate.js';
 import { settleAskShows } from './ask-show.js';
 import {
-  STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, crewHandle, dropOwnerWait, getChat, onChatChange, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, ownerWaitOrigin, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
+  STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, crewHandle, dropOwnerWait, getChat, onChatChange, ownerActedOnCard, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, ownerWaitOrigin, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
   type ChatActivity, type ChatChange, type ChatEntry, type PendingQuestion,
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokenOfSession } from '../window-control.js';
@@ -2486,7 +2486,7 @@ export async function ownerCardLiveEdge(sid: string): Promise<void> {
  *  - `held:phone`: the phone lets go of the child.
  * `scope` narrows it: the project's vault root (cap), the Super's key (no_window), the child (phone).
  */
-export async function retryHeldOwnerCards(outcome: Exclude<OwnerDeliveryState, 'sent' | 'waking' | 'ended'>, scope: { root?: string; key?: string; child?: string }): Promise<void> {
+export async function retryHeldOwnerCards(outcome: Exclude<OwnerDeliveryState, 'running' | 'finished' | 'sent' | 'waking' | 'ended'>, scope: { root?: string; key?: string; child?: string }): Promise<void> {
   const targets = new Map<string, OwnerReceiptTarget>();
   for (const [key, s] of lastStates) {
     if (scope.key && key !== scope.key) continue;
@@ -2499,6 +2499,70 @@ export async function retryHeldOwnerCards(outcome: Exclude<OwnerDeliveryState, '
     }
   }
   for (const t of targets.values()) await deliverOwnerReceipt(t).catch(() => 'held');
+}
+
+/** Is card `cardRef` (posted in `postingSession`) running right now (the record's own run)? */
+function cardRunLive(postingSession: string, cardRef: string): boolean {
+  return !!getCard(postingSession, cardRef)?.run;
+}
+
+/** `running` holds only while the card's run is live (run-bildirim-hemen): an exit whose result
+ *  found no line (a held send, a restart that cut the run) becomes `finished`, never a false
+ *  "running" and never a card that leaves the chat. Mutates `s`. */
+function clearStaleRunning(s: SuperState, cardRef?: string): boolean {
+  let changed = false;
+  for (const q of s.queue) {
+    if (q.delivery !== 'running' || !q.card || (cardRef && q.card.cardRef !== cardRef)) continue;
+    if (cardRunLive(q.card.postingSession, q.card.cardRef)) continue;
+    q.delivery = 'finished';
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * THE OWNER PRESSED ▶ Run on card `cardRef` (run-bildirim-hemen): the ONE place his press counts
+ * as his answer, at the run's START. The chats that hold its wait are answered (the card and the
+ * refusal of the same shell command, chat-registry `ownerActedOnCard`), and the Super record's
+ * items close here too, so a child with no live chat (parked, restarted) stops saying "needs you"
+ * as well: its card item closes `running`, its refusal of that command closes, its row leaves
+ * `waiting`. Every "needs you" surface reads those items. The run's result still reaches the child
+ * at the exit (the receipt store), exactly as before.
+ */
+export function ownerPressedRun(postingSession: string, cardRef: string, cardId: string, command: string): Promise<void> {
+  return track(pressedRun(postingSession, cardRef, cardId, command));
+}
+
+async function pressedRun(postingSession: string, cardRef: string, cardId: string, command: string): Promise<void> {
+  const l = lookupOwnerCard(postingSession, cardRef);
+  const sids = new Set([postingSession, ...(l ? [l.target.childId] : [])]);
+  for (const sid of sids) ownerActedOnCard(sid, 'run', cardId, command);
+  if (!l) return;
+  try {
+    await writeSuper(l.key, (s) => {
+      const kids = new Set<string>();
+      for (const q of s.queue) {
+        if (q.kind !== 'owner' || q.own || !q.card || q.card.cardRef !== cardRef || q.card.postingSession.toLowerCase() !== postingSession.toLowerCase()) continue;
+        kids.add(q.sessionId);
+        if (q.state !== 'done') closeOwnerAnswered(q);
+      }
+      for (const q of s.queue) {
+        if (q.kind !== 'owner' || q.state === 'done' || !kids.has(q.sessionId) || q.wait?.kind !== 'refusal' || !q.wait.refusal) continue;
+        if (sameShellCommand(q.wait.refusal, command)) q.state = 'done';
+      }
+      for (const sid of kids) {
+        const ch = s.children[sid];
+        if (ch?.row === 'waiting' && !hasOpenOwnerWait(s, sid)) setRow(ch, 'working', undefined, Date.now());
+      }
+    });
+  } catch { /* the registry's answer closes them on the next sync */ }
+}
+
+/** The card's run ended and its result went where it could: no "running" stays behind it. */
+export function ownerRunEnded(postingSession: string, cardRef: string): Promise<void> {
+  const l = lookupOwnerCard(postingSession, cardRef);
+  if (!l) return Promise.resolve();
+  return track(writeSuper(l.key, (s) => { clearStaleRunning(s, cardRef); }));
 }
 
 /**
@@ -2604,6 +2668,22 @@ export function _resetOwnerCardInbox(): void {
   parkedProbe = null;
 }
 
+/** A run card of child `sid` that he started and that is still running (the record's own run). */
+function ownerRunGoing(s: Pick<SuperState, 'queue'>, sid: string): boolean {
+  return s.queue.some((q) => q.kind === 'owner' && q.sessionId === sid && q.delivery === 'running' && !!q.card && cardRunLive(q.card.postingSession, q.card.cardRef));
+}
+
+/**
+ * Close an owner item his answer cleared. A run card whose run is LIVE (he pressed ▶ Run: the
+ * registry answered the wait at the START, run-bildirim-hemen) closes with the slot's line
+ * `running`: the card stays where he pressed it, its terminal live, until the exit's result line
+ * replaces it.
+ */
+function closeOwnerAnswered(q: SuperQueueItem): void {
+  q.state = 'done';
+  if (!q.delivery && q.card && q.wait?.kind === 'run' && cardRunLive(q.card.postingSession, q.card.cardRef)) q.delivery = 'running';
+}
+
 /**
  * Bring a child's `owner` items in line with what its stream holds (`ChatEntry.ownerWaits`):
  * a new wait is a new item (pending: the super hears it in the next batch; the owner sees it at
@@ -2627,7 +2707,7 @@ export function syncOwnerDraft(s: SuperState, sid: string, e: ChatEntry | null, 
       if (!q.card && isCardItem(q)) { const h = cardHandleFor(s, sid, e, w); if (h) { q.card = h; changed = true; } }
       continue;
     }
-    if (ownerWaitAnswered(sid, q.wait.kind, q.wait.id)) { q.state = 'done'; changed = true; continue; }
+    if (ownerWaitAnswered(sid, q.wait.kind, q.wait.id)) { closeOwnerAnswered(q); changed = true; continue; }
     orphans.push(q);
   }
   // The record holds them, this process does not (a respawn, a restart): hold them again, as
@@ -2637,7 +2717,7 @@ export function syncOwnerDraft(s: SuperState, sid: string, e: ChatEntry | null, 
       wait: { kind: q.wait!.kind, id: q.wait!.id, line: q.ownerText ?? '', ...(q.wait!.key ? { key: q.wait!.key } : {}), ...(q.wait!.refusal ? { refusal: { ...q.wait!.refusal } } : {}) },
       since: q.createdAt,
     })));
-    for (const q of orphans) if (answered.has(`${q.wait!.kind}:${q.wait!.id}`)) { q.state = 'done'; changed = true; }
+    for (const q of orphans) if (answered.has(`${q.wait!.kind}:${q.wait!.id}`)) { closeOwnerAnswered(q); changed = true; }
   }
   for (const w of waits) {
     if (s.queue.some((q) => q.sessionId === sid && q.kind === 'owner' && q.state !== 'done' && q.wait?.kind === w.kind && q.wait.id === w.id)) continue;
@@ -2904,7 +2984,7 @@ export function syncOwnDraft(s: SuperState, superId: SuperId, sid: string, e: Ch
     if (q.wait.kind === 'stalled') continue;
     const w = waits.find((x) => x.kind === q.wait!.kind && x.id === q.wait!.id);
     if (w) { if (q.ownerText !== w.line) { q.ownerText = w.line; changed = true; } continue; }
-    if (ownerWaitAnswered(sid, q.wait.kind, q.wait.id)) { q.state = 'done'; changed = true; continue; }
+    if (ownerWaitAnswered(sid, q.wait.kind, q.wait.id)) { closeOwnerAnswered(q); changed = true; continue; }
     orphans.push(q);
   }
   // Held by the record, not by this process (a respawn, a restart): held again, never inferred answered.
@@ -2913,7 +2993,7 @@ export function syncOwnDraft(s: SuperState, superId: SuperId, sid: string, e: Ch
       wait: { kind: q.wait!.kind, id: q.wait!.id, line: q.ownerText ?? '', ...(q.wait!.key ? { key: q.wait!.key } : {}), ...(q.wait!.refusal ? { refusal: { ...q.wait!.refusal } } : {}) },
       since: q.createdAt,
     })));
-    for (const q of orphans) if (answered.has(`${q.wait!.kind}:${q.wait!.id}`)) { q.state = 'done'; changed = true; }
+    for (const q of orphans) if (answered.has(`${q.wait!.kind}:${q.wait!.id}`)) { closeOwnerAnswered(q); changed = true; }
   }
   for (const w of waits) {
     if (s.queue.some((q) => q.own && q.sessionId === sid && q.kind === 'owner' && q.state !== 'done' && q.wait?.kind === w.kind && q.wait.id === w.id)) continue;
@@ -3979,6 +4059,9 @@ function settleDraft(s: SuperState, sid: string, now: number): boolean {
   if (resumeAwaited(ch, e)) { setRow(ch, 'working', undefined, now); return false; }
   // Something only the owner can do is still open: it waits on him, it is not done.
   if (hasOpenOwnerWait(s, sid)) { setRow(ch, 'waiting', undefined, now); return false; }
+  // He pressed ▶ Run on its card and the run still goes (run-bildirim-hemen): no longer his,
+  // not done either; its result reaches the child at the exit.
+  if (ownerRunGoing(s, sid)) { setRow(ch, 'working', undefined, now); return false; }
   const stuck = errorTurn(e);
   setRow(ch, stuck ? 'stuck' : 'done', stuck ? 'error' : undefined, now);
   return pushRowItem(s, sid, stuck ? 'stuck' : 'done', now);
@@ -4028,6 +4111,8 @@ function armSettle(root: string, sid: string, ms = settleWindow(getChat(sid))): 
  */
 export function reconcileDraft(s: SuperState, now: number, armed: (sid: string) => boolean): { changed: boolean; added: boolean; arm: Array<{ sid: string; ms: number }> } {
   let changed = false;
+  // A `running` card whose run is gone (a restart cut it): no false "running" (run-bildirim-hemen).
+  if (clearStaleRunning(s)) changed = true;
   let added = false;
   const arm: Array<{ sid: string; ms: number }> = [];
   for (const [sid, ch] of Object.entries(s.children)) {

@@ -116,7 +116,13 @@ export function slotCardItems(queue: readonly SuperQueueItem[]): SuperQueueItem[
       seenOpenCards.add(q.id);
       if (seenOpenCards.size > SEEN_CAP) seenOpenCards.delete(seenOpenCards.values().next().value as string);
       out.push(q);
-    } else if (q.delivery && seenOpenCards.has(q.id)) {
+    } else if (q.delivery === 'running' || (q.delivery && seenOpenCards.has(q.id))) {
+      // A run he pressed and that still goes is drawn even in a fresh window, and counts as seen:
+      // at its exit it settles in place with its result line (run-bildirim-hemen).
+      if (q.delivery === 'running') {
+        seenOpenCards.add(q.id);
+        if (seenOpenCards.size > SEEN_CAP) seenOpenCards.delete(seenOpenCards.values().next().value as string);
+      }
       out.push(q);
     }
   }
