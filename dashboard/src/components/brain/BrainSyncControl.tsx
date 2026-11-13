@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { GitHubMark } from './GitHubLogin';
+import { GitHubReconnect } from './GitHubReconnect';
 import {
   useBrainStatus,
   useRunBrainSync,
@@ -51,9 +52,11 @@ function GearIcon({ size = 13 }: { size?: number }) {
 interface BrainSyncControlProps {
   /** Open Settings → Brain (gear, reconnect, "check permissions"). */
   onOpenSettings: () => void;
+  /** Settings → GitHub: where a GitHub permission problem is looked at (plan D9). */
+  onOpenGitHub?: () => void;
 }
 
-export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
+export function BrainSyncControl({ onOpenSettings, onOpenGitHub }: BrainSyncControlProps) {
   const { t } = useI18n();
   const { vault, bus } = useVault();
   const { data: brainStatus } = useBrainStatus();
@@ -184,8 +187,9 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
 
   const recoveryAction = (f: SyncFailure) => {
     switch (f.recovery) {
-      case 'reconnect-github': return { label: t('brain.recovery.reconnect'), onClick: onOpenSettings };
-      case 'check-permissions': return { label: t('brain.recovery.checkPerms'), onClick: onOpenSettings };
+      // One click signs in again right here (plan D4); see `reconnectInPlace` below.
+      case 'reconnect-github': return null;
+      case 'check-permissions': return { label: t('brain.recovery.checkPerms'), onClick: onOpenGitHub ?? onOpenSettings };
       case 'retry': return { label: t('brain.recovery.retry'), onClick: () => runSyncWithFeedback('auto') };
       case 'manual': return { label: t('brain.recovery.openSettings'), onClick: onOpenSettings };
       case 'wait-online': return null; // passive — retries on next sync/open
@@ -266,6 +270,9 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
           )}
           {recovery && (
             <button className="brain-sync-panel-btn" onClick={recovery.onClick}>{recovery.label}</button>
+          )}
+          {failure.recovery === 'reconnect-github' && (
+            <GitHubReconnect className="brain-sync-panel-btn" onDone={() => runSyncWithFeedback('auto')} />
           )}
         </div>
       )}

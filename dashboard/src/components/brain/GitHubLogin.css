@@ -149,3 +149,45 @@
 .gh-login--expired .gh-login-logout {
   align-self: flex-start;
 }
+
+/* ── One-click reconnect (GitHubReconnect): a button, then the copied code in place ── */
+.gh-reconnect {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.gh-reconnect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.gh-reconnect-code {
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.gh-reconnect-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-accent-ink, var(--color-accent));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.gh-reconnect-err {
+  color: var(--color-error);
+}

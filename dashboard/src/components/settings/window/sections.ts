@@ -1,6 +1,7 @@
 /**
- * The Settings window's menu (new layout only): 16 pages by topic, in the owner's order
- * (task settings-konuya-gore-…, 2026-11-01). Classic Settings keeps its own menu.
+ * The Settings window's menu (new layout only): 18 pages by topic, in the owner's order
+ * (task settings-konuya-gore-…, 2026-11-01). GitHub has its own page, first in Connections
+ * (owner, 2026-11-13: the plan github-baglanti r4). Classic Settings keeps its own menu.
  */
 
 export type SwPageId =
@@ -8,7 +9,7 @@ export type SwPageId =
   | 'models' | 'mcp' | 'super' | 'assistant'
   | 'memory' | 'sleep'
   | 'tasks' | 'repos'
-  | 'teamsync' | 'mirror' | 'connected' | 'handsfree' | 'telegram'
+  | 'github' | 'teamsync' | 'mirror' | 'connected' | 'handsfree' | 'telegram'
   | 'system';
 
 /** The tabs of the Models page: Defaults, then one per tool. */
@@ -26,7 +27,7 @@ export const SW_GROUPS: readonly SwGroup[] = [
   { id: 'agents', labelKey: 'shell.sw.group.agents', pages: ['models', 'mcp', 'super', 'assistant'] },
   { id: 'memory', labelKey: 'shell.sw.group.memory', pages: ['memory', 'sleep'] },
   { id: 'project', labelKey: 'shell.sw.group.project', pages: ['tasks', 'repos'] },
-  { id: 'connections', labelKey: 'shell.sw.group.connections', pages: ['teamsync', 'mirror', 'connected', 'handsfree', 'telegram'] },
+  { id: 'connections', labelKey: 'shell.sw.group.connections', pages: ['github', 'teamsync', 'mirror', 'connected', 'handsfree', 'telegram'] },
   { id: 'end', labelKey: '', pages: ['system'] },
 ];
 
@@ -47,9 +48,11 @@ export interface SwTarget {
  */
 export function swTarget(focusId: string | null | undefined): SwTarget {
   switch (focusId) {
+    // "Connect GitHub" always lands on the GitHub page; 'brain' stays on Team sync, the
+    // destination for "signed in, no remote yet".
+    case 'github': return { page: 'github' };
     case 'brain':
-    case 'teamsync':
-    case 'github': return { page: 'teamsync' };
+    case 'teamsync': return { page: 'teamsync' };
     case 'system': return { page: 'system' };
     case 'mcp': return { page: 'mcp' };
     case 'models': return { page: 'models', tab: 'defaults' };

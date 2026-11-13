@@ -8,7 +8,7 @@ import {
   ChatPage, ConnectedPage, GeneralPage, HandsfreePage, TelegramPage, ReposPage, SleepPage, SuperPage, SystemPage, TasksPage,
   type PageProps,
 } from './pages/SimplePages';
-import { McpPage, MemoryPage, MirrorPage, TeamSyncPage, VoicePage } from './pages/TopicPages';
+import { GitHubPage, McpPage, MemoryPage, MirrorPage, TeamSyncPage, VoicePage } from './pages/TopicPages';
 import { AssistantPage } from './pages/AssistantPage';
 import { ModelsPage, modelsTabFor } from './pages/ModelsPage';
 import { JobChip } from './JobChip';
@@ -37,6 +37,7 @@ const PAGES: Record<SwPageId, (p: WindowPageProps) => ReactNode> = {
   sleep: SleepPage,
   tasks: TasksPage,
   repos: ReposPage,
+  github: GitHubPage,
   teamsync: TeamSyncPage,
   mirror: MirrorPage,
   connected: ConnectedPage,

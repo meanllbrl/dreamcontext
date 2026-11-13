@@ -11,7 +11,8 @@ import {
   type CloneResult,
   type FolderProbe,
 } from '../../hooks/useLauncher';
-import { useAuthStatus } from '../../hooks/useBrainStatus';
+import { isGitHubReconnectError, useAuthStatus } from '../../hooks/useBrainStatus';
+import { GitHubReconnect } from '../../components/brain/GitHubReconnect';
 import { GitHubLogin } from '../../components/brain/GitHubLogin';
 import { openFolderPicker, pickerError } from '../../lib/desktop';
 
@@ -233,7 +234,9 @@ export function CloneFlow({ defaultParent, onBack, onExistingProject, onBareFold
               />
               <div className="ob-repo-list" role="listbox" aria-label={t('onboarding.clone.listLabel')}>
                 {repos.isLoading && <p className="ob-hint">{t('onboarding.clone.loading')}</p>}
-                {repos.isError && <p className="ob-hint">{t('onboarding.clone.loadFailed')}</p>}
+                {repos.isError && (isGitHubReconnectError(repos.error) ? (
+                  <p className="ob-hint">{t('github.line.expired')} <GitHubReconnect onDone={() => void repos.refetch()} /></p>
+                ) : <p className="ob-hint">{t('onboarding.clone.loadFailed')}</p>)}
                 {!repos.isLoading && !repos.isError && (repos.data?.repos.length ?? 0) === 0 && (
                   <p className="ob-hint">{t('onboarding.clone.none')}</p>
                 )}

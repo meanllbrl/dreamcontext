@@ -1,12 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
-import {
-  useAuthStatus,
-  useDeviceStart,
-  useDevicePoll,
-  useSubmitPatToken,
-  useLogoutGitHub,
-} from '../../hooks/useBrainStatus';
+import { useAuthStatus, useSubmitPatToken, useLogoutGitHub } from '../../hooks/useBrainStatus';
+import { useGitHubReconnect } from '../../hooks/useGitHubReconnect';
 import './GitHubLogin.css';
 
 /** The GitHub octocat mark — reused by the Sidebar CTA so both surfaces read as one brand. */
@@ -18,217 +13,102 @@ export function GitHubMark({ size = 16 }: { size?: number }) {
   );
 }
 
-type DeviceFlowPhase = 'idle' | 'starting' | 'waiting' | 'error';
-
-const MAX_POLL_ATTEMPTS = 300; // ~ generous ceiling; real bound is expiresIn
-
 /**
- * The "sign into dreamcontext with GitHub" surface. B1: OAuth device flow —
- * shows the user_code + an "Open GitHub" link, polls on the SERVER-returned
- * interval (honoring `slow_down`), lands the token in the global 0600 secrets
- * store server-side. B2: a loud scope disclosure ("this grants access to all
- * your private repositories") plus a fine-grained-PAT recommendation that
- * reveals a paste-in fallback.
+ * A different account or a hand-made token: the global sign-in by token. Lives under
+ * Settings → GitHub → Advanced (plan D6), and is the only way in when no OAuth App is
+ * registered. Never echoes the token back.
  */
-export function GitHubLogin() {
+export function GitHubPatForm({ hint }: { hint?: string }) {
   const { t } = useI18n();
-  const { data: authStatus, isLoading } = useAuthStatus();
-  const deviceStart = useDeviceStart();
-  const devicePoll = useDevicePoll();
   const submitPat = useSubmitPatToken();
-  const logout = useLogoutGitHub();
-
-  const [phase, setPhase] = useState<DeviceFlowPhase>('idle');
-  const [deviceInfo, setDeviceInfo] = useState<{ userCode: string; verificationUri: string } | null>(null);
-  const [deviceError, setDeviceError] = useState<string | null>(null);
-  const [showPatForm, setShowPatForm] = useState(false);
-  const [patValue, setPatValue] = useState('');
-  const [patError, setPatError] = useState<string | null>(null);
-
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const attemptsRef = useRef(0);
-  const stoppedRef = useRef(false);
-
-  const stopPolling = useCallback(() => {
-    stoppedRef.current = true;
-    if (pollTimer.current) {
-      clearTimeout(pollTimer.current);
-      pollTimer.current = null;
-    }
-  }, []);
-
-  useEffect(() => () => stopPolling(), [stopPolling]);
-
-  const schedulePoll = useCallback((sessionId: string, intervalSeconds: number) => {
-    if (stoppedRef.current) return;
-    pollTimer.current = setTimeout(async () => {
-      if (stoppedRef.current) return;
-      attemptsRef.current += 1;
-      if (attemptsRef.current > MAX_POLL_ATTEMPTS) {
-        setPhase('error');
-        setDeviceError(t('brain.auth.device.expired'));
-        return;
-      }
-      try {
-        const result = await devicePoll.mutateAsync(sessionId);
-        if (stoppedRef.current) return;
-        switch (result.status) {
-          case 'authorized':
-            stopPolling();
-            setPhase('idle');
-            setDeviceInfo(null);
-            break;
-          case 'slow_down':
-            schedulePoll(sessionId, result.interval);
-            break;
-          case 'pending':
-            schedulePoll(sessionId, intervalSeconds);
-            break;
-          case 'expired':
-            stopPolling();
-            setPhase('error');
-            setDeviceError(t('brain.auth.device.expired'));
-            break;
-          case 'denied':
-            stopPolling();
-            setPhase('error');
-            setDeviceError(t('brain.auth.device.denied'));
-            break;
-          default:
-            stopPolling();
-            setPhase('error');
-            setDeviceError(result.message ?? t('brain.auth.device.error'));
-        }
-      } catch (err) {
-        stopPolling();
-        setPhase('error');
-        setDeviceError(err instanceof Error ? err.message : String(err));
-      }
-      // The devicePoll mutation invalidates nothing itself — the terminal
-      // 'authorized' branch above is what wakes up useAuthStatus.
-    }, Math.max(1, intervalSeconds) * 1000);
-  }, [devicePoll, stopPolling, t]);
-
-  const startDeviceFlow = async () => {
-    setDeviceError(null);
-    setPhase('starting');
-    stoppedRef.current = false;
-    attemptsRef.current = 0;
+  const [value, setValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    setError(null);
     try {
-      const started = await deviceStart.mutateAsync();
-      setDeviceInfo({ userCode: started.userCode, verificationUri: started.verificationUri });
-      setPhase('waiting');
-      schedulePoll(started.sessionId, started.interval);
+      await submitPat.mutateAsync(value.trim());
+      setValue('');
     } catch (err) {
-      setPhase('error');
-      setDeviceError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
-
-  const cancelDeviceFlow = () => {
-    stopPolling();
-    setPhase('idle');
-    setDeviceInfo(null);
-  };
-
-  const handleSubmitPat = async () => {
-    setPatError(null);
-    try {
-      await submitPat.mutateAsync(patValue.trim());
-      setPatValue('');
-      setShowPatForm(false);
-    } catch (err) {
-      setPatError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  if (isLoading) {
-    return <p className="settings-field-hint">{t('common.loading')}</p>;
-  }
-
-  // The PAT paste-in form — the fine-grained-token path. Shared by the
-  // device-flow layout (revealed on demand), the PAT-primary layout (always
-  // visible when no OAuth App is registered), AND the reconnect layout.
-  const patForm = (
+  return (
     <div className="gh-login-pat-form">
-      <p className="settings-field-hint">{t('brain.auth.pat.hint')}</p>
+      <p className="settings-field-hint">{hint ?? t('brain.auth.pat.hint')}</p>
       <div className="settings-field-row">
         <input
           type="password"
           className="settings-text-input"
           autoComplete="off"
+          aria-label={t('github.adv.account')}
           placeholder={t('brain.auth.pat.placeholder')}
-          value={patValue}
-          onChange={(e) => setPatValue(e.target.value)}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
         />
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={handleSubmitPat}
-          disabled={submitPat.isPending || !patValue.trim()}
-        >
+        <button type="button" className="btn btn--secondary" onClick={() => void submit()} disabled={submitPat.isPending || !value.trim()}>
           {submitPat.isPending ? t('brain.auth.pat.submitting') : t('brain.auth.pat.submit')}
         </button>
       </div>
-      {patError && <p className="settings-test-err">✗ {patError}</p>}
+      {error && <p className="settings-test-err">✗ {error}</p>}
     </div>
   );
+}
 
-  // The full "connect a GitHub account" surface — the one-click device flow, or
-  // the PAT-primary layout when no OAuth App is registered (placeholder client_id
-  // → the device flow can't reach GitHub). Extracted so the SAME controls RECONNECT
-  // an expired session in place, not just connect a first-time account.
+/**
+ * The "sign into dreamcontext with GitHub" surface: the OAuth device flow (code shown and
+ * copied, github.com/login/device opened, polled on the server's interval), landing the token
+ * in the global 0600 store server-side. One scope disclosure; no token is asked for here. A
+ * token is the fallback only when no OAuth App is registered, otherwise it lives under
+ * Settings → GitHub → Advanced.
+ */
+export function GitHubLogin({ tokenOption = false }: {
+  /** Classic Settings only (it has no Advanced section): a folded "another account or token" form. */
+  tokenOption?: boolean;
+} = {}) {
+  const { t } = useI18n();
+  const [showToken, setShowToken] = useState(false);
+  const { data: authStatus, isLoading } = useAuthStatus();
+  const logout = useLogoutGitHub();
+  const r = useGitHubReconnect();
+
+  if (isLoading) {
+    return <p className="settings-field-hint">{t('common.loading')}</p>;
+  }
+
   const connectControls = authStatus?.oauthConfigured === false ? (
     <div className="gh-login gh-login--pat-primary">
       <p className="gh-login-disclosure">{t('brain.auth.oauthUnavailable')}</p>
-      {patForm}
+      <GitHubPatForm />
     </div>
   ) : (
     <div className="gh-login">
       <p className="gh-login-disclosure">{t('brain.auth.scopeDisclosure')}</p>
-
-      {phase === 'waiting' && deviceInfo ? (
+      {r.phase === 'waiting' && r.code ? (
         <div className="gh-login-device">
-          <p className="gh-login-device-hint">{t('brain.auth.device.hint')}</p>
-          <div className="gh-login-code">{deviceInfo.userCode}</div>
-          <a
-            className="btn btn--primary gh-login-open"
-            href={deviceInfo.verificationUri}
-            target="_blank"
-            rel="noreferrer"
-          >
+          <p className="gh-login-device-hint">{r.copied ? t('github.reconnect.copied') : t('brain.auth.device.hint')}</p>
+          <div className="gh-login-code">{r.code.userCode}</div>
+          <a className="btn btn--primary gh-login-open" href={r.code.verificationUri} target="_blank" rel="noreferrer">
             {t('brain.auth.device.open')}
           </a>
           <p className="gh-login-waiting">
             <span className="gh-login-spinner" aria-hidden="true" />
             {t('brain.auth.device.waiting')}
           </p>
-          <button type="button" className="btn btn--ghost" onClick={cancelDeviceFlow}>
-            {t('common.cancel')}
-          </button>
+          <button type="button" className="btn btn--ghost" onClick={r.cancel}>{t('common.cancel')}</button>
         </div>
       ) : (
-        <button
-          type="button"
-          className="btn btn--primary gh-login-start"
-          onClick={startDeviceFlow}
-          disabled={phase === 'starting'}
-        >
+        <button type="button" className="btn btn--primary gh-login-start" onClick={() => void r.start()} disabled={r.phase === 'starting'}>
           <GitHubMark size={15} />
-          {phase === 'starting' ? t('brain.auth.device.starting') : t('brain.auth.continueWithGithub')}
+          {r.phase === 'starting' ? t('brain.auth.device.starting') : t('brain.auth.continueWithGithub')}
         </button>
       )}
-      {deviceError && <p className="settings-test-err">✗ {deviceError}</p>}
-
-      <button
-        type="button"
-        className="gh-login-pat-toggle"
-        onClick={() => setShowPatForm((v) => !v)}
-      >
-        {showPatForm ? t('brain.auth.pat.hide') : t('brain.auth.pat.recommend')}
-      </button>
-
-      {showPatForm && patForm}
+      {r.phase === 'error' && r.error && <p className="settings-test-err">✗ {r.error}</p>}
+      {tokenOption && (
+        <button type="button" className="gh-login-pat-toggle" onClick={() => setShowToken((v) => !v)}>
+          {showToken ? t('brain.auth.pat.hide') : t('github.adv.title')}
+        </button>
+      )}
+      {tokenOption && showToken && <GitHubPatForm />}
     </div>
   );
 
@@ -240,45 +120,29 @@ export function GitHubLogin() {
           <GitHubMark size={15} />
           {authStatus.login ? t('brain.auth.signedInAs').replace('{login}', authStatus.login) : t('brain.auth.signedIn')}
         </span>
-        <button
-          type="button"
-          className="btn btn--ghost gh-login-logout"
-          onClick={() => logout.mutate()}
-          disabled={logout.isPending}
-        >
+        <button type="button" className="btn btn--ghost gh-login-logout" onClick={() => logout.mutate()} disabled={logout.isPending}>
           {t('brain.auth.signOut')}
         </button>
       </div>
     );
   }
 
-  // Connected but GitHub REJECTED the stored token (expired/invalid). This is the
-  // exact state that used to show a green "Signed in as …" with no way to act while
-  // the sidebar screamed "sign-in expired". Surface the invalid chip + an in-place
-  // reconnect here, where the user was told to go.
+  // Connected but GitHub REJECTED the stored token: the invalid chip + an in-place reconnect.
   if (authStatus?.connected && authStatus?.needsReconnect) {
     return (
       <div className="gh-login gh-login--expired">
         <span className="gh-login-badge gh-login-badge--expired">
           <GitHubMark size={15} />
-          {authStatus.login
-            ? t('brain.auth.expiredAs').replace('{login}', authStatus.login)
-            : t('brain.auth.expired')}
+          {authStatus.login ? t('brain.auth.expiredAs').replace('{login}', authStatus.login) : t('brain.auth.expired')}
         </span>
         <p className="settings-field-hint gh-login-expired-hint">{t('brain.auth.expiredHint')}</p>
         {connectControls}
-        <button
-          type="button"
-          className="btn btn--ghost gh-login-logout"
-          onClick={() => logout.mutate()}
-          disabled={logout.isPending}
-        >
+        <button type="button" className="btn btn--ghost gh-login-logout" onClick={() => logout.mutate()} disabled={logout.isPending}>
           {t('brain.auth.signOut')}
         </button>
       </div>
     );
   }
 
-  // Not connected at all → the first-time connect surface.
   return connectControls;
 }

@@ -101,25 +101,27 @@ describe('Task mirroring and Team sync', () => {
     expect(mirror).toMatch(/\{ value: 'clickup', label: 'ClickUp' \}/);
   });
 
-  it('GitHub with no login still opens (a PAT or env token wins), with a reason and a Team sync link', () => {
+  it('GitHub with no login still opens, with a reason and a link to Settings → GitHub (plan github-baglanti D9)', () => {
     expect(mirror).not.toMatch(/v === 'github' && noLogin/);
     expect(mirror).toMatch(/onChange=\{choose\}/);
     expect(mirror).toMatch(/why=\{backend !== 'github' && noLogin \? t\('shell\.sw\.mirror\.noLogin'\) : undefined\}/);
-    expect(mirror).toMatch(/go\?\.\('teamsync'\)/);
+    expect(mirror).toMatch(/go\?\.\('github'\)/);
   });
 
-  it('embedded: no switch, no "other active" row, no token row while the login supplies it', () => {
+  it('embedded: no switch, no "other active" row, and GitHub asks for no token (it lives under Settings → GitHub → Advanced, plan D6)', () => {
     expect(mirror.match(/<CloudTaskSync provider="(github|clickup)" embedded \/>/g)?.length).toBe(2);
     expect(cloud).toMatch(/\{!embedded && <SettingRow\s+title=\{toggleLabel\}/);
     expect(cloud).toMatch(/\{otherActive && !embedded && \(/);
-    expect(cloud).toMatch(/const loginSuppliesToken = embedded && provider === 'github' && !!auth\?\.connected\s*&& \(!providerTokenStatus\?\.set \|\| providerTokenStatus\.source === 'global'\);/);
+    expect(cloud).toMatch(/const loginSuppliesToken = embedded && provider === 'github';/);
     expect(cloud).toMatch(/\{!loginSuppliesToken && <SettingRow\s+title=\{t\('settings\.cloud_tasks\.api_key'\)\}/);
   });
 
-  it('Team sync rows are one component in both Settings, the GitHub account sits on Team sync', () => {
+  it('Team sync rows are one component in both Settings; the GitHub account has its own page and Team sync shows one status line', () => {
     expect(settingsPage).toMatch(/<TeamSyncRows \/>/);
     expect(topics).toMatch(/<TeamSyncRows title=\{t\('shell\.sw\.teamsync\.sync'\)\} \/>/);
-    expect(topics).toMatch(/<GitHubLogin \/>/);
+    expect(topics).not.toMatch(/<GitHubLogin/);
+    expect(topics).toMatch(/<GitHubStatusLine onOpen=\{\(\) => go\?\.\('github'\)\} \/>/);
+    expect(topics).toMatch(/export function GitHubPage\(\)/);
   });
 });
 

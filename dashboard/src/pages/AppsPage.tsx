@@ -14,6 +14,8 @@ import { askAgent } from '../components/apps/askAgent';
 import { AppDataNotices } from '../components/apps/AppDataNotice';
 import { updateCheckDue } from '../components/apps/updateCheck';
 import { revealPath } from '../lib/reveal';
+import { isGitHubReconnectError } from '../hooks/useBrainStatus';
+import { GitHubReconnect } from '../components/brain/GitHubReconnect';
 import './AppsPage.css';
 
 /**
@@ -149,6 +151,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
       {note && (
         <p className="app-card__note app-card__note--warn" role="status">
           {t(`apps.install.${note.kind}`).replace('{repo}', note.repo)}{' '}
+          {note.kind === 'signIn' && <><GitHubReconnect connect className="share-link" onDone={() => setNote(null)} />{' '}</>}
           <button type="button" className="share-link" onClick={() => setNote(null)}>{t('apps.install.dismiss')}</button>
         </p>
       )}
@@ -200,6 +203,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
         <SharedApps
           list={shared.data ?? null}
           err={shared.error ? (shared.error as Error).message : null}
+          reconnect={isGitHubReconnectError(shared.error)}
           loading={shared.isLoading}
           installedLook={installedLook}
           onRefresh={() => void refreshShared()}
