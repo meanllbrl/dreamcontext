@@ -13,7 +13,7 @@ import { reusableTab } from '../../dashboard/src/lib/delegateAgent.js';
  * Super's, one child he sees; without it, a running publish chat of the app is shown again.
  */
 const say = (key: string, vars: Record<string, string> = {}) => `${key} ${Object.values(vars).join(' ')}`;
-const h = { slug: 'gunluk', name: 'Günlük', grant: 'G-1', visibility: 'private' as const, published: null };
+const h = { slug: 'gunluk', name: 'Günlük', grant: 'G-123_abcdef', visibility: 'private' as const, published: null };
 
 function deps(over: Partial<Parameters<typeof routePublish>[1]> = {}) {
   return {
@@ -64,7 +64,7 @@ describe('the message the Super gets', () => {
     expect(ask).toContain('if a child of yours is already publishing gunluk, do not start another');
     expect(ask).toContain('tell me when it is done or needs me');
     expect(ask.endsWith(publishPrompt(h, say))).toBe(true);
-    expect(ask).toContain('handoff.publish gunluk G-1');
+    expect(ask).toContain('handoff.publish gunluk G-123_abcdef');
   });
 
   it("another author's app name cannot break the message into lines", () => {
