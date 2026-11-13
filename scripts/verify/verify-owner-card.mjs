@@ -911,6 +911,36 @@ async function caseRun(page, base, out, shots) {
     JSON.stringify(childEvents(superTexts(), sid).lines));
   step('the 11 Nov loop is gone: one owner item for this card, zero gone events', (mainRecord().queue ?? []).filter((x) => x.kind === 'owner' && x.card?.cardRef === handle.cardRef).length === 1
     && childEvents(superTexts(), sid).gone === 0);
+  // 13 Nov (run-kart-altta): a finished card left the TAIL and sits in its place in the
+  // transcript (cardPlacement.ts), drawn once, and stays there as the chat moves on.
+  const settled = page.locator(`[data-testid="super-owner-card"][data-item="${done?.id}"]`);
+  step('the finished run card is drawn ONCE', await until(async () => (await settled.count()) === 1, 15000), String(await settled.count()));
+  step('…in its place in the transcript, not in the chat\'s tail (data-place="history")', await until(async () => (await settled.first().getAttribute('data-place').catch(() => null)) === 'history', 15000),
+    String(await settled.first().getAttribute('data-place').catch(() => null)));
+  const settledRun = settled.first().locator('.chat-runcard');
+  step('…and says how it ended (record closed, phase done), never a fresh ▶ Run', await until(async () =>
+    (await settledRun.getAttribute('data-card-state').catch(() => null)) === 'closed' && (await settledRun.getAttribute('data-phase').catch(() => null)) === 'done', 15000),
+    `${await settledRun.getAttribute('data-card-state').catch(() => null)} / ${await settledRun.getAttribute('data-phase').catch(() => null)}`);
+  const after = await page.evaluate((itemId) => {
+    const el = document.querySelector(`[data-testid="super-owner-card"][data-item="${itemId}"]`);
+    if (!el) return null;
+    // Transcript content drawn AFTER the card (the Super's turn on event=owner-result): it is not last.
+    const later = [...document.querySelectorAll('.chat-msg, [data-testid="super-event-line"], .chat-bubble, .chat-text')]
+      .filter((n) => !el.contains(n) && (el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return { later: later.length };
+  }, done?.id);
+  step('…and the chat went on below it: transcript drawn AFTER the settled card (it is not last)', !!after && after.later > 0, JSON.stringify(after));
+  for (const theme of ['light']) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await settled.first().scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(300);
+    const file = join(out, `settled-in-place-1440-${theme}.png`);
+    if (step('the settled card in its place: chat shot saved', await page.screenshot({ path: file }).then(() => true).catch(() => false))) shots.push({ file, name: 'settled-in-place', width: 1440, theme });
+    await page.evaluate(() => { const s = document.querySelector('.chat-scroll, [data-chat-scroll]'); if (s) s.scrollTop = s.scrollHeight; });
+    await page.waitForTimeout(300);
+    const end = join(out, `settled-chat-end-1440-${theme}.png`);
+    if (step('the chat\'s end: shot saved', await page.screenshot({ path: end }).then(() => true).catch(() => false))) shots.push({ file: end, name: 'settled-chat-end', width: 1440, theme });
+  }
   return { sid, handle };
 }
 
