@@ -2123,6 +2123,10 @@ export function Composer({
       // carried no About block, so the About chip stays for the next message.
       dropSentAttachments(convId, { keepAbout: slash, keepInline: slash });
       onClearQuote();
+      // The kept draft follows the box NOW, not in the mirror effect: a send can unmount this
+      // composer in the same commit (a parked tab's first message swaps it for the live chat's),
+      // and the effect then never runs, so the live composer would restore the sent message.
+      persistDraft(vault, convId, { text: left, attachments: readScratch(convId).attachments, quote: readScratch(convId).quote });
     };
     if (sendVia) { if (sendVia(message)) sent(); return; }
     // A remote screen's tab whose chat the Mac's window holds (hands-free sekmeler W2, D3): the

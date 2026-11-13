@@ -8,8 +8,8 @@ import { historyChatItem, type ChatItem, type ChatSession, type ConversationMode
  * white area, Read only. and nothing under it").
  *
  * The object speaks ChatSession so the pane needs no second code path, but it never opens a
- * socket and never starts `claude`: every verb is a no-op, and the only thing that changes it is
- * {@link TranscriptSession.load}, fed from `/agent/chat-history`. The replay lands in `items`,
+ * socket and never starts `claude`: every verb is a no-op, and what changes it is
+ * {@link TranscriptSession.load}, fed from `/agent/chat-history`, and the composer's draft. The replay lands in `items`,
  * not `history`, so the pane draws no "earlier conversation · resumed" divider over a chat that
  * was never resumed.
  */
@@ -33,7 +33,9 @@ export function createTranscriptSession(
     items: [], history: [], pending: [], queued: [], draft: '', draftEpoch: 0, capabilities: [], subAgents: [],
   };
   const subscribers = new Set<() => void>();
+  const notify = () => subscribers.forEach((cb) => { try { cb(); } catch { /* a broken subscriber must not stop the rest */ } });
   const noop = () => { /* a finished conversation: nothing to do */ };
+  let focusTarget: HTMLElement | null = null;
   const off = () => noop;
   const session: TranscriptSession = {
     id: `transcript-${++transcriptSeq}`,
@@ -76,13 +78,21 @@ export function createTranscriptSession(
     ensureOpen: noop,
     fitAndResize: noop,
     applyZoom: noop,
-    sendText: noop,
-    syncDraft: noop,
+    // The DRAFT is real: a parked chat (ParkedChat.tsx) draws its composer on this object, and
+    // its first message wakes the conversation. An answer's `ask` button fills that composer
+    // through `sendText` exactly as on a live chat (a no-op here was a dead button, owner
+    // 2026-11-12); `syncDraft` keeps the mirror `sendText` appends to accurate.
+    sendText: (data) => {
+      if (!data) return;
+      conv = { ...conv, draft: conv.draft + data, draftEpoch: conv.draftEpoch + 1, draftEpochReason: 'external' };
+      notify();
+    },
+    syncDraft: (text) => { conv = { ...conv, draft: text }; },
     dismissBranchNotice: noop,
     dismissHandoff: noop,
     dismissAccountSwitch: noop,
     noteAccountSwitch: noop,
-    focus: noop,
+    focus: () => { focusTarget?.focus(); },
     dispose: () => { subscribers.clear(); },
     subscribe: (cb) => { subscribers.add(cb); return () => { subscribers.delete(cb); }; },
     getModel: () => conv,
@@ -129,13 +139,13 @@ export function createTranscriptSession(
     clearAttention: noop,
     setAgentsWorking: noop,
     liveWorkError: () => 'queued',
-    setFocusTarget: noop,
+    setFocusTarget: (el) => { focusTarget = el; },
     setTranscriptRepin: noop,
     load: (entries) => {
       let seq = 0;
       const items = entries.map((h) => historyChatItem(h, `tr-${++seq}`)).filter((x): x is ChatItem => !!x);
       conv = { ...conv, items };
-      subscribers.forEach((cb) => { try { cb(); } catch { /* a broken subscriber must not stop the rest */ } });
+      notify();
     },
   };
   return session;
