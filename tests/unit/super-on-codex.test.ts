@@ -64,7 +64,8 @@ describe('a delegated job on Codex', () => {
 
 describe('a narrow Codex surface', () => {
   it('switches off every server Codex lists but its own, and web search', () => {
-    const listed = parseCodexMcpList(JSON.stringify([{ name: 'outer' }, { name: 'slack' }, { name: 'dreamcontext' }]));
+    const stdio = { type: 'stdio', command: '/opt/outer/bin/outer' };
+    const listed = parseCodexMcpList(JSON.stringify([{ name: 'outer', enabled: true, transport: stdio }, { name: 'slack', enabled: true, transport: stdio }, { name: 'dreamcontext', enabled: true, transport: stdio }]));
     const out = codexStrictArgs(listed, ['dreamcontext', 'slack'])!;
     expect(out).toContain('mcp_servers.outer.enabled=false');
     expect(out).not.toContain('mcp_servers.slack');
@@ -73,13 +74,34 @@ describe('a narrow Codex surface', () => {
     expect(HEADLESS_ENVELOPES['super-child'].strict && HEADLESS_ENVELOPES.sleep.strict && HEADLESS_ENVELOPES.light.strict).toBe(true);
   });
 
+  // A plugin's server (the ChatGPT app's cua_repl) is not in config.toml: `enabled=false` alone
+  // made a table with no transport and codex-cli 0.164 refused to start ("invalid transport").
+  it('switches a server off with the transport Codex listed, and leaves one already off alone', () => {
+    const listed = parseCodexMcpList(JSON.stringify([
+      { name: 'cua_repl', enabled: true, transport: { type: 'stdio', command: '/Apps/Chat.app/node', args: ['x'] } },
+      { name: 'remote', enabled: true, transport: { type: 'streamable_http', url: 'https://mcp.example.test/mcp' } },
+      { name: 'codex_app', enabled: false, transport: { type: 'stdio', command: '/plugins/launch' } },
+    ]))!;
+    const out = codexStrictArgs(listed, [])!;
+    expect(out).toContain('mcp_servers.cua_repl.command="/Apps/Chat.app/node"');
+    expect(out.indexOf('mcp_servers.cua_repl.command')).toBeLessThan(out.indexOf('mcp_servers.cua_repl.enabled=false'));
+    expect(out).toContain('mcp_servers.remote.url="https://mcp.example.test/mcp"');
+    expect(out).toContain('mcp_servers.remote.enabled=false');
+    expect(out).not.toContain('codex_app');
+  });
+
   it('refuses rather than leave a server on', () => {
+    const on = (name: string) => ({ name, enabled: true, command: '/bin/x' });
     expect(codexStrictArgs(null, [])).toBeNull();
     expect(parseCodexMcpList('not json')).toBeNull();
     expect(parseCodexMcpList('[{"x":1}]')).toBeNull();
     // `-c` cannot address a dotted name (checked on codex-cli 0.164).
-    expect(codexStrictArgs(['my.server'], [])).toBeNull();
-    expect(codexStrictArgs(['my.server'], ['my.server'])).toContain('web_search');
+    expect(codexStrictArgs([on('my.server')], [])).toBeNull();
+    expect(codexStrictArgs([on('my.server')], ['my.server'])).toContain('web_search');
+    // On, with no transport to name: a switch-off would break Codex's config, so the run is refused.
+    expect(codexStrictArgs([{ name: 'bare', enabled: true }], [])).toBeNull();
+    // An absent `enabled` reads as on.
+    expect(parseCodexMcpList('[{"name":"a"}]')).toEqual([{ name: 'a', enabled: true }]);
   });
 
   it('a strict surface whose servers cannot be read never starts Codex', async () => {

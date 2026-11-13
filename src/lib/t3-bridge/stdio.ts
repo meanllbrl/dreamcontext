@@ -28,7 +28,7 @@ import { checkAcpServers } from '../antigravity-mcp.js';
 import { INSTANCE_PRIMARY_ID, isInstanceAccountId, isInstanceTool } from '../instance-accounts.js';
 import { carriedText, recordThreadTurn } from './instance-threads.js';
 import { antigravityFailureKind } from './to-wire.js';
-import { MAX_DEVELOPER_INSTRUCTIONS, acpBrainMcpServer, acpLeanMcpServers, acpStoreServers, claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
+import { MAX_DEVELOPER_INSTRUCTIONS, acpBrainMcpServer, acpLeanMcpServers, acpStoreServers, claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv, type CodexListedServer } from './launch.js';
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
@@ -79,7 +79,7 @@ export interface StdioDeps {
   /** Tests: what a Codex chat reads (skills, roles); production lays it out under ~/.dreamcontext/codex. */
   readonly codexKit?: (o: CodexKitOptions) => CodexKit;
   /** Tests: stands in for `codex mcp list --json`. */
-  readonly listMcp?: () => string[] | null;
+  readonly listMcp?: () => CodexListedServer[] | null;
   /** Called by `/clear` after the fresh thread opened (consumes the handoff record). What it
    *  returns rides the NEXT turn as untrusted app context (the handoff banner). */
   readonly onRotated?: (nativeThreadId: string) => AppContext[] | void;
@@ -312,7 +312,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION, marks: deps.env })
     : null;
   const storePlan = args.storeMcp && args.tool === 'codex' && !args.strictMcp
-    ? codexStorePlan({ home, projectRoot: args.cwd, node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: listMcp() })
+    ? codexStorePlan({ home, projectRoot: args.cwd, node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: listMcp()?.map((s) => s.name) ?? null })
     : null;
   const mcpNode = process.execPath;
   const mcpCli = deps.env.DREAMCONTEXT_CLI || process.argv[1] || '';
