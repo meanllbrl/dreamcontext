@@ -7,9 +7,10 @@
  *  - `/dur`: the window's `hub_command interrupt` (what Esc does: interrupt + pause the queue);
  *    the injector's `interrupt()` only when no window is mounted (P4: one interrupt).
  *  - `/durum`: job rows (children + team jobs, every state), what waits on the owner, the pool.
- *  - `/gundem`: the agenda (Now / Waiting / Done) with **Bitti** (the same `padMove` the Mac's
- *    Done calls, no turn) and **Yaz** (the owner's next text carries the Mac's
- *    `[About agenda line note=…]` block; 5 minutes) per open line.
+ *  - `/gundem`: ONE message; each line waiting on the owner is one button. A tap turns the same
+ *    message into that line in full with **Bitti** (the same `padMove` the Mac's Done calls, no
+ *    turn), **Yaz** (the owner's next text carries the Mac's `[About agenda line note=…]` block;
+ *    5 minutes) and **Gündeme dön**. Running and finished lines are one quiet line.
  *  - Super off → "Bu projede Super kapalı" + **Super'i aç**: the window's own hand-over adopting
  *    nothing (`hub_command super_handover`); no window → the project is opened and the command
  *    sent once a chat of it mounts.
@@ -38,6 +39,14 @@ export const CMD_LINES = {
   nothingRunning: 'Şu an çalışan bir iş yok.',
   noWindow: "Super Mac'te açık değil; durduracak bir şey yok.",
   emptyAgenda: 'Gündem boş.',
+  nothingWaiting: 'Seni bekleyen iş yok.',
+  waitingCount: (n: number) => `Seni bekleyen ${n} iş`,
+  running: (n: number) => `${n} iş sürüyor`,
+  finishedToday: (n: number) => `bugün ${n} iş bitti`,
+  justDone: (line: string) => `✓ ${line} bitti`,
+  doneBtn: '✓ Bitti',
+  writeBtn: '✎ Yaz',
+  backBtn: '‹ Gündeme dön',
   writeNext: (line: string) => `Yaz: sonraki mesajın bu satır hakkında olacak (5 dk): «${line}»`,
   superOpened: "Super açıldı; Mac'te açık olan sekmeler buraya devredilmedi.",
   tabCap: "Mac'te sekme sınırı dolu.",
@@ -45,6 +54,24 @@ export const CMD_LINES = {
   cannotOpen: "Super Mac'te açılamadı; uygulamaya bakıp tekrar dene.",
 } as const;
 
+
+/** One waiting line as the button record keeps it (callback data never carries it). */
+interface AgendaLine { id: string; section: string; text: string; at?: number }
+/** One message holds this many lines (Telegram: 100 buttons, 2-digit button index). */
+const AGENDA_MAX = 30;
+const AGENDA_LABEL = 40;
+/** Month + the ablative suffix Turkish needs after it (Ocak'tan, Eylül'den). */
+const MONTHS = ["Ocak'tan", "Şubat'tan", "Mart'tan", "Nisan'dan", "Mayıs'tan", "Haziran'dan", "Temmuz'dan", "Ağustos'tan", "Eylül'den", "Ekim'den", "Kasım'dan", "Aralık'tan"];
+
+/** The tapped line in full: its first words bold when it reads "title: rest"; its age only when it is old. */
+function itemHtml(row: AgendaLine, nowMs: number): string {
+  const full = cleanTitle(row.text, 600);
+  const cut = full.indexOf(': ');
+  const text = cut > 0 && cut <= 60 ? `<b>${escapeHtml(full.slice(0, cut))}</b>\n${escapeHtml(full.slice(cut + 2))}` : `<b>${escapeHtml(full)}</b>`;
+  if (!row.at || nowMs - row.at < 24 * 3600_000) return text;
+  const d = new Date(row.at);
+  return `${text}\n<i>${d.getDate()} ${MONTHS[d.getMonth()]} beri seni bekliyor</i>`;
+}
 
 export interface CommandsDeps {
   /** The bot's one next-text capture (shared with rich asks' Not ekle, capture.ts). */
@@ -130,39 +157,66 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     await hub.send(ab, statusText(s, ab.contextRoot!));
   }
 
+  /** The agenda as the owner reads it: only what waits on HIM is a button (one per line, cut);
+   *  the Super's own Now lines and the finished ones are one quiet line. `justDone` = the line
+   *  that was just finished (it replaces the quiet line once). */
+  function agendaView(s: SuperState, justDone?: string): { html: string; labels: string[][]; lines: AgendaLine[] } {
+    const pad = (s.pad ?? []).filter((p) => p.text.trim());
+    const waiting = pad.filter((p) => p.section === 'waiting');
+    const shown = waiting.slice(0, AGENDA_MAX);
+    const running = pad.filter((p) => p.section === 'now').length;
+    const finished = pad.filter((p) => p.section === 'done').length;
+    const quiet = [running ? CMD_LINES.running(running) : '', finished ? CMD_LINES.finishedToday(finished) : ''].filter(Boolean).join(' · ');
+    const head = waiting.length ? CMD_LINES.waitingCount(waiting.length) : CMD_LINES.nothingWaiting;
+    const html = [`<b>${escapeHtml(head)}</b>`, justDone ? `<i>${escapeHtml(CMD_LINES.justDone(cleanTitle(justDone, 40)))}</i>` : quiet ? `<i>${escapeHtml(quiet)}</i>` : '']
+      .filter(Boolean).join('\n');
+    return {
+      html,
+      labels: shown.map((p) => [cleanTitle(p.text, AGENDA_LABEL)]),
+      lines: shown.map((p) => ({ id: p.id, section: p.section, text: p.text, at: p.at })),
+    };
+  }
+
   async function agenda(ab: ActiveBinding): Promise<void> {
     const s = await superState(ab);
     if (!s?.enabled || !s.session) { await hub.notice(ab, 'info', LINES.superOff); return; }
-    const pad = (s.pad ?? []).filter((p) => p.text.trim());
-    if (!pad.length) { await hub.notice(ab, 'info', CMD_LINES.emptyAgenda); return; }
-    const sections: [string, string][] = [['now', 'Şimdi'], ['waiting', 'Seni bekliyor'], ['done', 'Bitti']];
-    const lines: string[] = [];
-    const open = pad.filter((p) => p.section !== 'done').slice(0, 10);
-    for (const [key, word] of sections) {
-      const rows = pad.filter((p) => p.section === key).slice(-10);
-      if (!rows.length) continue;
-      lines.push(`<b>${escapeHtml(word)}</b>`);
-      for (const p of rows) lines.push(`${open.includes(p) ? `${open.indexOf(p) + 1}. ` : '• '}${escapeHtml(cleanTitle(p.text, 120))}`);
-    }
-    const labels = open.map((p, i) => [`${i + 1} Bitti`, `${i + 1} Yaz`]);
-    if (!labels.length) { await hub.send(ab, lines.join('\n')); return; }
-    await hub.sendButtons(ab, lines.join('\n'), labels, { kind: 'agenda', singleUse: false },
-      { lines: open.map((p) => ({ id: p.id, section: p.section, text: p.text })) });
+    const v = agendaView(s);
+    if (!v.labels.length) { await hub.send(ab, v.html); return; }
+    await hub.sendButtons(ab, v.html, v.labels, { kind: 'agenda', singleUse: false }, { view: 'list', lines: v.lines });
+  }
+
+  /** The list drawn again on the SAME message (back, after Bitti); no waiting line left → the empty state, no buttons. */
+  async function showList(ab: ActiveBinding, messageId: number, justDone?: string): Promise<boolean> {
+    const s = await superState(ab);
+    if (!s) return false;
+    const v = agendaView(s, justDone);
+    if (!v.labels.length) return hub.closeAnswered(ab, messageId, v.html);
+    return hub.editButtons(ab, messageId, v.html, v.labels, { kind: 'agenda', singleUse: false }, { view: 'list', lines: v.lines });
   }
 
   async function agendaButton(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number): Promise<string | null> {
-    const rows = Array.isArray(rec.data?.lines) ? (rec.data!.lines as { id: string; section: string; text: string }[]) : [];
-    const row = rows[Math.floor(idx / 2)];
-    if (!row || !ab.contextRoot) return LINES.stale;
-    if (idx % 2 === 0) {
-      const r = await padMove(ab.contextRoot, row.id, 'done');
-      return r.found ? `✓ Bitti: ${cleanTitle(row.text, 60)}` : LINES.stale;
+    if (!ab.contextRoot) return LINES.stale;
+    if (rec.data?.view === 'item') {
+      const row = obj(rec.data?.row) as unknown as AgendaLine | null;
+      if (!row) return LINES.stale;
+      if (idx === 2) return (await showList(ab, rec.messageId)) ? null : LINES.stale;
+      if (idx === 0) {
+        const r = await padMove(ab.contextRoot, row.id, 'done');
+        if (!r.found) return LINES.stale;
+        return (await showList(ab, rec.messageId, row.text)) ? CMD_LINES.doneBtn : `${CMD_LINES.doneBtn} (Mac'te de görünür)`;
+      }
+      if (idx !== 1) return LINES.stale;
+      const block = agendaNoteBlock(row.id, row.section, row.text);
+      if (!block) return LINES.stale;
+      capture.set(ab.key, { kind: 'about', block, at: now() });
+      await hub.notice(ab, 'wait', CMD_LINES.writeNext(cleanTitle(row.text, 120)));
+      return CMD_LINES.writeBtn;
     }
-    const block = agendaNoteBlock(row.id, row.section, row.text);
-    if (!block) return LINES.stale;
-    capture.set(ab.key, { kind: 'about', block, at: now() });
-    await hub.notice(ab, 'wait', CMD_LINES.writeNext(cleanTitle(row.text, 120)));
-    return '✎ Yaz';
+    const rows = Array.isArray(rec.data?.lines) ? (rec.data!.lines as AgendaLine[]) : [];
+    const row = rows[idx];
+    if (!row) return LINES.stale;
+    const ok = await hub.editButtons(ab, rec.messageId, itemHtml(row, now()), [[CMD_LINES.doneBtn, CMD_LINES.writeBtn], [CMD_LINES.backBtn]], { kind: 'agenda', singleUse: false }, { view: 'item', row });
+    return ok ? null : LINES.stale;
   }
 
   /** Super'i aç: the window's own hand-over, adopting nothing (N5). */

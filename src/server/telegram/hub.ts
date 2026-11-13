@@ -1185,6 +1185,25 @@ export class TelegramHub implements TelegramHubApi {
     return this.buttons.get(recId)?.messageId ?? null;
   }
 
+  /** The same message turned into another view: its text and buttons edited in one call, the
+   *  records it had die, a FRESH one is bound to it (hub-edited, so the tap check accepts the
+   *  edit). False when Telegram refuses the edit; the old buttons then stay as they were. */
+  async editButtons(ab: ActiveBinding, messageId: number, html: string, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<boolean> {
+    const id = randomBytes(8).toString('hex');
+    let idx = 0;
+    const keyboard = labels.map((row) => row.map((label) => ({ text: label, callback_data: `a:${id}:${idx++}` })));
+    const edited = await ab.transport.editMessageText(ab.binding.chatId, messageId, html, { reply_markup: { inline_keyboard: keyboard } }).catch(() => null);
+    if (edited === null) return false;
+    const plain = html.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    const text = typeof (edited as Obj | undefined)?.text === 'string' ? String((edited as Obj).text) : plain;
+    for (const b of [...this.buttons.values()]) if (b.key === ab.key && b.messageId === messageId) this.buttons.delete(b.id);
+    this.buttons.set(id, {
+      ...rec, id, key: ab.key, botId: ab.binding.botId, chatId: ab.binding.chatId, messageId, textHash: sha256(text), options: idx, hubEdited: true,
+      ...(data ? { data } : {}),
+    });
+    return true;
+  }
+
   /** The question on this message was answered elsewhere: its text says so and its buttons go
    *  (an edit with no reply_markup removes the keyboard; every record bound to it dies). */
   async closeAnswered(ab: ActiveBinding, messageId: number, html: string): Promise<boolean> {
