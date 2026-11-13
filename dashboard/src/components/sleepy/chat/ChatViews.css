@@ -322,6 +322,73 @@
 .chat-runcard-exit.is-bad { background: var(--color-error-soft, var(--color-bg-tertiary)); color: var(--color-error); }
 .chat-runcard-exit.is-unknown { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); }
 
+/* ── run card, status look (ran, failed, running) ─────────────────────────────────────
+   A card that ran or is running on this Mac: a tinted status header (mark, what happened, who got
+   it, time), the last error line when it failed, then one footer row. */
+.chat-runcard[data-look] { gap: 0; padding-bottom: 0; }
+.chat-runcard[data-look='ok'] { border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-border)); }
+.chat-runcard[data-look='bad'] { border-color: color-mix(in srgb, var(--color-error) 40%, var(--color-border)); }
+.chat-runhead { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+[data-look='ok'] > .chat-runhead { background: var(--color-success-subtle); }
+[data-look='bad'] > .chat-runhead { background: var(--color-error-subtle); }
+.chat-runhead-mark {
+  flex: none; box-sizing: border-box; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 13px; font-weight: 700; line-height: 1; color: #fff;
+}
+[data-look='ok'] .chat-runhead-mark { background: var(--color-success); }
+/* The mark's glyph needs 3:1 on its fill in both themes: a deeper green with a white tick on
+   light, and a dark glyph on the brighter dark-theme fills. */
+:root:not([data-theme='dark']) [data-look='ok'] .chat-runhead-mark { background: color-mix(in srgb, var(--color-success) 78%, #000); }
+[data-theme='dark'] .chat-runhead-mark { color: var(--color-bg); }
+[data-look='bad'] .chat-runhead-mark { background: var(--color-error); }
+[data-look='run'] .chat-runhead-mark {
+  background: transparent;
+  border: 2.5px solid var(--color-accent-soft);
+  border-top-color: var(--color-accent);
+  animation: var(--dc-motion-status-name, chat-runhead-spin) 0.9s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+@keyframes chat-runhead-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { [data-look='run'] .chat-runhead-mark { animation: none; } }
+.chat-runhead-text { flex: 1; min-width: 0; }
+.chat-runhead-title { font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--color-text); }
+.chat-runhead-sub { margin-top: 2px; font-size: 13px; line-height: 1.4; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.chat-runhead-time { flex: none; font-size: 12px; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.chat-runcard[data-look] > .chat-runcard-cmdrow { padding: 0 14px; margin-top: 2px; margin-bottom: 10px; }
+.chat-runcard[data-look='run'] .chat-runcard-cmd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-runcard[data-look] > .chat-runcard-note { padding: 0 14px 12px; }
+.chat-runcard[data-look] > .chat-runcard-share { padding: 10px 14px; }
+.chat-runcard[data-look] > .chat-runterm { margin: 0 14px 12px; }
+.chat-runcard-errline {
+  margin: 12px 14px; padding: 8px 10px; border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+  color: var(--color-error-ink); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.chat-runfold { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-top: 1px solid var(--color-border); }
+.chat-runfold-chev { flex: none; width: 14px; padding: 0; border: 0; background: none; color: var(--color-text-tertiary); font-size: 11px; cursor: pointer; }
+.chat-runfold-cmd {
+  flex: 1; min-width: 0;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.4; color: var(--color-text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-runfold-cmd.is-open { white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; }
+.chat-runfold-link {
+  flex: none; padding: 0; border: 0; background: none;
+  color: var(--color-text-secondary); font-size: 12px; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--color-border-hover);
+}
+.chat-runfold-link:hover { color: var(--color-text); }
+.chat-runcard-again {
+  flex: none; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: transparent; color: var(--color-text-secondary);
+  font-size: 12px; font-weight: 500; line-height: 1; cursor: pointer;
+}
+.chat-runcard-again.is-strong { color: var(--color-text); border-color: var(--color-border-hover); }
+.chat-runcard-again:hover:not(:disabled) { background: var(--color-bg-tertiary); }
+.chat-runcard-again:disabled { opacity: 0.5; cursor: default; }
+
 .chat-runterm {
   margin: 0 var(--space-4);
   border-radius: var(--radius-md);

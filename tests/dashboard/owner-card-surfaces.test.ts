@@ -33,6 +33,8 @@ const { TEMPLATES } = vi.hoisted(() => ({
     'ownerCard.runAgainNote': 'Running again executes the command again.',
     'ownerCard.gone': "This card is no longer in the job's transcript.",
     'ownerCard.mcpLine': 'Connect: {names}',
+    'ownerCard.bar.runWaits': 'A command waits for you to run: {why}',
+    'ownerCard.bar.runWaitsBare': 'A command waits for you to run. Show opens it.',
   } as Record<string, string>,
 }));
 vi.mock('../../dashboard/src/context/I18nContext.js', () => {
@@ -64,7 +66,7 @@ const { publishSuperQuestions, _resetOwnerSlots } = await import('../../dashboar
 const { _resetOwnerItems } = await import('../../dashboard/src/components/sleepy/super/ownerAnswer.js');
 const { agendaOpensSlot } = await import('../../dashboard/src/components/sleepy/super/SuperAgenda.js');
 const { RunCard } = await import('../../dashboard/src/components/sleepy/chat/RunCard.js');
-const { _resetCardRecords, _seedCardStateForTests } = await import('../../dashboard/src/lib/cardRecords.js');
+const { _resetCardRecords, _seedCardStateForTests, applyCardsFrame, cardsReadCount, hostRecord } = await import('../../dashboard/src/lib/cardRecords.js');
 type SuperQueueItem = import('../../dashboard/src/lib/superTypes.js').SuperQueueItem;
 type OwnerCardHandle = import('../../dashboard/src/lib/superTypes.js').OwnerCardHandle;
 
@@ -203,7 +205,7 @@ describe('the Super-chat slot draws the card from the record (B1-B4)', () => {
   });
 
   it('the chat tail draws every card item of main children and a member mirror carrying a card', () => {
-    const mirror = item(SECRET, { id: 'q-m', kind: 'member', member: 'turing', of: 'owner', state: 'pending' } as Partial<SuperQueueItem>);
+    const mirror = item(SECRET, { id: 'q-m', kind: 'member', member: 'turing', of: 'owner', state: 'pending', card: handleOf(SECRET, { cardRef: 'b'.repeat(32) }) } as Partial<SuperQueueItem>);
     publishSuperQuestions('SUPER', {
       open: [], members: [mirror], cards: [item(RUN)], superSession: undefined, sessionFor: () => undefined,
       titleFor: () => 'Invoice export', pausedFor: () => false,
@@ -244,6 +246,21 @@ describe('the bar row: the card verb is the primary button (A1-A5)', () => {
     const html = bar(item(long));
     expect(has(html, 'super-queue-card-show')).toBe(true);
     expect(has(html, 'super-queue-card-run')).toBe(false);
+  });
+
+  it('a long command says in plain words what waits on him: its own why line, never a phrase about the row (sahte-needs-you)', () => {
+    // The field case: a merge and deploy the child left for the owner, too long for the row.
+    const why = 'Merges the checkout PR and puts the new prices live. Going live is your call.';
+    const long = { ...RUN, why, command: `cd /w/acme-shop && node scripts/ready.ts /tmp/ids.json && gh pr merge 47 --merge --repo acme/shop ${'--flag value '.repeat(6)}`.trim() };
+    const html = bar(item(long));
+    expect(html).toContain(`A command waits for you to run: ${why}`);
+    expect(html).not.toContain('does not fit');
+    expect(has(html, 'super-queue-card-show')).toBe(true);
+    // No why on the card: still says what it is, and what Show does.
+    const bare = bar(item({ ...long, why: undefined }));
+    expect(bare).toContain('A command waits for you to run. Show opens it.');
+    // A why holding a hidden character is drawn with it visible, never raw.
+    expect(bar(item({ ...long, why: 'ok\u202e evil' }))).toContain('ok\\u{202e} evil');
   });
 
   it('a command with unsafe characters gets Show, never ▶ Run', () => {
@@ -388,5 +405,61 @@ describe('the agenda Waiting line opens the slot (C)', () => {
     expect(agendaOpensSlot(queue, 'q-done')).toBe(false);
     expect(agendaOpensSlot(queue, 'q-plain')).toBe(false);
     expect(agendaOpensSlot(queue, undefined)).toBe(false);
+  });
+});
+
+describe('a finished run card never attaches a terminal (run-bildirim-hemen ek-2)', () => {
+  // The Super window holds the child's records only as last read: the copy read while the run
+  // went still names it after the exit (no `cards` frame of the child's chat reaches this window).
+  const recordWith = (runId: string | null, state: 'open' | 'closed' = 'open') =>
+    applyCardsFrame(CHILD, [{ id: RUN.id, cardRef: REF, kind: 'run', spec: RUN, state, run: runId ? { runId, owner: 'mac' } : null }]);
+  const settledAtOf = (it: SuperQueueItem) => { seen.length = 0; slot(it); return (seen[0].props.host as { settledAtRead?: number }).settledAtRead; };
+
+  it('the slot tells its card when it saw the item settled: waiting and running are live, any result is settled', () => {
+    recordWith('r-gone');
+    expect(settledAtOf(item(RUN))).toBeUndefined();
+    expect(settledAtOf(item(RUN, { delivery: 'running' }))).toBeUndefined();
+    // Settled: the count of reads of the child's cards this window had at that moment.
+    expect(settledAtOf(item(RUN, { delivery: 'sent' }))).toBe(cardsReadCount(CHILD));
+    expect(settledAtOf(item(RUN, { state: 'done', delivery: 'finished' }))).toBe(1);
+    expect(settledAtOf(item(RUN, { state: 'done' }))).toBe(1);
+  });
+
+  it('a record read before the item settled carries no run (and draws closed once the item is); a live host keeps it', () => {
+    recordWith('r-gone');
+    const handle = handleOf(RUN);
+    const at = cardsReadCount(CHILD);
+    const masked = hostRecord(CHILD, { record: handle, open: false, settledAtRead: at });
+    expect(masked.run).toBeNull();
+    expect(masked.state).toBe('closed');
+    expect(hostRecord(CHILD, { record: handle, open: true, settledAtRead: at }).run).toBeNull();
+    expect(hostRecord(CHILD, { record: handle, open: true }).run?.runId).toBe('r-gone');
+  });
+
+  it('a record read AFTER the item settled is trusted: a Run again still going is watched (review r1)', () => {
+    recordWith(null, 'closed');
+    const at = cardsReadCount(CHILD);
+    // He pressed Run again on the finished card; the item stays settled, the next read names the new run.
+    recordWith('r-again', 'closed');
+    expect(hostRecord(CHILD, { record: handleOf(RUN), open: false, settledAtRead: at }).run?.runId).toBe('r-again');
+    // A window that never read the chat before the settle (a reload): its first read is trusted.
+    _resetCardRecords();
+    recordWith('r-again', 'closed');
+    expect(hostRecord(CHILD, { record: handleOf(RUN), open: false, settledAtRead: 0 }).run?.runId).toBe('r-again');
+  });
+
+  it('the history copy drawn from the stale record draws neither a live run nor a fresh Run', () => {
+    recordWith('r-gone');
+    const at = cardsReadCount(CHILD);
+    const draw = (host: Record<string, unknown>) => renderToStaticMarkup(createElement(RunCard, {
+      spec: RUN as never, host: { record: handleOf(RUN), ...host } as never, folder: { name: 'acme-shop-look', path: '/w/acme-shop-look' },
+    }));
+    const phaseOf = (html: string) => /data-phase="([^"]*)"/.exec(html)?.[1];
+    const live = draw({ open: true });
+    const settled = draw({ open: false, settledAtRead: at });
+    // The control: the same stale record on a live host draws the run.
+    expect(phaseOf(live)).not.toBe(phaseOf(settled));
+    expect(settled).toContain('data-card-state="closed"');
+    expect(settled).not.toContain('data-testid="run-card-play"');
   });
 });

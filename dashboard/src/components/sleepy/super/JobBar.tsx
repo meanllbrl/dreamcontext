@@ -290,7 +290,9 @@ function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: bool
           <code className="super-queue-input super-queue-card-command" data-testid="super-queue-card-command">{spec.command}</code>
           {folder && <span className="super-queue-card-folder" data-testid="super-queue-card-folder" title={state?.folder?.path}>{folder}</span>}
         </>
-      : <span data-testid="super-queue-card-long">{t('ownerCard.bar.longCommand')}</span>;
+      // A command the row cannot draw whole or safely: say in plain words WHAT waits on him, with
+      // the card's own one sentence (its `why`), never a phrase about the row's width.
+      : <span data-testid="super-queue-card-long">{runWaitsLine(t, spec.why)}</span>;
     verb = runnable ? (
       <button
         type="button"
@@ -347,6 +349,12 @@ function CardHead({ item, paused, onOpen }: { item: SuperQueueItem; paused: bool
       {note && <span className="super-queue-card-line" data-testid="super-queue-note">{note}</span>}
     </>
   );
+}
+
+/** The bar's line for a run card it cannot draw whole: what waits on the owner, in his words. */
+export function runWaitsLine(t: (key: string) => string, why: string | undefined): string {
+  const said = why ? visibleText(why).trim() : '';
+  return said ? t('ownerCard.bar.runWaits').replace('{why}', () => said) : t('ownerCard.bar.runWaitsBare');
 }
 
 /** The reveal in flight: a newer one (another click) supersedes it. */

@@ -847,9 +847,13 @@ export type OwnerWakeOutcome = typeof OWNER_WAKE_OUTCOMES[number];
  *  verified entry to send), `held` (no deliverer could act; kept), or the wake's outcome. */
 export type OwnerDeliverOutcome = 'delivered' | 'nothing' | 'held' | OwnerWakeOutcome;
 
-/** The slot's one true line for a card's result (K7): sent, waking a paused child, held (and
+/** The slot's one true line for a card's result (K7): running (he pressed ▶ Run, the result
+ *  goes to the child at the exit: run-bildirim-hemen), finished (its run ended and its result
+ *  had no line yet: a held send, a restart), sent, waking a paused child, held (and
  *  why), or the child was ended and the Super has it. */
-export const OWNER_DELIVERY_STATES = ['sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended'] as const;
+// `allowed` / `not_needed`: a run card settled by his answer to the refusal of the same command
+// (run-kart-altta): Allow let the child run it itself; Not needed declined it.
+export const OWNER_DELIVERY_STATES = ['running', 'finished', 'sent', 'waking', 'held:cap', 'held:no_window', 'held:phone', 'ended', 'allowed', 'not_needed'] as const;
 export type OwnerDeliveryState = typeof OWNER_DELIVERY_STATES[number];
 
 /** An `owner-result` event's fact (K6): one per owner action. `text` is the receipt's KEPT form

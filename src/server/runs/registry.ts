@@ -87,6 +87,10 @@ export interface RunDelivery {
   /** The run started: hold a "cut off" report on disk now, so a server that dies before the
    *  exit still owes the agent one (sent when the chat's window mounts after the restart). */
   started?(run: Run, record: CardRecordEntry): void;
+  /** The OWNER pressed ▶ Run on an open card (not a Mac "Run again" of a closed one): his press
+   *  IS his answer, so the card's owner wait is answered now, at the START, never at the exit
+   *  (run-bildirim-hemen). Called after the record knows its run. */
+  acted?(run: Run, record: CardRecordEntry): void;
   /** The run ended: HOLD its report, synchronously, BEFORE the record closes (sahip-karti-yerinde
    *  K6: a result is held before anything that can lose it). */
   hold?(run: Run, record: CardRecordEntry, report: RunReport): void;
@@ -185,6 +189,7 @@ export function startRun(
   try { deps.delivery?.started?.(run, rec); } catch { /* delivery logs its own */ }
   markCardStarted(sessionId, cardRef);
   setCardRun(sessionId, cardRef, { runId: run.runId, owner: by });
+  if (!rerun) { try { deps.delivery?.acted?.(run, rec); } catch { /* delivery logs its own */ } }
   return run;
 }
 

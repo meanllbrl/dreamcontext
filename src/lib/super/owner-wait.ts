@@ -21,6 +21,7 @@
 
 import { createHash } from 'node:crypto';
 import { MAX_REFUSAL_REASON, REFUSAL_WORD_RE, type RefusalFact } from './types.js';
+import { SHELL_TOOLS } from '../grants/canonical.js';
 
 /**
  * `refusal` and `stalled` are no cards (uye-bildirim K2, K6): a refusal is read from the stream's
@@ -136,6 +137,41 @@ export function answeredBy(text: string, open: readonly OwnerWait[]): OwnerWait[
     if (subject && w.key === subject) return true;
     return open.filter((x) => x.kind === w.kind).length === 1;
   });
+}
+
+/** The command a run card's receipt names (`[ran in chat]` then `$ <command>`), or ''. */
+export function runReceiptCommand(text: string): string {
+  const lines = text.trimStart().slice(0, 4000).split(/\r?\n/);
+  if (!/^\[ran in chat\]/i.test(lines[0]?.trim() ?? '')) return '';
+  return lines.find((l) => l.startsWith('$ '))?.slice(2).trim() ?? '';
+}
+
+/**
+ * The refused calls a run card's result settles (run-kart-altta, 13 Nov): a child whose command a
+ * permission check refused leaves the owner a run card with that exact command (outward.ts), so
+ * one command holds TWO waits, the refusal ("Allow") and the card ("Run"). His run of the card is
+ * the refused call done by him: the refusal of that SAME command (a shell call, its whole input
+ * equal to the receipt's `$ <command>` line) closes with it. Without this the refusal stayed open
+ * after he ran it, and the agenda and the Super kept saying the job waits for his permission
+ * ("bastım ama hiçbir şey olmadı"). A refusal of any other call, or one whose input was cut, stays.
+ */
+export function refusalsSettledByRun(text: string, open: readonly OwnerWait[]): OwnerWait[] {
+  return refusalsOfCommand(runReceiptCommand(text), open);
+}
+
+/** The refused calls of exactly this shell command (a run card's command: his press or his run's
+ *  receipt settles them, run-bildirim-hemen). */
+export function refusalsOfCommand(command: string, open: readonly OwnerWait[]): OwnerWait[] {
+  if (!command.trim()) return [];
+  return open.filter((w) => w.kind === 'refusal' && !!w.refusal && sameShellCommand(w.refusal, command));
+}
+
+/** ONE predicate, both directions: a refused call and a run card are the same command when the
+ *  refusal is a shell call whose WHOLE input equals the card's command (trimmed). A cut input, or
+ *  any other tool, is never the same. */
+export function sameShellCommand(refusal: Pick<RefusalFact, 'tool' | 'input' | 'whole'>, command: string): boolean {
+  const cmd = command.trim();
+  return !!cmd && refusal.whole && SHELL_TOOLS.has(refusal.tool) && refusal.input.trim() === cmd;
 }
 
 // ─── Waits the server reads, not cards (uye-bildirim K2, K6) ───────────────────────────────────

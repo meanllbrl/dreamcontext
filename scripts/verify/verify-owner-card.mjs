@@ -218,6 +218,9 @@ const AGENT_UI = join(HOME, '.dreamcontext', 'agent-ui.json');
 const OWNER_KEY = randomBytes(32).toString('hex');
 /** Long enough to attach to while it runs; nothing in it the run path refuses. */
 const RUN_CMD = 'sleep 8; echo kart-yerinde-ok';
+/** The second relayed run card (owner 13 Nov: "bu terminaller birikiyor", two finished cards
+ *  piled at the bottom): it must settle in its own place too. */
+const RUN2_CMD = 'sleep 2; echo ikinci-kart-ok';
 const SECRET_VALUE = `vk_${randomBytes(9).toString('hex')}`;
 const SECRET_KEY = 'VERIFY_TOKEN';
 /** The park sweep's verify hooks (chat-park.ts envMs / forcedPressure). */
@@ -261,11 +264,18 @@ report({ kind: 'spawn', role, sid, resumed: !!at('--resume') });
 process.on('exit', () => { try { report({ kind: 'exit', role, sid }); } catch {} });
 process.on('SIGTERM', () => process.exit(0));
 let secretAsked = false;
+let run2Asked = false;
 async function superTurn(text) {
   if (text.startsWith('[super handover]')) {
     const d = cli('super', 'delegate', '--prompt', 'RUNCARD: deploy adimini sahibine birak.', '--brief', 'Kargo kurulumu');
     report({ kind: 'delegated', which: 'run', sid: d.json?.sessionId ?? null, status: d.status, out: d.out });
     return 'Isi devraldim; kargo kurulumu basladi.';
+  }
+  if (text.includes('GO-RUN2') && !run2Asked) {
+    run2Asked = true;
+    const d = cli('super', 'delegate', '--prompt', 'RUNCARD2: yayin adimini sahibine birak.', '--brief', 'Fiyat yayini');
+    report({ kind: 'delegated', which: 'run2', sid: d.json?.sessionId ?? null, status: d.status, out: d.out });
+    return 'Fiyat yayini isi basladi.';
   }
   if (text.includes('GO-SECRET') && !secretAsked) {
     secretAsked = true;
@@ -278,6 +288,10 @@ async function superTurn(text) {
 async function childTurn(text) {
   if (text.includes('[ran in chat]')) { report({ kind: 'receipt', which: 'run', sid, text: text.slice(0, 2000) }); return 'Komut calisti, devam ediyorum.'; }
   if (text.includes('[secret submitted')) { report({ kind: 'receipt', which: 'secret', sid, text: text.slice(0, 2000) }); return 'Anahtar kaydedildi, devam ediyorum.'; }
+  if (text.includes('RUNCARD2')) {
+    report({ kind: 'card', which: 'run2', sid });
+    return 'Yayin icin bu komut senin terminalinde calismali.' + fence({ type: 'run', id: 'fiyat-yayin', command: ${JSON.stringify(RUN2_CMD)}, why: 'Yayin adimi; senin terminalinde calisir.' });
+  }
   if (text.includes('RUNCARD')) {
     report({ kind: 'card', which: 'run', sid });
     return 'Deploy oncesi bu komut senin terminalinde calismali.' + fence({ type: 'run', id: 'kargo-deploy', command: ${JSON.stringify(RUN_CMD)}, why: 'Deploy oncesi son kontrol; senin terminalinde calisir.' });
@@ -879,9 +893,29 @@ async function caseRun(page, base, out, shots) {
   await closeOverlays(page);
   const play = slotCard(page, 'run').locator('[data-testid="run-card-play"]').first();
   await play.scrollIntoViewIfNeeded().catch(() => {});
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(300);
+  {
+    const file = join(out, 'press-before-1440-light.png');
+    if (step('before the press: chat shot saved (bar, agenda and slot say Needs you)', await page.screenshot({ path: file }).then(() => true).catch(() => false))) shots.push({ file, name: 'press-before', width: 1440, theme: 'light' });
+  }
   await play.click();
   step('the run starts (the record has a live run)', await until(async () => !!(await cardRecord(base, handle.postingSession, handle.cardRef))?.run, 15000, 150),
     JSON.stringify(await cardRecord(base, handle.postingSession, handle.cardRef)));
+  // run-bildirim-hemen: his press IS his answer. While the run still goes, nothing says Needs you.
+  step('…at the START the owner item closes as `running` (the run still live)', await until(async () => cardItem('run')?.state === 'done' && cardItem('run')?.delivery === 'running'
+    && !!(await cardRecord(base, handle.postingSession, handle.cardRef))?.run, 5000, 100), JSON.stringify(cardItem('run')));
+  step('…the bar drops the card row', await until(async () => (await barCard(page).count()) === 0, 5000, 100));
+  step('…the slot heading says running, never needs you', await until(async () => {
+    const t = await slotCard(page, 'run').locator('.chat-m-cardhead-title').first().innerText().catch(() => '');
+    return / running/i.test(t) && !/needs you/i.test(t);
+  }, 5000, 100), await slotCard(page, 'run').innerText().catch(() => '(no slot)'));
+  step('…the slot still draws the live run card', (await slotCard(page, 'run').count()) > 0);
+  step('…and the child row no longer says waiting', mainRecord().children?.[sid]?.row !== 'waiting', JSON.stringify(mainRecord().children?.[sid]));
+  {
+    const file = join(out, 'press-running-1440-light.png');
+    if (step('mid-run: chat shot saved', await page.screenshot({ path: file }).then(() => true).catch(() => false))) shots.push({ file, name: 'press-running', width: 1440, theme: 'light' });
+  }
   const attach = await noOriginUpgrade(base, q);
   step('a no-Origin attach to his LIVE run: 403, never opened, 0 replay bytes', attach.status === 403 && !attach.opened && attach.bytes === 0, JSON.stringify(attach));
   step('the run ends in the slot (exit 0)', await until(async () => {
@@ -911,7 +945,95 @@ async function caseRun(page, base, out, shots) {
     JSON.stringify(childEvents(superTexts(), sid).lines));
   step('the 11 Nov loop is gone: one owner item for this card, zero gone events', (mainRecord().queue ?? []).filter((x) => x.kind === 'owner' && x.card?.cardRef === handle.cardRef).length === 1
     && childEvents(superTexts(), sid).gone === 0);
-  return { sid, handle };
+  // 13 Nov (run-kart-altta): a finished card left the TAIL and sits in its place in the
+  // transcript (cardPlacement.ts), drawn once, and stays there as the chat moves on.
+  const settled = page.locator(`[data-testid="super-owner-card"][data-item="${done?.id}"]`);
+  step('the finished run card is drawn ONCE', await until(async () => (await settled.count()) === 1, 15000), String(await settled.count()));
+  step('…in its place in the transcript, not in the chat\'s tail (data-place="history")', await until(async () => (await settled.first().getAttribute('data-place').catch(() => null)) === 'history', 15000),
+    String(await settled.first().getAttribute('data-place').catch(() => null)));
+  const settledRun = settled.first().locator('.chat-runcard');
+  step('…and says how it ended (record closed, phase done), never a fresh ▶ Run', await until(async () =>
+    (await settledRun.getAttribute('data-card-state').catch(() => null)) === 'closed' && (await settledRun.getAttribute('data-phase').catch(() => null)) === 'done', 15000),
+    `${await settledRun.getAttribute('data-card-state').catch(() => null)} / ${await settledRun.getAttribute('data-phase').catch(() => null)}`);
+  // ek-2: the copy drawn anew in history never attaches a terminal to the ended run (it 403'd and
+  // drew "Could not open this command's terminal").
+  await page.waitForTimeout(1500);
+  const settledText = await settled.first().innerText().catch(() => '');
+  step('…and attaches no terminal: no "Could not open" line in it', !/could not open/i.test(settledText), settledText.slice(0, 400));
+  const after = await page.evaluate((itemId) => {
+    const el = document.querySelector(`[data-testid="super-owner-card"][data-item="${itemId}"]`);
+    if (!el) return null;
+    // Transcript content drawn AFTER the card (the Super's turn on event=owner-result): it is not last.
+    const later = [...document.querySelectorAll('.chat-msg, [data-testid="super-event-line"], .chat-bubble, .chat-text')]
+      .filter((n) => !el.contains(n) && (el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return { later: later.length };
+  }, done?.id);
+  step('…and the chat went on below it: transcript drawn AFTER the settled card (it is not last)', !!after && after.later > 0, JSON.stringify(after));
+  for (const theme of ['light']) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await settled.first().scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(300);
+    const file = join(out, `settled-in-place-1440-${theme}.png`);
+    if (step('the settled card in its place: chat shot saved', await page.screenshot({ path: file }).then(() => true).catch(() => false))) shots.push({ file, name: 'settled-in-place', width: 1440, theme });
+    await page.evaluate(() => { const s = document.querySelector('.chat-scroll, [data-chat-scroll]'); if (s) s.scrollTop = s.scrollHeight; });
+    await page.waitForTimeout(300);
+    const end = join(out, `settled-chat-end-1440-${theme}.png`);
+    if (step('the chat\'s end: shot saved', await page.screenshot({ path: end }).then(() => true).catch(() => false))) shots.push({ file: end, name: 'settled-chat-end', width: 1440, theme });
+  }
+  return { sid, handle, itemId: done?.id };
+}
+
+/** Several relayed run cards finished in a row: each settles in its own place, none stays stacked
+ *  in the chat's tail above the composer (owner 13 Nov: "bu terminaller birikiyor"). */
+async function caseRunTwice(page, base, out, shots, first) {
+  console.log('\n── a second relayed run card, run and finished after the first');
+  if (!first?.handle) { step('the second run card case has the first card', false); return; }
+  await sayCentre(page, 'GO-RUN2: fiyat yayinini baslat.');
+  step('main\'s Super delegated the second run child', await until(() => reports().some((r) => r.kind === 'delegated' && r.which === 'run2' && r.status === 0), 60000),
+    JSON.stringify(reports().filter((r) => r.kind === 'delegated')));
+  step('the second child posted its run card', await until(() => reports().some((r) => r.kind === 'card' && r.which === 'run2'), 60000));
+  const second = () => (mainRecord().queue ?? []).filter((q) => q.kind === 'owner' && q.card?.spec?.command === RUN2_CMD).pop();
+  step('an open owner item carries the second card', await until(() => !!second() && second().state !== 'done', 30000), JSON.stringify(second() ?? null));
+  const item2 = second();
+  if (!item2) return;
+  const card2 = page.locator(`[data-testid="super-owner-card"][data-item="${item2.id}"]`);
+  const play = card2.locator('[data-testid="run-card-play"]').first();
+  step('the second card waits in the tail with its ▶ Run', await until(async () => (await play.count()) > 0 && !(await play.isDisabled().catch(() => true)), 30000),
+    await card2.first().innerText().catch(() => '(no card)'));
+  await closeOverlays(page);
+  await play.scrollIntoViewIfNeeded().catch(() => {});
+  await play.click();
+  step('…it runs and ends (exit 0)', await until(async () => {
+    const r = await cardRecord(base, item2.card.postingSession, item2.card.cardRef);
+    return r && !r.run && r.exit === 0;
+  }, 30000, 300), JSON.stringify(await cardRecord(base, item2.card.postingSession, item2.card.cardRef)));
+  step('…its item settles with its result (sent)', await until(() => second()?.state === 'done' && second()?.delivery === 'sent', 60000, 150), JSON.stringify(second()));
+  // The Super talks on after both: the chat moves past both cards.
+  await sayCentre(page, 'Ikisi de bitti mi?');
+  await page.waitForTimeout(2500);
+  const ids = [first.itemId, item2.id];
+  const facts = await page.evaluate((itemIds) => itemIds.map((id) => {
+    const el = document.querySelector(`[data-testid="super-owner-card"][data-item="${id}"]`);
+    if (!el) return { id, drawn: 0 };
+    const later = [...document.querySelectorAll('.chat-msg, [data-testid="super-event-line"], .chat-bubble, .chat-text')]
+      .filter((n) => !el.contains(n) && (el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return { id, drawn: document.querySelectorAll(`[data-testid="super-owner-card"][data-item="${id}"]`).length, place: el.getAttribute('data-place'), later: later.length,
+      text: /could not open/i.test(el.textContent ?? '') };
+  }), ids);
+  step('both finished cards are drawn once each, in history (data-place="history")', facts.every((x) => x.drawn === 1 && x.place === 'history'), JSON.stringify(facts));
+  step('…neither is last: transcript is drawn after each', facts.every((x) => x.later > 0), JSON.stringify(facts));
+  step('…neither attached a terminal ("Could not open")', facts.every((x) => !x.text), JSON.stringify(facts));
+  const inTail = await page.locator('[data-testid="super-owner-card"][data-place="tail"]:visible').count();
+  step('…and nothing piles up in the tail above the composer', inTail === 0, String(inTail));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await card2.first().scrollIntoViewIfNeeded().catch(() => {});
+  await page.waitForTimeout(300);
+  const file = join(out, 'settled-two-in-place-1440-light.png');
+  if (step('two settled cards in their places: chat shot saved', await page.screenshot({ path: file }).then(() => true).catch(() => false))) shots.push({ file, name: 'settled-two-in-place', width: 1440, theme: 'light' });
+  await page.evaluate(() => { const sc = document.querySelector('.chat-scroll, [data-chat-scroll]'); if (sc) sc.scrollTop = sc.scrollHeight; });
+  await page.waitForTimeout(300);
+  const end = join(out, 'settled-two-chat-end-1440-light.png');
+  if (step('the chat\'s end after both: shot saved', await page.screenshot({ path: end }).then(() => true).catch(() => false))) shots.push({ file: end, name: 'settled-two-chat-end', width: 1440, theme: 'light' });
 }
 
 async function caseSecret(page, out, shots) {
@@ -1007,7 +1129,8 @@ async function main(out) {
 
     console.log('── setup: hand-over');
     if (!step('main Super handed over and delegated a child', await handOver(page, base), JSON.stringify(reports().slice(-6)))) return;
-    await caseRun(page, base, out, shots);
+    const first = await caseRun(page, base, out, shots);
+    await caseRunTwice(page, base, out, shots, first);
     await caseSecret(page, out, shots);
     const errs = Object.values(pages).flatMap((p) => p.errors);
     step('no console error or page crash on any page', errs.length === 0, errs.slice(0, 6).join('\n      '));

@@ -325,7 +325,7 @@ async function runTheme(chromium, base, theme, report) {
   const finishedCardChecks = async (card, chip) => {
     ok(`${chip}: the terminal collapses once the process ends`,
       await until(async () => (await card.locator('.chat-runterm.is-collapsed').count()) === 1, 5000));
-    ok(`${chip}: a Show output toggle is offered`, (await card.locator('[data-testid="run-card-output-toggle"]').innerText()).includes('Show output'));
+    ok(`${chip}: a Show output toggle is offered`, (await card.locator('[data-testid="run-card-output-toggle"]').innerText()).match(/output/i));
     await card.locator('[data-testid="run-card-output-toggle"]').click();
     // Read with the screen SHOWN: a hidden one could hold no focus anyway.
     ok(`${chip}: the finished terminal holds no focus`,
@@ -456,7 +456,7 @@ async function runTheme(chromium, base, theme, report) {
   await page.keyboard.type('pong');
   await page.keyboard.press('Enter');
   await shot('run-terminal-live', runCard);
-  ok('the card reports the exit code', await until(async () => /exit 0/.test(await runCard.innerText()), 20000),
+  ok('the card reports the exit code', await until(async () => /Ran fine on this Mac/.test(await runCard.innerText()), 20000),
     (await runCard.innerText()).replace(/\s+/g, ' ').slice(0, 200));
   ok('THE TURN CONTINUES BY ITSELF — the agent was handed the outcome', await waitText(turn(3)));
   await waitIdle();
@@ -505,7 +505,7 @@ async function runTheme(chromium, base, theme, report) {
   await vis('.chat-runterm .xterm-screen').first().click();
   await page.keyboard.type('SECOND-RUN-OUTPUT');
   await page.keyboard.press('Enter');
-  ok('the second run also finishes', await until(async () => /exit 0/.test(await runCard.innerText()), 20000));
+  ok('the second run also finishes', await until(async () => /Ran fine on this Mac/.test(await runCard.innerText()), 20000));
   ok('the agent hears about it', await waitText(turn(6)));
   await waitIdle();
   const afterSecond = await lastAnswer();

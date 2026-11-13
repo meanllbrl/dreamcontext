@@ -32,8 +32,10 @@ export type { CardCloseReason };
 /** Every spec a record can be. */
 export type RecordSpec = RunViewSpec | SecretViewSpec | ChecklistViewSpec | McpViewSpec;
 
-/** Where a card is drawn: its own chat, or an owner item's record (`open`: the item is open). */
-export type CardHost = { session: string } | { record: OwnerCardHandle; open?: boolean };
+/** Where a card is drawn: its own chat, or an owner item's record (`open`: the item is open;
+ *  `settledAtRead`: the item was seen settled when the posting chat's cards had had that many
+ *  reads, see `hostRecord`). */
+export type CardHost = { session: string } | { record: OwnerCardHandle; open?: boolean; settledAtRead?: number };
 
 /** One chat's records. `folders`: the phone's card read only (GET /api/agent/cards answers the
  *  phone `{ session, cards, folders }`, `folders[cardRef]` = `{ path, name }` or null): the folder
@@ -52,6 +54,19 @@ function cleanFolders(v: unknown): Record<string, CardFolder | null> | undefined
 }
 
 const store = new Map<string, SessionCards>();
+/** How many times each chat's card list was replaced by a read or a frame (`cardsReadCount`). */
+const reads = new Map<string, number>();
+
+/** Every write of a chat's card list goes here: it counts as one read of that chat. */
+function setCards(sessionId: string, value: SessionCards): void {
+  store.set(sessionId, value);
+  reads.set(sessionId, (reads.get(sessionId) ?? 0) + 1);
+}
+
+/** How many reads of this chat's card list have landed in this window (0: none yet). */
+export function cardsReadCount(sessionId: string | undefined): number {
+  return sessionId ? reads.get(sessionId) ?? 0 : 0;
+}
 const listeners = new Set<() => void>();
 const inflight = new Set<string>();
 let version = 0;
@@ -123,7 +138,7 @@ export function applyCardsFrame(sessionId: unknown, cards: unknown): boolean {
   if (typeof sessionId !== 'string' || !isCards(cards)) return false;
   // The frame carries no folders: the ones the last read gave are kept.
   const folders = store.get(sessionId)?.folders;
-  store.set(sessionId, { loaded: true, cards, ...(folders ? { folders } : {}) });
+  setCards(sessionId, { loaded: true, cards, ...(folders ? { folders } : {}) });
   emit();
   // A frame may bring a card the last read did not have: its folder is read (the store's one rule).
   ensurePhoneFolders(sessionId);
@@ -145,10 +160,10 @@ export function loadCards(sessionId: string, fetchJson: (path: string) => Promis
       // A frame that arrived meanwhile is newer than this snapshot (its cards); the folders are
       // only ever in a read.
       const cur = store.get(sessionId);
-      if (!cur?.loaded) store.set(sessionId, { loaded: true, cards: isCards(cards) ? cards : [], ...(folders ? { folders } : {}) });
+      if (!cur?.loaded) setCards(sessionId, { loaded: true, cards: isCards(cards) ? cards : [], ...(folders ? { folders } : {}) });
       else if (folders) store.set(sessionId, { ...cur, folders });
     })
-    .catch(() => { if (!store.get(sessionId)?.loaded) store.set(sessionId, { loaded: true, cards: [] }); })
+    .catch(() => { if (!store.get(sessionId)?.loaded) setCards(sessionId, { loaded: true, cards: [] }); })
     .finally(() => {
       inflight.delete(sessionId);
       markFolderRead(sessionId);
@@ -176,6 +191,28 @@ export function byRecord(postingSession: string, cardRef: string): PublicCard | 
  *  (the server resolves it through `ensureCardsFor` on every action). */
 export function recordFromHandle(h: OwnerCardHandle, open: boolean): PublicCard {
   return { id: h.spec.id, cardRef: h.cardRef, kind: h.spec.type, spec: h.spec, state: open ? 'open' : 'closed', run: null };
+}
+
+/**
+ * THE record an owner item's card draws (`useHostCard`). The handle names its record; until the
+ * list is in, the handle's own copy is drawn (its ▶ still mints a ticket the server checks against
+ * the record).
+ *
+ * A record read BEFORE its item settled is older than the item (run-bildirim-hemen, ek-2): this
+ * window holds the posting chat's records only as last read (the Super window gets no `cards`
+ * frame of a child's chat), so the copy read while the run went still names it after the exit,
+ * and a card drawn anew in its place in history from that copy would attach a terminal to a run
+ * the server no longer has (403, "Could not open this command's terminal"). Such a copy carries
+ * no run and, once the item closed, draws closed. A record read AFTER the item was seen settled
+ * (the slot's re-read, a reload's first read) is newer than that fact and is drawn as it is: a
+ * "Run again" still going is watched (the server clears `run` at every exit).
+ */
+export function hostRecord(sessionId: string, host: { record: OwnerCardHandle; open?: boolean; settledAtRead?: number }): PublicCard {
+  const hit = store.get(sessionId)?.loaded ? byRecord(sessionId, host.record.cardRef) : null;
+  const rec = hit ?? recordFromHandle(host.record, host.open !== false);
+  const olderThanItem = host.settledAtRead !== undefined && cardsReadCount(sessionId) <= host.settledAtRead;
+  if (!olderThanItem) return rec;
+  return { ...rec, run: null, ...(host.open === false ? { state: 'closed' as const } : {}) };
 }
 
 /** The posting session a host's records live under. */
@@ -216,12 +253,7 @@ export function useHostCard(
   useEffect(() => { if (sessionId) loadCards(sessionId, fetchJson); }, [sessionId, fetchJson]);
   if (!host || !sessionId) return { loaded: true, record: null, sessionId };
   const s = store.get(sessionId);
-  if ('record' in host) {
-    // The handle names its record; until the list is in, the handle's own copy is drawn (its ▶
-    // still mints a ticket the server checks against the record).
-    const hit = s?.loaded ? byRecord(sessionId, host.record.cardRef) : null;
-    return { loaded: true, record: hit ?? recordFromHandle(host.record, host.open !== false), sessionId };
-  }
+  if ('record' in host) return { loaded: true, record: hostRecord(sessionId, host), sessionId };
   if (!s?.loaded) return { loaded: false, record: null, sessionId };
   return { loaded: true, record: matchCard(s.cards, spec), sessionId };
 }
@@ -484,7 +516,7 @@ export async function refreshCards(sessionId: string, fetchJson: (path: string) 
     const cards = (r as { cards?: unknown } | null)?.cards;
     if (!isCards(cards)) return null;
     const folders = cleanFolders((r as { folders?: unknown } | null)?.folders);
-    store.set(sessionId, { loaded: true, cards, ...(folders ? { folders } : {}) });
+    setCards(sessionId, { loaded: true, cards, ...(folders ? { folders } : {}) });
     markFolderRead(sessionId);
     emit();
     return cards;
@@ -532,6 +564,7 @@ export function _seedCardStateForTests(session: string, card: string, state: Car
 /** Tests only. */
 export function _resetCardRecords(): void {
   store.clear();
+  reads.clear();
   inflight.clear();
   fetchers.clear();
   folderReads.clear();
