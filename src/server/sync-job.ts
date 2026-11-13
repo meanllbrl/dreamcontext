@@ -1,6 +1,13 @@
 import { getTaskBackend } from '../lib/task-backend/index.js';
 import { hardRefreshTasks } from '../lib/task-backend/hard-refresh.js';
 import type { SyncDirection, SyncProgressEvent, SyncReport } from '../lib/task-backend/types.js';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { isTokenRefused, readTaskQueueDepth } from '../lib/sleep-cycle-tools.js';
+import { githubErrorPayload, type GitHubErrorPayload } from '../lib/git-sync/failure.js';
+import { resolveGitHubCredential } from '../lib/git-sync/auth-store.js';
+import { readSetupConfig } from '../lib/setup-config.js';
+import { listVaults } from '../lib/vaults.js';
 
 /**
  * Background task-sync jobs for the dashboard. A bulk first sync (or a hard
@@ -11,6 +18,8 @@ import type { SyncDirection, SyncProgressEvent, SyncReport } from '../lib/task-b
  * (and its live progress) on the next poll.
  */
 export interface SyncJobState {
+  /** C5: set when GitHub refused the credential, so the surface can offer one-click Reconnect. */
+  github?: GitHubErrorPayload;
   id: string;
   kind: 'sync' | 'hard-refresh';
   status: 'running' | 'success' | 'error';
@@ -133,7 +142,8 @@ async function runJob(contextRoot: string, job: SyncJobState, direction: SyncDir
       // "Runs until success": failed pushes stay drift-flagged and re-select,
       // and the rate window advances between passes — bounded retries, with
       // counters merged across passes (see mergeReports).
-      while (report.failedPushes.length > 0 && job.attempt < MAX_PASSES) {
+      // A refused credential is not fixed by another pass (D7): stop and say so once.
+      while (report.failedPushes.length > 0 && job.attempt < MAX_PASSES && !isTokenRefused(report)) {
         job.attempt++;
         report = mergeReports(report, await backend.sync(direction, { onProgress }));
       }
@@ -146,7 +156,14 @@ async function runJob(contextRoot: string, job: SyncJobState, direction: SyncDir
     const movedNothing =
       report.pushed + report.pulled + report.created + report.deleted +
       report.commentsAdded + report.reconciled + report.mirrorDeleted + report.mirrorRemapped === 0;
-    if (report.skipped === 'locked') {
+    if (isTokenRefused(report) && getTaskBackend(contextRoot).name === 'github') {
+      const cred = resolveGitHubCredential({ projectRoot: dirname(contextRoot), purpose: 'tasks' });
+      job.status = 'error';
+      job.github = githubErrorPayload('auth', cred?.source ?? null);
+      job.error = cred?.source === 'project'
+        ? "GitHub refused this project's own token. Sign in with GitHub in Settings → GitHub."
+        : job.github.message;
+    } else if (report.skipped === 'locked') {
       job.status = 'error';
       job.error = 'another sync held the lock for the whole wait window — try again.';
     } else if (report.failedPushes.length > 0) {
@@ -166,4 +183,57 @@ async function runJob(contextRoot: string, job: SyncJobState, direction: SyncDir
   } finally {
     job.finishedAt = Date.now();
   }
+}
+
+/** How long the drain waits on one project's sync before calling it stuck and moving on. */
+export const DRAIN_JOB_LIMIT_MS = 10 * 60_000;
+
+/** Projects whose post-sign-in sync ran past the limit, with that job: stuck while it still runs. */
+const stuckDrains = new Map<string, { status: string }>();
+export function isDrainStuck(contextRoot: string): boolean {
+  const job = stuckDrains.get(contextRoot);
+  if (job && job.status !== 'running') stuckDrains.delete(contextRoot);
+  return !!job && job.status === 'running';
+}
+
+export interface DrainOutcome { vault: string; outcome: 'done' | 'stuck' | 'failed' }
+
+/**
+ * After a sign-in: drain every GitHub task queue, one project at a time. Each sync gets
+ * DRAIN_JOB_LIMIT_MS; past it the project is marked stuck (its sync keeps running, its queue
+ * stays visible), one line goes to the log, and the next project's drain starts.
+ * Each run takes the ledger's own cross-process lock, so a sleep syncing at the same moment
+ * waits instead of doubling.
+ */
+export async function drainGitHubTaskQueues(
+  home?: string,
+  opts: { limitMs?: number; pollMs?: number; start?: (contextRoot: string) => { job: { status: string } } } = {},
+): Promise<DrainOutcome[]> {
+  const limit = opts.limitMs ?? DRAIN_JOB_LIMIT_MS;
+  const poll = opts.pollMs ?? 1000;
+  const out: DrainOutcome[] = [];
+  for (const vault of listVaults(home)) {
+    const contextRoot = join(vault.path, '_dream_context');
+    try {
+      if (!existsSync(contextRoot)) continue;
+      if (readSetupConfig(vault.path)?.taskBackend !== 'github') continue;
+      if (readTaskQueueDepth(contextRoot).ops === 0) continue;
+      const { job } = (opts.start ?? ((root: string) => startSyncJob(root, 'sync')))(contextRoot);
+      const until = Date.now() + limit;
+      while (job.status === 'running' && Date.now() < until) await new Promise((r) => setTimeout(r, poll));
+      if (job.status === 'running') {
+        stuckDrains.set(contextRoot, job);
+        const depth = readTaskQueueDepth(contextRoot);
+        console.warn(`[github] task sync for ${vault.name} is still running after ${Math.round(limit / 60_000)} min; ${depth.ops} change(s) still queued. Moving on to the next project.`);
+        out.push({ vault: vault.name, outcome: 'stuck' });
+        continue;
+      }
+      stuckDrains.delete(contextRoot);
+      out.push({ vault: vault.name, outcome: job.status === 'success' ? 'done' : 'failed' });
+    } catch {
+      // One project's trouble never stops the next one's drain.
+      out.push({ vault: vault.name, outcome: 'failed' });
+    }
+  }
+  return out;
 }

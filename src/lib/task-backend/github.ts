@@ -48,7 +48,9 @@ import { createHash } from 'node:crypto';
 import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
-import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
+import { writeGitHubToken, maskToken } from './secrets.js';
+import { clearProjectGitHubDemotion, resolveGitHubCredential } from '../git-sync/auth-store.js';
+import { GitHubAuthSession, githubApiAdapter, type GitHubAuthSessionDeps } from '../git-sync/token-fallback.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
@@ -136,9 +138,10 @@ export interface GitHubBackendDeps {
   fetchImpl?: typeof fetch;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Injectable credential-session deps (tests record the flag writes and demotions). */
+  authSessionDeps?: Partial<GitHubAuthSessionDeps>;
 }
 
-const GITHUB_BASE_URL = 'https://api.github.com';
 
 // GitHub's primary REST limit is 5000 requests/hour (~83/min). Pace BELOW it so
 // a large burst self-throttles under the ceiling rather than tipping into
@@ -251,19 +254,40 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   }
 
   protected getToken(): string | null {
-    return resolveGitHubToken(this.projectRoot)?.token ?? null;
+    return this.authSession()?.token ?? null;
+  }
+
+  /** C2: the run's credential with the dead-token heal (C1 order for purpose `tasks`). */
+  private session: GitHubAuthSession | null | undefined;
+  protected authSession(): GitHubAuthSession | null {
+    if (this.session === undefined) {
+      const cred = resolveGitHubCredential({ projectRoot: this.projectRoot, purpose: 'tasks' });
+      this.session = cred ? new GitHubAuthSession(cred, 'tasks', this.projectRoot, this.deps.authSessionDeps) : null;
+    }
+    return this.session;
+  }
+
+  /** True once GitHub refused the credential with a 401 nothing could heal (D7: stop the run). */
+  protected authDead(): boolean {
+    return this.session?.authDead === true;
   }
 
   protected getAdapter(): ApiAdapter {
     if (this.deps.adapter) return this.deps.adapter;
     if (!this.adapterInstance) {
-      const token = this.getToken();
-      if (!token) {
-        throw new Error('No GitHub token configured. Run `dreamcontext config github-token`.');
+      const session = this.authSession();
+      if (!session) {
+        throw new Error('No GitHub token: sign in with GitHub in Settings → GitHub.');
       }
-      this.adapterInstance = new ApiAdapter({
-        baseUrl: GITHUB_BASE_URL,
-        authHeaders: () => githubAuthHeaders(token),
+      this.adapterInstance = githubApiAdapter({
+        // Read per request: the session swaps to the sign-in after a heal.
+        authHeaders: () => githubAuthHeaders(session.token),
+        authObserver: {
+          onSuccess: () => session.noteSuccess(),
+          onReject: (kind) => session.handleReject(kind),
+          onRetryReject: (kind) => session.handleRetryReject(kind === 'auth' || kind === 'forbidden' || kind === 'rate_limited' ? kind : 'other'),
+          isDead: () => session.authDead,
+        },
         ratePerMinute: GITHUB_RATE_PER_MINUTE,
         maxRetries: GITHUB_MAX_RETRIES,
         minWriteIntervalMs: GITHUB_MIN_WRITE_INTERVAL_MS,
@@ -586,13 +610,16 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   /** Settings inline API-key entry: persist the token into the secrets store. */
   setToken(token: string): void {
     writeGitHubToken(this.projectRoot, token);
+    clearProjectGitHubDemotion(this.projectRoot);
+    this.session = undefined;
+    this.adapterInstance = null;
   }
 
   /** Settings "key set ✓" indicator: resolved token status, masked. */
   tokenStatus(): TokenStatus {
-    const resolved = resolveGitHubToken(this.projectRoot);
+    const resolved = resolveGitHubCredential({ projectRoot: this.projectRoot, purpose: 'tasks' });
     return resolved
-      ? { set: true, source: resolved.source, masked: maskToken(resolved.token) }
+      ? { set: true, source: resolved.source === 'project' ? 'secrets' : resolved.source, masked: maskToken(resolved.token) }
       : { set: false, source: null, masked: null };
   }
 
@@ -720,6 +747,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       } catch (err) {
         if ((err as { kind?: string }).kind === 'not_found') {
           this.ledger.dequeueFor(op.slug, op.ts);
+        } else if (this.authDead()) {
+          // D7: GitHub refused the credential and nothing could heal it: stop, say it once.
+          report.errors.push(`delete ${op.slug}: ${(err as Error).message ?? err}`);
+          return;
         } else {
           report.errors.push(`delete ${op.slug}: ${(err as Error).message ?? err}`);
         }
@@ -792,11 +823,17 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       } catch (err) {
         report.failedPushes.push(slug);
         report.errors.push(`push ${slug}: ${(err as Error).message ?? err}`);
+        if (this.authDead()) {
+          // D7: one refused credential is enough: the rest stay queued for the next sync.
+          report.failedPushes.push(...sorted.slice(done + 1));
+          break;
+        }
       }
       this.progress?.({ phase: 'push', current: ++done, total: sorted.length, slug, bootstrap });
     }
     // Sub-issues fallback only: a parent whose task list gained a sub-task this
     // run re-sends its body so the list names it.
+    if (this.authDead()) { this.parentsToRefresh.clear(); return; }
     for (const parent of [...this.parentsToRefresh]) {
       try {
         await this.pushTask(parent, adapter, owner, repo, report, bootstrap);
@@ -2536,8 +2573,7 @@ async function discoverGitHubReposInternal(
   token: string,
   deps: { fetchImpl?: typeof fetch } = {},
 ): Promise<DiscoveredRepo[]> {
-  const adapter = new ApiAdapter({
-    baseUrl: GITHUB_BASE_URL,
+  const adapter = githubApiAdapter({
     authHeaders: () => githubAuthHeaders(token),
     fetchImpl: deps.fetchImpl,
   });

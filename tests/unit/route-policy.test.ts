@@ -70,7 +70,7 @@ describe('the route policy is exhaustive', () => {
     for (const k of [
       'POST /api/handsfree/mac/start', 'POST /api/window/:verb', 'GET /api/assistant/status', 'POST /api/agent/open-terminal',
       'POST /api/launcher/register', 'POST /api/launcher/unregister', 'GET /api/telegram', 'POST /api/recall/cloud/key',
-      'POST /api/admin/shutdown', 'POST /api/agent/voice/tts', 'POST /api/notify', 'POST /api/brain/auth/token',
+      'POST /api/admin/shutdown', 'POST /api/agent/voice/tts', 'POST /api/notify', 'POST /api/brain/auth/token', 'POST /api/brain/auth/project-token', 'DELETE /api/brain/auth/project-token',
       'GET /api/launcher/status', 'POST /api/peer/send', 'POST /api/agent/grant', 'POST /api/agent/reveal',
     ]) expect(ROUTE_POLICY[k]?.allow, k).toBe(false);
   });

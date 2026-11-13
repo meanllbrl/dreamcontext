@@ -1,6 +1,7 @@
 /**
  * The Settings window of the new layout (task settings-konuya-gore-17-menuye…, wave 2): a
- * window over the app, 17 pages by topic in the owner's order, every deep link lands on its
+ * window over the app, 18 pages by topic in the owner's order (GitHub added first in Connections
+ * on the owner's word, 2026-11-13, plan github-baglanti r4), every deep link lands on its
  * page or tab, search reads names, hints and hidden keywords, and the page behind is never
  * navigated away from. Classic Settings is untouched.
  */
@@ -17,13 +18,13 @@ const pages = read('components/settings/window/pages/SimplePages.tsx') + read('c
 const i18n = read('context/I18nContext.tsx');
 
 describe('the menu', () => {
-  it('has exactly 17 pages, in the prototype order (Telegram after Hands-free, plan X2)', () => {
+  it('has exactly 18 pages, in the prototype order (Telegram after Hands-free, plan X2; GitHub first in Connections)', () => {
     expect(SW_PAGES).toEqual([
       'general', 'chat', 'voice',
       'models', 'mcp', 'super', 'assistant',
       'memory', 'sleep',
       'tasks', 'repos',
-      'teamsync', 'mirror', 'connected', 'handsfree', 'telegram',
+      'github', 'teamsync', 'mirror', 'connected', 'handsfree', 'telegram',
       'system',
     ]);
     expect(SW_GROUPS.map((g) => g.id)).toEqual(['top', 'agents', 'memory', 'project', 'connections', 'end']);
@@ -41,8 +42,10 @@ describe('the menu', () => {
     }
   });
 
-  it('holds no GitHub or ClickUp menu, Platforms, Default agent, Show Chat, Open sessions as, Terminal drawing or shortcut row', () => {
-    expect(SW_PAGES).not.toContain('github');
+  // Owner-directed reversal (2026-11-13, "ayarlarda github bağlantısı yapılabilecek bir alan yok"):
+  // GitHub gets its own page; ClickUp stays inside Task mirroring.
+  it('holds a GitHub page first in Connections, and no ClickUp menu, Platforms, Default agent, Show Chat, Open sessions as, Terminal drawing or shortcut row', () => {
+    expect(SW_GROUPS.find((g) => g.id === 'connections')?.pages[0]).toBe('github');
     expect(SW_PAGES).not.toContain('clickup');
     for (const gone of ['platforms', 'defaultAgent', 'chatView', 'renderer:', 'settings.agents.platforms', 'settings.agents.default_agent', 'settings.agents.show', 'settings.agents.hotkey']) {
       expect(pages, gone).not.toContain(gone);
@@ -53,7 +56,7 @@ describe('the menu', () => {
 describe('deep links', () => {
   it('every focus id lands on its page or tab; unknown is General', () => {
     expect(swTarget('brain')).toEqual({ page: 'teamsync' });
-    expect(swTarget('github')).toEqual({ page: 'teamsync' });
+    expect(swTarget('github')).toEqual({ page: 'github' });
     expect(swTarget('teamsync')).toEqual({ page: 'teamsync' });
     expect(swTarget('system')).toEqual({ page: 'system' });
     expect(swTarget('mcp')).toEqual({ page: 'mcp' });
@@ -185,5 +188,52 @@ describe('the window styles', () => {
   });
   it('a wrapper that already holds a group is no second card', () => {
     expect(css).toMatch(/\.sw \.settings-self-update:has\(> \.setting-group\) \{/);
+  });
+});
+
+describe('one destination for "connect GitHub" (plan D9)', () => {
+  const sidebar = read('components/layout/Sidebar.tsx');
+  const sync = read('components/brain/BrainSyncControl.tsx');
+  const mirror = read('components/settings/window/TaskMirroring.tsx');
+  const topic = read('components/settings/window/pages/TopicPages.tsx');
+
+  it('the sidebar Connect, the sync bar and Task mirroring land on the GitHub page when signed out or flagged', () => {
+    expect(sidebar).toContain("onNavigate('settings', !signedIn || authStatus?.needsReconnect ? 'github' : 'brain');");
+    expect(sidebar).toContain("onOpenGitHub={() => onNavigate('settings', 'github')}");
+    expect(sync).toContain("case 'check-permissions': return { label: t('brain.recovery.checkPerms'), onClick: onOpenGitHub ?? onOpenSettings };");
+    expect(mirror).toContain("go?.('github')");
+    expect(mirror).not.toContain("go?.('teamsync')");
+  });
+
+  it('the sync bar reconnects in place instead of only navigating', () => {
+    expect(sync).toContain("case 'reconnect-github': return null;");
+    expect(sync).toMatch(/failure\.recovery === 'reconnect-github' && \(\s*<GitHubReconnect /);
+  });
+
+  it('Team sync no longer hosts the sign-in; token entry lives only under Advanced on the GitHub page', () => {
+    expect(topic).not.toContain('<GitHubLogin');
+    const adv = topic.indexOf("title={t('github.adv.title')} collapsible");
+    expect(adv).toBeGreaterThan(0);
+    expect(topic.indexOf('<GitHubPatForm')).toBeGreaterThan(adv);
+    expect(topic.indexOf('<ProjectTokenRow')).toBeGreaterThan(adv);
+  });
+
+  it('every reconnect string names Settings → GitHub in English and Ayarlar → GitHub in Turkish, no em dash', () => {
+    const tr = i18n.slice(i18n.indexOf('const TR_PARTIAL'));
+    const en = i18n.slice(0, i18n.indexOf('const TR_PARTIAL'));
+    expect(en).toContain("'github.where': 'Settings → GitHub',");
+    expect(tr).toContain("'github.where': 'Ayarlar → GitHub',");
+    for (const k of ['shell.sw.teamsync.needsLogin', 'shell.sw.mirror.noLogin']) {
+      expect(en.split('\n').find((l) => l.includes(`'${k}':`)), k).toContain('Settings → GitHub');
+      expect(tr.split('\n').find((l) => l.includes(`'${k}':`)), k).toContain('Ayarlar → GitHub');
+    }
+    for (const l of i18n.split('\n').filter((x) => x.includes("'github."))) expect(l).not.toContain('—');
+  });
+
+  it('no default sign-in copy recommends a fine-grained token', () => {
+    for (const k of ['brain.auth.scopeDisclosure', 'brain.auth.pat.hint', 'brain.auth.oauthUnavailable']) {
+      const line = i18n.split('\n').find((l) => l.includes(`'${k}':`)) ?? '';
+      expect(line, k).not.toMatch(/fine-grained/i);
+    }
   });
 });

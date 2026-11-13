@@ -244,7 +244,10 @@ describe('sleep done / sleep start in a scratch project', () => {
     await runSleep(['done', 'Consolidated']);
 
     expect(sync).toHaveBeenCalledTimes(1);
-    expect(out()).toContain('Bad credentials');
+    // github-baglanti D7: ONE line that names the one place to fix it, not the raw error.
+    expect(out()).not.toContain('Bad credentials');
+    expect(out()).toContain('Settings → GitHub → Reconnect');
+    expect(out()).not.toMatch(/Renew the task backend token|dreamcontext config github-token/);
     expect(out()).toContain('3 change(s) to 2 task(s) queued since 2026-08-03');
     expect(out()).not.toContain('retrying once');
     expect(readTaskQueueDepth(ctx)).toEqual({ ops: 3, tasks: 2, oldest: '2026-08-03' });

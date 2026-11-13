@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
-import { useAuthStatus } from '../../hooks/useBrainStatus';
 import { useConfig, useUpdateConfig } from '../../hooks/useConfig';
 import { SearchableSelect } from '../tasks/SearchableSelect';
 import { useInstantSave, SaveMark } from './useInstantSave';
@@ -74,7 +73,6 @@ export function CloudTaskSync({ provider, embedded = false }: { provider: Provid
   const queryClient = useQueryClient();
   const { data: config } = useConfig();
   const updateConfig = useUpdateConfig();
-  const { data: auth } = useAuthStatus();
 
   const backend = config?.taskBackend ?? 'local';
   const active = backend === provider;
@@ -265,10 +263,9 @@ export function CloudTaskSync({ provider, embedded = false }: { provider: Provid
     ? t('settings.tasksync.github.label')
     : t('settings.tasksync.clickup.label');
 
-  // The Team sync login is the last token tier (secrets.ts): its own row would ask for a
-  // second copy of the same thing.
-  const loginSuppliesToken = embedded && provider === 'github' && !!auth?.connected
-    && (!providerTokenStatus?.set || providerTokenStatus.source === 'global');
+  // New layout: GitHub Issues uses the one GitHub sign-in (Settings → GitHub); a token for
+  // this project lives under that page's Advanced section, never asked for here (plan D6).
+  const loginSuppliesToken = embedded && provider === 'github';
 
   const provisionButton = (
     <button className="btn btn--secondary" onClick={() => void handleProvisionPreview()} disabled={provisioning || testing}>

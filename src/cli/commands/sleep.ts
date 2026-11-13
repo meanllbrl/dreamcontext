@@ -2,6 +2,7 @@ import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
+import { resolveGitHubCredential } from '../../lib/git-sync/auth-store.js';
 import { homedir } from 'node:os';
 import { listApps } from '../../lib/apps/registry.js';
 import { countFindings } from '../../lib/apps/learn-queue.js';
@@ -35,7 +36,6 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import { withSleepStateLock } from '../../lib/sleep-state-lock.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
-import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { classifySyncError } from '../../lib/git-sync/failure.js';
 import { resolveBrainSyncToken, resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
@@ -208,6 +208,13 @@ function freshDefaults(): SleepState {
  * Read sleep state from disk. Returns defaults if file is missing or malformed.
  * Exported for use by snapshot and hook.
  */
+
+/** Which GitHub credential task sync uses now (after any heal): the one GitHub refused. */
+function refusedGitHubSource(contextRoot: string, backend: string): 'project' | 'global' | 'env' | null {
+  if (backend !== 'github') return null;
+  try { return resolveGitHubCredential({ projectRoot: dirname(contextRoot), purpose: 'tasks' })?.source ?? null; } catch { return null; }
+}
+
 export function readSleepState(root: string): SleepState {
   const filePath = getSleepPath(root);
   if (!existsSync(filePath)) {
@@ -1404,8 +1411,9 @@ export function registerSleepCommand(program: Command): void {
             bar.done();
           }
           if (taskSyncAuthFailed) {
-            for (const e of report.errors.slice(0, 3)) warn(`  ${e}`);
-            warn(renderStaleRemoteLine(readTaskQueueDepth(root)));
+            // GitHub: ONE line that names the one place to fix it (D7); others keep the detail.
+            if (backend.name !== 'github') for (const e of report.errors.slice(0, 3)) warn(`  ${e}`);
+            warn(renderStaleRemoteLine(readTaskQueueDepth(root), backend.name, refusedGitHubSource(root, backend.name)));
           } else {
             if (report.conflicts.length > 0) {
               warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
@@ -1439,10 +1447,13 @@ export function registerSleepCommand(program: Command): void {
         // contract, but visible: a swallowed failure is what hid the last bug.
         // A thrown refusal stopped the whole sync, so it IS a refused token.
         const message = (err as Error).message ?? String(err);
-        warn(`Task sync: skipped — ${message}`);
+        const backendName = readSetupConfig(dirname(root))?.taskBackend ?? 'local';
         if (isSyncAuthFailure(message)) {
           taskSyncAuthFailed = true;
-          warn(renderStaleRemoteLine(readTaskQueueDepth(root)));
+          if (backendName !== 'github') warn(`Task sync: skipped — ${message}`);
+          warn(renderStaleRemoteLine(readTaskQueueDepth(root), backendName, refusedGitHubSource(root, backendName)));
+        } else {
+          warn(`Task sync: skipped — ${message}`);
         }
       }
       timer.lap('task-sync');
@@ -1456,9 +1467,6 @@ export function registerSleepCommand(program: Command): void {
         const cfg = readSetupConfig(dirname(root));
         if (cfg?.brainRepo?.autoSync) {
           const result = await runBrainSync({ cwd: root, mode: 'auto' });
-          // autoSync is a real git op — keep the global sign-in flag honest so a
-          // clean post-sleep sync clears any stale desktop "reconnect" banner.
-          reconcileBrainSyncSuccess(result.action);
           renderBrainSyncResult(result);
           if (result.action === 'awaiting-agent' || result.action === 'already-awaiting-agent') {
             warn('Brain sync paused on a team merge — run /dream-sync to reconcile (it will resume or continue as needed).');
@@ -1480,7 +1488,6 @@ export function registerSleepCommand(program: Command): void {
         }
       } catch (err) {
         const projectRoot = dirname(root);
-        reconcileBrainSyncFailure((err as Error).message ?? String(err), projectRoot);
         warn(`Brain sync: skipped — ${(err as Error).message ?? err}`);
         // Tier-aware hint: a stale per-project token shadowing the signed-in
         // account is the usual cause of a persistent auth/permission failure.

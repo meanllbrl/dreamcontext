@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { readFileSync, existsSync } from 'node:fs';
 import { updateSetupConfig, readBrainLocal, writeBrainLocal } from '../../src/lib/setup-config.js';
 import { writeConflictReport, readConflictReport } from '../../src/lib/git-sync/conflict-report.js';
-import { acquireBrainLock, releaseBrainLock, isDemotedProjectToken, FALLBACK_AUTHOR } from '../../src/lib/git-sync/brain-repo.js';
+import { acquireBrainLock, releaseBrainLock, FALLBACK_AUTHOR } from '../../src/lib/git-sync/brain-repo.js';
+import { isProjectTokenDemoted, tokenFingerprint, type GitHubCredential } from '../../src/lib/git-sync/auth-store.js';
+const isDemotedProjectToken = (root: string, token: string): boolean => isProjectTokenDemoted(root, token, 'brain');
 import { writeGitHubToken, writeClickUpToken, type ResolvedToken } from '../../src/lib/task-backend/secrets.js';
 import * as git from '../../src/lib/git-sync/git.js';
 import { runBrainSync as runBrainSyncReal, inStepWithRemote, type SyncEngineDeps } from '../../src/lib/git-sync/sync-engine.js';
@@ -149,7 +151,9 @@ describe('git-sync/sync-engine — runBrainSync', () => {
       scrubStagedFiles: () => [],
       scrubCommitRange: () => [],
       resolveConflicts: () => resolution,
-      resolveBrainSyncToken: () => ({ token: 'fake-token', source: 'secrets', via: 'token' }),
+      resolveBrainSyncToken: () => ({ token: 'fake-token', source: 'project', via: 'token', fingerprint: 'f' }),
+      readGlobalGitHubCredential: () => null,
+      reportGitHubAuthOutcome: () => {},
       withGitCredentials: (async (_token: string, fn: (env: NodeJS.ProcessEnv) => unknown) => fn({} as NodeJS.ProcessEnv)) as SyncEngineDeps['withGitCredentials'],
       acquireBrainLock: () => true,
       releaseBrainLock: () => {},
@@ -1097,15 +1101,17 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
     } as typeof git;
   }
 
-  function healDeps(state: FakeState, opts: { global: ResolvedToken | null; badTokens: string[]; throwMessage: string }): Partial<SyncEngineDeps> {
+  function healDeps(state: FakeState, opts: { global: GitHubCredential | null; badTokens: string[]; throwMessage: string }): Partial<SyncEngineDeps> {
     return {
       git: tokenAwareGit(state, opts.badTokens, opts.throwMessage),
       scrubStagedFiles: () => [],
       scrubCommitRange: () => [],
       resolveConflicts: () => ({ resolved: [], deferredToAgent: [], deferredToHuman: [] }),
       // Per-project token WINS resolution (the shadowing slot) — the real bug.
-      resolveBrainSyncToken: () => ({ token: STALE, source: 'secrets', via: 'token' }),
-      readGlobalGitHubToken: () => opts.global,
+      resolveBrainSyncToken: () => ({ token: STALE, source: 'project', via: 'token', fingerprint: tokenFingerprint(STALE) }),
+      readGlobalGitHubCredential: () => opts.global,
+      // Never the real ~/.dreamcontext: the flag writer is a no-op here.
+      reportGitHubAuthOutcome: () => {},
       // Use the REAL demoteProjectGitHubToken (from defaultDeps) so the on-disk
       // self-heal is exercised for real against the temp brain-local file.
       withGitCredentials: withCreds,
@@ -1124,12 +1130,12 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
     expect(readSecrets().github.token).toBe(STALE);
 
     const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
-    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'remote: Permission to acme-co/acme-brain.git denied to a-user.' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'global', via: 'sign-in', fingerprint: tokenFingerprint(FRESH) }, badTokens: [STALE], throwMessage: 'remote: Permission to acme-co/acme-brain.git denied to a-user.' });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps);
 
     expect(result.action).toBe('pushed');
     expect(result.healedStaleProjectToken).toBe(true);
-    expect(result.note).toMatch(/switched to your signed-in GitHub account/i);
+    expect(result.note).toMatch(/uses your GitHub sign-in/i);
     // Askpass hygiene: neither token value ever appears in the surfaced note.
     expect(result.note).not.toContain(STALE);
     expect(result.note).not.toContain(FRESH);
@@ -1150,7 +1156,7 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
   it('retry ALSO fails (global rejected too) → surfaces the ORIGINAL failure and does NOT remove the project token', async () => {
     writeGitHubToken(projectRoot, STALE);
     const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
-    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE, FRESH], throwMessage: 'remote: Permission to acme-co/acme-brain.git denied.' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'global', via: 'sign-in', fingerprint: tokenFingerprint(FRESH) }, badTokens: [STALE, FRESH], throwMessage: 'remote: Permission to acme-co/acme-brain.git denied.' });
 
     await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps)).rejects.toThrow(/denied/);
     // Stale token NOT removed — the recovery never succeeded.
@@ -1169,7 +1175,7 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
   it('a NON-auth failure (network) never triggers the fallback and never touches the secrets file', async () => {
     writeGitHubToken(projectRoot, STALE);
     const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
-    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'fatal: unable to access: Could not resolve host: github.com' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'global', via: 'sign-in', fingerprint: tokenFingerprint(FRESH) }, badTokens: [STALE], throwMessage: 'fatal: unable to access: Could not resolve host: github.com' });
 
     await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps)).rejects.toThrow(/resolve host/);
     expect(readSecrets().github?.token).toBe(STALE);
@@ -1178,7 +1184,7 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
   it('pull-only path also self-heals a stale per-project token on the fetch', async () => {
     writeGitHubToken(projectRoot, STALE);
     const state = makeState({ aheadCount: 1, shaSequence: ['before', 'after'], branch: 'main' });
-    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'fatal: Authentication failed' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'global', via: 'sign-in', fingerprint: tokenFingerprint(FRESH) }, badTokens: [STALE], throwMessage: 'fatal: Authentication failed' });
 
     const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true }, deps);
     expect(result.action).toBe('pulled');

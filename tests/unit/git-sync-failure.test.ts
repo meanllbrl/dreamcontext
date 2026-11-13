@@ -19,13 +19,15 @@ describe('git-sync/failure — classifySyncError', () => {
     const f = classifySyncError("fatal: Authentication failed for 'https://github.com/acme/brain.git/'");
     expect(f.kind).toBe('auth');
     expect(f.recovery).toBe('reconnect-github');
-    expect(f.message).toMatch(/reconnect github/i);
+    // github-baglanti D5: the one place to fix it, by name.
+    expect(f.message).toMatch(/Settings → GitHub → Reconnect/);
   });
 
-  it('terminal prompts disabled (no usable credential) → auth', () => {
+  it('terminal prompts disabled (askpass did not run) → helper, never "sign-in expired"', () => {
     const f = classifySyncError('fatal: could not read Username for https://github.com: terminal prompts disabled');
-    expect(f.kind).toBe('auth');
-    expect(f.recovery).toBe('reconnect-github');
+    expect(f.kind).toBe('helper');
+    expect(f.recovery).toBe('retry');
+    expect(f.message).not.toMatch(/expired|sign-in is invalid/i);
   });
 
   it('no token configured → no-token (NOT auth), and never says "expired"', () => {
@@ -36,7 +38,7 @@ describe('git-sync/failure — classifySyncError', () => {
     expect(f.kind).toBe('no-token');
     expect(f.recovery).toBe('reconnect-github');
     expect(f.message).not.toMatch(/expired|invalid/i);
-    expect(f.message).toMatch(/connect github/i);
+    expect(f.message).toMatch(/sign in with github in Settings → GitHub/i);
   });
 
   it('offline / DNS failure → network + wait-online, and says nothing was lost', () => {
@@ -82,10 +84,10 @@ describe('git-sync/failure — classifySyncError', () => {
       const f = classifySyncError("fatal: Authentication failed for 'https://github.com/o/r.git'", undefined, { perProjectToken: true });
       expect(f.kind).toBe('auth');
       expect(f.recovery).toBe('reconnect-github');
-      expect(f.message).toMatch(/its own github token/i);
-      expect(f.message).toMatch(/stale/i);
-      // Still carries the base copy — the tier note is APPENDED, not a replacement.
-      expect(f.message).toMatch(/expired or is invalid/i);
+      // Names the real cause (the project's own token) and the one place to fix it.
+      expect(f.message).toMatch(/this project's own token/i);
+      expect(f.message).toMatch(/Settings → GitHub/);
+      expect(f.message).not.toMatch(/token, then|paste|config github-token/i);
     });
 
     it('a PERMISSION failure with a per-project token also appends the tier note', () => {

@@ -1,3 +1,5 @@
+import { reportGitHubAuthOutcome } from '../../lib/git-sync/auth-store.js';
+import { githubErrorPayload } from '../../lib/git-sync/failure.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, realpathSync, renameSync } from 'node:fs';
@@ -593,17 +595,28 @@ export async function handleLauncherGithubRepos(
   if (!desktopGate(res)) return;
   const token = resolveLauncherGitHubToken();
   if (!token) {
-    sendError(res, 401, 'no_token', 'Sign in with GitHub to browse your repositories.');
+    sendJson(res, 401, { error: 'no_token', ...githubErrorPayload('no_token') });
     return;
   }
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const query = url.searchParams.get('q') ?? '';
   try {
     const repos = await listGitHubRepos({ token: token.token, query });
+    reportGitHubAuthOutcome({ source: token.source, fingerprint: token.fingerprint, kind: 'ok' });
     sendJson(res, 200, { repos });
   } catch (err) {
     if (err instanceof ApiError && err.kind === 'auth') {
-      sendError(res, 401, 'bad_token', 'GitHub rejected the stored sign-in. Reconnect your account.');
+      // C3: the sign-in's 401 raises the one reconnect flag; C5: one click fixes it.
+      reportGitHubAuthOutcome({ source: token.source, fingerprint: token.fingerprint, kind: 'auth' });
+      const gh = githubErrorPayload('auth', token.source);
+      sendJson(res, 401, { error: 'bad_token', ...gh });
+      return;
+    }
+    // A 403 is never the sign-in's fault: an SSO org, an org's OAuth-app approval, no access,
+    // or a rate limit. It names its real cause and raises no reconnect flag (criterion 5).
+    if (err instanceof ApiError && (err.kind === 'forbidden' || err.kind === 'rate_limited')) {
+      const gh = githubErrorPayload(err.kind, token.source, err.message);
+      sendJson(res, err.kind === 'rate_limited' ? 429 : 403, { error: err.kind, ...gh });
       return;
     }
     console.error('[launcher] github repos failed:', err);

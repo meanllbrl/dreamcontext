@@ -22,6 +22,7 @@ import { appLogoPath, clearAppLogo, LogoError, MAX_LOGO_BYTES, setAppLogo } from
 import { readCappedBody } from './automations.js';
 import { listVaults } from '../../lib/vaults.js';
 import { HostError, resolveAppHost } from '../../lib/apps/share/host.js';
+import { githubErrorPayload } from '../../lib/git-sync/failure.js';
 import { publishApp, PublishError, RESHARE_OK } from '../../lib/apps/share/publish.js';
 import { mintPublishGrant } from '../../lib/apps/share/publish-grant.js';
 import { takeAppGrant, type AppAction, type TakeResult } from '../../lib/apps/share/app-grant.js';
@@ -99,7 +100,18 @@ function realRoot(p: string): string {
 function sendFailure(res: ServerResponse, e: unknown): void {
   if (e instanceof PublishError) { sendJson(res, e.code === 'gate_blocked' ? 422 : 409, { error: e.code, message: e.message, ...(e.report ? { report: e.report } : {}) }); return; }
   if (e instanceof InstallError) { sendJson(res, 409, { error: e.code, message: e.message, ...(e.report ? { report: e.report } : {}) }); return; }
-  if (e instanceof HostError) { sendError(res, e.code === 'not_signed_in' ? 401 : e.code === 'rate_limited' ? 429 : 409, e.code, e.message); return; }
+  if (e instanceof HostError) {
+    // C5: a GitHub sign-in problem carries its kind and whether one Reconnect click fixes it.
+    const gh = e.code === 'github_auth' ? githubErrorPayload('auth', 'global')
+      : e.code === 'not_signed_in' ? githubErrorPayload('no_token')
+      : e.code === 'no_access' ? githubErrorPayload('forbidden', 'global', e.message)
+      : e.code === 'rate_limited' ? githubErrorPayload('rate_limited')
+      : null;
+    sendJson(res, e.code === 'not_signed_in' || e.code === 'github_auth' ? 401 : e.code === 'rate_limited' ? 429 : 409, {
+      error: e.code, message: e.message, ...(gh ? { github: gh } : {}),
+    });
+    return;
+  }
   if (e instanceof ConfigError || e instanceof SecretWriteError) { sendError(res, 400, (e as { code: string }).code, e.message); return; }
   if (e instanceof LogoError) { sendError(res, e.code === 'logo_too_large' ? 413 : e.code === 'logo_type' ? 415 : 400, e.code, e.message); return; }
   sendError(res, 500, 'share_failed', (e as Error)?.message ?? String(e));

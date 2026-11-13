@@ -652,6 +652,43 @@
   white-space: nowrap;
 }
 
+.sw-chip-bad,
+.sw-chip-off {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* A state that needs action: the error ink on its subtle fill (never the swatch as text). */
+.sw-chip-bad {
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink, var(--color-error));
+}
+
+/* A standing gap (signed out, managed in the app): neutral, so it never reads as broken. */
+.sw-chip-off {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+/* The GitHub status line on Team sync and Task mirroring. */
+.gh-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.gh-status--bad {
+  color: var(--color-error-ink, var(--color-error));
+}
+
 .sw-btn--danger {
   color: var(--color-error);
   border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));

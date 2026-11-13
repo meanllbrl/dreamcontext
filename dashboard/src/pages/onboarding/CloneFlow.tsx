@@ -11,7 +11,9 @@ import {
   type CloneResult,
   type FolderProbe,
 } from '../../hooks/useLauncher';
-import { useAuthStatus } from '../../hooks/useBrainStatus';
+import { isGitHubReconnectError, useAuthStatus } from '../../hooks/useBrainStatus';
+import { GitHubReconnect } from '../../components/brain/GitHubReconnect';
+import { RequestError } from '../../api/client';
 import { GitHubLogin } from '../../components/brain/GitHubLogin';
 import { openFolderPicker, pickerError } from '../../lib/desktop';
 
@@ -41,6 +43,12 @@ const POLL_MS = 700;
  * the destination is probed first so an existing folder gets "open it" / "use it" /
  * "choose another" instead of a dead-end error, and leaving the flow mid-clone cancels it.
  */
+
+/** A GitHub 403/429 from the repo search: the server's sentence names the real reason (SSO, org approval, no access, rate limit). */
+function githubRefusal(e: unknown): string | null {
+  return e instanceof RequestError && (e.status === 403 || e.status === 429) && (e.code === 'forbidden' || e.code === 'rate_limited') ? e.message : null;
+}
+
 export function CloneFlow({ defaultParent, onBack, onExistingProject, onBareFolder }: Props) {
   const { t } = useI18n();
   const { data: authStatus, isLoading: authLoading } = useAuthStatus();
@@ -233,7 +241,9 @@ export function CloneFlow({ defaultParent, onBack, onExistingProject, onBareFold
               />
               <div className="ob-repo-list" role="listbox" aria-label={t('onboarding.clone.listLabel')}>
                 {repos.isLoading && <p className="ob-hint">{t('onboarding.clone.loading')}</p>}
-                {repos.isError && <p className="ob-hint">{t('onboarding.clone.loadFailed')}</p>}
+                {repos.isError && (isGitHubReconnectError(repos.error) ? (
+                  <p className="ob-hint">{t('github.line.expired')} <GitHubReconnect onDone={() => void repos.refetch()} /></p>
+                ) : <p className="ob-hint">{githubRefusal(repos.error) ?? t('onboarding.clone.loadFailed')}</p>)}
                 {!repos.isLoading && !repos.isError && (repos.data?.repos.length ?? 0) === 0 && (
                   <p className="ob-hint">{t('onboarding.clone.none')}</p>
                 )}

@@ -164,7 +164,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
       setGithubSyncSeen(true);
       writeScopedRaw(vault, GITHUB_SYNC_SEEN_STORAGE_KEY, '1');
     }
-    onNavigate('settings', 'brain');
+    // Signed out or GitHub rejected the sign-in: the GitHub page. Signed in: the sync settings.
+    onNavigate('settings', !signedIn || authStatus?.needsReconnect ? 'github' : 'brain');
   };
 
   const nudgeGithubSync = !githubSyncSeen;
@@ -298,7 +299,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         {!tunnel && <SidebarTeam kind="global" />}
 
         {tunnel ? null : signedIn && hasRemote ? (
-          <BrainSyncControl onOpenSettings={openGithubSync} />
+          <BrainSyncControl onOpenSettings={openGithubSync} onOpenGitHub={() => onNavigate('settings', 'github')} />
         ) : (
           <button
             className={`sidebar-item sidebar-item--brain-sync${nudgeGithubSync ? ' sidebar-item--nudge' : ''}`}

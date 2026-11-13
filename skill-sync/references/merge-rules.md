@@ -84,11 +84,11 @@ The token is NEVER embedded in a remote URL, env, or argv. Every networked git c
 
 ## 5. Token resolution (decision D)
 
-`resolveBrainSyncToken(projectRoot)` — **M1: per-project `.secrets.json` github token → env
-(`GITHUB_TOKEN`/`GH_TOKEN`)**. Secrets-first, env-last — the INTENTIONAL reverse of
-`resolveGitHubToken` (env-first): a stray `GITHUB_TOKEN` in some inherited shell must never
-silently override the account a non-technical collaborator is actually logged in as. (M2 inserts a
-global `~/.dreamcontext/.secrets.json` tier between the two.)
+`resolveBrainSyncToken(projectRoot)` = `resolveGitHubCredential({ projectRoot, purpose: 'brain' })`,
+the ONE resolver every GitHub path shares: this project's own `github.token` (unless demoted for
+brain) → the app's sign-in (`~/.dreamcontext/.secrets.json`) → env (`GITHUB_TOKEN`/`GH_TOKEN`).
+Env last: a stray shell token never overrides the account a collaborator signed in as. A dead or
+forbidden project token heals onto the sign-in and is demoted, never deleted.
 
 ## 6. Scrub gate (decisions — BLOCK vs WARN)
 

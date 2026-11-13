@@ -1,133 +1,239 @@
-import type { ResolvedToken } from '../task-backend/secrets.js';
-import { demoteProjectGitHubToken } from './brain-repo.js';
-import { readGlobalGitHubToken } from './auth-store.js';
+import { ApiAdapter, type ApiAdapterOptions } from '../task-backend/api-adapter.js';
+import {
+  demoteProjectGitHubToken,
+  readGlobalGitHubCredential,
+  reportGitHubAuthOutcome,
+  type GitHubAuthOutcomeKind,
+  type GitHubCredential,
+  type GitHubPurpose,
+} from './auth-store.js';
 import { withGitCredentials } from './credentials.js';
 import { classifySyncError } from './failure.js';
 
 /**
- * Stale-per-project-token self-heal for the brain sync engine.
+ * C2, the ONE dead-credential heal (github-baglanti D2), for git (brain sync) and REST
+ * (the task backend, app share) alike.
  *
- * The bug this closes: `resolveBrainSyncToken` resolves the token per-project
- * (`_dream_context/state/.secrets.json`) → global (`~/.dreamcontext/.secrets.json`)
- * → env. A STALE per-project token (e.g. weeks old, since revoked for the
- * connected repo) keeps WINNING resolution and shadowing the fresh token the
- * user just re-signed-in with (which only ever lands in the GLOBAL tier). Every
- * sync then fails auth/permission forever, and re-signing-in does nothing —
- * misleading and unrecoverable from the UI.
+ * The bug it closes: a per-project `github.token` wins resolution, so once it dies (revoked,
+ * expired) it shadows the working sign-in forever, and every sync fails while Settings is
+ * green. The session holds the current credential; when GitHub rejects a per-project token
+ * that differs from the sign-in, it retries ONCE with the sign-in, swaps the token in place
+ * for the rest of the run and demotes the project token:
+ *  - `auth` (401): dead for every purpose (`all`);
+ *  - `forbidden` (a 403 that is not a rate limit): demoted for THIS purpose only, since a
+ *    repo-scoped PAT may still serve the task backend;
+ *  - `rate_limited`: never a retry on another token, never a demotion.
+ * The demotion is written only once the retry with the sign-in worked; if it failed too,
+ * nothing is demoted and the run keeps its own token. Nothing is ever deleted. Every outcome of the sign-in (the retry's included) goes to the
+ * one flag writer (C3) as `('global', …)`; other tokens' outcomes say nothing about it.
  *
- * The fix: wrap every credentialed git NETWORK op in a `BrainSyncTokenSession`.
- * When an op fails AND the failure classifies as `auth`/`permission` AND the
- * ACTIVE token came from the per-project tier AND a DIFFERING global token
- * exists, retry that ONE op once with the global token. On success: switch the
- * whole run to the global token and SELF-HEAL by DEMOTING the per-project
- * `github.token` (a machine-local hash marker — see `demoteProjectGitHubToken`),
- * NEVER deleting it: the same token is often the task backend's credential (a
- * PAT scoped to the tasks repo, not the origin), and deleting it forced users to
- * re-enter their API key after every sync. On failure (global also rejected):
- * surface the ORIGINAL error, demote nothing. Exactly one fallback attempt per
- * run — never loops.
- *
- * Token hygiene is preserved end-to-end: values only ever flow through
- * `withGitCredentials` (askpass tmp file) or a one-way hash, never into any
- * message/note/error.
+ * Token hygiene: values flow only through `withGitCredentials` (askpass) or the request
+ * header the caller builds; never into a message, note or error.
  */
 
-/** True when the token was resolved from the per-project secrets tier (the shadowing slot). */
-export function isPerProjectToken(t: ResolvedToken | null | undefined): boolean {
-  // Global also has `source: 'secrets'` — the `via: 'global'` sentinel is what
-  // distinguishes it. Per-project is the default `token` slot or a `users.<slug>` slot.
-  return !!t && t.source === 'secrets' && t.via !== 'global';
+/** The kinds the heal decides on. */
+export type GitHubRejectKind = 'auth' | 'forbidden' | 'rate_limited' | 'other';
+
+/** True when the credential is this project's own token (the slot that can shadow the sign-in). */
+export function isPerProjectToken(t: { source: string } | null | undefined): boolean {
+  return !!t && t.source === 'project';
 }
 
-/** Injectable deps — mirror the sync-engine's fakes so tests need no real git/network/fs. */
-export interface TokenFallbackDeps {
+/** git-sync's classification, in the session's terms. */
+export function classifyGitReject(err: unknown): GitHubRejectKind {
+  const kind = classifySyncError((err as Error)?.message ?? String(err)).kind;
+  if (kind === 'auth') return 'auth';
+  if (kind === 'permission') return 'forbidden';
+  if (kind === 'rate_limited') return 'rate_limited';
+  return 'other';
+}
+
+/** The longest a GitHub rate-limit 403 makes one request wait before its retry. */
+const GITHUB_RATE_LIMIT_WAIT_CAP_MS = 60_000;
+
+/**
+ * C4: GitHub answers rate limits with a 403 too. A 403 with `x-ratelimit-remaining: 0`,
+ * `retry-after`, or a body naming a (secondary) rate limit / abuse detection is a wait,
+ * never a dead credential; any other 403 is `forbidden` (SSO, an org's OAuth-app policy,
+ * no access) and carries GitHub's own reason.
+ */
+export function classifyGitHubReject(
+  status: number,
+  headers: Headers,
+  body: string,
+): { kind: 'auth' | 'forbidden' | 'rate_limited'; retryAfterMs?: number | null } | null {
+  if (status === 401) return { kind: 'auth' };
+  if (status !== 403) return null;
+  const remaining = headers.get('x-ratelimit-remaining');
+  const retryAfter = Number(headers.get('retry-after'));
+  if (remaining === '0' || (Number.isFinite(retryAfter) && retryAfter > 0) || /rate limit|abuse detection/i.test(body)) {
+    let wait: number | null = null;
+    if (Number.isFinite(retryAfter) && retryAfter > 0) wait = retryAfter * 1000;
+    else {
+      const reset = Number(headers.get('x-ratelimit-reset'));
+      if (Number.isFinite(reset) && reset > 0) wait = Math.max(1000, reset * 1000 - Date.now());
+    }
+    return { kind: 'rate_limited', retryAfterMs: wait === null ? null : Math.min(wait, GITHUB_RATE_LIMIT_WAIT_CAP_MS) };
+  }
+  if (/bad credentials/i.test(body)) return { kind: 'auth' };
+  return { kind: 'forbidden' };
+}
+
+/**
+ * The ONE way to build a GitHub REST client: api.github.com with `classifyGitHubReject`, so a
+ * 403 is never read as a dead sign-in (an SSO org or a rate limit is `forbidden` /
+ * `rate_limited`, only a 401 or "bad credentials" is `auth`). Every GitHub caller uses this;
+ * a hand-built adapter would map every 403 to `auth` and raise the reconnect flag for nothing.
+ */
+export function githubApiAdapter(opts: Omit<ApiAdapterOptions, 'baseUrl' | 'classifyReject'>): ApiAdapter {
+  return new ApiAdapter({ ...opts, baseUrl: GITHUB_API_BASE_URL, classifyReject: classifyGitHubReject });
+}
+
+export const GITHUB_API_BASE_URL = 'https://api.github.com';
+
+/** Injectable deps so tests need no real git, network or fs. */
+export interface GitHubAuthSessionDeps {
   withGitCredentials: typeof withGitCredentials;
-  readGlobalGitHubToken: typeof readGlobalGitHubToken;
+  readGlobalGitHubCredential: () => GitHubCredential | null;
   demoteProjectGitHubToken: typeof demoteProjectGitHubToken;
+  reportGitHubAuthOutcome: (o: { source: GitHubCredential['source']; fingerprint: string; kind: GitHubAuthOutcomeKind }) => void;
 }
 
-const defaultTokenFallbackDeps: TokenFallbackDeps = {
+const defaultDeps: GitHubAuthSessionDeps = {
   withGitCredentials,
-  readGlobalGitHubToken,
+  readGlobalGitHubCredential: () => readGlobalGitHubCredential(),
   demoteProjectGitHubToken,
+  reportGitHubAuthOutcome: (o) => reportGitHubAuthOutcome(o),
 };
 
-export class BrainSyncTokenSession {
-  /** The token every op currently runs with — swaps to global after a successful heal. */
-  private active: ResolvedToken;
-  /** The single fallback attempt is consumed on first use, success OR failure — never loop. */
+export class GitHubAuthSession {
+  private active: GitHubCredential;
+  /** The one fallback attempt is consumed on first use, success or failure: never a loop. */
   private fallbackConsumed = false;
   private healed = false;
+  /** Fingerprints whose success was already reported (one write per token per run). */
+  private reportedOk = new Set<string>();
+  /** Set once the current credential got a 401 nothing could heal: the run should stop. */
+  private deadReject: GitHubRejectKind | null = null;
+  /** The swap waiting for its retry: demoted only once the sign-in actually worked. */
+  private pending: { failed: GitHubCredential; scope: GitHubPurpose | 'all' } | null = null;
+  private readonly deps: GitHubAuthSessionDeps;
 
   constructor(
-    initial: ResolvedToken,
-    private readonly projectRoot: string,
-    private readonly deps: TokenFallbackDeps = defaultTokenFallbackDeps,
+    initial: GitHubCredential,
+    private readonly purpose: GitHubPurpose,
+    private readonly projectRoot: string | undefined,
+    deps: Partial<GitHubAuthSessionDeps> = {},
   ) {
     this.active = initial;
+    this.deps = { ...defaultDeps, ...deps };
   }
 
-  /** True once the stale per-project token was replaced by the global one AND demoted (kept on disk). */
+  /** True once a dead/forbidden project token was replaced by a WORKING sign-in (and demoted, kept on disk). */
   get healedStaleProjectToken(): boolean {
     return this.healed;
   }
 
-  /** The token the session is currently authenticating with. */
-  get activeToken(): ResolvedToken {
+  /** The credential every request currently uses: read it per request, it swaps after a heal. */
+  get current(): GitHubCredential {
     return this.active;
   }
 
-  /**
-   * Run one credentialed git network op. Transparently falls back to the global
-   * token + self-heals on a per-project auth/permission failure (see module doc).
-   */
-  async run<T>(fn: (env: NodeJS.ProcessEnv) => Promise<T> | T): Promise<T> {
-    try {
-      return await this.deps.withGitCredentials(this.active.token, fn);
-    } catch (err) {
-      const global = this.fallbackCandidate(err);
-      if (!global) throw err;
+  /** The token the session is currently authenticating with (a value for headers/askpass only). */
+  get token(): string {
+    return this.active.token;
+  }
 
-      // Consume the one attempt up-front so a throw inside the retry can never
-      // re-enter the fallback on a later op (single attempt per run, no loop).
-      this.fallbackConsumed = true;
-      let result: T;
-      try {
-        result = await this.deps.withGitCredentials(global.token, fn);
-      } catch {
-        // Global token ALSO rejected — surface the ORIGINAL failure, heal nothing.
-        throw err;
-      }
+  /** True after a 401 that no fallback could heal: further requests with this token are pointless. */
+  get authDead(): boolean {
+    return this.deadReject === 'auth';
+  }
 
-      // Retry succeeded: the per-project token was the stale culprit for THIS
-      // origin. Switch the rest of the run to the global token and demote the
-      // project token (machine-local hash marker) — never delete it: it may be
-      // the task backend's own credential.
-      const stale = this.active;
-      this.active = global;
+  /** Report a success of the current credential (once per token). */
+  noteSuccess(): void {
+    if (this.pending) {
+      // The retry with the sign-in worked: the project token was the culprit. Demote it
+      // (machine-local hash marker), never delete it: it may be another purpose's credential.
+      const { failed, scope } = this.pending;
+      this.pending = null;
       this.healed = true;
       try {
-        this.deps.demoteProjectGitHubToken(this.projectRoot, stale.token);
+        if (this.projectRoot) this.deps.demoteProjectGitHubToken(this.projectRoot, failed.token, scope);
       } catch {
-        // Best-effort: an unwritable state dir must never turn a recovered sync
-        // into a failure. Worst case the token is demoted on a later run.
+        // An unwritable state dir never turns a recovered run into a failure.
       }
-      return result;
     }
+    const c = this.active;
+    if (this.reportedOk.has(c.fingerprint)) return;
+    this.reportedOk.add(c.fingerprint);
+    this.deps.reportGitHubAuthOutcome({ source: c.source, fingerprint: c.fingerprint, kind: 'ok' });
   }
 
   /**
-   * Whether a failed op qualifies for the one-shot global fallback, returning the
-   * global token to retry with (or null when it does not qualify). Guards, in order:
-   * fallback not already used → active token is per-project → failure is auth/permission
-   * → a global token exists whose VALUE differs from the (stale) per-project one.
+   * A request with the current credential was rejected. Returns true when the caller should
+   * retry it once (the session switched to the sign-in); false = surface the error.
    */
-  private fallbackCandidate(err: unknown): ResolvedToken | null {
+  handleReject(kind: GitHubRejectKind): boolean {
+    const failed = this.active;
+    const global = this.fallbackCandidate(kind);
+    if (!global) {
+      this.deps.reportGitHubAuthOutcome({ source: failed.source, fingerprint: failed.fingerprint, kind });
+      if (kind === 'auth') this.deadReject = 'auth';
+      return false;
+    }
+    this.fallbackConsumed = true;
+    this.active = global;
+    this.pending = { failed, scope: kind === 'auth' ? 'all' : this.purpose };
+    return true;
+  }
+
+  /**
+   * The retry after {@link handleReject} also failed: report the sign-in's own outcome
+   * (a 401 on the retry raises the flag) and mark the run dead on a 401.
+   */
+  handleRetryReject(kind: GitHubRejectKind): void {
+    const c = this.active;
+    this.deps.reportGitHubAuthOutcome({ source: c.source, fingerprint: c.fingerprint, kind });
+    // The sign-in failed too: nothing is demoted and the run goes on with what it had.
+    if (this.pending) {
+      this.active = this.pending.failed;
+      this.pending = null;
+    }
+    if (kind === 'auth') this.deadReject = 'auth';
+  }
+
+  /**
+   * Run one credentialed git network op through askpass, with the heal. On a retry that
+   * also fails, the ORIGINAL error surfaces and nothing more is demoted.
+   */
+  async run<T>(fn: (env: NodeJS.ProcessEnv) => Promise<T> | T): Promise<T> {
+    let result: T;
+    try {
+      result = await this.deps.withGitCredentials(this.active.token, fn);
+    } catch (err) {
+      if (!this.handleReject(classifyGitReject(err))) throw err;
+      // `handleReject` swapped to the sign-in; the demotion waits for this retry to work.
+      try {
+        result = await this.deps.withGitCredentials(this.active.token, fn);
+      } catch (retryErr) {
+        this.handleRetryReject(classifyGitReject(retryErr));
+        throw err;
+      }
+    }
+    this.noteSuccess();
+    return result;
+  }
+
+  /**
+   * Guards, in order: the one attempt not used → the failing token is the project's own →
+   * the reject is `auth` or `forbidden` (never `rate_limited`) → a sign-in exists whose value
+   * differs.
+   */
+  private fallbackCandidate(kind: GitHubRejectKind): GitHubCredential | null {
     if (this.fallbackConsumed) return null;
     if (!isPerProjectToken(this.active)) return null;
-    const kind = classifySyncError((err as Error)?.message ?? String(err)).kind;
-    if (kind !== 'auth' && kind !== 'permission') return null;
-    const global = this.deps.readGlobalGitHubToken();
+    if (kind !== 'auth' && kind !== 'forbidden') return null;
+    const global = this.deps.readGlobalGitHubCredential();
     if (!global || global.token === this.active.token) return null;
     return global;
   }

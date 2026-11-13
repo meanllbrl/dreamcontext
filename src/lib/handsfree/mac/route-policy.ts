@@ -177,6 +177,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/brain/auth/device/poll': deny(SIGN_IN),
   'GET /api/brain/auth/status': agnostic('read: the signed-in GitHub login name, never the token; side-effect free'),
   'POST /api/brain/auth/token': deny(SECRET),
+  'POST /api/brain/auth/project-token': deny(SECRET),
+  'DELETE /api/brain/auth/project-token': deny(SECRET),
   'POST /api/brain/auth/logout': deny(SIGN_IN),
   'GET /api/brain/team/updates': filtered('read: brain-sync counters per project, narrowed to the chosen projects on a phone; side-effect free'),
   'POST /api/brain/team/fetch': deny(BRAIN_WRITE, 'cross:deny'),

@@ -131,7 +131,7 @@ describe('git-sync/brain-repo — resolveBrainSyncToken tiering (per-project →
     process.env.GITHUB_TOKEN = 'ghp_env';
     const t = resolveBrainSyncToken(projectRoot);
     expect(t?.token).toBe('ghp_perproject');
-    expect(t?.source).toBe('secrets');
+    expect(t?.source).toBe('project');
     expect(t?.via).toBe('token');
   });
 });

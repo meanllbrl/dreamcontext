@@ -1,4 +1,5 @@
 import { ApiAdapter, ApiError } from '../task-backend/api-adapter.js';
+import { githubApiAdapter } from './token-fallback.js';
 import { resolveBrainSyncToken } from './brain-repo.js';
 import * as git from './git.js';
 import { GitSyncError } from './git.js';
@@ -60,11 +61,10 @@ export function canonicalRemote(url: string): string | null {
 }
 
 function githubAdapter(projectRoot: string, injected?: ApiAdapter): ApiAdapter {
-  return injected ?? new ApiAdapter({
-    baseUrl: 'https://api.github.com',
+  return injected ?? githubApiAdapter({
     authHeaders: () => {
       const t = resolveBrainSyncToken(projectRoot);
-      if (!t) throw new GitSyncError('No GitHub token found (sign in with GitHub, or set GITHUB_TOKEN/GH_TOKEN).');
+      if (!t) throw new GitSyncError('No GitHub token found: sign in with GitHub in Settings → GitHub.');
       return { Authorization: `token ${t.token}` };
     },
   });

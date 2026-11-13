@@ -742,7 +742,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             single, three-part setup nobody could follow. */}
         <SettingGroup title={t('settings.github.account.title')}>
           <div className="setting-row">
-            <GitHubLogin />
+            <GitHubLogin tokenOption />
           </div>
         </SettingGroup>
 

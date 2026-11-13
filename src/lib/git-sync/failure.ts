@@ -17,6 +17,10 @@ export type SyncFailureKind =
   | 'no-token'
   /** Authenticated, but the token lacks Contents write on the repo (or a protected branch). */
   | 'permission'
+  /** GitHub is limiting requests: wait, nothing to fix. */
+  | 'rate_limited'
+  /** git could not run the credential helper (askpass): not a sign-in problem. */
+  | 'helper'
   /** Offline / DNS / unreachable host — transient; retry later. */
   | 'network'
   /** Two pushes rejected as non-fast-forward — the remote is still ahead. */
@@ -61,15 +65,15 @@ function extractRepo(message: string, fallbackRepo?: string): string | undefined
   return undefined;
 }
 
+/** The one place a user fixes GitHub (github-baglanti D5). */
+export const RECONNECT_PATH_EN = 'Settings → GitHub → Reconnect';
+
 /** Extra classification context — kept optional so every existing 2-arg call is unchanged. */
 export interface ClassifyOpts {
   /**
-   * The token that produced this failure came from the PER-PROJECT secrets tier
-   * (`_dream_context/state/.secrets.json`), which shadows the signed-in global
-   * account. On an auth/permission failure that stale project token is almost
-   * always the real culprit — so the message names it and points at the real fix
-   * (remove it / re-sign-in) instead of sending the user in circles reconnecting
-   * a global account that was never the one being used.
+   * The token that produced this failure is the project's OWN token, which no fallback
+   * could heal (no sign-in, or the sign-in failed too). The message then names it and the
+   * one place to fix it, instead of "your sign-in expired" about a sign-in never used.
    */
   perProjectToken?: boolean;
 }
@@ -91,8 +95,9 @@ export function classifySyncError(rawMessage: string, repoHint?: string, opts?: 
     return {
       ...failure,
       message:
-        `${failure.message} Note: this project has its own GitHub token that overrides your ` +
-        `signed-in account — it appears stale. Remove the project token (or re-sign-in) so sync uses your account.`,
+        failure.kind === 'auth'
+          ? `GitHub refused this project's own token and no working sign-in could take over. Sign in with GitHub in ${RECONNECT_PATH_EN.replace(' → Reconnect', '')}.`
+          : `${failure.message} This project uses its own GitHub token; you can remove it under ${RECONNECT_PATH_EN.replace(' → Reconnect', '')} → Advanced.`,
     };
   }
   return failure;
@@ -113,13 +118,34 @@ function classifyBase(rawMessage: string, repoHint?: string): SyncFailure {
     };
   }
 
+  // Rate limit: GitHub is slowing requests down (a 403 or 429 carrying a limit). Wait.
+  if (/rate limit|secondary rate|abuse detection|\b429\b/i.test(m)) {
+    return {
+      kind: 'rate_limited',
+      recovery: 'retry',
+      repo,
+      message: 'GitHub is limiting requests right now. Sync retries on its own in a few minutes; nothing was lost.',
+    };
+  }
+
   // Permission: authenticated but the token can't write Contents (or the branch is protected).
   if (/Contents\b.*write|permission to .* denied|protected branch|not authorized|remote: Permission|must have push access|403\b/i.test(m)) {
     return {
       kind: 'permission',
       recovery: 'check-permissions',
       repo,
-      message: `Your GitHub token can't write to${named || ' this repo'}. Give it Contents (read & write) access${repo ? ` on ${repo}` : ''}, then retry.`,
+      message: `GitHub refused write access (Contents read & write) to${named || ' this repo'}. Ask the repo's owner for access, then retry.`,
+    };
+  }
+
+  // The credential helper (askpass) did not run: git fell back to prompting, which is off.
+  // This is a local problem, never "your sign-in expired".
+  if (/could not read Username|could not read Password|terminal prompts disabled|askpass/i.test(m)) {
+    return {
+      kind: 'helper',
+      recovery: 'retry',
+      repo,
+      message: 'dreamcontext could not hand your GitHub sign-in to git on this Mac. Retry; if it repeats, restart the app.',
     };
   }
 
@@ -132,18 +158,18 @@ function classifyBase(rawMessage: string, repoHint?: string): SyncFailure {
       kind: 'no-token',
       recovery: 'reconnect-github',
       repo,
-      message: 'Cloud sync needs a GitHub account. Connect GitHub to start syncing.',
+      message: 'Cloud sync needs a GitHub account. Sign in with GitHub in Settings → GitHub.',
     };
   }
 
   // Auth: a real git op authenticated and GitHub REJECTED the credential
   // (expired/revoked/invalid). This is the only path that should say "sign-in expired".
-  if (/authentication failed|could not read Username|bad credentials|invalid credentials|401\b|terminal prompts disabled|Support for password authentication/i.test(m)) {
+  if (/authentication failed|bad credentials|invalid credentials|401\b|Support for password authentication/i.test(m)) {
     return {
       kind: 'auth',
       recovery: 'reconnect-github',
       repo,
-      message: 'Your GitHub sign-in expired or is invalid. Reconnect GitHub to keep syncing.',
+      message: `GitHub no longer accepts your sign-in. Reconnect in ${RECONNECT_PATH_EN}.`,
     };
   }
 
@@ -173,4 +199,57 @@ function classifyBase(rawMessage: string, repoHint?: string): SyncFailure {
     repo,
     message: rawMessage.trim() || 'Sync failed. Retry, or check your connection and GitHub access.',
   };
+}
+
+// ─── C5: the GitHub error every dashboard surface reads ─────────────────────
+
+export type GitHubErrorKind = 'auth' | 'forbidden' | 'rate_limited' | 'helper' | 'no_token' | 'desktop_only';
+
+/**
+ * One shape for every GitHub failure the dashboard shows (launcher, app share, brain sync,
+ * task sync, auth status): the kind, whether ONE click on "Reconnect" fixes it, and a
+ * sentence. `reconnect` is true only when the app's sign-in is the credential at fault
+ * (a 401 on it) or there is none at all; a project's own token, a 403, a rate limit or a
+ * local helper problem is never fixed by signing in again.
+ */
+export interface GitHubErrorPayload {
+  kind: GitHubErrorKind;
+  reconnect: boolean;
+  message: string;
+  detail?: string;
+}
+
+const GITHUB_ERROR_MESSAGES: Record<GitHubErrorKind, string> = {
+  auth: `GitHub no longer accepts your sign-in. Reconnect in ${RECONNECT_PATH_EN}.`,
+  forbidden: 'GitHub accepted your sign-in but refused this request.',
+  rate_limited: 'GitHub is limiting requests right now. Wait a few minutes, then try again.',
+  helper: 'dreamcontext could not hand your GitHub sign-in to git on this Mac. Retry; if it repeats, restart the app.',
+  no_token: 'Sign in with GitHub in Settings → GitHub.',
+  desktop_only: 'GitHub is managed in the dreamcontext app.',
+};
+
+export function githubErrorPayload(
+  kind: GitHubErrorKind,
+  source?: 'project' | 'global' | 'env' | null,
+  detail?: string,
+): GitHubErrorPayload {
+  const reconnect = (kind === 'auth' && (source === 'global' || source == null)) || kind === 'no_token';
+  const message = kind === 'forbidden' ? githubForbiddenReason(detail) : GITHUB_ERROR_MESSAGES[kind];
+  return { kind, reconnect, message, ...(detail ? { detail: detail.slice(0, 300) } : {}) };
+}
+
+/**
+ * A 403 in plain words, from GitHub's own reason in the response body: the org's SSO, the
+ * org's OAuth-app approval, or plain no access. Never "sign in again": none of these is fixed
+ * by reconnecting.
+ */
+export function githubForbiddenReason(detail?: string): string {
+  const d = detail ?? '';
+  if (/SAML|single sign-on|\bSSO\b/i.test(d)) {
+    return 'GitHub refused: this organization requires single sign-on. Authorize your GitHub sign-in (or token) for the organization on GitHub, then try again.';
+  }
+  if (/OAuth App access restrictions|third-party application access|OAuth App.*restrict/i.test(d)) {
+    return "GitHub refused: this organization has not approved the dreamcontext app. An owner of the organization approves it once on GitHub.";
+  }
+  return "GitHub refused: your account has no access to this repository or organization.";
 }

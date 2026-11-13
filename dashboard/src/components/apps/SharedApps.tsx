@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../../context/VaultContext';
 import { AppIcon } from './AppIcon';
 import { errText, useShareT } from './Sheet';
+import { GitHubReconnect } from '../brain/GitHubReconnect';
 
 // ─── Shared Apps ────────────────────────────────────────────────────────────────────
 
@@ -19,8 +20,10 @@ export interface InstalledLook { slug: string; name: string; icon: string | null
  * shared with this account. The button says the state: Get, Open, or Update. A row opens the app's
  * page: the install page for one not here yet, its own page for one installed.
  */
-export function SharedApps({ list, err, loading, installedLook, onRefresh, onInstall, onOpen, onAccepted }: {
+export function SharedApps({ list, err, reconnect = false, loading, installedLook, onRefresh, onInstall, onOpen, onAccepted }: {
   list: SharedList | null; err: string | null; loading: boolean;
+  /** The list failed because GitHub rejected the sign-in: one click signs in again (plan D4). */
+  reconnect?: boolean;
   installedLook: (slug: string) => InstalledLook | null;
   onRefresh: () => void; onInstall: (fullName: string) => void; onOpen: (slug: string) => void; onAccepted: () => void;
 }) {
@@ -39,6 +42,9 @@ export function SharedApps({ list, err, loading, installedLook, onRefresh, onIns
       {loading && !list && <p className="apps-page__muted">{t('share.checking')}</p>}
       {(err || acceptErr) && <p className="app-card__note app-card__note--bad">{err ?? acceptErr}</p>}
       {list && !list.signedIn && <p className="apps-page__muted">{t('share.shared.signIn')}</p>}
+      {((list && !list.signedIn) || reconnect) && (
+        <GitHubReconnect connect={!!list && !list.signedIn} className="app-tile__btn app-tile__btn--primary" onDone={onRefresh} />
+      )}
       {list?.problem && <p className="app-card__note app-card__note--warn">{list.problem}</p>}
       {list && list.invitations.length > 0 && (
         <section className="apps-shelf" aria-labelledby="apps-inv-h">

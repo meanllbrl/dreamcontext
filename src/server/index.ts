@@ -299,6 +299,7 @@ import {
   handleBrainAuthStatus,
   handleBrainAuthToken,
   handleBrainAuthLogout,
+  handleBrainAuthProjectToken,
 } from './routes/brain-auth.js';
 import {
   handleBrainStatus,
@@ -506,6 +507,8 @@ export function buildRouter(): Router {
   router.get('/api/brain/auth/status', handleBrainAuthStatus);
   router.post('/api/brain/auth/token', handleBrainAuthToken);
   router.post('/api/brain/auth/logout', handleBrainAuthLogout);
+  router.post('/api/brain/auth/project-token', handleBrainAuthProjectToken);
+  router.delete('/api/brain/auth/project-token', handleBrainAuthProjectToken);
   router.get('/api/brain/team/updates', handleBrainTeamUpdates);
   router.post('/api/brain/team/fetch', handleBrainTeamFetch);
   router.get('/api/brain/status', handleBrainStatus);

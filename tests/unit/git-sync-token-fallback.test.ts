@@ -1,10 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import type { ResolvedToken } from '../../src/lib/task-backend/secrets.js';
 import {
-  BrainSyncTokenSession,
+  GitHubAuthSession,
   isPerProjectToken,
-  type TokenFallbackDeps,
+  type GitHubAuthSessionDeps,
 } from '../../src/lib/git-sync/token-fallback.js';
+import type { GitHubCredential } from '../../src/lib/git-sync/auth-store.js';
+
+type TokenFallbackDeps = GitHubAuthSessionDeps;
+type ResolvedToken = GitHubCredential;
+/** The brain-sync session, as it was built before github-baglanti (same contract). */
+class BrainSyncTokenSession extends GitHubAuthSession {
+  constructor(initial: GitHubCredential, root: string, deps: Partial<GitHubAuthSessionDeps>) { super(initial, 'brain', root, deps); }
+  get activeToken(): GitHubCredential { return this.current; }
+}
 
 /**
  * Unit tests for the stale-per-project-token self-heal session. Fully injected:
@@ -13,9 +21,9 @@ import {
  * op" can succeed/fail per token WITHOUT any real git/network/fs.
  */
 
-const PROJECT = { token: 'stale-project-token', source: 'secrets', via: 'token' } as ResolvedToken;
-const GLOBAL = { token: 'fresh-global-token', source: 'secrets', via: 'global' } as ResolvedToken;
-const ENV_TOKEN = { token: 'env-token', source: 'env', via: 'GITHUB_TOKEN' } as ResolvedToken;
+const PROJECT: ResolvedToken = { token: 'stale-project-token', source: 'project', via: 'token', fingerprint: 'p' };
+const GLOBAL: ResolvedToken = { token: 'fresh-global-token', source: 'global', via: 'sign-in', fingerprint: 'g' };
+const ENV_TOKEN: ResolvedToken = { token: 'env-token', source: 'env', via: 'GITHUB_TOKEN', fingerprint: 'e' };
 
 /** A `withGitCredentials` fake that exposes the active token to the op via env. */
 const withCreds: TokenFallbackDeps['withGitCredentials'] = async (token, fn) => fn({ DC_TOKEN: token });
@@ -31,8 +39,9 @@ function harness(opts: HarnessOpts) {
   const demoted: Array<[string, string]> = [];
   const deps: TokenFallbackDeps = {
     withGitCredentials: withCreds,
-    readGlobalGitHubToken: () => opts.global ?? null,
+    readGlobalGitHubCredential: () => opts.global ?? null,
     demoteProjectGitHubToken: (root: string, token: string) => { demoted.push([root, token]); },
+    reportGitHubAuthOutcome: () => {},
   };
   let opCalls = 0;
   const tokensSeen: string[] = [];
@@ -55,7 +64,7 @@ function harness(opts: HarnessOpts) {
 describe('git-sync/token-fallback — isPerProjectToken', () => {
   it('is true for the per-project default + user slots, false for global/env/null', () => {
     expect(isPerProjectToken(PROJECT)).toBe(true);
-    expect(isPerProjectToken({ token: 't', source: 'secrets', via: 'users.alice' })).toBe(true);
+    expect(isPerProjectToken({ source: 'project' })).toBe(true);
     expect(isPerProjectToken(GLOBAL)).toBe(false);
     expect(isPerProjectToken(ENV_TOKEN)).toBe(false);
     expect(isPerProjectToken(null)).toBe(false);
@@ -79,7 +88,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     const r = await s.run(h.op);
     expect(r).toBe('ok:fresh-global-token'); // retried with the global token
     expect(s.healedStaleProjectToken).toBe(true);
-    expect(s.activeToken.via).toBe('global'); // whole run continues on global now
+    expect(s.activeToken.source).toBe('global'); // whole run continues on global now
     expect(h.demoted).toEqual([['/proj', 'stale-project-token']]); // stale token demoted, never deleted
     // The failing per-project op, then the successful global retry.
     expect(h.tokensSeen).toEqual(['stale-project-token', 'fresh-global-token']);
@@ -122,7 +131,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
   });
 
   it('global token identical to the per-project one → no retry (reconnecting cannot help)', async () => {
-    const h = harness({ global: { token: 'stale-project-token', source: 'secrets', via: 'global' }, badTokens: ['stale-project-token'] });
+    const h = harness({ global: { token: 'stale-project-token', source: 'global', via: 'sign-in', fingerprint: 'p' }, badTokens: ['stale-project-token'] });
     const s = new BrainSyncTokenSession(PROJECT, '/proj', h.deps);
     await expect(s.run(h.op)).rejects.toThrow();
     expect(h.tokensSeen).toEqual(['stale-project-token']);

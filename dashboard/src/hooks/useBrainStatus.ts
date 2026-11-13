@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { RequestError } from '../api/client';
 
 /**
  * Thin react-query layer over the M2 brain cloud-sync endpoints
@@ -34,7 +35,7 @@ export interface BrainStatus {
 
 /** A classified sync failure with a concrete recovery affordance (never a generic "sync failed"). */
 export interface SyncFailure {
-  kind: 'auth' | 'no-token' | 'permission' | 'network' | 'push-rejected' | 'unknown';
+  kind: 'auth' | 'no-token' | 'permission' | 'network' | 'push-rejected' | 'helper' | 'rate_limited' | 'unknown';
   recovery: 'reconnect-github' | 'check-permissions' | 'wait-online' | 'retry' | 'manual';
   message: string;
   repo?: string;
@@ -65,6 +66,17 @@ export interface AuthStatus {
    * to the personal-access-token path.
    */
   oauthConfigured?: boolean;
+  /**
+   * The OPEN project's own GitHub token, if it has one: `active` = it overrides the sign-in
+   * for this project, `demoted` = GitHub rejected it and the sign-in took over.
+   */
+  projectToken?: 'none' | 'active' | 'demoted';
+  /**
+   * The open project's GitHub task queue (null when its tasks do not mirror to GitHub): changes
+   * waiting to sync, how many tasks, since when, and whether the post-sign-in drain gave up
+   * waiting on a sync that is still running.
+   */
+  taskQueue?: { ops: number; tasks: number; oldest: string | null; stuck: boolean } | null;
 }
 
 export interface ScrubBlock {
@@ -131,6 +143,14 @@ const BRAIN_KEYS = {
   authStatus: ['brain-auth-status'] as const,
   teamUpdates: ['brain-team-updates'] as const,
 };
+
+/** After a sign-in: every surface that showed the old GitHub state reads it again. */
+export function invalidateAfterSignIn(queryClient: ReturnType<typeof useQueryClient>): void {
+  invalidateBrain(queryClient);
+  for (const key of ['launcher-github-repos', 'tasks-sync-status', 'tasks-token-status', 'apps-shared']) {
+    queryClient.invalidateQueries({ queryKey: [key] });
+  }
+}
 
 function invalidateBrain(queryClient: ReturnType<typeof useQueryClient>): void {
   queryClient.invalidateQueries({ queryKey: BRAIN_KEYS.status });
@@ -263,12 +283,55 @@ export function useDetachOrigin() {
 
 // ─── GitHub sign-in (app-global — device flow + PAT fallback) ────────────────
 
+/** The auth routes answer 403 `desktop_only` in a browser-served dashboard. */
+export function isDesktopOnlyError(e: unknown): boolean {
+  return e instanceof RequestError && e.status === 403 && e.code === 'desktop_only';
+}
+
+/**
+ * A GitHub failure one Reconnect fixes (C5 `reconnect: true`): the sign-in was rejected or is
+ * missing. The routes send it as a 401 with one of these slugs (launcher, app share).
+ */
+export function isGitHubReconnectError(e: unknown): boolean {
+  return e instanceof RequestError && e.status === 401
+    && ['bad_token', 'no_token', 'github_auth', 'not_signed_in'].includes(e.code);
+}
+
 export function useAuthStatus() {
   const api = useApi();
   return useQuery({
     queryKey: BRAIN_KEYS.authStatus,
     queryFn: () => api.get<AuthStatus>('/brain/auth/status'),
+    // A browser-served dashboard gets 403 desktop_only on every try: asking again changes nothing.
+    retry: (n, e) => !isDesktopOnlyError(e) && n < 3,
   });
+}
+
+/** The one GitHub state every surface shows: one source, so no two places disagree. */
+export type GitHubAccessState = 'loading' | 'connected' | 'expired' | 'signedOut' | 'desktopOnly';
+
+export function useGitHubAccess(): { state: GitHubAccessState; auth: AuthStatus | undefined } {
+  const { data, isLoading, error } = useAuthStatus();
+  if (isDesktopOnlyError(error)) return { state: 'desktopOnly', auth: undefined };
+  if (isLoading) return { state: 'loading', auth: undefined };
+  if (!data?.connected) return { state: 'signedOut', auth: data };
+  return { state: data.needsReconnect ? 'expired' : 'connected', auth: data };
+}
+
+/** Write or remove the OPEN project's own GitHub token (C6). Never echoes the token. */
+export function useProjectGitHubToken() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  const done = () => queryClient.invalidateQueries({ queryKey: BRAIN_KEYS.authStatus });
+  const save = useMutation({
+    mutationFn: (token: string) => api.post<{ projectToken: 'active'; login: string }>('/brain/auth/project-token', { token }),
+    onSuccess: done,
+  });
+  const remove = useMutation({
+    mutationFn: () => api.del<{ projectToken: 'none' }>('/brain/auth/project-token'),
+    onSuccess: done,
+  });
+  return { save, remove };
 }
 
 export function useDeviceStart() {
@@ -291,7 +354,7 @@ export function useSubmitPatToken() {
   const api = useApi();
   return useMutation({
     mutationFn: (token: string) => api.post<AuthStatus>('/brain/auth/token', { token }),
-    onSuccess: (data) => queryClient.setQueryData(BRAIN_KEYS.authStatus, data),
+    onSuccess: (data) => { queryClient.setQueryData(BRAIN_KEYS.authStatus, data); invalidateAfterSignIn(queryClient); },
   });
 }
 
