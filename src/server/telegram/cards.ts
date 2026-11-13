@@ -41,6 +41,9 @@ export interface CardContext {
   /** `render_card` for an insight container → PNG slices, or null (text). */
   renderInsight?: (containerId: string) => Promise<Buffer[] | null>;
   isGitIgnored?: ClassifyOptions['isGitIgnored'];
+  /** Media-only roots outside the project (`media-roots.ts` `superMediaRoots`): a picture the
+   *  Super shows from a child's worktree, a linked repo or the temp folder. */
+  mediaRoots?: readonly string[];
   /** A project HTML page → PDF bytes or null (text). Defaults to headless Chromium. */
   renderPdf?: PagePdfRenderer;
 }
@@ -61,10 +64,10 @@ export function cardTitle(c: Pick<SuperContainer, 'kind' | 'ref' | 'title'>): st
 }
 
 /** A project-relative or absolute path read through H; the project root and nothing else. */
-export function readProjectFile(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored'>, ref: string, maxBytes = 20 * 1024 * 1024): { ok: true; file: UploadFile; ext: string; rel: string } | { ok: false; reason: OutboundRefusal } {
+export function readProjectFile(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored' | 'mediaRoots'>, ref: string, maxBytes = 20 * 1024 * 1024): { ok: true; file: UploadFile; ext: string; rel: string } | { ok: false; reason: OutboundRefusal } {
   const projectRoot = dirname(ctx.contextRoot);
   const abs = isAbsolute(ref) ? ref : resolve(projectRoot, ref);
-  const r = readOutbound(abs, { roots: [projectRoot], projectRoot, maxBytes, ...(ctx.isGitIgnored ? { isGitIgnored: ctx.isGitIgnored } : {}) });
+  const r = readOutbound(abs, { roots: [projectRoot], projectRoot, maxBytes, ...(ctx.mediaRoots ? { mediaRoots: ctx.mediaRoots } : {}), ...(ctx.isGitIgnored ? { isGitIgnored: ctx.isGitIgnored } : {}) });
   if (!r.ok) return { ok: false, reason: r.reason };
   const ext = extname(r.file.name).toLowerCase();
   return { ok: true, file: { name: r.file.name, data: r.file.data, contentType: CONTENT_TYPE[ext] ?? 'application/octet-stream' }, ext, rel: r.file.rel };
@@ -84,7 +87,7 @@ const IMAGE_MIME: Record<string, string> = {
  * them. A file that cannot be read stays as written; the print layer draws it as a named
  * placeholder (`page-pdf.ts`), never a broken icon.
  */
-export function pageWithOwnAssets(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored'>, html: string, rel: string): string {
+export function pageWithOwnAssets(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored' | 'mediaRoots'>, html: string, rel: string): string {
   const { images, styles } = findLocalAssets(html, rel);
   if (!images.length && !styles.length) return html;
   let budget = MAX_TOTAL_BYTES;

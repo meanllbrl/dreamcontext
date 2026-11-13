@@ -35,6 +35,7 @@ import { caption as pictureCaption, fitsTelegram, pngFile, sendMedia, sendPictur
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
+import { superMediaRoots } from './media-roots.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
 type Obj = Record<string, unknown>;
@@ -132,10 +133,11 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const s = await readSuperState(ab.contextRoot).catch(() => null);
     const show = s?.askShows?.find((x) => x.item === itemId);
     const items: MediaItem[] = [];
+    let roots: string[] | undefined;
     for (const id of show?.cards ?? []) {
       const c = s!.containers.find((k) => k.id === id);
       if (!c || items.length >= 10) continue;
-      const out = await cardOut({ contextRoot: ab.contextRoot, sessionId, pictures: true, snapshot: deps.snapshot }, c);
+      const out = await cardOut({ contextRoot: ab.contextRoot, sessionId, pictures: true, snapshot: deps.snapshot, mediaRoots: roots ??= await superMediaRoots(ab.contextRoot) }, c);
       if (out.kind === 'media') {
         items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
         // A page printed to PDF (or a PDF card) goes as its document; a refused send is its line.

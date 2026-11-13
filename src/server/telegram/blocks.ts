@@ -1,11 +1,12 @@
 /**
  * Every surface block of a Super answer has a Telegram form (plan M5, N4, S1, T1-T3).
  *
+ * The text's own pictures (`![name](path)`) go first, right after it (`sendTextPictures`).
  * The text itself goes through `format.ts` with `blocks: 'hub'` (those fences left out); this
  * module sends, after it, in order:
  *  - `dream-html` → a picture built by the server from the transcript bytes (chat kit, sandboxed
- *    frame, network-less), when pictures are allowed (a live Telegram turn or streaming, and no
- *    secret card pending); a redactor hit, no window or no picture → "Bu kart Mac'te: <başlık>";
+ *    frame, network-less), when pictures are allowed (the text landed on Telegram and no secret
+ *    card is pending); a redactor hit, no window or no picture → "Bu kart Mac'te: <başlık>";
  *  - `dream-actions` → never JSON: `url` → a link button `🔗 <host> · <label>` (no system label,
  *    https only, no local or tunnel host); `ask` → "▸ <label>: «text»" and a button that needs a
  *    second confirm tap before its text goes as an owner turn; `task`/`knowledge`/`core` → their
@@ -15,22 +16,30 @@
  *    `learned` → the rule's own receipt line (`learn`'s line 2) with a "Geri al" button for an
  *    active rule (learning loop C9); keeping or dropping a proposed one stays on the Mac.
  */
-import { escapeHtml, fenceTitle } from '../../lib/telegram/format.js';
+import { escapeHtml, fenceTitle, imageName, markdownImages } from '../../lib/telegram/format.js';
 import { dreamHtmlPage, fenceBlocks } from '../../lib/telegram/render.js';
 import { agentUrlButton, cleanTitle } from '../../lib/telegram/urls.js';
 import { neutraliseHeaders } from '../../lib/telegram/inbound.js';
-import { pngFile, sendPictures, type Snapshotter } from './pictures.js';
+import { pngFile, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { NOT_SENT, cardWhy, notSentLine, readProjectFile, type CardContext } from './cards.js';
+import { superMediaRoots } from './media-roots.js';
 import { secretPending } from './present.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { RULE_ID_RE, undoRule } from '../../lib/rules-store.js';
 import { ownerLine } from '../../cli/commands/learn.js';
 import { locateRule } from '../routes/learned.js';
 
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
+const VIDEO_FILE = /\.(mp4|m4v|mov|webm)$/i;
+
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null);
 
 export interface BlocksDeps {
   snapshot: Snapshotter;
+  /** Injectable for tests; defaults to `superMediaRoots`. */
+  mediaRoots?: (contextRoot: string) => Promise<string[]>;
+  isGitIgnored?: CardContext['isGitIgnored'];
   tunnelHost?: () => string | null;
   lang?: (ab: ActiveBinding) => string | undefined;
 }
@@ -108,9 +117,50 @@ export async function onLearnedButton(ab: ActiveBinding, data: Obj, home?: strin
   }
 }
 
+export const MAX_TEXT_PICTURES = 10;
+
+/**
+ * The text's own pictures (`![alt](path)`), right after it: each read through H with the
+ * Super's media roots (a child's worktree, a linked repo, the temp folder: media only), sent as
+ * one photo or album with "N · name" captions; every picture that does not go is one line
+ * saying which and why (owner 2026-11-13: never a silent drop). Web pictures stay links in the
+ * text. Returns how many went.
+ */
+export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text: string, pictures: boolean, deps: Pick<BlocksDeps, 'mediaRoots' | 'isGitIgnored'> = {}): Promise<number> {
+  const local = markdownImages(text).filter((i) => !i.web);
+  if (!local.length || !ab.contextRoot) return 0;
+  const seen = new Set<string>();
+  const wanted = local.filter((i) => (seen.has(i.src) ? false : (seen.add(i.src), true)));
+  const lines: string[] = [];
+  const items: MediaItem[] = [];
+  const roots = pictures ? await (deps.mediaRoots ?? superMediaRoots)(ab.contextRoot) : [];
+  for (const img of wanted) {
+    const name = cleanTitle(imageName(img), 80);
+    if (!pictures) { lines.push(notSentLine('Resim: ', name, NOT_SENT.secret)); continue; }
+    if (items.length >= MAX_TEXT_PICTURES) { lines.push(notSentLine('Resim: ', name, `bir mesajda en çok ${MAX_TEXT_PICTURES} resim gider, Mac'te açık`)); continue; }
+    const f = readProjectFile({ contextRoot: ab.contextRoot, mediaRoots: roots, ...(deps.isGitIgnored ? { isGitIgnored: deps.isGitIgnored } : {}) }, img.src);
+    if (!f.ok) { lines.push(notSentLine('Resim: ', name, cardWhy(f.reason))); continue; }
+    const kind = IMAGE_FILE.test(f.file.name) ? 'photo' : VIDEO_FILE.test(f.file.name) ? 'video' : null;
+    if (!kind) { lines.push(notSentLine('Resim: ', name, NOT_SENT.format)); continue; }
+    items.push({ kind, file: f.file, title: name });
+  }
+  let sent = 0;
+  if (items.length) {
+    const r = await sendPictures(ab, items, { heading: (n) => (n === 1 ? 'Resim:' : `${n} resim:`) });
+    sent = r.sent.length;
+    for (const m of r.unsent) lines.push(notSentLine('Resim: ', m.title, NOT_SENT.refused));
+  }
+  if (lines.length) await hub.send(ab, lines.map((l) => `📎 <i>${escapeHtml(l)}</i>`).join('\n')).catch(() => {});
+  return sent;
+}
+
 /** The answer's blocks, sent after its text. */
 export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text: string, sessionId: string, deps: BlocksDeps): Promise<void> {
-  const pictures = !!(hub.telegramTurnOf(sessionId) || hub.deps.handsfree?.streamsTo(ab.scope, ab.target)) && !secretPending(sessionId);
+  // Called only after this text landed on Telegram (hub.onAssistantText): its pictures go with
+  // it, whatever made the text go (a Telegram turn, a routable Telegram ref, the owner on
+  // Telegram, streaming). None while a secret card is pending (L3).
+  const pictures = !secretPending(sessionId);
+  await sendTextPictures(hub, ab, text, pictures, deps).catch(() => 0);
   for (const b of fenceBlocks(text)) {
     if (b.lang === 'dream-html') {
       const title = cleanTitle(fenceTitle('dream-html', b.body));
