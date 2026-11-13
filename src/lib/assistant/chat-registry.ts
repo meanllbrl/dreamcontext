@@ -36,7 +36,7 @@
 
 import { outwardAction } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
-import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalWait, refusalWaitId, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
 import type { OpenRequest, RequestResponse } from '../super/request-answer.js';
@@ -866,10 +866,18 @@ export function registerChat(init: {
       // second checklist submit) closes nothing and is still delivered.
       if (receipt) {
         const hit = (e.ownerWaits ?? []).filter((w) => w.kind === receipt.kind && w.id === receipt.id);
-        if (hit.length) answerWaits(e, hit);
-        else if (!e.ownerAnswered?.includes(`${receipt.kind}:${receipt.id}`)) {
+        // His run of the card is the refused call done by him: the refusal of that same command
+        // closes with it (owner-wait.ts `refusalsSettledByRun`, run-kart-altta).
+        const settled = receipt.kind === 'run' ? refusalsSettledByRun(text, e.ownerWaits ?? []) : [];
+        if (hit.length || settled.length) answerWaits(e, [...hit, ...settled]);
+        const notHeld = [
+          ...(hit.length ? [] : [`${receipt.kind}:${receipt.id}`]),
+          // Not held here yet (a woken child): its refusal of the same shell command, by its id.
+          ...(receipt.kind === 'run' && !settled.length && runReceiptCommand(text) ? [`refusal:${refusalWaitId('Bash', runReceiptCommand(text))}`] : []),
+        ].filter((k) => !e.ownerAnswered?.includes(k));
+        if (notHeld.length) {
           // Not held here yet (a woken child's wait still lives only in the record): answered.
-          e.ownerAnswered = [...(e.ownerAnswered ?? []), `${receipt.kind}:${receipt.id}`].slice(-MAX_ANSWERED);
+          e.ownerAnswered = [...(e.ownerAnswered ?? []), ...notHeld].slice(-MAX_ANSWERED);
           emitOwner(e);
         }
       }
@@ -881,7 +889,8 @@ export function registerChat(init: {
       else if (!telegramSideSource(opts?.source) && !steered && opts?.closesNothing !== true) {
         // A server-looking turn the window wrote (a run report) closes only its card, never a
         // refusal or a stall: those close when their grant is used or the server says so.
-        if (e.ownerWaits?.length && opts?.server === true) answerWaits(e, answeredBy(text, e.ownerWaits).filter((w) => w.kind !== 'refusal' && w.kind !== 'stalled'));
+        // (Except the refusal of the very command the run report ran: he did that call himself.)
+        if (e.ownerWaits?.length && opts?.server === true) answerWaits(e, [...answeredBy(text, e.ownerWaits).filter((w) => w.kind !== 'refusal' && w.kind !== 'stalled'), ...refusalsSettledByRun(text, e.ownerWaits)]);
         else if (e.ownerWaits?.length) answerWaits(e, answeredBy(text, e.ownerWaits));
         // His words with no wait held here yet: a respawned child's wait still lives only in the
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).
