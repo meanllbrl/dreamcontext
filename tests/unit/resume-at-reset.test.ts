@@ -100,7 +100,7 @@ describe('the route arms it only under Continue, and cancels it', () => {
     expect(route).toMatch(/if \(!choice\.target\) armResumeAtReset\(choice\.earliestResetAt, toolAccountId, accounts\.tool\);/);
   });
   it('an owner turn and the pane ending cancel it', () => {
-    const at = route.indexOf('const writeOwnerTurn = (raw: string): void => {');
+    const at = route.indexOf('const writeOwnerTurn = (raw: string, source: OwnerTurnSource): void => {');
     expect(route.slice(at, at + 1800)).toMatch(/ownerSeq \+= 1;\s*resumeAtReset\.cancel\(\);/);
     expect(route.match(/resumeAtReset\.cancel\(\);\n    stopPing\(\);/g)?.length).toBe(2);
   });

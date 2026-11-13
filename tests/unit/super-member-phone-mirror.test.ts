@@ -104,7 +104,8 @@ describe('the upgrade handler (agent-chat.ts)', () => {
     expect(branch.indexOf('const liveSuper')).toBeLessThan(branch.indexOf('liveSuper.mirror?.('));
     // A mirror frame goes through the holder's own handler: the member Super's `superOwnerSpoke`
     // keyed by its session (origin owner), never a queue item.
-    expect(src).toMatch(/const frame = Buffer\.from\(raw, 'utf-8'\);\s*mirrorFrames\.add\(frame\);\s*onWsMessage\(frame\);/);
+    expect(src).toMatch(/const frame = Buffer\.from\(JSON\.stringify\(json\), 'utf-8'\);\s*mirrorFrames\.add\(frame\);/);
+    expect(src).toMatch(/onWsMessage\(serverBuiltFrame\(json, 'phone-mirror'\)\);/);
     expect(src).toContain('if (isSuper && wrote && !text.startsWith(\'/\')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);');
   });
 });

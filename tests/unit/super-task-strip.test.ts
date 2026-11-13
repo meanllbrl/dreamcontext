@@ -133,8 +133,8 @@ describe('[About task <slug>] rides on the owner\'s message while the strip is u
   });
   it('the chat applies it at the send and at a steer; the stage sets it only on the member\'s chat', () => {
     const chat = src('dashboard/src/components/sleepy/chatSession.ts');
-    expect(chat).toMatch(/return writeUser\(withAbout\(text\), \{ steered: false \}\);/);
-    expect(chat).toMatch(/return writeUser\(withAbout\(text\), \{ steered: true \}\);/);
+    expect(chat).toMatch(/return writeUser\(withAbout\(text\), \{ steered: false, own: own \?\? typedOwnFor\(text\) \}\);/);
+    expect(chat).toMatch(/return writeUser\(withAbout\(text\), \{ steered: true, own: own \?\? typedOwnFor\(text\) \}\);/);
     const surface = src('dashboard/src/components/sleepy/AgentSurface.tsx');
     expect(surface).toMatch(/chatAgentFor\(cs\.claudeId\) !== memberOf\(activeSuperId\)\) return undefined;/);
     expect(surface).toMatch(/cs\.setAboutHeader\?\.\(\(text\) => withAboutTask\(text, memberTaskRef\.current\)\);/);

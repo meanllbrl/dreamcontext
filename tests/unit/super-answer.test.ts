@@ -108,7 +108,7 @@ describe('super answer — questions only, current only', () => {
     ask(reg('c1'), 'req-1');
     const r = await verb('answer', { child: 'c1', requestId: 'req-1', choices: ['postgres'] });
     expect(r.status).toBe(200);
-    expect(commands()).toEqual([expect.objectContaining({ verb: 'answer', args: { child: 'c1', requestId: 'req-1', choices: ['postgres'] } })]);
+    expect(commands()).toEqual([expect.objectContaining({ verb: 'answer', args: { child: 'c1', requestId: 'req-1', choices: ['postgres'], deadline: expect.any(Number) } })]);
     expect((await readSuperState(root)).queue[0].state).toBe('done');
   });
 

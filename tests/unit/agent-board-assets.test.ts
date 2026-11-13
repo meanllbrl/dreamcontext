@@ -411,9 +411,11 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * 2026-11-12 (gece-duzeltme B7, IN-8): the dream-html grammar and dc- kit list (~4,900) moved to the
    * `draw` skill's references/chat-html.md behind a pointer; the prose-first rule stays. Ceiling -> 11000;
    * actual 10,778.
+   * 2026-11-13 (0.41.20 cut, ogrenme-dongusu-w1): his rules, `dreamcontext learn` and its `learned`
+   * receipt card, one paragraph everywhere. Ceiling -> 11500; actual 11,464.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11000);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(11500);
   });
 
   /**
@@ -424,7 +426,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 10778)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11464)).toBeLessThanOrEqual(20);
   });
 
   /**

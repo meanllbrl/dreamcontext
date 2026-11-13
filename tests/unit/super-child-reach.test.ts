@@ -209,7 +209,7 @@ describe('super send to a parked child', () => {
     const sends = frames.filter((f) => f.verb === 'send');
     expect(sends.length).toBeGreaterThanOrEqual(3);
     expect(frames.indexOf(resumes[0])).toBeLessThan(frames.indexOf(sends[0]));
-    expect(sends.at(-1)?.args).toEqual({ tab: B, text: 'pick up where you stopped' });
+    expect(sends.at(-1)?.args).toEqual({ tab: B, text: 'pick up where you stopped', deadline: expect.any(Number) });
   });
 
   it('a woken child whose card cannot open says card: not_opened in the send answer (task super-kart-kaydi)', async () => {
