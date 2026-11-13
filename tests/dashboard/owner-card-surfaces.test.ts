@@ -33,6 +33,8 @@ const { TEMPLATES } = vi.hoisted(() => ({
     'ownerCard.runAgainNote': 'Running again executes the command again.',
     'ownerCard.gone': "This card is no longer in the job's transcript.",
     'ownerCard.mcpLine': 'Connect: {names}',
+    'ownerCard.bar.runWaits': 'A command waits for you to run: {why}',
+    'ownerCard.bar.runWaitsBare': 'A command waits for you to run. Show opens it.',
   } as Record<string, string>,
 }));
 vi.mock('../../dashboard/src/context/I18nContext.js', () => {
@@ -244,6 +246,21 @@ describe('the bar row: the card verb is the primary button (A1-A5)', () => {
     const html = bar(item(long));
     expect(has(html, 'super-queue-card-show')).toBe(true);
     expect(has(html, 'super-queue-card-run')).toBe(false);
+  });
+
+  it('a long command says in plain words what waits on him: its own why line, never a phrase about the row (sahte-needs-you)', () => {
+    // The field case: a merge and deploy the child left for the owner, too long for the row.
+    const why = 'Merges the checkout PR and puts the new prices live. Going live is your call.';
+    const long = { ...RUN, why, command: `cd /w/acme-shop && node scripts/ready.ts /tmp/ids.json && gh pr merge 47 --merge --repo acme/shop ${'--flag value '.repeat(6)}`.trim() };
+    const html = bar(item(long));
+    expect(html).toContain(`A command waits for you to run: ${why}`);
+    expect(html).not.toContain('does not fit');
+    expect(has(html, 'super-queue-card-show')).toBe(true);
+    // No why on the card: still says what it is, and what Show does.
+    const bare = bar(item({ ...long, why: undefined }));
+    expect(bare).toContain('A command waits for you to run. Show opens it.');
+    // A why holding a hidden character is drawn with it visible, never raw.
+    expect(bar(item({ ...long, why: 'ok\u202e evil' }))).toContain('ok\\u{202e} evil');
   });
 
   it('a command with unsafe characters gets Show, never ▶ Run', () => {
