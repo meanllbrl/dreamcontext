@@ -373,9 +373,7 @@ async function main() {
     const missing = normalSig.filter((c) => !superSig.includes(c));
     const extra = superSig.filter((c) => !normalSig.includes(c));
     ok('…the SAME component: its class signature equals the normal agent\'s card\'s', normalSig.length > 0 && missing.length === 0 && extra.length === 0, JSON.stringify({ missing, extra }));
-    const head = page.getByTestId('super-queue-head');
-    ok('the job bar shows the question with ONE Answer button and no option buttons of its own', await until(page, async () => /Ship the login fix/.test(await head.innerText().catch(() => ''))
-      && (await head.getByTestId('super-queue-answer').count()) === 1 && (await page.getByTestId('super-ask-option').count()) === 0, 10000));
+    ok('the job bar asks no question of its own (owner 2026-11-13): no head for it, no option buttons', (await page.getByTestId('super-queue-answer').count()) === 0 && (await page.getByTestId('super-ask-option').count()) === 0);
     await page.screenshot({ path: join(OUT, '06-super-json-card-1440.png') });
 
     console.log('\n── while it is open the awaited job finishes (held, not dropped)');

@@ -228,7 +228,8 @@ async function main() {
     ok('…its note tells it to end the turn, never to wait', /end your turn; never wait/.test(result(asked).note ?? ''), result(asked).note);
     const glance = await (await fetch(`${base}/api/assistant/glance`)).json();
     ok('the notch glance lists it (SuperAsk row with its options)', (glance.chats ?? []).some((c) => c.super && c.ask?.tool === 'SuperAsk' && /Ship the login fix/.test(c.ask.text) && (c.ask.options ?? []).join('|') === 'Ship it|Wait'), JSON.stringify(glance.chats));
-    ok('the job bar draws it at its head with ONE Answer button (the card answers it)', await until(page, async () => /Ship the login fix/.test(await page.getByTestId('super-queue-head').innerText()) && (await page.getByTestId('super-queue-answer').count()) === 1, 15000));
+    // The band asks no question (owner 2026-11-13): the card in the chat is the one place.
+    ok('the job bar draws no question head', await until(page, async () => (await page.getByTestId('super-queue-answer').count()) === 0 && !/Ship the login fix/.test(await page.getByTestId('super-queue-head').innerText().catch(() => '')), 15000));
 
     console.log('\n── the question is IN the super chat, under the turn that asked it');
     const centre = page.locator('[data-super-slot="centre"]');
@@ -236,11 +237,16 @@ async function main() {
     ok('a question card in the super chat, open, with both options', await until(page, async () => (await askCard.count()) === 1
       && (await askCard.getAttribute('data-state')) === 'open'
       && (await askCard.locator('.chat-surveycard-opt-title').allInnerTexts()).map((x) => x.trim()).filter((x) => x !== 'Other').join('|') === 'Ship it|Wait', 15000));
-    ok('…drawn after the asking turn (its Bash row and its prose come before it)', await askCard.evaluate((card) => {
+    const order = await askCard.evaluate((card) => {
       const all = [...card.closest('[data-super-slot="centre"]').querySelectorAll('*')];
       const prose = all.filter((el) => el.children.length === 0 && /Ship the login fix now\?/.test(el.textContent ?? '') && !card.contains(el));
-      return prose.length > 0 && prose.every((el) => el.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING);
-    }));
+      // The ASKING turn's rows come first. Later event turns may re-ask the same words below the
+      // card; only the first occurrence is the asking turn (the old every() raced those).
+      const after = prose.filter((el) => !(el.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING));
+      const first = prose[0];
+      return { ok: !!first && !!(first.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING), prose: prose.length, after: after.map((el) => `${el.tagName}.${el.className} < ${el.parentElement?.className}`) };
+    });
+    ok('…drawn after the asking turn (its Bash row and its prose come before it)', order.ok, JSON.stringify(order));
     ok('the turn is NOT locked: the super\'s turn ended, the composer takes text, no AskUserQuestion card', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'turn-end' && r.said === 'Ship the login fix now?')
       && await centre.locator('.chat-cmp-input').first().isEditable()
       && (await centre.locator('.chat-surveycard').count()) === 1, 15000));
