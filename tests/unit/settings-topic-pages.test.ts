@@ -87,6 +87,18 @@ describe('Assistant', () => {
     expect(assistant).toMatch(/<div data-sw-modal>\s*<AssistantWizard exists=\{false\}/);
   });
 
+  it('the setup outlives its own first step: no state branch of the page draws it', () => {
+    // Step 1 creates the assistant and reloads the page, which flips "none" to the profile. A
+    // wizard drawn inside the "none" branch vanished right as the picture step came up (owner
+    // 2026-11-13: "it closes while I pick the photo").
+    const page = assistant.slice(assistant.indexOf('export function AssistantPage'), assistant.indexOf('/** A save lands on the CURRENT data'));
+    expect(page.match(/<AssistantWizard /g)?.length).toBe(1);
+    const branches = page.slice(page.indexOf("let body: ReactNode"), page.lastIndexOf('return ('));
+    expect(branches).toMatch(/data === 'none'/);
+    expect(branches).not.toMatch(/AssistantWizard|\breturn\b/);
+    expect(page.slice(page.lastIndexOf('return ('))).toMatch(/\{body\}\s*\{wizard && \(\s*<div data-sw-modal>\s*<AssistantWizard /);
+  });
+
   it('read aloud needs the voice key, and the model row is the shared chip', () => {
     expect(assistant).toMatch(/why=\{!voiceKey \? t\('shell\.sw\.voice\.needsKey'\) : undefined\}/);
     expect(assistant).toMatch(/control=\{chip\?\.\('assistant'\)\}/);

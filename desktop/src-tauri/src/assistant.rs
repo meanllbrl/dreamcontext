@@ -752,11 +752,36 @@ fn beat_notch_state<R: Runtime>(app: &AppHandle<R>) {
 // whether or not the panel ever had focus: the global one for clicks in other apps (mouse events
 // need no Accessibility grant, unlike keys), the local one for dreamcontext's own windows. Both
 // only REPORT a click outside the open panel; the webview decides (a popped-out window ignores it).
+//
+// A system window of THIS process is not "outside": a file picker, an alert, a colour panel, a
+// modal of the app's own. Its clicks land beyond the notch's frame, yet the owner is still in the
+// task the notch started, and folding under it closed the notch mid-pick. So nothing is reported
+// while one is up (`Held`), whichever way it was opened: a sheet, `runModal`, a free panel. The
+// webview's own `pickerOpen()` stays as the second guard (the separate-process picker).
+
+/// What else of this process is on screen when a mouse-down comes.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+struct Held {
+    /// An app-modal window is running (`runModal`: a panel or alert with no window to hang from).
+    modal: bool,
+    /// A sheet hangs from one of the app's windows (a file picker, an alert, a confirm).
+    sheet: bool,
+    /// The click landed in a window of this process that is not one of its web views: a system
+    /// panel (open, colour, font, print), a sheet, an alert.
+    in_system_window: bool,
+}
+
+impl Held {
+    fn any(self) -> bool {
+        self.modal || self.sheet || self.in_system_window
+    }
+}
 
 /// True when a mouse-down at `p` (screen coords) should be reported: the panel is on screen,
-/// open (taller than a pill) and `p` is outside its frame.
-fn is_outside_open_panel(visible: bool, frame: objc2_foundation::NSRect, p: objc2_foundation::NSPoint) -> bool {
-    if !visible || frame.size.height < OPEN_MIN_H {
+/// open (taller than a pill), `p` is outside its frame, and no system window of this process
+/// holds the owner's attention.
+fn is_outside_open_panel(visible: bool, frame: objc2_foundation::NSRect, p: objc2_foundation::NSPoint, held: Held) -> bool {
+    if !visible || frame.size.height < OPEN_MIN_H || held.any() {
         return false;
     }
     let inside = p.x >= frame.origin.x
@@ -766,8 +791,26 @@ fn is_outside_open_panel(visible: bool, frame: objc2_foundation::NSRect, p: objc
     !inside
 }
 
+/// What holds the owner right now. `event` is the local monitor's mouse-down (None for a click in
+/// another app, which has no window here). Main thread only.
+fn held_now<R: Runtime>(app: &AppHandle<R>, event: Option<&objc2_app_kit::NSEvent>) -> Held {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    let Some(mtm) = MainThreadMarker::new() else { return Held::default() };
+    let nsapp = NSApplication::sharedApplication(mtm);
+    let in_system_window = event.and_then(|e| e.window(mtm)).is_some_and(|w| {
+        let clicked = objc2::rc::Retained::as_ptr(&w) as *mut std::ffi::c_void;
+        !app.webview_windows().values().any(|v| v.ns_window().is_ok_and(|p| p == clicked))
+    });
+    Held {
+        modal: nsapp.modalWindow().is_some(),
+        sheet: nsapp.windows().iter().any(|w| w.attachedSheet().is_some()),
+        in_system_window,
+    }
+}
+
 /// Main thread only (the monitors call back on it).
-fn report_if_outside<R: Runtime>(app: &AppHandle<R>) {
+fn report_if_outside<R: Runtime>(app: &AppHandle<R>, event: Option<&objc2_app_kit::NSEvent>) {
     use objc2_app_kit::{NSEvent, NSWindow};
     let Some(w) = app.get_webview_window(NOTCH_LABEL) else { return };
     let Ok(ptr) = w.ns_window() else { return };
@@ -776,7 +819,7 @@ fn report_if_outside<R: Runtime>(app: &AppHandle<R>) {
     }
     // SAFETY: the notch's live NSWindow (a tauri-nspanel NSPanel), read on the main thread.
     let win: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
-    if is_outside_open_panel(win.isVisible(), win.frame(), NSEvent::mouseLocation()) {
+    if is_outside_open_panel(win.isVisible(), win.frame(), NSEvent::mouseLocation(), held_now(app, event)) {
         let _ = app.emit_to(NOTCH_LABEL, OUTSIDE_CLICK_EVENT, ());
     }
 }
@@ -789,12 +832,13 @@ fn watch_outside_clicks<R: Runtime>(app: &AppHandle<R>) {
     let mask = NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
 
     let g = app.clone();
-    let global = RcBlock::new(move |_e: NonNull<NSEvent>| report_if_outside(&g));
+    let global = RcBlock::new(move |_e: NonNull<NSEvent>| report_if_outside(&g, None));
     std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &global));
 
     let l = app.clone();
     let local = RcBlock::new(move |e: NonNull<NSEvent>| -> *mut NSEvent {
-        report_if_outside(&l);
+        // SAFETY: AppKit hands the monitor a live event for the duration of the call.
+        report_if_outside(&l, Some(unsafe { e.as_ref() }));
         e.as_ptr() // pass the event on untouched
     });
     // SAFETY: the handler returns the event it was given, so every click is still delivered.
@@ -864,6 +908,34 @@ mod tests {
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
     const OPEN: NSRect = NSRect { origin: NSPoint { x: 610.0, y: 520.0 }, size: NSSize { width: 580.0, height: 560.0 } };
+    const FREE: Held = Held { modal: false, sheet: false, in_system_window: false };
+
+    #[test]
+    fn a_system_window_of_this_app_never_folds_the_notch() {
+        // A click in the file picker's list: far outside the notch's frame, yet not "outside".
+        let far = NSPoint::new(250.0, 100.0);
+        for held in [
+            Held { sheet: true, ..FREE },            // the picker or an alert hung on a window
+            Held { modal: true, ..FREE },            // a `runModal` panel or alert
+            Held { in_system_window: true, ..FREE }, // a free panel (colour, font) or a menu
+        ] {
+            assert!(!is_outside_open_panel(true, OPEN, far, held), "{held:?} must not fold");
+        }
+        // Gone again: a real click into another app folds as before.
+        assert!(is_outside_open_panel(true, OPEN, far, FREE));
+    }
+
+    #[test]
+    fn both_click_monitors_ask_what_is_held_and_nothing_else_reports() {
+        // The guard is on the ONE report, so a new monitor or a second emit cannot slip past it.
+        let src = include_str!("assistant.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert_eq!(code.matches("OUTSIDE_CLICK_EVENT, ()").count(), 1, "one place reports a click outside");
+        assert!(code.contains("NSEvent::mouseLocation(), held_now(app, event))"), "the report asks held_now");
+        assert!(code.contains("report_if_outside(&g, None)"), "the global monitor goes through the report");
+        assert!(code.contains("report_if_outside(&l, Some(unsafe { e.as_ref() }))"), "the local one passes its event");
+        assert_eq!(code.matches("report_if_outside(&").count(), 2, "no third monitor bypasses the event");
+    }
 
     #[test]
     fn notch_state_is_the_shape_the_readers_parse() {
@@ -881,14 +953,14 @@ mod tests {
 
     #[test]
     fn a_click_outside_the_open_panel_is_reported() {
-        assert!(is_outside_open_panel(true, OPEN, NSPoint::new(250.0, 100.0)));
-        assert!(is_outside_open_panel(true, OPEN, NSPoint::new(1191.0, 700.0)));
+        assert!(is_outside_open_panel(true, OPEN, NSPoint::new(250.0, 100.0), FREE));
+        assert!(is_outside_open_panel(true, OPEN, NSPoint::new(1191.0, 700.0), FREE));
     }
 
     #[test]
     fn a_click_inside_the_panel_is_not() {
-        assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(900.0, 800.0)));
-        assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(610.0, 520.0)));
+        assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(900.0, 800.0), FREE));
+        assert!(!is_outside_open_panel(true, OPEN, NSPoint::new(610.0, 520.0), FREE));
     }
 
     #[test]
@@ -903,7 +975,7 @@ mod tests {
     #[test]
     fn a_closed_pill_or_a_hidden_panel_reports_nothing() {
         let pill = NSRect::new(NSPoint::new(659.0, 1042.0), NSSize::new(481.0, 38.0));
-        assert!(!is_outside_open_panel(true, pill, NSPoint::new(250.0, 100.0)));
-        assert!(!is_outside_open_panel(false, OPEN, NSPoint::new(250.0, 100.0)));
+        assert!(!is_outside_open_panel(true, pill, NSPoint::new(250.0, 100.0), FREE));
+        assert!(!is_outside_open_panel(false, OPEN, NSPoint::new(250.0, 100.0), FREE));
     }
 }

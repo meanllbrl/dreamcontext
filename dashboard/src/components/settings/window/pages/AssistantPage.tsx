@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
+import type { ReactNode } from 'react';
 import { isDesktop } from '../../../../lib/desktop';
 import { useI18n } from '../../../../context/I18nContext';
 import {
@@ -54,50 +55,53 @@ export function AssistantPage({ chip, searching }: PageProps) {
   useEffect(() => { void load(); void getVoiceKeySet().then(setVoiceKey, () => setVoiceKey(false)); }, [load]);
 
   const head = <PageHead title={t(pageTitleKey('assistant'))} desc={t(pageDescKey('assistant'))} />;
-  if (data === null) return head;
+  let body: ReactNode = null;
   if (data === 'error') {
-    return (
+    body = (
+      <SettingGroup>
+        <SettingRow
+          id="aerror"
+          title={t('shell.sw.page.assistant')}
+          hint={t('shell.sw.assistant.loadFailed')}
+          why={isDesktop() ? undefined : t('shell.sw.assistant.desktopOnly')}
+          keywords="assistant notch"
+          control={!searching ? <button type="button" className="sw-btn" data-testid="sw-assistant-retry" onClick={() => { setData(null); void load(); }}>{t('settings.agents.load_retry')}</button> : undefined}
+        />
+      </SettingGroup>
+    );
+  } else if (data === 'none') {
+    body = (
+      <SettingGroup>
+        <SettingRow
+          id="asetup"
+          title={t('shell.sw.assistant.none')}
+          hint={t('shell.sw.assistant.none.h')}
+          keywords="assistant notch setup create"
+          control={!searching ? <button type="button" className="sw-btn sw-btn--accent" data-testid="sw-assistant-setup" onClick={() => setWizard(true)}>{t('shell.sw.assistant.setup')}</button> : undefined}
+        />
+      </SettingGroup>
+    );
+  } else if (data !== null) {
+    body = (
       <>
-        {head}
-        <SettingGroup>
-          <SettingRow
-            id="aerror"
-            title={t('shell.sw.page.assistant')}
-            hint={t('shell.sw.assistant.loadFailed')}
-            why={isDesktop() ? undefined : t('shell.sw.assistant.desktopOnly')}
-            keywords="assistant notch"
-            control={!searching ? <button type="button" className="sw-btn" data-testid="sw-assistant-retry" onClick={() => { setData(null); void load(); }}>{t('settings.agents.load_retry')}</button> : undefined}
-          />
-        </SettingGroup>
+        <Profile data={data} rev={rev} onSaved={(fn) => { setData(update(fn)); setRev((n) => n + 1); }} />
+        <HowItWorks data={data} voiceKey={voiceKey} chip={chip} onSaved={(fn) => setData(update(fn))} />
       </>
     );
   }
-  if (data === 'none') {
-    return (
-      <>
-        {head}
-        <SettingGroup>
-          <SettingRow
-            id="asetup"
-            title={t('shell.sw.assistant.none')}
-            hint={t('shell.sw.assistant.none.h')}
-            keywords="assistant notch setup create"
-            control={!searching ? <button type="button" className="sw-btn sw-btn--accent" data-testid="sw-assistant-setup" onClick={() => setWizard(true)}>{t('shell.sw.assistant.setup')}</button> : undefined}
-          />
-        </SettingGroup>
-        {wizard && (
-          <div data-sw-modal>
-            <AssistantWizard exists={false} onClose={() => { setWizard(false); void load(); }} onChanged={() => void load()} />
-          </div>
-        )}
-      </>
-    );
-  }
+  // The setup is drawn OUTSIDE the page's state branches. Its first step creates the assistant,
+  // `onChanged` reloads, and the page flips from "no assistant" to the profile: a wizard drawn
+  // inside the "no assistant" branch was unmounted right there, as the picture step came up
+  // (owner 2026-11-13: "it closes while I pick the photo"). Only its own close ends it.
   return (
     <>
       {head}
-      <Profile data={data} rev={rev} onSaved={(fn) => { setData(update(fn)); setRev((n) => n + 1); }} />
-      <HowItWorks data={data} voiceKey={voiceKey} chip={chip} onSaved={(fn) => setData(update(fn))} />
+      {body}
+      {wizard && (
+        <div data-sw-modal>
+          <AssistantWizard exists={false} onClose={() => { setWizard(false); void load(); }} onChanged={() => void load()} />
+        </div>
+      )}
     </>
   );
 }
