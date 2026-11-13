@@ -330,8 +330,10 @@
   overflow: hidden;
 }
 .chat-runterm.is-collapsed { display: none; }
-/* A failed start keeps its reason on the card: only the empty screen goes. */
-.chat-runterm:has(.chat-runterm-error) .chat-runterm-screen { display: none; }
+.chat-runterm.is-folded .chat-runterm-screen { display: none; }
+/* A failed start keeps its reason on the card: only an EMPTY screen goes; one the run wrote to
+   stays, with the reason under it. */
+.chat-runterm:not([data-wrote]):has(.chat-runterm-error) .chat-runterm-screen { display: none; }
 .chat-runcard-outtoggle {
   align-self: flex-start;
   margin: 0 var(--space-4);

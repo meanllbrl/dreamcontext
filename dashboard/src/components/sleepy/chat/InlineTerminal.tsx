@@ -29,7 +29,7 @@ export type InlineTermStatus = 'connecting' | 'running' | 'exited' | 'failed';
 export type { CardTarget };
 
 export function InlineTerminal({
-  vault, command, cwd, card, mintTicket, rows = 14, onExit, onStatus, collapsed = false,
+  vault, command, cwd, card, mintTicket, rows = 14, onExit, onStatus, onOutput, collapsed = false,
 }: {
   /** The process ended and the owner has not asked for the output: the screen is hidden (kept
    *  mounted, so Show brings the same text back). */
@@ -48,9 +48,14 @@ export function InlineTerminal({
    *  a refused start (busy, no PTY, a closed card) never does. */
   onExit: (result: { code: number | null; tail: string; exited: boolean; opened: boolean; reason?: string }) => void;
   onStatus?: (status: InlineTermStatus) => void;
+  /** Fires ONCE, on the first output written to the screen: there is something to show. */
+  onOutput?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
+  // Something was written to the screen: an error line then sits UNDER the output, never in its
+  // place (a socket that errors after the run printed must not hide what it printed).
+  const [wrote, setWrote] = useState(false);
   // Everything below is per-MOUNT and must not re-run: a reconnect would run the command a
   // SECOND time. The effect has an empty dependency list on purpose and reads its inputs
   // from a ref — a card's command never changes under it (a different command is a
@@ -59,6 +64,8 @@ export function InlineTerminal({
   const argsRef = useRef({ vault, command, cwd, rows, card, mintTicket });
   const onExitRef = useRef(onExit);
   const onStatusRef = useRef(onStatus);
+  const onOutputRef = useRef(onOutput);
+  onOutputRef.current = onOutput;
   const endedRef = useRef<() => void>(() => {});
   onExitRef.current = onExit;
   onStatusRef.current = onStatus;
@@ -112,6 +119,7 @@ export function InlineTerminal({
       sock.onopen = () => { opened = true; onStatusRef.current?.('running'); sendResize(); };
       sock.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
+          if (!tail && ev.data) { setWrote(true); onOutputRef.current?.(); }
           tail = appendTail(tail, ev.data);
           term.write(ev.data);
           return;
@@ -184,7 +192,9 @@ export function InlineTerminal({
       // had any effect. The second pass lands after that settles. `center` because
       // `nearest` is satisfied by the sliver of terminal that is already showing, which is
       // exactly the state where nothing renders.
-      if (!userOpened) return;
+      // A process that already ended (a fast command, fonts late) takes neither the view nor the
+      // keyboard: the blur at settle must not be undone here.
+      if (!userOpened || settled) return;
       const reveal = () => { if (!disposed && host.isConnected) host.scrollIntoView({ block: 'center' }); };
       reveal();
       revealTimer = setTimeout(reveal, 250);
@@ -209,7 +219,8 @@ export function InlineTerminal({
   }, []);
 
   return (
-    <div className={collapsed && !error ? 'chat-runterm is-collapsed' : 'chat-runterm'} data-testid="run-terminal">
+    // Collapsed: the whole terminal goes; with an error line, only the screen folds and the reason stays.
+    <div className={!collapsed ? 'chat-runterm' : error ? 'chat-runterm is-folded' : 'chat-runterm is-collapsed'} data-wrote={wrote ? 'true' : undefined} data-testid="run-terminal">
       <div className="chat-runterm-screen" ref={hostRef} />
       {error && <p className="chat-runterm-error">{error}</p>}
     </div>

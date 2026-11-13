@@ -326,9 +326,10 @@ async function runTheme(chromium, base, theme, report) {
     ok(`${chip}: the terminal collapses once the process ends`,
       await until(async () => (await card.locator('.chat-runterm.is-collapsed').count()) === 1, 5000));
     ok(`${chip}: a Show output toggle is offered`, (await card.locator('[data-testid="run-card-output-toggle"]').innerText()).includes('Show output'));
+    await card.locator('[data-testid="run-card-output-toggle"]').click();
+    // Read with the screen SHOWN: a hidden one could hold no focus anyway.
     ok(`${chip}: the finished terminal holds no focus`,
       await card.evaluate((el) => !el.querySelector('.chat-runterm')?.contains(document.activeElement)));
-    await card.locator('[data-testid="run-card-output-toggle"]').click();
     ok(`${chip}: shown again, it draws no cursor`,
       await until(async () => (await card.locator('.chat-runterm:not(.is-collapsed)').count()) === 1, 3000)
       && (await card.locator('.xterm-cursor').count()) === 0

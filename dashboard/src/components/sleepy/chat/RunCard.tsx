@@ -132,14 +132,16 @@ interface Shown {
  */
 function RunTerminal({ ended, ...term }: { ended: boolean } & ComponentProps<typeof InlineTerminal>) {
   const [open, setOpen] = useState(false);
+  // No output, nothing to show: no toggle (a refused start keeps only its reason line).
+  const [hasOutput, setHasOutput] = useState(false);
   return (
     <>
-      {ended && (
+      {ended && hasOutput && (
         <button type="button" className="chat-runcard-outtoggle" data-testid="run-card-output-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? 'Hide output' : 'Show output'}
         </button>
       )}
-      <InlineTerminal {...term} collapsed={ended && !open} />
+      <InlineTerminal {...term} onOutput={() => setHasOutput(true)} collapsed={ended && !open} />
     </>
   );
 }
