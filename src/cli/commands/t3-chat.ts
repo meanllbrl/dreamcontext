@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
+import { nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
+import { runOnBridgeNode } from './t3-node-hop.js';
 
 /**
  * The bridge lives in its own bundle beside this one (dist/t3-bridge.js), never inlined: a
@@ -47,6 +49,13 @@ export function registerT3ChatCommand(program: Command): void {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
         process.exit(2);
       }
+      const label = o.tool === 'antigravity' ? 'Antigravity' : o.tool === 'claude' ? 'The T3 Claude engine' : 'Codex';
+      const hop = await runOnBridgeNode();
+      if (typeof hop === 'number') process.exit(hop);
+      if (hop === 'none') {
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: nodeTooOldMessage(label), num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: o.tool }) + '\n');
+        process.exit(1);
+      }
       let bridge: Awaited<ReturnType<typeof loadBridge>>;
       try {
         bridge = await loadBridge(o.tool);
@@ -79,6 +88,12 @@ export function registerT3ChatCommand(program: Command): void {
         process.exit(2);
       }
       const label = o.tool === 'antigravity' ? 'Antigravity' : 'Codex';
+      const hop = await runOnBridgeNode();
+      if (typeof hop === 'number') process.exit(hop);
+      if (hop === 'none') {
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: nodeTooOldMessage(label), num_turns: 0, total_cost_usd: 0, dc_tool: o.tool }) + '\n');
+        process.exit(1);
+      }
       let bridge: Awaited<ReturnType<typeof loadBridge>>;
       try {
         bridge = await loadBridge(o.tool);
@@ -103,6 +118,12 @@ export function registerT3ChatCommand(program: Command): void {
       if (action !== 'prepare' && action !== 'probe' && action !== 'seed' && action !== 'install' && action !== 'signin') {
         process.stderr.write(`t3-account: unknown action ${action}\n`);
         process.exit(2);
+      }
+      const hop = await runOnBridgeNode();
+      if (typeof hop === 'number') process.exit(hop);
+      if (hop === 'none') {
+        process.stdout.write(JSON.stringify({ ok: false, signedIn: false, error: nodeTooOldMessage(o.tool === 'antigravity' ? 'Antigravity' : 'Codex') }) + '\n');
+        process.exit(1);
       }
       let bridge: Awaited<ReturnType<typeof loadBridge>>;
       try {

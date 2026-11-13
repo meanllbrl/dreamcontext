@@ -96,6 +96,46 @@ export function antigravityQuotaReply(text: string, now: number): { resetsAtMs: 
   return { resetsAtMs: ms > 0 ? now + ms : null };
 }
 
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/** Is this Codex's own usage-limit sentence? ("You've hit your usage limit …") */
+export const isCodexLimitText = (text: string): boolean => /\bhit your usage limit\b/i.test(text);
+
+/**
+ * When Codex's usage-limit sentence says the account is free again, as epoch ms, else null.
+ * Codex prints the reset in the machine's local time, and this process runs on that machine:
+ *  - another day: "try again at Nov 24th, 2026 7:09 PM"
+ *  - the same day: "try again at 7:09 PM" (a time already past is tomorrow's)
+ *  - older Codex: "Try again in 2 days 3 hours 15 minutes"
+ * The rate-limit snapshot T3 reads is the first source; this is for a refusal that came without one.
+ */
+export function codexLimitResetMs(text: string, now: number): number | null {
+  if (typeof text !== 'string' || !isCodexLimitText(text)) return null;
+  const at = /try again at\s+(?:([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s+)?(\d{1,2}):(\d{2})\s*([AP])\.?M\.?/i.exec(text);
+  if (at) {
+    const hour = (Number(at[4]) % 12) + (at[6]!.toUpperCase() === 'P' ? 12 : 0);
+    const minute = Number(at[5]);
+    if (hour > 23 || minute > 59) return null;
+    if (at[1]) {
+      const month = MONTHS.indexOf(at[1].toLowerCase());
+      const day = Number(at[2]);
+      if (month < 0 || day < 1 || day > 31) return null;
+      const d = new Date(Number(at[3]), month, day, hour, minute);
+      return d.getMonth() === month ? d.getTime() : null;
+    }
+    const d = new Date(now);
+    d.setHours(hour, minute, 0, 0);
+    if (d.getTime() <= now) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  }
+  const within = /try again in\s+((?:\d+\s*(?:days?|hours?|minutes?|mins?|seconds?|secs?)[,\s]*(?:and\s+)?)+)/i.exec(text);
+  if (!within) return null;
+  const unit: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1000 };
+  let ms = 0;
+  for (const [, n, u] of within[1]!.matchAll(/(\d+)\s*(day|hour|min|sec)/gi)) ms += Number(n) * unit[u![0]!.toLowerCase()]!;
+  return ms > 0 ? now + ms : null;
+}
+
 export function toolCallFor(item: TurnItem): { name: string; input: Record<string, unknown> } | null {
   switch (item.type) {
     case 'command_execution':
@@ -820,8 +860,11 @@ export class ToWire {
     // like Claude's refusal frame, with the reset T3 knows (plan r5 §4d "Limit detection").
     const kind = this.opts.tool === 'antigravity' ? antigravityFailureKind(failure?.message ?? '') : null;
     const quota = ok && this.opts.tool === 'antigravity' ? antigravityQuotaReply(this.lastAssistantText, now) : null;
-    const limited = failure?.class === 'usage_limit' || kind === 'limit' || !!quota;
-    const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : quota?.resetsAtMs ?? NaN;
+    // Codex's own refusal sentence counts too, and names the reset when T3 had no snapshot of it.
+    const codexText = this.opts.tool === 'codex' && failure ? failure.message ?? '' : '';
+    const limited = failure?.class === 'usage_limit' || kind === 'limit' || !!quota || isCodexLimitText(codexText);
+    const snapshotReset = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : NaN;
+    const limitResetMs = Number.isFinite(snapshotReset) ? snapshotReset : quota?.resetsAtMs ?? codexLimitResetMs(codexText, now) ?? NaN;
     const result: WireFrame = {
       type: 'result',
       subtype: ok ? 'success' : 'error_during_execution',
