@@ -134,7 +134,10 @@
    the transcript holds, an inline card's buttons least of all: while one shows, the scroller
    gives up the strip it stands in, so nothing scrolls under it at any width (owner, 11 Nov). */
 .chat-transcript { --chat-float-strip: calc(32px + var(--space-3) * 2); }
-.chat-transcript:has(> .chat-jump, > .super-unread-bar) > .chat-scroll { margin-bottom: var(--chat-float-strip); }
+.chat-transcript:has(> .chat-jump) > .chat-scroll { margin-bottom: var(--chat-float-strip); }
+/* The Super chat keeps that strip ALL the time (owner 2026-11-13, "telegram gibi"): its "↓ N yeni"
+   button comes and goes as he reads, and a strip that came with it shrank the view and moved rows. */
+.chat-transcript--super > .chat-scroll { margin-bottom: var(--chat-float-strip); }
 
 .chat-scroll {
   flex: 1 1 auto;

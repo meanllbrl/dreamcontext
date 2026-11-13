@@ -2,7 +2,9 @@
 /**
  * The Super chat's unread marks (owner 2026-10-30, draft A), on the real dashboard server with a
  * scratch HOME and a scripted `claude`: reports land while the window is in the back, then the
- * rail's count, the dots, the bar, the jump, the dwell, a reload, mark-all, 390 px and take-back.
+ * rail's count, the dwell, the opening landing on the first unread (its "Okunmamış" line), a
+ * reload, the "↓ N yeni" button (owner 2026-11-13: no pill, no dots, no mark-all), 390 px and
+ * take-back. The scroll itself is measured by super-kayma.mjs.
  *
  *   npm run build && node scripts/verify/super-unread.mjs
  *   BEFORE=1 CLI_PATH=<a build without it> node scripts/verify/super-unread.mjs   (the "before" shots)
@@ -213,6 +215,7 @@ async function run() {
     await until(page, async () => (await centreInput.count()) > 0, 30000);
   };
   const shot = (name) => page.screenshot({ path: join(OUT, `${name}.png`) });
+  // No per-row dots any more (owner 2026-11-13).
   const dots = () => page.locator('[data-super-slot="centre"] [data-unread]').count();
   const badge = async () => {
     const b = page.locator('nav [data-testid="super-unread-badge"], [data-testid="drawer-super-row"] [data-testid="super-unread-badge"]');
@@ -222,8 +225,11 @@ async function run() {
     const m = lbl && /\((\d+) /.exec(lbl);
     return m ? Number(m[1]) : 0;
   };
-  const bar = page.locator('[data-testid="super-unread-bar"]');
-  const barCount = async () => Number(((await bar.innerText().catch(() => '')).match(/\d+/) ?? ['0'])[0]);
+  const newBtn = page.locator('[data-super-slot="centre"] [data-testid="super-new"], .super-dock [data-testid="super-new"]').filter({ visible: true });
+  const firstLineInView = () => page.evaluate(() => {
+    const el = document.querySelector('[data-unread-first]'); const box = [...document.querySelectorAll('.chat-scroll')].find((e) => e.getBoundingClientRect().height > 0 && e.closest('[data-super-slot="centre"], .super-dock'))?.getBoundingClientRect();
+    if (!el || !box) return false; const r = el.getBoundingClientRect(); return r.top >= box.top && r.top < box.bottom;
+  });
   const send = async (text) => {
     await centreInput.first().click();
     await centreInput.first().fill(text);
@@ -249,134 +255,6 @@ async function run() {
 
     const real = errors.filter((e) => !/favicon|ERR_CONNECTION|WebSocket|Failed to load resource/i.test(e));
     ok('no console errors', real.length === 0, real.join('\n'));
-  };
-  /** Every frame from the click on: where the view is, where the first unread is, is it pinned. */
-  const trace = (ms) => page.evaluate((ms) => new Promise((done) => {
-    const el = document.querySelector('[data-super-slot="centre"] .chat-scroll');
-    const out = []; const t0 = performance.now();
-    const step = () => {
-      const t = performance.now() - t0;
-      const f = document.querySelector('[data-unread-first]');
-      out.push({ t: Math.round(t), top: Math.round(el.scrollTop), h: el.scrollHeight, max: el.scrollHeight - el.clientHeight, pill: !!document.querySelector('[data-super-slot="centre"] .chat-jump'), line: f ? Math.round(f.getBoundingClientRect().top) : null });
-      if (t < ms) requestAnimationFrame(step); else done(out);
-    };
-    requestAnimationFrame(step);
-  }), ms);
-  /** What a trace shows: how far the view went up, how far it was then pulled back down, the frames. */
-  const verdict = (name, tr) => {
-    const least = Math.min(...tr.map((x) => x.top));
-    const iLeast = tr.findIndex((x) => x.top === least);
-    const end = tr[tr.length - 1];
-    const dts = tr.slice(1).map((x, i) => x.t - tr[i].t);
-    const moves = tr.slice(1).map((x, i) => x.top - tr[i].top).filter(Boolean);
-    const v = { start: tr[0].top, least, end: end.top, pulledBack: end.top - least, atBottomAtEnd: end.max - end.top < 60, pillAtEnd: end.pill, frames: tr.length, worstFrameMs: Math.max(...dts), biggestStep: Math.max(...moves.map(Math.abs), 0), reversals: moves.slice(1).filter((m, i) => Math.sign(m) !== Math.sign(moves[i])).length, tookMs: tr[iLeast].t };
-    console.log(`   ${name}`, JSON.stringify(v));
-    writeFileSync(join(OUT, `iz-${name}.json`), JSON.stringify(tr));
-    return v;
-  };
-  /** Rows must not move when marks come and go: the jump's layout is the same read or unread. */
-  const noOverlap = () => page.evaluate(() => {
-    const body = document.querySelector('.chat-msg-assistant-row[data-unread] > .chat-msg-assistant-body');
-    const line = document.querySelector('.chat-reply-line')?.getBoundingClientRect();
-    const box = body?.getBoundingClientRect();
-    const first = document.querySelector('[data-unread-first]');
-    const lineLeft = first ? first.getBoundingClientRect().left : null;
-    return { dotRight: box ? box.right : null, replyLineRight: line ? line.right : null, unreadLineLeft: lineLeft };
-  });
-  const jumpTrace = async () => {
-    await blur(false);
-    await toBottom();
-    await page.waitForTimeout(1500);
-    ok('at the bottom the bar offers the rest', await until(page, async () => (await bar.count()) === 1, 4000));
-    await shot(`ux-${BEFORE ? 'once' : 'sonra'}-1-altta-1440`);
-    // 1. Nothing but the reader's own click.
-    await page.locator('[data-testid="super-unread-jump"]').click();
-    const quiet = verdict('sessiz', await trace(4000));
-    await shot(`ux-${BEFORE ? 'once' : 'sonra'}-2-vardi-1440`);
-    ok('quiet: the view stays where the jump put it', quiet.pulledBack <= 2, JSON.stringify(quiet));
-    if (!BEFORE) {
-      ok('quiet: it landed in one direction', quiet.reversals === 0, JSON.stringify(quiet));
-      ok('quiet: the way down is on offer', await page.locator('[data-testid="super-unread-bottom"], .chat-jump').count() > 0);
-      const lines = await noOverlap();
-      console.log('   lines', JSON.stringify(lines));
-      ok('the unread line starts right of the reply line', lines.replyLineRight == null || lines.unreadLineLeft == null || lines.unreadLineLeft > lines.replyLineRight, JSON.stringify(lines));
-      // Next unread: the rows below are reached one click at a time, and each stays.
-      const barNow = await bar.innerText().catch(() => '');
-      console.log('   bar after landing:', JSON.stringify(barNow));
-      // Faster than the dwell: the walk goes on, it does not come back.
-      const walk = [];
-      for (let i = 0; i < 4 && await bar.count(); i++) {
-        await page.locator('[data-testid="super-unread-jump"]').click();
-        await page.waitForTimeout(450);
-        walk.push(await scroller().evaluate((el) => el.scrollTop));
-      }
-      console.log('   fast clicks', JSON.stringify(walk));
-      ok('next: fast clicks never stand on one row twice', new Set(walk).size === walk.length, JSON.stringify(walk));
-      await page.waitForTimeout(1500);
-      if (await bar.count()) {
-        const a = await scroller().evaluate((el) => el.scrollTop);
-        await page.locator('[data-testid="super-unread-jump"]').click();
-        await page.waitForTimeout(900);
-        const c = await scroller().evaluate((el) => el.scrollTop);
-        ok('next: the second click moves on', c !== a, `${a} -> ${c}`);
-        await page.waitForTimeout(1800);
-        ok('next: and stays', (await scroller().evaluate((el) => el.scrollTop)) === c);
-      }
-      // The bar going away with focus in it leaves focus in the pane, not on the body.
-      if (await bar.count()) {
-        await page.locator('[data-testid="super-unread-jump"]').focus();
-        await page.locator('[data-testid="super-unread-all"]').click();
-        await page.locator('[data-testid="super-unread-all"]').waitFor({ state: 'detached', timeout: 3000 }).catch(() => {});
-        await page.waitForTimeout(200);
-        ok('focus: it stays in the pane when the bar goes', await page.evaluate(() => document.activeElement && document.activeElement !== document.body));
-      }
-      await toBottom();
-      await page.waitForTimeout(400);
-    }
-    // 2. Back down, then the same click while reports land.
-    await toBottom();
-    await page.waitForTimeout(600);
-    await blur(true);
-    await send('GO-REPORTS Z');
-    await blur(true);
-    const b = turnEnds();
-    await until(page, async () => turnEnds() >= b, 30000);
-    await page.waitForTimeout(1200);
-    await send('GO-DRIP');
-    await blur(false);
-    await page.waitForTimeout(800);
-    await until(page, async () => (await bar.count()) === 1, 4000);
-    if (await bar.count()) {
-      await page.locator('[data-testid="super-unread-jump"]').click();
-      const live = verdict('canli', await trace(6000));
-      await shot(`ux-${BEFORE ? 'once' : 'sonra'}-3-canli-1440`);
-      await page.waitForTimeout(2500);
-      // 3. An event turn landing on the idle Super while the reader is up.
-      await send('GO-EVENT');
-      await blur(true);
-      await page.waitForTimeout(1800);
-      await blur(false);
-      await page.waitForTimeout(400);
-      if (await bar.count()) {
-        await page.locator('[data-testid="super-unread-jump"]').click();
-        const evBefore = frames().filter((f) => f.role === 'super' && /^\[super (event|batch)/.test(f.blocks[0] ?? '')).length;
-        const ev = verdict('olay', await trace(24000));
-        const evLanded = frames().filter((f) => f.role === 'super' && /^\[super (event|batch)/.test(f.blocks[0] ?? '')).length - evBefore;
-        console.log('   event turns that landed during the trace:', evLanded);
-        ok('event: one really landed during the trace', evLanded > 0);
-        ok('event: an event turn does not drag the reader back down', ev.pulledBack <= 2 && !ev.atBottomAtEnd, JSON.stringify(ev));
-      } else console.log('   (no bar for the event round)');
-      ok('live: nothing drags the reader back down', live.pulledBack <= 2 && !live.atBottomAtEnd, JSON.stringify(live));
-      if (!BEFORE) {
-        const m = await page.evaluate(() => { const b = document.querySelector('[data-testid="super-unread-bottom"]') ?? document.querySelector('[data-super-slot="centre"] .chat-jump'); b?.click(); return !!b; });
-        await page.waitForTimeout(700);
-        ok('live: the way down brings the reader to the end', m && await scroller().evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 60));
-        await page.setViewportSize({ width: 390, height: 844 });
-        await page.waitForTimeout(1200);
-        await scroller().evaluate((el) => { el.scrollTop = el.scrollHeight; }).catch(() => {});
-        await shot('ux-sonra-4-390');
-      }
-    } else ok('live: a bar to click', false);
   };
   try {
     await page.goto(`${base}/?vault=acme-app`, { waitUntil: 'domcontentloaded' });
@@ -415,11 +293,6 @@ async function run() {
       return;
     }
 
-    if (process.env.ONLY === 'jump') {
-      await jumpTrace();
-      return;
-    }
-
     if (BEFORE) {
       await scroller().evaluate((el) => { el.scrollTop = 200; });
       await page.waitForTimeout(500);
@@ -432,11 +305,11 @@ async function run() {
 
     console.log('── the window in the back reads nothing');
     const n0 = await badge();
-    ok('11 units flagged: 10 blocks + the question card', n0 === 11, `badge ${n0}, dots ${await dots()}`);
+    ok('11 units flagged: 10 blocks + the question card', n0 === 11, `badge ${n0}`);
     ok('the rail carries the count', n0 > 0);
+    ok('no per-row dots (owner 2026-11-13)', (await dots()) === 0, `${await dots()}`);
     await page.waitForTimeout(1800);
     ok('still all unread after 1.8 s with the window unfocused', (await badge()) === n0, `${await badge()}`);
-    ok('the owner\'s own message has no dot', (await page.locator('.chat-msg-user-row[data-unread]').count()) === 0);
     await shot('kod-sonra-rail-1440');
 
     console.log('── another page reads nothing');
@@ -453,47 +326,41 @@ async function run() {
     await page.waitForTimeout(2200);
     const n1 = await badge();
     ok('what stood on screen ~1 s went read, what lay above did not', n1 > 0 && n1 < n0, `${n1} of ${n0}`);
-    ok('the bar offers the rest', await until(page, async () => (await bar.count()) === 1, 3000));
-    ok('its count is the rail\'s', (await barCount()) === n1, `${await barCount()} vs ${n1}`);
+    // Rule C (owner 2026-11-13): his send was followed until the new answer's start reached the
+    // top; the rest waits below the button with its count.
+    const rest = (await newBtn.innerText().catch(() => '')).trim();
+    ok('stopped at the answer\'s start: "↓ N new" for what waits below', /↓\s*\d+\s+new/.test(rest), JSON.stringify(rest));
     await shot('kod-sonra-1440');
     const server = await page.evaluate(async () => (await fetch('/api/agent/super-read')).json().catch(() => null));
     console.log('   marks', JSON.stringify(server)?.slice(0, 160));
 
-    console.log('── jump');
-    console.log('   before jump', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('[data-unread]')].map((e) => `${e.className.slice(0, 30)}|${e.textContent.slice(0, 50)}`))));
-    await page.locator('[data-testid="super-unread-jump"]').click();
-    const firstInView = await until(page, async () => page.evaluate(() => {
-      const el = document.querySelector('[data-unread-first]'); const box = document.querySelector('[data-super-slot="centre"] .chat-scroll')?.getBoundingClientRect();
-      if (!el || !box) return false; const r = el.getBoundingClientRect(); return r.top >= box.top && r.top < box.bottom;
-    }), 3000);
-    ok('the first unread is on screen, with its line', firstInView);
-    await shot('kod-sonra-atla-1440');
+    console.log('── opening the chat lands on the first unread');
+    await blur(true);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await toStage();
+    await until(page, async () => (await badge()) > 0, 20000);
+    // What was read stays read (never more unread than before); the landing on the first unread
+    // may read what it shows, so fewer is fine, none left is not.
+    const nReload = await badge();
+    ok('a reload keeps what was read and what was not', nReload > 0 && nReload <= n1, `${nReload} after ${n1}`);
+    ok('the opening lands with the first unread and its line on screen', await until(page, firstLineInView, 6000));
+    await shot('kod-sonra-acilis-1440');
+    const below = await newBtn.innerText().catch(() => '');
+    console.log('   button after landing:', JSON.stringify(below));
+    ok('the way down is on offer, with what is new below', (await newBtn.count()) === 1 && /↓/.test(below), JSON.stringify(below));
+    await blur(false);
     await page.waitForTimeout(2200);
     const n2 = await badge();
     ok('reading it counted it down', n2 < n1, `${n2} after ${n1}`);
 
-    console.log('── a restart');
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await blur(true);
-    await toStage();
-    await until(page, async () => (await badge()) > 0, 20000);
+    console.log('── the button');
+    const top = await scroller().evaluate((el) => el.scrollTop);
     await page.waitForTimeout(1500);
-    const n3 = await badge();
-    console.log('   after reload', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('[data-unread]')].map((e) => `${e.className.slice(0, 30)}|${e.textContent.slice(0, 50)}`))));
-    ok('a reload keeps what was read and what was not', n3 === n2, `${n3} after ${n2}`);
-    await blur(false);
-    await page.waitForTimeout(1500);
-
-    console.log('── mark all');
-    await scroller().evaluate((el) => { el.scrollTop = 0; });
-    if (!(await bar.count())) await page.waitForTimeout(600);
-    if (await bar.count()) await page.locator('[data-testid="super-unread-all"]').click();
-    ok('mark all clears count, dots and bar', await until(page, async () => (await badge()) === 0 && (await dots()) === 0 && (await bar.count()) === 0, 5000), `${await badge()} ${await dots()}`);
-    await page.waitForTimeout(800);
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await toStage();
-    await page.waitForTimeout(3500);
-    ok('stays clear after a reload', (await badge()) === 0 && (await dots()) === 0);
+    ok('nothing moves the resting view', (await scroller().evaluate((el) => el.scrollTop)) === top);
+    await newBtn.first().click();
+    ok('the button goes to the bottom and hides', await until(page, async () => (await scroller().evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 60)) && (await newBtn.count()) === 0, 4000));
+    ok('no "Mark as read" anywhere', !(/Mark as read|Okundu say/.test(await page.locator('[data-super-slot="centre"]').innerText())));
+    ok('no unread pill', (await page.locator('[data-testid="super-unread-bar"]').count()) === 0);
 
     console.log('── phone width');
     await page.setViewportSize({ width: 390, height: 844 });
@@ -507,32 +374,18 @@ async function run() {
     await blur(true);
     await until(page, async () => turnEnds() > b4, 60000);
     await page.waitForTimeout(1500);
-    await page.locator('.chat-scroll:visible').first().evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await page.locator('.chat-scroll:visible').first().evaluate((el) => { el.scrollTop = 0; });
     await page.waitForTimeout(800);
     const geo = await page.evaluate(() => {
-      const b = document.querySelector('[data-testid="super-unread-bar"]')?.getBoundingClientRect();
-      const d = document.querySelector('[data-unread]')?.getBoundingClientRect();
-      return { bar: b ? { l: b.left, r: b.right, h: b.height } : null, dotRow: d ? d.left : null, over: document.documentElement.scrollWidth - innerWidth };
+      const b = document.querySelector('[data-testid="super-new"]')?.getBoundingClientRect();
+      return { btn: b ? { l: b.left, r: b.right, h: b.height } : null, over: document.documentElement.scrollWidth - innerWidth };
     });
     console.log('   390', JSON.stringify(geo));
-    ok('390: the bar fits the width', !!geo.bar && geo.bar.l >= 0 && geo.bar.r <= 390, JSON.stringify(geo));
+    ok('390: the button fits the width', !!geo.btn && geo.btn.l >= 0 && geo.btn.r <= 390, JSON.stringify(geo));
     ok('390: no sideways scroll', geo.over <= 0, String(geo.over));
-    const dotPaints = await page.evaluate(() => {
-      const row = [...document.querySelectorAll('.chat-msg-assistant-row[data-unread]')].find((e) => e.getBoundingClientRect().top > 100);
-      const body = row?.querySelector(':scope > .chat-msg-assistant-body');
-      if (!body) return false;
-      const cs = getComputedStyle(body, '::after');
-      return cs.content !== 'none' && parseFloat(cs.right) > 0;
-    });
-    ok('390: the dot is inside the message card', dotPaints);
     await shot('kod-sonra-390');
-    await page.locator('[data-testid="super-unread-jump"]').click();
-    const phone = verdict('telefon', await trace(3000));
-    ok('390: the jump lands and stays', phone.pulledBack <= 2 && phone.reversals === 0, JSON.stringify(phone));
-    const pill = await page.evaluate(() => { const b = document.querySelector('[data-testid="super-unread-bar"]')?.getBoundingClientRect(); return b ? { l: b.left, r: b.right, three: !!document.querySelector('[data-testid="super-unread-bottom"]') } : null; });
-    console.log('   390 pill', JSON.stringify(pill));
-    ok('390: the pill with the way down fits', !pill || (pill.l >= 0 && pill.r <= 390), JSON.stringify(pill));
-    await shot('ux-sonra-5-390-vardi');
+    await newBtn.first().click();
+    ok('390: the button goes to the bottom', await until(page, async () => page.locator('.chat-scroll:visible').first().evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 60), 4000));
     await page.locator('.chat-scroll:visible').first().evaluate((el) => { el.scrollTop = 0; });
     await page.waitForTimeout(600);
     await blur(false);

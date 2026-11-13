@@ -210,12 +210,14 @@ describe('the model chip (owner 2026-10-21)', () => {
   });
 });
 
-describe('the bar answers no question itself (owner 2026-10-22: one way to ask)', () => {
-  it('a question row is its words and ONE Answer button that shows the chat\'s card; no option buttons, no style for them', () => {
+describe('the bar asks no question at all (owner 2026-11-13: "şu tip soru bile istemiyorum")', () => {
+  it('no question head, no option buttons: a question is its card in the chat', () => {
     const bar = read(`${SUPER}/JobBar.tsx`);
-    expect(bar).not.toMatch(/askAnswerText|super-ask-option|super-job-option/);
-    expect(bar).toMatch(/\? <QuestionHead item=\{head\} text=\{head\.ownerText \?\? ''\} root=\{superSession\?\.container\} onReplyToSuper=\{onReplyToSuper\} \/>/);
+    expect(bar).not.toMatch(/askAnswerText|super-ask-option|super-job-option|QuestionHead|super-queue-answer/);
     expect(read(`${SUPER}/JobBar.css`)).not.toMatch(/super-job-option/);
+    // The band's head and count skip questions; the stage and the dock band both read them.
+    expect(read(`${SUPER}/SuperSurface.tsx`)).toMatch(/const head = bandHead\(state\);/);
+    expect(read('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/head=\{bandHead\(superState\)\}\n\s*waiting=\{bandCount\(superState\)\}/);
   });
 });
 

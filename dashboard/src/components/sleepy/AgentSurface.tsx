@@ -189,7 +189,7 @@ import type { Page } from '../layout/Sidebar';
 import type { TerminalRowItem } from './super/TerminalsRow';
 import {
   actionGeneration, adoptionBody, cardReference, headAlarmOnce, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
-  homedSessions, isSuperSession, markedChildren, withAboutTask, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, ownerAnswerPicks, superAnswerPicks, superWindowRefusal, terminalTabs,
+  bandCount, bandHead, homedSessions, isSuperSession, markedChildren, withAboutTask, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, ownerAnswerPicks, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, superStageOfLink, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
@@ -7679,8 +7679,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             band={superState ? (
               <JobBar
                 state={superState}
-                head={queueHead(superState)}
-                waiting={ownerQueueCount(superState)}
+                head={bandHead(superState)}
+                waiting={bandCount(superState)}
                 vault={vault ?? ''}
                 look={{
                   ...jobLookOf({ sessionFor: chatByClaudeId, titleFor: superTitleFor, nameFor: superNameFor, children: superState.children, superTitle: t('super.centre.name') }),

@@ -411,9 +411,8 @@ async function runEngine(engineName) {
     await pill.first().click();
     const askCard = dock.locator('[data-super-slot="dock"] [data-testid="super-question-card"]').filter({ hasText: 'Ship the login fix now?' });
     ok('the question card is in the dock', await until(page, async () => (await askCard.count()) === 1, 10000));
-    ok('…and the band\'s Answer brings it into view in the dock (one band in the page)', (await page.locator('[data-testid="super-queue-head"]').count()) === 1);
-    await dock.locator('[data-testid="super-queue-answer"]').click().catch(() => {});
-    ok('…focused', await until(page, async () => page.evaluate(() => !!document.activeElement?.closest('[data-testid="super-question-card"]')), 3000));
+    // A question is its card in the chat, never a head in the band (owner 2026-11-13).
+    ok('…and the band asks no question of its own', (await dock.locator('[data-testid="super-queue-answer"]').count()) === 0);
     await askCard.locator('.chat-surveycard-opt').filter({ hasText: 'Ship it' }).click();
     await askCard.locator('.chat-btn.primary').click();
     ok('answered in the dock', await until(page, async () => reports().some((r) => r.kind === 'answer'), 15000));

@@ -38,7 +38,7 @@ import { useWaitingAppCards } from './superAppCards';
 import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
-import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
+import { bandCount, bandHead, freshPending, hasOwnKey, needsOwner, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { SuperHeadMenu } from './SuperHeadMenu';
 import { SuperAddMenu } from './SuperAddMenu';
 import { MENU_WIDTH } from './superAddMenuModel';
@@ -418,7 +418,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const shownGroup = useMemo(() => presentedGroup(presented, state.groups, state.containers)?.id ?? null, [presented, state.groups, state.containers]);
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
-  const queueUp = !!queueHead(state);
+  const queueUp = !!bandHead(state);
   // The bar's measured height (JobBar): the stage plans below its ACTUAL bottom (a wrapped card
   // row is taller than one line), so no card or agenda is ever drawn over it.
   const queueHeight = useQueueHeight(state.session);
@@ -939,7 +939,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   useLiveSession(superSession, () => { const s = chatStatus(superSession); return `${s.kind}|${s.mood}`; });
   const status = superCentreStatus(superSession, ownerAsk);
 
-  const head = queueHead(state);
+  const head = bandHead(state);
   // What each child's card says it waits on the owner for: a question it asks, or something only he can do.
   const asking = useMemo(() => {
     const m = new Map<string, AsksOwner>();
@@ -1324,7 +1324,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {!props.queueElsewhere && <JobBar
         state={state}
         head={head}
-        waiting={ownerQueueCount(state)}
+        waiting={bandCount(state)}
         vault={props.vault}
         rect={plan.queue}
         look={jobLook}

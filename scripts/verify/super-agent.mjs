@@ -1609,15 +1609,14 @@ async function board(engineName, browserType, base, full) {
       const fullLines = await page.locator('[data-super-slot="centre"] [data-testid="super-event-line"][data-full="true"]').count();
       ok('…the batch the super agent escalated in renders full', fullLines >= 1 || (record().ownerBatches ?? []).length === 0, JSON.stringify({ fullLines, ownerBatches: record().ownerBatches }));
 
-      // AC7 + D7: the super agent's own question heads the bar with ONE Answer button; it is
-      // answered in the chat's own AskUserQuestion card (owner 2026-10-22), one message back.
+      // AC7 + D7: the super agent's own question is answered in the chat's own AskUserQuestion card
+      // (owner 2026-10-22), one message back; the band asks nothing (owner 2026-11-13).
       await sayToSuper(page, 'GO-ASKOWNER');
-      const answerBtn = page.getByTestId('super-queue-answer');
-      ok('the super agent\'s own ask heads the bar with its Answer button', await until(page, async () => (await answerBtn.count()) === 1, 40000), await page.getByTestId('super-queue-head').innerText().catch(() => 'no head'));
-      ok('…the band holds only the question (no counts beside it)', (await page.locator('[data-testid^="super-job-count-"]').count()) === 0);
-      const tAsk = Date.now();
-      await answerBtn.click();
       const askCard = page.locator('[data-testid="super-question-card"][data-kind="ask"] .chat-surveycard');
+      ok('the super agent\'s own ask is its card in the chat', await until(page, async () => (await askCard.count()) === 1, 40000));
+      ok('…and no question head in the band', (await page.getByTestId('super-queue-answer').count()) === 0 && (await page.locator('[data-testid^="super-job-count-"]').count()) === 0);
+      const tAsk = Date.now();
+      await askCard.scrollIntoViewIfNeeded();
       await askCard.locator('.chat-surveycard-opt').filter({ hasText: 'Ship it' }).first().click();
       await askCard.locator('.chat-btn.primary').click();
       ok('…the card sends ONE `[super answer]` message into the super chat', await until(page, async () => frames().some((f) => f.role === 'super' && f.t >= tAsk && /^\[super answer\] item=\S+\n[\s\S]*="Ship it"/.test(f.blocks[0] ?? '')), 15000));

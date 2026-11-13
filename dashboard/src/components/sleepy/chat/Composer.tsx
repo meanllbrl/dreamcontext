@@ -441,7 +441,7 @@ export function Composer({
   showModel = true,
   modelMenu,
   activeAccountId = '', onAccountChange, superView = false, onRefJump,
-  contextHandoff, onContextHandoffChange, folded = false, onFieldTap,
+  contextHandoff, onContextHandoffChange, folded = false, onFieldTap, onQueued,
 }: {
   session: ComposerHost;
   /** Phone: the reader has scrolled up, so an empty composer folds to one row. */
@@ -449,6 +449,9 @@ export function Composer({
   /** Phone: a tap on the text field, which takes the transcript to its end. A tap and not focus:
    *  the app also focuses this field itself, and that must never move the reader. */
   onFieldTap?: () => void;
+  /** A message went to the queue at his press (⌥⏎, or a turn that could not take it): the
+   *  moment the Super view moves for it, never its later drain. */
+  onQueued?: () => void;
   model: string;
   effort: string;
   modelConfig: ModelConfig;
@@ -2140,6 +2143,7 @@ export function Composer({
     // (`sendVia`: a member channel), a slash command, or a draft that still holds an app's prefill.
     const prefill = prefilledRef.current;
     const own = slash || (prefill && text.includes(prefill)) ? '' : ownWords(text);
+    const enqueue = (opts?: { steerWhenPossible: true }): void => { session.enqueue(message, opts); onQueued?.(); };
     const deliver = (fn: () => void): void => {
       if (own) armTypedSend(message, own);
       try { fn(); } finally { disarmTypedSend(); }
@@ -2154,8 +2158,8 @@ export function Composer({
         // running is steered (or queued), a ⌥⏎ queues, an idle chat starts a turn.
         let refused = false;
         deliver(() => {
-          if (mode === 'queue') session.enqueue(message);
-          else if (session.busy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
+          if (mode === 'queue') enqueue();
+          else if (session.busy) { if (!session.steer(message)) enqueue({ steerWhenPossible: true }); }
           else if (session.send(message) === false) refused = true;
         });
         if (refused) return;
@@ -2165,8 +2169,8 @@ export function Composer({
     }
     let refused = false;
     deliver(() => {
-      if (mode === 'queue') session.enqueue(message);
-      else if (isBusy) { if (!session.steer(message)) session.enqueue(message, { steerWhenPossible: true }); }
+      if (mode === 'queue') enqueue();
+      else if (isBusy) { if (!session.steer(message)) enqueue({ steerWhenPossible: true }); }
       else if (session.send(message) === false) refused = true;
     });
     if (refused) return;

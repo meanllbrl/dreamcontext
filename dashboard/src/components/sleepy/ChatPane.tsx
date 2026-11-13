@@ -17,7 +17,7 @@ import { isJudgeRole } from '../../lib/agentRoles';
 import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress, workingPillShown,
-  nextStickToBottom, nextComposerFolded, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
+  nextStickToBottom, nextComposerFolded, nextRestoreTop, isAtBottom, screenScaleOf, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
@@ -93,10 +93,10 @@ import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
-import { SuperUnreadBar } from './super/SuperUnreadBar';
+import { SuperNewButton } from './super/SuperNewButton';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
-import { useFollowUnread } from './super/useFollowUnread';
+import { answerRowAfter, followStep, ownAnchorIndex, shouldWrite } from './super/superScroll';
 import { landingFor, SUPER_QUESTION_EVENT, type SuperQuestionDetail, type UnreadUnit } from './super/superUnread';
 import './super/SuperSurface.css';
 import './chat/cards.css';
@@ -153,6 +153,11 @@ const GESTURE_MS = 500;
  *  own height plus its top offset plus a little air, so the row it scrolled to lands just
  *  under the rail instead of behind it. */
 const RAIL_CLEARANCE = 64;
+
+/** The Super follow's stop, by item (see `superAnchorRef` in ChatPane). */
+interface SuperAnchor { own: string | null; after: HTMLElement | null; afterId: string | null; taken: boolean }
+/** The anchor's row is gone: as a stop line above everything, `followStep` stops where it stands. */
+const ANCHOR_GONE = Number.NEGATIVE_INFINITY;
 
 /** How long a jumped-to sub-agent row stays flashed. */
 const FLASH_MS = 1600;
@@ -922,6 +927,11 @@ export function ChatPane({
   const restoreTopRef = useRef(0);
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
+  /** The Super chat: is the view at the bottom, MEASURED (its `pinned` means "follows", D2). */
+  const [atBottom, setAtBottom] = useState(true);
+  /** Measured, for readers outside render (the unread line: "at the bottom" means what he sees). */
+  const atBottomRef = useRef(true);
+  atBottomRef.current = atBottom;
   /** The reader has scrolled up: the phone's composer folds (`nextComposerFolded`). */
   const [composerFolded, setComposerFolded] = useState(false);
 
@@ -935,50 +945,119 @@ export function ChatPane({
     onSignIn().catch(() => { /* see above */ });
   }, [onSignIn]);
 
+  // The Super chat's ONE scroll owner (owner 2026-11-13, super/superScroll.ts, rule C): there
+  // `stickRef` means "the view follows", and the follow never carries the new answer's start past
+  // the top of the view. `superAnchorRef` names that start by an ITEM, never a scroll number (r1:
+  // a number taken once went stale under a late history or a window trim): `own` = the item id of
+  // his own send; `after` = the newest message row (`itemRows`) when the follow began (the next
+  // message is the new answer), `afterId` its item id should the row be redrawn, `taken` once taken.
+  // It is never taken while the scroller measures 0 (garaged) or a resumed history is still on its
+  // way: until then the follow goes to the bottom uncapped. Reset whenever the follow begins;
+  // never by the follow's own writes.
+  const superRef = useRef(superView);
+  superRef.current = superView;
+  const superAnchorRef = useRef<SuperAnchor>({ own: null, after: null, afterId: null, taken: false });
+  const historyPendingRef = useRef(false);
+  historyPendingRef.current = !!conv.historyPending;
+  /** The rows of the transcript, in order: never the reply lines' layer or the reveal button. */
+  const transcriptRows = useCallback((): HTMLElement[] => {
+    const inner = contentRef.current;
+    if (!inner) return [];
+    return Array.from(inner.children).filter((c): c is HTMLElement => c instanceof HTMLElement
+      && !c.classList.contains('chat-reply-lines') && !c.classList.contains('chat-window-more')
+      && !c.hasAttribute('data-items-end'));
+  }, []);
+  /** The rows the follow may anchor on: messages, by a stable item id (`data-item-id`), above the
+   *  `data-items-end` mark. Never a row the turn itself redraws or drops (the steps line, whose key
+   *  flips when the answer starts; a feed's working row; a notice) and never what trails the items
+   *  (a waiting card, a permission, the live "starting" line): the stop is always a message, the
+   *  new answer the next message after it, and a lost anchor means the item is really gone (r2, r3). */
+  const itemRows = useCallback((): HTMLElement[] => {
+    const end = contentRef.current?.querySelector(':scope > [data-items-end]');
+    return transcriptRows().filter((r) => !!r.dataset.itemId
+      && (!end || !!(r.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING)));
+  }, [transcriptRows]);
+  /** The follow's starting point: the newest row now, once it can be measured (else left untaken,
+   *  and the first follow step that can measure takes it). */
+  const takeAnchor = useCallback((own: string | null) => {
+    const el = scrollRef.current;
+    const ready = !!el && el.clientHeight > 0 && !historyPendingRef.current;
+    const last = ready ? itemRows().at(-1) ?? null : null;
+    superAnchorRef.current = { own, after: last, afterId: last?.dataset.itemId ?? null, taken: ready };
+  }, [itemRows]);
   const setStick = useCallback((next: boolean) => {
+    // The follow begins afresh (his arrival at the bottom): what is on screen now is read, so the
+    // new answer is the row after today's newest.
+    if (next && !stickRef.current && superRef.current) takeAnchor(null);
     stickRef.current = next;
-    if (next) followRowRef.current = null;
     setPinned((prev) => (prev === next ? prev : next));
     // Not every return to the bottom scrolls (a send at the bottom, a jump already there).
     if (next) setComposerFolded(false);
-  }, []);
+  }, [takeAnchor]);
 
-  // The Super chat's follow (owner 2026-11-12, super/useFollowUnread.ts): the bottom wins only
-  // while the first unread's START stays in view. Created here, before the pin that asks it; its
-  // inputs are filled in once the unread marks exist, further down. Stable identities throughout.
-  const { follow, inputs: followInputs } = useFollowUnread(scrollRef, contentRef);
-  /** `captureAnchor` is defined further down; the cap re-takes the hold through this. */
+  /** The new answer's start, in scroll coordinates; null: nothing new yet (or no follow begun);
+   *  ANCHOR_GONE: the row it was measured from is gone, so the follow stops where it stands (D4). */
+  const superAnchorTop = useCallback((el: HTMLElement): number | null => {
+    const at = superAnchorRef.current;
+    const rows = itemRows();
+    const scale = screenScaleOf(el) || 1;
+    const spans = rows.map((r) => ({ top: contentTopOf(r, el), height: r.getBoundingClientRect().height / scale }));
+    let i = -1;
+    if (at.own) {
+      const own = rows.findIndex((r) => r.dataset.itemId === at.own);
+      i = ownAnchorIndex(spans, own, el.clientHeight, RAIL_CLEARANCE);
+    }
+    if (i < 0) {
+      if (!at.taken) {
+        if (el.clientHeight > 0 && !historyPendingRef.current) {
+          const last = rows.at(-1) ?? null;
+          superAnchorRef.current = { ...at, after: last, afterId: last?.dataset.itemId ?? null, taken: true };
+        }
+        return null;
+      }
+      let after = at.after ? rows.indexOf(at.after) : -1;
+      // Redrawn under another element (a live row swapped for its history twin): find it by id.
+      if (after < 0 && at.afterId) after = rows.findIndex((r) => r.dataset.itemId === at.afterId);
+      // Its row is gone (trimmed, re-id'd): never guess, the follow disarms where it stands (D4).
+      if (after < 0 && (at.after || at.afterId)) return ANCHOR_GONE;
+      i = answerRowAfter(rows.length, after);
+    }
+    if (i < 0) return null;
+    // A reply strip above the row starts it.
+    const host = rows[i].previousElementSibling;
+    return host instanceof HTMLElement && host.hasAttribute('data-reply-strip') && host.parentElement === contentRef.current ? contentTopOf(host, el) : spans[i].top;
+  }, [itemRows]);
+  /** `captureAnchor` is defined further down; the follow's stop re-takes the hold through this. */
   const captureAnchorRef = useRef<() => void>(() => {});
-  /** The unread row a landing holds (the follow's cap, the reload's reveal, every unread jump): the
-   *  hold measures ITS START first, resolved on every measure (`lineHostOf`: a reply strip above it
-   *  when there is one, which can mount or leave while the history settles), so nothing changing
-   *  around it can slide that start out of view. Cleared by the reader's input, another jump, or
-   *  the view pinning again. */
-  const followRowRef = useRef<HTMLElement | null>(null);
-  /** The cap: when following the bottom would push the first unread's start above the view, write
-   *  its start once and leave the view unpinned and HELD there. True: it wrote (or started a
-   *  reveal that lands by itself), so the bottom write is skipped. */
-  const holdAtUnread = useCallback((el: HTMLElement, allowUp: boolean): boolean => {
-    const at = follow.target(el, allowUp);
-    if (!at) return false;
-    if ('reveal' in at) return true;
-    setStick(false);
-    followRowRef.current = at.node;
-    el.scrollTop = at.top;
-    prevTopRef.current = el.scrollTop;
-    restoreTopRef.current = el.scrollTop;
-    captureAnchorRef.current();
-    return true;
-  }, [follow, setStick]);
+  /** One follow step of the Super chat: to the bottom, capped at the new answer's start; at the cap
+   *  the follow ends and the view rests where it is. Writes nothing during his own gesture. */
+  const superStep = useCallback((el: HTMLElement) => {
+    if (!stickRef.current || glideRef.current) return;
+    const { top, stop } = followStep({
+      scrollTop: el.scrollTop,
+      maxTop: el.scrollHeight - el.clientHeight,
+      anchorTop: superAnchorTop(el),
+      clearance: RAIL_CLEARANCE,
+    });
+    if (shouldWrite(el.scrollTop, top, lastActivityAtRef.current, performance.now())) {
+      el.scrollTop = top;
+      prevTopRef.current = el.scrollTop;
+      restoreTopRef.current = el.scrollTop;
+    }
+    if (stop) {
+      stickRef.current = false;
+      setPinned(false);
+      captureAnchorRef.current();
+    }
+  }, [superAnchorTop]);
 
-  /** `allowUp`: the opened pane's first landing (marks loaded, back from the garage), the one
-   *  follow that may go up to the first unread; otherwise a pinned view only moves down. */
-  const scrollToBottom = useCallback((allowUp = false) => {
+  const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     // A minimized pane's container is parked in the detached garage: it measures 0 and
     // cannot be scrolled. The observer below re-runs this the moment it is re-homed.
     if (!el || el.clientHeight === 0) return;
-    if (holdAtUnread(el, allowUp)) return;
+    // The Super chat: the one owner decides (follow, capped at the new answer's start).
+    if (superRef.current) { superStep(el); return; }
     el.scrollTop = el.scrollHeight;
     prevTopRef.current = el.scrollTop;
     restoreTopRef.current = el.scrollTop;
@@ -1000,14 +1079,42 @@ export function ChatPane({
       repinFrameRef.current = 0;
       const now = scrollRef.current;
       if (!now || !stickRef.current || now.clientHeight === 0) return;
-      // The same target as the write above, or the cap would be undone a frame later.
-      if (holdAtUnread(now, false)) return;
       if (isAtBottom({ scrollTop: now.scrollTop, scrollHeight: now.scrollHeight, clientHeight: now.clientHeight })) return;
       now.scrollTop = now.scrollHeight;
       prevTopRef.current = now.scrollTop;
       restoreTopRef.current = now.scrollTop;
     });
-  }, [holdAtUnread]);
+  }, [superStep]);
+
+  /** His own choice of the end (his send, Latest): straight to the bottom, the follow begins there.
+   *  `own`: the item id of the message he just sent, the new answer's anchor. */
+  const placeAtBottom = useCallback((own: string | null) => {
+    const el = scrollRef.current;
+    stickRef.current = true;
+    setPinned(true);
+    setComposerFolded(false);
+    takeAnchor(own);
+    if (!el || el.clientHeight === 0) return;
+    // Already there (a send at the bottom): no write, a zero-distance write is a frame's work for nothing.
+    if (el.scrollHeight - el.clientHeight - el.scrollTop < 1) return;
+    el.scrollTop = el.scrollHeight;
+    prevTopRef.current = el.scrollTop;
+    restoreTopRef.current = el.scrollTop;
+  }, [takeAnchor]);
+  // A turn ended while the view follows: the next answer (an event turn, a report) starts fresh
+  // from here, so the follow stops at ITS start, not at the start of the one just read.
+  const busyNow = session.busy;
+  const wasBusyRef = useRef(busyNow);
+  useEffect(() => {
+    const was = wasBusyRef.current;
+    wasBusyRef.current = busyNow;
+    if (!superView || !was || busyNow || !stickRef.current) return;
+    // Parked off-screen (garaged): nothing can be measured, so his own send keeps the anchor and
+    // the view he comes back to still stops at that answer's start (r1).
+    const el = scrollRef.current;
+    if (!el || el.clientHeight === 0) return;
+    takeAnchor(null);
+  }, [busyNow, superView, takeAnchor]);
 
   useEffect(() => () => {
     if (repinFrameRef.current) cancelAnimationFrame(repinFrameRef.current);
@@ -1060,7 +1167,6 @@ export function ChatPane({
   const markActivity = useCallback(() => {
     lastActivityAtRef.current = performance.now();
     jumpHeldRef.current = false;
-    followRowRef.current = null;
     stopGlideRef.current();
   }, []);
   /** Pending settled-reveal timer, so a burst of scroll events keeps exactly one alive. */
@@ -1460,12 +1566,8 @@ export function ChatPane({
       if (runRows && runRows.length) rows.push(...Array.from(runRows));
       else rows.push(child);
     }
-    // The landed unread row first (followRowRef): held by its START, whichever element starts it.
-    const held = followRowRef.current;
-    if (held?.isConnected) candidates.push({ node: held, top: holdTopOf({ node: held, start: true }, el), start: true });
     for (const node of rows) {
       if (candidates.length >= ANCHOR_CANDIDATES) break;
-      if (node === held) continue;
       if (node.getBoundingClientRect().bottom <= fold) continue;
       candidates.push({ node, top: contentTopOf(node, el) });
     }
@@ -1840,6 +1942,8 @@ export function ChatPane({
     const ro = new ResizeObserver(() => {
       if (stickRef.current) scrollToBottom();
       else holdAnchorSteady();
+      // Content growing below a resting view moves no offset and fires no scroll event.
+      if (superRef.current && el.clientHeight > 0) setAtBottom(isAtBottom(el));
       drawReplyLinesRef.current();
       // Content growing ABOVE an unpinned view moves the card without a scroll event of
       // its own — the rail would otherwise still be showing a card that is back in view.
@@ -1869,9 +1973,15 @@ export function ChatPane({
   useEffect(() => {
     session.setTranscriptRepin(() => {
       const el = scrollRef.current;
-      // Back from the garage (the re-parent zeroed the offset): a landing, which may reveal the
-      // first unread above the window (plan r1 E2).
-      if (stickRef.current) scrollToBottom(!!el && el.scrollTop === 0 && restoreTopRef.current > 0);
+      if (stickRef.current) {
+        // The Super chat back from the garage (the re-parent zeroed the offset): the same offset
+        // first, so the follow's never-upward step starts where he was, not at the top.
+        if (superRef.current && el && el.clientHeight > 0 && el.scrollTop === 0 && restoreTopRef.current > 0) {
+          el.scrollTop = restoreTopRef.current;
+          prevTopRef.current = el.scrollTop;
+        }
+        scrollToBottom();
+      }
       // Guarded on the value actually differing so a `fitAndResize` for a move that scrolled
       // nothing (the common case — it fires on every layout change, not just re-homes) writes
       // nothing at all.
@@ -2804,49 +2914,40 @@ export function ChatPane({
     scrollRef,
     contentRef,
     dividerLabel: () => t('super.unread.divider'),
-    isPinned: () => stickRef.current,
+    // What he sees, not the follow flag: a view resting at the bottom after the follow stopped is
+    // still at the bottom (D2).
+    isPinned: () => atBottomRef.current,
     isGliding: () => !!glideRef.current,
-    isWalking: () => jumpHeldRef.current,
   });
   const { rowOf: unreadRowOf, look: lookAtUnread } = superUnread;
   /** Prose lands under the rail's clearance; a question card whole when it fits, its top when not. */
   const unreadLanding = useCallback((u: UnreadUnit, row: HTMLElement, sc: HTMLElement) => (
     u.question ? landingFor('question', row.getBoundingClientRect().height, sc.clientHeight) : RAIL_CLEARANCE
   ), []);
-  const holdUnreadRow = useCallback((row: HTMLElement) => { followRowRef.current = row; }, []);
+  /** The jump's held row: the in-place hold already keeps the first visible row (D6). */
+  const holdUnreadRow = useCallback(() => {}, []);
   const goToUnread = useUnreadJump({ scrollRef, rowOf: unreadRowOf, look: lookAtUnread, measureTop: contentTopOf, landingOf: unreadLanding, flashMs: FLASH_MS, holdRow: holdUnreadRow, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef });
-  followInputs.current = {
-    enabled: !!superView && !!superQuestionView,
-    items: unreadItems,
-    unread: superUnread.units,
-    rowOf: unreadRowOf,
-    measureTop: contentTopOf,
-    releaseToItem,
-    jump: goToUnread,
-    setStick,
-    jumpHeldRef,
-  };
-  // The opened pane's FIRST landing (marks loaded): straight to the first unread's start, even
-  // above the window. Then, while pinned, a new anchor (a read one handing over to the next, the
-  // marks arriving) is followed again, only ever down. Skipped once the reader has moved (r1 E9).
-  const anchorKeyNow = follow.anchorKey();
+  // The opened pane's landing (D7), once per mount: on the first unread with its "Okunmamış" line,
+  // even above the window, as Telegram opens a chat. Nothing unread: the view stays where the
+  // mount put it (the bottom). It waits, unspent, until the read marks are in and a resumed
+  // transcript has landed; skipped once the reader has moved.
   const unreadReady = superUnread.ready;
   const historyPending = !!conv.historyPending;
+  const firstUnread = superUnread.units[0] ?? null;
   const landedRef = useRef(false);
   const openedAtRef = useRef(performance.now());
   useLayoutEffect(() => {
-    // The first landing judges the WHOLE transcript: it waits, unspent, until the read marks are in,
-    // a resumed transcript has landed (live frames can come first, end review r2) and there is
-    // an anchor at all (end review r1).
-    if (!unreadReady || historyPending || !anchorKeyNow) return;
-    const first = !landedRef.current;
+    if (!superView || landedRef.current || !unreadReady || historyPending) return;
     landedRef.current = true;
-    if (!stickRef.current || glideRef.current) return;
-    if (first && lastActivityAtRef.current > openedAtRef.current) return;
-    scrollToBottom(first);
-  }, [anchorKeyNow, unreadReady, historyPending, scrollToBottom]);
-  // The doors to a question (the band's Answer, the agenda's waiting row): showQuestionCard asks
-  // this pane through the event, and the pane says where it went (K1 = A).
+    if (!firstUnread || lastActivityAtRef.current > openedAtRef.current || glideRef.current) return;
+    if (firstUnread.itemId && releaseToItem(firstUnread.itemId) === null) return;
+    if (!firstUnread.itemId && !unreadRowOf(firstUnread)) return;
+    setStick(false);
+    jumpHeldRef.current = true;
+    goToUnread(firstUnread, { instant: true });
+  }, [superView, unreadReady, historyPending, firstUnread, releaseToItem, unreadRowOf, setStick, goToUnread]);
+  // The doors to a question (the agenda's waiting row): showQuestionCard asks this pane through
+  // the event, and the pane goes straight to the card.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !superView) return undefined;
@@ -2854,34 +2955,31 @@ export function ChatPane({
       const detail = (e as CustomEvent<SuperQuestionDetail>).detail;
       if (!detail?.item) return;
       e.preventDefault();
-      followRowRef.current = null;
-      detail.landed = follow.door(detail.item);
+      setStick(false);
+      jumpHeldRef.current = true;
+      goToUnread(superUnread.units.find((u) => u.question === detail.item) ?? { key: `q:${detail.item}`, ts: 0, itemId: null, question: detail.item });
+      detail.landed = 'card';
     };
     el.addEventListener(SUPER_QUESTION_EVENT, onDoor);
     return () => el.removeEventListener(SUPER_QUESTION_EVENT, onDoor);
-  }, [superView, follow]);
-  const jumpToNextUnread = () => {
-    const unit = superUnread.next();
-    if (!unit) return;
-    follow.forgetDoor();
-    followRowRef.current = null;
-    if (unit.itemId ? releaseToItem(unit.itemId) === null : !unreadRowOf(unit)) return;
-    setStick(false);
-    jumpHeldRef.current = true;
-    goToUnread(unit);
-  };
-  /** The button pressed goes away with the bar, and focus with it, which would end the surface's
-   *  chords. Never under a finger: it would open the keyboard. */
-  const refocusAfterBar = () => { if (window.matchMedia('(hover: hover)').matches) session.focus(); };
+  }, [superView, setStick, goToUnread, superUnread.units]);
+  /** The jump button takes the focus from the composer and unmounts at the bottom: the typing goes
+   *  back to the composer, on a pointer screen only (under a finger the keyboard would pop up). */
+  const refocusComposer = () => { if (window.matchMedia('(hover: hover)').matches) session.focus(); };
   const goToLatest = () => {
     jumpHeldRef.current = false;
     stopGlideRef.current();
-    // The reader chose the end: what is above no longer holds the view (D2).
-    follow.passAll();
-    follow.forgetDoor();
-    setStick(true);
-    scrollToBottom();
-    if (superView) refocusAfterBar();
+    if (superView) placeAtBottom(null);
+    else { setStick(true); scrollToBottom(); }
+    refocusComposer();
+  };
+  /** A message he queued (⌥⏎, or ⏎ while a turn cannot take it) moves the Super view at his press;
+   *  its later arrival from the queue moves nothing (`queued` items, rule 1, r1). */
+  const onQueued = () => {
+    if (!superView) return;
+    jumpHeldRef.current = false;
+    stopGlideRef.current();
+    placeAtBottom(null);
   };
 
   // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
@@ -2890,7 +2988,7 @@ export function ChatPane({
   // dragged a reader down on every event. Retry keeps `lastUserItem`: a failed event turn is
   // what it sends again.
   const lastOwnItem = superView
-    ? [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia && !superEventOf(it.text))
+    ? [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia && !it.echo && !it.queued && !superEventOf(it.text))
     : lastUserItem;
 
   // Sending is unambiguous intent to watch the answer, so it re-arms sticking: a reply that
@@ -2902,12 +3000,17 @@ export function ChatPane({
   const sentIdRef = useRef(lastUserItemId);
   useLayoutEffect(() => {
     if (!lastUserItemId) return;
-    if (sentIdRef.current !== lastUserItemId) { sentIdRef.current = lastUserItemId; follow.passAll(); }
+    const sent = sentIdRef.current !== lastUserItemId;
+    sentIdRef.current = lastUserItemId;
+    // The Super chat moves for his send only (rule 1): the mount is no send, and an echo of a
+    // message typed elsewhere never counts as one (lastOwnItem skips it).
+    if (superView && !sent) return;
     jumpHeldRef.current = false;
     stopGlideRef.current();
+    if (superView) { placeAtBottom(lastUserItemId); return; }
     setStick(true);
     scrollToBottom();
-  }, [lastUserItemId, setStick, scrollToBottom, follow]);
+  }, [lastUserItemId, superView, setStick, scrollToBottom, placeAtBottom]);
 
   // Stream-interrupted retry (state 12): resend the last user message. There is no
   // reconnect-and-resume machinery in this engine (see the plan's resolved risk) — for a
@@ -2933,7 +3036,7 @@ export function ChatPane({
       )}
       <BrowserHostProvider value={browserHost}>
       <SelectionScope handler={selectionHandler}>
-      <div className="chat-transcript">
+      <div className={superView ? 'chat-transcript chat-transcript--super' : 'chat-transcript'}>
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
                 <div
           className="chat-scroll"
@@ -2952,14 +3055,16 @@ export function ChatPane({
             const readerMoving = metrics.userDriven || performance.now() - lastActivityAtRef.current < SCROLL_SETTLE_MS;
             if (!jumpHeldRef.current) {
               const stick = nextStickToBottom(stickRef.current, metrics);
-              if (stick && !stickRef.current && readerMoving) follow.passAll();
-              setStick(stick);
+              // The Super chat follows again only when HE brings the view to the bottom: the
+              // follow's own stop near the end, a clamp or a hold never re-arms it (rule C).
+              setStick(superView && stick && !stickRef.current && !readerMoving ? false : stick);
             }
             // In the Super chat the composer folds on his own scroll only, never on the follow's
             // hold (a report landing must not fold it under him on a phone, r1 E7).
             setComposerFolded((prev) => (superView && !readerMoving && !stickRef.current ? prev : nextComposerFolded(prev, stickRef.current, metrics)));
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
+            if (superView) setAtBottom(isAtBottom(metrics));
             syncRail();
             // The hold moves with the reader: wherever they have just come to rest is the new
             // "don't move me from here". A pinned view needs no hold — the bottom is its own
@@ -3120,6 +3225,8 @@ export function ChatPane({
               </>
             )}
             {liveNodes}
+            {/* Where the conversation's items end: the Super follow anchors above it only. */}
+            {superView && <div data-items-end hidden />}
             {endSlot?.({ openFile: handleOpenFile })}
             {trailingParties}
             {conv.pending
@@ -3194,14 +3301,14 @@ export function ChatPane({
             onClose={closeFind}
           />
         )}
-        {superView && <SuperUnreadBar unread={superUnread} onJump={jumpToNextUnread} onBottom={pinned ? null : goToLatest} onGone={refocusAfterBar} />}
-        {!pinned && !(superView && superUnread.edge && superUnread.count > 0) && (
+        {superView && <SuperNewButton shown={!atBottom} below={superUnread.below} onClick={goToLatest} onGone={refocusComposer} />}
+        {!superView && !pinned && (
           <button
             type="button"
             className="chat-jump"
             onClick={goToLatest}
           >
-            <span aria-hidden>↓</span> {superView ? t('super.unread.bottom') : 'Latest'}
+            <span aria-hidden>↓</span> Latest
           </button>
         )}
       </div>
@@ -3281,6 +3388,7 @@ export function ChatPane({
           session={session}
           folded={isPhone && composerFolded}
           onFieldTap={isPhone ? goToLatest : undefined}
+          onQueued={onQueued}
           model={model}
           effort={effort}
           modelConfig={modelConfig}

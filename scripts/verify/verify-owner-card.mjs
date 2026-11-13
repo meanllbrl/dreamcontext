@@ -470,8 +470,8 @@ function hitTestIn(node, points) {
  *  - TOP: any fixed or sticky element, at any depth (the titlebar, the Super bar, the Super
  *    chat's own head inside its column), in the upper part of the screen; plus the named ones
  *    (`ns-titlebar`, `super-job-bar`, a header);
- *  - BOTTOM: any fixed or sticky element in the lower part (the composer, the unread pill), plus
- *    `.chat-cmp` and `super-unread-bar`;
+ *  - BOTTOM: any fixed or sticky element in the lower part (the composer, the "↓ N yeni"
+ *    button), plus `.chat-cmp` and `super-new`;
  *  - and what the element's own clipping scroll containers hide (`clipChrome`): a head that sits
  *    above the scrolled list is chrome even when it is not sticky.
  * Never the element itself, a descendant or an ancestor. Then the band ({@link chromeBand}).
@@ -484,7 +484,7 @@ async function bandOf(page, el) {
     const related = (e) => e === n || n.contains(e) || e.contains(n);
     const shown = (e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0; };
     const tops = new Set(document.querySelectorAll('[data-testid="ns-titlebar"], [data-testid="super-job-bar"], header, [role="banner"]'));
-    const bottoms = new Set(document.querySelectorAll('.chat-cmp, [data-testid="super-unread-bar"]'));
+    const bottoms = new Set(document.querySelectorAll('.chat-cmp, [data-testid="super-new"]'));
     for (const e of document.querySelectorAll('body *')) {
       const pos = getComputedStyle(e).position;
       if (pos !== 'fixed' && pos !== 'sticky') continue;

@@ -259,6 +259,17 @@ export function ownerQueueCount(state: Pick<SuperState, 'queue'> | null | undefi
   return (state?.queue ?? []).filter(needsOwner).length;
 }
 
+/** A question is asked in the chat, as its card, never in the top band (owner 2026-11-13: "şu tip
+ *  soru bile istemiyorum"). The band's head and count skip them; the notch, dock and alarm keep
+ *  `queueHead`. */
+const bandItem = (it: SuperQueueItem) => it.kind !== 'ask' && it.kind !== 'question';
+export function bandHead(state: Pick<SuperState, 'queue'> | null | undefined): SuperQueueItem | null {
+  return queueHead(state ? { queue: state.queue.filter(bandItem) } : state);
+}
+export function bandCount(state: Pick<SuperState, 'queue'> | null | undefined): number {
+  return (state?.queue ?? []).filter((it) => needsOwner(it) && bandItem(it)).length;
+}
+
 /** Items whose alarm this window already raised, per project: the strip remounts (the stage is
  *  redrawn, the mode re-entered) and a ref would forget, ringing the same head again. Bounded:
  *  the oldest ids go first (an id never comes back once answered). */
