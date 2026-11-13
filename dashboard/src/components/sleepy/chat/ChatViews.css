@@ -215,7 +215,7 @@
 .chat-secretcard-error {
   margin: 0;
   padding: 0 var(--space-4);
-  color: var(--color-error);
+  color: var(--color-error-ink);
   font-size: var(--font-size-xs);
   line-height: 1.5;
 }
@@ -338,7 +338,7 @@
   margin: 0;
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--color-border);
-  color: var(--color-error);
+  color: var(--color-error-ink);
   font-size: var(--font-size-xs);
 }
 
@@ -395,7 +395,7 @@
 }
 .chat-autocard-next { color: var(--color-text-secondary); }
 .chat-autocard-note { color: var(--color-text-tertiary); }
-.chat-autocard-error { color: var(--color-error); }
+.chat-autocard-error { color: var(--color-error-ink); }
 .chat-autocard-foot {
   display: flex;
   align-items: center;
@@ -431,7 +431,7 @@
 }
 .chat-learnedcard-scope { color: var(--color-text-secondary); }
 .chat-learnedcard-note { color: var(--color-text-tertiary); overflow-wrap: anywhere; }
-.chat-learnedcard-error { color: var(--color-error); }
+.chat-learnedcard-error { color: var(--color-error-ink); }
 .chat-learnedcard-quote {
   margin: 0 var(--space-4);
   padding: var(--space-2) var(--space-3);

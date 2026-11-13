@@ -163,6 +163,17 @@ describe('rules-delivery: before something that cannot be taken back (criterion 
     expect(bash('gh pr merge 12 --squash')).toBe('gh pr merge');
     expect(bash('npm test')).toBeNull();
     expect(bash('git status')).toBeNull();
+    // The act is the binary's own subcommand: never a word in a message or a later argument.
+    expect(bash('git stash push -m wip')).toBeNull();
+    expect(bash('git commit -m "feat: push notification permission"')).toBeNull();
+    expect(bash('git add -A && git commit -m "fix push token refresh"')).toBeNull();
+    expect(bash("git commit -m 'chore: npm publish notes; git push later'")).toBeNull();
+    expect(bash('npm run publish-docs')).toBeNull();
+    expect(bash('gh issue create --title "merge the pr"')).toBeNull();
+    expect(bash('git add -A && git commit -m "x" && git push origin main')).toBe('git push');
+    expect(bash('/usr/bin/git push')).toBe('git push');
+    expect(bash('npm -w pkg publish')).toBe('npm publish');
+    expect(bash('gh -R o/r pr merge 3')).toBe('gh pr merge');
     expect(actKind('mcp__slack__send_message', {})).toBe('send');
     expect(actKind('mcp__slack__read_channel', {})).toBeNull();
     expect(actKind('Read', { file_path: 'x' })).toBeNull();

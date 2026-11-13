@@ -277,38 +277,73 @@ const ALL_ACT_WORDS = [...new Set(Object.values(ACT_WORDS).flat())];
 
 const fold = (s: string): string => foldAscii(s).toLowerCase();
 
-/** Words of one simple command (split on ; & | newlines and parentheses). */
+/**
+ * Words of each simple command (split on ; & | newlines and parentheses). Quoted text is one
+ * opaque word first, so a commit message or a heredoc line that says "push" or "publish" is
+ * never read as the command itself.
+ */
 function simpleCommands(command: string): string[][] {
-  return command.split(/[;&|\n()]+/).map((seg) => seg.trim().split(/\s+/).filter(Boolean)).filter((t) => t.length > 0);
+  const unquoted = command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ' __q__ ');
+  return unquoted.split(/[;&|\n()]+/).map((seg) => seg.trim().split(/\s+/).filter(Boolean)).filter((t) => t.length > 0);
+}
+
+/** Options that take the next word as their value, per binary (`git -C dir`, `npm -w pkg`). */
+const VALUE_OPTIONS: Record<string, readonly string[]> = {
+  git: ['-C', '-c', '--git-dir', '--work-tree', '--namespace'],
+  npm: ['-w', '--workspace', '--prefix', '--registry', '--tag', '--otp'],
+  pnpm: ['-C', '--dir', '-F', '--filter', '--registry', '--tag', '--otp'],
+  yarn: ['--cwd'],
+  gh: ['-R', '--repo'],
+};
+
+/**
+ * The positional words after `bin` in one simple command: options and their values skipped, so
+ * `git -C dir push` gives `push`. The binary is the command word itself (a path ending in `/git`
+ * counts); an env assignment or `sudo`/`command`/`exec` before it is skipped. Null: not this binary.
+ */
+function positionals(t: readonly string[], bin: string): string[] | null {
+  let i = 0;
+  while (i < t.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t[i]!) || t[i] === 'sudo' || t[i] === 'command' || t[i] === 'exec')) i += 1;
+  const head = t[i];
+  if (!head || (head !== bin && !head.endsWith(`/${bin}`))) return null;
+  const takesValue = VALUE_OPTIONS[bin] ?? [];
+  const out: string[] = [];
+  for (let j = i + 1; j < t.length; j += 1) {
+    const w = t[j]!;
+    if (w.startsWith('-')) {
+      if (!w.includes('=') && takesValue.includes(w)) j += 1;
+      continue;
+    }
+    out.push(w);
+  }
+  return out;
 }
 
 /**
- * The act a tool call is, from a short fixed list, or null. A command is read as tokens anywhere
- * in the line (`git -C dir push`, `cd x && npm publish`); an MCP tool counts when its own name says
- * it sends, posts or publishes. Pure and cheap: a call that is not on the list reads no store.
+ * The act a tool call is, from a short fixed list, or null. The act is the binary's own
+ * subcommand (`git push`, `cd x && npm publish`, `git -C dir push`), never a word inside quotes or
+ * a later argument (`git commit -m "fix push token"`, `git stash push`); an MCP tool counts when
+ * its own name says it sends, posts or publishes. Pure and cheap: a call that is not on the list
+ * reads no store.
  */
 export function actKind(toolName: string, toolInput: Record<string, unknown>): ActKind | null {
   if (toolName === 'Bash') {
     const command = str(toolInput.command);
     if (!command) return null;
     for (const t of simpleCommands(command)) {
-      const after = (bin: string, word: string): boolean => {
-        const i = t.indexOf(bin);
-        return i >= 0 && t.indexOf(word, i + 1) > i;
-      };
-      if (after('npm', 'publish') || after('pnpm', 'publish') || after('yarn', 'publish')) return 'npm publish';
-      if (after('git', 'push')) return 'git push';
-      if (after('git', 'tag')) {
+      for (const bin of ['npm', 'pnpm', 'yarn']) {
+        if (positionals(t, bin)?.[0] === 'publish') return 'npm publish';
+      }
+      const git = positionals(t, 'git');
+      if (git?.[0] === 'push') return 'git push';
+      if (git?.[0] === 'tag') {
         const i = t.indexOf('tag');
         const args = t.slice(i + 1);
         if (args.length > 0 && !args.some((a) => a === '-l' || a === '--list' || a === '-v' || a === '--verify' || a === '-n')) return 'git tag';
       }
-      if (after('gh', 'release')) {
-        const i = t.indexOf('release');
-        const verb = t[i + 1];
-        if (verb === 'create' || verb === 'upload' || verb === 'edit' || verb === 'delete') return 'gh release';
-      }
-      if (t.includes('gh') && after('pr', 'merge')) return 'gh pr merge';
+      const gh = positionals(t, 'gh');
+      if (gh?.[0] === 'release' && ['create', 'upload', 'edit', 'delete'].includes(gh[1] ?? '')) return 'gh release';
+      if (gh?.[0] === 'pr' && gh[1] === 'merge') return 'gh pr merge';
     }
     return null;
   }

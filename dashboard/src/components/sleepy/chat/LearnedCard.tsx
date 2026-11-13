@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { RequestError } from '../../../api/client';
+import { phoneAllows } from '../../../lib/phoneSurface';
 import { CardHeader } from './molecules';
 import type { LearnedViewSpec } from '../../../lib/chatViewSpec';
 import type { ChatSession } from '../chatSession';
@@ -24,6 +25,9 @@ export interface LearnedCardFacts {
 
 type Tap = 'undo' | 'keep' | 'drop';
 type Phase = 'idle' | 'busy' | 'failed' | 'refused';
+
+/** One glyph per state: a check only where the rule is in force. */
+const GLYPH: Record<LearnedCardFacts['status'], string> = { active: '✓', proposed: '?', undone: '↺', superseded: '⇄', invalid: '!' };
 
 const SLOT = (s: string, vars: Record<string, string>) => s.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? '');
 
@@ -67,6 +71,8 @@ export function LearnedCard({ spec, session, report }: {
       report?.(tapReport(res.card, op));
     } catch (err) {
       setPhase(err instanceof RequestError && err.code === 'owner_page_only' ? 'refused' : 'failed');
+      // The rule may have moved under the card (undone in another window): show its real state.
+      void queryClient.invalidateQueries({ queryKey: key });
     }
     // `key` is rebuilt every render from the id; the id is what it depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,6 +92,8 @@ export function LearnedCard({ spec, session, report }: {
   }
 
   const f = q.data.card;
+  // Keep and Drop are laptop-only routes: on the phone they are never drawn, the card says where.
+  const decideHere = phoneAllows('POST', `/api/learned/${encodeURIComponent(f.id)}/keep`);
   const when = f.quote ? new Date(f.quote.at) : null;
   const date = when && !Number.isNaN(when.getTime())
     ? when.toLocaleDateString(locale === 'tr' ? 'tr-TR' : undefined, { day: 'numeric', month: 'short' })
@@ -93,8 +101,8 @@ export function LearnedCard({ spec, session, report }: {
   return (
     <div className="chat-viewcard chat-learnedcard" data-view-kind="learned" data-state={f.status}>
       <CardHeader
-        glyph="✓"
-        title={f.headline}
+        glyph={GLYPH[f.status] ?? '✓'}
+        title={f.headline || t('chat.learned.title')}
         aside={<span className="chat-learnedcard-state" data-state={f.status}>{t(`chat.learned.state.${f.status}`)}</span>}
       />
       <p className="chat-learnedcard-scope">{t(f.scope === 'me' ? 'chat.learned.scope.me' : 'chat.learned.scope.project')}</p>
@@ -115,7 +123,10 @@ export function LearnedCard({ spec, session, report }: {
               {t('chat.learned.undo')}
             </button>
           )}
-          {f.status === 'proposed' && (
+          {f.status === 'proposed' && !decideHere && (
+            <span className="chat-learnedcard-note">{t('chat.learned.onMac')}</span>
+          )}
+          {f.status === 'proposed' && decideHere && (
             <>
               <button type="button" className="chat-btn pill" disabled={phase === 'busy'} onClick={() => { void tap('drop'); }}>
                 {t('chat.learned.drop')}
