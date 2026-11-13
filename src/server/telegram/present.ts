@@ -122,15 +122,12 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
   }
   // Pictures Telegram refuses (too large, over the request fence, a failed send) and PDFs that
   // fail become text lines: the presentation is never just its footer.
-  // Several pictures: each its own "N · name" caption and a numbered list under them (the list
-  // carries "Ve N kart daha."); one picture: its name as its caption.
-  const { sent: pics, unsent, listed } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), { heading: (n) => (layout === 'open' ? `${word} ${n} resim:` : `${word}, ${n} resim:`), footer: moreLine });
+  // Pictures carry their own "N · name" caption and no listing message follows (owner 2026-11-13).
+  const { sent: pics, unsent } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), true);
   for (const d of docs) if (!(await sendMedia(ab, d, caption(d.title)))) unsent.push(d);
   const album = pics.length >= 2;
   const fallback = unsent.map((m) => notSentLine('', m.title, NOT_SENT.refused));
-  // The picture list carries "Ve N kart daha." when it went; otherwise this message does.
-  const moreSaid = listed;
-  if (lines.length || fallback.length || !pics.length || (moreLine.length && !moreSaid)) {
+  if (lines.length || fallback.length || !pics.length || moreLine.length) {
     // One card per line; a numbered list when nothing went as a picture (the whole presentation
     // is this message), never the old "Başlık: a · b · c" run-on.
     const rows = [...lines.map((l) => (l.kind === 'text' ? l.line : l.title)), ...fallback];
@@ -138,7 +135,7 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
     const text = [
       pics.length ? '' : `<b>${escapeHtml(`${word}:`)}</b>`,
       ...rows.map((r, i) => escapeHtml(numbered ? `${i + 1}. ${r}` : r)),
-      ...(moreSaid ? [] : moreLine.map(escapeHtml)),
+      ...moreLine.map(escapeHtml),
     ].filter(Boolean).join('\n');
     const keyboard = lines.flatMap((l) => (l.kind === 'text' && l.button ? [[{ text: l.button.text, url: l.button.url }]] : []));
     await hub.send(ab, text, keyboard.length ? { reply_markup: { inline_keyboard: keyboard } } : {}).catch(() => {});

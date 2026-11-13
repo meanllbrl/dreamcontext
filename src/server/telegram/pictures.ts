@@ -109,45 +109,18 @@ export function numberedCaption(n: number, title: string): string {
 }
 
 /**
- * The text under a group of pictures: a heading, then one numbered line per picture in the order
- * they were sent, then the footer lines. Never a run-on line; split into messages of whole lines.
- */
-export function pictureListMessages(heading: string, rows: ReadonlyArray<{ n: number; title: string }>, footer: readonly string[] = [], max = 4000): string[] {
-  const lines = [
-    `<b>${escapeHtml(redactSecrets(heading))}</b>`,
-    ...rows.map((r) => `${r.n}. ${escapeHtml(redactSecrets(pictureName(r.title)))}`),
-    ...footer.map((f) => escapeHtml(redactSecrets(f))),
-  ];
-  const out: string[] = [];
-  let cur = '';
-  for (const l of lines) {
-    if (cur && cur.length + 1 + l.length > max) { out.push(cur); cur = ''; }
-    cur = cur ? `${cur}\n${l}` : l;
-  }
-  if (cur) out.push(cur);
-  return out;
-}
-
-export interface PictureNames {
-  /** The list's heading for `n` pictures sent, e.g. `Sahnede 6 resim:`. */
-  heading: (n: number) => string;
-  /** Lines under the list (e.g. "Ve 2 kart daha."). */
-  footer?: string[];
-}
-
-/**
  * THE way pictures leave (one place for every caller: presentations, dream-html, previews):
  * items Telegram would refuse are left out first, then one photo/clip or one album of 2-10
  * within the request fence. Returns the items that did NOT go, so the caller sends their text
  * lines (a refused send leaves every item unsent, never silence).
  *
- * With `names` (pictures that each have a name): every picture carries "N · name" as its own
- * caption, and a numbered list follows in the same order (owner 2026-11-10: one run-on caption
- * line under a cropped collage could not be read). A picture taller than 1:2 goes as its own
+ * With `named` (pictures that each have a name): every picture carries "N · name" as its own
+ * caption (owner 2026-11-10: one run-on caption line under a cropped collage could not be read).
+ * No separate listing message follows (owner 2026-11-13: "Sahnede 2 resim: 1. Önce 2. Sonra" was noise). A picture taller than 1:2 goes as its own
  * photo after the album, so it is seen whole; one beyond Telegram's photo dimensions as a document.
- * Without `names` (slices of one card): no captions, as before.
+ * Without `named` (slices of one card): no captions, as before.
  */
-export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?: PictureNames): Promise<{ sent: MediaItem[]; unsent: MediaItem[]; listed: boolean }> {
+export async function sendPictures(ab: ActiveBinding, items: MediaItem[], named?: boolean): Promise<{ sent: MediaItem[]; unsent: MediaItem[] }> {
   const fit: MediaItem[] = [];
   const unsent: MediaItem[] = [];
   let total = 0;
@@ -156,17 +129,17 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?
     fit.push(it);
     total += it.file.data.length;
   }
-  if (!fit.length) return { sent: [], unsent, listed: false };
-  if (!names) {
+  if (!fit.length) return { sent: [], unsent };
+  if (!named) {
     // Slices of one card: each tile says which part it is ("Kart · 2/3"), never one shared line.
     const part = (m: MediaItem): string => { const t = pictureName(m.title); return t ? caption(`${t} · ${fit.indexOf(m) + 1}/${fit.length}`) : ''; };
     const ok = fit.length === 1 ? !!(await sendMedia(ab, fit[0])) : await sendAlbum(ab, fit, part);
-    return ok ? { sent: fit, unsent, listed: false } : { sent: [], unsent: [...fit, ...unsent], listed: false };
+    return ok ? { sent: fit, unsent } : { sent: [], unsent: [...fit, ...unsent] };
   }
   if (fit.length === 1) {
     const one = fit[0];
     const ok = !!(await sendMedia(ab, overPhotoDimensions(one) ? { ...one, kind: 'document' } : one, caption(pictureName(one.title))));
-    return ok ? { sent: fit, unsent, listed: false } : { sent: [], unsent: [...fit, ...unsent], listed: false };
+    return ok ? { sent: fit, unsent } : { sent: [], unsent: [...fit, ...unsent] };
   }
   // Numbers follow the order he sees: the album first (grid order = sent order), then each
   // tall picture on its own.
@@ -185,15 +158,7 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], names?
     const asSent = overPhotoDimensions(m) ? { ...m, kind: 'document' as const } : m;
     if (await sendMedia(ab, asSent, numberedCaption(num.get(m)!, m.title))) sent.add(m);
   }
-  const went = order.filter((m) => sent.has(m));
-  // The list goes silently (the pictures already buzzed); `listed` says it (and its footer) went.
-  let listed = went.length > 0;
-  if (went.length) {
-    for (const html of pictureListMessages(names.heading(went.length), went.map((m) => ({ n: num.get(m)!, title: m.title })), names.footer)) {
-      if (!(await ab.transport.sendMessage(ab.binding.chatId, html, { disable_notification: true }).then(() => true, () => false))) listed = false;
-    }
-  }
-  return { sent: fit.filter((m) => sent.has(m)), unsent: [...fit.filter((m) => !sent.has(m)), ...unsent], listed };
+  return { sent: fit.filter((m) => sent.has(m)), unsent: [...fit.filter((m) => !sent.has(m)), ...unsent] };
 }
 
 /** Taller than 1:3: Telegram shrinks a photo to 2560 px on its long side, so the text of a
