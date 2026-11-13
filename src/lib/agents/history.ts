@@ -153,8 +153,9 @@ const dayCache = new Map<string, { mtimeMs: number; size: number; entries: Threa
 
 /** Every entry of a source, by id, the ids inside the feed's unread window (the newest 14 calendar
  *  days, the feed's own window), and the day file each entry came from: its name says which
- *  machine wrote it, also for a shared routine whose threads sync with agent sync off. */
-function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; windowIds: Set<string>; fileOf: Map<string, string> } {
+ *  machine wrote it, also for a shared routine whose threads sync with agent sync off. The window
+ *  counts back from the caller's `now`, as `buildFeed` does, never from the wall clock. */
+function readSource(contextRoot: string, source: string, now?: Date): { entries: ThreadEntry[]; windowIds: Set<string>; fileOf: Map<string, string> } {
   let dir: string;
   try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], windowIds: new Set(), fileOf: new Map() }; }
   let names: string[];
@@ -163,7 +164,7 @@ function readSource(contextRoot: string, source: string): { entries: ThreadEntry
   // A day file retention deleted leaves the cache with its folder's listing.
   for (const p of [...dayCache.keys()]) if (p.startsWith(dir + sep) && !present.has(p)) dayCache.delete(p);
   const days = [...new Set(names.map((n) => n.slice(0, 10)))];
-  const cutoffDay = feedCutoffDay();
+  const cutoffDay = feedCutoffDay(now);
   const windowDays = new Set(days.filter((d) => d >= cutoffDay));
   const byId = new Map<string, ThreadEntry>();
   const windowIds = new Set<string>();
@@ -342,7 +343,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const titleOf = (s: string): string => (s === slug ? agentTitle : manifests.find((m) => m.slug === s)?.title ?? s);
 
   for (const source of sourcesFor(contextRoot, slug, opts.audience)) {
-    const { entries, windowIds, fileOf } = readSource(contextRoot, source);
+    const { entries, windowIds, fileOf } = readSource(contextRoot, source, opts.now);
     if (entries.length === 0) continue;
     const here = opts.audience === 'agent' ? threadEntriesHere(contextRoot, source, home) : null;
     const watermark = threadReadWatermark(contextRoot, source, home);
