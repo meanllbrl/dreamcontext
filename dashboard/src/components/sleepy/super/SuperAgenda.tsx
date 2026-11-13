@@ -25,6 +25,16 @@ function parseStopDetail(detail: string | undefined): { reason: string; asOf: st
 }
 import type { SuperQueueItem } from '../../../lib/superTypes';
 
+/** The paused brain sync's reason (brain-auto-sync.ts writes it in `detail`); unknown reads as held. */
+function syncReason(row: OwnerInboxRow): string {
+  try {
+    const r = (JSON.parse(row.detail ?? '') as { reason?: unknown }).reason;
+    return typeof r === 'string' && ['conflict', 'code-conflict', 'scrub', 'held', 'failed'].includes(r) ? r : 'held';
+  } catch {
+    return 'held';
+  }
+}
+
 /** A Waiting line whose item is a card a child left (K7): it opens that card in the Super chat's
  *  slot, the same card the bar and the slot draw. */
 export function agendaOpensSlot(queue: readonly Pick<SuperQueueItem, 'id' | 'card' | 'state'>[], itemId: string | undefined | null): boolean {
@@ -59,7 +69,7 @@ export function agendaOpensSlot(queue: readonly Pick<SuperQueueItem, 'id' | 'car
  * has the same "Write about this" (it asks the Super again through the composer) and, where the
  * owner's own window is (`onDropOwed`), "Gerek yok". The phone only reads them.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, recallRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, onDropOwed, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
@@ -80,6 +90,9 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   onOpenTask?: (slug: string) => void;
   /** The cloud recall index stopped updating (a spend cap, a failure): one row, his Update runs it. */
   recallRows?: OwnerInboxRow[];
+  /** The 24-hour background brain sync stopped on something only he settles: one line with the
+   *  one step to finish. Read only; the row closes by itself once a sync lands. */
+  syncRows?: OwnerInboxRow[];
   onUpdateIndex?: (row: OwnerInboxRow) => void;
   /** After his press: the update runs, or it failed (the row stays until a build lands). */
   indexUpdate?: 'idle' | 'running' | 'failed';
@@ -115,7 +128,7 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   // (it needs his eye), so a small agenda never reads "0 waiting" while one is open.
   const tileCountOf = (sec: string) => countOf(sec) + (sec === 'waiting' ? unanswered.length : 0);
   // A folded Now line no longer counts as running; a Waiting one still waits on him, so it does.
-  const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length + recallRows.length + approvals.length : 0);
+  const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length + recallRows.length + syncRows.length + approvals.length : 0);
 
   if (variant === 'tile') {
     return (
@@ -312,6 +325,20 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
                       </span>
                     </span>
                   </button>
+                </div>
+              );
+            })}
+            {sec === 'waiting' && syncRows.map((r) => {
+              const line = tr(t, `super.agenda.sync.${syncReason(r)}`, r.title);
+              return (
+                <div key={r.id} className="super-agenda-row" data-row={r.id} data-testid="super-agenda-row" data-state="waiting" data-kind="sync" data-chip={r.kind}>
+                  <div className="super-agenda-row-btn" role="note">
+                    <span className="super-agenda-dot" aria-hidden />
+                    <span className="super-agenda-name" title={line}>{line}</span>
+                    <span className="super-agenda-meta">
+                      <span className="super-agenda-chip" data-kind="sync">{tr(t, 'super.agenda.chip.sync', 'Brain sync')}</span>
+                    </span>
+                  </div>
                 </div>
               );
             })}

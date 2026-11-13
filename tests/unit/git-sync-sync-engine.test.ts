@@ -8,7 +8,7 @@ import { writeConflictReport, readConflictReport } from '../../src/lib/git-sync/
 import { acquireBrainLock, releaseBrainLock, isDemotedProjectToken, FALLBACK_AUTHOR } from '../../src/lib/git-sync/brain-repo.js';
 import { writeGitHubToken, writeClickUpToken, type ResolvedToken } from '../../src/lib/task-backend/secrets.js';
 import * as git from '../../src/lib/git-sync/git.js';
-import { runBrainSync as runBrainSyncReal, type SyncEngineDeps } from '../../src/lib/git-sync/sync-engine.js';
+import { runBrainSync as runBrainSyncReal, inStepWithRemote, type SyncEngineDeps } from '../../src/lib/git-sync/sync-engine.js';
 
 const runBrainSync = runBrainSyncReal;
 
@@ -363,6 +363,30 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     expect(state.pushCalls).toBe(0);
   });
 
+  it('lastFullSyncAt: stamped by a push or a clean full noop, never by a pull-only or a held push', async () => {
+    writeBrainLocal(projectRoot, { lastFullSyncAt: undefined });
+    await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, baseDeps(makeState()));
+    expect(readBrainLocal(projectRoot).lastFullSyncAt).toBeUndefined();
+    const held = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, { ...baseDeps(makeState({ dirty: ['knowledge/x.md'] })), appDataInPushRange: () => 'abc123' });
+    expect(held.action).toBe('app-data-held');
+    expect(readBrainLocal(projectRoot).lastFullSyncAt).toBeUndefined();
+    const before = Date.now();
+    await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(makeState()));
+    expect(readBrainLocal(projectRoot).lastFullSyncAt).toBeGreaterThanOrEqual(before);
+    writeBrainLocal(projectRoot, { lastFullSyncAt: undefined });
+    const pushed = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(makeState({ dirty: ['knowledge/x.md'] })));
+    expect(pushed.action).toBe('pushed');
+    expect(readBrainLocal(projectRoot).lastFullSyncAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('inStepWithRemote: a noop with a note is a skip, and only a full auto noop counts', () => {
+    expect(inStepWithRemote({ mode: 'push-only' }, { action: 'pushed' })).toBe(true);
+    expect(inStepWithRemote({ mode: 'auto' }, { action: 'noop' })).toBe(true);
+    expect(inStepWithRemote({ mode: 'auto' }, { action: 'noop', note: 'Skipped the pull: could not check' })).toBe(false);
+    expect(inStepWithRemote({ mode: 'pull-only' }, { action: 'noop' })).toBe(false);
+    expect(inStepWithRemote({ mode: 'auto' }, { action: 'awaiting-agent' })).toBe(false);
+  });
+
   it('pushed after a local edit', async () => {
     const state = makeState({ dirty: ['knowledge/x.md'] });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
@@ -456,6 +480,18 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     expect(state.abortMergeCalls).toBe(0); // auto leaves the merge IN PROGRESS, does not abort
     expect(readConflictReport(contextRoot)).not.toBeNull();
     expect(state.pushCalls).toBe(0);
+  });
+
+  it('auto --headless: the same conflict is backed out to a clean tree and marked pending for --resume', async () => {
+    writeBrainLocal(projectRoot, { pendingAgentMerge: false });
+    const state = makeState({ aheadCount: 1, mergeConflicts: ['knowledge/x.md'] });
+    const deps = baseDeps(state, { resolved: [], deferredToAgent: [{ path: 'knowledge/x.md', class: 'knowledge-md' }] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto', headless: true }, deps);
+    expect(result.action).toBe('awaiting-agent');
+    expect(state.abortMergeCalls).toBe(1);
+    expect(readBrainLocal(projectRoot).pendingAgentMerge).toBe(true);
+    expect(state.pushCalls).toBe(0);
+    writeBrainLocal(projectRoot, { pendingAgentMerge: false });
   });
 
   it('amendment 1: --continue + push success clears the report and a follow-up plain sync proceeds normally', async () => {

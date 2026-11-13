@@ -125,7 +125,9 @@ export function registerBrainCommand(program: Command): void {
     .option('--strict', 'Treat WARN-tier scrub hits as blocking too')
     .option('--continue', 'Commit an in-progress agent-resolved merge')
     .option('--resume', 'Attended redo of a pull-only-deferred handoff')
-    .action(async (opts: { pullOnly?: boolean; pushOnly?: boolean; strict?: boolean; continue?: boolean; resume?: boolean }) => {
+    .option('--headless', 'Nobody watches: a team merge that needs /dream-sync is backed out to a clean tree and waits for --resume')
+    .option('--json', 'One JSON line instead of text: {"action","note"} (the desktop server\'s background sync reads it)')
+    .action(async (opts: { pullOnly?: boolean; pushOnly?: boolean; strict?: boolean; continue?: boolean; resume?: boolean; json?: boolean; headless?: boolean }) => {
       if (opts.continue && opts.resume) {
         error('--continue and --resume are mutually exclusive.');
         process.exitCode = 1;
@@ -147,16 +149,23 @@ export function registerBrainCommand(program: Command): void {
           strict: opts.strict,
           continue: opts.continue,
           resume: opts.resume,
+          headless: opts.headless,
         });
         // A CLI sync is a real git op too — reconcile the global sign-in flag off
         // its result so a working sync clears a stale "reconnect" banner (the
         // server route is no longer the only path that keeps the flag honest).
         reconcileBrainSyncSuccess(result.action);
-        renderBrainSyncResult(result);
+        if (opts.json) console.log(JSON.stringify({ action: result.action, note: result.note ?? null }));
+        else renderBrainSyncResult(result);
         if (result.action === 'invalid-flag' || result.action === 'blocked-scrub' || result.action === 'app-data-held' || result.action === 'session-files-held') process.exitCode = 1;
       } catch (err) {
         const projectRoot = dirname(contextRoot);
         reconcileBrainSyncFailure((err as Error).message, projectRoot);
+        if (opts.json) {
+          console.log(JSON.stringify({ action: 'error', note: (err as Error).message ?? String(err) }));
+          process.exitCode = 1;
+          return;
+        }
         if (err instanceof GitSyncError) {
           error(err.message);
         } else {

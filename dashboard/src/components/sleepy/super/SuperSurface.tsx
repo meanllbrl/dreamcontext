@@ -1055,6 +1055,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const taskRows = inboxRows.filter((r) => r.kind.startsWith('task-'));
   // The cloud recall index stopped updating (owner 2026-11-12): never silent, his Update runs it.
   const recallRows = member ? [] : inboxRows.filter((r) => r.kind === 'recall-index-stopped');
+  // The 24-hour brain sync stopped on him (a conflict, a scrub block): told here, it closes itself.
+  const syncRows = member ? [] : inboxRows.filter((r) => r.kind === 'brain-sync-paused');
   const answerInbox = useAnswerInbox();
   // After his press the row stays until the build lands (the inbox poll then drops it): it says the
   // update runs, or that it failed, never a button that seems to do nothing.
@@ -1116,6 +1118,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onWriteAbout={writeAbout}
       taskRows={taskRows}
       recallRows={recallRows}
+      syncRows={syncRows}
       indexUpdate={indexUpdate}
       onUpdateIndex={remote ? undefined : (r) => { setIndexPressed(true); answerInbox.mutate({ id: r.id, action: 'update-index' }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: INDEX_KEY }) }); }}
       approvals={agendaApprovals}
