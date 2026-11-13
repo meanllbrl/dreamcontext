@@ -83,8 +83,9 @@ export function InstallSheet({ initialRef, running, onStarted, onClose, onFinish
   /** Before the install request goes: the Apps page follows it from here on, whatever this sheet does. */
   onStarted: (start: { fullName: string; name: string; settings: number; way: SettingsWay }) => void;
   onClose: () => void;
-  /** The install request answered: the Apps page reads the server's list now instead of waiting. */
-  onFinished: () => void;
+  /** The install request answered (`error`: its refusal or failure): the install follow settles on
+   *  it and the Apps page reads the server's list now instead of waiting. */
+  onFinished: (fullName: string, error: string | null) => void;
 }) {
   const api = useApi();
   const t = useShareT();
@@ -116,16 +117,24 @@ export function InstallSheet({ initialRef, running, onStarted, onClose, onFinish
   const elsewhere = !!pv && busy !== 'install' && !!running?.(pv.fullName);
   const installing = busy === 'install' || elsewhere;
 
+  // The install outlives this sheet (K8): once it is closed, or another app's sheet replaced it,
+  // its answer must not close or touch whatever is open now. The follow reports the outcome.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const install = async (way: SettingsWay) => {
     if (!pv || installing) return;
+    const fullName = pv.fullName;
     setBusy('install'); setErr(null);
-    onStarted({ fullName: pv.fullName, name: pv.name, settings: pv.config.length, way });
+    onStarted({ fullName, name: pv.name, settings: pv.config.length, way });
     try {
       // `ref` names the repo, so the server's in-flight list is keyed by it (K8).
-      await api.ownerPost<{ slug: string }>('/apps/install', { previewId: pv.previewId, sha: pv.sha, ref: pv.fullName });
-      onFinished();
-      onClose();
-    } catch (e) { setErr(errText(e)); onFinished(); } finally { setBusy(null); }
+      await api.ownerPost<{ slug: string }>('/apps/install', { previewId: pv.previewId, sha: pv.sha, ref: fullName });
+      onFinished(fullName, null);
+      if (mounted.current) onClose();
+    } catch (e) {
+      onFinished(fullName, errText(e));
+      if (mounted.current) setErr(errText(e));
+    } finally { if (mounted.current) setBusy(null); }
   };
 
   const f = pv?.facts;

@@ -96,6 +96,21 @@ describe('the phone draws the folder from { session, cards, folders } and presse
     expect(has(html, 'secret-card-save')).toBe(true);
   });
 
+  it('a reloaded app key card (closed, any reason) names the app; the file only under Details', async () => {
+    const sid = '22222222-3333-4444-8555-666666666666';
+    const want: Record<string, string> = { done: 'secret.app.promise', dropped: 'secret.app.closed.dropped', superseded: 'secret.app.closed.superseded', other: 'secret.app.closed.unknown' };
+    for (const [closedBy, key] of Object.entries(want)) {
+      _resetCardRecords();
+      await refreshCards(sid, async () => ({ session: sid, cards: [{ id: APP_SECRET.id, cardRef: APP_REF, kind: 'secret', spec: APP_SECRET, state: 'closed', closedBy, run: null }], folders: {} }));
+      const html = renderToStaticMarkup(createElement(SecretCard, { spec: APP_SECRET as never, sessionId: sid }));
+      const [head, details] = html.split('<details');
+      expect(head).toContain('>shop<');
+      expect(head).toContain(key);
+      expect(head).not.toContain('.env');
+      expect(details).toContain('.env');
+    }
+  });
+
   it('a later cards frame (no folders) keeps the folders the read gave', () => {
     applyCardsFrame(SID, PHONE_ANSWER.cards);
     expect(phoneFolderOf(SID, RUN_REF)).toEqual(FOLDER);

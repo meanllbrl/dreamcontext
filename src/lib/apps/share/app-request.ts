@@ -119,6 +119,9 @@ interface AppRequest {
    *  the asking chat (null: not settled yet); `receipt` the one chat card that posted it instead. */
   running: boolean;
   failed: string | null;
+  /** A spend that used the yes but held part of it back (an invitation accepted, its install
+   *  stopped for its own card): the plain reason. The card says "accepted, not installed". */
+  stopped: string | null;
   delivered: boolean | null;
   receipt: boolean;
   /** The requester's chat ids (tab pin id, agent session id): delivery only. */
@@ -161,9 +164,9 @@ let deliver: Deliver | null = null;
 
 const slotOf = (p: Pick<ActionPlan, 'projectRoot' | 'key' | 'body'>) => `${p.projectRoot}\0${p.key}\0${p.body.action}`;
 
-onAppGrantSpent((requestId) => {
+onAppGrantSpent((requestId, stopped) => {
   const r = requests.get(requestId);
-  if (r) { r.spent = true; r.state = 'used'; r.running = false; r.failed = null; }
+  if (r) { r.spent = true; r.state = 'used'; r.running = false; r.failed = null; r.stopped = stopped ? cleanReason(stopped) : null; }
 });
 onAppGrantRun((requestId, event) => {
   const r = requests.get(requestId);
@@ -308,7 +311,7 @@ export function openAppRequest(input: OpenInput): { id: string; state: RequestSt
   setProposalApp(pv.id, view());
   const req: AppRequest = {
     id, proposalId: pv.id, plan, hash, renewHash, state: 'pending', createdAt: now, grant: null, spent: false,
-    running: false, failed: null, delivered: null, receipt: false,
+    running: false, failed: null, stopped: null, delivered: null, receipt: false,
     agentSessions: input.agentSessions ?? [], logo: input.logo ?? null, stillFresh: input.stillFresh,
     shown: new Set(), view,
   };
@@ -376,7 +379,7 @@ export async function decideAppRequest(ref: { id?: string; proposalId?: string }
 }
 
 /** What `GET /api/apps/requests/:id` answers. The grant only to whoever holds the request id. */
-export function appRequestStatus(id: string, now = Date.now()): { state: RequestState | 'unknown'; shown?: CardSurface[]; failed?: string; grant?: { id: string; expiresAt: string; command: string } } {
+export function appRequestStatus(id: string, now = Date.now()): { state: RequestState | 'unknown'; shown?: CardSurface[]; failed?: string; stopped?: string; grant?: { id: string; expiresAt: string; command: string } } {
   sweep(now);
   const r = requests.get(id);
   if (!r) return { state: 'unknown' };
@@ -384,7 +387,7 @@ export function appRequestStatus(id: string, now = Date.now()): { state: Request
   const shown = CARD_SURFACES.filter((s) => r.shown.has(s));
   // A failed spend keeps its grant for a retry inside the hour: the agent still gets it.
   const grant = (state === 'approved' || state === 'failed') && r.grant ? { grant: { id: r.grant.id, expiresAt: new Date(r.grant.expiresAt).toISOString(), command: spendCommand(r.plan, r.grant.id) } } : {};
-  return { state, shown, ...(state === 'failed' && r.failed ? { failed: r.failed } : {}), ...grant };
+  return { state, shown, ...(state === 'failed' && r.failed ? { failed: r.failed } : {}), ...(state === 'used' && r.stopped ? { stopped: r.stopped } : {}), ...grant };
 }
 
 /**
@@ -401,7 +404,7 @@ export function markAppRequestShown(ref: { id?: string; proposalId?: string }, w
 }
 
 /** The request behind a card (its proposal id), for the chat card: its state and plan hash. */
-export function appRequestByProposal(proposalId: string, now = Date.now()): { id: string; state: RequestState; hash: string; view: AppCardView; failed?: string; receiptOwed?: boolean } | null {
+export function appRequestByProposal(proposalId: string, now = Date.now()): { id: string; state: RequestState; hash: string; view: AppCardView; failed?: string; stopped?: string; receiptOwed?: boolean } | null {
   sweep(now);
   const id = byProposal.get(proposalId);
   const r = id ? requests.get(id) : undefined;
@@ -410,6 +413,7 @@ export function appRequestByProposal(proposalId: string, now = Date.now()): { id
   return {
     id: r.id, state, hash: r.hash,
     ...(state === 'failed' && r.failed ? { failed: r.failed } : {}),
+    ...(state === 'used' && r.stopped ? { stopped: r.stopped } : {}),
     ...(state === 'approved' && r.delivered === false && !r.receipt ? { receiptOwed: true } : {}),
     view: { action: viewAction(r.plan.body.action), appName: r.plan.appName, vault: r.plan.vault, title: r.plan.title, lines: r.plan.lines, ...(r.plan.warn ? { warn: r.plan.warn } : {}), ...(r.logo ? { image: `/api/apps/requests/${r.proposalId}/logo` } : {}), ...(r.plan.renewal ? { renewal: true } : {}), hash: r.hash },
   };

@@ -8,7 +8,7 @@
  *
  * One live grant per (project, app key, action); a newer one replaces the older (its id then
  * answers `replaced`). An hour to spend it. `done(true)` spends it (the id answers `used` for
- * another hour), `done(false)` frees it for a retry inside the same hour (the gate stopped it).
+ * another hour; a reason with it says what the spend held back), `done(false)` frees it for a retry inside the same hour (the gate stopped it).
  * Memory only: a restart drops every grant, and no file an agent can write can make one.
  */
 
@@ -37,7 +37,7 @@ const grants = new Map<string, Grant>();
 const spent = new Map<string, Gone[]>();
 /** Ids a newer grant on the same slot replaced: "the owner opened a newer one". */
 const replaced = new Map<string, Gone[]>();
-const spentListeners = new Set<(requestId: string) => void>();
+const spentListeners = new Set<(requestId: string, stopped: string | null) => void>();
 
 const slotOf = (projectRoot: string, key: string, action: AppAction) => `${projectRoot}\0${key}\0${action}`;
 
@@ -71,8 +71,10 @@ function tellRun(requestId: string | null, e: GrantRunEvent): void {
   for (const fn of [...runListeners]) { try { fn(requestId, e); } catch { /* a listener's failure is its own */ } }
 }
 
-/** A grant spent by a bound request: the request module marks its request used. */
-export function onAppGrantSpent(fn: (requestId: string) => void): () => void {
+/** A grant spent by a bound request: the request module marks its request used. `stopped` is the
+ *  part the yes did NOT do (an invitation accepted, its install held back for its own card): the
+ *  card must say that, never "installed". */
+export function onAppGrantSpent(fn: (requestId: string, stopped: string | null) => void): () => void {
   spentListeners.add(fn);
   return () => { spentListeners.delete(fn); };
 }
@@ -156,7 +158,8 @@ export function takeAppGrant(input: { projectRoot: string; key: string; action: 
       if (!sent) { g.busy = false; tellRun(g.requestId, { kind: 'released', reason }); return; }
       grants.delete(slot);
       remember(spent, slot, { id: g.id, until: g.expiresAt + APP_GRANT_TTL_MS, fullName, at: new Date(now).toISOString() }, now);
-      if (g.requestId) for (const fn of [...spentListeners]) { try { fn(g.requestId); } catch { /* a listener's failure is its own */ } }
+      const stopped = reason ? reason : null;
+      if (g.requestId) for (const fn of [...spentListeners]) { try { fn(g.requestId, stopped); } catch { /* a listener's failure is its own */ } }
     },
   };
 }

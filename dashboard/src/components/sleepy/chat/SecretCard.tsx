@@ -176,8 +176,28 @@ export function SecretCard({ spec, report, sessionId: chatSid, host, folder, ree
   const unfillable = !!sessionId && (!loaded || (phone && !record));
   if (closed) {
     const saved = record?.closedBy === 'done';
+    // An app's key card (K9): every closed phase speaks plainly and names the app; the file only
+    // under Details. The same card after a reload must read like it did before.
+    if (spec.app) {
+      const why = saved ? 'secret.app.promise'
+        : record?.closedBy === 'superseded' ? 'secret.app.closed.superseded'
+          : record?.closedBy === 'dropped' ? 'secret.app.closed.dropped'
+            : 'secret.app.closed.unknown';
+      return (
+        <div className="chat-viewcard chat-secretcard" data-phase={saved ? 'saved' : 'closed'} data-closed-by={record?.closedBy} data-view-kind="secret" data-view-id={spec.id}>
+          <CardHeader glyph={saved ? '✓' : '🔑'} title={spec.title} aside={<span className="chat-secretcard-file">{spec.app}</span>} />
+          <p className="chat-secretcard-note">{t(why)}</p>
+          <details className="chat-secretcard-details">
+            <summary>{t('secret.details')}</summary>
+            <ul className="chat-secretcard-receipt">
+              {spec.fields.map((f) => <li key={f.key}><code>{f.key}</code> · <code>{spec.file}</code></li>)}
+            </ul>
+          </details>
+        </div>
+      );
+    }
     const note = saved
-      ? <>{spec.app ? t('secret.app.promise') : <>Already saved to <code>{spec.file}</code>. The agent was told the key, not the value.</>}</>
+      ? <>{<>Already saved to <code>{spec.file}</code>. The agent was told the key, not the value.</>}</>
       : record?.closedBy === 'superseded'
         ? <>Nothing was saved here. The agent posted a newer copy of this card further down.</>
         : record?.closedBy === 'dropped'

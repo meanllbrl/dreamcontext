@@ -157,7 +157,7 @@ export async function handleAppRequestCard(req: IncomingMessage, res: ServerResp
   const id = params.proposal ?? '';
   const hit = PROPOSAL_ID.test(id) ? appRequestByProposal(id) : null;
   if (!hit) { sendError(res, 404, 'no_card', 'No such app request card.'); return; }
-  sendJson(res, 200, { state: hit.state, card: hit.view, ...(hit.failed ? { failed: hit.failed } : {}), ...(hit.receiptOwed ? { receiptOwed: true } : {}) });
+  sendJson(res, 200, { state: hit.state, card: hit.view, ...(hit.failed ? { failed: hit.failed } : {}), ...(hit.stopped ? { stopped: hit.stopped } : {}), ...(hit.receiptOwed ? { receiptOwed: true } : {}) });
 }
 
 /**

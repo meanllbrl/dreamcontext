@@ -205,7 +205,8 @@ async function notShared(host: AppHost, fullName: string): Promise<InstallError>
 export interface InstallProgress {
   fullName: string;
   since: string;
-  done?: { slug: string; settings: number } | { error: string };
+  /** `message`: the plain reason, for the Apps page's "could not be installed: <why>" (K8). */
+  done?: { slug: string; settings: number } | { error: string; message: string };
 }
 
 const inflight = new Map<string, InstallProgress & { at: number }>();
@@ -228,7 +229,9 @@ export async function trackInstall<T extends { rec: AppRecord }>(fullName: strin
     entry.at = Date.now();
     return out;
   } catch (e) {
-    entry.done = { error: e instanceof InstallError ? e.code : 'failed' };
+    // Only our own errors are worded for him; anything else (a path in a system error) is not shown.
+    const message = e instanceof InstallError ? e.message.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+    entry.done = { error: e instanceof InstallError ? e.code : 'failed', message: message || 'something went wrong' };
     entry.at = Date.now();
     throw e;
   }

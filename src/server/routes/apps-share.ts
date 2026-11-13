@@ -382,8 +382,9 @@ async function spendInviteInstall(req: IncomingMessage, res: ServerResponse, hel
     if (pv.repoId !== invite.repoId) { held.done(false); sendError(res, 409, 'stale_request', `The repo behind that invitation changed: nothing was installed. ${ASK_AGAIN}`); return; }
     const warn = inviteWarnList(pv);
     if (warn.length) {
-      // The yes covered the acceptance; what the content holds needs its own look.
-      held.done(true, invite.fullName);
+      // The yes covered the acceptance; what the content holds needs its own look. The spend
+      // carries what it held back, so the card reads "accepted, not installed", never "installed".
+      held.done(true, invite.fullName, warn.join('; '));
       if (!pv.gate.ok) { sendJson(res, 409, { error: 'gate_blocked', message: `The invitation is accepted, but this app holds something an app may not, so nothing was installed: ${warn.join('; ')}.` }); return; }
       const built = await buildInstallPlan({ home, vault, contextRoot: '', projectRoot }, invite.fullName, { config: invite.config });
       const out = openAppRequest({ plan: built.plan, stillFresh: built.stillFresh, agentSessions: held.requestId ? requestSessionsOf(held.requestId) : [] });

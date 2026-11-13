@@ -112,7 +112,10 @@ function waitSeconds(raw: string | undefined): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(110, Math.floor(n))) : 60;
 }
 
-interface RequestAnswer { state: string; shown: string[]; grant?: { id?: string; command?: string; expiresAt?: string } }
+export interface RequestAnswer { state: string; shown: string[]; failed?: string; stopped?: string; grant?: { id?: string; command?: string; expiresAt?: string } }
+
+/** A grant the agent may still spend: approved, or approved and its last run failed (the hour still holds). */
+export const spendable = (a: RequestAnswer): boolean => (a.state === 'approved' || a.state === 'failed') && !!a.grant?.id;
 
 const SURFACE_WORDS: Record<string, string> = { chat: 'in this chat', notch: 'on the notch', telegram: 'on his Telegram' };
 
@@ -134,16 +137,18 @@ async function waitForOwner(p: ProjectRef, id: string, seconds: number, json: bo
   const answer: RequestAnswer = {
     state: String(r.state ?? 'unknown'),
     shown: Array.isArray(r.shown) ? r.shown.filter((x): x is string => typeof x === 'string') : [],
+    ...(typeof r.failed === 'string' ? { failed: r.failed } : {}),
+    ...(typeof r.stopped === 'string' ? { stopped: r.stopped } : {}),
     ...(r.grant ? { grant: r.grant as RequestAnswer['grant'] } : {}),
   };
-  if (quiet === 'silent' || (quiet && answer.state === 'approved' && answer.grant?.id)) return answer;
+  if (quiet === 'silent' || (quiet && spendable(answer))) return answer;
   if (json) { console.log(JSON.stringify({ request: id, ...r }, null, 2)); return answer; }
   sayAnswer(id, answer);
   return answer;
 }
 
 /** What to do next, in so many words. */
-function sayAnswer(id: string, a: RequestAnswer): void {
+export function sayAnswer(id: string, a: RequestAnswer): void {
   const state = a.state;
   if (state === 'approved' && a.grant?.command) {
     success('The owner approved it. Run this once, exactly (the grant is good for one hour):');
@@ -156,11 +161,25 @@ function sayAnswer(id: string, a: RequestAnswer): void {
     console.log(`Wait again with: dreamcontext apps grant ${id} --wait 110`);
     return;
   }
+  if (state === 'running') {
+    info('It is running now (an install can take a few minutes). Do not run it again.');
+    console.log(`Check again with: dreamcontext apps grant ${id} --wait 110`);
+    return;
+  }
   process.exitCode = 2;
+  if (state === 'failed') {
+    error(`The last run did not finish: ${a.failed ?? 'no reason given'}.`);
+    if (a.grant?.command) {
+      info('The owner\'s yes still holds for this hour. Fix what the reason names, then run this once:');
+      console.log(`  ${a.grant.command}`);
+    }
+    return;
+  }
   if (state === 'rejected') error('The owner said no. Nothing runs: do not ask again unless something changed.');
   else if (state === 'expired') error('The request or its grant ran out. Run the same --ask command again: the owner sees a card and one tap gives a new hour.');
   else if (state === 'stale') error('The app changed after you asked, so nothing was approved. Run the same --ask command again.');
   else if (state === 'replaced') error('A newer request for the same app and action replaced this one: follow that one.');
+  else if (state === 'used' && a.stopped) error(`This grant was used, but only in part: ${a.stopped}. That part has its own card: follow it, never run this one again.`);
   else if (state === 'used') error('This grant already ran. It is done: do not run it again.');
   else error('No such request (the app may have restarted). Run the same --ask command again.');
 }
@@ -450,7 +469,8 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
           // Approved (a grant still good for exactly this): the install runs here, now.
           if (o.state !== 'approved') { await sayPending(p, o, opts.json); return; }
           const a = await waitForOwner(p, o.request, 0, opts.json, true);
-          if (a.state === 'approved' && a.grant?.id) await spend(a.grant.id);
+          // Not spendable: waitForOwner already said why (running, used, expired…).
+          if (spendable(a)) await spend(a.grant!.id!);
           return;
         }
         if (opts.go) {

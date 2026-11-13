@@ -242,6 +242,10 @@ describe('K2 + S1: one card accepts the invitation and installs', () => {
     const second = listProposals().filter((x) => x.app && x.app.title === 'Kur');
     expect(second).toHaveLength(1);
     expect(second[0]!.app!.lines.find((l) => l.key === 'mcp')).toMatchObject({ value: 'posthog', tone: 'warn' });
+    // Review r1: the FIRST card never says "installed": its request is used with what it held back.
+    const first = await status(String(r.body.request));
+    expect(first.body.state).toBe('used');
+    expect(String(first.body.stopped)).toContain('posthog');
   });
 
   it('S1: a bound invitation whose repo id differs is refused, nothing accepted', async () => {

@@ -59,7 +59,7 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
   const q = useQuery({
     enabled: here,
     queryKey: key,
-    queryFn: () => api.get<{ state: RequestState; card: AppCard; failed?: string; receiptOwed?: boolean }>(`/apps/requests/card/${encodeURIComponent(spec.id)}`),
+    queryFn: () => api.get<{ state: RequestState; card: AppCard; failed?: string; stopped?: string; receiptOwed?: boolean }>(`/apps/requests/card/${encodeURIComponent(spec.id)}`),
     retry: false,
     refetchInterval: (query) => (query.state.data && MOVING.has(query.state.data.state) ? 3000 : false),
   });
@@ -123,6 +123,8 @@ export function AppRequestCard({ spec, report }: { spec: AppRequestViewSpec; rep
   const tone = state === 'used' ? 'approved' : state === 'pending' || state === 'approved' || state === 'running' ? 'waiting' : 'off';
   const stateLine = state === 'pending' ? null
     : state === 'running' ? t(install ? 'appreq.state.running.install' : 'appreq.state.running')
+    // Used, but only in part (an invitation accepted, its install held back): never "installed".
+    : state === 'used' && q.data.stopped ? say('appreq.state.held', { why: q.data.stopped })
     : state === 'used' ? t(install ? 'appreq.state.used.install' : 'appreq.state.used')
     : state === 'failed' ? say('appreq.state.failed', { why: q.data.failed ?? '' })
     : t(`appreq.state.${state}`);

@@ -22,6 +22,7 @@ import { CouncilPage } from './pages/CouncilPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
 import { AppsPage } from './pages/AppsPage';
+import { InstallFollower } from './components/apps/InstallFollower';
 import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
 import type { Page } from './components/layout/Sidebar';
 import { parseAppLink } from './lib/appLink';
@@ -694,6 +695,8 @@ export function ProjectInstance({
                       onAgentsFocus={focusAgents}
                     />
                     <StartIntentBridge start={pendingStart} onConsumed={consumeStart} />
+                    {/* An app install he started keeps its next step when he leaves Apps (K8). */}
+                    <InstallFollower />
                     {newShell && <PageDrawerToggleBridge page={nav.page} nonce={drawerToggleNonce} onDrawerToggle={onDrawerToggle} onPageChange={onDrawerDismiss} />}
                     {newShell && <DrawerPageBridge nav={nav} />}
                   </>

@@ -78,6 +78,10 @@ describe('the app approval card (K4, K5)', () => {
     expect(line('approved')).toContain("Onaylandı, Claude&#x27;a iletiliyor.");
     expect(line('running')).toContain('Kuruluyor…');
     expect(line('used')).toContain('Kuruldu.');
+    // Review r1: an invitation accepted, its install held back: never "Kuruldu".
+    const held = line('used', { stopped: 'MCP sunucuları: posthog' });
+    expect(held).toContain('Davet kabul edildi ama bir şey kurulmadı: MCP sunucuları: posthog.');
+    expect(held).not.toContain('Kuruldu.');
     expect(line('failed', { failed: 'paket kurulamadı' })).toContain('Olmadı: paket kurulamadı');
     expect(line('running')).not.toContain('Onayla<');
   });
