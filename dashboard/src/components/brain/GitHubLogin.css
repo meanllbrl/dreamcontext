@@ -182,6 +182,7 @@
   border: 0;
   background: none;
   font: inherit;
+  font-size: var(--font-size-sm);
   color: var(--color-accent-ink, var(--color-accent));
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -190,4 +191,10 @@
 
 .gh-reconnect-err {
   color: var(--color-error);
+}
+
+/* Waiting for approval in a settings row: wrap inside a bounded column, never squeeze the row's text. */
+.gh-reconnect--waiting {
+  max-width: 340px;
+  justify-content: flex-end;
 }

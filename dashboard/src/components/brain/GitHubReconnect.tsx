@@ -48,8 +48,13 @@ export function GitHubReconnect({ connect = false, className = 'btn btn--primary
 }
 
 /** "GitHub bağlantısı uygulamada yönetilir · Uygulamada aç": never "not connected" in a browser. */
-export function GitHubInApp({ vault }: { vault: string | null | undefined }) {
+export function GitHubInApp({ vault, linkOnly = false }: {
+  vault: string | null | undefined;
+  /** Only the link, where the row already says it is managed in the app (say it once). */
+  linkOnly?: boolean;
+}) {
   const { t } = useI18n();
+  if (linkOnly) return vault ? <a className="gh-reconnect-link" href={buildAppLink({ kind: 'page', vault, page: 'settings', id: null })}>{t('github.openInApp')}</a> : null;
   return (
     <span className="gh-reconnect gh-reconnect--inapp">
       {t('github.desktopOnly')}

@@ -101,7 +101,7 @@ export function GitHubPage() {
   const flagged = state === 'expired';
   const projectNote = projectTokenNote(auth, t);
 
-  const accountControl = state === 'desktopOnly' ? <GitHubInApp vault={vault} />
+  const accountControl = state === 'desktopOnly' ? <GitHubInApp vault={vault} linkOnly />
     : state === 'connected' ? (auth?.source === 'global'
       ? <button type="button" className="sw-btn" onClick={() => logout.mutate()} disabled={logout.isPending}>{t('brain.auth.signOut')}</button>
       : null)
@@ -177,6 +177,7 @@ function ProjectTokenRow({ auth }: { auth: AuthStatus | undefined }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const st = auth?.projectToken ?? 'none';
+  // Demoted = healed: the sign-in already took over, so its chip is neutral, never the red of 'act now'.
   const submit = async () => {
     setError(null);
     try { await save.mutateAsync(value.trim()); setValue(''); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -191,7 +192,7 @@ function ProjectTokenRow({ auth }: { auth: AuthStatus | undefined }) {
       title={t('github.adv.project')}
       hint={t('github.adv.project.h')}
       keywords="github project token own key override"
-      status={<span className={st === 'demoted' ? 'sw-chip-bad' : 'sw-state'}>{t(`github.adv.project.${st}`)}</span>}
+      status={<span className={st === 'demoted' ? 'sw-chip-off' : 'sw-state'}>{t(`github.adv.project.${st}`)}</span>}
     >
       <div className="gh-login-pat-form">
         <div className="settings-field-row">
