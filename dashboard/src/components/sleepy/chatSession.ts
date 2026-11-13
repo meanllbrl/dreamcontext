@@ -23,6 +23,7 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { MAC_CLOSE_HANDED_OVER, MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
 import { agentRunRunning, runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
 import * as queue from './chat/chatQueue';
+import { typedOwnFor } from './chat/composerScratch';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 import { leanMcpParam, superEventText } from './super/superHandover';
@@ -1330,6 +1331,9 @@ export function createChatSession(
   const sessionAllow = new Set<string>();
 
   let queuedSeq = 0;
+  /** His own words for each queued row the Composer marked, by row id (C3). A row's entry dies
+   *  when it is sent, edited, removed, or no longer in the queue. */
+  const queuedOwn = new Map<string, string>();
 
   let conv: ConversationModel = {
     items: [], history: [], pending: [], queued: [], draft: '', draftEpoch: 0, capabilities: [], subAgents: [],
@@ -2650,7 +2654,7 @@ export function createChatSession(
    * `user` frame leaves this client, shared by `send` (start a turn) and `steer` (cut into
    * the one already running) — the two differ only in what they may claim afterwards.
    */
-  function writeUser(text: string, opts: { steered: boolean }): boolean {
+  function writeUser(text: string, opts: { steered: boolean; own?: string | null }): boolean {
     const clean = text.trim();
     if (!clean || ws.readyState !== WebSocket.OPEN) return false;
     // Spoken now, or spoken before an account switch restarted this pane (`spokenCarry`).
@@ -2667,7 +2671,12 @@ export function createChatSession(
     const frame: ClientControl = {
       type: 'user', text: clean, ...(spoken ? { voice: true as const } : {}), ...(take ? { voiceTake: take } : {}),
     };
-    try { ws.send(JSON.stringify(frame)); } catch { return false; }
+    // The Composer's mark (learning loop C3, contract D): only a draft he typed carries
+    // `typed: true` and `own` (his words without any chip's block, quote or path). Nothing else
+    // that writes through here (a queue row he edited, `window send`, a resubmit) sets it.
+    const own = opts.own?.trim();
+    const wire = own ? { ...frame, typed: true as const, own } : frame;
+    try { ws.send(JSON.stringify(wire)); } catch { return false; }
     turnTrace.mark(vault, 'sent');
     // The frame carried the text as it came (a resubmitted Telegram turn keeps its sentinel pair,
     // so the server honours its ref again, E1); the bubble shows the body and keeps the ref.
@@ -2713,9 +2722,11 @@ export function createChatSession(
     try { return aboutHeader(text); } catch { return text; }
   }
 
-  function send(text: string): boolean {
+  /** `own`: his words for a queued row the Composer marked; else the Composer's armed mark for
+   *  exactly this text (`typedOwnFor`), else none. */
+  function send(text: string, own?: string | null): boolean {
     if (ownerWordsTaken(text)) return true;
-    return writeUser(withAbout(text), { steered: false });
+    return writeUser(withAbout(text), { steered: false, own: own ?? typedOwnFor(text) });
   }
 
   /**
@@ -2726,13 +2737,13 @@ export function createChatSession(
    * `busy` is already true here; `writeUser` setting it again is a no-op the turn clock's
    * false→true edge never sees.
    */
-  function steer(text: string): boolean {
+  function steer(text: string, own?: string | null): boolean {
     if (ownerWordsTaken(text)) return true;
     if (!steerable()) return false;
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
     silenceSpeech('steer');
-    return writeUser(withAbout(text), { steered: true });
+    return writeUser(withAbout(text), { steered: true, own: own ?? typedOwnFor(text) });
   }
 
   /**
@@ -2801,9 +2812,15 @@ export function createChatSession(
 
   function enqueue(text: string, opts?: { steerWhenPossible?: boolean; resubmit?: boolean }): void {
     if (ownerWordsTaken(text)) return;
+    // A row the Composer queued keeps its mark until it is sent (C3); a resubmit never has one.
+    const own = opts?.resubmit ? null : typedOwnFor(text);
     applyAndNotify(() => {
-      const next = queue.appendQueued(conv.queued, text, `q-${id}-${++queuedSeq}`, Date.now(), opts);
-      if (next !== conv.queued) conv = { ...conv, queued: next };
+      const qid = `q-${id}-${++queuedSeq}`;
+      const next = queue.appendQueued(conv.queued, text, qid, Date.now(), opts);
+      if (next !== conv.queued) {
+        conv = { ...conv, queued: next };
+        if (own) queuedOwn.set(qid, own);
+      }
     });
     // A held row the owner already sent stays out of sight only while it can still go out by
     // itself; a socket that has not opened within the connect timeout turns it back into an
@@ -2814,6 +2831,10 @@ export function createChatSession(
         if (!disposed && conv.queued.some((q) => q.resubmit)) applyAndNotify(() => clearResubmit());
       }, CONNECT_TIMEOUT_MS);
     }
+  }
+
+  function ownOfQueued(qid: string): string | null {
+    return queuedOwn.get(qid) ?? null;
   }
 
   /** Every held row becomes an ordinary, visible, editable row (see `chatQueue.visibleQueued`).
@@ -2838,6 +2859,8 @@ export function createChatSession(
   function editQueued(qid: string, text: string): void {
     const was = conv.queued.find((q) => q.id === qid)?.text;
     if (was !== undefined && was !== text) noteQueueDropped([was]);
+    // An edited row is no longer the draft the Composer marked.
+    if (was !== text) queuedOwn.delete(qid);
     applyAndNotify(() => { setQueued(queue.editQueued(conv.queued, qid, text)); });
   }
 
@@ -2864,7 +2887,7 @@ export function createChatSession(
     // still report (a socket that closed between the guard and the write), so neither the
     // message nor the order the strip was showing is lost.
     applyAndNotify(() => { conv = { ...conv, queued: conv.queued.filter((q) => q.id !== qid) }; });
-    if (session.busy ? steer(row.text) : send(row.text)) return;
+    if (session.busy ? steer(row.text, ownOfQueued(qid)) : send(row.text, ownOfQueued(qid))) { queuedOwn.delete(qid); return; }
     applyAndNotify(() => {
       const restored = [...conv.queued];
       restored.splice(Math.min(at, restored.length), 0, row);
@@ -2876,6 +2899,7 @@ export function createChatSession(
    *  back, and a "paused" strip with no rows describes a state that no longer exists. */
   function setQueued(queued: QueuedMessage[]): void {
     conv = { ...conv, queued, queuePaused: queued.length > 0 ? conv.queuePaused : undefined };
+    for (const qid of [...queuedOwn.keys()]) if (!queued.some((q) => q.id === qid)) queuedOwn.delete(qid);
   }
 
   function flushQueue(): void {
@@ -2908,7 +2932,8 @@ export function createChatSession(
     });
     if (owed) {
       applyAndNotify(() => { conv = { ...conv, queued: conv.queued.filter((q) => q.id !== owed.id) }; });
-      if (!steer(owed.text)) applyAndNotify(() => { conv = { ...conv, queued: [owed, ...conv.queued] }; });
+      if (steer(owed.text, ownOfQueued(owed.id))) queuedOwn.delete(owed.id);
+      else applyAndNotify(() => { conv = { ...conv, queued: [owed, ...conv.queued] }; });
       return;
     }
     const drainable = queue.shouldDrainQueue({
@@ -2929,7 +2954,8 @@ export function createChatSession(
     // the guard above and the write), so a message is never lost to a failed send.
     const remaining = conv.queued.slice(1);
     conv = { ...conv, queued: remaining };
-    if (!send(next.text)) conv = { ...conv, queued: [next, ...conv.queued] };
+    if (send(next.text, ownOfQueued(next.id))) queuedOwn.delete(next.id);
+    else conv = { ...conv, queued: [next, ...conv.queued] };
     if (resubmitTimer && !conv.queued.some((q) => q.resubmit)) { clearTimeout(resubmitTimer); resubmitTimer = null; }
   }
 

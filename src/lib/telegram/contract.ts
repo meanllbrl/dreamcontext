@@ -284,8 +284,13 @@ export function telegramSideSource(source: InjectedSource | string | undefined):
 export interface ChatInjector {
   sessionId: string;
   chatRegistryId: string;
-  /** `text` already carries `withTelegramRef(ref, …)`; the hub has `put` the ref first. */
-  sendOwnerText(text: string, opts: { ref: string; source: InjectedSource }): Promise<{ ok: true } | { ok: false; reason: 'closed' | 'refused' }>;
+  /** `text` already carries `withTelegramRef(ref, …)`; the hub has `put` the ref first. `own`
+   *  (learning loop C3) is ONLY what he typed or said: the cleaned text of a message that is not a
+   *  forward, plus a voice note's transcript; never the hub's header, a forward, a quote
+   *  ("Alıntı"), a replied-to message ("Yanıtlanan mesaj") or a saved file's path. Absent for
+   *  everything the hub writes on his behalf (a card tap, a run report, a schedule): those write
+   *  no owner-words line. */
+  sendOwnerText(text: string, opts: { ref: string; source: InjectedSource; own?: string }): Promise<{ ok: true } | { ok: false; reason: 'closed' | 'refused' }>;
   /** `/dur` fallback ONLY when no window is mounted (P4); a mounted window gets `hub_command interrupt`. */
   interrupt(): void;
 }

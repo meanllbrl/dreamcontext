@@ -2542,6 +2542,103 @@
       ]
     },
     {
+      "path": "learn",
+      "desc": "Store a rule he stated (his preference, this project's rule, or a member's lesson) and print the line to repeat to him",
+      "args": [
+        "[text]"
+      ],
+      "group": true,
+      "valueFlags": [
+        "--scope",
+        "--quote",
+        "--headline",
+        "--says",
+        "--at",
+        "--when",
+        "--same",
+        "--replaces",
+        "--supersedes",
+        "--doc",
+        "--member",
+        "--by"
+      ]
+    },
+    {
+      "path": "learn drop",
+      "desc": "Drop a rule that waits for his word (needs his word about it)",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "--quote"
+      ]
+    },
+    {
+      "path": "learn edit",
+      "desc": "Edit a rule by id (never add a twin); --scope moves it",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "--headline",
+        "--text",
+        "--says",
+        "--at",
+        "--when",
+        "--doc",
+        "--scope"
+      ]
+    },
+    {
+      "path": "learn export",
+      "desc": "Print a store as JSON (to carry his preferences to another Mac)",
+      "args": []
+    },
+    {
+      "path": "learn import",
+      "desc": "Import his approved list (ticked lines active, the rest proposed; by migration)",
+      "args": [
+        "<file>"
+      ]
+    },
+    {
+      "path": "learn keep",
+      "desc": "Make a waiting rule active (needs his word about it)",
+      "args": [
+        "<id>"
+      ],
+      "valueFlags": [
+        "--quote"
+      ]
+    },
+    {
+      "path": "learn list",
+      "desc": "The rules he taught: his preferences and this project's rules, with who wrote each",
+      "args": []
+    },
+    {
+      "path": "learn show",
+      "desc": "One rule with its history",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "learn stats",
+      "desc": "Each week's sayings of an already stored rule",
+      "args": [],
+      "valueFlags": [
+        "--weeks"
+      ]
+    },
+    {
+      "path": "learn undo",
+      "desc": "Undo a rule (\"geri al\"); the rule it replaced comes back",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
       "path": "link",
       "desc": "Govern bare code repos: bind, clone, list, and unlink linked repos",
       "args": [],

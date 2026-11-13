@@ -145,6 +145,7 @@ Two routing rules that override surface reading:
 - Is it an **outcome with a committed date**? → objective (`roadmap`).
 - Is it **prose you write once and maintain**? → knowledge.
 - Is it **work to do**? → task.
+- Is it **a standing rule or a correction of how agents work**, "remember" said or not? → `dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"` this turn (`--same <id>` or `--replaces <id>` for one it has). Never stricter than his words, never Claude's or Codex's own memory; repeat its receipt's second line verbatim (in the app's chat paste its card instead: `{"type":"learned","id":"<id>"}` in a dream-view block).
 - Is it a **falsifiable claim actively being proven/disproven**? → thesis (not knowledge).
 - Is it **work that should run on a schedule with nobody asking**? → automation (`automations`), never a hand-rolled cron job or external scheduler.
 - Is it **who does the work**, reused by jobs, tasks or chat? → agent; a schedule for it is an automation.

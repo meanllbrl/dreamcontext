@@ -264,6 +264,18 @@ const BRIEFING_NATIVE_TOOLS = `## Claude Code's tools vs dreamcontext
 
 No \`dreamcontext window\` (a card, the Assistant): answer a plan request in prose. In a Chat tab with no \`# Mode:\` in force (system prompt or a later mode note): say Plan mode does this and add an \`ask\` button whose text, in the user's language, asks to switch; when they send it, run \`dreamcontext window mode plan\`. Schedules go to \`dreamcontext automations\`, lasting work to \`dreamcontext tasks\`, facts to the brain, never Claude's own memory files.`;
 
+/** His standing rules (learning-loop plan C1, C8, C9): one verb, one store, his words as the
+ *  citation. In the app's chat the receipt is its card (the `learned` view reads the record). */
+const BRIEFING_LEARN = `## His rules: \`dreamcontext learn\`
+
+He states a standing rule or corrects how agents work, "remember" said or not: run \`dreamcontext learn "<the rule>" --scope me|project|member --quote "<his exact words>"\` in that turn. \`me\` is how to work with him (every project on this Mac), \`project\` this product's rule, \`member\` a member's own job. When it names a rule it already has, answer by id: \`--same <id>\`, \`--replaces <id>\` or \`--new\`. Never stricter than his words. Then paste its receipt card, the id from its LEARNED line; the card shows his words and his Undo:
+
+\`\`\`dream-view
+{"type":"learned","id":"k7m2q6xw4b"}
+\`\`\`
+
+Never write his rule into Claude's or Codex's own memory files.`;
+
 /** A script inlined into Bash (owner 2026-11-05, Bypass chat): a quoted heredoc holding a
  *  Playwright `p.$$(".phone")` made Claude Code 2.1.318 ask him even in Bypass ("Dangerous rm
  *  operation not ruled out — the shell may read this command differently than it was parsed",
@@ -292,6 +304,8 @@ ${BRIEFING_REST}
 ${BRIEFING_WINDOW}
 
 ${BRIEFING_NATIVE_TOOLS}
+
+${BRIEFING_LEARN}
 
 ${BRIEFING_SHELL}
 
@@ -365,6 +379,11 @@ find it and do not message anything they list.
 You never file a task (\`dreamcontext tasks create\`): the Super is the only filer. Big work comes
 with its task named in your brief; with none named, it is small work, reported in your last reply.
 Work that turns out big: stop and tell the Super.
+
+His rules: one he types to you in this tab is yours to learn, with \`dreamcontext learn "<rule>"
+--scope me|project --quote "<his exact words>"\` (\`--same <id>\` or \`--replaces <id>\` for one it
+has), never stricter than his words, as the section on his rules says. One that reaches you only
+as an \`Owner:\` quote in your brief is the Super's: do not learn it again.
 
 Scratch files (downloads, scripts you run once, intermediate JSON) go under \`$TMPDIR\` (\`/tmp\` when it
 is unset), in a folder named for the job, never in the project: no tool asks for them there.

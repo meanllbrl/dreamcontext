@@ -14,6 +14,7 @@ import { RunCard } from './RunCard';
 import { McpCard } from './McpCard';
 import { AgentThreadCard } from './AgentThreadCard';
 import { AutomationApprovalCard } from './AutomationApprovalCard';
+import { LearnedCard } from './LearnedCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
@@ -147,6 +148,10 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
     // report, so any other chat's agent reads the decision as the next message.
     case 'automation':
       return <AutomationApprovalCard spec={view} session={session} report={report} />;
+    // DERIVED: the receipt of a rule `dreamcontext learn` stored, his words and his Undo, read
+    // from the rules store by id (learning loop C9). His tap is reported into this conversation.
+    case 'learned':
+      return <LearnedCard spec={view} session={session} report={report} />;
     // Hoisted OUT of the transcript: a pin lives on the shelf docked to the composer, which is
     // the whole point of it — drawn here as well, it would scroll away exactly like the inline
     // card it exists to replace. `PinShelf` collects them. Their `notices` still render above,

@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import matter from 'gray-matter';
 import {
@@ -29,6 +29,15 @@ import {
   type Card,
 } from '../lab/boards.js';
 import { compact, findOverlaps } from '../lab/grid.js';
+import { withFileLockSync } from '../file-lock.js';
+import {
+  LEARNED_RULES_VIEW_REL,
+  RULES_JSON_REL,
+  mergeRulesStores,
+  parseStore,
+  projectStoreRef,
+  writeStore,
+} from '../rules-store.js';
 
 /**
  * Deterministic merge engine for the brain-repo sync engine — see
@@ -65,6 +74,10 @@ export type MergeClass =
    *  ours beside the renamed agent; an edit of a shared file takes the prose path. */
   | 'agent-file'
   | 'other'
+  /** `core/RULES.json` (learning loop C2): union of records by id, events by eid (mergeRulesJson). */
+  | 'rules-json'
+  /** `knowledge/patterns/learned-rules.md`: a generated view, never merged: regenerated from the merged store. */
+  | 'learned-rules-view'
   /**
    * An app's data file under the brain's `apps/` (app-veri-ortak K5): never text-merged. The
    * team's copy goes into the index AND the disk (one side, never a blend), so a push can never
@@ -88,6 +101,8 @@ export function classifyPath(relPath: string): MergeClass {
   if (norm === PEOPLE_JSON_REL) return 'people-json';
   if (norm === 'core/taxonomy.json') return 'taxonomy-json';
   if (norm === TASKS_MAP_REL) return 'tasks-map-json';
+  if (norm === RULES_JSON_REL) return 'rules-json';
+  if (norm === LEARNED_RULES_VIEW_REL) return 'learned-rules-view';
   if (norm === 'state/.task-objections.json') return 'task-objections-json';
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
   if (/^knowledge\/features\//.test(norm)) return 'feature-md';
@@ -681,6 +696,50 @@ export function mergeMarkdownDoc(base: string, ours: string, theirs: string): { 
   return { merged: result.merged, needsAgent: false };
 }
 
+// ─── core/RULES.json and its generated view (learning loop C2) ──────────────
+
+/**
+ * The learned-rules store: the union of records by id and, inside a record, of events by `eid`.
+ * Nothing is chosen, so nothing is lost (an undo on one side and a later saying on the other: the
+ * rule stays undone and has the saying). Null when a non-empty side does not parse: an unreadable
+ * store is never merged as empty.
+ */
+export function mergeRulesJson(_base: string, ours: string, theirs: string, working = ''): { merged: string | null } {
+  const sides = [ours, theirs];
+  // The working file may hold events written after the merge began; markers make it unparsable, then it adds nothing.
+  if (working.trim()) { try { parseStore(working); sides.push(working); } catch { /* conflict markers */ } }
+  const merged = mergeRulesStores(sides);
+  return { merged: merged ? JSON.stringify(merged) : null };
+}
+
+/** The `_dream_context/`-or-not prefix a rules path carries, so its sibling view resolves the same way. */
+function rulesPrefix(relPath: string, rel: string): string {
+  const norm = relPath.replace(/\\/g, '/');
+  return norm.slice(0, norm.length - rel.length);
+}
+
+/**
+ * Write the merged store under its lock and regenerate the view from it (the view is never
+ * merged). Returns the paths written, relative to `cwd`.
+ */
+function writeMergedRules(cwd: string, prefix: string, mergedJson: string | null, opts: ResolveConflictsOptions): string[] {
+  const contextRoot = join(cwd, prefix);
+  const ref = projectStoreRef(contextRoot, opts.home);
+  return withFileLockSync(ref.lock, () => {
+    let store: ReturnType<typeof parseStore>;
+    if (mergedJson !== null) {
+      store = parseStore(mergedJson);
+    } else {
+      // Only the view conflicted: regenerate it from the store as it stands.
+      let text = '';
+      try { text = readFileSync(ref.file, 'utf-8'); } catch { text = ''; }
+      store = parseStore(text);
+    }
+    writeStore(ref, store, { fromMerge: true });
+    return [`${prefix}${RULES_JSON_REL}`, `${prefix}${LEARNED_RULES_VIEW_REL}`];
+  });
+}
+
 // ─── Orchestration over a real merge conflict set ───────────────────────────
 
 export interface MergeResult {
@@ -813,7 +872,11 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
     return statuses;
   };
 
-  for (const relPath of reorderTaskMdFirst(conflicts, opts)) {
+  // The generated rules view goes last, after its store merged (it is regenerated from it).
+  const ordered = reorderTaskMdFirst(conflicts, opts);
+  const rulesWritten = new Set<string>();
+  const isView = (p: string): boolean => !isCodePath(p, opts) && classifyPath(p) === 'learned-rules-view';
+  for (const relPath of [...ordered.filter((p) => !isView(p)), ...ordered.filter(isView)]) {
     // App data first: never blended, never deferred to the prose agent (`/dream-sync` does not
     // touch these files). A side git cannot take leaves it for the human like code.
     if (isAppDataPath(relPath, opts)) {
@@ -929,6 +992,33 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         }
         mergedContent = doc.merged;
         break;
+      }
+      case 'rules-json':
+      case 'learned-rules-view': {
+        const rel = cls === 'rules-json' ? RULES_JSON_REL : LEARNED_RULES_VIEW_REL;
+        const prefix = rulesPrefix(relPath, rel);
+        if (cls === 'learned-rules-view' && rulesWritten.has(prefix)) {
+          addPath(cwd, relPath);
+          resolved.push(relPath);
+          continue;
+        }
+        let working = '';
+        if (cls === 'rules-json') { try { working = readFileSync(join(cwd, relPath), 'utf-8'); } catch { working = ''; } }
+        const merged = cls === 'rules-json' ? mergeRulesJson(base, ours, theirs, working).merged : null;
+        if (cls === 'rules-json' && merged === null) {
+          deferredToHuman.push({ path: relPath, class: cls });
+          continue;
+        }
+        try {
+          // Both files are rewritten, so both are staged (the view may not have been in conflict).
+          for (const w of writeMergedRules(cwd, prefix, merged, opts)) addPath(cwd, w);
+          rulesWritten.add(prefix);
+          resolved.push(relPath);
+          if (cls === 'rules-json') notes.push(`${relPath}: learned rules merged by id and event; the view was regenerated.`);
+        } catch {
+          deferredToHuman.push({ path: relPath, class: cls });
+        }
+        continue;
       }
       case 'knowledge-md':
       case 'feature-md':

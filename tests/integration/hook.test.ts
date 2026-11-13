@@ -2243,3 +2243,62 @@ describe('hook delivery: a session that moved out of the brain, and the snapshot
     expect(Date.now() - started).toBeLessThan(3_000);
   });
 });
+
+// ─── learned rules by position (learning loop C7, criterion 16) ────────────
+
+describe('hook: learned rules ride by position (integration)', () => {
+  let tmpDir: string;
+  let ctx: string;
+  let fakeHome: string;
+  let env: NodeJS.ProcessEnv;
+
+  beforeEach(async () => {
+    tmpDir = makeTmpDir();
+    ctx = scaffold(tmpDir);
+    fakeHome = join(tmpDir, 'home');
+    mkdirSync(fakeHome, { recursive: true });
+    env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, DREAMCONTEXT_PROMPT_ONCE: '0' };
+    const rs = await import('../../src/lib/rules-store.js');
+    rs.ensureMeFile(fakeHome, 'gardener@example.com');
+    const mk = (headline: string, at?: 'always' | 'act'): import('../../src/lib/rules-store.js').RuleRecord => ({
+      id: rs.newRuleId(), scope: 'me', created: { at: '2026-11-02T09:00:00.000Z', by: 'owner', person: '' },
+      events: [{ eid: rs.newEventId(), at: '2026-11-02T09:00:00.000Z', op: 'create', by: 'owner', conversation: 'c1', status: 'active', headline, text: headline, ...(at ? { at_tag: at } : {}), quotes: [] }],
+    });
+    rs.writeStore(rs.personalStoreRef(fakeHome), { version: 1, rules: [mk('Write to him in plain Turkish', 'always'), mk('Run npm whoami before you publish', 'act')] });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('the first npm publish of a session is refused with the opened rule; the retry passes', () => {
+    const input = JSON.stringify({ session_id: 'sess-act-1', cwd: tmpDir, tool_name: 'Bash', tool_input: { command: 'cd pkg && npm publish' } });
+    const first = JSON.parse(runWithStdin('hook pre-tool-use', input, tmpDir, env));
+    expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Run npm whoami before you publish');
+    expect(runWithStdin('hook pre-tool-use', input, tmpDir, env).trim()).toBe('');
+  });
+
+  it('a call off the list and a call with no session id pass untouched', () => {
+    expect(runWithStdin('hook pre-tool-use', JSON.stringify({ session_id: 's2', cwd: tmpDir, tool_name: 'Bash', tool_input: { command: 'git status' } }), tmpDir, env).trim()).toBe('');
+    expect(runWithStdin('hook pre-tool-use', JSON.stringify({ cwd: tmpDir, tool_name: 'Bash', tool_input: { command: 'npm publish' } }), tmpDir, env).trim()).toBe('');
+  });
+
+  it('a dispatch prompt gets the always rules appended in one JSON answer; Explore stays a deny', () => {
+    const out = JSON.parse(runWithStdin('hook pre-tool-use', JSON.stringify({ session_id: 's3', cwd: tmpDir, tool_name: 'Agent', tool_input: { subagent_type: 'reviewer', prompt: 'Review it' } }), tmpDir, env));
+    expect(out.hookSpecificOutput.updatedInput.subagent_type).toBe('reviewer');
+    expect(out.hookSpecificOutput.updatedInput.prompt).toMatch(/^Review it\n\n<dreamcontext-owner-rules>[\s\S]*plain Turkish/);
+    expect(out.hookSpecificOutput.permissionDecision).toBeUndefined();
+    const ex = JSON.parse(runWithStdin('hook pre-tool-use', JSON.stringify({ session_id: 's3', cwd: tmpDir, tool_name: 'Agent', tool_input: { subagent_type: 'Explore', prompt: 'x' } }), tmpDir, env));
+    expect(ex.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(ex.hookSpecificOutput.updatedInput).toBeUndefined();
+  });
+
+  it('a sub-agent start carries the always rule; the session start has every rule with its id', () => {
+    const sub = JSON.parse(runWithStdin('hook subagent-start', JSON.stringify({ agent_type: 'reviewer' }), tmpDir, env));
+    expect(sub.hookSpecificOutput.additionalContext).toContain('Write to him in plain Turkish');
+    const start = runWithStdin('hook session-start', JSON.stringify({ session_id: 's4', source: 'startup' }), tmpDir, env);
+    expect(start).toContain('His preferences');
+    expect(start).toContain('Run npm whoami before you publish');
+  });
+});

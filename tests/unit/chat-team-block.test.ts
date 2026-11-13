@@ -352,6 +352,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       // rev 41 (2026-11-12, gece-duzeltme B7, IN-12): the orchestration guide is lookup only; the split and
       // mode-per-job rows ride here. TK-1: the Super is the only task filer (rev 36's "a small fix gets no task" folded in).
       '- The orchestration guide is lookup only (member jobs, MCP map, layouts, a worked example): .claude/skills/dreamcontext/references/super-orchestration.md.',
+      // rev 43 (2026-11-13, ogrenme-dongusu C10): his decision rides a brief as his quoted words.
+      "- His decision goes into a child's brief as his own words, quoted, under an `Owner:` line. Your",
+      '  reading goes on its own line under it and never narrows, softens or contradicts his. Your research',
+      '  says otherwise: the brief says both, and that his word decides.',
       // 2026-11-12 (owner): the ONE task-filing standard, the same words as every briefing.
       '- Tasks: Open a task only for big work (more than ~3 files, or several sessions). Small fix: no task, say it in your last reply. Big work: ONE task; log its steps and waves inside it. A sub-task only for a part of big work that is delivered and checked on its own, never one per step or wave. Before opening, recall: if a task for the same work exists, use it. A Super child never opens one: the Super does. You file it: `dreamcontext tasks create`, then `--task <slug>` on',
       '  its plan child and later its develop child.',
@@ -408,6 +412,15 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('He sees each job word for word: no approval card.'),
       // 2026-11-08 (model-secimi): the handoff line never fixes a model per kind of job.
       expect.stringContaining('Its working style never fixes a model per kind of job.'),
+      // rev 43 (2026-11-13, ogrenme-dongusu C10/C8): an approved, unsent text is a file; a standing rule goes to `learn`.
+      '- A text he approved that has not gone out yet (a message, a post, a release note): save it as a file',
+      '  under `_dream_context/state/.super/approved/` when he approves it, and remove the file once the send',
+      '  is confirmed. Every handoff lists the files there by itself.',
+      '- He states a standing rule or corrects how agents work, "remember" said or not:',
+      '  `dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"` in that turn',
+      // rev 44 (2026-11-13, ogrenme-dongusu W2 L3): the receipt is its card; Telegram draws it with Geri al.
+      "  (`--same <id>` or `--replaces <id>` for one it has). Never stricter than his words. Paste its",
+      "  receipt card (`{\"type\":\"learned\",\"id\":\"<id>\"}`; Telegram shows it with Geri al); never Claude's or Codex's own memory.",
       '- A global agent (this Mac\'s; `agents list` marks it) is an AI Team member too: `super team ask`',
       '  it, never a child or a sub-agent.',
       'His Agenda card is YOUR notepad, never a list of children: a few',
@@ -429,8 +442,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  result with `<!-- re:<ref> -->`.',
       // rev 38 (2026-11-09, super-rutin): a scheduled job's turn.
       expect.stringContaining('`event=schedule` or `[super schedule]`: his timed job.'),
-      expect.stringContaining('<super-brief rev=42>'),
+      expect.stringContaining('<super-brief rev=44>'),
     ]);
-    expect(after.length).toBe(before.length + 69); // +3 (rev 42, 2026-11-12, super-push-red: the push line gone, four added) +1 (2026-11-12, tahta-hizli-duzenle: the area= line) -1 (2026-11-12, owner: the task-filer bullet is the ONE task-filing standard, 2 rows for 3) +8 (rev 41, 2026-11-12, gece-duzeltme B7: the task-filer bullet, 3 rows, the split rows, 3, and the mode rows, 2; the guide line reworded in place) +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
+    expect(after.length).toBe(before.length + 79); // +10 (rev 43, 2026-11-13, ogrenme-dongusu C10/C8: the Owner: quote bullet, 3 rows; the approved-text bullet, 3; the learn bullet, 4) +3 (rev 42, 2026-11-12, super-push-red: the push line gone, four added) +1 (2026-11-12, tahta-hizli-duzenle: the area= line) -1 (2026-11-12, owner: the task-filer bullet is the ONE task-filing standard, 2 rows for 3) +8 (rev 41, 2026-11-12, gece-duzeltme B7: the task-filer bullet, 3 rows, the split rows, 3, and the mode rows, 2; the guide line reworded in place) +2 (2026-11-11, telegram-resim-adlari: the card-close rule, 3 rows for the old 1) +0 (rev 39, 2026-11-11, sahip-karti-yerinde: the event=owner bullet rewritten in place) +2 (2026-11-11: a board message's selection, delegated verbatim) +5 (rev 38: his timed jobs, 4 rows, and the schedule event, 2026-11-09) +1 (rev 37: report colors only from the kit, 2026-11-09) +1 (rev 35: a Telegram reaction is a note, 2026-11-09) +2 (rev 34: bold the few words his eye lands on, 2026-11-09) +1 (rev 33: a Telegram turn, 2026-11-08) +5 (2026-11-08, model-secimi: the model line, 5 rows; the handoff line is rewrapped, same length) +4 (rev 32: text, never thinking; a question he did not understand is re-asked reworded) +2 (app tools line, 2026-11-07, merged in the 0.41.5 cut) +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line) +2 (approvals on his screen) +4 (one subject per section, the owed ledger); rev 31 in the 0.41.4 merge
   });
 });

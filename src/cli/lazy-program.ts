@@ -44,6 +44,7 @@ const LOADERS = new Map<string, Loader>([
   ['features', async () => (await import('./commands/features.js')).registerFeaturesCommand],
   ['knowledge', async () => (await import('./commands/knowledge.js')).registerKnowledgeCommand],
   ['patterns', async () => (await import('./commands/patterns.js')).registerPatternsCommand],
+  ['learn', async () => (await import('./commands/learn.js')).registerLearnCommand],
   ['tasks', async () => (await import('./commands/tasks.js')).registerTasksCommand],
   ['whiteboard', async () => (await import('./commands/whiteboard.js')).registerWhiteboardCommand],
   ['roadmap', async () => (await import('./commands/roadmap.js')).registerRoadmapCommand],

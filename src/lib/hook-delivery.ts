@@ -324,8 +324,8 @@ export function writePromptOverflow(sessionId: string, text: string, home: strin
 /** The long fixed blocks a prompt prints in full once per session, then as one line (audit MM-3). */
 export type SessionOnceKey = 'authorization' | 'gate' | 'patterns';
 
-function seenFile(sessionId: string, home: string): string {
-  return join(home, '.dreamcontext', 'prompt-seen', `${sessionId.replace(/[^\w-]/g, '')}.json`);
+function seenFile(sessionId: string, home: string, dir = 'prompt-seen'): string {
+  return join(home, '.dreamcontext', dir, `${sessionId.replace(/[^\w-]/g, '')}.json`);
 }
 
 /** Markers older than this belong to sessions long gone. */
@@ -339,29 +339,46 @@ const SEEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export function firstInSession(sessionId: string, key: SessionOnceKey, home: string = homedir()): boolean {
   if (!sessionId.replace(/[^\w-]/g, '')) return true;
-  const file = seenFile(sessionId, home);
+  return markOnce(seenFile(sessionId, home), key, home, 'prompt-seen') !== 'seen';
+}
+
+/**
+ * True the first time this act (`npm publish`, `git push`…) is stopped in this session, and marks
+ * it (learning loop C7: never stopped twice). Kept apart from {@link firstInSession}'s markers, so a
+ * compaction does not stop it again. No session id or a marker that cannot be written: false, so a
+ * call whose retry could not pass is never held.
+ */
+export function firstActInSession(sessionId: string, act: string, home: string = homedir()): boolean {
+  if (!sessionId.replace(/[^\w-]/g, '')) return false;
+  return markOnce(seenFile(sessionId, home, 'act-seen'), act, home, 'act-seen') === 'marked';
+}
+
+function markOnce(file: string, key: string, home: string, dir: string): 'marked' | 'seen' | 'unmarked' {
   let seen: string[] = [];
   try { seen = (JSON.parse(readFileSync(file, 'utf-8')) as { seen?: unknown }).seen as string[] ?? []; } catch { seen = []; }
   if (!Array.isArray(seen)) seen = [];
-  if (seen.includes(key)) return false;
+  if (seen.includes(key)) return 'seen';
   try {
-    mkdirSync(join(home, '.dreamcontext', 'prompt-seen'), { recursive: true, mode: 0o700 });
+    mkdirSync(join(home, '.dreamcontext', dir), { recursive: true, mode: 0o700 });
     const tmp = `${file}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify({ seen: [...seen, key] }), { encoding: 'utf-8', mode: 0o600 });
     renameSync(tmp, file);
-  } catch { /* unmarked: the next prompt prints it in full again */ }
-  return true;
+    return 'marked';
+  } catch { return 'unmarked'; /* the next prompt prints it in full again */ }
 }
 
 /** Forget what this session was shown (SessionStart: startup, resume, clear, compact), and sweep old markers. */
 export function resetSessionOnce(sessionId: string, home: string = homedir()): void {
   const dir = join(home, '.dreamcontext', 'prompt-seen');
   try { if (sessionId.replace(/[^\w-]/g, '')) rmSync(seenFile(sessionId, home), { force: true }); } catch { /* best effort */ }
-  try {
-    const now = Date.now();
-    for (const name of readdirSync(dir)) {
-      const file = join(dir, name);
-      if (now - statSync(file).mtimeMs > SEEN_TTL_MS) rmSync(file, { force: true });
-    }
-  } catch { /* no markers yet */ }
+  const now = Date.now();
+  // The act markers (firstActInSession) survive a compaction; only old ones are swept.
+  for (const d of [dir, join(home, '.dreamcontext', 'act-seen')]) {
+    try {
+      for (const name of readdirSync(d)) {
+        const file = join(d, name);
+        if (now - statSync(file).mtimeMs > SEEN_TTL_MS) rmSync(file, { force: true });
+      }
+    } catch { /* no markers yet */ }
+  }
 }

@@ -70,6 +70,8 @@ import {
   CURATOR_TASK_SLUG,
 } from '../../lib/sleep-flags.js';
 import { loadStatuses } from '../../lib/overrides.js';
+import { learnedThisSleep } from '../../lib/sleep-learns.js';
+import { pruneOwnerWords } from '../../lib/owner-words.js';
 import { buildSleepPacket, renderSleepPacket, renderSleepBoard, writeSleepPacket, PACKET_MD_REL, PACKET_BOARD_REL, type SleepPacket } from '../../lib/sleep-packet.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { getExistingReleases } from '../../lib/release-discovery.js';
@@ -1179,6 +1181,13 @@ export function registerSleepCommand(program: Command): void {
       if (pendingOutputs > 0 && !opts.productRan) {
         warn(`${pendingOutputs} automation output(s) were not consolidated this cycle (no --product-ran), so they stay pending for the next sleep.`);
       }
+      // What this sleep learned (learning loop C5, C9): learned, proposed, repeated and escalated
+      // rules with their ids, the ones waiting for his word, and the week's repeat count. Then the
+      // owner-words ledger's month files past their age go. Best-effort, like every tail step.
+      try { for (const line of learnedThisSleep(root, epoch ?? null)) info(line); } catch (err) {
+        warn(`Learned this sleep: not listed (${(err as Error).message ?? err}).`);
+      }
+      try { pruneOwnerWords(); } catch { /* the next sleep prunes */ }
       timer.lap('state');
 
       // AC6 (1/2) — recidivism escalation: reconcile this cycle's --flag

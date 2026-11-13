@@ -33,13 +33,13 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation', 'learned'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec | McpViewSpec
   | PinViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec
-  | AutomationViewSpec;
+  | AutomationViewSpec | LearnedViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -283,6 +283,17 @@ export interface TitleViewSpec {
 export interface AutomationViewSpec {
   type: 'automation';
   slug: string;
+}
+
+/**
+ * `type: "learned"` — the receipt card of a rule `dreamcontext learn` stored (learning loop C9).
+ * DERIVED, like `automation`: the block names the rule id and nothing else; the card reads the
+ * record (`GET /api/learned/:id`) and draws its headline, scope, his quote and one action row
+ * (Undo for an active rule, Keep and Drop for one waiting for his word).
+ */
+export interface LearnedViewSpec {
+  type: 'learned';
+  id: string;
 }
 
 export const MAX_VIEW_BYTES = 64 * 1024;
@@ -899,6 +910,27 @@ function validateAutomation(obj: Record<string, unknown>, notices: string[]): { 
   return { view: { type: 'automation', slug }, notices };
 }
 
+// ---------------------------------------------------------------------------------------
+// type: "learned"
+// ---------------------------------------------------------------------------------------
+
+/** MIRROR of `RULE_ID_RE` (`src/lib/rules-store.ts`): 10 base-32 characters. */
+const LEARNED_ID_RE = /^[a-z2-7]{10}$/;
+/** Keys that would mean the agent is DESCRIBING the rule instead of naming it. */
+const ASSERTED_LEARNED_KEYS = ['headline', 'text', 'title', 'quote', 'status', 'scope'] as const;
+
+function validateLearned(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!LEARNED_ID_RE.test(id)) {
+    notices.push('A learned block was skipped — its "id" is missing or is not a rule id (the LEARNED line of `dreamcontext learn` prints it).');
+    return { view: null, notices };
+  }
+  if (ASSERTED_LEARNED_KEYS.some((k) => obj[k] !== undefined)) {
+    notices.push('A learned block described the rule itself — that was ignored. The card reads it from the rules store.');
+  }
+  return { view: { type: 'learned', id }, notices };
+}
+
 /**
  * `type: "checkout"` — a path, or a withdrawal. Anything else is a notice, because a block
  * that says neither is an agent that meant to move the shelf and did not.
@@ -1007,6 +1039,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'agent-thread': return validateAgentThread(parsed, notices);
       case 'title': return validateTitle(parsed, notices);
       case 'automation': return validateAutomation(parsed, notices);
+      case 'learned': return validateLearned(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

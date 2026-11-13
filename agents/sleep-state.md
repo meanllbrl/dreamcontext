@@ -121,7 +121,9 @@ Two different gates, by whether the target file describes user intent or code re
 
 #### B0a. Two-observation gate (preferences & decisions)
 
-Applies to `people/<slug>.md` (a person's preferences) and `2.memory.md` (**Technical Decisions** and **Known Issues** only). Scan for **recurring** signals (a preference enforced 2+ times, a decision concluded, a new constraint, a footgun solved). **The default is no change.** One observation is data; two is a pattern. A recurring reusable SOLUTION SHAPE is not a core-file entry: report it as a pattern signal for `sleep-product`.
+Applies to `people/<slug>.md` (a person's preferences) and `2.memory.md` (**Technical Decisions** and **Known Issues** only). Scan for **recurring** signals (a preference enforced 2+ times, a decision concluded, a new constraint, a footgun solved). **The default is no change.** One observation is data; two is a pattern. A recurring reusable SOLUTION SHAPE is not a core-file entry: report it as a pattern signal for `sleep-product`. **A standing rule or correction from the owner about how agents work (a style, a "do not", a preference he repeats) is not yours to write**: not into `people/<slug>.md`, not into `0.soul.md`, not into `2.memory.md`. `sleep-product` learns it from his own words with `dreamcontext learn --by sleep` (its Pass D); name it under Cross-domain mentions if you saw it.
+
+**Repeated tool errors → Known Issues.** The packet's repeated-tool-errors block lists the tool errors seen in two or more sessions on two or more days, with the count, since when and the session ids. For each line not already marked as named by a Known Issues entry, read ONE of its sessions (`dreamcontext transcript distill <session_id>`) for what worked instead, and write ONE Known Issues line per error in `2.memory.md`: the error, the fix, since when (e.g. `command not found: timeout (since 2026-10-14): macOS has no timeout; use gtimeout or a background kill`). No fix on record in the session: write nothing for that error and say so in your report. This is a fact about the machine, not an owner rule: never `learn` it.
 
 `2.memory.md` has no LIFO ship-narrative section: ship events live in `CHANGELOG.json`. Do NOT re-create a LIFO/session-log section; write a changelog entry instead.
 
@@ -219,6 +221,9 @@ The key stays byte-identical every cycle. `sleep done` reads what you recorded, 
 ### Anti-bloat & staleness
 - <file> at <chars>/<lines>: <under | OVER: what was extracted, doctor result>
 - Knowledge staleness flags (for sleep-product): <file: suggestion>
+
+### Repeated tool errors
+- <error>: Known Issues line written (<fix>) | no fix on record | block empty
 
 ### Cross-domain mentions (for other specialists)
 - (none) | <what, for whom>
