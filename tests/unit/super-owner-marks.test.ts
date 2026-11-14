@@ -15,6 +15,7 @@ import { readSuperState, resetSuperIndex, sanitizeSuperState, SUPER_STATE_REL } 
 import { _resetSuperInbox, startSuperInbox, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, writeSuper } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
 import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
+import { MAX_TASK_SLUG_LENGTH } from '../../src/lib/task-slug.js';
 import { MAX_OWNER_MARKS_BYTES, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 
 const SUPER = 'sup-marks';
@@ -75,6 +76,16 @@ describe('coalescing per key', () => {
     expect(s.ownerMarks!.some((m) => m.key === 'pad:n800')).toBe(true);
     expect(s.ownerMarks!.some((m) => m.key === 'pad:n1')).toBe(false);
     expect(s.ownerMarks!.some((m) => m.key === 'evil:x')).toBe(false);
+  });
+
+  it('a task mark keeps every slug length a task file can have (252), and nothing longer', () => {
+    const long = `task:${'a'.repeat(MAX_TASK_SLUG_LENGTH)}`;
+    const over = `task:${'b'.repeat(MAX_TASK_SLUG_LENGTH + 1)}`;
+    const s = sanitizeSuperState({ ...on(), ownerMarks: [
+      { key: long, kind: 'task-status', text: 'Long', from: 'todo', to: 'done', at: 1 },
+      { key: over, kind: 'task-status', text: 'Over', from: 'todo', to: 'done', at: 2 },
+    ] });
+    expect(s.ownerMarks!.map((m) => m.key)).toEqual([long]);
   });
 
   it('dropCarriedMarks removes only the carried entries; a mark made in between stays', () => {

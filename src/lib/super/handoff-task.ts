@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { TASK_SLUG_RE } from '../task-slug.js';
 import { MAX_FILE_BYTES, MEMBER_SUPER_DIR, acceptableWorktree, okMember, superRecordPath } from './store.js';
 import { SUPER_BRANCH_RE } from './types.js';
 import { bindingVerdict } from './record-binding.js';
@@ -89,7 +90,8 @@ export interface SuperChildContext {
   branch?: string;
 }
 
-const TASK_SLUG = /^[a-z0-9][a-z0-9-]{0,239}$/;
+// Every length a task file can have (task-slug.ts): a shorter copy dropped long slugs.
+const TASK_SLUG = TASK_SLUG_RE;
 
 /**
  * A child's worktree and branch as the store itself would accept them (`acceptableWorktree`: one

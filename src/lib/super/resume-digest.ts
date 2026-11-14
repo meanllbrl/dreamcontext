@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { TASK_SLUG_RE } from '../task-slug.js';
 import { computePlanState, isCodeLedger, renderNextAction, type Ledger } from '../plan-ledger.js';
 import { LOOP_NAME_RE, readLedgerAt, reviewLoopsDir } from '../plan-store.js';
 import { childPlaceOf } from './handoff-task.js';
@@ -24,7 +25,8 @@ const MAX_PATHS = 20;
 const MAX_LINE = 160;
 const GIT_MS = 3_000;
 
-const TASK_SLUG = /^[a-z0-9][a-z0-9-]{0,239}$/;
+// Every length a task file can have (task-slug.ts): a shorter copy dropped long slugs.
+const TASK_SLUG = TASK_SLUG_RE;
 
 /** One line, no control characters, cut: a path name is a file's, not prose we trust. */
 const oneLine = (s: string, n = MAX_LINE): string => {

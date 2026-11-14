@@ -342,9 +342,12 @@ async function main() {
     ok('…Escape closes it', await until(page, async () => (await detail.count()) === 0, 3000));
 
     const dayBefore = await agendaCard(page).getByTestId('super-agenda-day').innerText();
+    const progressToday = await agendaCard(page).getByTestId('super-agenda-progress').innerText();
     await agendaCard(page).getByTestId('super-agenda-day-prev').click();
     ok('‹ goes to yesterday and shows its saved Done line', await until(page, async () => (await agendaCard(page).getByTestId('super-agenda-day').innerText()) !== dayBefore
       && (await rows(page).filter({ hasText: 'Dünden kalan' }).count()) === 1, 8000));
+    const progressPast = await agendaCard(page).getByTestId('super-agenda-progress').innerText();
+    ok('…its count is that day\'s, not today\'s', progressPast !== progressToday && /\b1\b/.test(progressPast), `${progressToday} | ${progressPast}`);
     await shot(page, '05-yesterday-light.png');
     await agendaCard(page).getByTestId('super-agenda-day-next').click();
     ok('› comes back to today', await until(page, async () => (await agendaCard(page).getByTestId('super-agenda-day').innerText()) === dayBefore, 5000));
@@ -382,7 +385,27 @@ async function main() {
           } else ok(`${theme} medium: the counts filter the list`, false, 'no filter buttons');
           await agendaCard(page).getByTestId('super-agenda-plus').click();
           ok(`${theme} medium: + opens one add box`, await until(page, async () => page.getByTestId('super-agenda-add-input').isVisible(), 3000));
+          if (theme === 'light') {
+            // A refused add says why where he is typing (review r1: a full agenda).
+            await page.route('**/api/super/pad/add', (r) => r.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'pad_full', message: 'the agenda is full' }) }));
+            await page.getByTestId('super-agenda-add-input').fill('Bir satır daha');
+            await page.getByTestId('super-agenda-add-submit').click();
+            ok('light medium: a refused add says why inside the add box, in words', await until(page, async () => (await page.getByTestId('super-agenda-add-error').isVisible()) && !/Request failed/.test(await page.getByTestId('super-agenda-add-error').innerText()), 4000));
+            await shot(page, '11b-medium-light-add-refused.png');
+            await page.unroute('**/api/super/pad/add');
+          }
           await page.keyboard.press('Escape');
+        }
+        if (size === 'small' && theme === 'light') {
+          // A refused Done shows on the small card itself (review r1).
+          await page.route('**/api/super/pad', (r) => (r.request().method() === 'POST' ? r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'unknown_note', message: 'no such note' }) }) : r.continue()));
+          const lr = rows(page).filter({ has: page.getByTestId('super-agenda-status') }).first();
+          await lr.hover();
+          await lr.getByTestId('super-agenda-done').click();
+          ok('light small: a refused Done says why on the card, in words', await until(page, async () => (await agendaCard(page).getByTestId('super-agenda-error').isVisible()) && !/Request failed/.test(await agendaCard(page).getByTestId('super-agenda-error').innerText()), 4000));
+          await cardShot(page, '12b-small-light-done-refused.png');
+          await page.unroute('**/api/super/pad');
+          await page.mouse.move(5, 5);
         }
         if (size === 'small') {
           await rows(page).getByTestId('super-agenda-status').first().click().catch(() => {});
@@ -441,7 +464,8 @@ async function main() {
     ok('the run finished', false, String(e?.stack ?? e).slice(0, 400));
     await page.screenshot({ path: join(OUT, 'zz-failure.png') }).catch(() => {});
   } finally {
-    const real = errors.filter((e) => !/favicon|ResizeObserver loop|WebSocket|ERR_CONNECTION_REFUSED/.test(e));
+    // The 404/409 are the refusals this script forces on purpose (page.route), once each.
+    const real = errors.filter((e) => !/favicon|ResizeObserver loop|WebSocket|ERR_CONNECTION_REFUSED|status of (404|409)/.test(e));
     // ERR_CONNECTION_REFUSED: only while the script restarts the server on purpose.
     ok('zero page errors', real.length === 0, real.slice(0, 5).join(' | '));
     await browser.close();

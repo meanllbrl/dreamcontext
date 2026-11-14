@@ -209,7 +209,10 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-hover[data-compact='true'] .agenda-hover-btn:not([data-action='notNeeded']) { width: 24px; padding: 0; justify-content: center; }
 
 /* The add box and the + (one box, no picker). */
-.agenda-add { flex: none; display: flex; gap: var(--space-2); }
+.agenda-add { flex: none; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.agenda-add-error { flex-basis: 100%; }
+/* The small card's foot: a refusal takes the waiting line's place, one line, whole on hover. */
+.agenda-foot .agenda-error { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agenda-add-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -311,8 +314,10 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   .super-agenda[data-size='full'][data-detail='true'] { grid-template-columns: minmax(0, 1fr); }
 }
 .agenda-title-row { display: flex; align-items: baseline; gap: var(--space-2); }
-.agenda-title { margin: 0; font-size: var(--font-size-2xl, 24px); font-weight: var(--font-weight-bold); line-height: 1.2; }
-.agenda-title-row .agenda-today { font-size: var(--font-size-xl, 20px); }
+/* The approved drawing's title and Today are one step above the rows (22 px on its 14 px rows):
+   the app's scale step for that is lg, never the 40 px display size (review r1). */
+.agenda-title { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); line-height: 1.2; }
+.agenda-title-row .agenda-today { font-size: var(--font-size-lg); }
 .agenda-progress-row { display: flex; align-items: center; gap: var(--space-3); }
 .agenda-progress-row .agenda-bar { flex: 0 0 160px; }
 .agenda-progress-row .agenda-count { margin-left: 0; font-size: var(--font-size-sm); }

@@ -156,7 +156,10 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     approvals, taskRows, recallRows, syncRows, children: state.children, now,
   });
   const past = day < today ? dayGroups(day, pad, dayData[day]?.done ?? null) : null;
-  const progress = agendaProgress(groups);
+  // Every count and the bar describe the day on screen (review r1): a past day's from its lines.
+  const progress = past
+    ? { done: past.dayDone.length, total: past.dayDone.length + past.dayOpen.length, working: 0, waiting: 0 }
+    : agendaProgress(groups);
 
   // The order holds while the pointer is over the list (C3): it re-sorts on leave.
   const [held, setHeld] = useState<string[] | null>(null);
@@ -174,22 +177,32 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   const [menu, setMenu] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const [filter, setFilter] = useState<AgendaFilter>('waiting');
   const [addOpen, setAddOpen] = useState<HTMLElement | null>(null);
-  const [error, setError] = useState('');
+  // A refused write (C8): its words and the line it belongs to (absent = the card's). Shown where
+  // he is looking at every size: that line's detail when it is open, else the card's error line;
+  // the add box shows its own (review r1, action-failure-shown-where-he-looks).
+  const [error, setError] = useState<{ text: string; note?: string } | null>(null);
 
   const all = [...TODAY_GROUPS.flatMap((g) => groups[g]), ...(past ? [...past.dayDone, ...past.dayOpen] : [])];
   const selectedEntry = selected ? all.find((e) => e.key === selected) ?? null : null;
   useEffect(() => { if (selected && !selectedEntry) setSelected(null); }, [selected, selectedEntry]);
-  useEffect(() => { setError(''); }, [selected]);
+  useEffect(() => { setError(null); }, [selected]);
+  // The small and medium cards have no room to keep a stale refusal: it leaves after a while.
+  useEffect(() => {
+    if (!error) return undefined;
+    const t = window.setTimeout(() => setError(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [error]);
 
   const actionsOf = (e: AgendaEntry): RowActions => rowActions(e, { readOnly });
-  const fail = (e: unknown) => {
+  const explain = (e: unknown): string => {
     const code = codeOf(e);
-    setError(code === 'unknown_note' ? t('super.agenda.detail.archived') : code === 'pad_full' ? t('super.agenda.full') : (e instanceof Error && e.message) || t('super.agenda.failed'));
+    return code === 'unknown_note' ? t('super.agenda.detail.archived') : code === 'pad_full' ? t('super.agenda.full') : (e instanceof Error && e.message) || t('super.agenda.failed');
   };
+  const fail = (e: unknown, note?: string) => setError({ text: explain(e), ...(note ? { note } : {}) });
   const setStatus = async (id: string, status: PadStatus) => {
     if (!onPadStatus) return;
-    setError('');
-    try { await onPadStatus(id, status); } catch (e) { fail(e); }
+    setError(null);
+    try { await onPadStatus(id, status); } catch (e) { fail(e, id); }
   };
 
   // A question's own press, as today: a card a child left opens in the Super chat's slot; a
@@ -352,13 +365,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     return (
       <AgendaDetail
         entry={e} actions={a} group={groupName(e.group)} job={job} fmtTime={fmtTime} fmtDay={fmtDay}
-        error={error}
+        error={error && error.note === id ? error.text : ''}
         onClose={() => setSelected(null)}
         onAsk={a.hover.includes('ask') && onWriteAbout ? () => onWriteAbout(e.live ? r : { ...r, note: undefined, archived: true }) : undefined}
         onDone={a.hover.includes('done') && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
         onRemove={a.remove && onPadRemove && id ? () => {
-          setError('');
-          onPadRemove(id).then(() => setSelected(null)).catch(fail);
+          setError(null);
+          onPadRemove(id).then(() => setSelected(null)).catch((e) => fail(e, id));
         } : undefined}
         onOpenChat={job?.canOpen && r.for ? () => onShowChild(r.for as string) : undefined}
         onOpenTask={job?.task && onOpenTask ? () => onOpenTask(job.task as string) : undefined}
@@ -392,7 +405,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       className="agenda-pop"
       testId="super-agenda-add-pop"
     >
-      <AgendaAddBox onAdd={onPadAdd} onError={fail} autoFocus onDone={() => setAddOpen(null)} />
+      <AgendaAddBox onAdd={onPadAdd} explain={explain} autoFocus onDone={() => setAddOpen(null)} />
     </FloatLayer>
   );
   const plusButton = onPadAdd && !readOnly && day === today && (
@@ -471,6 +484,10 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     );
   };
 
+  // Shown unless the open detail is the line it belongs to (that detail shows it).
+  const inDetail = !!error?.note && selectedEntry?.row?.note === error.note && actionsOf(selectedEntry).detail !== 'none';
+  const errorLine = error && !inDetail && <p className="agenda-error" role="alert" data-testid="super-agenda-error" title={error.text}>{error.text}</p>;
+
   const common = {
     ref: rootRef,
     'data-testid': 'super-agenda',
@@ -496,9 +513,11 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           {order(rows).map(rowOf)}
         </div>
         <div className="agenda-foot">
-          <span className="agenda-foot-waiting" data-on={progress.waiting > 0 ? 'true' : undefined}>
-            {tr(t, 'super.agenda.summaryWaiting', '{n} waiting on you', { n: String(progress.waiting) })}
-          </span>
+          {errorLine || (!past && (
+            <span className="agenda-foot-waiting" data-on={progress.waiting > 0 ? 'true' : undefined}>
+              {tr(t, 'super.agenda.summaryWaiting', '{n} waiting on you', { n: String(progress.waiting) })}
+            </span>
+          ))}
           {plusButton}
         </div>
         {statusMenu}{floatingDetail}{addPopover}
@@ -508,7 +527,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   if (size === 'medium') {
     const counts: Record<AgendaFilter, number> = { waiting: groups.waiting.length, onit: groups.super.length + groups.mine.length + groups.earlier.length, done: groups.done.length };
-    const rows = past ? [...past.dayOpen, ...past.dayDone] : filterEntries(groups, filter);
+    const rows = past ? [] : filterEntries(groups, filter);
     return (
       <div className="super-agenda" {...common}>
         <div className="agenda-side">
@@ -524,13 +543,16 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         </div>
         <div className="agenda-main">
           <div className="agenda-main-head">
-            <span>{past ? groupName('dayDone') : groupName(filter === 'onit' ? 'super' : filter)}</span>
+            <span>{past ? tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) }) : groupName(filter === 'onit' ? 'super' : filter)}</span>
             {plusButton}
           </div>
-          <div className="agenda-groups" {...listHandlers}>
-            {rows.length === 0 && <div className="super-agenda-empty">{t(past ? 'super.agenda.nothingDay' : 'super.agenda.nothing')}</div>}
-            {order(rows).map(rowOf)}
-          </div>
+          {errorLine}
+          {past ? groupList(false) : (
+            <div className="agenda-groups" {...listHandlers}>
+              {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+              {order(rows).map(rowOf)}
+            </div>
+          )}
         </div>
         {statusMenu}{floatingDetail}{addPopover}
       </div>
@@ -544,8 +566,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       <span className="agenda-count" data-testid="super-agenda-progress">{progressText}</span>
     </div>
   );
-  const addRow = onPadAdd && !readOnly && day === today && <AgendaAddBox onAdd={onPadAdd} onError={fail} onStart={() => setError('')} />;
-  const errorLine = error && !selectedEntry && <p className="agenda-error" role="alert" data-testid="super-agenda-error">{error}</p>;
+  const addRow = onPadAdd && !readOnly && day === today && <AgendaAddBox onAdd={onPadAdd} explain={explain} onStart={() => setError(null)} />;
 
   if (size === 'large') {
     return (
@@ -595,7 +616,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         </div>
         <div className="agenda-progress-row">
           {bar}
-          <span className="agenda-count" data-testid="super-agenda-progress">{past ? groupName('dayDone') : summary}</span>
+          <span className="agenda-count" data-testid="super-agenda-progress">{summary}</span>
         </div>
         {addRow}
         {errorLine}
@@ -611,9 +632,10 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 /** The add box (one box, no picker: a line he adds is his). Disabled while its request runs, so a
  *  double Enter writes one line (plan build notes). Its own component, so a pushed record never
  *  wipes what he is typing. */
-function AgendaAddBox({ onAdd, onError, onStart, onDone, autoFocus = false }: {
+function AgendaAddBox({ onAdd, explain, onStart, onDone, autoFocus = false }: {
   onAdd: (text: string) => Promise<void>;
-  onError: (e: unknown) => void;
+  /** A refusal's words; the box shows them under itself, where he is typing. */
+  explain: (e: unknown) => string;
   onStart?: () => void;
   onDone?: () => void;
   autoFocus?: boolean;
@@ -621,12 +643,14 @@ function AgendaAddBox({ onAdd, onError, onStart, onDone, autoFocus = false }: {
   const { t } = useI18n();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState('');
   const submit = async () => {
     const line = text.trim();
     if (!line || busy) return;
     setBusy(true);
+    setRefused('');
     onStart?.();
-    try { await onAdd(line); setText(''); onDone?.(); } catch (e) { onError(e); } finally { setBusy(false); }
+    try { await onAdd(line); setText(''); onDone?.(); } catch (e) { setRefused(explain(e)); } finally { setBusy(false); }
   };
   return (
     <form className="agenda-add" data-testid="super-agenda-add" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
@@ -642,6 +666,7 @@ function AgendaAddBox({ onAdd, onError, onStart, onDone, autoFocus = false }: {
         onChange={(e) => setText(e.target.value)}
       />
       <button type="submit" className="agenda-btn" data-testid="super-agenda-add-submit" disabled={busy || !text.trim()}>{t('super.agenda.add')}</button>
+      {refused && <p className="agenda-error agenda-add-error" role="alert" data-testid="super-agenda-add-error">{refused}</p>}
     </form>
   );
 }
