@@ -75,8 +75,13 @@ export function dropCarriedMarks(s: SuperState, carried: readonly Pick<OwnerMark
 const STATUS_WORDS: Record<string, string> = {
   'not-started': 'Not started', 'in-progress': 'In progress', 'almost-done': 'Almost done', waiting: 'Waiting', done: 'Done',
 };
+/** A status key (a task's may be any project-declared slug) printed outside the fence: only a
+ *  plain slug passes, anything else reads '?', so text an agent wrote into a task's status can
+ *  never close the block or speak in it (security review, round 1). */
+const STATUS_SLUG = /^[A-Za-z0-9_-]{1,40}$/;
 export function markWord(v: string | undefined): string {
-  return v ? STATUS_WORDS[v] ?? v : '';
+  if (!v) return '';
+  return STATUS_WORDS[v] ?? (STATUS_SLUG.test(v) ? v : '?');
 }
 
 /** One mark's head line (no text: that goes through `wrapUntrusted`). */
