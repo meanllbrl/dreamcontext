@@ -138,12 +138,29 @@ export function identityOf(token: string): WindowIdentity | null {
   return { vault: c.vault, contextRoot: c.contextRoot, sessionId: c.sessionId, mode: c.mode, superId: c.superId ?? 'main' };
 }
 
-/** The live token of the chat with pin id `sessionId`, or null. The server uses it to push a
- *  frame (`super_state`, `super_event`) down that chat's socket; it never leaves the server. */
+/** The live token of the chat with pin id `sessionId`, the NEWEST one, or null. The server uses
+ *  it to push a frame (`super_state`, `super_event`) down that chat's socket; it never leaves the
+ *  server. Newest, never the first registered (2026-11-14): a respawn mints its token before the
+ *  old process releases its own, and an old process that never exits keeps its token for good,
+ *  its socket long closed. The first match was that dead channel, so every push to the Super's
+ *  window was dropped and the agenda card froze. */
 export function tokenOfSession(sessionId: string): string | null {
   if (!sessionId) return null;
-  for (const [token, c] of channels) if (c.sessionId === sessionId) return token;
-  return null;
+  let found: string | null = null;
+  for (const [token, c] of channels) if (c.sessionId === sessionId) found = token;
+  return found;
+}
+
+/** Push one `_meta` frame down EVERY socket of the chat with pin id `sessionId`, newest first;
+ *  true when at least one socket took it. For a frame that only reports state (`super_state`):
+ *  whichever process of that pin the window is attached to gets it, and a dead channel left
+ *  beside a live one can never swallow it. */
+export function pushFrameToSession(sessionId: string, frame: Record<string, unknown>): boolean {
+  if (!sessionId) return false;
+  const mine = [...channels.values()].filter((c) => c.sessionId === sessionId).reverse();
+  let sent = false;
+  for (const c of mine) if (c.send(frame)) sent = true;
+  return sent;
 }
 
 /** The live token of the SUPER-mode chat with pin id `sessionId`, the newest one when a respawn

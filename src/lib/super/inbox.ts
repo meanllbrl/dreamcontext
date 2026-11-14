@@ -38,7 +38,7 @@ import {
   STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, crewHandle, dropOwnerWait, getChat, onChatChange, ownerActedOnCard, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, ownerWaitOrigin, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
   type ChatActivity, type ChatChange, type ChatEntry, type PendingQuestion,
 } from '../assistant/chat-registry.js';
-import { pushFrame, tokenOfSession } from '../window-control.js';
+import { pushFrameToSession } from '../window-control.js';
 import { announceOwnerHead, holdOwnerRing, muteOwnerRing, releaseOwnerRing, seedOwnerHead, serverBannered } from './owner-question.js';
 import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
 import { readHandoffRecord, type HandoffRecord } from '../context-watch.js';
@@ -680,8 +680,9 @@ export function pushSuperState(contextRoot: string, state: SuperState): boolean 
   if (!state.session) return false;
   // Before the window's own push: a phone is told even while no window socket is there.
   try { superDigestSink?.(rootOf(contextRoot), state); } catch (err) { console.error('[super] digest push failed:', err); }
-  const token = tokenOfSession(state.session);
-  return token ? pushFrame(token, { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) }) : false;
+  // Every socket of the pin, never one picked token (2026-11-14: a second process of the same
+  // pin left the first one's dead channel in front, and the card froze on the owner's screen).
+  return pushFrameToSession(state.session, { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) });
 }
 
 /** Everything a write of the record owes: the glance's head cache, the window's push, and the
