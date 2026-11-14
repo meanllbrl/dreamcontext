@@ -214,9 +214,9 @@ export async function onAskButton(hub: TelegramHub, ab: ActiveBinding, data: Obj
     return null;
   }
   if (idx !== 0) return 'Vazgeçildi';
-  if (!ab.contextRoot) return LINES.stale;
-  const { readSuperState } = await import('../../lib/super/store.js');
-  const s = await readSuperState(ab.contextRoot);
+  // The Super this bot talks to: main's, or the member's own.
+  const s = await hub.readBound(ab);
+  if (!s) return LINES.stale;
   if (!s.enabled || !s.session) return LINES.superOff;
   const ok = await hub.injectText(ab, hub.syntheticUpdateId(), ask.text, s.session);
   return ok ? '✓ Gönderildi' : null;

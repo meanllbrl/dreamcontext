@@ -5,9 +5,11 @@
  *    + its quote, built by the hub (never from Telegram's `reply_to_message` text); a reply to
  *    the owner's own earlier Telegram message → `from=owner` with that turn's ref.
  *  - `/dur`: the window's `hub_command interrupt` (what Esc does: interrupt + pause the queue);
- *    the injector's `interrupt()` only when no window is mounted (P4: one interrupt).
- *  - `/durum`: job rows (children + team jobs, every state), what waits on the owner, the pool.
- *  - `/gundem`: ONE message; each line waiting on the owner is one button. A tap turns the same
+ *    the injector's `interrupt()` only when no window is mounted (P4: one interrupt). On every
+ *    bot (owner 2026-11-14, B2): a member's bot stops that member's own Super (`hub.readBound`).
+ *  - `/durum`: job rows (children + team jobs, every state), what waits on the owner, the pool;
+ *    on every bot, of the Super it talks to.
+ *  - `/gundem` (the main Super's bot only): ONE message; each line waiting on the owner is one button. A tap turns the same
  *    message into that line in full with **Bitti** (the same `padMove` the Mac's Done calls, no
  *    turn), **Yaz** (the owner's next text carries the Mac's `[About agenda line note=…]` block;
  *    5 minutes) and **Gündeme dön**. Running and finished lines are one quiet line.
@@ -19,7 +21,6 @@
 import { chatInjector, getChat, listChats } from '../../lib/assistant/chat-registry.js';
 import { appLinkForContextRoot } from '../../lib/app-link.js';
 import { padMove } from '../../lib/super/pad-move.js';
-import { readSuperState } from '../../lib/super/store.js';
 import { teamJobStatus } from '../../lib/super/team.js';
 import type { SuperState } from '../../lib/super/types.js';
 import { type ButtonRecord, type StatusState } from '../../lib/telegram/contract.js';
@@ -93,8 +94,10 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     if (prevCommand && await prevCommand(ab, u)) return true;
     const text = String(obj(u.message)?.text ?? '').trim();
     const m = /^\/(dur|durum|gundem)(?:@\w+)?(?:\s|$)/i.exec(text);
-    if (!m || ab.target !== 'super') return false;
+    if (!m) return false;
     const cmd = m[1].toLowerCase();
+    // The agenda is the main Super's: a member's bot names its own two (hub's unknown-command line).
+    if (cmd === 'gundem' && ab.target !== 'super') return false;
     if (cmd === 'dur') await stop(ab);
     else if (cmd === 'durum') await status(ab);
     else await agenda(ab);
@@ -130,14 +133,19 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
     await hub.sendButtons(ab, escapeHtml(LINES.superOff), [["Super'i aç"]], { kind: 'confirm', singleUse: true }, { action: 'super-on' });
   };
 
+  /** The Super this bot talks to: main's, or the member's own (`hub.readBound`). */
   async function superState(ab: ActiveBinding): Promise<SuperState | null> {
-    if (!ab.contextRoot) return null;
-    try { return await readSuperState(ab.contextRoot); } catch { return null; }
+    return hub.readBound(ab);
+  }
+
+  /** No Super to read: main's is off; a member's own was never written to, so nothing runs. */
+  async function noSuper(ab: ActiveBinding): Promise<void> {
+    await hub.notice(ab, 'info', ab.target === 'super' ? LINES.superOff : CMD_LINES.nothingRunning);
   }
 
   async function stop(ab: ActiveBinding): Promise<void> {
     const s = await superState(ab);
-    if (!s?.enabled || !s.session) { await hub.notice(ab, 'info', LINES.superOff); return; }
+    if (!s?.enabled || !s.session) { await noSuper(ab); return; }
     const chat = getChat(s.session);
     if (!chat || chat.status === 'idle' || chat.status === 'gone') { await hub.notice(ab, 'info', CMD_LINES.nothingRunning); return; }
     const token = superTokenOfSession(s.session);
@@ -153,8 +161,9 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
 
   async function status(ab: ActiveBinding): Promise<void> {
     const s = await superState(ab);
-    if (!s?.enabled || !s.session) { await hub.notice(ab, 'info', LINES.superOff); return; }
-    await hub.send(ab, statusText(s, ab.contextRoot!));
+    const root = hub.rootOf(ab);
+    if (!s?.enabled || !s.session || !root) { await noSuper(ab); return; }
+    await hub.send(ab, statusText(s, root));
   }
 
   /** The agenda as the owner reads it: only what waits on HIM is a button (one per line, cut);

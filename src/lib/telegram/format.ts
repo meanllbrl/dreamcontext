@@ -170,8 +170,8 @@ export interface FormatOptions {
    *  `'mac'` (the default, e.g. routine forwards) every dream fence is one "Mac'te" line. */
   blocks?: 'mac' | 'hub';
   /** A long text keeps its first paragraphs open and the rest in an expandable quote. Only a
-   *  routine's or an AI Team member's result folds; what the Super writes him never does (owner
-   *  2026-11-11). Off by default. */
+   *  routine's forwarded result folds; what a bot's Super writes him (main's or a member's own)
+   *  never does (owner 2026-11-11, 2026-11-14). Off by default. */
   fold?: boolean;
 }
 
@@ -358,7 +358,7 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
   // its own marker and a visible indent, a heading never sticks to the line above it, and a list
   // is a group of its own: a blank line before it (unless the line above leads into it with ':')
   // and after it, so the facts never glue to the sentences around them.
-  let last: LineKind = 'blank';
+  let last = 'blank' as LineKind; // set inside push(): a plain annotation narrows it to 'blank'
   // The line above a list leads into it (no gap): it ends with ':' or opens with a bold head
   // (`**Aldım** (14 video)`), the B2 group head with a note beside it.
   let leadsIn = false;

@@ -217,7 +217,7 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
 
   const onChange = (sessionId: string): void => {
     const ab = hub.bindingOfSession(sessionId);
-    if (!ab || ab.disabled || ab.target !== 'super') return;
+    if (!ab || ab.disabled) return;
     if (!hub.hasTelegramTurn(sessionId) && !deps.streams(ab)) return;
     for (const rec of openCards(sessionId)) {
       if (rec.rebuilt || rec.run || announced.has(rec.cardRef)) continue;
@@ -286,10 +286,11 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       return RUN_LINES.stopped;
     }
     if (idx === 2) return RUN_LINES.cancelled;
-    // G1 (K4): Run only for the SUPER's OWN card, through this very binding; never a child's card
+    // G1 (K4): Run only for the bound Super's OWN card (main's, or a member's own Super on its
+    // bot), through this very binding; never a child's card
     // (an owner item stands for it), whatever button record names it.
     const own = hub.bindingOfSession(sessionId);
-    if (!own || own.key !== ab.key || ab.target !== 'super' || ownerCardLookup(sessionId, cardRef)) return RUN_LINES.notHere;
+    if (!own || own.key !== ab.key || ownerCardLookup(sessionId, cardRef)) return RUN_LINES.notHere;
     const live = getCard(sessionId, cardRef);
     const newest = live ? newestCard(sessionId, 'run', live.id) : null;
     const spec = live?.spec as RunViewSpec | undefined;
@@ -327,7 +328,7 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     }
     // A plain message while a secret card waits: it goes on as a normal turn, never into a
     // file, and the owner is reminded where the value goes (G2).
-    if (ab.target === 'super' && typeof msg.text === 'string' && !msg.text.startsWith('/')) {
+    if (typeof msg.text === 'string' && !msg.text.startsWith('/')) {
       for (const [sid, key] of secretSessions) {
         if (key === ab.key && openCards(sid, 'secret').length) { await hub.notice(ab, 'access', RUN_LINES.secretHere, true); break; }
       }
@@ -339,7 +340,7 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
   setTelegramRunSink({
     async deliverRunReport(sessionId, cardRef, text) {
       const ab = hub.bindingOfSession(sessionId);
-      if (!ab || ab.disabled || ab.target !== 'super') return false;
+      if (!ab || ab.disabled) return false;
       return (await hub.injectText(ab, hub.syntheticUpdateId(), text, sessionId, { kind: 'run-report', cardRef })) !== false;
     },
   });
