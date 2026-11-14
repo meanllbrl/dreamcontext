@@ -15,6 +15,20 @@ import { isSuperSession, ownerQueueCount } from './superHandover';
 
 export type SessionHome = 'super' | 'chat';
 
+/**
+ * How a window opens a Super Agent's own chat it does not hold yet (`ensureSuperSession`): a
+ * session the hand-over just minted starts under its id (no resume, nothing to reattach to);
+ * every other open is AUTOMATIC (a mount, a reload, an app reopen, a second window) and so
+ * PASSIVE: the server adopts the live process (detached at once, a half-open holder after its
+ * probe), answers 4409 when another live screen holds it, and resumes in a new process only when
+ * none runs. A plain resume here was a RESPAWN to the server: a second Super process on the same
+ * pin beside the one still running, the old one living on until its socket closed (field
+ * 2026-11-14: two per project for an hour, the window's state pushed to the dead one).
+ */
+export function superPaneOpen(fresh: boolean): { resume: boolean; reattach: '' | 'passive' } {
+  return fresh ? { resume: false, reattach: '' } : { resume: true, reattach: 'passive' };
+}
+
 type Owned = Pick<SuperState, 'session' | 'children'> & { enabled?: boolean; formerChildren?: readonly string[]; released?: readonly string[] };
 
 /**

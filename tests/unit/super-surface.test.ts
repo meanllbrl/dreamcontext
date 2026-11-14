@@ -46,14 +46,14 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
 
   it('it joins the roster with mode super and is placed in NO pane', () => {
     const ensure = surface.slice(surface.indexOf('const ensureSuperSession'), surface.indexOf('// ── What the server pushes'));
-    expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
+    expect(ensure).toMatch(/spawn\(false, session, how\.resume, 'chat', '', superModel, true, '', false, superEffort, false, 'super', '', '', how\.reattach\)/);
     expect(ensure).toMatch(/mode: 'super'/);
     expect(ensure).not.toMatch(/setPanes/);
   });
 
   it('it follows the vault\'s permission switch like any chat (decision 14): no explicit bypass on its spawn or its children\'s', () => {
     // Param 11 (explicitBypass) is false, so `spawn`'s chat arm takes the vault's remembered mode.
-    expect(surface).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
+    expect(surface).toMatch(/spawn\(false, session, how\.resume, 'chat', '', superModel, true, '', false, superEffort, false, 'super', '', '', how\.reattach\)/);
     // The child's id is minted first so its lean MCP set (orchestration plan r5 D14) is known at the spawn.
     expect(surface).toMatch(/spawn\(false, childId, false, 'chat', prepared\.inline, d\.model, true, prepared\.token, false, d\.effort, false, d\.mode\)/);
   });

@@ -71,12 +71,12 @@ describe('ensureSuperSession(session, superId)', () => {
     const member = ensure.slice(ensure.indexOf('if (member) {'), ensure.indexOf('const fresh = superFreshRef.current === session;\n    superFreshRef.current = null;'));
     expect(member.indexOf('bindChatAgent(session, member);')).toBeGreaterThan(-1);
     expect(member.indexOf('bindChatAgent(session, member);')).toBeLessThan(member.indexOf('spawn('));
-    expect(member).toMatch(/spawn\(false, session, !fresh, 'chat', '', model, true, '', false, effort, false, 'super'\)/);
+    expect(member).toMatch(/spawn\(false, session, how\.resume, 'chat', '', model, true, '', false, effort, false, 'super', '', '', how\.reattach\)/);
     expect(member).toMatch(/mode: 'super', agent: member/);
     expect(member).not.toMatch(/setPanes/);
   });
   it('main\'s spawn is byte-for-byte as before', () => {
-    expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super'\)/);
+    expect(ensure).toMatch(/spawn\(false, session, how\.resume, 'chat', '', superModel, true, '', false, superEffort, false, 'super', '', '', how\.reattach\)/);
     expect(ensure).toMatch(/const ensureSuperSession = useCallback\(\(session: string, superId: SuperId = MAIN_SUPER\)/);
   });
   it('a member Super chat\'s pushes write its own record', () => {
