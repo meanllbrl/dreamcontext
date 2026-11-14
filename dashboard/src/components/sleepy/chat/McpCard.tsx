@@ -28,6 +28,9 @@ import './mcpCard.css';
  * the 5-minute window the row turns into the fallback: reconnect it on claude.ai as the
  * expected account, then "I've connected it, check again".
  */
+/** How long a card waits for this chat's first server reading before it says it has none. */
+export const MCP_READ_WAIT_MS = 8_000;
+
 export function McpCard({ spec, session, conversationId, report, placeKey }: {
   spec: McpViewSpec;
   session?: ChatSession;
@@ -79,6 +82,22 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
 
   const live = !!session && !!report;
 
+  // No reading of this chat's servers within a few seconds (no live process behind the pane, a
+  // socket that never opened, a status request that hangs): the rows stop waiting and say what
+  // Settings → MCP knows, with a Retry, instead of "reading…" forever (owner 2026-11-14).
+  const [unread, setUnread] = useState(false);
+  const [tries, setTries] = useState(0);
+  useEffect(() => {
+    if (status) { setUnread(false); return undefined; }
+    const t = setTimeout(() => setUnread(true), MCP_READ_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [status]);
+  const retry = () => {
+    setOverview(null);
+    setTries((n) => n + 1);
+    session?.mcpRefresh();
+  };
+
   // A named server this chat cannot show or sign in to (missing from its status, or needing a
   // sign-in where this card has no live channel, e.g. a Super child's read-only pane): read
   // Settings → MCP's overview once, so the row says whether it is set up and needs a sign-in
@@ -86,13 +105,15 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
   const api = useApi();
   const { bus } = useVaultId();
   const [overview, setOverview] = useState<McpOverview | null>(null);
-  const needOverview = !!status && rows.some((r) => !r.live || (r.live.status === 'needs-auth' && !live));
+  const needOverview = (!!status || unread) && rows.some((r) => !r.live || (r.live.status === 'needs-auth' && !live));
+  const [overviewFailed, setOverviewFailed] = useState(false);
   useEffect(() => {
     if (!needOverview || overview) return undefined;
     let gone = false;
-    api.get<McpOverview>('/agent/mcp/overview').then((o) => { if (!gone) setOverview(o); }, () => { /* the plain line stays */ });
+    setOverviewFailed(false);
+    api.get<McpOverview>('/agent/mcp/overview').then((o) => { if (!gone) setOverview(o); }, () => { if (!gone) setOverviewFailed(true); });
     return () => { gone = true; };
-  }, [needOverview, overview, api]);
+  }, [needOverview, overview, api, tries]);
   const chatAccount = session ? (session.getModel().activeAccountId || session.accountId) : '';
   const openSettings = () => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: 'mcp' });
   const fallbacks = rows.filter((r) => r.live?.home === 'claudeai' && auth[r.live.name]?.state === 'timeout');
@@ -114,23 +135,25 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
           const action = row ? rowAction(row) : null;
           const inFlight = row ? auth[row.name] : undefined;
           const flight = connectLabel(inFlight?.state, inFlight?.host);
-          const missing = !row && status ? missingRow(name, overview, chatAccount || undefined) : null;
+          const missing = !row && (status || unread) ? missingRow(name, overview, chatAccount || undefined) : null;
           // The sign-in lives in Settings → MCP when this card cannot run it itself.
           const settingsSignIn = !!missing?.signIn || (row?.status === 'needs-auth' && row.home !== 'claudeai' && !live);
           return (
             <li className="chat-mcpcard-row" key={name} data-status={row?.status ?? 'missing'}>
-              <span className="chat-mcpcard-icon" aria-hidden>{row?.home === 'claudeai' ? '✉' : '◆'}</span>
+              <span className="chat-mcpcard-icon" aria-hidden>{(row?.home ?? missing?.home) === 'claudeai' ? '✉' : '◆'}</span>
               <span className="chat-mcpcard-text">
                 <span className="chat-mcpcard-name">{row?.name ?? name}</span>
                 <span className="chat-mcpcard-sub">
-                  {row ? `${homeLabel(row.home)} · ${flight ?? statusLabel(row)}` : missing ? missing.text : 'reading this chat\'s servers…'}
+                  {row ? `${homeLabel(row.home)} · ${flight ?? statusLabel(row)}`
+                    : missing ? (overviewFailed ? 'could not read Settings → MCP' : missing.text)
+                      : 'reading this chat\'s servers…'}
                 </span>
               </span>
               {row?.status === 'connected' ? (
                 <span className="chat-mcpcard-pill" data-tone="good"><span className="chat-mcpcard-dot" />Connected</span>
               ) : (
                 <span className="chat-mcpcard-actions">
-                  {row?.home === 'claudeai' && (
+                  {(row?.home ?? missing?.home) === 'claudeai' && (
                     <button type="button" className="chat-btn pill" onClick={() => { void openExternalUrl(CLAUDE_AI_CONNECTORS_URL); }}>
                       Settings on claude.ai ↗
                     </button>
@@ -157,10 +180,14 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
 
       <div className="chat-mcpcard-foot">
         <span className="chat-mcpcard-progress">
-          {reported === 'skipped' ? 'Continued without them.'
+          {!status && unread && !reported ? 'This chat\'s own servers did not answer. '
+            : ''}{reported === 'skipped' ? 'Continued without them.'
             : reported ? 'All connected — the agent was told.'
               : `${done} of ${spec.servers.length} done · the agent continues on its own when ${spec.servers.length === 1 ? 'it is' : 'all are'} green`}
         </span>
+        {((!status && unread) || (overviewFailed && needOverview)) && (
+          <button type="button" className="chat-btn pill" data-testid="mcp-card-retry" onClick={retry}>Retry</button>
+        )}
         {!reported && live && (
           ready && !memory.current.sawBroken
             ? <button type="button" className="chat-btn pill primary" onClick={() => send('connected')}>Tell the agent</button>

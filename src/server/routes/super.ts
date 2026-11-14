@@ -69,7 +69,8 @@ import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '.
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, vaultLiveChildren, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
-import { knownMcpServers, mcpNeedingSignIn, unknownMcpNames } from '../../lib/super/lean-mcp.js';
+import { childMcpNeedingSignIn, connectorOnAccount, knownChildMcp, unknownMcpNames } from '../../lib/super/lean-mcp.js';
+import { listClaudeAccounts } from '../../lib/claude-accounts.js';
 import { readStatusCache } from '../../lib/mcp-live.js';
 import {
   WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
@@ -589,13 +590,28 @@ function outwardGrant(c: SuperCaller, b: Record<string, unknown>, ref: string | 
 /** `super state`'s MCP part: the names `delegate --mcp` can grant, and among them the ones that
  *  need the owner's sign-in (`mcpSignIn`, from the accounts' last live readings): a child given
  *  one cannot use it, so that job waits on the owner, never on another delegate. */
-function mcpRows(root: string): { mcpServers: string[]; mcpSignIn?: string[]; mcpSignInDo?: string } {
-  const names = [...knownMcpServers(dirname(root)).keys()];
+function mcpRows(root: string): { mcpServers: string[]; mcpConnectors?: Array<{ name: string; connector: string; accounts?: string[] }>; mcpConnectorsDo?: string; mcpSignIn?: string[]; mcpSignInDo?: string } {
+  const { local, connectors, read } = knownChildMcp(dirname(root));
+  const names = [...local.keys(), ...connectors.keys()];
   let signIn: string[] = [];
-  try { signIn = mcpNeedingSignIn(names, readStatusCache()); } catch { /* names only */ }
+  try { signIn = childMcpNeedingSignIn(names, connectors, readStatusCache()); } catch { /* names only */ }
+  // A connector is the Claude ACCOUNT's: named with the accounts known to have it whenever a
+  // configured account is not (its list lacks it, or was never read), so a child on another
+  // account is never promised it (owner 2026-11-14).
+  let roster: string[] = [];
+  try { roster = listClaudeAccounts().map((a) => a.id); } catch { /* the recorded accounts */ }
+  if (!roster.length) roster = ['default'];
+  const rows = [...connectors.values()].map((c) => {
+    const on = roster.filter((id) => connectorOnAccount(c, id, read) === 'yes');
+    return { name: c.alias, connector: c.name, ...(on.length < roster.length ? { accounts: on } : {}) };
+  });
   return {
     mcpServers: names,
-    ...(signIn.length ? { mcpSignIn: signIn, mcpSignInDo: 'only the owner can sign these in: tell him once (Settings → MCP → Connect), and hold the job until he has' } : {}),
+    ...(rows.length ? {
+      mcpConnectors: rows,
+      mcpConnectorsDo: 'claude.ai connectors of the owner\'s Claude account: give one by its short name (`--mcp notion`); Claude children only (a Codex or Antigravity child cannot have them), and only on an account that has it (`accounts`, when not every account does)',
+    } : {}),
+    ...(signIn.length ? { mcpSignIn: signIn, mcpSignInDo: 'only the owner can sign these in: tell him once (Settings → MCP → Connect, or claude.ai for a connector), and hold the job until he has' } : {}),
   };
 }
 
@@ -603,7 +619,14 @@ function mcpRows(root: string): { mcpServers: string[]; mcpSignIn?: string[]; mc
  *  names the known ones so the agent can fix its call; names only, never a config. */
 function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
   if (!job.mcp?.length) return false;
-  const known = knownMcpServers(dirname(root));
+  const { all: known, local, connectors } = knownChildMcp(dirname(root));
+  // A claude.ai connector belongs to the Claude account: said, never dropped in silence.
+  const claudeOnly = job.tool ? job.mcp.filter((n) => connectors.has(n) && !local.has(n)) : [];
+  if (claudeOnly.length) {
+    const one = claudeOnly.length === 1;
+    refuse(res, 400, 'claude_only_mcp', `${claudeOnly.join(', ')} ${one ? 'is a claude.ai connector' : 'are claude.ai connectors'}: only a Claude child can use ${one ? 'it' : 'them'}, not ${job.tool === 'codex' ? 'Codex' : 'Antigravity'}. Delegate this job without --tool, or without ${one ? 'it' : 'them'}`);
+    return true;
+  }
   const missing = unknownMcpNames(job.mcp, known);
   if (!missing.length) return false;
   refuse(res, 400, 'unknown_mcp', `no MCP server named ${missing.join(', ')}; this project has: ${[...known.keys()].join(', ') || 'none'}`, { known: [...known.keys()] });
@@ -988,7 +1011,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // A named server that needs the owner's sign-in: a warning, never a block (the child may
     // still do the rest of the job), so the agent asks him instead of delegating it again.
     let signIn: string[] = [];
-    try { signIn = job.mcp?.length ? mcpNeedingSignIn(job.mcp, readStatusCache()) : []; } catch { /* no warning */ }
+    try { signIn = job.mcp?.length ? childMcpNeedingSignIn(job.mcp, knownChildMcp(dirname(root)).connectors, readStatusCache()) : []; } catch { /* no warning */ }
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
     ok(res, {
       sessionId: sid, ...cardOutcome(container, sid, after), ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
