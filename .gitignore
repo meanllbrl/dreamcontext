@@ -56,3 +56,8 @@ dashboard/.verify-harness/
 
 *.tgz
 /npm-shrinkwrap.json
+
+# The desktop bundle's runtime, fetched at build time (scripts/fetch-bundled-node.mjs) and its file
+# manifest (scripts/gen-rt-manifest.mjs): build outputs, never committed (plan npmsiz-beta C1).
+/desktop/src-tauri/resources/runtime/
+/desktop/src-tauri/resources/rt-manifest.json
