@@ -17,7 +17,7 @@
  */
 import { superAnswerPicks, type QuestionLike } from '../../../../../src/lib/super/request-answer.js';
 import {
-  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type PadStatus, type QueueKind, type SuperChild, type SuperPadItem, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 import { cardMentionText } from '../../../lib/cardMention';
 import { isOwnerCardItem } from './superJobsStore';
@@ -642,6 +642,36 @@ export interface AgendaRow {
   owed?: string;
   owedKind?: 'msg' | 'result';
   at: number;
+  /** A pad note's status of five (C1), who wrote it (`owner` = him), its day (`bornAt`, absent =
+   *  `at`) and the job it follows (`for`). Absent on every other row. */
+  status?: PadStatus;
+  author?: 'owner';
+  bornAt?: number;
+  for?: string;
+  /** A closed line read from its day file (C8): Ask names it by its words only, never its id. */
+  archived?: true;
+}
+
+/** A line's status, of five, from its stored section and stage (MIRROR of src/lib/super/pad.ts
+ *  `padStatus`, pinned by agendaGroups.test.ts). */
+export function padStatusOf(p: Pick<SuperPadItem, 'section' | 'stage'>): PadStatus {
+  if (p.section === 'done') return 'done';
+  if (p.section === 'waiting') return 'waiting';
+  return p.stage === 'todo' ? 'not-started' : p.stage === 'almost' ? 'almost-done' : 'in-progress';
+}
+
+/**
+ * A row's last update (C3), derived, never kept by habit: a note's own `at`, raised to its job's
+ * `rowAt` when it follows one; a question's or an unanswered line's own time. Null = no time
+ * (it keeps its place below the timed rows).
+ */
+export function agendaUpdatedAt(row: Pick<AgendaRow, 'note' | 'at' | 'for'>, children?: Readonly<Record<string, Pick<SuperChild, 'rowAt'>>> | null): number | null {
+  const own = Number.isFinite(row.at) ? row.at : null;
+  if (row.note && row.for && children && Object.prototype.hasOwnProperty.call(children, row.for)) {
+    const job = children[row.for]?.rowAt;
+    if (typeof job === 'number' && Number.isFinite(job)) return Math.max(own ?? 0, job);
+  }
+  return own;
 }
 
 /**
@@ -747,7 +777,10 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
     const stale = p.author !== 'owner' && (!p.for || p.by === 'owner') && now - p.at >= PAD_STALE_MS
       && (p.section === 'now' || (p.section === 'waiting' && p.at < dayStart));
     out[p.section].push({
-      key: `n:${p.id}`, section: p.section, text: p.text, note: p.id, at: p.at,
+      key: `n:${p.id}`, section: p.section, text: p.text, note: p.id, at: p.at, status: padStatusOf(p),
+      ...(p.author === 'owner' ? { author: 'owner' as const } : {}),
+      ...(typeof p.bornAt === 'number' ? { bornAt: p.bornAt } : {}),
+      ...(p.for ? { for: p.for } : {}),
       ...(p.section === 'done' && p.by === 'auto' ? { auto: true } : {}),
       ...(stale ? { stale: true } : {}),
     });
@@ -784,9 +817,11 @@ function aboutLine(text: string): string {
  * section: its words are a child's, and the super reads them fenced from `super state`.
  * '' for a row that names neither.
  */
-export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text' | 'owed'>): string {
+export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text' | 'owed' | 'archived'>): string {
   // An unanswered line names its debt: the Super answers under that debt's ref.
   if (row.owed && ABOUT_ID.test(row.owed)) return `[About agenda line owed=${row.owed} section=unanswered]`;
+  // An archived line's id is not on the pad any more: its words only (plan build notes).
+  if (row.archived) return `[About a closed agenda line]\nline: ${JSON.stringify(aboutLine(row.text))}`;
   if (row.note && ABOUT_ID.test(row.note)) {
     return `[About agenda line note=${row.note} section=${row.section}]\nline: ${JSON.stringify(aboutLine(row.text))}`;
   }
@@ -823,8 +858,8 @@ export function agendaAboutChipName(row: Pick<AgendaRow, 'note' | 'item' | 'sid'
 /** What an inline chip reads for an agenda row (owner 2026-10-24): the line's own words, or for
  *  a question "<child>'s question" / "Super's question". No "About:": the chip's ● says it, and
  *  the composer clips the name to its own width (composerRefs `refLabel`). */
-export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text' | 'owed'>, words: AboutWords = ABOUT_WORDS_EN): string {
-  if (row.note || row.owed) return aboutLine(row.text);
+export function agendaRefName(row: Pick<AgendaRow, 'note' | 'item' | 'sid' | 'text' | 'owed' | 'archived'>, words: AboutWords = ABOUT_WORDS_EN): string {
+  if (row.note || row.owed || row.archived) return aboutLine(row.text);
   return row.sid ? words.question.replace('{name}', () => aboutLine(row.text)) : words.superQuestion;
 }
 

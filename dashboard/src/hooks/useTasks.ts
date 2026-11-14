@@ -262,7 +262,7 @@ export function useCreateTask() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (input: CreateTaskInput) => api.post<TaskResponse>('/tasks', input),
+    mutationFn: (input: CreateTaskInput) => api.ownerPost<TaskResponse>('/tasks', input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
@@ -274,7 +274,7 @@ export function useUpdateTask() {
   const api = useApi();
   return useMutation({
     mutationFn: ({ slug, updates }: UpdateTaskInput) =>
-      api.patch<TaskResponse>(`/tasks/${slug}`, updates),
+      api.ownerPatch<TaskResponse>(`/tasks/${slug}`, updates),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });

@@ -93,27 +93,27 @@ describe('Cevaplanmadı: what the Super left unanswered (task super-hicbir-konuy
   const draw = (extra: Record<string, unknown>) => renderToStaticMarkup(createElement(SuperAgenda as never, {
     state: { queue: [], pad: [], owed }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {}, onWriteAbout: () => {}, ...extra,
   } as never));
-  it('the desktop draws the section above Waiting with "Gerek yok"; the phone draws it read only', () => {
+  it('the desktop lists them in Waiting on you with "Not needed"; the phone draws them read only', () => {
+    // Task ajanda-gunluk: Unanswered rows sit in Waiting on you (grouped by who acts next), keeping "Not needed".
     const desk = draw({ onDropOwed: () => {} });
-    expect(desk).toContain('data-testid="super-agenda-section-unanswered"');
-    expect(desk.indexOf('super-agenda-section-unanswered')).toBeLessThan(desk.indexOf('super-agenda-section-waiting'));
+    const waiting = desk.slice(desk.indexOf('data-testid="super-agenda-section-waiting"'));
+    expect(waiting).toContain('data-kind="owed"');
     expect(desk).toContain('data-testid="super-agenda-owed-drop"');
     expect(desk).toContain('Is the pricing page live?');
-    const phone = draw({});
-    expect(phone).toContain('data-testid="super-agenda-section-unanswered"');
+    const phone = draw({ readOnly: true });
+    expect(phone).toContain('data-kind="owed"');
     expect(phone).not.toContain('super-agenda-owed-drop');
     // The phone's own agenda passes no drop door.
     expect(read('dashboard/src/components/sleepy/super/PhoneAgenda.tsx')).not.toContain('onDropOwed');
-    // The small card (its counts tile) never reads "0 waiting" while one is unanswered.
-    const tile = renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [], owed }, look, variant: 'tile', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never));
-    const waitingTile = tile.slice(tile.indexOf('super-agenda-tile-waiting'));
-    expect(/class="super-agenda-tile-v">(\d+)</.exec(waitingTile)?.[1], tile).toBe('2'); // o1 nudged twice, o3 parked long ago
-        // The phone chip counts it too: one unanswered line alone is never "nothing noted".
+    // The small card never reads "0 waiting" while one is unanswered.
+    const tile = renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [], owed }, look, size: 'small', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never));
+    expect(tile).toContain('2 waiting on you'); // o1 nudged twice, o3 parked long ago
+    // The phone chip counts it too: one unanswered line alone is never "nothing noted".
     const only = { ...record({ queue: [], pad: [] }), owed: [owed[0]] } as never;
     expect(strip(only)).toMatch(/data-testid="phone-agenda-chip"[^>]*data-waiting="true"/);
     expect(strip(only)).toMatch(/data-testid="phone-agenda-waiting"[^>]*>(<[^>]*>)*1</);
-        // Nothing unanswered: no section at all.
-    expect(renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [] }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never))).not.toContain('unanswered');
+    // Nothing unanswered: no such row at all.
+    expect(renderToStaticMarkup(createElement(SuperAgenda as never, { state: { queue: [], pad: [] }, look, variant: 'full', canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} } as never))).not.toContain('data-kind="owed"');
   });
 });
 

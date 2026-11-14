@@ -13,7 +13,8 @@ import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls, StripMarks, stripStartFor } from './StageParts';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
-import { SuperAgenda } from './SuperAgenda';
+import { SuperAgenda, type AgendaSize } from './SuperAgenda';
+import type { AgendaDay } from './superApi';
 import { onOpenJobRow, publishSuperEventContext, useQueueHeight } from './superJobsStore';
 import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
@@ -21,7 +22,7 @@ import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type Remote
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
-import type { ContainerSize } from '../../../lib/superTypes';
+import type { ContainerSize, PadStatus } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
@@ -114,8 +115,14 @@ export interface SuperSurfaceProps {
   onEndChild: (child: string, whenDone: boolean) => void;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
   onKeepChild: (child: string) => void;
-  /** The owner moved an agenda note by hand (Done / Put back). */
-  onMoveNote?: (id: string, section: 'now' | 'done') => void;
+  /** His status change on an agenda line, Done included (`POST /api/super/pad`). Absent: read only. */
+  onPadStatus?: (id: string, status: PadStatus) => Promise<void>;
+  /** His own agenda line (`POST /api/super/pad/add`). Absent where no owner key exists: no add box. */
+  onPadAdd?: (text: string) => Promise<void>;
+  /** His own open line taken off (`POST /api/super/pad/remove`). */
+  onPadRemove?: (id: string) => Promise<void>;
+  /** One day of the agenda (`GET /api/super/agenda-day`). Absent: no day browsing. */
+  loadAgendaDay?: (date: string) => Promise<AgendaDay | null>;
   /** His "Gerek yok" on an unanswered agenda line. Absent: read only. */
   onDropOwed?: (id: string) => void;
   /** The owner opens a card himself (POST /api/super/open): the state is applied before it
@@ -1110,12 +1117,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return () => ro.disconnect();
   }, [approvalsTop]);
   const { bus } = useVaultId();
-  const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
+  const renderAgenda = (size: AgendaSize) => (
     <SuperAgenda
       state={state}
       look={jobLook}
-      variant={variant}
-      wide={wide}
+      size={size}
       canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
       onShowChild={showChild}
       onShowQuestion={showQuestion}
@@ -1128,9 +1134,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
       approvals={agendaApprovals}
       onShowApproval={showApproval}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
-      onMoveNote={props.onMoveNote}
+      onPadStatus={props.onPadStatus}
+      onPadAdd={props.onPadAdd}
+      onPadRemove={props.onPadRemove}
+      loadDay={props.loadAgendaDay}
       onDropOwed={props.onDropOwed}
-      extra={member && variant === 'full' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
+      extra={member && size !== 'small' && size !== 'medium' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
     />
   );
   const pillItem = (id: string): OthersItem => {
