@@ -38,7 +38,7 @@ import {
   STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, crewHandle, dropOwnerWait, getChat, onChatChange, ownerActedOnCard, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, ownerWaitOrigin, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
   type ChatActivity, type ChatChange, type ChatEntry, type PendingQuestion,
 } from '../assistant/chat-registry.js';
-import { pushFrame, tokenOfSession } from '../window-control.js';
+import { pushFrame, tokensOfSession } from '../window-control.js';
 import { announceOwnerHead, holdOwnerRing, muteOwnerRing, releaseOwnerRing, seedOwnerHead, serverBannered } from './owner-question.js';
 import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
 import { readHandoffRecord, type HandoffRecord } from '../context-watch.js';
@@ -680,8 +680,14 @@ export function pushSuperState(contextRoot: string, state: SuperState): boolean 
   if (!state.session) return false;
   // Before the window's own push: a phone is told even while no window socket is there.
   try { superDigestSink?.(rootOf(contextRoot), state); } catch (err) { console.error('[super] digest push failed:', err); }
-  const token = tokenOfSession(state.session);
-  return token ? pushFrame(token, { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) }) : false;
+  // EVERY bridge on the pin: two processes can hold it at once (a respawn, a reload or a second
+  // screen's open beside the one still running), and the state is safe to repeat. Sent to one,
+  // the window whose socket sat on the other kept a frozen record: a new child got no card and
+  // showed as a tab in the chat window (field 2026-11-14).
+  const tokens = tokensOfSession(state.session);
+  if (!tokens.length) return false;
+  const frame = { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) };
+  return tokens.map((token) => pushFrame(token, frame)).some(Boolean);
 }
 
 /** Everything a write of the record owes: the glance's head cache, the window's push, and the
