@@ -1522,7 +1522,8 @@ function planWith(
     // bottom band, and neither is a reason to give up the top.
     const docked = (list.length === 0 && !opts.agendaPill) || (opts.terminals ?? 0) > 0;
     inHead.others = inHead.agenda = !docked;
-    const top = opts.queueUp ? f.content.y : STAGE.MARGIN;
+    // The top band holds something (the job bar's pill, the waiting presentations): the centre starts under it.
+    const top = opts.queueUp || opts.queueBand === 'wait' ? f.content.y : STAGE.MARGIN;
     const bottom = docked ? f.content.y + f.content.height : f.height - STAGE.MARGIN;
     return finish({ ...f.content, y: top, height: Math.max(0, bottom - top) }, f.content.width, 'float');
   }
@@ -1600,7 +1601,7 @@ function planWith(
     const zx = Math.max(f.othersZone.x, sc.x + sc.width + (othersFit ? STAGE.GAP : 0));
     f.othersZone = { ...f.othersZone, x: zx, width: f.width - zx };
   }
-  const top = opts.queueUp ? sc.y : STAGE.MARGIN;
+  const top = opts.queueUp || opts.queueBand === 'wait' ? sc.y : STAGE.MARGIN;
   const bottom = tallBottom ? f.height - STAGE.MARGIN : sc.y + sc.height;
   const centre: Rect = { ...sc, y: top, height: Math.max(0, bottom - top) };
 

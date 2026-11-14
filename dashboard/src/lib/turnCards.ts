@@ -116,6 +116,11 @@ function knownOf(v: unknown): KnownCard | null {
   return { id: o.id, kind: o.kind, ref: o.ref, ...(typeof o.title === 'string' && o.title ? { title: o.title } : {}) };
 }
 
+/** The keys a `present` reply may carry. MIRRORS `PRESENT_REPLY_KEYS` in src/server/routes/super.ts
+ *  (view, kept + its note, queued, and reportWindow's window/windowNote; drift-tested in
+ *  super-present-queue-window.test.ts). Another key means another verb's answer, not a present. */
+export const PRESENT_REPLY_KEYS: ReadonlySet<string> = new Set(['view', 'kept', 'note', 'queued', 'window', 'windowNote']);
+
 /** Fold one verb's result object into the turn. */
 function addResult(turn: TurnCards, r: Record<string, unknown>): void {
   const add = (id: string) => { if (!turn.ids.includes(id)) turn.ids.push(id); };
@@ -135,7 +140,7 @@ function addResult(turn: TurnCards, r: Record<string, unknown>): void {
   // view is then the presentation still on screen, never this turn's).
   const view = r.view && typeof r.view === 'object' ? r.view as Record<string, unknown> : null;
   const queued = r.queued && typeof r.queued === 'object' ? r.queued as Record<string, unknown> : null;
-  if (view && !Array.isArray(r.containers) && Object.keys(r).every((k) => k === 'view' || k === 'kept' || k === 'queued')) {
+  if (view && !Array.isArray(r.containers) && Object.keys(r).every((k) => PRESENT_REPLY_KEYS.has(k))) {
     if (queued) { if (Array.isArray(queued.cards)) for (const id of queued.cards) if (isId(id)) add(id); }
     else if (view.mode === 'present' && Array.isArray(view.cards)) for (const id of view.cards) if (isId(id)) add(id);
   }

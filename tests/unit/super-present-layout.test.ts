@@ -23,7 +23,7 @@ import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState, updateSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
-import { handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
+import { PRESENT_REPLY_KEYS, handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createProgram } from '../../src/cli/program.js';
 
@@ -261,11 +261,14 @@ describe('the owner wins for his card set (D9, D10)', () => {
     r = await present(ids(3), 'grid');
     expect(r.status).toBe(200);
     expect((r.json.result as Record<string, unknown>).kept).toBe('owner_layout');
+    // The chat's turn record knows every key of this reply (turnCards PRESENT_REPLY_KEYS mirrors it).
+    for (const k of Object.keys(r.json.result as Record<string, unknown>)) expect(PRESENT_REPLY_KEYS as readonly string[]).toContain(k);
     expect(onDisk().view.layout).toBe('filmstrip');
     // Another set is a new presentation: it waits in the queue, his presentation stays (sunum-sirasi).
     r = await present(ids(2));
     expect((r.json.result as Record<string, unknown>).kept).toBeUndefined();
     expect((r.json.result as Record<string, unknown>).queued).toMatchObject({ at: 2, of: 2 });
+    for (const k of Object.keys(r.json.result as Record<string, unknown>)) expect(PRESENT_REPLY_KEYS as readonly string[]).toContain(k);
     expect(onDisk().view).toMatchObject({ cards: ids(3), layout: 'filmstrip', layoutBy: 'owner' });
   });
 

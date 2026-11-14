@@ -738,6 +738,12 @@ function queuedPart(r: { shown: boolean; at: number; of: number }, cards?: reado
   return r.shown ? {} : { queued: { at: r.at, of: r.of, ...(cards?.length ? { cards: [...cards] } : {}), note: queuedNote(r.at, r.of) } };
 }
 
+/** Every top-level key a `super present` reply may carry: its view, the owner's kept layout and
+ *  its note, the queue it joined, and where the push went (reportWindow). The chat's turn record
+ *  MIRRORS it (dashboard turnCards.ts PRESENT_REPLY_KEYS, drift-tested): a key added here and not
+ *  there makes every such answer lose its cards. */
+export const PRESENT_REPLY_KEYS = ['view', 'kept', 'note', 'queued', 'window', 'windowNote'] as const;
+
 /** A picture question whose pictures wait in the presentation queue: where, and the note. */
 function queuedAskPart(state: SuperState, item: string): Record<string, unknown> {
   const q = state.presentQueue;

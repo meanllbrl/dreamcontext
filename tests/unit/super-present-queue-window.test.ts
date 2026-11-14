@@ -8,7 +8,8 @@ import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import { STAGE, applyLayoutPatch, patchEchoed, planStage } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { remoteLayoutPatch, remoteStageState } from '../../dashboard/src/components/sleepy/super/remoteStage.js';
-import { answerForCards, turnCardsByAnswer, type TurnItem } from '../../dashboard/src/lib/turnCards.js';
+import { PRESENT_REPLY_KEYS as CLIENT_PRESENT_KEYS, answerForCards, turnCardsByAnswer, type TurnItem } from '../../dashboard/src/lib/turnCards.js';
+import { PRESENT_REPLY_KEYS } from '../../src/server/routes/super.js';
 import { superRowMarks } from '../../dashboard/src/components/sleepy/super/sessionHome.js';
 import { rosterSummary } from '../../src/server/routes/agent-sessions.js';
 import { onQueueJump, sendQueueJump } from '../../dashboard/src/components/sleepy/super/queueJump.js';
@@ -69,6 +70,9 @@ describe('the top band (D7, D10)', () => {
     expect(w.queueBand?.kind).toBe('wait');
     expect(w.controls).toBeUndefined();
     expect(planStage(items, { mode: 'float' }, { width: 1384, height: 814 }, { queueBand: 'step' }).queueBand).toBeUndefined();
+    // The floating centre starts under the band, as it does under the job bar's pill: never under the pill.
+    expect(w.centre.y).toBeGreaterThanOrEqual(w.queueBand!.rect.y + w.queueBand!.rect.height);
+    expect(w.centre.y).toBe(planStage(items, { mode: 'float' }, { width: 1384, height: 814 }, { queueUp: true }).centre.y);
     expect(planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3, queueBand: 'wait' }).queueBand).toBeUndefined();
   });
 });
@@ -117,13 +121,35 @@ describe('the chat follows the step (AC3)', () => {
       ...items,
       { kind: 'user', id: 'u4', text: 'the logo too' },
       // The view is still checkout (on screen); the logo waits (W1's reply shape).
-      bash('t4', 'dreamcontext super present c-logo', { view: { mode: 'present', cards: ['c-pay'] }, queued: { at: 2, of: 2, cards: ['c-logo'], note: 'In the presentation queue (2/2)' } }),
+      bash('t4', 'dreamcontext super present c-logo', { view: { mode: 'present', cards: ['c-pay'] }, queued: { at: 2, of: 2, cards: ['c-logo'], note: 'In the presentation queue (2/2)' }, window: 'sent' }),
       { kind: 'text', id: 'a4', text: 'The logo waits in the queue.' },
     ];
     const by = turnCardsByAnswer(queuedTurn);
     expect(by.get('a4')?.ids).toEqual(['c-logo']);
     expect(answerForCards(by, ['c-logo'])).toBe('a4');
     expect(answerForCards(by, ['c-pay'])).toBe('a3');
+  });
+
+  it('the CLI\'s window mark on a present reply does not hide what it showed', () => {
+    const by = turnCardsByAnswer([
+      { kind: 'user', id: 'u1', text: 'show it' },
+      bash('t1', 'dreamcontext super present c-pay', { view: { mode: 'present', cards: ['c-pay'] }, window: 'none', windowNote: 'No window holds the Super Agent' }),
+      { kind: 'text', id: 'a1', text: 'On the stage.' },
+    ]);
+    expect(by.get('a1')?.ids).toEqual(['c-pay']);
+  });
+
+  it('the turn record reads every key a present reply may carry (mirrors the server)', () => {
+    expect([...CLIENT_PRESENT_KEYS].sort()).toEqual([...PRESENT_REPLY_KEYS].sort());
+  });
+
+  it('a re-present that kept the owner\'s layout records its cards (kept + note)', () => {
+    const by = turnCardsByAnswer([
+      { kind: 'user', id: 'u1', text: 'again' },
+      bash('t1', 'dreamcontext super present c-pay', { view: { mode: 'present', cards: ['c-pay'], layout: 'filmstrip' }, kept: 'owner_layout', note: 'Shown, in the layout the owner picked', window: 'sent' }),
+      { kind: 'text', id: 'a1', text: 'In your layout.' },
+    ]);
+    expect(by.get('a1')?.ids).toEqual(['c-pay']);
   });
 
   it('lands on the newest answer that showed the cards', () => {

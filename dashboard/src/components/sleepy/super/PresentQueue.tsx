@@ -33,31 +33,35 @@ export function PresentQueue({ rect, kind, short, at, of, current, next, waiting
     const count = short ? t('super.pq.waitingShort') : n === 1 ? t('super.pq.waitingOne') : t('super.pq.waiting');
     return (
       <div className="super-pq" data-kind="wait" data-short={short ? 'true' : undefined} data-testid="super-pq" role="group" aria-label={t('super.pq.label')} style={style}>
-        <span className="super-pq-play" aria-hidden>▶</span>
-        <span className="super-pq-text">
-          <span className="super-pq-count">{count.replace('{n}', String(n))}</span>
-          {!short && n > 0 && <span className="super-pq-names" title={waiting.join(', ')}>{' · '}{waiting.join(', ')}</span>}
-        </span>
-        <button type="button" className="super-pq-go" data-testid="super-pq-resume" onClick={onResume}>{t('super.pq.resume')}</button>
+        <div className="super-pq-pill">
+          <span className="super-pq-play" aria-hidden>▶</span>
+          <span className="super-pq-text">
+            <span className="super-pq-count">{count.replace('{n}', String(n))}</span>
+            {!short && n > 0 && <span className="super-pq-names" title={waiting.join(', ')}>{`· ${waiting.join(', ')}`}</span>}
+          </span>
+          <button type="button" className="super-pq-go" data-testid="super-pq-resume" onClick={onResume}>{t('super.pq.resume')}</button>
+        </div>
       </div>
     );
   }
   const nextLabel = next === null ? t('super.pq.finish') : t('super.pq.next').replace('{name}', next);
   return (
     <div className="super-pq" data-kind="step" data-short={short ? 'true' : undefined} data-testid="super-pq" role="group" aria-label={t('super.pq.label')} style={style}>
-      {!short && of <= MAX_DOTS && (
-        <span className="super-pq-dots" aria-hidden>
-          {Array.from({ length: of }, (_, i) => <span key={i} className="super-pq-dot" data-on={i + 1 === at ? 'true' : undefined} data-past={i + 1 < at ? 'true' : undefined} />)}
+      <div className="super-pq-pill">
+        {!short && of <= MAX_DOTS && (
+          <span className="super-pq-dots" aria-hidden>
+            {Array.from({ length: of }, (_, i) => <span key={i} className="super-pq-dot" data-on={i + 1 === at ? 'true' : undefined} data-past={i + 1 < at ? 'true' : undefined} />)}
+          </span>
+        )}
+        <span className="super-pq-text">
+          <span className="super-pq-count" data-testid="super-pq-count">{at}/{of}</span>
+          {!short && <span className="super-pq-names" title={current}>{`· ${current}`}</span>}
         </span>
-      )}
-      <span className="super-pq-text">
-        <span className="super-pq-count" data-testid="super-pq-count">{at}/{of}</span>
-        {!short && <span className="super-pq-names" title={current}>{' · '}{current}</span>}
-      </span>
-      <button type="button" className="super-pq-go" data-testid="super-pq-next" onClick={onNext}
-        aria-label={short ? nextLabel : undefined} title={short ? nextLabel : undefined}>
-        {short ? '›' : <>{nextLabel}{next !== null && <span aria-hidden>{' →'}</span>}</>}
-      </button>
+        <button type="button" className="super-pq-go" data-testid="super-pq-next" onClick={onNext}
+          aria-label={short ? nextLabel : undefined} title={short ? nextLabel : undefined}>
+          {short ? '›' : <>{nextLabel}{next !== null && <span aria-hidden>{' →'}</span>}</>}
+        </button>
+      </div>
     </div>
   );
 }
