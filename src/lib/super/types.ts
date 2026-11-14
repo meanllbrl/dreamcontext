@@ -12,7 +12,7 @@ import type { OwnerCardKind, OwnerWaitKind } from './owner-wait.js';
 import type { CardSpec } from '../cards/public.js';
 import { parseViewBlock } from '../chat-view-spec.js';
 import type { OwnerLanguage } from './owner-language.js';
-import { TASK_SLUG_RE } from '../task-slug.js';
+import { MAX_TASK_SLUG_LENGTH } from '../task-slug.js';
 import type { OutwardGrant } from './outward.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
@@ -1435,8 +1435,9 @@ export interface OwnerMark {
 export const OWNER_MARK_KINDS = ['pad-status', 'pad-add', 'pad-remove', 'task-created', 'task-status'] as const;
 export type OwnerMarkKind = typeof OWNER_MARK_KINDS[number];
 /** `task:` takes every slug a task file can have (task-slug.ts, MAX_TASK_SLUG_LENGTH): a shorter
- *  cap dropped a long task's marks silently (edge-cases review, round 1). */
-export const OWNER_MARK_KEY_RE = new RegExp(`^(pad:n[1-9][0-9]{0,5}|task:${TASK_SLUG_RE.source.slice(1, -1)})$`);
+ *  cap dropped a long task's marks silently (edge-cases review, round 1). Keeps `.` and `_`:
+ *  a hand-named task file (fix_bug.md) is a task too. */
+export const OWNER_MARK_KEY_RE = new RegExp(`^(pad:n[1-9][0-9]{0,5}|task:[a-z0-9][a-z0-9._-]{0,${MAX_TASK_SLUG_LENGTH - 1}})$`);
 /** Stored marks are bounded by bytes, not count: past this the oldest are dropped. */
 export const MAX_OWNER_MARKS_BYTES = 64 * 1024;
 export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;

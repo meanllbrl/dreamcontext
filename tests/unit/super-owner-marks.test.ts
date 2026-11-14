@@ -88,6 +88,14 @@ describe('coalescing per key', () => {
     expect(s.ownerMarks!.map((m) => m.key)).toEqual([long]);
   });
 
+  it('a hand-named task file with . or _ in its slug keeps its mark', () => {
+    const s = sanitizeSuperState({ ...on(), ownerMarks: [
+      { key: 'task:fix_bug', kind: 'task-status', text: 'Fix bug', from: 'todo', to: 'done', at: 1 },
+      { key: 'task:v1.2-release', kind: 'task-status', text: 'Release', from: 'todo', to: 'done', at: 2 },
+    ] });
+    expect(s.ownerMarks!.map((m) => m.key)).toEqual(['task:fix_bug', 'task:v1.2-release']);
+  });
+
   it('dropCarriedMarks removes only the carried entries; a mark made in between stays', () => {
     const s = on();
     applyOwnerMark(s, { key: 'pad:n1', kind: 'pad-status', text: 'x', from: 'in-progress', to: 'done', at: 1 });
