@@ -1343,7 +1343,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         </button>
       )}
       {plan.controls && plan.layout && (
-        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} />
+        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
       )}
       {plan.strip && (
         <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />
