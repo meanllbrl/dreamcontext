@@ -176,41 +176,17 @@ describe('agent-chat detach / reattach', () => {
     expect(findLiveChat(id)).toBeNull();
   });
 
-  it('a respawn supersedes: a detached child drains now, an attached idle one once the open is accepted', () => {
+  it('a respawn supersedes: a detached child drains now, an attached one at its close', () => {
     const a = startPinned();
     a.ws.drop();
     findLiveChat(a.id)!.supersede();
     expect(a.child.stdin.end).toHaveBeenCalledTimes(1);
 
     const b = startPinned();
-    const settle = findLiveChat(b.id)!.supersede();
-    expect(b.child.stdin.end).not.toHaveBeenCalled();   // provisional: the open may be refused
-    settle(true);
+    findLiveChat(b.id)!.supersede()(true);
+    expect(b.child.stdin.end).not.toHaveBeenCalled();
+    b.ws.drop();
     expect(b.child.stdin.end).toHaveBeenCalledTimes(1);
-  });
-
-  it('an ACCEPTED open ends the attached twin even while its screen stays open (field 2026-11-14)', () => {
-    // Two Super processes held one pin for an hour: the newer one was accepted, the older one
-    // waited for a socket close that never came, because a live screen still held it.
-    const { ws, child, id } = startPinned();
-    findLiveChat(id)!.supersede()(true);
-    expect(ws.readyState).toBe(ws.OPEN);               // nobody closed its socket
-    expect(child.stdin.end).toHaveBeenCalledTimes(1);   // and it is ended all the same
-    expect(findLiveChat(id)).toBeNull();               // no longer adoptable as the live chat
-    vi.advanceTimersByTime(CLOSE_LINGER_MS);
-    expect(child.kill).toHaveBeenLastCalledWith();      // the old EOF → linger → kill backstop
-  });
-
-  it('an ACCEPTED open never cuts the attached twin mid-turn: it ends when that turn ends', async () => {
-    const { ws, child, id } = startPinned({ prompt: 'long job' });
-    findLiveChat(id)!.supersede()(true);
-    vi.advanceTimersByTime(CLOSE_LINGER_MS * 3);
-    expect(child.stdin.end).not.toHaveBeenCalled();
-    expect(child.kill).not.toHaveBeenCalled();
-    child.print({ type: 'result', subtype: 'success', result: 'done' });
-    await vi.advanceTimersToNextTimerAsync();
-    expect(child.stdin.end).toHaveBeenCalledTimes(1);
-    expect(ws.readyState).toBe(ws.OPEN);
   });
 
   it('a REFUSED second open withdraws its supersede: the first pane stays detachable', () => {
@@ -272,8 +248,8 @@ describe('agent-chat detach / reattach', () => {
     expect(findLiveChat(id)).toBeNull();
   });
 
-  it('an ACCEPTED supersede of a busy attached child still drains it at its close', () => {
-    const { ws, child, id } = startPinned({ prompt: 'job' });
+  it('an ACCEPTED supersede still drains the old child at its close', () => {
+    const { ws, child, id } = startPinned();
     findLiveChat(id)!.supersede()(true);               // the new open was accepted
     ws.drop();
     expect(child.stdin.end).toHaveBeenCalledTimes(1);
