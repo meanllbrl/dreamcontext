@@ -36,7 +36,7 @@ import {
 import { appLinkForContextRoot } from '../../lib/app-link.js';
 import { listVaults } from '../../lib/vaults.js';
 import { readSuperState } from '../../lib/super/store.js';
-import { superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
+import { isOwnerProse, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
@@ -1129,7 +1129,8 @@ export class TelegramHub implements TelegramHubApi {
     // A server-opened event turn the Mac folds into one quiet line (a permission decision, a
     // note, row chatter) is not for the owner: nothing of it goes out. The same call the Mac
     // folds by; a result he waits on, a job waiting on him, an owed answer are owner batches.
-    if (ab.contextRoot) {
+    // A reply written for him (`isOwnerProse`) goes out whatever the turn: the Mac draws it too.
+    if (ab.contextRoot && !isOwnerProse(text)) {
       const folds = await readSuperState(ab.contextRoot).then((st) => superTurnFolds(at?.mark ?? superTurnMark(sessionId), st.ownerBatches), () => false);
       if (folds) return false;
     }

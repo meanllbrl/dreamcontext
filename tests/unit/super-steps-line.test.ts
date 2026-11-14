@@ -3,7 +3,8 @@
  *  - in the Super view a dreamcontext call no longer breaks the run, and one step already folds;
  *    the plain Chat keeps its rule (a dreamcontext call keeps its own row, runs start at 3);
  *  - a member's answer to Super (`super team done`) still keeps its own place;
- *  - a failed step (tool error or the CLI's `✗`) is counted and drawn outside the line;
+ *  - a failed step (tool error or the CLI's `✗`) is counted on the chip and folds like any other,
+ *    never a standalone red row (owner 2026-11-14);
  *  - the chip's duration reads in seconds, then minutes, from the dashboard's i18n.
  */
 import { describe, it, expect } from 'vitest';
@@ -58,6 +59,21 @@ describe('the quiet steps line', () => {
     expect(stepFailed(bash('b', 'dreamcontext tasks status nope done', 'done', '✗ Task not found: nope'))).toBe(true);
     expect(stepFailed(bash('c', 'dreamcontext tasks list', 'done', 'Tasks: 3'))).toBe(false);
     expect(stepFailed(bash('d', 'dreamcontext tasks list', 'running'))).toBe(false);
+  });
+
+  // Owner 2026-11-14: "bu kırmızı hata çubukları neden Super thinking yazan loading kısmında
+  // saklanmıyor". The line used to draw every failed step as its own red ToolCard under it (live
+  // or landed) and, once put away behind the answer, drew ONLY those. Every failure kind goes
+  // through `stepFailed`, so none may be drawn outside the fold.
+  it('folds a failed step into the line: no standalone red row, live, landed or put away', () => {
+    const line = src('dashboard/src/components/sleepy/super/SuperStepsLine.tsx');
+    expect(line).not.toContain('super-steps-errors');
+    expect(line).not.toMatch(/failed\.map\(/);
+    expect(line).toContain('if (hidden) return null;');
+    // The only ToolCard left is inside the opened fold, and the chip still counts the failure.
+    expect(line.match(/<ToolCard/g)).toHaveLength(1);
+    expect(line).toContain('super.steps.failedOne');
+    expect(src('dashboard/src/components/sleepy/super/SuperSurface.css')).not.toContain('.super-steps-errors');
   });
 
   it('names the step in hand in plain words, never the raw command', () => {

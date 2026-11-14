@@ -1299,6 +1299,19 @@ export function superTurnFolds(mark: SuperTurnMark, ownerBatches: readonly strin
   return !mark.batch || !ownerBatches.includes(mark.batch);
 }
 
+/** A Super text at or above this many characters is a reply, whether or not it carries a mark. */
+export const OWNER_PROSE_MIN_CHARS = 280;
+
+/**
+ * Prose the Super wrote for the owner (owner 2026-11-14): a text with a line-start `re:` mark (the
+ * same reading that closes his debts, `superSaid`), or one of real length. It goes out even from a
+ * folded turn, so nothing the ledger counts as told is left unshown. The window's twin is
+ * superHandover.ts `isOwnerProse`; both share OWNER_PROSE_MIN_CHARS.
+ */
+export function isOwnerProse(text: string): boolean {
+  return replyMarkRefs(text).length > 0 || text.trim().length >= OWNER_PROSE_MIN_CHARS;
+}
+
 /** The owner message the super session's running turn answers (its `<owner-msg ref>`), set by
  *  every owner message and dropped when an event turn opens: a job the super starts in his turn
  *  records it (`origin`), so its results link under that message. In memory, like the above. */
@@ -1657,17 +1670,21 @@ export function superOwnerOwes(sessionId: string, text: string, now = Date.now()
 
 /**
  * A top-level text of a Super session: its line-start `<!-- re:<ref> -->` sections close debts,
- * one each, oldest first, among those at or under the record's `owedSeq` as this text arrived.
+ * one each, oldest first, among those at or under the record's `owedSeq` once every write queued
+ * before this text has landed. Read inside the write, never from `lastStates`: the debt of his
+ * message is a write still in flight when a quick answer arrives, and a mark read against the
+ * record before it was dropped while the window drew the answer (an `[super owed]` turn followed
+ * for a reply already on his screen, 2026-11-14).
  */
 export function superSaid(sessionId: string, text: string): Promise<void> {
   const refs = replyMarkRefs(text);
   if (!refs.length) return Promise.resolve();
   const root = superKeyOfSession(sessionId);
   if (!root) return Promise.resolve();
-  const cur = lastStates.get(keyOf(root));
-  if (!cur || !openDebts(cur).length) return Promise.resolve();
-  const ceiling = cur.owedSeq ?? 0;
-  return track(writeSuper(root, (s) => { closeByMarks(s, refs, ceiling, Date.now()); }));
+  return track(writeSuper(root, (s) => {
+    if (!openDebts(s).length) return;
+    closeByMarks(s, refs, s.owedSeq ?? 0, Date.now());
+  }));
 }
 
 /** The block his message carries: what is still owed from before (never this message itself),

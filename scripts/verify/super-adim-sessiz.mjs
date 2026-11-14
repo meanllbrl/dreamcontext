@@ -5,7 +5,7 @@
  *   2 once it lands: the line is gone, only the answer stays (owner 2026-11-06, second look);
  *   3 hovering the answer shows no steps entry at all (the hover "steps" link was removed, owner
  *     2026-11-08), at 1440 and at a 390 phone width;
- *   4 a failed step still stands on its own row.
+ *   4 a failed step folds like any other: no standalone red row (owner 2026-11-14).
  *
  *   npm run build && node scripts/verify/super-adim-sessiz.mjs [outDir]
  *   VERIFY_CLI=<package>/dist/index.js runs it against another build (a before/after pair).
@@ -140,8 +140,8 @@ async function run(base) {
   await sayOnStage(page, 'main', 'Checkout görevini taşı (hata)');
   const answer2 = s.locator('.chat-msg-assistant-row', { hasText: 'Görevi taşıyamadım' }).first();
   ok('4 the second answer lands', await until(page, async () => (await answer2.count()) === 1, 30000));
-  ok('4 the failed step stands on its own, with no chip', await until(page, async () => (await s.locator('[data-testid="super-steps-errors"] .chat-toolcard[data-status="error"]').count()) === 1
-    && (await s.locator('[data-testid="super-steps-line"]').count()) === 0, 10000));
+  await page.waitForTimeout(1500);
+  ok('4 no standalone red step row under the answer', (await s.locator('.chat-toolcard[data-status="error"], .chat-dreamcard[data-status="error"], [data-testid="super-steps-errors"]').count()) === 0);
   await page.mouse.move(5, 5);
   await page.waitForTimeout(400);
   await page.screenshot({ path: join(OUT, '8-hata-disarida-yeni-1440-dark.png') });
