@@ -1368,7 +1368,7 @@ export function ChatPane({
     // The Super view is the exception (owner 2026-11-06, draft A): there nearly every step IS a
     // dreamcontext call, so this rule left a routine turn as seven cards above a two-line
     // answer. There the whole stretch folds into one quiet line (`SuperStepsLine`) whose chip
-    // opens the same rows, and a failed step still stands under it in full. Only a member's
+    // opens the same rows; a failed step folds in with the rest (owner 2026-11-14), counted on the chip. Only a member's
     // answer to Super (`super team done`, drawn as a quote) keeps its own place.
     const command = bashCommand(item) ?? undefined;
     if (superView) return teamDoneText(command) === null;
