@@ -345,6 +345,9 @@ merges them. Reply: "Started 6 (one messages Ayla), 2 wait for the invites API. 
 1 spotlight, 2 compare, 3-4 grid, 5+ filmstrip (2+ clips or landscape pictures: filmstrip), and a page with its own child's chat (and browser) is
 review. A wrong count for a named layout answers 400 naming the range. The owner can switch the layout
 from the stage's top band; an answer with `kept: owner_layout` means he chose it: leave it.
+Every verb that changes his screen (`open`, `half`, `present`, `stack`, `float`, `close`, `group`,
+`ungroup`, `shape`) answers `window`: `sent` = his window got it; `none` = the record changed and
+his screen did not (no window holds you): never tell him it is on his screen, say it waits for his window.
 Pictures you show the owner as a result (a child's screenshots, a design): `open image … --present`
 opens and presents them in one call, so he sees them at once; a group card alone is not showing.
 A picture question presents itself: `super ask`/`queue ask` shows its pictures (`--show`, previews'
