@@ -20,7 +20,6 @@
  * No CLI verb, `super` verb, `window` verb or window command handler reaches any of these (the
  * key is the shell's; asserted by test). The Super's only lever stays `super queue done`.
  */
-import { APP_UPDATED_ERROR, APP_UPDATED_MESSAGE, appReplacedUnderUs } from '../../lib/app-drift.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { CARD_REF_RE, closeCard, isSessionUuid, type CardRecordEntry } from '../../lib/cards/records.js';
 import type { ChecklistViewSpec, RunViewSpec } from '../../lib/chat-view-spec.js';
@@ -96,9 +95,6 @@ export async function handleCardTicket(req: IncomingMessage, res: ServerResponse
   // ticket; the ticket binds it, and the start compares it again (end review r2).
   const press = await pressRoot(rec, typeof b.root === 'string' ? b.root : null);
   if (!press.ok) { sendJson(res, 409, folderRefusalBody(press)); return; }
-  // The app was replaced under this server (an install while it runs): the terminal would fail
-  // with no word, so the card says plainly to restart (field 2026-11-13).
-  if (appReplacedUnderUs()) { sendJson(res, 409, { error: APP_UPDATED_ERROR, message: APP_UPDATED_MESSAGE }); return; }
   sendJson(res, 200, mintCardTicket({ project: rec.vault, postingSession: rec.sessionId, cardRef: rec.cardRef, action, shown: b.shown, root: press.root }));
 }
 

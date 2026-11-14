@@ -1,39 +1,11 @@
 /**
- * Field 2026-11-13: an install over the running app left run cards failing with no word, and the
- * server's own Allow turn was read as the owner's message (an owner ref, a debt in `<super-owed>`).
+ * Field 2026-11-13: the server's own Allow turn was read as the owner's message (an owner ref, a
+ * debt in `<super-owed>`).
  */
 import { describe, it, expect } from 'vitest';
-import { driftProbe, APP_UPDATED_MESSAGE } from '../../src/lib/app-drift.js';
 import { isServerTurnText } from '../../src/lib/usage-readers.js';
 import { allowTurnText } from '../../src/lib/super/answer.js';
 import { mootSuperCall } from '../../src/lib/super/inbox.js';
-
-describe('the app replaced under a running server', () => {
-  it('a bundle entry whose file changed (or vanished) reads as replaced; the same file does not', () => {
-    let id = { ino: 1, mtimeMs: 10, size: 100 };
-    let gone = false;
-    const stat = () => { if (gone) throw new Error('ENOENT'); return id; };
-    const replaced = driftProbe('/Applications/x.app/Contents/Resources/dist/index.js', stat);
-    expect(replaced()).toBe(false);
-    id = { ino: 2, mtimeMs: 20, size: 101 };
-    expect(replaced()).toBe(true);
-    id = { ino: 1, mtimeMs: 10, size: 100 };
-    expect(replaced()).toBe(false);
-    gone = true;
-    expect(replaced()).toBe(true);
-  });
-
-  it('a dev server (tsx on src/) or no entry never reads as replaced', () => {
-    const stat = () => { throw new Error('never read'); };
-    expect(driftProbe('/repo/src/cli/index.ts', stat)()).toBe(false);
-    expect(driftProbe(null, stat)()).toBe(false);
-  });
-
-  it('the line says plainly to restart', () => {
-    expect(APP_UPDATED_MESSAGE).toMatch(/restart/);
-    expect(APP_UPDATED_MESSAGE).not.toMatch(/—/);
-  });
-});
 
 describe("the server's own turns are no message of the owner's", () => {
   it('an Allow turn is a server turn; his own words are not', () => {

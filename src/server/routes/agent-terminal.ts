@@ -121,25 +121,34 @@ function ptyResolveBases(): string[] {
  * execute bit on macOS's `spawn-helper` — so LOADING node-pty succeeds yet
  * `pty.spawn` then dies with `posix_spawnp failed`. Restore +x on every shipped
  * spawn-helper (prebuilds + any local build) before we rely on node-pty. Idempotent
- * and cheap; runs once. Survives any install path (dev link, `npm i -g`, app).
+ * and cheap (a few stats). Survives any install path (dev link, `npm i -g`, app).
+ *
+ * It runs on EVERY load, not once (field 2026-11-13/14, "terminal çalışmıyor"): an install
+ * over the running app (`npm i -g <tarball>`) writes a fresh spawn-helper without +x at the
+ * same path the loaded node-pty spawns through, so a fix done once at boot is undone and every
+ * run card and terminal died with `posix_spawnp failed` until the app restarted.
  */
 function ensurePtyHelperExecutable(): void {
   for (const base of ptyResolveBases()) {
     try {
       // …/node-pty/lib/index.js → …/node-pty
-      const root = dirname(dirname(createRequire(base).resolve('node-pty')));
-      const candidates: string[] = [join(root, 'build', 'Release', 'spawn-helper')];
-      const prebuilds = join(root, 'prebuilds');
-      if (existsSync(prebuilds)) {
-        for (const d of readdirSync(prebuilds)) candidates.push(join(prebuilds, d, 'spawn-helper'));
-      }
-      for (const p of candidates) {
-        if (!existsSync(p)) continue;
-        const mode = statSync(p).mode;
-        if ((mode & 0o111) !== 0o111) chmodSync(p, mode | 0o755);
-      }
+      restorePtyHelpers(dirname(dirname(createRequire(base).resolve('node-pty'))));
       return;
     } catch { /* not resolvable from this base — try the next */ }
+  }
+}
+
+/** Give +x back to every spawn-helper under one node-pty package root (exported for tests). */
+export function restorePtyHelpers(root: string): void {
+  const candidates: string[] = [join(root, 'build', 'Release', 'spawn-helper')];
+  const prebuilds = join(root, 'prebuilds');
+  if (existsSync(prebuilds)) {
+    for (const d of readdirSync(prebuilds)) candidates.push(join(prebuilds, d, 'spawn-helper'));
+  }
+  for (const p of candidates) {
+    if (!existsSync(p)) continue;
+    const mode = statSync(p).mode;
+    if ((mode & 0o111) !== 0o111) chmodSync(p, mode | 0o755);
   }
 }
 
@@ -155,7 +164,12 @@ function ensurePtyHelperExecutable(): void {
  */
 let ptyModule: typeof import('node-pty') | null | undefined;
 export function loadNodePty(): typeof import('node-pty') | null {
-  if (ptyModule !== undefined) return ptyModule;
+  if (ptyModule !== undefined) {
+    // Every caller is about to spawn (or to say it can): re-check the helper an install may
+    // have rewritten since the module loaded.
+    if (ptyModule) ensurePtyHelperExecutable();
+    return ptyModule;
+  }
   for (const base of ptyResolveBases()) {
     try {
       ptyModule = createRequire(base)('node-pty') as typeof import('node-pty');
