@@ -34,7 +34,7 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { COARSE_POINTER_QUERY, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
-import { useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
+import { drawerTogglePanel, useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
 import { useLauncherStatus } from '../../hooks/useLauncher';
 import { TitleBar } from './newshell/TitleBar';
@@ -1003,18 +1003,22 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   // Docked beside Chat; floating over any other page (the button never leaves the page) and ≤900.
   const drawerFloats = narrow || !activeOnChat;
   const docked = !drawerFloats && drawerOpen;
-  const drawerVisible = newShell && (docked || floatingOpen || peek);
+  const drawerVisible = newShell && (docked || (drawerFloats && floatingOpen) || peek);
   const drawerFloating = !docked;
-  const peekOnly = peek && !floatingOpen;
+  const peekOnly = peek && !(drawerFloats && floatingOpen);
   const onDrawerHover = useCallback((over: boolean) => {
     clearPeekTimer();
     if (!newShell) return;
     if (over) {
-      if (!docked && !floatingOpen) setPeek(true);
+      // On a page whose side panel the button drives (Whiteboards, Brain) the chat drawer is not
+      // what a click would toggle, so it does not peek there.
+      const page = document.querySelector('.project-instance:not([hidden])')?.getAttribute('data-page') ?? '';
+      if (drawerTogglePanel({ chatOpen: activeFactsOnChat, page }) === 'page') return;
+      if (!docked && !(drawerFloats && floatingOpen)) setPeek(true);
       return;
     }
     peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setPeek(false); }, PEEK_GRACE_MS);
-  }, [newShell, docked, floatingOpen, clearPeekTimer]);
+  }, [newShell, docked, drawerFloats, floatingOpen, activeFactsOnChat, clearPeekTimer]);
   const onDrawerToggle = useCallback(() => {
     clearPeekTimer();
     if (peek) {
