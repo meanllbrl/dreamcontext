@@ -114,13 +114,12 @@ const TEXT_DOC = /\.(md|txt|csv|json|html?)$/i;
  * The send for one finished run, or null when nothing goes. Pure up to reading the binding and
  * forward.json (both through the shared, symlink-refusing reader).
  */
-export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) | null {
-  if (!input.scheduled) return null;
-  const home = input.home ?? homedir();
-  // A member with its own bot: that bot, opted in by forward.json (native confirm). Anything else,
-  // a plain automation or a member with no bot (super-rutin): the project's Super bot, its results
-  // opted in by an approved `reply: telegram` (approval with the owner's consent,
-  // `ApprovalEntry.consent`), its failures always. One sender for both.
+type RouteInput = Pick<ForwardInput, 'contextRoot' | 'slug' | 'agent' | 'reply' | 'approvalHash'>;
+
+/** Which bot a routine's results go to, and whether its results are opted in there: its member's
+ *  own bot (forward.json, native confirm), else the project's Super bot (an approved `reply:
+ *  telegram`). The one reading `buildRoutineForward` and `routineReachesPhone` share. */
+function forwardRoute(input: RouteInput, home: string): { scope: string; target: string; viaSuper: boolean; optedIn: boolean } {
   let scope = scopeOfContextRoot(input.contextRoot);
   let target = 'super';
   let viaSuper = true;
@@ -134,12 +133,33 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
       viaSuper = false;
     }
   }
-  const failed = input.status === 'failed' || input.status === 'timeout';
-  const approval = input.approvalNeeded ?? null;
-  const asked = !approval && !!input.question && input.status.startsWith('awaiting');
   const optedIn = viaSuper
     ? input.reply === 'telegram'
     : readForward(bindingDir(scope, target, home), home).routines.some((r) => r.projectKey === projectKey(dirname(input.contextRoot)) && r.slug === input.slug && r.approvalHash === input.approvalHash);
+  return { scope, target, viaSuper, optedIn };
+}
+
+/** True when this routine's scheduled results reach his phone (a bound bot, opted in): its run is
+ *  then told the one Telegram writing rule (writing.ts), like the Super and every member. */
+export function routineReachesPhone(input: RouteInput & { home?: string }): boolean {
+  try {
+    const home = input.home ?? homedir();
+    const r = forwardRoute(input, home);
+    return r.optedIn && readBinding(r.scope, r.target, home).ok;
+  } catch { return false; }
+}
+
+export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) | null {
+  if (!input.scheduled) return null;
+  const home = input.home ?? homedir();
+  // A member with its own bot: that bot, opted in by forward.json (native confirm). Anything else,
+  // a plain automation or a member with no bot (super-rutin): the project's Super bot, its results
+  // opted in by an approved `reply: telegram` (approval with the owner's consent,
+  // `ApprovalEntry.consent`), its failures always. One sender for both.
+  const { scope, target, viaSuper, optedIn } = forwardRoute(input, home);
+  const failed = input.status === 'failed' || input.status === 'timeout';
+  const approval = input.approvalNeeded ?? null;
+  const asked = !approval && !!input.question && input.status.startsWith('awaiting');
   // Through the Super bot a question goes only while he is away (owner 2026-11-09); failures always.
   if (viaSuper && !failed && asked && !(input.away?.() ?? false)) return null;
   const b = readBinding(scope, target, home);

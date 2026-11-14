@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { FakeTelegram } from '../helpers/fake-telegram.js';
-import { buildRoutineForward, mintRunPostKey, runPostStamp, verifiedRunPosts, type ForwardInput } from '../../src/lib/telegram/member-forward.js';
+import { buildRoutineForward, mintRunPostKey, routineReachesPhone, runPostStamp, verifiedRunPosts, type ForwardInput } from '../../src/lib/telegram/member-forward.js';
 import { bindingDir, scopeOfContextRoot, writeBinding, writeTelegramJson } from '../../src/lib/telegram/config.js';
 import { appendThreadEntry, readThreadRun, threadEntryContentHash } from '../../src/lib/automations/threads.js';
 import { projectKey } from '../../src/lib/local-store.js';
@@ -147,5 +147,25 @@ describe('what a member bot sends', () => {
     await expect(buildRoutineForward(input({ log: (l) => lines.push(l) }))!()).resolves.toBeUndefined();
     expect(tg.sent().length).toBe(4);
     expect(lines.join('\n')).not.toContain(TOKEN);
+  });
+});
+
+describe('a routine that reaches his phone writes by the one Telegram rule (owner 2026-11-14, B2)', () => {
+  const route = () => ({ contextRoot: root, slug: 'daily', agent: 'ua-manager', approvalHash: 'h1', reply: null, home });
+
+  it('true only for a bound member bot that opted this routine in, at this approval', () => {
+    expect(routineReachesPhone(route())).toBe(false);
+    optIn('h0');
+    expect(routineReachesPhone(route())).toBe(false);
+    optIn();
+    expect(routineReachesPhone(route())).toBe(true);
+  });
+
+  it('a plain automation reaches the phone only with an approved reply: telegram and a bound Super bot', () => {
+    const plain = { ...route(), agent: null };
+    expect(routineReachesPhone({ ...plain, reply: 'telegram' })).toBe(false);
+    writeBinding(scopeOfContextRoot(root), 'super', { token: TOKEN, botId: 222222, botUsername: 'ua_bot', chatId: 777, userId: 777, boundAt: 'now' }, home);
+    expect(routineReachesPhone(plain)).toBe(false);
+    expect(routineReachesPhone({ ...plain, reply: 'telegram' })).toBe(true);
   });
 });

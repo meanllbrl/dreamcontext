@@ -213,7 +213,16 @@ function inline(raw: string): string {
 
 const LIST_LINE = /^\s*(?:[-*+]|\d{1,3}[.)])\s+\S/;
 
-type LineKind = 'head' | 'top' | 'sub' | 'text' | 'blank';
+/** The head that folds a quote (TELEGRAM_WRITING_RULE): `**Ayrıntı**`, its plural, or the English word. */
+const DETAIL_HEAD = /^\*\*(?:ayrıntı|ayrıntılar|detay|detaylar|details?)\*\*:?$/iu;
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_RULE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+function tableCells(row: string): string[] {
+  return row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+}
+
+/** `block`: a quote, a code block, a rule or a "Mac'te" line: its own box on the phone, so no gap rule. */
+type LineKind = 'head' | 'top' | 'sub' | 'text' | 'block' | 'blank';
 
 /** Telegram drops leading ASCII spaces; a no-break space survives, so a sub-item's indent shows. */
 export const SUB_INDENT = '\u00a0\u00a0\u00a0\u00a0';
@@ -345,20 +354,27 @@ function picturesOut(md: string, mode: 'mac' | 'hub'): string {
 export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): string {
   const lines = picturesOut(stripReplyMarks(md), opts.blocks ?? 'mac').split('\n');
   const out: string[] = [];
-  // Readability on a phone (owner 2026-11-10, "okuması çok güç"): a sub-item gets its own marker
-  // and a visible indent, a group that had sub-items is followed by a blank line, and a heading
-  // never sticks to the line above it.
+  // Readability on a phone (owner 2026-11-10, "okuması çok güç"; 2026-11-14, B2): a sub-item gets
+  // its own marker and a visible indent, a heading never sticks to the line above it, and a list
+  // is a group of its own: a blank line before it (unless the line above leads into it with ':')
+  // and after it, so the facts never glue to the sentences around them.
   let last: LineKind = 'blank';
+  // The line above a list leads into it (no gap): it ends with ':' or opens with a bold head
+  // (`**Aldım** (14 video)`), the B2 group head with a note beside it.
+  let leadsIn = false;
   const levels: number[] = [];
   const push = (html: string, kind: LineKind): void => {
     if (kind === 'head') levels.length = 0;
     const gap = out.length > 0 && last !== 'blank' && (
       (kind === 'head' && last !== 'head')
       || (last === 'sub' && kind !== 'sub' && kind !== 'blank')
+      || (kind === 'top' && last === 'text' && !leadsIn)
+      || (kind === 'text' && last === 'top')
     );
     if (gap) out.push('');
     out.push(html);
     last = kind;
+    leadsIn = kind === 'text' && (html.startsWith('<b>') || telegramHtmlToPlain(html).trimEnd().endsWith(':'));
   };
   const list = (indent: string, marker: string, body: string): void => {
     const depth = listDepth(indent, levels);
@@ -378,32 +394,49 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
       const text = body.join('\n');
       if (DREAM_FENCES.has(lang)) {
         if (opts.blocks === 'hub' && hubDrawsFence(lang, text)) continue;
-        if (!isSilentView(lang, text)) push(`<i>Mac'te: ${escapeHtml(oneLine(fenceTitle(lang, text)))}</i>`, 'text');
+        if (!isSilentView(lang, text)) push(`<i>Mac'te: ${escapeHtml(oneLine(fenceTitle(lang, text)))}</i>`, 'block');
       } else if (opts.codeFences === 'mac') {
-        push(`<i>Mac'te: ${escapeHtml(lang ? `${lang} kodu` : 'kod')}</i>`, 'text');
+        push(`<i>Mac'te: ${escapeHtml(lang ? `${lang} kodu` : 'kod')}</i>`, 'block');
       } else {
-        push(lang ? `<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(text)}</code></pre>` : `<pre>${escapeHtml(text)}</pre>`, 'text');
+        push(lang ? `<pre><code class="language-${escapeHtml(lang)}">${escapeHtml(text)}</code></pre>` : `<pre>${escapeHtml(text)}</pre>`, 'block');
       }
       continue;
     }
     const heading = /^\s{0,3}#{1,6}\s+(.*)$/.exec(line);
     if (heading) { push(`<b>${inline(heading[1].replace(/\s*#+\s*$/, ''))}</b>`, 'head'); i++; continue; }
     if (/^\s*>/.test(line)) {
-      const quote: string[] = [];
-      while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(inline(lines[i++].replace(/^\s*>\s?/, '')));
-      push(`<blockquote>${quote.join('\n')}</blockquote>`, 'text');
+      const raw: string[] = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) raw.push(lines[i++].replace(/^\s*>\s?/, ''));
+      // A quote that opens with its `**Ayrıntı**` head is detail he did not ask for: it opens
+      // folded (Bot API 7.4 expandable quote, TELEGRAM_WRITING_RULE). Its body is inline only
+      // (a quote holds no code block or quote here), so Telegram never refuses the nesting.
+      const fold = raw.length > 1 && DETAIL_HEAD.test(raw[0].trim());
+      push(`<blockquote${fold ? ' expandable' : ''}>${raw.map(inline).join('\n')}</blockquote>`, 'block');
+      continue;
+    }
+    // A markdown table (Telegram draws none): each body row becomes one bullet, "first: rest".
+    if (TABLE_ROW.test(line) && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1])) {
+      const head = tableCells(line);
+      i += 2;
+      while (i < lines.length && TABLE_ROW.test(lines[i])) {
+        const cells = tableCells(lines[i++]);
+        const rest = cells.slice(1).map((c, k) => (head[k + 1] ? `${head[k + 1]} ${c}` : c)).filter((c) => c.trim());
+        list('', '•', rest.length ? `${cells[0]}: ${rest.join(' · ')}` : cells[0] ?? '');
+      }
       continue;
     }
     const bullet = /^([ \t]*)[-*+•]\s+(.*)$/.exec(line);
     if (bullet) { list(bullet[1], '•', bullet[2]); i++; continue; }
     const numbered = /^([ \t]*)(\d{1,3})[.)]\s+(.*)$/.exec(line);
     if (numbered) { list(numbered[1], `${numbered[2]}.`, numbered[3]); i++; continue; }
-    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { push('──────', 'text'); i++; continue; }
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { push('──────', 'block'); i++; continue; }
     if (isSectionHead(lines, i) || isBoldHead(line)) { push(`<b>${inline(line.trim().replace(/^\*\*(.*)\*\*$/, '$1'))}</b>`, 'head'); i++; continue; }
     // An indented line under a list item is its continuation: the run's levels stay; a line at the
     // margin ends the list.
     if (line.trim() && !/^[ \t]/.test(line)) levels.length = 0;
-    push(inline(line), line.trim() ? 'text' : 'blank');
+    // An indented line right under an item continues it: it stays in the item's group (no gap).
+    const cont = !!line.trim() && /^[ \t]/.test(line) && (last === 'top' || last === 'sub');
+    push(inline(line), !line.trim() ? 'blank' : cont ? last : 'text');
     i++;
   }
   const html = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();

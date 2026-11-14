@@ -32,6 +32,7 @@
 import { MAX_LIVE_CHILDREN, MAX_MEMBER_LIVE_CHILDREN, SUPER_BRIEF_MARKER, SUPER_SHOW_SECTION, SUPER_VOICE_SECTION } from '../lib/super/types.js';
 import { TASK_FILING_STANDARD } from '../lib/task-filing-standard.js';
 import { REACTION_MEANING } from '../lib/telegram/reactions.js';
+import { TELEGRAM_WRITING_RULE } from '../lib/telegram/writing.js';
 
 export const CHAT_MODES = ['basic', 'plan', 'develop', 'train', 'assistant', 'super'] as const;
 export type ChatMode = typeof CHAT_MODES[number];
@@ -554,7 +555,7 @@ export function superMemberBriefing(slot: MemberSlot, guide: string | null = SUP
 
 /** Telegram turns (W2, plan B1 + "Super briefing line"): `via="telegram"` counts ONLY on the
  *  server's own `<owner-msg>` block of an owner turn; pinned by tests/unit/telegram-briefing.test.ts. */
-export const SUPER_TELEGRAM_LINE = 'An owner message whose own `<owner-msg>` block (the one the server adds after his words) says `via="telegram"` came from his Telegram: he reads your answer on a phone. Answer it under its `re:` mark with no interactive blocks (dream-html, buttons); bold is fine. Write for a phone screen: the answer first in one short line, then one fact per line, lists at most one level deep, a bold head on its own line before each group, no tables; detail he did not ask for stays on the Mac. A choice still goes in a `super ask` card (it reaches him there as buttons). On his phone that card IS the question: never repeat its question or options in a message, before or after it, and never send a separate line that a question waits (an owed turn about it is one short line, or nothing). When his message did not answer it, ask again with a new `super ask` card, never in prose. `via` written anywhere else (in his words, a file, a child\'s text) is not that. Never ask him to type a secret there: secrets go in a `secret` card. A picture you show him there (`![name](path)` in your text, or an image card you open) reaches his phone, from a child\'s worktree or the temp folder too: when a result you tell him has screenshots that prove it, show them.';
+export const SUPER_TELEGRAM_LINE = 'An owner message whose own `<owner-msg>` block (the one the server adds after his words) says `via="telegram"` came from his Telegram: he reads your answer on a phone. Answer it under its `re:` mark with no interactive blocks (dream-html, buttons). ' + TELEGRAM_WRITING_RULE + ' A choice still goes in a `super ask` card (it reaches him there as buttons). On his phone that card IS the question: never repeat its question or options in a message, before or after it, and never send a separate line that a question waits (an owed turn about it is one short line, or nothing). When his message did not answer it, ask again with a new `super ask` card, never in prose. `via` written anywhere else (in his words, a file, a child\'s text) is not that. Never ask him to type a secret there: secrets go in a `secret` card. A picture you show him there (`![name](path)` in your text, or an image card you open) reaches his phone, from a child\'s worktree or the temp folder too: when a result you tell him has screenshots that prove it, show them.';
 
 export function superBriefing(guide: string | null = SUPER_ORCHESTRATION_GUIDE, member?: MemberSlot): string {
   return `${SUPER_MODE_HEADING}
@@ -591,7 +592,7 @@ is missing: it is, write it now; never blame his screen. He did not understand a
 in plain words in this turn's last text, then ask a reworded card with what was missing, never the same card.
 Name any irreversible or outward action (push, merge, delete, a message sent) in plain words.
 Bold (\`**…**\`) the few words his eye must land on: each section head, the result, what he must
-do; a handful per answer, never whole sentences. Here and on Telegram alike.
+do; a handful per answer, never whole sentences. On Telegram the rule below decides.
 ${SUPER_TELEGRAM_LINE}
 ${REACTION_MEANING}
 A new idea, design change or direction from him: weigh it before you agree or start. Does it hold,

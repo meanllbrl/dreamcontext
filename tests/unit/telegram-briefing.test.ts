@@ -1,6 +1,7 @@
 /** The Super's Telegram rule rides its briefing and the briefing update (plan B1, W2 docs). */
 import { describe, it, expect } from 'vitest';
 import { SUPER_BRIEF_TEXT, SUPER_TELEGRAM_LINE, superBriefing } from '../../src/server/chat-modes.js';
+import { TELEGRAM_WRITING_RULE } from '../../src/lib/telegram/writing.js';
 
 describe('Telegram briefing line', () => {
   it('is in the briefing and in the update a running session gets', () => {
@@ -12,7 +13,7 @@ describe('Telegram briefing line', () => {
 
   it('allows bold on Telegram and only forbids interactive blocks (owner, 2026-11-09)', () => {
     expect(SUPER_TELEGRAM_LINE).toContain('no interactive blocks');
-    expect(SUPER_TELEGRAM_LINE).toContain('bold is fine');
+    expect(SUPER_TELEGRAM_LINE).toContain('ONE bold line');
     expect(SUPER_TELEGRAM_LINE).not.toContain('plain text');
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('Bold (`**…**`) the few words his eye must land on');
   });
@@ -24,6 +25,19 @@ describe('the Telegram line keeps one question in one place (owner 2026-11-10)',
     expect(line).toContain('that card IS the question');
     expect(line).toContain('never repeat its question or options');
     expect(line).toContain('ask again with a new `super ask` card, never in prose');
-    expect(line).toContain('lists at most one level deep');
+    expect(line).toContain('lists one level deep');
+  });
+});
+
+describe('one Telegram writing rule for every surface (owner 2026-11-14, B2)', () => {
+  it('the Super briefing (main and every member) carries the shared rule word for word', () => {
+    expect(SUPER_TELEGRAM_LINE).toContain(TELEGRAM_WRITING_RULE);
+    expect(superBriefing()).toContain(TELEGRAM_WRITING_RULE);
+  });
+
+  it('names each element with its one job', () => {
+    for (const piece of ['ONE bold line', 'bold head on its own line', 'ONE blank line between groups', '`inline code`', '`>` quote', 'fenced code block', '`**Ayrıntı**`', 'No tables']) {
+      expect(TELEGRAM_WRITING_RULE).toContain(piece);
+    }
   });
 });

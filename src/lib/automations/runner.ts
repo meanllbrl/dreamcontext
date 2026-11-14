@@ -37,7 +37,8 @@ import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, approvedTarget, getApproval, manifestHash, renderApprovalReview } from './registry.js';
 import { claimPendingNotice } from '../agents/pending-change.js';
-import { buildRoutineForward, mintRunPostKey, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
+import { buildRoutineForward, mintRunPostKey, routineReachesPhone, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
+import { TELEGRAM_WRITING_RULE } from '../telegram/writing.js';
 import { ownerAwayNow } from '../telegram/away-state.js';
 import type { OnDeferredSend } from '../telegram/contract.js';
 import { ownerLabel } from '../agents/owner.js';
@@ -632,6 +633,8 @@ export function composePrompt(
   light?: boolean,
   /** The app this run serves (src/lib/apps/brief.ts): an app's message, or an app's scheduled job. */
   app?: AppRunBrief | null,
+  /** Its results reach his phone through a bot (`routineReachesPhone`): the one Telegram writing rule joins. */
+  phone?: boolean,
 ): string {
   const parts = [
     buildPreamble(m, projectRoot, fireAt, outputPath, board?.scope ?? null, board?.scope ? null : board?.home ?? null), '', m.prompt.trim(),
@@ -669,6 +672,7 @@ export function composePrompt(
   const learning = light ? '' : buildLearningDirective(m);
   if (learning) parts.push('', learning);
   if (light) parts.push('', LIGHT_JOB_BLOCK);
+  if (phone) parts.push('', `TELEGRAM: what you post and your result also reach the owner's phone through Telegram. ${TELEGRAM_WRITING_RULE}`);
   // The assigned task: DATA under its own fresh nonce, after every approved block
   // and before the owner's live note.
   if (task) parts.push('', buildTaskAssignmentBlock(task, newTurnNonce()));
@@ -2746,6 +2750,10 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       }),
       opts.override?.light === true,
       opts.app ?? (manifest.app ? appRunBrief(projectRoot, manifest.app, opts.home) : null),
+      // A scheduled fire whose results go to a bot writes for his phone (the same rule as every bot).
+      !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep
+        && (manifest as AutomationManifest).target !== 'super'
+        && routineReachesPhone({ contextRoot, slug, agent: manifest.agent, reply: (manifest as AutomationManifest).reply ?? null, approvalHash: manifestHash(manifest as AutomationManifest), ...(home ? { home } : {}) }),
     );
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
