@@ -9,7 +9,7 @@
  * Super runs, his answer goes in at once as his Telegram words (`injectText`); when it does not,
  * it waits in its queue as his reply (`answerOwnerItem`).
  */
-import { memberMirrorTarget, superAnswerText, superUnclearText, unclearMessage, answerOwnerItem } from '../../lib/super/answer.js';
+import { memberMirrorTarget, superAnswerText, superUnclearText, superAlreadyText, unclearMessage, ALREADY_ANSWERED_MESSAGE, answerOwnerItem } from '../../lib/super/answer.js';
 import { getChat } from '../../lib/assistant/chat-registry.js';
 import type { GrantSize, OwnerAnswer, OwnerAnswerResult } from '../../lib/super/types.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
@@ -37,7 +37,7 @@ export function sizeLine(size: GrantSize | 'deny' | 'not_needed'): string {
 export async function answerMemberPick(hub: TelegramHub, ab: ActiveBinding, mirrorId: string, answer:
   | { kind: 'permission'; allow: boolean; size?: GrantSize; shownKey?: string }
   | { kind: 'refusal'; allow: boolean; size?: GrantSize; shownKey?: string }
-  | { kind: 'question'; questions: readonly { question: string; options?: unknown[] }[]; picked: Record<string, string>; notes?: Record<string, string>; unclear?: string }): Promise<string | null> {
+  | { kind: 'question'; questions: readonly { question: string; options?: unknown[] }[]; picked: Record<string, string>; notes?: Record<string, string>; unclear?: string; already?: true }): Promise<string | null> {
   const root = ab.contextRoot;
   if (!root) return LINES.stale;
   const t = await memberMirrorTarget(root, mirrorId);
@@ -49,13 +49,13 @@ export async function answerMemberPick(hub: TelegramHub, ab: ActiveBinding, mirr
     const r = await answerOwnerItem(root, { record: 'main', item: mirrorId, answer: a, via: 'telegram', ...(answer.shownKey ? { shownKey: answer.shownKey } : {}) });
     return pickLine(r, sizeLine(answer.allow ? answer.size ?? 'once' : answer.kind === 'permission' ? 'deny' : 'not_needed'));
   }
-  const picked = answer.unclear !== undefined ? '↺ Tekrar sorulacak' : `✓ ${Object.values(answer.picked).join(' · ')}`;
+  const picked = answer.already ? '↺ Zaten cevaplandı' : answer.unclear !== undefined ? '↺ Tekrar sorulacak' : `✓ ${Object.values(answer.picked).join(' · ')}`;
   if (t.item.kind === 'ask') {
     // Its Super runs: his words go in now, as his Telegram text (a first answer anywhere else
     // closed the mirror, so `memberMirrorTarget` above already said so).
     const live = getChat(t.session);
     if (live && live.status !== 'gone') {
-      const text = answer.unclear !== undefined
+      const text = answer.already ? superAlreadyText(t.item) : answer.unclear !== undefined
         ? superUnclearText(t.item, unclearMessage(answer.unclear ? [answer.unclear] : []))
         : superAnswerText(t.item, answer.questions as { question: string }[], answer.picked, answer.notes);
       const ok = await hub.injectText(ab, hub.syntheticUpdateId(), text, t.session);
@@ -63,7 +63,7 @@ export async function answerMemberPick(hub: TelegramHub, ab: ActiveBinding, mirr
     }
     // Cold (or the write did not land): his answer waits in its queue as his reply.
     const a: OwnerAnswer = answer.unclear !== undefined
-      ? { kind: 'ask', text: answer.unclear || 'Anlaşılmadı, tekrar sor.' }
+      ? { kind: 'ask', text: answer.already ? ALREADY_ANSWERED_MESSAGE : answer.unclear || 'Anlaşılmadı, tekrar sor.' }
       : { kind: 'question', answers: answer.picked };
     return pickLine(await answerOwnerItem(root, { record: 'main', item: mirrorId, answer: a, via: 'telegram' }), picked);
   }
