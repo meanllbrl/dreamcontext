@@ -1,8 +1,8 @@
 /**
  * AC2 guard (plan-r10 1, 4): a member's conversation is its Super stage, so nothing under
  * dashboard/src/components/aiteam/ mounts a chat pane of its own: no ChatPane / ChatPaneHost, no
- * live chat session (createChatSession, chatSession.ts) and no spawn. Read-only run views (RunView,
- * built on the stage's own ChildTranscript) stay allowed: they start no process.
+ * live chat session (createChatSession, chatSession.ts) and no spawn. A run's read-only transcript
+ * is the stage's own ChildTranscript, mounted from sleepy/super: it starts no process.
  *
  * Written to the END state of Wave 3: it goes green once the lead deletes aiteam/AgentStage.tsx and
  * aiteam/stageSession.ts at the close. Until then those two files are the only reds it names.

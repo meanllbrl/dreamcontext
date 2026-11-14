@@ -1921,6 +1921,8 @@
 /* A team job's card, large: its session, then the composer or the sentence that says why not. */
 .super-team-job { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
 .super-team-job-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* The previous run scrolls here, never clipped: prose (no session) has no scroller of its own; a pane fills it and scrolls itself. */
+.super-team-job-body--previous { overflow-y: auto; }
 .super-team-job-closed { margin: 0; padding: var(--space-2, 8px) var(--space-3, 12px); color: var(--color-text-secondary); font-size: 13px; }
 .super-team-job-reply { display: flex; align-items: flex-end; gap: var(--space-2, 8px); padding: var(--space-2, 8px) var(--space-3, 12px); }
 .super-team-job-reply textarea { flex: 1; min-width: 0; resize: none; font: inherit; color: inherit; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-md, 8px); padding: var(--space-2, 8px); }
