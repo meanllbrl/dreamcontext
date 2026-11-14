@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+/** /verify: the left drawer opens over the page on hover of its title-bar button and closes after the pointer leaves both. */
+import { openApp } from './lib/app.mjs';
+const app = await openApp({ suite: 'drawer-hover' });
+const sel = '[data-testid="chat-drawer"]';
+const results = [];
+const ok = (n, v) => { console.log((v ? 'ok   ' : 'FAIL ') + n); results.push(`${v ? 'ok  ' : 'FAIL'} ${n}`); if (!v) app.findings.push(`check failed: ${n}`); };
+await app.look('/?vault=proj', async (page, w) => {
+  if (w.name !== 'desktop') return;
+  await page.waitForSelector('[data-testid="ns-drawer-toggle"]', { timeout: 20000 });
+  await page.waitForTimeout(800);
+  const vis = () => page.locator(sel).count().then((n) => n > 0);
+  const mainBox = () => page.locator('.window-chrome-body').boundingBox();
+  if (await vis()) await page.click('[data-testid="ns-drawer-toggle"]');
+  await page.mouse.move(700, 500);
+  await page.waitForTimeout(400);
+  ok('closed at start', !(await vis()));
+  const before = await mainBox();
+  await page.hover('[data-testid="ns-drawer-toggle"]');
+  await page.waitForTimeout(150);
+  ok('opens on hover', await vis());
+  const after = await mainBox();
+  ok('page does not shift', before && after && before.x === after.x && before.width === after.width);
+  await page.screenshot({ path: `${app.shots}/hover-open.png` });
+  const d = await page.locator(sel).boundingBox({ timeout: 2000 }).catch(() => ({ x: 56, y: 100, width: 300 }));
+  await page.mouse.move(d.x + 60, d.y + 120);
+  await page.waitForTimeout(500);
+  ok('stays open over drawer', await vis());
+  await page.mouse.move(d.x + d.width + 300, d.y + 200);
+  await page.waitForTimeout(500);
+  ok('closes after leaving', !(await vis()));
+  await page.hover('[data-testid="ns-drawer-toggle"]');
+  await page.waitForTimeout(150);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  ok('escape closes', !(await vis()));
+  await page.hover('[data-testid="ns-drawer-toggle"]');
+  await page.waitForTimeout(150);
+  await page.click('[data-testid="ns-drawer-toggle"]');
+  await page.mouse.move(d.x + d.width + 300, d.y + 200);
+  await page.waitForTimeout(500);
+  ok('click pins', await vis());
+}, { name: 'hover' });
+console.log(results.join('\n'));
+process.exit(await app.finish());

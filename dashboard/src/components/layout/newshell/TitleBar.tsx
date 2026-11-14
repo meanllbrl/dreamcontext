@@ -23,6 +23,8 @@ interface TitleBarProps {
   waiting?: number;
   /** A finger: 44 px targets and no zoom menu (NewShell.css `[data-touch]`). */
   touch?: boolean;
+  /** The pointer entered or left the drawer button: a hover peek of the drawer. */
+  onDrawerHover?: (over: boolean) => void;
   zoom: number;
   zoomLevels: readonly number[];
   onZoom: (level: number) => void;
@@ -46,7 +48,7 @@ interface TitleBarProps {
  * above the page, below every full-screen view.
  */
 export function TitleBar({
-  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, waiting = 0, touch = false,
+  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, onDrawerHover, waiting = 0, touch = false,
   zoom, zoomLevels, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot, device,
 }: TitleBarProps) {
   const { t } = useI18n();
@@ -70,6 +72,8 @@ export function TitleBar({
           title={t('shell.drawer.toggle')}
           data-testid="ns-drawer-toggle"
           onClick={onToggleDrawer}
+          onMouseEnter={() => onDrawerHover?.(true)}
+          onMouseLeave={() => onDrawerHover?.(false)}
         >
           {waiting > 0 && <span className="ns-tb-badge" data-testid="ns-drawer-waiting" aria-hidden="true">{waiting}</span>}
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">

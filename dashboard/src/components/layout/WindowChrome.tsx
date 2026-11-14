@@ -38,7 +38,7 @@ import { wasOpenedForLink } from '../../lib/windowLaunch';
 import { useKeyboardUp } from '../../hooks/useKeyboardUp';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
-import { readDeviceShell, useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
+import { drawerTogglePanel, readDeviceShell, useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
 import { drawerWidthOf, readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
 import { useShellProjects } from '../../hooks/useShellProjects';
 import { useUnregisterVault } from '../../hooks/useLauncher';
@@ -271,6 +271,10 @@ function seedPendingLinks(initialVault: string, initialLink: string | null | und
   if (!link || !isProjectAppLink(link) || link.vault !== initialVault) return {};
   return { [initialVault]: { raw: initialLink as string, nonce: 1 } };
 }
+
+/** How long the pointer may be off both the drawer button and the drawer before a hover peek closes:
+ *  long enough to cross the gap between them. */
+const PEEK_GRACE_MS = 200;
 
 export function WindowChrome({ initialVault, initialLink, initialStart = null, initialIntent }: {
   initialVault: string;
@@ -1027,6 +1031,16 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   // A phone opens with the drawer over the page (its first screen is the chat list), unless the
   // window was built to land a link: a notification tap goes straight to its chat.
   const [floatingOpen, setFloatingOpen] = useState(() => newShell && readIsMobile() && !wasOpenedForLink());
+  // Hover peek: with the drawer shut, the pointer on the drawer button opens it over the page at
+  // once, and it closes when the pointer leaves the button AND the drawer (a short grace crosses
+  // the gap between them). A click on the button while it peeks pins it (the normal toggle).
+  const [peek, setPeek] = useState(false);
+  const peekTimer = useRef<number | null>(null);
+  const clearPeekTimer = useCallback(() => {
+    if (peekTimer.current !== null) { window.clearTimeout(peekTimer.current); peekTimer.current = null; }
+  }, []);
+  const closeOverlay = useCallback(() => { clearPeekTimer(); setPeek(false); setFloatingOpen(false); }, [clearPeekTimer]);
+  useEffect(() => clearPeekTimer, [clearPeekTimer]);
   // Leaving Chat or changing project closes it. Compared with the previous values, not a first-run
   // flag (StrictMode runs mount effects twice). On a phone the Chat page coming up under the open
   // drawer in the same project (the launch's auto-expand) leaves it open; bar taps close it
@@ -1037,16 +1051,40 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     drawerFlipRef.current = { onChat: activeOnChat, vault: activeVault };
     if (prev.onChat === activeOnChat && prev.vault === activeVault) return;
     if (isMobile && !prev.onChat && activeOnChat && prev.vault === activeVault) return;
-    setFloatingOpen(false);
-  }, [activeOnChat, activeVault, isMobile]);
+    closeOverlay();
+  }, [activeOnChat, activeVault, isMobile, closeOverlay]);
   // Docked beside Chat; floating over any other page (the button never leaves the page) and ≤900.
   const drawerFloats = narrow || !activeOnChat;
-  const drawerVisible = newShell && (drawerFloats ? floatingOpen : drawerOpen);
+  const docked = !drawerFloats && drawerOpen;
+  const drawerVisible = newShell && (docked || (drawerFloats && floatingOpen) || peek);
+  const drawerFloating = !docked;
+  const peekOnly = peek && !(drawerFloats && floatingOpen);
+  const onDrawerHover = useCallback((over: boolean) => {
+    clearPeekTimer();
+    if (!newShell) return;
+    if (over) {
+      // On a page whose side panel the button drives (Whiteboards, Brain) the chat drawer is not
+      // what a click would toggle, so it does not peek there.
+      const page = document.querySelector('.project-instance:not([hidden])')?.getAttribute('data-page') ?? '';
+      if (drawerTogglePanel({ chatOpen: activeFactsOnChat, page }) === 'page') return;
+      if (!docked && !(drawerFloats && floatingOpen)) setPeek(true);
+      return;
+    }
+    peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setPeek(false); }, PEEK_GRACE_MS);
+  }, [newShell, docked, drawerFloats, floatingOpen, activeFactsOnChat, clearPeekTimer]);
   const onDrawerToggle = useCallback(() => {
+    clearPeekTimer();
+    if (peek) {
+      // Pinned: the overlay stays (floating) or docks open, and hover stops governing it.
+      setPeek(false);
+      if (drawerFloats) setFloatingOpen(true);
+      else toggleDrawer();
+      return;
+    }
     if (drawerFloats) setFloatingOpen((o) => !o);
     else toggleDrawer();
-  }, [drawerFloats, toggleDrawer]);
-  const dismissFloating = useCallback(() => setFloatingOpen(false), []);
+  }, [peek, drawerFloats, toggleDrawer, clearPeekTimer]);
+  const dismissFloating = closeOverlay;
   const drawerFloatsRef = useRef(drawerFloats);
   drawerFloatsRef.current = drawerFloats;
   // A link landing (a notification tap while the app is open) goes straight to its chat.
@@ -1065,13 +1103,13 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   }, [isMobile]);
   // The on-screen keyboard is up: a phone's bottom bar steps aside so the composer sits on it.
   const keyboardUp = useKeyboardUp(isMobile);
-  // Esc closes a floating drawer (its menus own their Esc first).
+  // Esc closes a floating or peeking drawer (its menus own their Esc first).
   useEffect(() => {
-    if (!floatingOpen) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFloatingOpen(false); };
+    if (!floatingOpen && !peek) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeOverlay(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [floatingOpen]);
+  }, [floatingOpen, peek, closeOverlay]);
 
   const [drawerExpanded, setDrawerExpanded] = useState<string[]>(() => {
     const stored = readLayoutPrefs().drawerExpanded;
@@ -1456,11 +1494,12 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             pickerOpen={pickerOpen}
             onNewProject={() => { setPickerOpen(false); setNewProjectOpen(true); }}
             onPickerOpen={setPickerOpen}
-            onPick={(name) => { setFloatingOpen(false); markProjectSwitch(name); void addTab(name); }}
+            onPick={(name) => { closeOverlay(); markProjectSwitch(name); void addTab(name); }}
             notice={notice}
             onToggleDrawer={() => setDrawerToggleNonce((n) => n + 1)}
             waiting={drawerWaiting}
             touch={coarse}
+            onDrawerHover={onDrawerHover}
             zoom={zoom}
             zoomLevels={ZOOM_LEVELS}
             onZoom={setZoomLevel}
@@ -1476,22 +1515,23 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
           <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
             <div className="ns-rail-slot" ref={setRailSlot} />
-            {drawerVisible && drawerFloats && (
-              <div className="ns-drawer-scrim" onClick={() => setFloatingOpen(false)} aria-hidden="true" />
+            {drawerVisible && drawerFloating && !peekOnly && (
+              <div className="ns-drawer-scrim" onClick={closeOverlay} aria-hidden="true" />
             )}
             {drawerVisible && (
               <ChatDrawer
                 rows={drawerRows}
                 width={drawerWidth}
-                floating={drawerFloats}
+                floating={drawerFloating}
+                onHover={onDrawerHover}
                 home={drawerHome}
-                onNewProject={() => { setFloatingOpen(false); setNewProjectOpen(true); }}
-                onClose={() => setFloatingOpen(false)}
+                onNewProject={() => { closeOverlay(); setNewProjectOpen(true); }}
+                onClose={closeOverlay}
                 onResize={resizeDrawer}
                 onToggleExpanded={toggleExpanded}
                 onIntent={(vault, intent) => void queueDrawerIntent(vault, intent)}
                 onHistory={openHistory}
-                onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); setFloatingOpen(false); }}
+                onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); closeOverlay(); }}
                 onMove={(name, delta) => reorder(moveInOrder(projectOrder, name, delta))}
                 onDrop={(name, before) => reorder(dropInOrder(projectOrder, name, before))}
                 onMoveWindow={(vault, windowId, before) => {
@@ -1535,7 +1575,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   pendingStart={pendingStarts[p.vault] ?? null}
                   onStartConsumed={consumeStart}
                   drawerToggleNonce={drawerToggleNonce}
-                  drawerVisible={drawerVisible}
+                  drawerVisible={drawerVisible && !peekOnly}
                   onDrawerToggle={onDrawerToggle}
                   onDrawerDismiss={dismissFloating}
                   onDrawerFacts={handleDrawerFacts}
