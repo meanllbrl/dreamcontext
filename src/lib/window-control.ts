@@ -141,9 +141,21 @@ export function identityOf(token: string): WindowIdentity | null {
 /** The live token of the chat with pin id `sessionId`, or null. The server uses it to push a
  *  frame (`super_state`, `super_event`) down that chat's socket; it never leaves the server. */
 export function tokenOfSession(sessionId: string): string | null {
-  if (!sessionId) return null;
-  for (const [token, c] of channels) if (c.sessionId === sessionId) return token;
-  return null;
+  return tokensOfSession(sessionId)[0] ?? null;
+}
+
+/** Every live token of the chat with pin id `sessionId`, NEWEST first. A pin can hold two
+ *  processes at once (a respawn, a reload or phone open beside the one still running; field
+ *  2026-11-07 and 2026-11-14): a command goes to the newest, as the live-chat map, the inbox and
+ *  the chat registry already decide; the window's `super_state` goes to all of them
+ *  (`pushSuperState`). The oldest-first answer this replaced sent every `super_state` to a
+ *  bridge nobody read, so the window's record froze: a new child got no card and showed as a
+ *  tab in the chat window. */
+export function tokensOfSession(sessionId: string): string[] {
+  if (!sessionId) return [];
+  const out: string[] = [];
+  for (const [token, c] of channels) if (c.sessionId === sessionId) out.unshift(token);
+  return out;
 }
 
 /** The live token of the SUPER-mode chat with pin id `sessionId`, the newest one when a respawn
