@@ -467,6 +467,9 @@ export function registerSuperCommand(program: Command): void {
   n.command('done <id>')
     .description('Move a line to Done (it finished, or the owner gave what you waited for)')
     .action((id: string) => run('note-done', { id }));
+  n.command('status <id> <status>')
+    .description('Set a line\'s status: not-started | in-progress | almost-done | waiting | done (the owner\'s own lines too, when it helps him)')
+    .action((id: string, status: string) => run('note-status', { id, status }));
   n.command('keep <id>')
     .description('A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h')
     .action((id: string) => run('note-keep', { id }));
@@ -474,7 +477,7 @@ export function registerSuperCommand(program: Command): void {
     .description('Remove a line that no longer holds')
     .action((id: string) => run('note-drop', { id }));
   n.command('clear [section]')
-    .description('Empty the agenda (or one section): a new day or a new piece of work starts')
+    .description('Empty the agenda (or one section) of your own lines: a new piece of work starts. The owner\'s own lines stay')
     .action((section?: string) => run('note-clear', section ? { section } : {}));
 
   s.command('ask [text]')

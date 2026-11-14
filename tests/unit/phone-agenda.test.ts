@@ -142,7 +142,7 @@ describe('the phone agenda is the desktop notepad', () => {
     expect(phone.done.map((r) => r.note)).toEqual(['n4', 'n2']);
   });
 
-  it('a new day reads the same on the phone: the owner\'s own Done stays, a linked Waiting line is not stale', () => {
+  it('a new day reads the same on the phone: yesterday\'s Done lines, his too, roll off into their day, a linked Waiting line is not stale', () => {
     const TODAY = new Date(2026, 9, 28, 10, 0).getTime();
     const YESTERDAY = new Date(2026, 9, 27, 15, 0).getTime();
     const rec = record({ pad: [
@@ -155,7 +155,7 @@ describe('the phone agenda is the desktop notepad', () => {
     const phone = superNotepad(state, look, TODAY);
     const desk = superNotepad(rec as never, { live: () => null, titleFor: (c) => rec.containers.find((k) => k.ref === c)?.title ?? rec.children[c]?.brief ?? c, superTitle: 'Claude' }, TODAY);
     expect(phone).toEqual(desk);
-    expect(phone.done.map((r) => r.note)).toEqual(['n1']);
+    expect(phone.done.map((r) => r.note)).toEqual([]);
     expect(phone.waiting.filter((r) => r.note).map((r) => [r.note, !!r.stale])).toEqual([['n3', false], ['n4', true]]);
   });
 

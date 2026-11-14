@@ -1316,6 +1316,11 @@ export interface SuperState {
   /** When this record started keeping debts (the first write after the upgrade): an item older
    *  than this is never owed. Absent = now. */
   owedSince?: number;
+  /** What the owner did by hand since his last message (owner-marks.ts). Never in the Super's
+   *  own `super state` view: it hears them only in the fenced block. Absent = none. */
+  ownerMarks?: OwnerMark[];
+  /** The last owner mark number handed out. */
+  ownerMarkSeq?: number;
 }
 
 /**
@@ -1397,7 +1402,40 @@ export interface SuperPadItem {
   why?: PadAutoWhy;
   /** When an event batch last told the super about this line (its auto move or its stale flag). */
   toldAt?: number;
+  /** When it was first written (ms): its day. Absent = `at` (stamped once by the store). */
+  bornAt?: number;
+  /** A Now line's stage (the five statuses, `padStatus`): `todo` = Not started, `almost` =
+   *  Almost done, absent = In progress. Only in `now`. */
+  stage?: PadStage;
+  /** `owner` = the owner wrote it himself (`POST /api/super/pad/add`): the server's automatic
+   *  rules never act on it (pad.ts `ownerLine`). Absent = the Super's. */
+  author?: 'owner';
 }
+export const PAD_STAGES = ['todo', 'almost'] as const;
+export type PadStage = typeof PAD_STAGES[number];
+/** The five statuses a line shows; `section` (+ `stage`) stays the stored truth (pad.ts). */
+export const PAD_STATUSES = ['not-started', 'in-progress', 'almost-done', 'waiting', 'done'] as const;
+export type PadStatus = typeof PAD_STATUSES[number];
+
+/** One thing the owner did by hand since his last message (owner-marks.ts): carried once, in a
+ *  `<super-owner-marks>` block on his next message to the Super, then cleared. */
+export interface OwnerMark {
+  /** `pad:<id>` or `task:<slug>`: one entry per thing, newer marks coalesce into it. */
+  key: string;
+  kind: OwnerMarkKind;
+  /** What it is about, one line (a pad line's text, a task's title). */
+  text: string;
+  from?: string;
+  to?: string;
+  at: number;
+  /** Monotonic per record: the carry clears by it, never by time alone. */
+  seq?: number;
+}
+export const OWNER_MARK_KINDS = ['pad-status', 'pad-add', 'pad-remove', 'task-created', 'task-status'] as const;
+export type OwnerMarkKind = typeof OWNER_MARK_KINDS[number];
+export const OWNER_MARK_KEY_RE = /^(pad:n[1-9][0-9]{0,5}|task:[a-z0-9][a-z0-9._-]{0,239})$/;
+/** Stored marks are bounded by bytes, not count: past this the oldest are dropped. */
+export const MAX_OWNER_MARKS_BYTES = 64 * 1024;
 export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;
 export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
 /** A Now line with no job behind it that has not changed for this long is stale: `super state`
@@ -1997,7 +2035,7 @@ export const SUPER_VERBS = [
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
-  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
+  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',
   // The owner's scheduled jobs (super-rutin plan C4): main Super only.
@@ -2050,7 +2088,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
  * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one.
  */
-export const SUPER_BRIEF_REV = 45;
+export const SUPER_BRIEF_REV = 46;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

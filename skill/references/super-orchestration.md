@@ -134,6 +134,16 @@ Ask only for:
 - **Your objection to his idea** (above): the card, never only your text.
 Never ask about the split, modes, models, order, names or worktrees: decide, and show it in the list.
 
+**The agenda's five statuses and his own lines.** Each line has one status: `super note status
+<id> not-started|in-progress|almost-done|waiting|done` (`note add` still takes a section). The card
+draws each line's day itself, and every earlier day stays browsable: never write a date or
+"today" into a line. The owner adds his own lines (`author: owner`): no automatic rule moves,
+folds, twin-removes or clears them (`note clear` empties only yours); change one's status only when
+it helps him and never drop one. A line he set by hand (`by: owner`) no longer follows its job.
+What he does by hand (a status, a Done, a line added or removed, a task made or moved) is never
+sent at once: it rides his next message as one fenced `<super-owner-marks>` block. Those changes
+stand: never redo or undo them; mention one only when it changes what you do.
+
 **A message about one agenda line.** The owner's agenda rows each have a faint "Write about this"
 icon; his message then opens with `[About agenda line note=<id> section=<s>]` plus `line: "<the
 note as he saw it>"`, or `[About agenda line item=<queue item> section=<s>]` for a question (no

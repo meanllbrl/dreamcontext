@@ -737,13 +737,14 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
       out.waiting.push({ key: `q:${q.id}`, section: 'waiting', item: q.id, sid: q.sessionId, text: nameOf(q.sessionId), line: '', chip: 'queued', at: q.createdAt });
     }
   }
-  // Mirrors src/lib/super/pad.ts (padRolledOff, padStale): a new day drops an earlier day's
-  // Done line (not one he moved himself); a line no job keeps true goes stale.
+  // Mirrors src/lib/super/pad.ts (padRolledOff, padStale, ownerLine): a new day drops an earlier
+  // day's Done line, his included (it is kept in its day); a line no job keeps true goes stale,
+  // never one he wrote himself.
   const day = new Date(now); day.setHours(0, 0, 0, 0);
   const dayStart = day.getTime();
   for (const p of state.pad ?? []) {
-    if (p.section === 'done' && p.by !== 'owner' && p.at < dayStart) continue;
-    const stale = (!p.for || p.by === 'owner') && now - p.at >= PAD_STALE_MS
+    if (p.section === 'done' && p.at < dayStart) continue;
+    const stale = p.author !== 'owner' && (!p.for || p.by === 'owner') && now - p.at >= PAD_STALE_MS
       && (p.section === 'now' || (p.section === 'waiting' && p.at < dayStart));
     out[p.section].push({
       key: `n:${p.id}`, section: p.section, text: p.text, note: p.id, at: p.at,

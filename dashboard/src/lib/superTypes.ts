@@ -824,7 +824,15 @@ export interface SuperPadItem {
   id: string; section: PadSection; text: string; at: number;
   /** The job (child session id) the line follows; `by` who last moved it when not the super. */
   for?: string; by?: 'auto' | 'owner'; why?: PadAutoWhy; toldAt?: number;
+  /** When it was first written (its day; absent = `at`), a Now line's stage, and `owner` when he
+   *  wrote it himself (MIRRORED from the server, `src/lib/super/types.ts`). */
+  bornAt?: number; stage?: PadStage; author?: 'owner';
 }
+export const PAD_STAGES = ['todo', 'almost'] as const;
+export type PadStage = typeof PAD_STAGES[number];
+/** The five statuses a line shows (MIRRORED from the server). */
+export const PAD_STATUSES = ['not-started', 'in-progress', 'almost-done', 'waiting', 'done'] as const;
+export type PadStatus = typeof PAD_STATUSES[number];
 export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;
 export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
 /** A Now line with no job behind it, unchanged this long, is stale (the card flags it). */
