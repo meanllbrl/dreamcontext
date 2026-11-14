@@ -22,11 +22,13 @@ import { scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { takeSuperReactionBlock, telegramReactionNotes } from '../../src/lib/telegram/reactions.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
+import { noteStageVerb } from '../../src/lib/super/stage-events.js';
 
 const TOKEN = '222222:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 const OWNER = 777;
 const SLUG = 'ua-manager';
 const MSID = '99999999-2222-4333-8444-555555555555';
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(80, 7)]);
 
 let home: string; let project: string; let root: string; let tg: FakeTelegram; let hub: TelegramHub;
 let births: string[];
@@ -53,6 +55,8 @@ beforeEach(async () => {
   mkdirSync(join(root, 'state'), { recursive: true });
   mkdirSync(join(root, 'agents'), { recursive: true });
   writeFileSync(join(root, 'agents', `${SLUG}.md`), '---\nname: UA\n---\n');
+  writeFileSync(join(project, 'a.png'), PNG);
+  writeFileSync(join(project, '.gitignore'), '');
   mkdirSync(join(home, '.dreamcontext'), { recursive: true });
   writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'acme', path: project }] }));
   reg._resetChatRegistry();
@@ -70,7 +74,7 @@ beforeEach(async () => {
       return { ok: true, superId: superIdOfMember(slug), session: state.session!, state, born: true };
     },
   });
-  wireTelegramW5(hub);
+  wireTelegramW5(hub, { settleMs: 5, isGitIgnored: () => false });
   await hub.start();
   const start = await hub.beginPairing({ scope: scopeOfContextRoot(root), target: SLUG, token: TOKEN, projectName: 'acme', contextRoot: root });
   await drained();
@@ -178,5 +182,19 @@ describe("a member's bot talks to the member's own Super", () => {
     await vi.waitFor(() => expect(reg.getChat(MSID)?.status).toBe('asking'));
     await quiet();
     expect(tg.texts().slice(n).filter((t) => t.includes('Hangisi'))).toEqual([]);
+  });
+
+  it("a picture the member's own Super opens on its stage reaches its bot (end review r1)", async () => {
+    const h = reg.registerChat({ sessionId: MSID, conversationId: null, vault: 'acme', mode: 'super' });
+    const { inj, sent } = fakeInjector();
+    reg.registerChatInjector(MSID, inj);
+    tg.push(TOKEN, textUpdate(OWNER, 'resmi göster'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    await writeSuper(root, superIdOfMember(SLUG), (s) => {
+      s.containers = [{ id: 'image-a', kind: 'image', ref: 'a.png', shape: 'square', place: 'main', title: 'Resim A' }] as never;
+    });
+    noteStageVerb({ vault: 'acme', contextRoot: root, sessionId: MSID, superId: superIdOfMember(SLUG), verb: 'open', ids: ['image-a'] });
+    h.observe({ type: 'result', subtype: 'success', is_error: false, parent_tool_use_id: null });
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true), { timeout: 5000 });
   });
 });

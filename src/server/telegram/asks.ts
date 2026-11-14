@@ -217,7 +217,8 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   // He turned away: every question still open on this Super goes (oldest first), each once; and
   // every child permission still open.
   const flush = async (ab: ActiveBinding): Promise<void> => {
-    if (!ab.contextRoot || !hub.ownerAway()) return;
+    // The main Super's queue, on the main Super's bot only (a member's bot never carries it, B2).
+    if (ab.target !== 'super' || !ab.contextRoot || !hub.ownerAway()) return;
     const s = await readSuperState(ab.contextRoot);
     if (!s.enabled || !s.session) return;
     offerOwnerItemsToTelegram(ab.projectName, s);

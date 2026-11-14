@@ -695,6 +695,23 @@ export class TelegramHub implements TelegramHubApi {
     return { root, id: ab.target === 'super' ? 'main' : superIdOfMember(ab.target) };
   }
 
+  /** The live binding whose bot talks to this Super (`vault`'s main, or a member's own), or null.
+   *  The chat's own mapping first; else the bindings, by the Super they talk to and its project. */
+  bindingOfSuper(vault: string, id: SuperId, sessionId?: string): ActiveBinding | null {
+    if (sessionId) {
+      const ab = this.bindingOfSession(sessionId);
+      if (ab && !ab.disabled && this.superOf(ab)?.id === id) return ab;
+    }
+    let vroot: string | null = null;
+    try { const v = listVaults(this.home).find((x) => x.name === vault); vroot = v ? join(v.path, '_dream_context') : null; } catch { vroot = null; }
+    for (const ab of this.active.values()) {
+      if (ab.disabled) continue;
+      const b = this.superOf(ab);
+      if (b && b.id === id && (ab.projectName === vault || (vroot !== null && b.root === vroot))) return ab;
+    }
+    return null;
+  }
+
   /** The bound Super's record, or null (no project, unreadable). A member's unborn Super reads empty. */
   async readBound(ab: ActiveBinding): Promise<SuperState | null> {
     const b = this.superOf(ab);
