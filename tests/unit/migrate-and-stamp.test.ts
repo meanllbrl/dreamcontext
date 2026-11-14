@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -238,5 +238,83 @@ describe('setupVersion write discipline', () => {
   it('init remains the documented exception (fresh vault, nothing to migrate)', () => {
     const src = readFileSync(join(process.cwd(), 'src/cli/commands/init.ts'), 'utf-8');
     expect(src).toMatch(/setupVersion\s*:\s*dreamcontextVersion\(\)/);
+  });
+});
+
+// ─── C12: a brain a newer (Beta) CLI set up, opened by an older (stable) one ──────
+
+describe('migrateThenStampSetupVersion — never lowers setupVersion (plan npmsiz-beta C12)', () => {
+  const roots: string[] = [];
+  afterEach(() => { while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
+
+  /** Every file under the brain, path → bytes. */
+  function snapshot(root: string): Map<string, string> {
+    const out = new Map<string, string>();
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) walk(p); else out.set(p.slice(root.length), readFileSync(p, 'utf-8'));
+      }
+    };
+    walk(root);
+    return out;
+  }
+
+  it('a brain migrated by N+1, then opened by N: keeps N+1\'s setupVersion and changes no file', async () => {
+    const root = makeLegacyVault('99.0.0');
+    roots.push(root);
+    // N+1 wrote keys and values this CLI does not know.
+    const cfgPath = join(root, '_dream_context', 'state', '.config.json');
+    writeFileSync(cfgPath, JSON.stringify({ setupVersion: '99.0.0', platforms: ['claude'], futureKey: { a: 1 }, taskBackend: 'linear' }, null, 2), 'utf-8');
+    const before = snapshot(root);
+
+    const result = migrateThenStampSetupVersion(root);
+
+    expect(result.fromVersion).toBe('99.0.0');
+    expect(result.stamped).toBe('99.0.0');
+    expect(readSetupConfig(root)?.setupVersion).toBe('99.0.0');
+    // No range step ran: only this CLI's own idempotent `everyRun` repairs, which exist to run on
+    // a brain above the CLI (src/migrations/0.32.0.ts says why). Nothing else is N's to touch.
+    const { REGISTRY } = await import('../../src/migrations/index.js');
+    const everyRun = new Set(REGISTRY.filter((m) => m.everyRun).map((m) => m.version));
+    for (const id of result.appliedCodeSteps) expect(everyRun.has(id.split('/')[0]), id).toBe(true);
+    // The shared config, byte for byte: N+1's keys and values this CLI does not know survive.
+    const after = snapshot(root);
+    const cfgRel = cfgPath.slice(root.length);
+    expect(after.get(cfgRel)).toBe(before.get(cfgRel));
+
+    // The snapshot's note reads as harmless (no "upgrade", no instruction).
+    const { buildDriftDirective } = await import('../../src/lib/setup-drift.js');
+    const note = buildDriftDirective({ cliVersion: dreamcontextVersion(), setupVersion: '99.0.0' }) ?? '';
+    expect(note).toMatch(/newer dreamcontext \(v99\.0\.0\)/);
+    expect(note).toMatch(/nothing needs to be done/);
+    expect(note).not.toMatch(/unusual|consider upgrading|Action required|Run `dreamcontext/);
+  });
+
+  it('on a newer brain the caller\'s own keys are still written, every unknown key kept', () => {
+    const root = makeLegacyVault('99.0.0');
+    roots.push(root);
+    const cfgPath = join(root, '_dream_context', 'state', '.config.json');
+    writeFileSync(cfgPath, JSON.stringify({ setupVersion: '99.0.0', platforms: [], futureKey: 'kept' }), 'utf-8');
+    migrateThenStampSetupVersion(root, { platforms: ['claude'] });
+    const raw = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+    expect(raw).toMatchObject({ setupVersion: '99.0.0', platforms: ['claude'], futureKey: 'kept' });
+  });
+
+  // Edge-case review W1 r1 (Minor): only keys this CLI does not model are copied back; one it
+  // models but rejects is dropped, so a malformed linkedRepos entry's local path never stays in
+  // the shared file.
+  it('a key this CLI models but reads as malformed is dropped on rewrite, never copied back raw', () => {
+    const root = makeLegacyVault('99.0.0');
+    roots.push(root);
+    const cfgPath = join(root, '_dream_context', 'state', '.config.json');
+    writeFileSync(cfgPath, JSON.stringify({
+      setupVersion: '99.0.0', platforms: [], futureKey: 'kept',
+      linkedRepos: [{ name: 'example-app', path: '/Users/example-user/code/example-app' }],
+    }), 'utf-8');
+    migrateThenStampSetupVersion(root, { platforms: ['claude'] });
+    const text = readFileSync(cfgPath, 'utf-8');
+    expect(JSON.parse(text)).toMatchObject({ futureKey: 'kept', platforms: ['claude'] });
+    expect(text).not.toContain('/Users/example-user');
   });
 });

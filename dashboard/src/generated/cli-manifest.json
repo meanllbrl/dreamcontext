@@ -151,6 +151,13 @@
       ]
     },
     {
+      "path": "app channel",
+      "desc": "Choose the desktop app's update channel: stable (default) or beta (new features first). Leaving beta never downgrades.",
+      "args": [
+        "[channel]"
+      ]
+    },
+    {
       "path": "app install",
       "desc": "Install the desktop app (no quarantine, no admin)",
       "args": [],

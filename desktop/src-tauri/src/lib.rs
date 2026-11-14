@@ -862,6 +862,9 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         // this shell's bundle id, stamped into every app bundle and desktop-server.json.
         .envs(app_runner_path().map(|p| ("DREAMCONTEXT_APP_RUNNER".to_string(), p)))
         .env("DREAMCONTEXT_APP_BUNDLE_ID", &app.config().identifier)
+        // The running app's own version: Settings → "Beta programı" says the build in place
+        // stays until stable passes it (src/server/routes/launcher.ts `updateChannelView`).
+        .env("DREAMCONTEXT_APP_VERSION", app.package_info().version.to_string())
         .stdin(Stdio::piped())
         // The global CLI install the server's self-update upgrades (src/lib/self-update.ts),
         // also when the bundled copy is the one running. Absent = no global CLI found.

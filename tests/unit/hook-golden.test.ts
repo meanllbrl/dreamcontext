@@ -13,6 +13,8 @@
  * `## Marketing` state (8 lines), which the snapshot now omits until the surface holds something.
  * The fixture's context sits over the handoff threshold, so the nudge path (`maybeNudge`, which
  * W1 extended with `context_tokens`) is in the output.
+ * 2026-11-14 (npmsiz-beta C12c) reworded exactly the downgrade note, so a stable teammate opening a
+ * brain a Beta build set up reads it as harmless.
  *
  * The CLI version line is compared against package.json's version, not the version frozen in the
  * fixture (Super decision 2026-11-07, test receipts): a release bump no longer edits this fixture,
@@ -28,10 +30,10 @@ import { describe, expect, it } from 'vitest';
 const ROOT = join(__dirname, '../..');
 const CLI = join(ROOT, 'dist', 'index.js');
 const GOLDEN = join(ROOT, 'tests/fixtures/hook-golden');
-const VERSION_LINE = /(The CLI version \(v)[^)]+\)/g;
+const VERSION_LINE = /(; this one is v)\d+\.\d+\.\d+/g;
 const VERSION = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8')) as { version: string }).version;
 /** A golden file as today's build must print it: the CLI's version is package.json's. */
-const expected = (f: string) => readFileSync(join(GOLDEN, f), 'utf-8').replace(VERSION_LINE, `$1${VERSION})`);
+const expected = (f: string) => readFileSync(join(GOLDEN, f), 'utf-8').replace(VERSION_LINE, `$1${VERSION}`);
 
 describe('Claude hook output (golden, wave base)', () => {
   it.skipIf(!existsSync(CLI))('every hook prints exactly what the base printed', () => {

@@ -2239,6 +2239,12 @@ const translations: Record<string, Record<string, string>> = {
     'settings.selfUpdate.status.failed': 'Could not update {installed} → {latest} ({when}); it tries again in a day.',
     'settings.selfUpdate.status.unknown': 'Could not check for a new version ({when}).',
     'settings.selfUpdate.status.log': 'Details: {path}',
+    'settings.beta.label': 'Beta program',
+    'settings.beta.hint': 'New versions reach you before everyone else. One may still have a rough edge.',
+    'settings.beta.status.on': 'On: the app updates from beta releases.',
+    'settings.beta.status.off': 'Off: the app updates from stable releases.',
+    'settings.beta.status.stays': 'Off. This version ({installed}) stays until a stable release passes it; nothing is downgraded.',
+    'settings.beta.status.desktopOnly': 'Switch it in the dreamcontext app.',
 
     'settings.github.account.title': 'Account',
     'settings.github.sync.title': 'Project sync',
@@ -5023,6 +5029,12 @@ const translations: Record<string, Record<string, string>> = {
  * so a half-translated locale can never put `nav.tasks` on screen.
  */
 const TR_PARTIAL: Record<string, string> = {
+  'settings.beta.label': 'Beta programı',
+  'settings.beta.hint': 'Yeni sürümler sana herkesten önce gelir. Pürüzlü bir yeri çıkabilir.',
+  'settings.beta.status.on': 'Açık: uygulama beta sürümlerinden güncellenir.',
+  'settings.beta.status.off': 'Kapalı: uygulama kararlı sürümlerden güncellenir.',
+  'settings.beta.status.stays': 'Kapalı. Bu sürüm ({installed}), kararlı bir sürüm onu geçene kadar kalır; hiçbir şey eski sürüme dönmez.',
+  'settings.beta.status.desktopOnly': 'Bunu dreamcontext uygulamasından açıp kapatırsın.',
   'nav.apps': 'Uygulamalar',
   'apps.lede': 'Bu projeye ait app\'ler. Her biri kendi Mac penceresinde açılır ve dreamcontext\'i kullanır: insight\'lar, görevler, AI Team ve MCP\'lerin.',
   'apps.loading': 'App\'ler yükleniyor…',

@@ -61,7 +61,10 @@ import { sanitizeModel, sanitizeEffort } from './agent-spawn-shared.js';
 import { ApiError } from '../../lib/task-backend/api-adapter.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
-import { readAppManifest } from '../../cli/commands/app.js';
+import { fetchLatestRelease, readAppManifest, versionFromTag } from '../../cli/commands/app.js';
+import { isUpdateChannel, readUpdateChannel, setUpdateChannel } from '../../lib/update-channel.js';
+import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
+import { requireLocalDesktop } from './agent-spawn-shared.js';
 import { getUpgradeRun, startUpgradeRun } from '../upgrade-job.js';
 import { acquireProjectUpdatesLock, readProjectUpdatesRecord, releaseProjectUpdatesLock, type ProjectIssue, type ProjectUpdatesRecord } from '../../lib/project-catch-up.js';
 import { readSelfUpdateRecord, selfUpdateDisabledBy, selfUpdateLogPath, selfUpdateMarkerOff, setSelfUpdateEnabled } from '../../lib/self-update.js';
@@ -1941,6 +1944,93 @@ export async function handleLauncherSelfUpdatePost(
   }
   setSelfUpdateEnabled(body.enabled);
   sendJson(res, 200, selfUpdateView());
+}
+
+// ─── Update channel (Settings → This machine → "Beta programı", plan npmsiz-beta C10) ──────
+
+const SEMVER = /^\d+\.\d+\.\d+$/;
+/** The newest stable release's version, asked of GitHub at most every 6 h; a failed or empty
+ *  answer (null = not known) is asked again after 5 min, so one offline moment does not hide the
+ *  "stays until stable catches up" line for 6 h. */
+let stableCache: { version: string | null; at: number } | null = null;
+let stableInFlight: Promise<void> | null = null;
+const STABLE_TTL_MS = 6 * 60 * 60_000;
+const STABLE_RETRY_MS = 5 * 60_000;
+const STABLE_WAIT_MS = 3_000;
+
+/** Tests only: forget the cached stable version. */
+export function resetStableVersionCache(): void { stableCache = null; stableInFlight = null; }
+
+async function latestStableVersion(fetchRelease: () => Promise<{ tag_name: string } | null>): Promise<string | null> {
+  if (stableCache && Date.now() - stableCache.at < (stableCache.version ? STABLE_TTL_MS : STABLE_RETRY_MS)) return stableCache.version;
+  stableInFlight ??= fetchRelease()
+    .then((r) => { const v = r ? versionFromTag(r.tag_name) : null; stableCache = { version: v && SEMVER.test(v) ? v : null, at: Date.now() }; })
+    .catch(() => { stableCache = { version: null, at: Date.now() }; })
+    .finally(() => { stableInFlight = null; });
+  // The Settings row never waits on a slow network: the line fills in on the next poll.
+  await Promise.race([stableInFlight, new Promise((r) => setTimeout(r, STABLE_WAIT_MS))]);
+  return stableCache?.version ?? null;
+}
+
+/** The running app's version: the shell says it; else the CLI-installed app's manifest. */
+function runningAppVersion(env: NodeJS.ProcessEnv = process.env, home?: string): string | null {
+  const v = env.DREAMCONTEXT_APP_VERSION ?? readAppManifest(home)?.version ?? null;
+  return v && SEMVER.test(v) ? v : null;
+}
+
+/** What the Beta row shows: the channel, and whether the build in place stays until stable passes it. */
+export async function updateChannelView(opts: {
+  home?: string; env?: NodeJS.ProcessEnv; fetchRelease?: () => Promise<{ tag_name: string } | null>;
+} = {}): Promise<Record<string, unknown>> {
+  const env = opts.env ?? process.env;
+  const channel = readUpdateChannel(opts.home);
+  const appVersion = runningAppVersion(env, opts.home);
+  // Only off Beta does the stable version matter: it says why nothing installs yet.
+  const stableVersion = channel === 'stable' && appVersion
+    ? await latestStableVersion(opts.fetchRelease ?? (() => fetchLatestRelease()))
+    : null;
+  const staysUntilStable = !!(appVersion && stableVersion && compareVersions(appVersion, stableVersion) > 0);
+  return { channel, appVersion, stableVersion, staysUntilStable, desktop: env.DREAMCONTEXT_DESKTOP === '1' };
+}
+
+/** GET /api/launcher/update-channel — the Beta switch and what it means right now. Read-only. */
+export async function handleLauncherUpdateChannelGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  sendJson(res, 200, await updateChannelView());
+}
+
+/**
+ * POST /api/launcher/update-channel `{ channel: "stable" | "beta" }` — the owner's own click in
+ * the desktop app only (`fromOwnerPage`: the shell's owner key). A loopback `curl` from an agent
+ * passes the CSRF guard (no Origin), so without the key it could move the Mac to Beta.
+ */
+export async function handleLauncherUpdateChannelPost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  if (!requireLocalDesktop(req, res)) return;
+  if (!fromOwnerPage(req)) {
+    sendError(res, 403, 'owner_page_only', ownerRefusalMessage(req, 'Only your own click in the dreamcontext app can change the update channel.'));
+    return;
+  }
+  const body = await parseJsonBody(req);
+  if (!body || typeof body !== 'object' || Object.keys(body).length !== 1 || !isUpdateChannel(body.channel)) {
+    sendError(res, 400, 'invalid_body', '`channel` must be "stable" or "beta".');
+    return;
+  }
+  try {
+    setUpdateChannel(body.channel);
+  } catch (e) {
+    sendError(res, 409, 'not_written', (e as Error).message);
+    return;
+  }
+  sendJson(res, 200, await updateChannelView());
 }
 
 /**

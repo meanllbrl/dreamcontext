@@ -77,6 +77,8 @@ import {
   handleLauncherUpgrade,
   handleLauncherUpgradeStatus,
   handleLauncherSelfUpdateGet,
+  handleLauncherUpdateChannelGet,
+  handleLauncherUpdateChannelPost,
   handleLauncherSelfUpdatePost,
   handleLauncherRelaunch,
   handleLauncherFederationGraph,
@@ -718,6 +720,8 @@ export function buildRouter(): Router {
   router.get('/api/launcher/upgrade/status', handleLauncherUpgradeStatus);
   router.get('/api/launcher/self-update', handleLauncherSelfUpdateGet);
   router.post('/api/launcher/self-update', handleLauncherSelfUpdatePost);
+  router.get('/api/launcher/update-channel', handleLauncherUpdateChannelGet);
+  router.post('/api/launcher/update-channel', handleLauncherUpdateChannelPost);
   router.post('/api/launcher/relaunch', handleLauncherRelaunch);
   router.get('/api/launcher/federation-graph', handleLauncherFederationGraph);
   router.post('/api/launcher/connection', handleLauncherConnectionCreate);

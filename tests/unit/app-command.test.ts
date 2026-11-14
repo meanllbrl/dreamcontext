@@ -236,8 +236,13 @@ describe('maybeTriggerAppUpdate', () => {
 
 // ─── downloadLatestArtifact: checksum is mandatory (supply-chain) ──────────────
 
-describe.skipIf(process.arch !== 'arm64')('downloadLatestArtifact checksum enforcement', () => {
-  const tarball = Buffer.from('fake-app-tarball-bytes');
+describe('downloadLatestArtifact: checksum and signature are mandatory', () => {
+  // A payload `tauri signer sign` signed with a throwaway key (tests/fixtures/release-updater-sig).
+  const FIX = join(__dirname, '..', 'fixtures', 'release-updater-sig');
+  const tarball = readFileSync(join(FIX, 'example-setup.exe'));
+  const sig = readFileSync(join(FIX, 'example-setup.exe.sig'), 'utf-8');
+  const pubkey = readFileSync(join(FIX, 'throwaway.key.pub'), 'utf-8');
+  const platform = { os: 'darwin', arch: 'aarch64' } as const;
   const assetName = 'dreamcontext-beta_0.9.0_aarch64.app.tar.gz';
   const goodSum = createHash('sha256').update(tarball).digest('hex');
 
@@ -263,24 +268,43 @@ describe.skipIf(process.arch !== 'arm64')('downloadLatestArtifact checksum enfor
   }
 
   it('REFUSES to install when no .sha256 asset is present', async () => {
-    const fetchImpl = mockFetch([{ name: assetName, body: tarball }]);
-    await expect(downloadLatestArtifact('owner/repo', fetchImpl)).rejects.toThrow(/missing.*sha256|unverified/i);
+    const fetchImpl = mockFetch([{ name: assetName, body: tarball }, { name: `${assetName}.sig`, body: sig }]);
+    await expect(downloadLatestArtifact('owner/repo', fetchImpl, { pubkey, platform })).rejects.toThrow(/missing.*sha256|unverified/i);
   });
 
   it('REJECTS on checksum mismatch', async () => {
     const fetchImpl = mockFetch([
       { name: assetName, body: tarball },
       { name: `${assetName}.sha256`, body: 'deadbeef  ' + assetName },
+      { name: `${assetName}.sig`, body: sig },
     ]);
-    await expect(downloadLatestArtifact('owner/repo', fetchImpl)).rejects.toThrow(/mismatch/i);
+    await expect(downloadLatestArtifact('owner/repo', fetchImpl, { pubkey, platform })).rejects.toThrow(/mismatch/i);
   });
 
-  it('accepts a matching checksum', async () => {
+  it('REFUSES a matching checksum with no .sig (C10)', async () => {
     const fetchImpl = mockFetch([
       { name: assetName, body: tarball },
       { name: `${assetName}.sha256`, body: `${goodSum}  ${assetName}` },
     ]);
-    const dl = await downloadLatestArtifact('owner/repo', fetchImpl);
+    await expect(downloadLatestArtifact('owner/repo', fetchImpl, { pubkey, platform })).rejects.toThrow(/missing.*\.sig/);
+  });
+
+  it('REFUSES a matching checksum whose .sig another key made (the app key refuses the throwaway one)', async () => {
+    const fetchImpl = mockFetch([
+      { name: assetName, body: tarball },
+      { name: `${assetName}.sha256`, body: `${goodSum}  ${assetName}` },
+      { name: `${assetName}.sig`, body: sig },
+    ]);
+    await expect(downloadLatestArtifact('owner/repo', fetchImpl, { platform })).rejects.toThrow(/not signed by the dreamcontext updater key/);
+  });
+
+  it('accepts a matching checksum and a .sig the trusted key made', async () => {
+    const fetchImpl = mockFetch([
+      { name: assetName, body: tarball },
+      { name: `${assetName}.sha256`, body: `${goodSum}  ${assetName}` },
+      { name: `${assetName}.sig`, body: sig },
+    ]);
+    const dl = await downloadLatestArtifact('owner/repo', fetchImpl, { pubkey, platform });
     expect(dl?.version).toBe('0.9.0');
     expect(dl?.archivePath.endsWith(assetName)).toBe(true);
     if (dl) rmSync(join(dl.archivePath, '..'), { recursive: true, force: true });

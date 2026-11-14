@@ -232,6 +232,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/launcher/upgrade/status': deny(INSTALL),
   'GET /api/launcher/self-update': deny(INSTALL),
   'POST /api/launcher/self-update': deny(INSTALL),
+  'GET /api/launcher/update-channel': deny(INSTALL),
+  'POST /api/launcher/update-channel': deny(INSTALL),
   'POST /api/launcher/relaunch': deny(LAUNCHER),
   'GET /api/launcher/federation-graph': deny(OTHER_PROJECTS),
   'POST /api/launcher/connection': deny(OTHER_PROJECTS),

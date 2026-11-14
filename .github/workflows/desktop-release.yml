@@ -37,6 +37,21 @@ name: desktop-release
 # a browser-downloaded copy; and the app can update itself without the CLI. Moving from the
 # self-signed certificate to Developer ID changes the identity ONCE: every user re-grants once.
 #
+# CHANNELS (plan npmsiz-beta C10). One app, two update feeds, plain versions (never -beta.N).
+# A release is beta or stable by its GitHub prerelease flag alone:
+#   stable (workflow_dispatch channel: stable) a normal release, marked latest: the stable feed
+#                                            /releases/latest/download/latest.json moves to it.
+#   beta   (workflow_dispatch channel: beta) a PRERELEASE, never marked latest: stable users never
+#                                            see it. It carries its own latest.json like any release.
+# Every publish also rewrites beta.json on the `channel-beta` prerelease (created once, never
+# latest) to the NEWER of beta and stable: the feed the app's "Beta programı" switch reads. A beta
+# publish fails while a brain migration above the current stable is in the registry, unless
+# `allow-migration-in-beta` is set (C12a). PROMOTE (workflow_dispatch promote: true, from the tag
+# ref) re-verifies every signature and latest.json of an existing beta release, then flips its
+# prerelease flag and marks it latest: the same signed bytes become stable. Every build job first
+# refuses a test feed setting (scripts/check-release-settings.mjs). `publish` and `promote` are
+# the only jobs with a write token, both in the tag-only `release` environment.
+#
 # Secrets (all in the tag-only `release` environment; the repo is public, so no branch
 # workflow or fork PR may read them):
 #   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12 (key + cert)
@@ -45,27 +60,50 @@ name: desktop-release
 #   TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)  the updater's minisign key
 # Variables: APPLE_SIGNING_IDENTITY (the identity's SHA-1), APPLE_TEAM_ID.
 
+# No `push: tags` trigger: a tag push used to mean "publish stable", so the tag a beta needs
+# (the `release` environment admits tags only) would also have started a stable publish of the
+# same build. Every run is a dispatch that names its channel; pushing a tag publishes nothing:
+#   gh workflow run desktop-release.yml --ref v<ver> -f tag=v<ver> -f channel=stable|beta
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build/publish (e.g. v0.8.0)'
+        description: 'Release tag to build/publish (e.g. v0.8.0); dispatch from that same tag ref'
         required: true
       dry_run:
         description: 'Dry run: build both platforms, keep latest.json as an artifact, publish nothing'
+        type: boolean
+        default: false
+      channel:
+        description: 'Update channel: stable (a normal release, marked latest) or beta (a prerelease, never latest). Required: no default.'
+        type: choice
+        required: true
+        options: [beta, stable]
+      allow-migration-in-beta:
+        description: 'Beta only: publish even though a brain migration above the current stable is in the registry (say so in the release notes)'
+        type: boolean
+        default: false
+      promote:
+        description: 'Promote the existing beta release `tag` to stable (same signed bytes): no build'
         type: boolean
         default: false
 
 permissions:
   contents: read # only `publish` gets a write token
 
+# One publish or promote at a time: `assemble` reads beta.json and `publish` writes it, and
+# `releases/latest` is checked before it moves, so two runs must never interleave. A run waits
+# for the one in progress (never cancels it); GitHub keeps one waiting run, so a third dispatch
+# replaces a waiting one, which then shows as cancelled. Dry runs publish nothing and never wait.
+concurrency:
+  group: desktop-release-${{ inputs.dry_run && github.run_id || 'publish' }}
+  cancel-in-progress: false
+
 jobs:
   build-macos:
     # macos-15 is Apple Silicon → produces an aarch64 .app. Add an x86_64 matrix
     # leg later for Intel; the client picks the arch-matching asset by name.
+    if: ${{ !inputs.promote }}
     runs-on: macos-15
     # The signing secrets live in this environment, which only `v*` TAGS may deploy to:
     # a workflow pushed on any branch cannot read them. Dispatch from a tag ref, not main.
@@ -75,6 +113,7 @@ jobs:
     outputs:
       tag: ${{ steps.ver.outputs.tag }}
       version: ${{ steps.ver.outputs.version }}
+      channel: ${{ steps.ver.outputs.channel }}
     env:
       ARCH: aarch64
       DRY_RUN: ${{ inputs.dry_run == true }}
@@ -87,22 +126,30 @@ jobs:
         # inline expression would be pasted into this script before bash ever saw it), and
         # only a plain vX.Y.Z passes, before it is used anywhere or printed.
         env:
-          EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_CHANNEL: ${{ github.event.inputs.channel }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            TAG="$INPUT_TAG"
-          else
-            TAG="$GITHUB_REF_NAME"
-          fi
+          TAG="$INPUT_TAG"
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::The release tag must be a plain vX.Y.Z (e.g. v0.32.0)."
+            exit 1
+          fi
+          # A release builds the tree its tag names: dispatched from that tag ref, nothing else.
+          if [ "$DRY_RUN" != true ] && { [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "$TAG" ]; }; then
+            echo "::error::Dispatch a release from the tag ref it publishes (--ref $TAG), not $GITHUB_REF_TYPE $GITHUB_REF_NAME."
+            exit 1
+          fi
+          # The channel is always named (no default, no tag-push run): only the two names pass.
+          CHANNEL="$INPUT_CHANNEL"
+          if [ "$CHANNEL" != stable ] && [ "$CHANNEL" != beta ]; then
+            echo "::error::The channel must be stable or beta (got '$CHANNEL')."
             exit 1
           fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Resolved tag=$TAG version=$VERSION"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG version=$VERSION channel=$CHANNEL"
 
       - name: Refuse a tag the sources do not carry
         # The version surfaces move together (release-publish-checklist). A tag cut from a tree
@@ -131,6 +178,31 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+
+      - name: Refuse a test feed setting (C10)
+        # A test build points the updater at a loopback feed with `--config` and a compile-time
+        # DREAMCONTEXT_TEST_BETA_URL; a published app must carry neither. The --config below is
+        # the one this job's build passes.
+        run: node scripts/check-release-settings.mjs '{"bundle":{"createUpdaterArtifacts":true}}'
+
+      - name: Beta brain safety — no migration above stable (C12a)
+        if: ${{ steps.ver.outputs.channel == 'beta' }}
+        # A beta build carrying a brain migration the current stable does not know would rewrite a
+        # teammate's shared brain into a shape their stable CLI cannot read. Owner opt-in only.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALLOW: ${{ inputs.allow-migration-in-beta == true }}
+        run: |
+          STABLE_TAG="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest" | jq -r .tag_name)"
+          if ! [[ "$STABLE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Could not read the current stable release (got '$STABLE_TAG'); a beta needs one to compare against."
+            exit 1
+          fi
+          if [ "$ALLOW" = true ]; then
+            node scripts/check-migration-channel.mjs --stable "${STABLE_TAG#v}" --allow
+          else
+            node scripts/check-migration-channel.mjs --stable "${STABLE_TAG#v}"
+          fi
 
       - name: Cache cargo build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -326,6 +398,7 @@ jobs:
     # the updater's minisign key, so this job takes the `release` environment for that one
     # secret. It reads no Apple secret, has no write token, and hands the installer to
     # `assemble` as an artifact. Builds in parallel with build-macos.
+    if: ${{ !inputs.promote }}
     runs-on: windows-latest
     environment: ${{ !inputs.dry_run && 'release' || '' }}
     permissions:
@@ -343,22 +416,30 @@ jobs:
         # Same rule as build-macos: the dispatch input reaches the shell through env only, and
         # only a plain vX.Y.Z passes.
         env:
-          EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_CHANNEL: ${{ github.event.inputs.channel }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            TAG="$INPUT_TAG"
-          else
-            TAG="$GITHUB_REF_NAME"
-          fi
+          TAG="$INPUT_TAG"
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::The release tag must be a plain vX.Y.Z (e.g. v0.32.0)."
+            exit 1
+          fi
+          # A release builds the tree its tag names: dispatched from that tag ref, nothing else.
+          if [ "$DRY_RUN" != true ] && { [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "$TAG" ]; }; then
+            echo "::error::Dispatch a release from the tag ref it publishes (--ref $TAG), not $GITHUB_REF_TYPE $GITHUB_REF_NAME."
+            exit 1
+          fi
+          # The channel is always named (no default, no tag-push run): only the two names pass.
+          CHANNEL="$INPUT_CHANNEL"
+          if [ "$CHANNEL" != stable ] && [ "$CHANNEL" != beta ]; then
+            echo "::error::The channel must be stable or beta (got '$CHANNEL')."
             exit 1
           fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Resolved tag=$TAG version=$VERSION"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG version=$VERSION channel=$CHANNEL"
 
       - name: Refuse a tag the sources do not carry
         # The installer's file name, About box and bundled CLI must agree with the tag (the
@@ -379,6 +460,10 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+
+      - name: Refuse a test feed setting (C10)
+        # The same check as build-macos, with the --config this job's build passes.
+        run: node scripts/check-release-settings.mjs '{"bundle":{"createUpdaterArtifacts":true}}'
 
       - name: Cache cargo build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -492,15 +577,20 @@ jobs:
           name: windows-release
           path: dist-release
 
-      - name: Verify checksums, check signatures, write latest.json
+      - name: Verify checksums, check signatures, write latest.json and beta.json
         id: merge
         env:
           VERSION: ${{ needs.build-macos.outputs.version }}
+          CHANNEL: ${{ needs.build-macos.outputs.channel }}
           WINDOWS_RESULT: ${{ needs.build-windows.result }}
           DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
           cd dist-release
           for f in *.sha256; do sha256sum -c "$f"; done
+          # The beta feed published today (a 404 = none yet, this release starts it; any other
+          # failure fails the run). beta.json becomes the newer of it and this release's
+          # latest.json, whichever channel this is.
+          node ../scripts/release-latest-json.mjs fetch-feed "https://github.com/${GITHUB_REPOSITORY}/releases/download/channel-beta/beta.json" current-beta.json
           if [ "$WINDOWS_RESULT" = success ]; then
             echo "windows=true" >> "$GITHUB_OUTPUT"
           else
@@ -508,10 +598,10 @@ jobs:
             echo "::warning::build-windows did not succeed ($WINDOWS_RESULT): latest.json carries the Mac entry only. Re-run the failed jobs to add Windows to this release."
           fi
           if [ "$DRY_RUN" = true ]; then MODE=--dry-run; else MODE=; fi
-          node ../scripts/release-latest-json.mjs "$VERSION" . $MODE > latest.json
-          rm platform-*.json
+          node ../scripts/release-latest-json.mjs "$VERSION" . $MODE --channel "$CHANNEL" > latest.json
+          rm -f platform-*.json current-beta.json
           cat latest.json
-          { echo '### latest.json'; echo '```json'; cat latest.json; echo '```'; echo; ls -la; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### $CHANNEL release"; echo '### latest.json'; echo '```json'; cat latest.json; echo '```'; echo '### beta.json'; echo '```json'; cat beta.json; echo '```'; echo; ls -la; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -559,14 +649,126 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: src
+
+      - name: Gate - releases/latest only moves forward
+        # THE one gate of every publish (release-latest-json.mjs checkPublish): a stable tag must be
+        # newer than releases/latest (the same tag passes: a re-run adding Windows); a beta never
+        # publishes over an existing normal release (a prerelease over it would take it off latest
+        # and move the stable feed back). Nothing is written before it passes.
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build-macos.outputs.tag }}
+          CHANNEL: ${{ needs.build-macos.outputs.channel }}
+        # An assignment, never `echo "...$(gate)"`: inside another command's arguments a refusal's
+        # exit code is lost and the step would go on to publish (W1 review r3).
+        run: |
+          BEFORE="$(node src/scripts/release-latest-json.mjs gate "$CHANNEL" "$TAG")"
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
+
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ needs.build-macos.outputs.tag }}
-          name: dreamcontext-beta ${{ needs.build-macos.outputs.version }}
-          # Must be a non-draft, non-prerelease so /releases/latest (the CLI's
-          # downloadLatestArtifact, the in-app updater's latest.json, the DMG link) finds it.
+          name: dreamcontext-beta ${{ needs.build-macos.outputs.version }}${{ needs.build-macos.outputs.channel == 'beta' && ' (beta)' || '' }}
+          # Stable: a non-draft, non-prerelease release marked latest, so /releases/latest (the
+          # CLI's downloadLatestArtifact, the in-app updater's latest.json, the DMG link) finds it.
+          # Beta: a prerelease never marked latest, so no stable user is offered it.
           draft: false
-          prerelease: false
+          prerelease: ${{ needs.build-macos.outputs.channel == 'beta' }}
+          make_latest: ${{ needs.build-macos.outputs.channel == 'beta' && 'false' || 'true' }}
           fail_on_unmatched_files: true
           files: ${{ steps.files.outputs.list }}
+
+      - name: Rewrite beta.json on the channel-beta prerelease
+        # The Beta switch's feed: created once as a prerelease that is never marked latest, then
+        # beta.json is replaced on every publish (assemble chose the newer of beta and stable).
+        # Should this step fail, the beta feed stays one release behind; the app checks again 6 h later.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="$GITHUB_REPOSITORY"
+          if ! gh release view channel-beta -R "$R" >/dev/null 2>&1; then
+            gh release create channel-beta -R "$R" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title 'dreamcontext beta channel' \
+              --notes 'The feed the app reads when Settings → Beta programı is on. Not a release: beta.json names the newest beta or stable build.'
+          fi
+          gh release upload channel-beta dist-release/beta.json --clobber -R "$R"
+
+      - name: Check where each feed points
+        # Stable: releases/latest IS this tag. Beta: releases/latest did not move. Either way the
+        # channel-beta release is a prerelease (so never latest) and the tag's flag matches its channel.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build-macos.outputs.tag }}
+          CHANNEL: ${{ needs.build-macos.outputs.channel }}
+          BEFORE: ${{ steps.gate.outputs.before }}
+        run: |
+          R="$GITHUB_REPOSITORY"
+          # Stable: latest IS this tag. Beta: latest is exactly what it was before this run.
+          node src/scripts/release-latest-json.mjs latest-after "$CHANNEL" "$TAG" "$BEFORE"
+          [ "$(gh release view channel-beta -R "$R" --json isPrerelease --jq .isPrerelease)" = true ] || { echo "::error::channel-beta is not a prerelease"; exit 1; }
+          [ "$(gh release view "$TAG" -R "$R" --json isPrerelease --jq .isPrerelease)" = "$([ "$CHANNEL" = beta ] && echo true || echo false)" ] || { echo "::error::$TAG's prerelease flag does not match its channel"; exit 1; }
+
+  promote:
+    # Beta → stable on the SAME signed bytes: no build. Re-verifies the release is whole (its
+    # latest.json names the tag, every platform asset is there and its signature verifies against
+    # the pubkey installed apps trust), then flips the prerelease flag and marks it latest. Run
+    # from the tag ref: the `release` environment admits tags only.
+    if: ${{ inputs.promote && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve the tag
+        id: ver
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if ! [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The release tag must be a plain vX.Y.Z (e.g. v0.32.0)."
+            exit 1
+          fi
+          echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify every asset of the beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          R="$GITHUB_REPOSITORY"
+          # The same gate as publish: only a prerelease, strictly newer than releases/latest.
+          node scripts/release-latest-json.mjs gate promote "$TAG" > before.txt
+          mkdir -p dist-release
+          gh release download "$TAG" -R "$R" -D dist-release
+          ( cd dist-release && for f in *.sha256; do sha256sum -c "$f"; done )
+          node scripts/release-latest-json.mjs verify "$TAG" dist-release
+
+      - name: Mark it stable and latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          R="$GITHUB_REPOSITORY"
+          # Re-checked right before the flip (nothing else runs meanwhile: one concurrency group).
+          node scripts/release-latest-json.mjs gate promote "$TAG" > before.txt
+          # beta.json stays the newer of beta and stable. Read and written BEFORE the flip: a 404 =
+          # none yet, any other failure stops here with nothing changed, and a failed upload leaves
+          # the tag a prerelease, so the promote can simply be run again.
+          node scripts/release-latest-json.mjs fetch-feed "https://github.com/$R/releases/download/channel-beta/beta.json" current-beta.json
+          node scripts/release-latest-json.mjs pick-beta dist-release/latest.json current-beta.json > beta.json
+          if ! cmp -s beta.json current-beta.json; then gh release upload channel-beta beta.json --clobber -R "$R"; fi
+          gh release edit "$TAG" -R "$R" --prerelease=false --latest
+          BEFORE="$(cat before.txt)"
+          node scripts/release-latest-json.mjs latest-after promote "$TAG" "$BEFORE"
+          echo "✓ $TAG is stable and releases/latest"
+

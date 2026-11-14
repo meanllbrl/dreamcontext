@@ -12,6 +12,14 @@
 //! Identity is why this is safe for macOS permissions: every release carries the same
 //! Developer ID requirement (`anchor apple generic` + the team), so an update is the same
 //! app to TCC and keeps its file, microphone and automation grants.
+//!
+//! Two feeds, one app (plan npmsiz-beta C10). `~/.dreamcontext/update-channel.json` (written
+//! by `dreamcontext app channel` / Settings → "Beta programı", src/lib/update-channel.ts) is read
+//! every round: exactly `{"channel":"beta"}` → an updater on [`BETA_FEED`]; anything else (no
+//! file, stable, malformed, extra keys, a symlink) → `app.updater()` on the compiled-in stable
+//! endpoint, exactly as before. Both URLs are compiled in: the record can only pick between
+//! them, never name one. Both feeds are checked against the same pubkey, and only a strictly
+//! higher version installs, so leaving Beta never downgrades.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -30,6 +38,43 @@ const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// release the first time it checked.
 pub(crate) fn compiled_in() -> bool {
     option_env!("DREAMCONTEXT_UPDATER") == Some("1")
+}
+
+/// The beta feed: a `beta.json` on the `channel-beta` prerelease, which the release workflow
+/// rewrites on every publish to the newer of beta and stable. A test build may point it at a
+/// loopback feed through `DREAMCONTEXT_TEST_BETA_URL` at COMPILE time; the release workflow fails
+/// any build that sets it.
+const BETA_FEED: &str = match option_env!("DREAMCONTEXT_TEST_BETA_URL") {
+    Some(url) => url,
+    None => "https://github.com/meanllbrl/dreamcontext/releases/download/channel-beta/beta.json",
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Channel {
+    Stable,
+    Beta,
+}
+
+/// The channel the record names. Only a plain file in a plain `~/.dreamcontext`, holding
+/// exactly one key `channel` equal to `"beta"`, is Beta; every other case is Stable (the
+/// unchanged path), so a damaged or planted record can never do more than leave the user on
+/// stable. Same rule as `readUpdateChannel` in src/lib/update-channel.ts.
+fn read_channel(home: &Path) -> Channel {
+    let dir = home.join(".dreamcontext");
+    match std::fs::symlink_metadata(&dir) {
+        Ok(m) if m.is_dir() => {}
+        _ => return Channel::Stable,
+    }
+    let file = dir.join("update-channel.json");
+    match std::fs::symlink_metadata(&file) {
+        Ok(m) if m.is_file() => {}
+        _ => return Channel::Stable,
+    }
+    let Ok(raw) = std::fs::read_to_string(&file) else { return Channel::Stable };
+    match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(serde_json::Value::Object(map)) if map.len() == 1 && map.get("channel").and_then(|c| c.as_str()) == Some("beta") => Channel::Beta,
+        _ => Channel::Stable,
+    }
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -131,7 +176,8 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
             }
             // Once a new bundle is on disk, checking again would fetch it a second time:
             // this process still reports the old version until it is reopened.
-            if allowed && check_and_install(&app).await {
+            let channel = home.as_deref().map_or(Channel::Stable, read_channel);
+            if allowed && check_and_install(&app, channel).await {
                 return;
             }
             tokio::time::sleep(EVERY).await;
@@ -139,9 +185,28 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
     });
 }
 
+/// The updater for this round. Stable is `app.updater()` exactly as before this channel existed;
+/// Beta is the same builder (same pubkey, same version rule) with only the endpoint swapped.
+fn updater_for<R: Runtime>(app: &AppHandle<R>, channel: Channel) -> Result<tauri_plugin_updater::Updater, String> {
+    match channel {
+        Channel::Stable => app.updater().map_err(|e| e.to_string()),
+        Channel::Beta => {
+            let url = tauri::Url::parse(BETA_FEED).map_err(|e| e.to_string())?;
+            app.updater_builder()
+                .endpoints(vec![url])
+                .map_err(|e| e.to_string())?
+                .build()
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
 /// True when a newer version was downloaded and installed over the bundle on disk.
-async fn check_and_install<R: Runtime>(app: &AppHandle<R>) -> bool {
-    let update = match app.updater().map_err(|e| e.to_string()) {
+async fn check_and_install<R: Runtime>(app: &AppHandle<R>, channel: Channel) -> bool {
+    if channel == Channel::Beta {
+        crate::applog::log("[updater] channel: beta");
+    }
+    let update = match updater_for(app, channel) {
         Ok(updater) => match updater.check().await {
             Ok(Some(update)) => update,
             Ok(None) => {
@@ -313,6 +378,73 @@ mod tests {
         std::fs::create_dir_all(h.join(".dreamcontext").join("handsfree")).unwrap();
         std::fs::write(h.join(".dreamcontext").join("handsfree").join("state.json"), r#"{"phase":"away"}"#).unwrap();
         assert!(mac_mode_allows_update(&h));
+    }
+
+    fn channel_file(home: &Path, raw: &str) {
+        std::fs::write(home.join(".dreamcontext").join("update-channel.json"), raw).unwrap();
+    }
+
+    #[test]
+    fn only_an_exact_beta_record_is_beta() {
+        let h = home("chan-beta");
+        assert_eq!(read_channel(&h), Channel::Stable, "no record = stable");
+        channel_file(&h, r#"{"channel":"beta"}"#);
+        assert_eq!(read_channel(&h), Channel::Beta);
+        channel_file(&h, "{\"channel\": \"beta\"}\n");
+        assert_eq!(read_channel(&h), Channel::Beta);
+    }
+
+    #[test]
+    fn stable_malformed_and_url_bearing_records_stay_stable() {
+        let h = home("chan-other");
+        for raw in [
+            r#"{"channel":"stable"}"#,
+            r#"{"channel":"BETA"}"#,
+            r#"{"channel":true}"#,
+            r#"{"channel":"beta","url":"https://evil.example/feed.json"}"#,
+            r#"{"url":"https://evil.example/feed.json"}"#,
+            r#"["beta"]"#,
+            r#""beta""#,
+            "{\"channel\": \"be",
+            "",
+        ] {
+            channel_file(&h, raw);
+            assert_eq!(read_channel(&h), Channel::Stable, "{raw} must stay stable");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_record_or_folder_stays_stable() {
+        let h = home("chan-link");
+        let elsewhere = h.join("elsewhere.json");
+        std::fs::write(&elsewhere, r#"{"channel":"beta"}"#).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, h.join(".dreamcontext").join("update-channel.json")).unwrap();
+        assert_eq!(read_channel(&h), Channel::Stable, "a symlinked record");
+
+        let h2 = std::env::temp_dir().join(format!("dc-updater-chan-dirlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&h2);
+        std::fs::create_dir_all(&h2).unwrap();
+        let real = h2.join("real-dc");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("update-channel.json"), r#"{"channel":"beta"}"#).unwrap();
+        std::os::unix::fs::symlink(&real, h2.join(".dreamcontext")).unwrap();
+        assert_eq!(read_channel(&h2), Channel::Stable, "a symlinked ~/.dreamcontext");
+    }
+
+    #[test]
+    fn a_directory_at_the_record_path_stays_stable() {
+        let h = home("chan-dir");
+        std::fs::create_dir(h.join(".dreamcontext").join("update-channel.json")).unwrap();
+        assert_eq!(read_channel(&h), Channel::Stable);
+    }
+
+    #[test]
+    fn the_beta_feed_is_the_channel_beta_release_in_a_release_build() {
+        if option_env!("DREAMCONTEXT_TEST_BETA_URL").is_none() {
+            assert_eq!(BETA_FEED, "https://github.com/meanllbrl/dreamcontext/releases/download/channel-beta/beta.json");
+        }
+        assert!(tauri::Url::parse(BETA_FEED).is_ok());
     }
 
     #[test]
