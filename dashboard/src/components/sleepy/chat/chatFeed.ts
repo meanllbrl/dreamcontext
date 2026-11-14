@@ -93,8 +93,9 @@ export interface ChatFeed {
   onRetry: () => void;
   /** A run session's last row (or its boundary) has been on screen. */
   onSeen: (meta: FeedMeta) => void;
-  onBoundary: (meta: FeedMeta) => void;
-  /** Drawn under a run's last row: its steps, report and Continue. The host owns what is open;
+  /** A boundary that opens something. Absent: the boundary is a plain line, not a button. */
+  onBoundary?: (meta: FeedMeta) => void;
+  /** Drawn under a run's last row: its document. The host owns what is drawn;
    *  `ctx.openFile` is the pane's own file opener (a report's path chips). */
   runFoot?: (meta: FeedMeta, ctx?: { openFile: (path: string) => void }) => ReactNode;
   /** A card in a routine run's row finished (a command the owner ran): its report goes back
@@ -188,9 +189,9 @@ export interface FeedMarks {
 }
 
 /**
- * A routine run still in flight: its session's end carries Chat's working indicator, so the
- * stage says what the team list says ("Working · 1m 30s") instead of ending on a still prompt
- * above the live "New conversation" line.
+ * A routine run still in flight: its session's end carries a live line, so the stage says what
+ * the team list says ("Working · 1m 30s") instead of ending on a still prompt above the live
+ * "New conversation" line. In the Super view that is the turn's own live steps line.
  */
 export function feedRunWorking(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
   return marks.last && meta.sessionKind === 'run' && meta.status === 'running';
@@ -210,18 +211,13 @@ export function documentHead(text: string | null | undefined): string | undefine
 }
 
 /**
- * What stands under one run: its steps (a session on this machine) and, when the run published a
- * document, that document as a tile that opens in the side file panel. A run with no document
- * shows nothing extra (owner 2026-11-08: no "Full report" link, no inline expand).
+ * What stands under one run: when the run published a document, that document as a tile that
+ * opens in the side file panel. A run with no document shows nothing extra (owner 2026-11-08: no
+ * "Full report" link, no inline expand). Its steps are not offered (owner 2026-11-14): a landed
+ * run reads as a landed Super turn, its answer alone.
  */
-export function runFootOf(meta: FeedMeta): { steps: boolean; document: { path: string; name: string; head?: string } | null } {
-  return { steps: !!meta.claudeId, document: meta.document ?? null };
-}
-
-/** A running run shows its steps by itself, until the owner closes them. */
-export function stepsOpen(meta: FeedMeta, opened: ReadonlySet<string>, closed: ReadonlySet<string>): boolean {
-  if (!meta.claudeId) return false;
-  return opened.has(meta.sessionKey) || (meta.status === 'running' && !closed.has(meta.sessionKey));
+export function runFootOf(meta: FeedMeta): { document: { path: string; name: string; head?: string } | null } {
+  return { document: meta.document ?? null };
 }
 
 /** Any run in the feed still in flight: the host re-reads the history often until it ends. */

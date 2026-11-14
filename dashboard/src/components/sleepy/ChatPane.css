@@ -294,7 +294,7 @@
 
 /* ── An agent's past sessions above its conversation (chatFeed.ts, the AI Team stage) ── */
 
-/* A session's boundary: the dashed divider, clickable (a run opens its activity, a talk its tab). */
+/* A session's boundary: the dashed divider, clickable when the host gives it something to open. */
 .chat-feed-boundary {
   width: 100%;
   padding: 0;
@@ -310,6 +310,9 @@
 .chat-feed-boundary:focus-visible { color: var(--color-text-secondary); text-decoration: underline; }
 /* It opens something: the mark says so, after the words and before the rule. */
 .chat-feed-boundary-go { margin-left: var(--space-1, 4px); }
+/* A boundary that opens nothing (a member's chat): a plain line, no pointer, no underline. */
+.chat-feed-boundary--still { cursor: default; }
+.chat-feed-boundary--still:hover { color: var(--color-text-tertiary); text-decoration: none; }
 .chat-feed-report { display: block; text-align: left; }
 .chat-feed-failure { color: var(--color-error); }
 .chat-feed-boundary--failed { color: var(--color-error); }
@@ -333,7 +336,6 @@
 }
 /* A routine run in a member's conversation (aiteam/RunFoot.tsx): what opens under its last row. */
 .run-foot { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-1) 0 var(--space-3); min-width: 0; }
-.run-foot-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
 .run-view { position: relative; display: flex; flex-direction: column; height: min(60vh, 520px); min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-bg); }
 .run-report { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); min-width: 0; overflow-wrap: anywhere; }
 .run-view-note { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
