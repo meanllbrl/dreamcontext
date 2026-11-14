@@ -675,6 +675,22 @@ export function superWork(now = Date.now()): SuperWorkRow[] {
 let superDigestSink: ((contextRoot: string, state: SuperState) => void) | null = null;
 export function setSuperDigestSink(fn: ((contextRoot: string, state: SuperState) => void) | null): void { superDigestSink = fn; }
 
+/** Every state push, numbered, and the last one per Super session: did it reach a window socket?
+ *  A stage verb reads it to say so in its reply (`super present` with no window that got it is
+ *  never a silent success, owner 2026-11-14). One entry per Super session. */
+let pushSeq = 0;
+const lastPushes = new Map<string, { seq: number; sent: boolean }>();
+
+/** The push count now: a stage verb notes it before it runs. */
+export function superPushMark(): number { return pushSeq; }
+
+/** Whether the last state push for `session` after `mark` reached a window socket; null when
+ *  none was pushed since. */
+export function superPushedSince(session: string | null | undefined, mark: number): boolean | null {
+  const p = session ? lastPushes.get(session) : undefined;
+  return p && p.seq > mark ? p.sent : null;
+}
+
 /** Push the vault's state down its super chat's socket (when that chat is running). */
 export function pushSuperState(contextRoot: string, state: SuperState): boolean {
   if (!state.session) return false;
@@ -685,9 +701,14 @@ export function pushSuperState(contextRoot: string, state: SuperState): boolean 
   // the window whose socket sat on the other kept a frozen record: a new child got no card and
   // showed as a tab in the chat window (field 2026-11-14).
   const tokens = tokensOfSession(state.session);
-  if (!tokens.length) return false;
-  const frame = { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) };
-  return tokens.map((token) => pushFrame(token, frame)).some(Boolean);
+  let sent = false;
+  if (tokens.length) {
+    const frame = { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) };
+    sent = tokens.map((token) => pushFrame(token, frame)).some(Boolean);
+  }
+  pushSeq += 1;
+  lastPushes.set(state.session, { seq: pushSeq, sent });
+  return sent;
 }
 
 /** Everything a write of the record owes: the glance's head cache, the window's push, and the

@@ -48,6 +48,7 @@ import { memberAskReach, pinnedMemberCard, planQuestion, superAnsweredFirst } fr
 import { answerOwnerItem } from '../../lib/super/answer.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
+import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
 import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
@@ -3487,6 +3488,9 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
     return;
   }
   const body = expanded.body;
+  // A screen verb's reply says whether the owner's window got the change (owner 2026-11-14): FIRST,
+  // so it rewrites the body the watchers below read.
+  if (SCREEN_VERBS.has(verb)) reportWindow(res, caller.state.session, superPushMark());
   const cue = CUED_VERBS.has(verb) ? captureOk(res) : null;
   const staged = STAGE_VERBS.has(verb) ? (cue ?? captureOk(res)) : null;
   ensureTidy(caller.who.contextRoot, TIDY_IO);
@@ -3503,6 +3507,46 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
   if (staged && staged() !== undefined) {
     noteStageVerb({ vault: caller.who.vault, contextRoot: caller.who.contextRoot, sessionId: caller.who.sessionId, superId: caller.superId, verb: verb as StageVerbEvent['verb'], ids: cueIds(body as Record<string, unknown>, staged()) });
   }
+}
+
+/** The verbs that change what the owner's window shows: each reply names `window`. */
+const SCREEN_VERBS = new Set<SuperVerb>(['open', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'shape']);
+
+/** What `window` says, and the line that goes with a change no window got. */
+export const WINDOW_SENT = 'sent';
+export const WINDOW_NONE = 'none';
+export const WINDOW_NONE_NOTE = 'No window holds the Super Agent: the record changed, the owner\'s screen did not. It shows it when his window opens the Super Agent again.';
+
+/**
+ * Add `window` to a screen verb's successful reply: `sent` when the record's push after this verb
+ * reached a window socket, `none` (with a note) when it reached none. A verb that wrote nothing
+ * (a refusal, a no-op) is left as it was. The reply was a silent success before: `super present`
+ * answered its view while the owner's screen never moved (field 2026-11-14).
+ */
+export function reportWindow(res: ServerResponse, session: string | null | undefined, mark: number): void {
+  let head: unknown[] | null = null;
+  const writeHead = res.writeHead.bind(res) as (...a: unknown[]) => ServerResponse;
+  const end = res.end.bind(res) as (...a: unknown[]) => ServerResponse;
+  (res as unknown as { writeHead: (...a: unknown[]) => ServerResponse }).writeHead = (...a: unknown[]) => { head = a; return res; };
+  (res as unknown as { end: (...a: unknown[]) => ServerResponse }).end = (...a: unknown[]) => {
+    const h = head ?? [];
+    head = null;
+    const sent = superPushedSince(session, mark);
+    if (Number(h[0]) === 200 && typeof a[0] === 'string' && sent !== null) {
+      try {
+        const j = JSON.parse(a[0]) as { ok?: unknown; result?: unknown };
+        if (j.ok === true && j.result && typeof j.result === 'object' && !Array.isArray(j.result)) {
+          const result = { ...(j.result as Record<string, unknown>), window: sent ? WINDOW_SENT : WINDOW_NONE, ...(sent ? {} : { windowNote: WINDOW_NONE_NOTE }) };
+          const out = JSON.stringify({ ...j, result });
+          const headers = { ...((h[1] as Record<string, string | number> | undefined) ?? {}), 'Content-Length': Buffer.byteLength(out) };
+          writeHead(h[0], headers);
+          return end(out, ...a.slice(1));
+        }
+      } catch { /* not ours to change: sent as it came */ }
+    }
+    if (h.length) writeHead(...h);
+    return end(...a);
+  };
 }
 
 /** The verbs the window gives a visible cue (AC16). */

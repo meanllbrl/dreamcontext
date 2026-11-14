@@ -15,6 +15,22 @@ import { isSuperSession, ownerQueueCount } from './superHandover';
 
 export type SessionHome = 'super' | 'chat';
 
+/**
+ * How a window opens a Super Agent's own chat it does not hold yet (`ensureSuperSession`): a
+ * session the hand-over just minted starts under its id (nothing runs it yet); any other open
+ * TAKES the live process (`reattach=1`): there is one Super per project and the window opening it
+ * is the one the owner looks at, so a screen that still holds it (a window left behind, a socket
+ * still open) is told 4409 and stops, and the running turn goes on untouched. No process runs it:
+ * the server resumes it. A plain resume was a RESPAWN to the server: a second Super process on
+ * the same pin beside the live one, and the window's state pushed to the one nobody read (field
+ * 2026-11-14). Passive would leave the live screen holding it, and the owner's window without it.
+ * A remote screen (`remote`: the phone, a remote computer) never evicts the Mac's window: its open
+ * stays a plain resume, which the Mac makes a mirror (agent-chat.ts `phoneSuperOpen`).
+ */
+export function superPaneReattach(fresh: boolean, remote = false): '' | '1' {
+  return fresh || remote ? '' : '1';
+}
+
 type Owned = Pick<SuperState, 'session' | 'children'> & { enabled?: boolean; formerChildren?: readonly string[]; released?: readonly string[] };
 
 /**

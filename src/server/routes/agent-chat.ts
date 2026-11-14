@@ -1882,6 +1882,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         cut();
       };
       wss.handleUpgrade(req, socket, head, (ws) => {
+        // Always the MAIN server's port (a phone listener passes it in): where the agent's own CLI
+        // calls back, never through the tunnel. Learned before EVERY spawn below, the reattach
+        // fallbacks included: a Super the window reopens by taking it (`reattach=1`) right after a
+        // server start spawns there, and with no base its window token was never minted.
+        const address = server.address();
+        const port = opts.windowControlPort ?? (address && typeof address === 'object' ? address.port : 0);
+        if (port) setWindowControlBase(`http://127.0.0.1:${port}`);
         if (deviceTag) tagDeviceSocket(ws, deviceTag);
         socketLoopback.set(ws, !phone && isLoopback(req));
         if (adoptable && passive) {
@@ -1908,11 +1915,6 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
         // spawn only, never into any other vault's chat.
-        // Always the MAIN server's port (a phone listener passes it in): that is where the
-        // agent's own CLI calls back, never through the tunnel.
-        const address = server.address();
-        const port = opts.windowControlPort ?? (address && typeof address === 'object' ? address.port : 0);
-        if (port) setWindowControlBase(`http://127.0.0.1:${port}`);
         const assistantEnv = assistant
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
@@ -2361,12 +2363,18 @@ export function startChatSession(
   //  • resume requested but no resumable transcript → fresh-pin via --session-id so the
   //    session stays resumable going forward instead of erroring.
   const mappedId = resumeId ? resolveAgentSession(contextRoot, resumeId) : '';
+  /** The pin rotated and a live process runs its conversation now: nothing here may take it. */
+  const mappedHeld = !!mappedId && liveConversations.has(mappedId);
   // A bridge pane resumes its tool's own thread, found through the same tab map (the bridge
   // records it) and only when that thread belongs to THIS project (`bridgeResumeTarget`).
   const mappedAccount = isInstanceTool(bridgeTool) ? (mappedId ? resolveAgentSessionAccount(contextRoot, resumeId) || 'primary' : instanceThreadAccount(resumeId, projectRoot) ?? '') : '';
   const resumeTarget = isAccountTool(bridgeTool)
     ? bridgeResumeTarget({ tool: bridgeTool, mapped: mappedId, resumeId, projectRoot, held: liveConversations, accountId: toolAccountId, mappedAccount })
     // A T3 Claude pane's thread id is not its pin, so a held pin is a running child too.
+    // A pin that rotated (`/clear`) and whose conversation a live process runs is HELD: its own
+    // id is the transcript before the rotation, and resuming it started a second process beside
+    // the live one (field 2026-11-14: a second Super on the pre-handoff conversation).
+    : mappedHeld ? ''
     : [mappedId, resumeId].find(
       (c) => c && !liveConversations.has(c) && !(bridgeTool && liveConversations.has(resumeId || sessionId)) && claudeConversationExists(c),
     ) ?? '';
@@ -2393,7 +2401,7 @@ export function startChatSession(
   const paneHeld = !!bridgeTool;
   const freshPin = paneHeld
     ? (resumeTarget || bridgeMapped || (bridgeTool === 'claude' && (liveConversations.has(pinId) || claudeConversationExists(pinId))) ? '' : pinId)
-    : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
+    : !resumeTarget && !mappedHeld && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
       ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
   /** This pane keeps a stable id across respawns (Claude: a pinned or resumed conversation; a bridge
@@ -2543,9 +2551,33 @@ export function startChatSession(
   /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
    *  the conversation is not ours to release any more, so `releaseHeld` must leave it alone. */
   let holdLent = false;
+  /**
+   * The conversation this process runs NOW, when a `/clear` (a handoff's rotation, the owner's
+   * own) moved it off `heldConversation`: held too, so a second open of the pin finds it taken.
+   * Unheld, the tab map's answer for the pin was free and a window's open started a SECOND
+   * process on the very conversation this one runs, or on the pin's old pre-handoff transcript
+   * (field 2026-11-14: two Super processes per project, the window's state pushed to the old one).
+   */
+  let rotatedHold = '';
+  /** `releaseHeld` ran (a drain, the exit): a `/clear` still queued in its stdin must take no new
+   *  hold, or the pin would stay held by a process that is leaving (nothing releases it twice). */
+  let holdsReleased = false;
+  const holdRotated = (conversation: string): void => {
+    if (!pinId || bridgeTool || holdLent || holdsReleased || !conversation || conversation === heldConversation || conversation === rotatedHold) return;
+    if (rotatedHold) liveConversations.delete(rotatedHold);
+    rotatedHold = '';
+    // Another live process already holds it: theirs, never released by this one.
+    if (liveConversations.has(conversation)) return;
+    liveConversations.add(conversation);
+    rotatedHold = conversation;
+  };
+  /** Every conversation this process holds (a respawn's supersede lends them all). */
+  const ownHolds = (): string[] => [heldConversation, rotatedHold].filter((c) => !!c && liveConversations.has(c));
   let releaseHeld = () => {
     releaseHeld = () => { /* once */ };
+    holdsReleased = true;
     if (heldConversation && !holdLent) liveConversations.delete(heldConversation);
+    if (rotatedHold && !holdLent) liveConversations.delete(rotatedHold);
     if (threadHold) liveConversations.delete(threadHold);
   };
 
@@ -4333,19 +4365,19 @@ export function startChatSession(
     };
     if (detached && turnsInFlight === 0) { drain(); return () => { /* already given up */ }; }
     if (detached) {
-      if (heldConversation && liveConversations.has(heldConversation)) {
-        liveConversations.delete(heldConversation);
-        holdLent = true;
-      }
+      // Every hold it has, the rotated conversation's too: the respawn resumes THAT one.
+      const lent = ownHolds();
+      for (const c of lent) liveConversations.delete(c);
+      if (lent.length) holdLent = true;
       return settleOnce((accepted) => {
         // Accepted: the new process holds the conversation now; `holdLent` keeps the drain
         // from releasing its hold.
         if (accepted) { drain(); return; }
-        if (!holdLent || !alive || !heldConversation) return;
-        // Refused: take the hold back — unless someone else took the conversation meanwhile,
-        // in which case it stays theirs and this child must never release it.
-        if (!liveConversations.has(heldConversation)) {
-          liveConversations.add(heldConversation);
+        if (!holdLent || !alive) return;
+        // Refused: take the holds back — unless someone else took a conversation meanwhile,
+        // in which case the child stays lent and never releases them.
+        if (lent.every((c) => !liveConversations.has(c))) {
+          for (const c of lent) liveConversations.add(c);
           holdLent = false;
         }
       });
@@ -4496,6 +4528,7 @@ export function startChatSession(
       // read is the right price for closing that direction against a future CLI change.
       if (obj.type === 'system' && obj.subtype === 'init' && typeof obj.session_id === 'string') {
         observedConversation = obj.session_id;
+        if (!obj.parent_tool_use_id) holdRotated(obj.session_id);
       }
       if (obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && typeof obj.apiKeySource === 'string') {
         const first = chatApiKeySource === '';
