@@ -26,13 +26,14 @@ import {
   closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, owedVisible, replyMarkRefs, nextOwedReveal,
 } from '../../src/lib/super/owed.js';
 import {
-  OWED_PREFIX, _resetSuperInbox, _superInboxDrained, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes, ownerGist,
+  OWED_PREFIX, OWNER_PROSE_MIN_CHARS, _resetSuperInbox, _superInboxDrained, isOwnerProse, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes, ownerGist,
   superOwnerSpoke, superSaid, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import { ownerWords } from '../../src/lib/agents/team-roster.js';
+import { OWNER_PROSE_MIN_CHARS as WINDOW_OWNER_PROSE_MIN_CHARS } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 
 let dir: string;
 let root: string;
@@ -267,6 +268,23 @@ describe('the ledger in the running inbox', () => {
     s = await readSuperState(root);
     expect(openDebts(s).length).toBe(0);
     expect(superOwedBlock(SUPER, 'And the logo?')).toBeNull();
+  });
+
+  it('a quick answer closes his debt even while the debt\'s own write is still in flight (2026-11-14)', async () => {
+    await boot();
+    // Not awaited: the reply's mark arrives before the debt of his message has landed.
+    const owes = superOwnerOwes(SUPER, 'Five things, answer each');
+    const said = superSaid(SUPER, `<!-- re:${msgRef('Five things, answer each')} -->\n**Banner:** done. **Checkout:** a job is open.`);
+    await Promise.all([owes, said]);
+    expect(openDebts(await readSuperState(root))).toEqual([]);
+  });
+
+  it('owner prose is the reading the ledger closes by, or a text of real length; the window shares the length', () => {
+    expect(isOwnerProse(`<!-- re:${msgRef('x')} -->\nDone.`)).toBe(true);
+    expect(isOwnerProse('Done.')).toBe(false);
+    expect(isOwnerProse('```\n<!-- re:abc123 -->\n```')).toBe(false);
+    expect(isOwnerProse('y'.repeat(OWNER_PROSE_MIN_CHARS))).toBe(true);
+    expect(OWNER_PROSE_MIN_CHARS).toBe(WINDOW_OWNER_PROSE_MIN_CHARS);
   });
 
   it('a tapped card answer is owed in his own words, never the internal [super answer] line', async () => {

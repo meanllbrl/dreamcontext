@@ -440,7 +440,25 @@ export function superBatchOf(text: string): { kind: string; batch: string | null
 
 // ─── The event line (plan r4 D2, D8) ─────────────────────────────────────────────
 
-interface EventItemLike { kind: string; id: string; text?: string; superEvent?: string; name?: string; input?: unknown }
+interface EventItemLike { kind: string; id: string; text?: string; superEvent?: string; name?: string; input?: unknown; replyTo?: readonly string[] }
+
+/** A Super text at or above this many characters is a reply, whether or not it carries a mark. */
+export const OWNER_PROSE_MIN_CHARS = 280;
+const RAW_MARK = /(^|\n)[ \t]*<!--\s*re:/;
+
+/**
+ * Prose the Super wrote for the owner (owner 2026-11-14, "anlatmamış ama anlattım diyor"): a text
+ * under a `<!-- re:… -->` mark (its `replyTo`, or the raw mark while it streams), or one of real
+ * length. It is drawn in place even inside an event turn folded into one line: the server counts
+ * every marked section as told (inbox.ts `superSaid`), so the screen must show every one. Short
+ * unmarked narration still folds. The server twin is inbox.ts `isOwnerProse` (Telegram).
+ */
+export function isOwnerProse(it: Pick<EventItemLike, 'kind' | 'text' | 'replyTo'>): boolean {
+  if (it.kind !== 'text') return false;
+  if (it.replyTo && it.replyTo.length > 0) return true;
+  const t = typeof it.text === 'string' ? it.text : '';
+  return RAW_MARK.test(t) || t.trim().length >= OWNER_PROSE_MIN_CHARS;
+}
 
 /** One event turn as the centre draws it: the turn's anchor (the injected user item), what it
  *  carried, how many commands the super agent ran in it other than `dreamcontext super`, and
@@ -466,7 +484,7 @@ function isSuperCommand(it: EventItemLike): boolean {
  * Fold each event turn of a slice into ONE line (pure). A turn runs from its injected item to
  * the next user item (an owner message, steered or not, ends it and renders as his bubble) or
  * the next injected one. A turn whose batch is in `ownerBatches`, or that the owner expanded,
- * keeps every item. A recap is never kept flat: its whole turn is drawn inside the recap card,
+ * keeps every item; a folded one still keeps its owner prose ({@link isOwnerProse}). A recap is never kept flat: its whole turn is drawn inside the recap card,
  * which is open by default (owner 2026-10-23). Built per windowed slice, so a group never
  * straddles a window edge.
  */
@@ -490,7 +508,8 @@ export function groupSuperEventTurns<T extends EventItemLike>(
     }
     if (open) {
       if (it.kind === 'tool' && !isSuperCommand(it)) open.commands += 1;
-      if (!open.full) { open.folded.push(it.id); continue; }
+      // A reply to the owner never folds with the steps: it stays drawn under the line.
+      if (!open.full && !(open.kind !== 'recap' && isOwnerProse(it))) { open.folded.push(it.id); continue; }
     }
     kept.push(it);
   }

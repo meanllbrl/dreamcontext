@@ -15,7 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  eventLine, groupSuperEventTurns, modelChip, plainJobName, rowOf, superNotepad, superBatchOf, superEventText, toneOfRow, toneOfStatus, type JobLook,
+  OWNER_PROSE_MIN_CHARS, eventLine, groupSuperEventTurns, isOwnerProse, modelChip, plainJobName, rowOf, superNotepad, superBatchOf, superEventText, toneOfRow, toneOfStatus, type JobLook,
 } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { toChatEvent } from '../../dashboard/src/lib/chatProtocol.js';
 import type { SuperState } from '../../dashboard/src/lib/superTypes.js';
@@ -110,6 +110,21 @@ describe('event turns fold into one line', () => {
     const { kept, groups } = groupSuperEventTurns(items, { ownerBatches: [], expanded: new Set() });
     expect(kept.map((i) => i.id)).toEqual(['u0', 't0', 'e1']);
     expect(groups.get('e1')).toMatchObject({ batch: 'b-1', commands: 1, full: false, folded: ['k1', 'k2', 't1'] });
+  });
+
+  it('a folded turn still draws the reply written for him: marked or of real length; short narration and the steps fold (owner 2026-11-14)', () => {
+    const marked = { kind: 'text', id: 't-mark', text: 'Fiyat taraması bitti.', replyTo: ['ab12cd'] };
+    const streaming = { kind: 'text', id: 't-raw', text: '<!-- re:ab12cd -->\nStok sayımı bitti.' };
+    const long = { kind: 'text', id: 't-long', text: `Maillerin bitti: ${'okundu olarak işaretlendi, '.repeat(12)}` };
+    const items = [user('e1', batch('b-1')), tool('k1', 'git status'), text('t-short'), marked, tool('k2', 'git log'), streaming, long];
+    const { kept, groups } = groupSuperEventTurns(items, { ownerBatches: [], expanded: new Set() });
+    expect(kept.map((i) => i.id)).toEqual(['e1', 't-mark', 't-raw', 't-long']);
+    expect(groups.get('e1')).toMatchObject({ full: false, folded: ['k1', 't-short', 'k2'] });
+    expect(isOwnerProse({ kind: 'text', text: 'x'.repeat(OWNER_PROSE_MIN_CHARS - 1) })).toBe(false);
+    expect(isOwnerProse({ kind: 'thinking', text: 'x'.repeat(OWNER_PROSE_MIN_CHARS) })).toBe(false);
+    // A recap's whole turn is drawn inside its card: nothing of it is lifted out.
+    const recap = superEventText('recap', 'c1');
+    expect(groupSuperEventTurns([user('r1', recap), marked], { ownerBatches: [], expanded: new Set() }).kept.map((i) => i.id)).toEqual(['r1']);
   });
 
   it('full when its batch is in ownerBatches, or when the owner expanded it', () => {

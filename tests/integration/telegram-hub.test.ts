@@ -191,15 +191,17 @@ describe('the Super target', () => {
       }
       afterEach(() => markSuperEventTurn(SID, false));
 
-      it('a permission-only event turn sends nothing, marked or not', async () => {
+      it('a permission-only event turn sends no narration; a reply marked for him goes, as the Mac draws it (2026-11-14)', async () => {
         const { h } = await onTelegram();
         await ownerBatches();
         _openEventTurnForTests(SID, 'b-perm', root);
         const n = tg.texts().length;
         assistant(h, 'İzni verdim: kendi worktree içinde git add.');
-        assistant(h, '<!-- re:abc123 -->\nBir not daha.');
         await quiet();
         expect(tg.texts().length).toBe(n);
+        assistant(h, '<!-- re:abc123 -->\nBir not daha.');
+        await vi.waitFor(() => expect(tg.texts()).toContain('Bir not daha.'));
+        expect(tg.texts()).not.toContain('İzni verdim: kendi worktree içinde git add.');
       });
 
       it('an awaited=owner result (owner batch) under its ref sends', async () => {
