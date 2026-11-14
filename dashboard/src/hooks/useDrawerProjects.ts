@@ -84,7 +84,7 @@ export function perWindowOf(raw: unknown[]): Array<{ id: string; name: string; t
   });
 }
 
-export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean, folded: readonly string[] = []): {
+export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean, folded: readonly string[] = [], hidden: readonly string[] = []): {
   facts: Record<string, FanoutFacts>;
   /** A window row of a project that is not mounted, dragged: the row moves now, the roster on
    *  disk follows, and a fresh read settles it (a refused write puts the row back). */
@@ -176,9 +176,9 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
   const [marks, setMarks] = useState<Record<string, SuperMarks>>({});
   const [teams, setTeams] = useState<Record<string, DrawerEkipFacts>>({});
   const targets = useMemo(
-    () => foldedTargets(folded, mounted),
+    () => foldedTargets(folded, mounted, undefined, hidden),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [folded.join('\n'), mounted.join('\n')],
+    [folded.join('\n'), mounted.join('\n'), hidden.join('\n')],
   );
   useEffect(() => {
     setMarks((prev) => (Object.keys(prev).every((v) => targets.includes(v))
