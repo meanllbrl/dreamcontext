@@ -16,12 +16,14 @@ import type { ChatToolItem } from '../chatSession';
  * step in hand in plain words; once it lands, a grey chip ("7 steps · 61 s") that opens the
  * same rows the plain Chat draws, and closes them again.
  *
- * Two things never hide inside it: a step that failed is drawn in full UNDER the line (and
- * counted on the chip), and a permission the owner has to answer stays its own card below the
- * transcript; the line only says it is waiting. The line's height never changes while it runs.
+ * A step that failed folds like any other (owner 2026-11-14, "kırmızı hata çubukları neden
+ * gürültü yaratıyor"): it is counted on the chip and its red row shows when the line is open,
+ * never as a standalone row under it. A permission the owner has to answer stays its own card
+ * below the transcript; the line only says it is waiting. The line's height never changes while
+ * it runs.
  *
  * Once the answer is written the line goes away entirely (owner 2026-11-06, second look): only
- * the answer stays, and a faint "steps" link on its hover opens the rows here (`hidden`).
+ * the answer stays (`hidden`).
  *
  * While it runs the line also carries the turn's elapsed time at its end, and in the gap between
  * steps it reads "Thinking" (owner 2026-11-07): the separate "Working… 28s" pill that used to pop
@@ -69,8 +71,8 @@ function SuperStepsLineInner({
 }: {
   /** When the turn began (`conv.turnStartedAt`): the live line's clock counts from here. */
   startedAt?: number;
-  /** Landed and put away behind its answer (ChatPane decides): nothing of the line shows, only a
-   *  failed step's own row. There is no way back to the rows (owner 2026-11-08). */
+  /** Landed and put away behind its answer (ChatPane decides): nothing shows, a failed step
+   *  included. There is no way back to the rows (owner 2026-11-08). */
   hidden?: boolean;
   items: ChatToolItem[];
   /** The tail of a turn that has not spoken yet (see `toolRunPhase`). */
@@ -94,16 +96,9 @@ function SuperStepsLineInner({
   if (!live && summary.durationMs != null) parts.push(stepsDuration(summary.durationMs, t));
   const label = live ? liveLabel(items, waiting, t) : parts.join(' · ');
 
-  if (hidden) {
-    if (!failed.length) return null;
-    return (
-      <div className="super-steps" data-testid="super-steps" data-hidden>
-        <div className="super-steps-errors" data-testid="super-steps-errors">
-          {failed.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" />)}
-        </div>
-      </div>
-    );
-  }
+  // Put away behind its answer: nothing of the line shows, a failed step included. A failure is
+  // never its own red row here (owner 2026-11-14); it lives in the fold, counted on the chip.
+  if (hidden) return null;
 
   return (
     <div
@@ -141,18 +136,12 @@ function SuperStepsLineInner({
         )}
         <span className="super-steps-caret" aria-hidden>{open ? '▾' : '▸'}</span>
       </button>
-      {/* A failed step's own row (below) draws its browser; the line draws the rest. */}
-      {!open && <BrowserSlot ids={items.filter((i) => !stepFailed(i)).map((i) => i.id)} />}
+      {!open && <BrowserSlot ids={items.map((i) => i.id)} />}
       {open ? (
         <div className="super-steps-rows" data-testid="super-steps-rows">
           {items.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" stretch="follow" />)}
         </div>
-      ) : failed.length > 0 && (
-        // A failed step never hides in the line: it stands under it, in full, with its own red row.
-        <div className="super-steps-errors" data-testid="super-steps-errors">
-          {failed.map((item) => <ToolCard key={item.id} item={item} onOpenFile={onOpenFile} actor="lead" />)}
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }

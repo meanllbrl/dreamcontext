@@ -1976,7 +1976,6 @@
 .super-steps-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .super-steps-failed { flex: none; color: var(--color-error-ink); }
 .super-steps-caret { flex: none; font-size: 9px; }
-.super-steps-errors { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
 /* Open: the plain Chat's rows, without their card frames, beside a thin rule. */
 .super-steps-rows { width: 100%; border-left: 2px solid var(--color-border); padding-left: var(--space-3); }
 .super-steps-rows .chat-toolcard {
