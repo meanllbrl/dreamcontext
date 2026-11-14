@@ -691,6 +691,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-transcript-cwd-',
   'dc-trim-',
   'dc-tsc-check-',
+  'dc-unread-',
+  'dc-unread-home-',
   'dc-upcoming-',
   'dc-ups-home-',
   'dc-usage-limit-',
