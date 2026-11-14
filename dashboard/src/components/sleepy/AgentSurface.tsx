@@ -177,7 +177,7 @@ import { HandoverButton } from './super/HandoverButton';
 import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlights, type FlightRun, type StageShowChild } from './super/SuperSurface';
 import { SuperDock } from './super/SuperDock';
 import { SUPER_PAGE_OPEN_EVENT, SUPER_PAGE_SEND_EVENT, answerPageSend, publishSuperPresence, useFieldMounted, type SuperPageSendDetail } from '../../lib/superPageBridge';
-import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, busyChildren } from './super/sessionHome';
+import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superPaneOpen, superRowMarks, busyChildren } from './super/sessionHome';
 import { JobBar } from './super/JobBar';
 import { ownerRowKind, publishSessionGrantItems, type SessionGrantItems } from './super/ownerAnswer';
 import { memberWaitCounts } from '../aiteam/teamModel';
@@ -4346,7 +4346,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // Its record's session is new until its first turn: started under that id, never resumed.
       const fresh = superFreshRef.current === session || memberFreshRef.current.has(session);
       memberFreshRef.current.delete(session);
-      const s = spawn(false, session, !fresh, 'chat', '', model, true, '', false, effort, false, 'super') as ChatSession;
+      const how = superPaneOpen(fresh);
+      const s = spawn(false, session, how.resume, 'chat', '', model, true, '', false, effort, false, 'super', '', '', how.reattach) as ChatSession;
       const meta: SessionMeta = { id: s.id, title: member, kind: 'chat', bypass: s.bypass, claudeId: session, mode: 'super', agent: member };
       sessionListRef.current = [...sessionListRef.current, meta];
       // admitTab: exempt, like main's own session (a Super is never a tab).
@@ -4358,7 +4359,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // Its own default model and effort (Settings -> Chat -> Super Agent; Opus at high unless the
     // owner saved another pair), never the chat default. A hand-over's successor opens here too.
     const { superModel, superEffort } = agentSettingsRef.current;
-    const s = spawn(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super') as ChatSession;
+    const how = superPaneOpen(fresh);
+    const s = spawn(false, session, how.resume, 'chat', '', superModel, true, '', false, superEffort, false, 'super', '', '', how.reattach) as ChatSession;
     // Registered in the roster (so it is portaled and homed) but NEVER in a pane.
     const meta: SessionMeta = { id: s.id, title: 'Claude', kind: 'chat', bypass: s.bypass, claudeId: session, mode: 'super' };
     sessionListRef.current = [...sessionListRef.current, meta];

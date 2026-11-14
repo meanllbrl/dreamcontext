@@ -1882,6 +1882,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         cut();
       };
       wss.handleUpgrade(req, socket, head, (ws) => {
+        // Always the MAIN server's port (a phone listener passes it in): that is where the
+        // agent's own CLI calls back, never through the tunnel. Set before EVERY spawn below,
+        // the reattach fallbacks too: a Super whose first open after a server start is passive
+        // was spawned without its window env, and every `dreamcontext super` verb got a 401.
+        const address = server.address();
+        const port = opts.windowControlPort ?? (address && typeof address === 'object' ? address.port : 0);
+        if (port) setWindowControlBase(`http://127.0.0.1:${port}`);
         if (deviceTag) tagDeviceSocket(ws, deviceTag);
         socketLoopback.set(ws, !phone && isLoopback(req));
         if (adoptable && passive) {
@@ -1908,11 +1915,6 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         }
         // The Assistant's CLI reaches `/api/assistant/*` with these two — injected into THIS
         // spawn only, never into any other vault's chat.
-        // Always the MAIN server's port (a phone listener passes it in): that is where the
-        // agent's own CLI calls back, never through the tunnel.
-        const address = server.address();
-        const port = opts.windowControlPort ?? (address && typeof address === 'object' ? address.port : 0);
-        if (port) setWindowControlBase(`http://127.0.0.1:${port}`);
         const assistantEnv = assistant
           ? { DREAMCONTEXT_ASSISTANT_URL: `http://127.0.0.1:${port}`, DREAMCONTEXT_ASSISTANT_TOKEN: assistantToken() }
           : undefined;
@@ -3431,6 +3433,9 @@ export function startChatSession(
   /** Opens of this conversation that superseded it and were not refused. While any is
    *  counted the next socket-gone drains; a refused open withdraws its own (`supersedeLive`). */
   let pendingSupersedes = 0;
+  /** A newer process was ACCEPTED for this conversation while this one was attached and busy:
+   *  this one is a twin now and ends at its turn's end (`supersedeLive`, `closeTurn`). */
+  let drainAtTurnEnd = false;
   let detachIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let detachCapTimer: ReturnType<typeof setTimeout> | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -3547,6 +3552,8 @@ export function startChatSession(
     if (superEventTurnOpen) superEventTurnOpen = false;
     // One end per turn; a Stop says so (an owed decision is never made on it).
     if (isSuper) setImmediate(() => superTurnEnded(chatRegistryId, { stopped, inboxId: superInboxId }));
+    // Superseded mid-turn by an accepted open: its turn is over, so it ends now (supersedeLive).
+    if (drainAtTurnEnd) { drainAtTurnEnd = false; setImmediate(drain); }
   };
   /**
    * The CLI acked an interrupt and no `result` followed: nothing was running, or what was
@@ -4352,7 +4359,12 @@ export function startChatSession(
     }
     pendingSupersedes += 1;
     return settleOnce((accepted) => {
-      if (!accepted) pendingSupersedes = Math.max(0, pendingSupersedes - 1);
+      if (!accepted) { pendingSupersedes = Math.max(0, pendingSupersedes - 1); return; }
+      // Accepted: a newer process runs this conversation now, so this one is a twin on the same
+      // pin. Waiting for its socket to close let it live as long as the screen that held it (an
+      // hour beside the new Super, field 2026-11-14, the window's state pushed to the wrong one).
+      // It ends at its next idle: now, or when its running turn ends (never mid-turn).
+      if (turnsInFlight === 0) drain(); else drainAtTurnEnd = true;
     });
   }
 
