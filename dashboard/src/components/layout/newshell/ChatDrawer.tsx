@@ -18,6 +18,8 @@ export interface ChatDrawerProps {
   width: number;
   /** Floats over the page with a scrim (≤900) or slides from the top (≤600). */
   floating: boolean;
+  /** The pointer entered or left the drawer (a hover peek stays open while it is over it). */
+  onHover?: (over: boolean) => void;
   onClose(): void;
   onResize(width: number): void;
   onToggleExpanded(name: string): void;
@@ -305,7 +307,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
 
   return (
     <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
-      ref={rootRef} aria-label={t('shell.drawer.projects')} data-testid="chat-drawer">
+      ref={rootRef} aria-label={t('shell.drawer.projects')} data-testid="chat-drawer"
+      onMouseEnter={() => p.onHover?.(true)} onMouseLeave={() => p.onHover?.(false)}>
       <div className="ns-dr-scroll">
         <button ref={newRowRef} type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-window"
           onClick={(e) => openMenu({ kind: 'new', x: e.clientX, y: e.clientY })}>

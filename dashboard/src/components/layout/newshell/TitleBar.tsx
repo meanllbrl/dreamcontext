@@ -18,6 +18,8 @@ interface TitleBarProps {
   /** The chrome's notice (the ceiling's eviction or refusal), in the new wording. */
   notice: string | null;
   onToggleDrawer: () => void;
+  /** The pointer entered or left the drawer button: a hover peek of the drawer. */
+  onDrawerHover?: (over: boolean) => void;
   zoom: number;
   zoomLevels: readonly number[];
   onZoom: (level: number) => void;
@@ -38,7 +40,7 @@ interface TitleBarProps {
  * above the page, below every full-screen view.
  */
 export function TitleBar({
-  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer,
+  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, onDrawerHover,
   zoom, zoomLevels, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot,
 }: TitleBarProps) {
   const { t } = useI18n();
@@ -61,6 +63,8 @@ export function TitleBar({
           title={t('shell.drawer.toggle')}
           data-testid="ns-drawer-toggle"
           onClick={onToggleDrawer}
+          onMouseEnter={() => onDrawerHover?.(true)}
+          onMouseLeave={() => onDrawerHover?.(false)}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <rect x="1.4" y="2.4" width="13.2" height="11.2" rx="2.2" stroke="currentColor" strokeWidth="1.4" />

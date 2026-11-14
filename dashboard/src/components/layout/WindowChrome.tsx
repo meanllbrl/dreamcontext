@@ -237,6 +237,10 @@ function seedPendingLinks(initialVault: string, initialLink: string | null | und
   return { [initialVault]: { raw: initialLink as string, nonce: 1 } };
 }
 
+/** How long the pointer may be off both the drawer button and the drawer before a hover peek closes:
+ *  long enough to cross the gap between them. */
+const PEEK_GRACE_MS = 200;
+
 export function WindowChrome({ initialVault, initialLink, initialStart = null, initialIntent }: {
   initialVault: string;
   /** A `dreamcontext://` link this window was built to land (the `?open=` param). */
@@ -985,22 +989,52 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   // ≤900 the drawer floats over the page and a pick closes it (without forgetting the setting).
   const narrow = useIsNarrowWindow(900);
   const [floatingOpen, setFloatingOpen] = useState(false);
-  useEffect(() => { setFloatingOpen(false); }, [activeOnChat, activeVault]);
+  // Hover peek: with the drawer shut, the pointer on the drawer button opens it over the page at
+  // once, and it closes when the pointer leaves the button AND the drawer (a short grace crosses
+  // the gap between them). A click on the button while it peeks pins it (the normal toggle).
+  const [peek, setPeek] = useState(false);
+  const peekTimer = useRef<number | null>(null);
+  const clearPeekTimer = useCallback(() => {
+    if (peekTimer.current !== null) { window.clearTimeout(peekTimer.current); peekTimer.current = null; }
+  }, []);
+  const closeOverlay = useCallback(() => { clearPeekTimer(); setPeek(false); setFloatingOpen(false); }, [clearPeekTimer]);
+  useEffect(() => { closeOverlay(); }, [activeOnChat, activeVault, closeOverlay]);
+  useEffect(() => clearPeekTimer, [clearPeekTimer]);
   // Docked beside Chat; floating over any other page (the button never leaves the page) and ≤900.
   const drawerFloats = narrow || !activeOnChat;
-  const drawerVisible = newShell && (drawerFloats ? floatingOpen : drawerOpen);
+  const docked = !drawerFloats && drawerOpen;
+  const drawerVisible = newShell && (docked || floatingOpen || peek);
+  const drawerFloating = !docked;
+  const peekOnly = peek && !floatingOpen;
+  const onDrawerHover = useCallback((over: boolean) => {
+    clearPeekTimer();
+    if (!newShell) return;
+    if (over) {
+      if (!docked && !floatingOpen) setPeek(true);
+      return;
+    }
+    peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setPeek(false); }, PEEK_GRACE_MS);
+  }, [newShell, docked, floatingOpen, clearPeekTimer]);
   const onDrawerToggle = useCallback(() => {
+    clearPeekTimer();
+    if (peek) {
+      // Pinned: the overlay stays (floating) or docks open, and hover stops governing it.
+      setPeek(false);
+      if (drawerFloats) setFloatingOpen(true);
+      else toggleDrawer();
+      return;
+    }
     if (drawerFloats) setFloatingOpen((o) => !o);
     else toggleDrawer();
-  }, [drawerFloats, toggleDrawer]);
-  const dismissFloating = useCallback(() => setFloatingOpen(false), []);
-  // Esc closes a floating drawer (its menus own their Esc first).
+  }, [peek, drawerFloats, toggleDrawer, clearPeekTimer]);
+  const dismissFloating = closeOverlay;
+  // Esc closes a floating or peeking drawer (its menus own their Esc first).
   useEffect(() => {
-    if (!floatingOpen) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFloatingOpen(false); };
+    if (!floatingOpen && !peek) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeOverlay(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [floatingOpen]);
+  }, [floatingOpen, peek, closeOverlay]);
 
   const [drawerExpanded, setDrawerExpanded] = useState<string[]>(() => {
     const stored = readLayoutPrefs().drawerExpanded;
@@ -1230,6 +1264,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             onPick={(name) => void addTab(name)}
             notice={notice}
             onToggleDrawer={() => setDrawerToggleNonce((n) => n + 1)}
+            onDrawerHover={onDrawerHover}
             zoom={zoom}
             zoomLevels={ZOOM_LEVELS}
             onZoom={setZoomLevel}
@@ -1244,21 +1279,22 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
           <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
             <div className="ns-rail-slot" ref={setRailSlot} />
-            {drawerVisible && drawerFloats && (
-              <div className="ns-drawer-scrim" onClick={() => setFloatingOpen(false)} aria-hidden="true" />
+            {drawerVisible && drawerFloating && !peekOnly && (
+              <div className="ns-drawer-scrim" onClick={closeOverlay} aria-hidden="true" />
             )}
             {drawerVisible && (
               <ChatDrawer
                 rows={drawerRows}
                 width={drawerWidth}
-                floating={drawerFloats}
-                onNewProject={() => { setFloatingOpen(false); setNewProjectOpen(true); }}
-                onClose={() => setFloatingOpen(false)}
+                floating={drawerFloating}
+                onHover={onDrawerHover}
+                onNewProject={() => { closeOverlay(); setNewProjectOpen(true); }}
+                onClose={closeOverlay}
                 onResize={resizeDrawer}
                 onToggleExpanded={toggleExpanded}
                 onIntent={(vault, intent) => void queueDrawerIntent(vault, intent)}
-                onHistory={() => { setHistoryOpen(true); setFloatingOpen(false); }}
-                onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); setFloatingOpen(false); }}
+                onHistory={() => { setHistoryOpen(true); closeOverlay(); }}
+                onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); closeOverlay(); }}
                 onMove={(name, delta) => reorder(moveInOrder(projectOrder, name, delta))}
                 onDrop={(name, before) => reorder(dropInOrder(projectOrder, name, before))}
                 onMoveWindow={(vault, windowId, before) => {
@@ -1296,7 +1332,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   pendingStart={pendingStarts[p.vault] ?? null}
                   onStartConsumed={consumeStart}
                   drawerToggleNonce={drawerToggleNonce}
-                  drawerVisible={drawerVisible}
+                  drawerVisible={drawerVisible && !peekOnly}
                   onDrawerToggle={onDrawerToggle}
                   onDrawerDismiss={dismissFloating}
                   onDrawerFacts={handleDrawerFacts}
