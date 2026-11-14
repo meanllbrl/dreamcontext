@@ -731,9 +731,11 @@ export const OWNER_LAYOUT_NOTE = 'Shown, in the layout the owner picked for thes
 export function queuedNote(at: number, of: number): string {
   return `In the presentation queue (${at}/${of}), NOT on his screen: he is looking at another presentation, which stays. Do not say it is on screen; say it is waiting in the queue and opens when he moves on.`;
 }
-/** The reply's `presented` part for a present that waits (`queued`), or nothing when shown. */
-function queuedPart(r: { shown: boolean; at: number; of: number }): Record<string, unknown> {
-  return r.shown ? {} : { queued: { at: r.at, of: r.of, note: queuedNote(r.at, r.of) } };
+/** The reply's `presented` part for a present that waits (`queued`), or nothing when shown.
+ *  `cards`: what waits, named, since the reply's view is the presentation still on screen (the
+ *  chat's turn record reads them, dashboard turnCards.ts, to scroll to this answer on its step). */
+function queuedPart(r: { shown: boolean; at: number; of: number }, cards?: readonly string[]): Record<string, unknown> {
+  return r.shown ? {} : { queued: { at: r.at, of: r.of, ...(cards?.length ? { cards: [...cards] } : {}), note: queuedNote(r.at, r.of) } };
 }
 
 /** A picture question whose pictures wait in the presentation queue: where, and the note. */
@@ -1914,7 +1916,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       kept = r.kept;
       presented = r;
     });
-    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}), ...queuedPart(presented) });
+    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}), ...queuedPart(presented, ids) });
   },
 
   stack: async (c, b, res) => {

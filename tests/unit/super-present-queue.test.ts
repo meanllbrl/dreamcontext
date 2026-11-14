@@ -18,6 +18,7 @@ import { sanitizeSuperState } from '../../src/lib/super/store.js';
 import { planOthersClose, planTidy, presentSpent } from '../../src/lib/super/tidy.js';
 import { stackForLive } from '../../src/lib/super/live.js';
 import { retirableCards } from '../../src/lib/super/room.js';
+import { autoContainerId, settleChild } from '../../src/lib/super/proactive.js';
 import { settleAskShows } from '../../src/lib/super/ask-show.js';
 import { applyOwnerLayout } from '../../src/server/routes/super.js';
 import { checkRemoteLayout } from '../../src/server/routes/super-remote.js';
@@ -53,7 +54,8 @@ describe('presentCards queues instead of replacing (AC1, D1, D6)', () => {
   });
   it('the owner\'s own presentation and his held side by side are not replaced either', () => {
     const own = stage({ containers: [img('image-a'), img('image-b')], view: { mode: 'present', cards: ['image-a'], by: 'owner', ownerAt: Date.now() } });
-    expect(presentCards(own, ['image-b']).shown).toBe(false);
+    // His presentation counts as the first: 1/2 on the stage, the new one 2/2.
+    expect(presentCards(own, ['image-b'])).toMatchObject({ shown: false, at: 2, of: 2 });
     expect(own.view.cards).toEqual(['image-a']);
     const half = stage({ containers: [img('image-a'), img('image-b')], view: { mode: 'half', card: 'image-a', by: 'owner', ownerAt: Date.now() } });
     expect(presentCards(half, ['image-b']).shown).toBe(false);
@@ -184,6 +186,15 @@ describe('an unseen item is never swept (AC6)', () => {
     s.containers[1].place = 'others';
     expect(planOthersClose(s, () => 0, now + 10 * 86_400_000, 0, never)).not.toContain('image-b');
     expect(retirableCards(s, [], () => false)).not.toContain('image-b');
+  });
+  it('a child that goes away never closes its queued browser card, nor stacks its queued chat', () => {
+    const browser: SuperContainer = { id: autoContainerId('browser', 'kid-1'), kind: 'browser', ref: 'kid-1', shape: 'square', place: 'float' };
+    const chat: SuperContainer = { id: 'chat-kid', kind: 'chat', ref: 'kid-1', shape: 'square', place: 'float' };
+    const s = stage({ containers: [img('image-a'), browser, chat] });
+    presentCards(s, ['image-a']);
+    presentCards(s, [browser.id, chat.id]);
+    settleChild(s, 'kid-1', 'gone', Date.now());
+    expect(s.containers.map((c) => [c.id, c.place])).toEqual([['image-a', 'float'], [browser.id, 'float'], ['chat-kid', 'float']]);
   });
   it('the live cap never stacks a queued card, and a queued presentation is never ended for him', () => {
     const many = Array.from({ length: 14 }, (_, i) => img(`image-${i}`));

@@ -756,6 +756,38 @@ export interface SuperState {
   mainBatches?: string[];
   /** What the Super still owes the owner (server owed.ts): open debts and the newest closed. */
   owed?: SuperOwed[];
+  /** The stage's presentation queue (server types.ts `PresentQueue`). Absent = none. */
+  presentQueue?: PresentQueue;
+}
+
+/** One presentation on the stage's queue. MIRRORS `PresentItem` in src/lib/super/types.ts. */
+export interface PresentItem { id: string; cards: string[]; layout?: PresentLayout; layoutBy?: 'owner'; ask?: string; at: number }
+/** MIRRORS `PresentQueue` in src/lib/super/types.ts: unseen items, the head the next (or current). */
+export interface PresentQueue { items: PresentItem[]; seen: number; seq: number; showing?: string }
+export const PRESENT_ITEM_ID_RE = /^pq[0-9]{1,9}$/;
+
+/** The queue's counter (MIRRORS server `queueCounter`): i/N, how many wait, the head on screen.
+ *  `showing` here also needs the view to present the head's cards (a push may lag a gesture). */
+export function queueCounter(q: PresentQueue | undefined, view?: SuperView): { at: number; of: number; waiting: number; showing: boolean } {
+  const items = q?.items ?? [];
+  const head = items[0];
+  const shown = view ? (view.mode === 'present' ? view.cards ?? [] : []) : head?.cards ?? [];
+  const showing = !!q?.showing && head?.id === q.showing && shown.length > 0 && shown.every((id) => head.cards.includes(id));
+  return { at: (q?.seen ?? 0) + 1, of: (q?.seen ?? 0) + items.length, waiting: items.length - (showing ? 1 : 0), showing };
+}
+
+/** The queue as pushed: well-formed items only (the server settled it). A remote screen's view
+ *  carries no `at` or `seq` (handsfree contract `RemotePresentQueue`): the window reads neither. */
+function readPresentQueue(v: unknown): PresentQueue | undefined {
+  if (!isRecord(v) || !Array.isArray(v.items)) return undefined;
+  const items: PresentItem[] = [];
+  for (const i of v.items) {
+    if (!isRecord(i) || typeof i.id !== 'string' || !PRESENT_ITEM_ID_RE.test(i.id)) continue;
+    if (!Array.isArray(i.cards) || i.cards.length === 0 || !i.cards.every((c) => typeof c === 'string')) continue;
+    items.push({ ...(i as unknown as PresentItem), at: typeof i.at === 'number' ? i.at : 0 });
+  }
+  if (!items.length) return undefined;
+  return { items, seen: typeof v.seen === 'number' ? v.seen : 0, seq: typeof v.seq === 'number' ? v.seq : 0, ...(typeof v.showing === 'string' ? { showing: v.showing } : {}) };
 }
 
 /** One thing the Super owes the owner. MIRRORS `SuperOwed` in src/lib/super/types.ts
@@ -1227,6 +1259,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),
     ...(Array.isArray(v.owed) && readOwed(v.owed).length ? { owed: readOwed(v.owed) } : {}),
+    ...(readPresentQueue(v.presentQueue) ? { presentQueue: readPresentQueue(v.presentQueue) } : {}),
     team,
     ...(teamLive ? { teamLive } : {}),
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),

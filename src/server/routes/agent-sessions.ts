@@ -19,7 +19,7 @@ import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { backgroundBusy, superSanitizeOpts } from '../../lib/super/inbox.js';
 import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
 import { superRestoreHold, type SuperRestoreHold } from '../../lib/super/restore.js';
-import { emptySuperState, type SuperState } from '../../lib/super/types.js';
+import { emptySuperState, queueCounter, type SuperState } from '../../lib/super/types.js';
 import { parkedSince } from '../chat-park.js';
 import { sanitizeModel } from '../../lib/claude-args.js';
 import { getClaudeAccount, isSafeAccountId } from '../../lib/claude-accounts.js';
@@ -818,6 +818,8 @@ export interface RosterSummary {
   /** The drawer's Super Agent row for a project not mounted: children at work, a question waiting. */
   superWorking: number;
   superAsking: boolean;
+  /** Presentations waiting on the stage's queue, not on screen (task super-sahnesinde-sunum-sirasi, AC5). */
+  superWaiting: number;
   /** Each AI Team member's owner-facing facts (plan-r10 1; the route adds them). */
   members?: SuperMemberSummary[];
 }
@@ -831,7 +833,7 @@ function childRunsNow(sid: string): boolean {
   return act !== 'gone' && (act !== 'idle' || backgroundBusy(e));
 }
 
-export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue' | 'released'>>, runsNow: (sid: string) => boolean = childRunsNow, memberSessions: ReadonlySet<string> = new Set()): RosterSummary {
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue' | 'released' | 'presentQueue'>>, runsNow: (sid: string) => boolean = childRunsNow, memberSessions: ReadonlySet<string> = new Set()): RosterSummary {
   const settled = withWindows({ sessions: saved.sessions }, saved.windows);
   // The drawer's count of a project: the owner's chats, never the Super Agent's sessions (they
   // stay in the roster; only this count leaves them out).
@@ -844,7 +846,8 @@ export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>,
   const superAsking = (superState.queue ?? []).some((q) => q.state !== 'done' && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true && !q.team)));
   // Off, nothing works for the Super Agent (the window's `superRowMarks` says the same).
   const superWorking = !superState.enabled ? 0 : Object.entries(superState.children ?? {}).filter(([sid, c]) => c.endedAt === undefined && c.row === 'working' && runsNow(sid)).length;
-  return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow, superWorking, superAsking };
+  const superWaiting = queueCounter(superState.presentQueue).waiting;
+  return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow, superWorking, superAsking, superWaiting };
 }
 
 /** The GET body (also the 409 body): the surface, each entry with its `bound` flag, and the

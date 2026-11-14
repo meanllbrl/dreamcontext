@@ -67,13 +67,15 @@ export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--e
  * A presentation's controls at the top band's right end (plan-r2 D11, D12): the layouts these
  * cards can take (only when there is a choice), then the way back to the floating stage.
  */
-export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false, closable = 0, onCloseGroup }: {
+export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false, closable = 0, onCloseGroup, leaveQueue = false }: {
   rect: Rect; layouts: readonly PresentLayout[]; current: PresentLayout; onPick: (l: PresentLayout) => void; onExit: () => void;
   /** The presentation shows one group whole: "Minimize" goes back to that group's panel, "Close group" closes its cards. */
   toGroup?: boolean;
   /** How many of the group's cards a close would end (running jobs stay); 0 draws the button off. */
   closable?: number;
   onCloseGroup?: () => void;
+  /** A queued presentation of 2+ is shown: the exit leaves the queue (the rest keep waiting). */
+  leaveQueue?: boolean;
 }) {
   const { t } = useI18n();
   const [ask, setAsk] = useState(false);
@@ -104,7 +106,7 @@ export function StageControls({ rect, layouts, current, onPick, onExit, toGroup 
             </div>
           )}
         </>
-      ) : <button type="button" className="super-stage-exit" data-testid="super-stage-exit" onClick={onExit} title="Esc">{t('super.stage.exit')}</button>}
+      ) : <button type="button" className="super-stage-exit" data-testid="super-stage-exit" onClick={onExit} title={leaveQueue ? undefined : 'Esc'}>{t(leaveQueue ? 'super.stage.leaveQueue' : 'super.stage.exit')}</button>}
     </div>
   );
 }

@@ -92,7 +92,8 @@ import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
-import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
+import { answerForCards, sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
+import { onQueueJump } from './super/queueJump';
 import { SuperNewButton } from './super/SuperNewButton';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
@@ -1785,6 +1786,16 @@ export function ChatPane({
   useLayoutEffect(() => { if (superView) drawReplyLines(); });
   const replyJumpRef = useRef({ jumpToReplyTarget, jumpToReplied });
   replyJumpRef.current = { jumpToReplyTarget, jumpToReplied };
+  // The owner stepped the stage's presentation queue (AC3): the answer that brought the one now
+  // shown scrolls into view and flashes. Not in this transcript: nothing moves, nothing fails.
+  const queueJumpSession = superView ? session.claudeId ?? null : null;
+  useEffect(() => {
+    if (!queueJumpSession) return undefined;
+    return onQueueJump(queueJumpSession, (cards) => {
+      const id = answerForCards(turnCardsRef.current, cards);
+      if (id) replyJumpRef.current.jumpToReplyTarget(id);
+    });
+  }, [queueJumpSession]);
   /** Stable for the memoized rows. */
   /** A section head's click: the same jump as a strip's. Stable for the memoized rows. */
   const handleReplyTarget = useCallback((targetId: string, part?: number) => {

@@ -9,7 +9,7 @@
  * the rule hides is still saved, so absence never deletes, and the classic shell shows it as ever.
  * The record's `formerChildren` keeps ownership past the hand-over that prunes an ended child.
  */
-import type { SuperState } from '../../../lib/superTypes';
+import { queueCounter, type SuperState } from '../../../lib/superTypes';
 import type { SessionStatusKind } from '../agentStatus';
 import { isSuperSession, ownerQueueCount } from './superHandover';
 
@@ -123,16 +123,18 @@ export function busyChildren(
   });
 }
 
-/** The Super Agent row's two marks. A child counts while it works ({@link workingChildren});
- *  `asking`: the Super or a child waits on the owner. */
+/** The Super Agent row's marks. A child counts while it works ({@link workingChildren});
+ *  `asking`: the Super or a child waits on the owner; `waiting`: presentations on the stage's queue
+ *  not on screen (task super-sahnesinde-sunum-sirasi, AC5), only when there are any. */
 export function superRowMarks(
-  state: (Pick<SuperState, 'children' | 'queue'> & { enabled?: boolean }) | null | undefined,
+  state: (Pick<SuperState, 'children' | 'queue' | 'presentQueue'> & { enabled?: boolean }) | null | undefined,
   liveOf?: (sid: string) => SessionStatusKind | null,
-): { working: number; asking: boolean } {
+): { working: number; asking: boolean; waiting?: number } {
   if (!state) return { working: 0, asking: false };
   // Off, nothing works for the Super Agent: a child still running is an ordinary chat by now.
   const working = state.enabled === false ? 0 : workingChildren(state.children, liveOf).length;
-  return { working, asking: ownerQueueCount(state) > 0 };
+  const waiting = queueCounter(state.presentQueue).waiting;
+  return { working, asking: ownerQueueCount(state) > 0, ...(waiting > 0 ? { waiting } : {}) };
 }
 
 /**

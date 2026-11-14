@@ -92,7 +92,7 @@ describe('GET /agent/sessions?summary=1', () => {
     expect(status).toBe(200);
     const json = JSON.parse(body);
     // plan-r10 1: each AI Team member's owner-facing facts ride along; this project has none.
-    expect(json).toEqual({ windows: 1, tabs: 2, superOn: false, superWorking: 0, superAsking: false, perWindow: [{ id: 'main', name: 'Chat', tabs: 2 }], members: [] });
+    expect(json).toEqual({ windows: 1, tabs: 2, superOn: false, superWorking: 0, superAsking: false, superWaiting: 0, perWindow: [{ id: 'main', name: 'Chat', tabs: 2 }], members: [] });
     expect(body).not.toContain('Secret plan');
     expect(body).not.toContain('private draft');
   });

@@ -26,8 +26,9 @@ import { pollMs, useWindowActivity } from '../lib/windowActivity';
 
 type SuperMarks = NonNullable<FanoutFacts['superMarks']>;
 
-function marksOf(summary: { superWorking?: unknown; superAsking?: unknown } | null): SuperMarks {
-  return { working: typeof summary?.superWorking === 'number' ? summary.superWorking : 0, asking: summary?.superAsking === true };
+function marksOf(summary: { superWorking?: unknown; superAsking?: unknown; superWaiting?: unknown } | null): SuperMarks {
+  const waiting = typeof summary?.superWaiting === 'number' && summary.superWaiting > 0 ? Math.floor(summary.superWaiting) : 0;
+  return { working: typeof summary?.superWorking === 'number' ? summary.superWorking : 0, asking: summary?.superAsking === true, ...(waiting ? { waiting } : {}) };
 }
 
 /** The summary's `members`, each entry checked (another project's answer, read over the wire). */

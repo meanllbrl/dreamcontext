@@ -131,10 +131,13 @@ function addResult(turn: TurnCards, r: Record<string, unknown>): void {
       add(k.id);
     }
   }
-  // `present`: the view it set.
+  // `present`: the view it set, or, when it joined the presentation queue, the cards that wait (its
+  // view is then the presentation still on screen, never this turn's).
   const view = r.view && typeof r.view === 'object' ? r.view as Record<string, unknown> : null;
-  if (view && view.mode === 'present' && Array.isArray(view.cards) && !Array.isArray(r.containers) && Object.keys(r).every((k) => k === 'view' || k === 'kept')) {
-    for (const id of view.cards) if (isId(id)) add(id);
+  const queued = r.queued && typeof r.queued === 'object' ? r.queued as Record<string, unknown> : null;
+  if (view && !Array.isArray(r.containers) && Object.keys(r).every((k) => k === 'view' || k === 'kept' || k === 'queued')) {
+    if (queued) { if (Array.isArray(queued.cards)) for (const id of queued.cards) if (isId(id)) add(id); }
+    else if (view.mode === 'present' && Array.isArray(view.cards)) for (const id of view.cards) if (isId(id)) add(id);
   }
   // `ask --show`: the cards its question put up.
   const show = r.show && typeof r.show === 'object' ? r.show as Record<string, unknown> : null;
@@ -225,6 +228,19 @@ export function turnCardsByAnswer(items: readonly TurnItem[]): Map<string, TurnC
   }
   flush();
   return out;
+}
+
+/**
+ * The answer that brought a presentation (task super-sahnesinde-sunum-sirasi, AC3): the LAST answer
+ * whose turn showed any of `cards`, so a re-presented set lands on its newest answer. Null when no
+ * answer in the transcript showed them (cut from history, another session): nothing to scroll to.
+ */
+export function answerForCards(byAnswer: ReadonlyMap<string, TurnCards>, cards: readonly string[]): string | null {
+  if (!cards.length) return null;
+  const want = new Set(cards);
+  let found: string | null = null;
+  for (const [answer, turn] of byAnswer) if (turn.ids.some((id) => want.has(id))) found = answer;
+  return found;
 }
 
 // ─── Tiles: the turn's cards against the stage as it is now ─────────────────────────────────

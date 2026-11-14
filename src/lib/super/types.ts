@@ -515,7 +515,10 @@ export function presentCards(
   const prev = s.view;
   const counter = (item: PresentItem, shown: boolean): PresentResult => {
     const i = q.items.indexOf(item);
-    return { kept: false, shown, at: q.seen + (i < 0 ? 1 : i + 1), of: q.seen + Math.max(q.items.length, 1) };
+    // Waiting behind a presentation that is not a queue item (his own, or one from before the
+    // queue): that one counts as the first (AC1: "1/2").
+    const ahead = !shown && s.view.mode === 'present' && !headShowing(s) ? 1 : 0;
+    return { kept: false, shown, at: q.seen + ahead + (i < 0 ? 1 : i + 1), of: q.seen + ahead + Math.max(q.items.length, 1) };
   };
   if (prev.mode === 'present' && sameCardSet(prev.cards ?? [], ids)) {
     const question = ask ?? prev.ask;
