@@ -20,6 +20,7 @@ import {
   ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 import { cardMentionText } from '../../../lib/cardMention';
+import { isOwnerCardItem } from './superJobsStore';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
 
@@ -262,7 +263,10 @@ export function ownerQueueCount(state: Pick<SuperState, 'queue'> | null | undefi
 /** A question is asked in the chat, as its card, never in the top band (owner 2026-11-13: "şu tip
  *  soru bile istemiyorum"). The band's head and count skip them; the notch, dock and alarm keep
  *  `queueHead`. */
-const bandItem = (it: SuperQueueItem) => it.kind !== 'ask' && it.kind !== 'question';
+/** Nor an owner-only CARD (a run, a secret, a checklist, an MCP connect; owner 2026-11-14: "şu
+ *  üstteki kart kalksın"): its card is drawn in the Super chat where it was posted and it is
+ *  listed in Waiting on you, so the top row only said it twice. */
+const bandItem = (it: SuperQueueItem) => it.kind !== 'ask' && it.kind !== 'question' && !isOwnerCardItem(it);
 export function bandHead(state: Pick<SuperState, 'queue'> | null | undefined): SuperQueueItem | null {
   return queueHead(state ? { queue: state.queue.filter(bandItem) } : state);
 }
