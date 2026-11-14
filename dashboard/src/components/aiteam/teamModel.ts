@@ -817,6 +817,33 @@ export function memberWaitCounts(queue: ReadonlyArray<{ kind: string; state: str
   return out;
 }
 
+/**
+ * What the member summary is built from, as this window holds it live (the project's Super
+ * records, main and each member, pushed by the server): every open queue item and each child's
+ * row and agenda marks. The Ekip row's `asking`, `unread` and `ownerWorking` come from a summary
+ * READ (`GET /agent/sessions?summary=1`) on a 15 s poll that slows to 60-120 s off focus or in
+ * light mode, so an answer the owner just gave left the row red until the next poll. A change of
+ * this key re-reads the summary at once: his answer closes the item (and its mirror in main),
+ * the record push lands, the row follows, whatever card kind it was. Pure.
+ */
+export function ekipPulseKey(records: ReadonlyArray<{
+  superId: string;
+  record: {
+    queue?: ReadonlyArray<{ id: string; state: string }> | null;
+    children?: Readonly<Record<string, { row?: string; endedAt?: number; finishedAt?: number; seenAt?: number }>> | null;
+  } | null;
+}>): string {
+  const parts: string[] = [];
+  for (const r of records) {
+    if (!r.record) continue;
+    const open = (r.record.queue ?? []).filter((q) => q.state !== 'done').map((q) => `${q.id}:${q.state}`).sort();
+    const kids = Object.entries(r.record.children ?? {})
+      .map(([sid, c]) => `${sid}:${c.row ?? ''}:${c.endedAt ?? ''}:${c.finishedAt ?? ''}:${c.seenAt ?? ''}`).sort();
+    parts.push(`${r.superId}|${open.join(',')}|${kids.join(',')}`);
+  }
+  return parts.sort().join('\n');
+}
+
 /** Approval cards waiting on the owner (counted in `ekipAskingCount` too). */
 export function ekipApprovalCount(members: readonly EkipMember[]): number {
   return members.filter((m) => m.approval).length;
