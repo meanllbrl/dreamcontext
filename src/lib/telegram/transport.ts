@@ -193,7 +193,7 @@ export class TelegramTransport {
   editMessageText(chatId: number, messageId: number, html: string, extra: Record<string, unknown> = {}): Promise<unknown> {
     return this.call('editMessageText', { chat_id: chatId, message_id: messageId, text: html, parse_mode: 'HTML', ...extra });
   }
-  sendChatAction(chatId: number, action: 'typing' | 'upload_photo' | 'upload_document' = 'typing'): Promise<unknown> {
+  sendChatAction(chatId: number, action: 'typing' | 'upload_photo' | 'upload_document' | 'record_voice' = 'typing'): Promise<unknown> {
     return this.call('sendChatAction', { chat_id: chatId, action });
   }
   answerCallbackQuery(id: string, text?: string): Promise<unknown> {
@@ -204,6 +204,15 @@ export class TelegramTransport {
   }
   sendPhoto(chatId: number, file: UploadFile, caption?: string): Promise<TgSentMessage> {
     return this.upload('sendPhoto', { chat_id: chatId, ...(caption ? { caption, parse_mode: 'HTML' } : {}) }, { photo: file });
+  }
+  /** A voice bubble: OGG/Opus only (another container arrives as a file). */
+  sendVoice(chatId: number, file: UploadFile, extra: { caption?: string; duration?: number; replyTo?: number } = {}): Promise<TgSentMessage> {
+    return this.upload('sendVoice', {
+      chat_id: chatId,
+      ...(extra.caption ? { caption: extra.caption, parse_mode: 'HTML' } : {}),
+      ...(extra.duration ? { duration: extra.duration } : {}),
+      ...(extra.replyTo ? { reply_parameters: { message_id: extra.replyTo, allow_sending_without_reply: true } } : {}),
+    }, { voice: file });
   }
   sendDocument(chatId: number, file: UploadFile, caption?: string): Promise<TgSentMessage> {
     return this.upload('sendDocument', { chat_id: chatId, ...(caption ? { caption, parse_mode: 'HTML' } : {}) }, { document: file });

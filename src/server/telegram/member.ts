@@ -21,6 +21,8 @@ import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegr
 import { takeMemberReactionText } from '../../lib/telegram/reactions.js';
 import { sayToAgent } from '../routes/automations.js';
 import { SILENT, voiceEchoHtml } from '../../lib/telegram/system-lines.js';
+import { voiceAnswer } from '../../lib/telegram/voice-block.js';
+import { sendVoiceSummary, type VoiceReplyDeps } from './voice-reply.js';
 import type { UpdateDisposition } from '../../lib/telegram/poller.js';
 import { memberCommandLine, memberStatusText, stopMemberJobs, type MemberJobsDeps } from './member-commands.js';
 import type { ActiveBinding, BindingKey, HubMember, TelegramHub } from './hub.js';
@@ -42,6 +44,8 @@ export interface MemberDeps {
   transcribeVoice?: (oggPath: string) => Promise<string>;
   /** /dur and /durum's reads and stops (tests inject; member-commands.ts). */
   jobs?: MemberJobsDeps;
+  /** A `dream-voice` block's voice (voice-reply.ts; tests inject `speak`). */
+  voice?: VoiceReplyDeps;
 }
 
 const NOT_FOUND = "Bu üyeyi Mac'te bulamadım; üyenin Mac'te kayıtlı olduğundan emin ol.";
@@ -95,7 +99,8 @@ export function memberAdapter(deps: MemberDeps = {}): HubMember {
         // His reactions on this bot's messages since (reactions.ts): notes in front, never his words.
         const reacted = takeMemberReactionText(ab.key, hub.now());
         if (reacted) text = `${reacted}\n\n${text}`;
-        await sendToMember(hub, ab, root, text, { say, readRun, watchEveryMs: deps.watchEveryMs ?? WATCH_EVERY_MS, retryEveryMs: deps.retryEveryMs ?? RETRY_EVERY_MS });
+        const replyTo = Number.isSafeInteger(Number(msg.message_id)) ? Number(msg.message_id) : null;
+        await sendToMember(hub, ab, root, text, { say, readRun, watchEveryMs: deps.watchEveryMs ?? WATCH_EVERY_MS, retryEveryMs: deps.retryEveryMs ?? RETRY_EVERY_MS, replyTo, voice: deps.voice });
       })().catch(() => { void hub.notice(ab, 'warn', 'Mesajın üyeye ulaşmadı; tekrar gönder.', true); });
       return 'accepted';
     },
@@ -104,7 +109,7 @@ export function memberAdapter(deps: MemberDeps = {}): HubMember {
 
 async function sendToMember(
   hub: TelegramHub, ab: ActiveBinding, root: string, text: string,
-  o: { say: typeof sayToAgent; readRun: typeof readThreadRun; watchEveryMs: number; retryEveryMs: number },
+  o: { say: typeof sayToAgent; readRun: typeof readThreadRun; watchEveryMs: number; retryEveryMs: number; replyTo?: number | null; voice?: VoiceReplyDeps },
 ): Promise<void> {
   let r = o.say(root, { slug: ab.target, text, via: 'telegram' });
   if (!r.ok && r.status === 429) {
@@ -124,10 +129,13 @@ async function sendToMember(
   await watchRun(hub, ab, root, runId, askId, o);
 }
 
-/** Sends the member's `agent` posts in `runId` after the ask, until the run ends. */
+/** Sends the member's `agent` posts in `runId` after the ask, until the run ends. A post's
+ *  `dream-voice` block (the owner asked for a spoken summary) goes as a voice bubble through this
+ *  member's own bot, replying to his message: only runs his message on this bot started are
+ *  followed here, so a scheduled routine is never spoken (plan telegram-sesli-ozet, C4b). */
 async function watchRun(
   hub: TelegramHub, ab: ActiveBinding, root: string, runId: string, askId: string,
-  o: { readRun: typeof readThreadRun; watchEveryMs: number },
+  o: { readRun: typeof readThreadRun; watchEveryMs: number; replyTo?: number | null; voice?: VoiceReplyDeps },
 ): Promise<void> {
   const sent = new Set<string>([askId]);
   const until = hub.now() + WATCH_MAX_MS;
@@ -139,7 +147,12 @@ async function watchRun(
     for (const e of entries) {
       if (sent.has(e.id)) continue;
       sent.add(e.id);
-      if (e.kind === 'agent' && e.text.trim()) await hub.sendMarkdown(ab, e.text).catch(() => {});
+      if (e.kind === 'agent' && e.text.trim()) {
+        const { text, voice } = voiceAnswer(e.text);
+        if (text.trim()) await hub.sendMarkdown(ab, text).catch(() => {});
+        // No sessionId: a member raises no Super secret card, so the secret-card check has nothing to read.
+        if (voice) await sendVoiceSummary(hub, ab, voice, { replyTo: o.replyTo ?? null, deps: o.voice }).catch(() => false);
+      }
       // Its question (a free-text ask) and a failure reach the owner here too.
       if (e.kind === 'system' && e.event === 'asked' && e.text.trim()) await hub.sendMarkdown(ab, `❓ ${e.text}`, undefined, 'mac', false).catch(() => {});
       if (e.kind === 'system' && (e.event === 'failed' || e.event === 'timeout')) await hub.notice(ab, 'warn', `Çalışamadı: ${e.text.slice(0, 300) || e.event}`, true);

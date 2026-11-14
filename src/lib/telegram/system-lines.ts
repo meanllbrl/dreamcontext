@@ -47,3 +47,17 @@ export const NOTICE_EMOJI: Record<NoticeKind, string> = { info: 'ℹ️', warn: 
 export function noticeHtml(kind: NoticeKind, sentence: string): string {
   return `${NOTICE_EMOJI[kind]} <i>${escapeHtml(sentence.replace(/\s+/g, ' ').trim())}</i>`;
 }
+
+/** A spoken summary that could not be made (voice-reply.ts): the summary follows as text. */
+export const VOICE_SUMMARY_LINES = {
+  no_key: "Sesli özet için ses anahtarı yok: Mac'te Ayarlar › Ses › OpenRouter anahtarı. Yazıyla:",
+  no_ffmpeg: 'Sesli özet için ffmpeg gerekli (Mac\'te brew install ffmpeg). Yazıyla:',
+  failed: 'Sesli özet şu an hazırlanamadı. Yazıyla:',
+  too_long: 'Sesli özet çok uzun oldu. Yazıyla:',
+} as const;
+
+/** The caption under a voice bubble: one line, the title escaped. */
+export function voiceCaptionHtml(title: string): string {
+  const t = clip(redactSecrets(title || ''), 64);
+  return `🔊 ${escapeHtml(t || 'Sesli özet')}`;
+}
