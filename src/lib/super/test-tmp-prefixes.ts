@@ -638,6 +638,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-suite-',
   'dc-suite-dist-',
   'dc-super-handoff-',
+  'dc-super-push-',
   'dc-super-rutin-',
   'dc-super-rutin-proj-',
   'dc-super-schedule-',
