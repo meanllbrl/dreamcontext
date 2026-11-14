@@ -7,7 +7,9 @@ import { listSharedAgentSlugs } from '../automations/sharing.js';
 import { getAutomation, listAutomations, readAutomationCache } from '../automations/store.js';
 import { readMachineIdentity } from '../machine-id.js';
 import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
-import { feedCutoffDay, readRunHead, runDocumentPath, runUnread, toBrainRelative } from '../automations/feed.js';
+import {
+  feedCutoffDay, openQuestionsByRun, readRunHead, runDocumentPath, runInUnreadWindow, runWindowUnread, toBrainRelative,
+} from '../automations/feed.js';
 import { pendingQuestionOfRun } from '../automations/hitl.js';
 import { ownerQuietReader, superJobReader } from '../automations/super-quiet.js';
 import { privateSources } from '../automations/history.js';
@@ -151,22 +153,18 @@ function sourcesFor(contextRoot: string, slug: string, audience: HistoryAudience
 
 const dayCache = new Map<string, { mtimeMs: number; size: number; entries: ThreadEntry[] }>();
 
-/** Every entry of a source, by id, the ids inside the feed's unread window (the newest 14 calendar
- *  days, the feed's own window), and the day file each entry came from: its name says which
- *  machine wrote it, also for a shared routine whose threads sync with agent sync off. */
-function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; windowIds: Set<string>; fileOf: Map<string, string> } {
+/** Every entry of a source, by id, and the day file each entry came from: its name says which
+ *  machine wrote it, also for a shared routine whose threads sync with agent sync off. Which runs
+ *  count as unread is `runInUnreadWindow`'s word, the feed's own rule, never a day file's. */
+function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; fileOf: Map<string, string> } {
   let dir: string;
-  try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], windowIds: new Set(), fileOf: new Map() }; }
+  try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], fileOf: new Map() }; }
   let names: string[];
   try { names = readdirSync(dir).filter(isThreadDayFile).sort(); } catch { names = []; }
   const present = new Set(names.map((n) => join(dir, n)));
   // A day file retention deleted leaves the cache with its folder's listing.
   for (const p of [...dayCache.keys()]) if (p.startsWith(dir + sep) && !present.has(p)) dayCache.delete(p);
-  const days = [...new Set(names.map((n) => n.slice(0, 10)))];
-  const cutoffDay = feedCutoffDay();
-  const windowDays = new Set(days.filter((d) => d >= cutoffDay));
   const byId = new Map<string, ThreadEntry>();
-  const windowIds = new Set<string>();
   const fileOf = new Map<string, string>();
   for (const name of names) {
     const path = join(dir, name);
@@ -181,14 +179,12 @@ function readSource(contextRoot: string, source: string): { entries: ThreadEntry
       hit = { mtimeMs: st.mtimeMs, size: st.size, entries: parseDayFile(raw) };
       dayCache.set(path, hit);
     }
-    const inWindow = windowDays.has(name.slice(0, 10));
     for (const e of hit.entries) {
       if (!byId.has(e.id)) { byId.set(e.id, e); fileOf.set(e.id, name); }
-      if (inWindow) windowIds.add(e.id);
     }
   }
   const entries = [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return { entries, windowIds, fileOf };
+  return { entries, fileOf };
 }
 
 // ─── Candidates ─────────────────────────────────────────────────────────────────────
@@ -331,6 +327,8 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const quietOf = ownerQuietReader(contextRoot);
   const isSuperJob = opts.runsOnly ? superJobReader(contextRoot) : null;
   const nowMs = (opts.now ?? new Date()).getTime();
+  const cutoffDay = feedCutoffDay(opts.now);
+  const openRuns = openQuestionsByRun(contextRoot);
   const agentTitle = (() => {
     try {
       const a = getAgent(contextRoot, slug);
@@ -342,7 +340,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const titleOf = (s: string): string => (s === slug ? agentTitle : manifests.find((m) => m.slug === s)?.title ?? s);
 
   for (const source of sourcesFor(contextRoot, slug, opts.audience)) {
-    const { entries, windowIds, fileOf } = readSource(contextRoot, source);
+    const { entries, fileOf } = readSource(contextRoot, source);
     if (entries.length === 0) continue;
     const here = opts.audience === 'agent' ? threadEntriesHere(contextRoot, source, home) : null;
     const watermark = threadReadWatermark(contextRoot, source, home);
@@ -359,9 +357,9 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
     const title = titleOf(source);
     for (const [runId, runEntries] of byRun) {
       if (isSuperJob?.(source, runEntries)) continue;
-      // Unread exactly as the feed counts it: the run's entries inside the feed's window.
-      const windowed = runEntries.filter((e) => windowIds.has(e.id));
-      const u = runUnread(windowed, watermark, quietOf(source, runEntries));
+      // Unread exactly as the feed counts it: one window rule, anchored on the run's last activity.
+      const inWindow = runInUnreadWindow(runEntries, cutoffDay, openRuns.has(`${source}::${runId}`));
+      const u = runWindowUnread(runEntries, watermark, inWindow, quietOf(source, runEntries));
       unreadCount += u.unreadPosts;
       let lastMs = -Infinity;
       let lastAt = runEntries[runEntries.length - 1].at;
@@ -371,7 +369,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
       }
       const key = `${source}::${runId}`;
       const unread = u.unread;
-      const newestId = windowed.length ? u.newestId : runUnread(runEntries, null).newestId;
+      const newestId = u.newestId;
       const run = runsByFire.get(runId) ?? null;
       const posts = runEntries.filter((e) => e.kind === 'user' || e.kind === 'agent');
       candidates.push({
