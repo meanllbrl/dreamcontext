@@ -20,6 +20,7 @@ import {
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
+  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
@@ -62,7 +63,7 @@ import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
-import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
+import { askShowState, askStillOpen, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
 import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
@@ -725,6 +726,23 @@ function readCardsOf(s: SuperState, shown: ReturnType<typeof applyAskShow>): str
 export const OWNER_KEPT_NOTE = 'NOT on his screen: the owner arranged his stage himself a moment ago, so it stays. Do not say it is on screen; tell him where it is (the card\'s title, on the stage or in Others) so he can open it.';
 /** A present that kept the owner's layout for the same cards: they ARE shown, in his layout. */
 export const OWNER_LAYOUT_NOTE = 'Shown, in the layout the owner picked for these same cards (his layout stays).';
+/** A presentation that joined the queue behind the one the owner is looking at (task
+ *  super-sahnesinde-sunum-sirasi, AC1): it is NOT on his screen yet. */
+export function queuedNote(at: number, of: number): string {
+  return `In the presentation queue (${at}/${of}), NOT on his screen: he is looking at another presentation, which stays. Do not say it is on screen; say it is waiting in the queue and opens when he moves on.`;
+}
+/** The reply's `presented` part for a present that waits (`queued`), or nothing when shown. */
+function queuedPart(r: { shown: boolean; at: number; of: number }): Record<string, unknown> {
+  return r.shown ? {} : { queued: { at: r.at, of: r.of, note: queuedNote(r.at, r.of) } };
+}
+
+/** A picture question whose pictures wait in the presentation queue: where, and the note. */
+function queuedAskPart(state: SuperState, item: string): Record<string, unknown> {
+  const q = state.presentQueue;
+  const i = (q?.items ?? []).findIndex((x) => x.ask === item);
+  if (!q || i < 0) return {};
+  return { queued: { at: q.seen + i + 1, of: q.seen + q.items.length }, note: queuedNote(q.seen + i + 1, q.seen + q.items.length) };
+}
 
 /** After the write: the picture chain, the phone's strip, and what the agent is told (D9). */
 function finishAskShow(
@@ -743,6 +761,7 @@ function finishAskShow(
   return {
     cards: r?.ids ?? [], ...(r?.ids.length ? { via: r.via } : {}), state: st,
     ...(st === 'skipped' ? { reason: 'owner_layout', note: OWNER_KEPT_NOTE } : {}),
+    ...(st === 'queued' ? queuedAskPart(state, item) : {}),
     ...(r?.cut ? { cut: r.cut } : {}),
     ...(prep.skipped.length ? { skipped: prep.skipped } : {}),
   };
@@ -1296,8 +1315,10 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
   // Cards whose size the owner chose: the agent's size is not written (decided inside the
   // locked write, so an owner resize landing meanwhile still wins).
   let kept: string[] = [];
-  // `--present`: whether the owner's own layout for these same cards was kept (presentCards).
+  // `--present`: whether the owner's own layout for these same cards was kept, and whether it
+  // is on his screen or waits in the queue (presentCards).
   let layoutKept = false;
+  let presented: { shown: boolean; at: number; of: number } = { shown: true, at: 1, of: 1 };
   // Touched before the write too, so a tidy pass racing it never moves what is being opened.
   touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
   // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
@@ -1369,7 +1390,9 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
     if (presentNow) {
       const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
       const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
-      layoutKept = presentCards(s, shown).kept;
+      const r = presentCards(s, shown);
+      layoutKept = r.kept;
+      presented = r;
     }
     // The picture chain: the next image open within the window joins where this one went.
     if (isMediaKind(kind as ContainerKind)) {
@@ -1391,7 +1414,8 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
     if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
   }
   door.done(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
-    ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) } } : {}),
+    ...(presentNow && presented.shown && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) } } : {}),
+    ...(presentNow ? queuedPart(presented) : {}),
     ...(note ? { kind, note } : {}) }, state);
 }
 
@@ -1841,7 +1865,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   present: async (c, b, res) => {
     const raw = Array.isArray(b.containers) ? b.containers : [];
     if (raw.length === 0) {
-      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { s.view = { mode: 'float' }; });
+      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { withdrawPresent(s); });
       ok(res, { view: { mode: 'float' } });
       return;
     }
@@ -1876,6 +1900,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     let kept = false;
+    let presented: { shown: boolean; at: number; of: number } = { shown: true, at: 1, of: 1 };
     // The presented pictures' shapes, read before the write (image-aspect.ts).
     const aspects = await imageAspects(dirname(c.who.contextRoot),
       c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
@@ -1884,10 +1909,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // A group presented whole comes out of Others: leaving the presentation finds it on the stage.
       for (const g of s.groups) if (raw.includes(g.id)) g.place = 'float';
       // One present (types.ts `presentCards`): the owner's same-set pick and a question the same
-      // cards show stay; other cards are a new presentation.
-      kept = presentCards(s, ids, layout).kept;
+      // cards show stay; other cards are a new presentation, queued while he looks at one.
+      const r = presentCards(s, ids, layout);
+      kept = r.kept;
+      presented = r;
     });
-    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) });
+    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}), ...queuedPart(presented) });
   },
 
   stack: async (c, b, res) => {
@@ -3702,9 +3729,32 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
       if (raw.mode === 'half' || raw.mode === 'present') { raw.by = 'owner'; raw.ownerAt = Date.now(); }
     }
   }
+  // Closing a queued presentation he is looking at passes it and opens the next (AC2).
+  const q = s.presentQueue;
+  let step = readQueueStep(body);
+  if (!step && ownerView.exit && q?.showing && s.view.mode === 'present' && q.items[0]?.id === q.showing) {
+    const shown = s.view.cards ?? [];
+    const ex = ownerView.exit;
+    if (sameCardSet(shown, ex.cards) || sameCardSet(shown.filter((id) => !ex.closing.includes(id)), ex.cards)) {
+      step = { op: 'next', item: q.showing };
+      delete ownerView.exit;
+    }
+  }
   // The layout he picked, the chat bar, leaving: each only on the cards he saw (plan-r2 R2-E3).
   s.view = applyOwnerViewFields(s.view, ownerView, Date.now());
+  // A layout picked on a queued item is that item's own (D8): the queue does not move.
+  if (ownerView.presentLayout) notePresentLayout(s);
+  // His queue gesture, on the item his window showed (D2, AC2, AC5).
+  if (step) ownerQueueStep(s, step.op, step.item, askStillOpen(s));
   return s;
+}
+
+/** The owner's queue gesture in a layout body: `{ op: next|leave|resume, item: pq… }`. */
+export function readQueueStep(body: Record<string, unknown>): { op: 'next' | 'leave' | 'resume'; item: string } | null {
+  const v = body.queue;
+  const r = v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+  if (!r || (r.op !== 'next' && r.op !== 'leave' && r.op !== 'resume') || typeof r.item !== 'string' || !PRESENT_ITEM_ID_RE.test(r.item)) return null;
+  return { op: r.op, item: r.item };
 }
 
 

@@ -9,7 +9,7 @@ import {
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
-  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
@@ -916,13 +916,15 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   const owedSeq = Math.max(rawOwedSeq !== undefined && rawOwedSeq > 0 && rawOwedSeq < 1e9 ? Math.floor(rawOwedSeq) : 0, ...owed.map((d) => d.seq));
   const owedSince = finite(raw.owedSince);
   const ownerLanguage = asOwnerLanguage(raw.ownerLanguage);
+  // The presentation queue settles against the cards, and may open its next item (types.ts).
+  const pq = settlePresentQueue(raw.presentQueue, sanitizeView(raw.view, containers), containers);
   return {
     v: SUPER_STATE_VERSION,
     session,
     enabled: raw.enabled === true && session !== null,
     containers,
     groups,
-    view: sanitizeView(raw.view, containers),
+    view: pq.view,
     children,
     queue,
     notes,
@@ -938,6 +940,7 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(pad.length ? { pad } : {}),
     ...(padSeq ? { padSeq } : {}),
     ...(askShows.length ? { askShows } : {}),
+    ...(pq.queue ? { presentQueue: pq.queue } : {}),
     ...(member ? { member } : {}),
     ...(mainBatches.length ? { mainBatches } : {}),
     ...(owed.length ? { owed } : {}),

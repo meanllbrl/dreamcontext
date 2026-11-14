@@ -166,7 +166,9 @@ describe('settleAskShows: presenting', () => {
     expect(s.view).toMatchObject({ mode: 'present', cards: ['image-c', 'image-d'], ask: 'q2' });
     expect(s.containers.filter((c) => c.place === 'others').map((c) => c.id)).toEqual(['image-a', 'image-b']);
   });
-  it('the owner\'s own view, set a moment ago, is not replaced: skipped, and never later', () => {
+  // Task super-sahnesinde-sunum-sirasi (owner 2026-11-14): what he looks at is never replaced;
+  // the question's pictures join the presentation queue instead of being skipped.
+  it('the owner\'s own view, set a moment ago, is not replaced: the pictures wait in the queue, never opened by themselves', () => {
     const at = Date.now() - 60_000;
     for (const view of [{ mode: 'half' as const, card: 'task-x', by: 'owner' as const, ownerAt: at }, { mode: 'present' as const, cards: ['task-x', 'task-y'], layout: 'compare' as const, layoutBy: 'owner' as const, ownerAt: at }]) {
       const s = settle(stage({
@@ -174,7 +176,8 @@ describe('settleAskShows: presenting', () => {
         view, queue: [ask('q1')], askShows: [entry('q1', ['image-a', 'image-b'])],
       }));
       expect(s.view).toEqual(view);
-      expect(s.askShows?.[0].skipped).toBe('owner_layout');
+      expect(s.askShows?.[0]).toMatchObject({ presented: true });
+      expect(s.presentQueue?.items).toEqual([expect.objectContaining({ cards: ['image-a', 'image-b'], ask: 'q1' })]);
       s.view = { mode: 'float' };
       settle(s);
       expect(s.view.mode).toBe('float');
@@ -182,12 +185,11 @@ describe('settleAskShows: presenting', () => {
   });
   // Owner 2026-11-08: a view of his pinned for hours (or to a job that ended) kept every new
   // picture off his screen. Only his CURRENT intent holds (types.ts ownerViewHeld).
-  it('an owner view older than the hold, or with no time (written before it), no longer keeps the pictures off', () => {
+  it('an owner side by side older than the hold, or with no time, no longer keeps the pictures off; any presentation queues them', () => {
     const old = Date.now() - OWNER_VIEW_HOLD_MS - 1;
     for (const view of [
       { mode: 'half' as const, card: 'task-x', by: 'owner' as const, ownerAt: old },
       { mode: 'half' as const, card: 'task-x', by: 'owner' as const },
-      { mode: 'present' as const, cards: ['task-x', 'task-y'], layout: 'compare' as const, layoutBy: 'owner' as const, ownerAt: old },
     ]) {
       const s = settle(stage({
         containers: [img('image-a'), img('image-b'), { id: 'task-x', kind: 'task', ref: 'x', shape: 'square', place: 'float' }, { id: 'task-y', kind: 'task', ref: 'y', shape: 'square', place: 'float' }],
@@ -197,6 +199,14 @@ describe('settleAskShows: presenting', () => {
       expect(s.view.by).toBeUndefined();
       expect(s.askShows?.[0]).toMatchObject({ presented: true });
     }
+    // A presentation on screen, however old his mark, is what he looks at: the pictures queue.
+    const pres = { mode: 'present' as const, cards: ['task-x', 'task-y'], layout: 'compare' as const, layoutBy: 'owner' as const, ownerAt: old };
+    const q = settle(stage({
+      containers: [img('image-a'), img('image-b'), { id: 'task-x', kind: 'task', ref: 'x', shape: 'square', place: 'float' }, { id: 'task-y', kind: 'task', ref: 'y', shape: 'square', place: 'float' }],
+      view: pres, queue: [ask('q1')], askShows: [entry('q1', ['image-a', 'image-b'])],
+    }));
+    expect(q.view).toEqual(pres);
+    expect(q.presentQueue?.items[0]).toMatchObject({ ask: 'q1' });
   });
   it('an owner view of an ENDED job\'s chat, even set a moment ago, no longer keeps the pictures off', () => {
     const chat: SuperContainer = { id: 'chat-old', kind: 'chat', ref: 'child-1', shape: 'square', place: 'float' };
@@ -218,7 +228,7 @@ describe('settleAskShows: presenting', () => {
       queue: [ask('q1')], askShows: [entry('q1', ['image-a', 'image-b'])],
     }));
     expect(live.view).toMatchObject({ mode: 'half', card: 'chat-old', by: 'owner' });
-    expect(live.askShows?.[0].skipped).toBe('owner_layout');
+    expect(live.presentQueue?.items[0]).toMatchObject({ ask: 'q1' });
   });
   it('ownerViewHeld: his mark, a time inside the hold, no ended job\'s chat', () => {
     const now = 1_000_000_000;
@@ -353,12 +363,12 @@ describe('settleAskShows: putting back', () => {
 });
 
 describe('presentCards and the stored view', () => {
-  it('a same-set Super present keeps the question; another set drops it', () => {
+  it('a same-set Super present keeps the question; another set waits in the queue behind it', () => {
     const s = stage({ containers: [img('image-a'), img('image-b'), img('image-c')], view: { mode: 'present', cards: ['image-a', 'image-b'], layout: 'compare', ask: 'q1' } });
     presentCards(s, ['image-b', 'image-a']);
     expect(s.view.ask).toBe('q1');
-    presentCards(s, ['image-a', 'image-c']);
-    expect(s.view.ask).toBeUndefined();
+    expect(presentCards(s, ['image-a', 'image-c']).shown).toBe(false);
+    expect(s.view).toMatchObject({ cards: ['image-b', 'image-a'], ask: 'q1' });
   });
   it('sanitizeView and resolvePresent keep ask and by; a malformed askShows is dropped', () => {
     const cs = [img('image-a'), img('image-b')];
@@ -570,7 +580,7 @@ describe('super ask presents its pictures and answers show', () => {
     expect(after.view).toEqual({ mode: 'float' });
     expect(after.groups[0].place).toBe('others');
   });
-  it('an owner view he just set: answered skipped (owner_layout) with a plain NOT-on-screen note, his view untouched', async () => {
+  it('an owner view he just set: answered queued with a plain NOT-on-screen note, his view untouched', async () => {
     makeVault({ containers: [{ id: 'task-x', kind: 'task', ref: 'x', shape: 'square', place: 'float' }] });
     const before = Date.now();
     expect((await layout({ view: { mode: 'half', card: 'task-x' } })).status).toBe(200);
@@ -578,7 +588,7 @@ describe('super ask presents its pictures and answers show', () => {
     expect(mine).toMatchObject({ mode: 'half', card: 'task-x', by: 'owner' });
     expect(mine.ownerAt).toBeGreaterThanOrEqual(before);
     const r = await verb('ask', pictureAsk(['mock/a.png', 'mock/b.png']));
-    expect(r.json.show).toMatchObject({ state: 'skipped', reason: 'owner_layout' });
+    expect(r.json.show).toMatchObject({ state: 'queued', queued: { at: 1, of: 1 } });
     expect(String((r.json.show as { note?: string }).note)).toMatch(/NOT on his screen/);
     expect((await readSuperState(root)).view).toEqual(mine);
   });
