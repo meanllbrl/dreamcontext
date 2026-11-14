@@ -29,7 +29,13 @@ export function FloatLayer({ anchorOf, place, onClose, children, className, test
     const el = ref.current;
     if (!a || !el) return;
     const p = place(a.getBoundingClientRect(), { width: el.offsetWidth, height: el.offsetHeight });
-    setStyle({ position: 'fixed', left: p.x, top: p.y });
+    // `fixed` is relative to the viewport only when no ancestor makes its own containing block;
+    // the stage root does (a transform or contain), which put the layer one stage-offset away
+    // from its anchor (seen 15 Nov). Measure where (0, 0) lands and place from there.
+    el.style.left = '0px';
+    el.style.top = '0px';
+    const origin = el.getBoundingClientRect();
+    setStyle({ position: 'fixed', left: p.x - origin.left, top: p.y - origin.top });
   }, []);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;

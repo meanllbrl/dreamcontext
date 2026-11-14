@@ -105,11 +105,13 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
   const r = entry.row;
   const status = r?.status;
   const hover = actions.hover.filter((a) => !!onHover[a]);
-  const compact = size === 'small';
+  // Small and medium draw the round icon buttons (their names on hover): the medium list column
+  // is too narrow for worded buttons and the line's name (measured on the stage, 15 Nov).
+  const compact = size === 'small' || size === 'medium';
   const body = (
     <>
       <span className="super-agenda-name" title={label}>{label}</span>
-      {chips && size !== 'small' && <span className="super-agenda-meta">{chips}</span>}
+      {chips && size !== 'small' && size !== 'medium' && <span className="super-agenda-meta">{chips}</span>}
       {time && size !== 'small' && <span className="agenda-time">{time}</span>}
       {line && size !== 'small' && size !== 'medium' && <span className="super-agenda-line">{line}</span>}
     </>

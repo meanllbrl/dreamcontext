@@ -290,14 +290,17 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       );
     }
     if (e.kind === 'question') {
+      // The Super's own question is named by its words (approved drawing): its chip already says
+      // who asks. A job's or member's question keeps who asks as its name, the words under it.
+      const own = r.chip === 'ask' && !!r.line;
       const line = r.allowed
         ? <span data-testid="super-agenda-allowed">{t('owner.answer.allowedWaiting')}</span>
         : remote && r.chip === 'refusal'
           ? <span data-testid="super-agenda-phone-refusal">{t('owner.answer.phoneRefusal')}</span>
-          : r.line || undefined;
+          : own ? undefined : r.line || undefined;
       return (
         <AgendaRowView
-          key={e.key} entry={e} actions={a} size={size} label={r.text} line={line}
+          key={e.key} entry={e} actions={a} size={size} label={own ? r.line as string : r.text} line={line}
           chips={r.chip ? <span className="super-agenda-chip" data-kind={r.chip}>{t(`super.jobs.chip.${r.chip}`)}</span> : undefined}
           time={e.at !== null ? fmtTime(e.at) : ''}
           onPress={questionClickable(r) ? () => pressQuestion(r) : undefined}

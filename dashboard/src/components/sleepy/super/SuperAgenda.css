@@ -125,7 +125,9 @@ button.agenda-mark:hover { background: var(--color-bg-tertiary); }
   min-width: 0;
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  /* The name keeps at least half the row: chips wrap inside what is left instead of
+     squeezing the words into a narrow column. */
+  grid-template-columns: minmax(50%, 1fr) minmax(0, auto) auto;
   column-gap: var(--space-2);
   row-gap: 2px;
   align-items: baseline;
@@ -148,7 +150,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.super-agenda-meta { display: inline-flex; align-items: baseline; gap: var(--space-1); }
+.super-agenda-meta { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: var(--space-1); min-width: 0; }
 .agenda-time { font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .super-agenda-line {
   grid-column: 1 / -1;
