@@ -3,6 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { BUILDER_NO_BACKGROUND_ENV, TASK_ID_RE, classifyBuilderResult, lastResultObject } from './builder-tools.js';
+import { MAX_TASK_SLUG_LENGTH } from './task-slug.js';
 
 /**
  * The builder base, its forks and fresh builders: how `dreamcontext builder base|spawn|fork|
@@ -45,7 +46,7 @@ export const STALL_MS = 20 * 60 * 1000;
 export const BASE_ID = 'base';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,239}$/;
+const SLUG_RE = new RegExp(`^[a-z0-9][a-z0-9._-]{0,${MAX_TASK_SLUG_LENGTH - 1}}$`);
 
 export interface SpawnIdentity { model: string; effort: string }
 
