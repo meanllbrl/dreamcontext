@@ -534,6 +534,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-progress-criteria-',
   'dc-proj-',
   'dc-ps1-',
+  'dc-pty-',
   'dc-queue-',
   'dc-quick-memory-',
   'dc-quiet-',
