@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { scheduleVerb } from '../super-schedule.js';
+import { appendOpenLog } from '../../lib/window-open-log.js';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -143,11 +144,53 @@ type Params = Record<string, string>;
 
 const MAX_TEXT = 100_000;
 const SLUG_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
-const DELEGATE_TIMEOUT_MS = 30_000;
+/** How long `super delegate` waits for the window's answer before it answers the agent. */
+let delegateAnswerMs = 30_000;
+/**
+ * How long past that the window may still open the child, and the server still records it when
+ * it does (field 2026-11-15: a hidden window on a loaded Mac in Low Power Mode answered too late
+ * three times in a row; each start was thrown away and its worktree removed, so the Super
+ * delegated the same job again and again). The window refuses the frame after this.
+ */
+let delegateLateMs = 5 * 60_000;
 /** `super open <kind> <ref…>` takes at most this many refs at once. */
 const MAX_OPEN_REFS = 12;
 /** How long past the frame's `deadline` the server still waits for the window's answer. */
-const DELEGATE_GRACE_MS = 5_000;
+let delegateGraceMs = 5_000;
+/** Test seam: the delegate waits (null = the shipped values). */
+export function _setDelegateWaitsForTests(w: { answerMs: number; graceMs: number; lateMs: number } | null): void {
+  delegateAnswerMs = w?.answerMs ?? 30_000;
+  delegateGraceMs = w?.graceMs ?? 5_000;
+  delegateLateMs = w?.lateMs ?? 5 * 60_000;
+}
+
+/** A start the window has not answered yet but may still open (`delegate_pending`). */
+interface StartingJob { prompt: string; fromRow?: string; since: number; until: number }
+/** Per super (superKey): the starts still pending. In memory: they live as long as the wait does. */
+const startingJobs = new Map<string, StartingJob[]>();
+function startingOf(key: string, prompt: string, fromRow: string | undefined, now = Date.now()): StartingJob | null {
+  return (startingJobs.get(key) ?? []).find((j) => j.until > now && (j.prompt === prompt || (!!fromRow && j.fromRow === fromRow))) ?? null;
+}
+/** The pending starts of one super (they count against its cap while they wait). */
+function startingCount(key: string, now = Date.now()): number {
+  return (startingJobs.get(key) ?? []).filter((j) => j.until > now).length;
+}
+/** Every super's pending starts in one vault (main's key is the vault root). */
+function vaultStarting(root: string, now = Date.now()): number {
+  const main = superKey(root);
+  let n = 0;
+  for (const [k, list] of startingJobs) if (k === main || k.startsWith(`${main}\u0000`)) n += list.filter((j) => j.until > now).length;
+  return n;
+}
+function dropStarting(key: string, j: StartingJob): void {
+  const left = (startingJobs.get(key) ?? []).filter((x) => x !== j);
+  if (left.length) startingJobs.set(key, left); else startingJobs.delete(key);
+}
+/** "23:41", the local clock an agent reads to the owner. */
+function clock(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 /**
  * How long a `delegate` call's socket may sit silent. The server closes an idle socket at 30 s
  * (index.ts `server.setTimeout`), but this route legitimately waits longer before its first byte:
@@ -931,8 +974,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   // in-flight count, or parallel delegates all pass.
   const vaultLive = await readVaultLive(root).catch(() => 0);
   const dKey = superKey(root, c.superId);
-  const inFlight = noteDelegating(dKey, 0);
-  const room = delegationAllowed(c.state, Date.now(), vaultLive + vaultDelegating(root));
+  const inFlight = noteDelegating(dKey, 0) + startingCount(dKey);
+  const room = delegationAllowed(c.state, Date.now(), vaultLive + vaultDelegating(root) + vaultStarting(root));
   const ownFull = room.live + inFlight >= room.max;
   if (ownFull || room.bound === 'vault') {
     const facts = ownFull
@@ -979,6 +1022,11 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   let wt: CreatedWorktree | null = null;
   /** True once the child is recorded with `wt`: from then on the worktree is the child's. */
   let handedOver = false;
+  /** Set when the window did not answer in time and the start waits for its late answer. */
+  let pending: StartingJob | null = null;
+  /** The first prompt and when it went (the record step keeps it for a restart). */
+  let sentAt = 0;
+  let firstPrompt = '';
   try {
     if (job.worktree) {
       wt = await createChildWorktree({ projectRoot: dirname(root), repo: job.worktree, slug: job.slug, base: job.base });
@@ -987,9 +1035,14 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // plus a grace, so a child the window opens is (almost always) answered in time. A frame
     // that may still have opened a child never loses its worktree (review W2 #1).
     // Taken BEFORE the frame: the child's first turn is written after this, so it counts as arrived.
-    const sentAt = Date.now();
-    const deadline = sentAt + DELEGATE_TIMEOUT_MS;
-    const firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`;
+    sentAt = Date.now();
+    // The window may act until the late wait runs out (delegateLateMs); the agent hears at
+    // delegateAnswerMs + grace either way.
+    // A hand-over gets no late wait: landing minutes later it would end the old child from a
+    // record read when the call came in (the owner may have taken that chat meanwhile).
+    const lateMs = succeeds ? 0 : delegateLateMs;
+    const deadline = sentAt + delegateAnswerMs + lateMs;
+    firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`;
     const r = await sendSuperCommand(c.token, 'delegate', {
       prompt: firstPrompt,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
@@ -999,9 +1052,36 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // A member Super's child (plan-r10 1): a one-time `crewTicket` the window passes on the
       // child's connection, which ties it to EXACTLY this super from its first spawn (the
       // `memberCrew` hint beside it only narrows). Main's frame carries neither, unchanged.
-      ...(memberOfSuperId(c.superId) ? { memberCrew: memberOfSuperId(c.superId), crewTicket: mintCrewTicket(root, c.superId, sid0) } : {}),
-    }, { timeoutMs: DELEGATE_TIMEOUT_MS + DELEGATE_GRACE_MS });
-    const sid = r.ok && r.result && typeof r.result === 'object' ? (r.result as { sessionId?: unknown }).sessionId : undefined;
+      ...(memberOfSuperId(c.superId) ? { memberCrew: memberOfSuperId(c.superId), crewTicket: mintCrewTicket(root, c.superId, sid0, Date.now(), deadline - Date.now() + delegateGraceMs) } : {}),
+    }, { timeoutMs: delegateAnswerMs + delegateGraceMs, ...(lateMs > 0 ? { late: { lateMs: lateMs + delegateGraceMs, onLate: (lr) => { void landLate(lr); } } } : {}) });
+    const sid = sessionIdOf(r);
+    appendOpenLog('delegate_answer', { superId: c.superId, ms: Date.now() - sentAt, ok: r.ok, ...(r.ok ? { child: sid ?? null, ...windowTiming(r.result) } : { error: r.error, sent: r.sent }) });
+    if (!r.ok && r.error === 'no_window' && r.sent === true && lateMs > 0) {
+      // Written and not answered in time: the window is slow, not gone. The start is kept (its
+      // worktree too) and recorded by itself when the window opens it (`landLate`); the agent is
+      // told so in plain words, never asked to delegate it again.
+      pending = { prompt: job.prompt, ...(fromRow ? { fromRow: fromRow.id } : {}), since: sentAt, until: deadline + delegateGraceMs };
+      startingJobs.set(dKey, [...(startingJobs.get(dKey) ?? []), pending]);
+      // From here the start counts against the cap as a pending start (startingCount), and no
+      // longer as a delegate in flight: that count marks every lean child spawned meanwhile.
+      noteDelegating(dKey, -1);
+      handedOver = true;
+      if (fromRow) {
+        await writeSuper(root, c.superId, (s) => {
+          const p = s.pool.find((x) => x.id === fromRow.id);
+          if (!p) return;
+          p.maybeStarted = true;
+          if (wt) { p.startedIn = wt.path; p.startedBranch = wt.branch; }
+        }).catch(() => undefined);
+      }
+      // What happens if it never opens, said truly: only a job the pool can keep waits there.
+      const poolable = !!fromRow || Buffer.byteLength(job.prompt, 'utf-8') <= MAX_POOL_PROMPT;
+      ok(res, {
+        pending: true, until: pending.until, ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
+        do: `The Mac is slow to open the chat (the window did not answer in ${Math.round((delegateAnswerMs + delegateGraceMs) / 1000)} s). The start is NOT lost: when the window opens it, by ${clock(pending.until)}, it is recorded by itself and shows in \`dreamcontext super state\`. Do not delegate this job again before then. ${poolable ? 'If it has not opened by then, it waits in the pool with the reason (a full pool keeps nothing: then delegate it again).' : 'If it has not opened by then, delegate it again (a prompt over 16 KB is not kept in the pool).'}`,
+      });
+      return;
+    }
     if (!r.ok || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
       // Unconfirmed: the window timed out (it may still have opened the child) or answered
       // without a session id. The worktree stays; the agent checks before delegating again.
@@ -1038,6 +1118,20 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         : 'the window could not open the child chat');
       return;
     }
+    ok(res, await recordStart(sid));
+  } catch (err) {
+    // A throw before any child was told about the worktree (the send, a store write) leaves it
+    // no owner: a fresh one goes back with its branch, like a refusal.
+    if (wt && !handedOver) await discardFreshWorktree(wt).catch(() => undefined);
+    if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
+    storeRefusal(res, err);
+  } finally {
+    // A pending start was taken off already (it counts as pending until it lands or gives up).
+    if (!pending) noteDelegating(dKey, -1);
+  }
+
+  /** Record the child the window opened as `sid` (in time, or late) and build the answer. */
+  async function recordStart(sid: string): Promise<Record<string, unknown>> {
     let container: string | null = null;
     let noted: SuperPadItem | 'full' | null = null;
     let startError: string | null = null;
@@ -1106,22 +1200,76 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     let signIn: string[] = [];
     try { signIn = job.mcp?.length ? childMcpNeedingSignIn(job.mcp, knownChildMcp(dirname(root)).connectors, readStatusCache()) : []; } catch { /* no warning */ }
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
-    ok(res, {
+    return {
       sessionId: sid, ...cardOutcome(container, sid, after), ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
       ...(hint ? { teamHint: hint } : {}),
       ...(signIn.length ? { mcpSignIn: signIn, mcpSignInDo: `${signIn.join(', ')} needs the owner's sign-in (Settings → MCP → Connect); the child cannot use it until then. Tell him once; never delegate the job again hoping it appears` } : {}),
       ...(predecessor ? { predecessor } : {}),
       ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
-    });
-  } catch (err) {
-    // A throw before any child was told about the worktree (the send, a store write) leaves it
-    // no owner: a fresh one goes back with its branch, like a refusal.
-    if (wt && !handedOver) await discardFreshWorktree(wt).catch(() => undefined);
-    if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
-    storeRefusal(res, err);
-  } finally {
-    noteDelegating(dKey, -1);
+    };
   }
+
+  /**
+   * The window's answer after the agent was told `pending`: a child is recorded exactly as an
+   * answer in time records it; no child (the window refused, or never answered by the end of the
+   * late wait) puts the job in the pool with the reason in plain words, its untouched worktree
+   * removed, so nothing is lost and nothing is left behind.
+   */
+  async function landLate(lr: WindowResult): Promise<void> {
+    const p = pending;
+    try {
+      const lsid = sessionIdOf(lr);
+      appendOpenLog('delegate_late', { superId: c.superId, ms: Date.now() - (p?.since ?? Date.now()), ok: lr.ok, ...(lr.ok ? { child: lsid ?? null, ...windowTiming(lr.result) } : { error: lr.error }) });
+      if (lr.ok && lsid && SESSION_ID_RE.test(lsid)) { await recordStart(lsid); return; }
+      // The window said no (its own error): no child exists. No answer at all, or one without a
+      // session id: one may, so a worktree something wrote in is kept and the row stays marked.
+      const sure = !lr.ok && lr.error !== 'late_timeout';
+      const discarded = wt ? await discardFreshWorktree(wt).then(() => !existsSync(wt!.path)).catch(() => false) : false;
+      const keptWt = wt && !discarded ? wt : null;
+      const why = lateWhy(lr);
+      if (fromRow) {
+        await writeSuper(root, c.superId, (s) => {
+          const row = s.pool.find((x) => x.id === fromRow.id);
+          if (!row) return;
+          row.note = why;
+          if (sure && !keptWt) { delete row.maybeStarted; delete row.startedIn; delete row.startedBranch; }
+          else if (keptWt) { row.maybeStarted = true; row.startedIn = keptWt.path; row.startedBranch = keptWt.branch; }
+        });
+      } else {
+        const kept = await keepInPool(root, job, { note: why, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
+        // Not kept (a prompt over 16 KB, a full pool): the agent was told to delegate it again.
+        if ('error' in kept) appendOpenLog('delegate_late_lost', { superId: c.superId, why: kept.error, error: lr.ok ? 'no_session_id' : lr.error });
+      }
+    } catch (err) {
+      appendOpenLog('delegate_late_error', { superId: c.superId, error: (err as Error).message });
+    } finally {
+      if (p) dropStarting(dKey, p);
+    }
+  }
+}
+
+/** The session id a window's `delegate` answer names, if any. */
+function sessionIdOf(r: WindowResult): string | undefined {
+  const sid = r.ok && r.result && typeof r.result === 'object' ? (r.result as { sessionId?: unknown }).sessionId : undefined;
+  return typeof sid === 'string' ? sid : undefined;
+}
+
+/** What the window says about its own timing (`got`: when the frame reached it; `hidden`). */
+function windowTiming(result: unknown): Record<string, unknown> {
+  const o = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+  return {
+    ...(typeof o.got === 'number' && Number.isFinite(o.got) ? { gotAt: new Date(o.got).toISOString() } : {}),
+    ...(typeof o.hidden === 'boolean' ? { hidden: o.hidden } : {}),
+  };
+}
+
+/** The pool note of a start that never opened, in plain words. */
+function lateWhy(lr: WindowResult): string {
+  if (lr.ok) return 'The window answered without naming the chat it opened; check `super state` before starting it again.';
+  if (lr.error === 'late_timeout') return 'The Mac never opened this chat (no answer from the window in over 5 minutes, likely too busy). It may still have opened late: check `super state`, then start it again with --from <id> --force.';
+  if (lr.error === 'expired') return 'The window got the start too late and did not open it; start it again with --from.';
+  if (lr.error === 'tabs_full') return 'The window has no room for another tab; close one, then start it again with --from.';
+  return `The window could not open the chat (${String(lr.error).slice(0, 60)}); start it again with --from.`;
 }
 
 /** `super state`'s `members`: the AI Team as `super team ask` judges it, names and fields fenced. */
@@ -1890,6 +2038,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const fromId = str(b.from);
     const fromRow = fromId ? c.state.pool.find((p) => p.id === fromId) : undefined;
     if (fromId && !fromRow) { refuse(res, 404, 'unknown_pool_item', 'no such pool job (`dreamcontext super pool list`)'); return; }
+    // A start still pending (the window may open it any moment): never a second child for it.
+    const startingPrompt = fromRow ? fromRow.prompt : typeof b.prompt === 'string' ? b.prompt : '';
+    const still = b.force === true ? null : startingOf(superKey(root, c.superId), startingPrompt, fromRow?.id);
+    if (still) {
+      refuse(res, 409, 'starting', `this job is already starting: the window is slow to open it and it is recorded by itself when it does, by ${clock(still.until)}. Wait and check \`dreamcontext super state\`; do not delegate it again`, { until: still.until });
+      return;
+    }
     if (fromRow?.maybeStarted && b.force !== true) {
       refuse(res, 409, 'maybe_started', 'an earlier start of this job went unconfirmed and it may be running: check `dreamcontext super state` first, then pass --force to start it anyway');
       return;
@@ -2928,7 +3083,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const effort = str(b.effort) ?? ch.effort;
     if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
     // A resumed child is a live child again: the same cap as a delegate.
-    const room = delegationAllowed(c.state, Date.now(), (await readVaultLive(c.who.contextRoot).catch(() => 0)) + vaultDelegating(c.who.contextRoot));
+    const room = delegationAllowed(c.state, Date.now(), (await readVaultLive(c.who.contextRoot).catch(() => 0)) + vaultDelegating(c.who.contextRoot) + vaultStarting(c.who.contextRoot));
     if (!room.ok) {
       const own = room.bound === 'own';
       refuse(res, 409, 'held', own

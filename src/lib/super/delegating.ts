@@ -53,12 +53,14 @@ export function mainDelegating(root: string): boolean {
  * first spawn. Main's frames carry none. A forged, expired or replayed ticket ties nothing.
  */
 export const CREW_TICKET_TTL_MS = 40_000;
-const tickets = new Map<string, { root: string; superId: SuperId; job: string; at: number }>();
+const tickets = new Map<string, { root: string; superId: SuperId; job: string; until: number }>();
 
-export function mintCrewTicket(root: string, superId: SuperId, job: string, now = Date.now()): string {
-  for (const [t, v] of tickets) if (now - v.at > CREW_TICKET_TTL_MS) tickets.delete(t);
+/** `ttlMs`: how long the window may still open the child (a delegate's late wait, field
+ *  2026-11-15); never shorter than {@link CREW_TICKET_TTL_MS}. */
+export function mintCrewTicket(root: string, superId: SuperId, job: string, now = Date.now(), ttlMs = CREW_TICKET_TTL_MS): string {
+  for (const [t, v] of tickets) if (now > v.until) tickets.delete(t);
   const ticket = randomBytes(18).toString('hex');
-  tickets.set(ticket, { root: resolve(root), superId, job, at: now });
+  tickets.set(ticket, { root: resolve(root), superId, job, until: now + Math.max(CREW_TICKET_TTL_MS, ttlMs) });
   return ticket;
 }
 
@@ -68,7 +70,7 @@ export function consumeCrewTicket(ticket: unknown, root: string, now = Date.now(
   const v = tickets.get(ticket);
   if (!v) return null;
   tickets.delete(ticket);
-  if (now - v.at > CREW_TICKET_TTL_MS || v.root !== resolve(root)) return null;
+  if (now > v.until || v.root !== resolve(root)) return null;
   return memberOfSuperId(v.superId);
 }
 
