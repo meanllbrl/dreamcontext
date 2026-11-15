@@ -68,6 +68,17 @@ export function wouldRedact(text: string): boolean {
   return redactSecrets(text) !== text;
 }
 
+/**
+ * Consent matches display (G2): true when `text`, escaped into a Telegram message, reaches the
+ * phone exactly as written. The transport redacts the ESCAPED html, where `&quot;`, `&amp;`,
+ * `&lt;` and `&gt;` shift what a secret rule matches, so a check on the raw text alone can pass
+ * a value the phone then shows as `[gizli]`. Every card that offers a yes on the text it shows
+ * (a permission's Allow, a run's Çalıştır, an automation's Onayla) asks this.
+ */
+export function showsAsWritten(text: string): boolean {
+  return !wouldRedact(text) && !wouldRedact(escapeHtml(text));
+}
+
 const LOGIN_TOKEN_RE = new RegExp(`(/login)\\?(?:[^\\s"'<>#]*&)?${MAC_LOGIN_TOKEN_PARAM}=[^\\s"'<>#]*`, 'g');
 
 /** The hands-free QR's `/login?t=<token>` keeps its path only (the passphrase signs in). */

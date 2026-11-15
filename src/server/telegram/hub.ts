@@ -61,7 +61,7 @@ import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '.
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
-import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
+import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
 import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
@@ -1509,7 +1509,7 @@ export const TG_COMMAND_MAX = 1500;
 /** Does a message show this command whole and as it is: it fits, the redactor changes nothing, and
  *  no hidden or direction-changing character is in it? Only then may a card offer any Allow. */
 export function shownWhole(command: string): boolean {
-  return command.length <= TG_COMMAND_MAX && redactSecrets(command) === command && !hasHiddenChars(command);
+  return command.length <= TG_COMMAND_MAX && showsAsWritten(command) && !hasHiddenChars(command);
 }
 
 /** A command as a Telegram card draws it: secrets redacted, every hidden or direction-changing

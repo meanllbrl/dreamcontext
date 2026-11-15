@@ -11,7 +11,7 @@ import { conditionFacts, sendIfConditionUnseen, shownWitness } from './condition
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { approvalCardFacts, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
-import { tellSuperAutomationDecision } from '../../lib/super/automation-event.js';
+import { approveAsOwner, rejectAsOwner } from '../automation-decision.js';
 import { foreignOwner, ownerLabel } from '../../lib/agents/owner.js';
 import { globalAgentExists } from '../../lib/agents/scope.js';
 import { memberCallState } from '../../lib/agents/team-roster.js';
@@ -667,25 +667,20 @@ export async function handleAutomationsApprove(
     }
     if (refuseNotOwner(res, manifest)) return;
     const body = (await parseJsonBody(req)) ?? {};
-    const projectRoot = dirname(contextRoot);
-    registerProject(projectRoot);
     // A condition is stamped only on the hash the owner was shown (kosullu-otomasyon C2): the card
     // sends `shownHash`, and a disk that moved since he looked refuses with 409, stamping nothing.
     // It proves the hash is fresh, not who sent it: the owner-page check above is the boundary.
     const witness = shownWitness(res, manifest, body);
     if (witness === null) return;
-    // The owner's page: his consent covers a Super turn or a Telegram reply too (super-rutin C2).
-    let entry;
+    // THE owner's yes, the one body the Telegram card calls too (automation-decision.ts).
+    let out;
     try {
-      entry = approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-page', witness);
+      out = await approveAsOwner(contextRoot, manifest, { witness, enable: body.enable === true, sessionId: body.sessionId });
     } catch (err) {
       if (sendIfConditionUnseen(res, err)) return;
       throw err;
     }
-    settleApprovalQuestions(contextRoot, manifest.slug);
-    const after = body.enable === true && !manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, true) : manifest;
-    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'approved');
-    sendJson(res, 200, { slug: manifest.slug, approval: entry, card: approvalCardFacts(projectRoot, after), told });
+    sendJson(res, 200, { slug: manifest.slug, approval: out.entry, card: out.card, told: out.told });
   } catch (err) {
     if (sendIfNotOwner(res, err)) return;
     sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
@@ -714,12 +709,9 @@ export async function handleAutomationsReject(
     }
     if (refuseNotOwner(res, manifest)) return;
     const body = (await parseJsonBody(req)) ?? {};
-    // A NO takes back a yes given earlier too: an approval left standing would let any session's
-    // `automations enable` run it on the grant he just withdrew.
-    revokeApproval(dirname(contextRoot), manifest.slug);
-    const after = manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, false) : manifest;
-    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'rejected');
-    sendJson(res, 200, { slug: manifest.slug, card: approvalCardFacts(dirname(contextRoot), after), told });
+    // THE owner's no, the one body the Telegram card calls too (automation-decision.ts).
+    const out = await rejectAsOwner(contextRoot, manifest, { sessionId: body.sessionId });
+    sendJson(res, 200, { slug: manifest.slug, card: out.card, told: out.told });
   } catch (err) {
     if (sendIfNotOwner(res, err)) return;
     sendError(res, 500, 'reject_failed', 'Failed to reject the automation.');
@@ -746,17 +738,6 @@ export async function handleAutomationsCard(
     sendJson(res, 200, { card: approvalCardFacts(dirname(contextRoot), manifest), owned: foreignOwner(manifest) === null });
   } catch {
     sendError(res, 500, 'card_failed', 'Failed to read the automation.');
-  }
-}
-
-/** Queue the decision for the Super Agent when the card sits in its chat (or a child's). */
-async function tellSuper(contextRoot: string, sessionId: unknown, slug: string, decision: 'approved' | 'rejected'): Promise<boolean> {
-  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(sessionId)) return false;
-  try {
-    return await tellSuperAutomationDecision(contextRoot, sessionId, slug, decision);
-  } catch {
-    // The decision itself is written; a super that cannot hear it reads it from `show`.
-    return false;
   }
 }
 
