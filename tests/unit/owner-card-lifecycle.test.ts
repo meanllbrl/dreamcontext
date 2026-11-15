@@ -32,13 +32,13 @@ import {
   CARD_OVERFLOW_TEXT, _resetChatRegistry, dropOwnerWait, getChat, registerChat, registerCrewHandle, type ChatHandle,
 } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
-import { emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.js';
+import { READOPT_GRACE_MS, emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.js';
 import {
-  PARKED_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, lookupOwnerCard, moveCardItems, noteChatStarted, noteChildParking,
+  PARKED_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, lookupOwnerCard, moveCardItems, noteChatStarted, noteChildParking, noteServerStopping,
   startSuperInbox, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, noteSuperSend } from '../../src/lib/super/owner-wait.js';
-import { _resetCardsForTests, cardRefOf, listCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
+import { _resetCardsForTests, cardRefOf, getCard, listCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
 import { _resetOwnerReceiptsForTests } from '../../src/server/owner-receipts.js';
 import { deliverWindowResult, mintWindowToken, resetWindowControl, sendWindowCommand } from '../../src/lib/window-control.js';
 import { buildRunReport } from '../../dashboard/src/components/sleepy/chat/runReport.js';
@@ -175,18 +175,69 @@ describe('an owner card a crew child leaves is a record the server holds (K1, K2
     expect(ev).not.toMatch(/event=gone/);
   });
 
-  it('a real exit (no park) still says `gone`, with the card item still open (K2)', async () => {
+  // Owner 15 Nov (kart-alta-yapisma-2): only a PARK keeps a card past the process; a real exit
+  // leaves nobody to take the result, so the card is withdrawn and nothing counts it.
+  it('a real exit (no park) says `gone`, and its card is withdrawn (record `dropped`)', async () => {
     const { hs, delivered } = await boot([C1]);
     say(hs[0], fence(RUN));
     hs[0].observe({ type: 'result' });
     await drain();
+    const [item] = await openCards(C1);
     hs[0].exited();
     await advance(60_000);
     expect(await ofKind('gone', C1)).toHaveLength(1);
     expect(await ofKind('parked', C1)).toHaveLength(0);
-    expect(await openCards(C1)).toHaveLength(1);
-    expect((await state()).children[C1].row).toBe('waiting');
+    expect(await openCards(C1)).toHaveLength(0);
+    expect(getCard(C1, item.card!.cardRef)).toMatchObject({ state: 'closed', closedBy: 'dropped' });
+    expect((await state()).children[C1].row).toBe('gone');
     expect(delivered.map((d) => d.text).join('\n')).toMatch(/event=gone/);
+  });
+
+  it('a real exit keeps a card he already acted on (its result is held for the child): K2', async () => {
+    const { hs } = await boot([C1]);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    const [item] = await openCards(C1);
+    await writeSuper(root, (s) => { const q = s.queue.find((x) => x.id === item.id); if (q) q.delivery = 'held:cap'; });
+    hs[0].exited();
+    await advance(60_000);
+    expect((await state()).queue.find((q) => q.id === item.id)).toMatchObject({ delivery: 'held:cap', state: expect.not.stringMatching(/^done$/) });
+    expect(getCard(C1, item.card!.cardRef)?.state).toBe('open');
+  });
+
+  it('the server\'s own stop kills the child: a park, its card stays open (K2)', async () => {
+    const { hs } = await boot([C1]);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    const [item] = await openCards(C1);
+    noteServerStopping();
+    hs[0].exited();
+    await advance(60_000);
+    expect((await openCards(C1)).map((q) => q.id)).toEqual([item.id]);
+    expect(getCard(C1, item.card!.cardRef)?.state).toBe('open');
+  });
+
+  it('a relaunch whose child does not come back withdraws nothing: no exit was seen (K2)', async () => {
+    const { hs } = await boot([C1]);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    const [item] = await openCards(C1);
+    // A child the relaunch brings back (on the stage: `superRestoreHold` null), so its grace arms.
+    await writeSuper(root, (s) => { s.children[C1].adopted = true; });
+    // The app relaunches: a new process, the child never re-registers.
+    _resetSuperInbox();
+    _resetChatRegistry();
+    resetSuperIndex();
+    await startSuperInbox([root]);
+    attachSuperInbox({ id: `inbox-${Math.random()}`, sessionId: SUPER, attached: () => true, idle: () => true, deliver: async () => true });
+    await drain();
+    await advance(READOPT_GRACE_MS + 60_000);
+    expect(await ofKind('gone', C1)).toHaveLength(1);
+    expect((await openCards(C1)).map((q) => q.id)).toEqual([item.id]);
+    expect(getCard(C1, item.card!.cardRef)?.closedBy).not.toBe('dropped');
   });
 
   it('the 11 Nov replay: post, park, resume, idle, park ends with ONE open item and zero gone events', async () => {

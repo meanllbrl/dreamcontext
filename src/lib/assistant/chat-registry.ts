@@ -278,10 +278,12 @@ function emitOwner(e: ChatEntry): void {
  *  an open CARD wait already held is never the one evicted (sahip-karti-yerinde K2: it may have a
  *  running action or an owed receipt): the newcomer beyond the cap is the one not tracked, and
  *  the child is told the owner already has that many open cards. Other kinds keep the newest. */
-function setOwnerWaits(e: ChatEntry, next: OwnerWait[]): void {
+/** `changed`: the list may read the same, but a card in it is a new copy (a same-id re-post):
+ *  the listeners are told anyway. */
+function setOwnerWaits(e: ChatEntry, next: OwnerWait[], changed = false): void {
   const cur = e.ownerWaits ?? [];
   const key = (ws: OwnerWait[]) => ws.map((w) => `${w.kind}:${w.id}:${w.line}`).join('\n');
-  if (key(cur) === key(next)) return;
+  if (key(cur) === key(next) && !changed) return;
   let kept = next;
   if (next.length > MAX_OWNER_WAITS) {
     const held = new Set(cur.filter((w) => isOwnerCardKind(w.kind)).map(waitKey));
@@ -301,7 +303,7 @@ function setOwnerWaits(e: ChatEntry, next: OwnerWait[]): void {
   }
   if (kept.length) e.ownerWaits = kept.slice(-MAX_OWNER_WAITS); else delete e.ownerWaits;
   pruneOrigins(e);
-  if (key(cur) === key(e.ownerWaits ?? [])) return;
+  if (key(cur) === key(e.ownerWaits ?? []) && !changed) return;
   emitOwner(e);
 }
 
@@ -865,10 +867,17 @@ export function registerChat(init: {
             // A card posted again is a new ask, even under an id he answered before.
             if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
             if (replaced.length) e.ownerAnswered = [...(e.ownerAnswered ?? []).filter((k) => !replaced.some((w) => waitKey(w) === k)), ...replaced.map(waitKey)].slice(-MAX_ANSWERED);
+            // The SAME card posted again (same kind and id) from another message: the wait list
+            // reads unchanged, but the card is a new copy (its record closed the old one), so the
+            // inbox must hear it and move the item onto the new copy (kart-alta-yapisma-2).
+            const reposted = !!uuid && cards.some((c) => {
+              const o = waitOrigins.get(originKey(e.sessionId, c));
+              return !!o && o.messageUuid !== uuid && (e.ownerWaits ?? []).some((w) => w.kind === c.kind && w.id === c.id);
+            });
             // The frame each card came from (K1): the inbox makes the item's card handle from it.
             if (uuid) for (const c of cards) waitOrigins.set(originKey(e.sessionId, c), { messageUuid: uuid, conversationId: e.conversationId ?? '', text });
             for (const c of cards) waitTurns.set(originKey(e.sessionId, c), turn);
-            setOwnerWaits(e, [...keep, ...cards]);
+            setOwnerWaits(e, [...keep, ...cards], reposted);
           }
           // The whole text, marks included, to whoever routes answers (the Telegram hub, W2).
           emitAssistantText(e.sessionId, text);

@@ -4278,6 +4278,13 @@ export function startChatSession(
     if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
   }
 
+  /** The SERVER ends this child (a detached child's idle or busy reap, the drain on an autonomy
+   *  change): nobody chose to end the job, so it is a park (K2), never a real exit. A card it
+   *  holds for the owner stays open (kart-alta-yapisma-2: only a real exit withdraws one). */
+  function serverDrain(): void {
+    if (registry) noteChildParking(chatRegistryId);
+    drain();
+  }
   /** (Re)arm the reaping of a DETACHED child for its current state. A no-op while attached.
    *  Idle: ended after `detachIdleMs()` (15 min) of continuous idleness. Busy: never reaped
    *  for lack of a socket, up to `detachBusyCapMs()` (4 h) after it lost its socket. */
@@ -4287,13 +4294,13 @@ export function startChatSession(
       if (detachIdleTimer) { clearTimeout(detachIdleTimer); detachIdleTimer = null; }
       if (!detachCapTimer) {
         const left = Math.max(0, detachBusyCapMs() - (Date.now() - detachedAt));
-        detachCapTimer = setTimeout(() => { detachCapTimer = null; drain(); }, left);
+        detachCapTimer = setTimeout(() => { detachCapTimer = null; serverDrain(); }, left);
       }
       return;
     }
     if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
     if (!detachIdleTimer) {
-      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; drain(); }, detachIdleMs());
+      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; serverDrain(); }, detachIdleMs());
     }
   }
 
@@ -4404,7 +4411,7 @@ export function startChatSession(
       settled = true;
       fn(accepted);
     };
-    if (detached && turnsInFlight === 0) { drain(); return () => { /* already given up */ }; }
+    if (detached && turnsInFlight === 0) { serverDrain(); return () => { /* already given up */ }; }
     if (detached) {
       // Every hold it has, the rotated conversation's too: the respawn resumes THAT one.
       const lent = ownHolds();
@@ -4413,7 +4420,7 @@ export function startChatSession(
       return settleOnce((accepted) => {
         // Accepted: the new process holds the conversation now; `holdLent` keeps the drain
         // from releasing its hold.
-        if (accepted) { drain(); return; }
+        if (accepted) { serverDrain(); return; }
         if (!holdLent || !alive) return;
         // Refused: take the holds back — unless someone else took a conversation meanwhile,
         // in which case the child stays lent and never releases them.
@@ -5775,7 +5782,7 @@ export function startChatSession(
       // Detached (pane closed, phone locked): a reattach respawns it (adoptSocket). An idle one
       // with nothing held is ended now instead, so no process keeps running at the old level
       // in the meantime; the conversation stays on disk and its next open resumes it.
-      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0 && !mcpGrantReceipt) drain();
+      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0 && !mcpGrantReceipt) serverDrain();
       return;
     }
     handedOff = true;
