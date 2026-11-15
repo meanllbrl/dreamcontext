@@ -12,12 +12,12 @@ import './PhoneAgenda.css';
  * sohbeti-ajandayi…; the owner's chips of 1 Nov): one chip in the chat's header, nothing between
  * that bar and the conversation. The chip counts what waits on the owner (the pink mark), else
  * what is going on; a tap opens a sheet with all the counts and the desktop's own notepad
- * (`SuperAgenda` variant full, the same rows in the same order). The phone has no super record:
+ * (`SuperAgenda`, the same groups in the same order). The phone has no super record:
  * it draws from the `super_digest` the Mac pushes to its mirror.
  *
- * A row's ↩ stages it as an About chip in this phone's composer (`onWriteAbout`); the Super's
- * own question scrolls to its card in the chat (the sheet stays open when there is no card);
- * a child's permission or wait is read only (the phone never shows a child).
+ * The sheet is read only (task ajanda-gunluk C8, `readOnly`): no +, Done, Ask or status menu.
+ * The Super's own question scrolls to its card in the chat (the sheet stays open when there is
+ * no card); a child's permission or wait is read only (the phone never shows a child).
  */
 
 /** The digest as the desktop notepad's input. Pure: `text` is the item's `ownerText`, a name is
@@ -80,9 +80,10 @@ function questionCard(item: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-testid="super-question-card"][data-item="${CSS.escape(item)}"]`);
 }
 
-export function PhoneAgenda({ digest, onWriteAbout, onScreen }: {
+export function PhoneAgenda({ digest, onScreen }: {
   digest: SuperDigestWire | null;
-  onWriteAbout: (row: AgendaRow) => void;
+  /** Kept for its callers; the read-only sheet offers no Ask (C8). */
+  onWriteAbout?: (row: AgendaRow) => void;
   /** The chat is on screen. Off (a link opened the drawer or another project): no sheet stays up. */
   onScreen: boolean;
 }) {
@@ -157,7 +158,10 @@ export function PhoneAgenda({ digest, onWriteAbout, onScreen }: {
             <SuperAgenda
               state={input.state}
               look={input.look}
-              variant="full"
+              // The new groups, read only (task ajanda-gunluk C8): no +, Done, Ask or status menu,
+              // no day browsing; a question row still opens its card, as before.
+              size="large"
+              readOnly
               canShowChild={() => false}
               // A member's page is the Mac's: on the phone its row is named and read only.
               canOpenMember={false}
@@ -170,7 +174,6 @@ export function PhoneAgenda({ digest, onWriteAbout, onScreen }: {
                 setOpen(false);
                 requestAnimationFrame(() => card.scrollIntoView({ block: 'center' }));
               }}
-              onWriteAbout={(row) => { onWriteAbout(row); setOpen(false); }}
             />
           </div>
         </PhoneSheet>

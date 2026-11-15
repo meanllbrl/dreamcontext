@@ -196,6 +196,15 @@ export function unclearMessage(questions: QuestionSpec[], picks: SurveyPicks): s
     + ' option a `preview`.';
 }
 
+/**
+ * What the "Already answered" button sends (owner 2026-11-14: most cards are asked after he
+ * already said it). A DENY like "Unclear", for the same reason. Tool-neutral on purpose (no
+ * AskUserQuestion / `super ask` / `propose` wording), so every surface and every child tool
+ * (Claude, Codex, Antigravity) can carry it unchanged. Server mirror: `ALREADY_ANSWERED_MESSAGE`
+ * in `src/lib/super/answer.ts`, pinned by `tests/unit/super-question-card.test.ts`.
+ */
+export const ALREADY_ANSWERED_MESSAGE = 'The owner says he already answered this question in the conversation. Find his answer in his recent messages and act on it; do not ask it again. If you truly cannot find it, ask once more with the context he would need: a `title` naming the work in progress, the question in plain words, and what changes with the answer.';
+
 /** Option letters for the A/B/C board and the swipe deck's hints. */
 export function optionLetter(i: number): string {
   return String.fromCharCode(65 + i);

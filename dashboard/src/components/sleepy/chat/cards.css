@@ -915,6 +915,7 @@ video.chat-msg-user-media-el { cursor: default; }
   font-size: 11.5px;
   cursor: pointer;
 }
+.chat-surveycard-side { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; min-width: 0; }
 .chat-surveycard-unclear:hover { color: var(--color-text); text-decoration: underline; }
 .chat-surveycard-unclear:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 
@@ -954,9 +955,8 @@ video.chat-msg-user-media-el { cursor: default; }
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
 }
-/* A preview on a question card reads at the CARD's type size, not the transcript's: the Super
-   Agent's chat sets 17 px (superCentre.css), and a kit list at that size in a half-width tile
-   was cut after three items (owner 2026-10-30). The kit reads these two tokens off the block's
+/* A preview on a question card reads at the CARD's type size, not the transcript's: a kit list at
+   the transcript's size in a half-width tile was cut after three items (owner 2026-10-30). The kit reads these two tokens off the block's
    wrapper (chatHtmlKit.ts `CHAT_READING_TOKENS`), so the frame follows. */
 .chat-surveycard-tile-preview,
 .chat-surveycard-solo-window,

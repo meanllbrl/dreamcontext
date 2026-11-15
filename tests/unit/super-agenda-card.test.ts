@@ -272,14 +272,15 @@ describe('the agenda row\'s Write about this icon', () => {
     })));
   }
 
-  it('one faint button on every full row (notes and questions, every section), none on the tile or without a handler', async () => {
+  it('Ask on every line and question at every size (task ajanda-gunluk), none without a handler', async () => {
     const html = await render('full', () => {});
     const rows = html.match(/data-testid="super-agenda-row"/g) ?? [];
     const icons = html.match(/data-testid="super-agenda-about"/g) ?? [];
     expect(rows).toHaveLength(5);
     expect(icons).toHaveLength(5);
-    expect(html).toContain('aria-label="Write about this"');
-    expect(await render('tile', () => {})).not.toContain('super-agenda-about');
+    expect(html).toContain('aria-label="Ask about this"');
+    // The small card is live too (learned rule d5xlppqj5a): its Ask is a round icon with a tooltip.
+    expect(await render('tile', () => {})).toContain('super-agenda-about');
     expect(await render('full')).not.toContain('super-agenda-about');
   });
 
@@ -293,14 +294,13 @@ describe('the agenda row\'s Write about this icon', () => {
     expect(depth).toBe(0);
   });
 
-  it('the icon calls onWriteAbout(row); the row\'s own press is unchanged', () => {
+  it('Ask calls onWriteAbout(row); the row keeps its own press; hover shows it, a touch screen opens the detail', () => {
     const src = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.tsx', ROOT_URL), 'utf-8');
-    expect(src).toMatch(/className="super-agenda-row-btn" onClick=\{\(\) => press\(r\)\}/);
-    expect(src).toMatch(/className="super-agenda-about"[\s\S]{0,300}onClick=\{\(\) => onWriteAbout\(r\)\}/);
+    expect(src).toMatch(/onPress=\{questionClickable\(r\) \? \(\) => pressQuestion\(r\) : undefined\}/);
+    expect(src).toMatch(/onHover=\{\{ ask: onWriteAbout \? \(\) => onWriteAbout\(r\) : undefined \}\}/);
     const css = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.css', ROOT_URL), 'utf-8');
-    expect(css).toMatch(/\.super-agenda-about \{[^}]*width: 28px;[^}]*height: 28px;[^}]*opacity: 0\.45;/);
-    expect(css).toMatch(/\.super-agenda-row:hover \.super-agenda-about \{ opacity: 1; \}/);
-    expect(css).toMatch(/\.super-agenda-about:focus-visible \{ opacity: 1;/);
+    expect(css).toMatch(/\.super-agenda-row:hover \.agenda-hover, \.super-agenda-row:focus-within \.agenda-hover \{ display: inline-flex; \}/);
+    expect(css).toMatch(/@media \(hover: none\) \{ \.super-agenda-row:hover \.agenda-hover \{ display: none; \} \}/);
   });
 
   it('the stage passes it only while the super chat is there; a narrow stage floats first; the surface stages one chip and focuses', () => {

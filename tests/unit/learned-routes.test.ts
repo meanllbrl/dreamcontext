@@ -110,9 +110,10 @@ describe('the learned card (C9)', () => {
     const mp = learnedMessage(ctx, JSON.stringify({ type: 'learned', id: p.id }), home)!;
     expect(mp.undo).toBe(false);
     expect(mp.line).toMatch(/^Önerildi: .*Mac'te tut ya da bırak$/);
-    const ab = { contextRoot: ctx } as Parameters<typeof onLearnedButton>[0];
-    expect(await onLearnedButton(ab, { id: a.id }, home)).toBe('↩ Geri alındı');
-    expect(await onLearnedButton(ab, { id: a.id }, home)).toMatch(/already undone/);
+    const ab = { contextRoot: ctx } as Parameters<typeof onLearnedButton>[1];
+    const hub = { rootOf: () => ctx } as unknown as Parameters<typeof onLearnedButton>[0];
+    expect(await onLearnedButton(hub, ab, { id: a.id }, home)).toBe('↩ Geri alındı');
+    expect(await onLearnedButton(hub, ab, { id: a.id }, home)).toMatch(/already undone/);
   });
 
   it('the dashboard card mirrors the route\'s facts key set', () => {

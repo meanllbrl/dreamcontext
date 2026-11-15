@@ -78,7 +78,6 @@
 
 .ns-tb-btn:focus-visible,
 .ns-tb-picker:focus-visible,
-.ns-zoom button:focus-visible,
 .ns-rail-btn:focus-visible,
 .ns-menu-row:focus-visible {
   outline: 2px solid var(--color-border-focus);
@@ -157,41 +156,66 @@
   pointer-events: none;
 }
 
-.ns-zoom {
-  display: flex;
-  align-items: center;
-  height: var(--space-7);
-  padding: 0 2px;
-  border-radius: var(--radius-md);
+.ns-zoom { position: relative; flex: none; }
+.ns-zoom > .ns-tb-btn[data-on='true'] { color: var(--color-accent-ink); }
+
+/* The zoom icon's panel (ZoomMenu.tsx): the fine control under the icon, right-aligned to it. */
+.ns-zoom-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 60;
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
 }
 
-.ns-zoom button {
-  height: var(--space-5);
-  min-width: var(--space-5);
-  border: none;
-  background: none;
-  border-radius: var(--radius-sm);
+/* The fine control: also drawn bare on Settings → General. */
+.ns-zoom-control {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  width: 200px;
+}
+.ns-zoom-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.ns-zoom-step {
+  width: var(--space-7);
+  height: var(--space-7);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
-
-.ns-zoom .ns-zoom-value {
-  min-width: var(--space-10);
-}
-
-.ns-zoom button:hover:not(:disabled) {
-  background: var(--color-bg-elevated);
+.ns-zoom-step:hover:not(:disabled) { color: var(--color-text); background: var(--color-bg-elevated); }
+.ns-zoom-step:disabled { opacity: 0.35; cursor: default; }
+.ns-zoom-pct {
+  flex: 1;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
   color: var(--color-text);
 }
-
-.ns-zoom button:disabled {
-  opacity: 0.35;
-  cursor: default;
+.ns-zoom-slider { width: 100%; margin: 0; accent-color: var(--color-accent); cursor: pointer; }
+.ns-zoom-reset {
+  height: var(--space-7);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
 }
+.ns-zoom-reset:hover:not(:disabled) { background: var(--color-bg-tertiary); color: var(--color-text); }
+.ns-zoom-reset:disabled { opacity: 0.4; cursor: default; }
+.ns-zoom-step:focus-visible,
+.ns-zoom-reset:focus-visible,
+.ns-zoom-slider:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
 
 /* ≤900: no back/forward, the wordmark goes, Hands-free is icon-only (handsfree.css). */
 @media (max-width: 900px) {

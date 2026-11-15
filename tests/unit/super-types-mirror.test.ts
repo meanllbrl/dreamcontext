@@ -21,6 +21,8 @@ describe('super types — server record <-> window mirror', () => {
     expect([...client.CONTAINER_KINDS]).toEqual([...server.CONTAINER_KINDS]);
     expect([...client.MEMBER_CARD_REFS]).toEqual([...server.MEMBER_CARD_REFS]);
     expect([...client.PAD_SECTIONS]).toEqual([...server.PAD_SECTIONS]);
+    expect([...client.PAD_STAGES]).toEqual([...server.PAD_STAGES]);
+    expect([...client.PAD_STATUSES]).toEqual([...server.PAD_STATUSES]);
     expect([client.MAX_PAD, client.MAX_PAD_TEXT]).toEqual([server.MAX_PAD, server.MAX_PAD_TEXT]);
     expect([client.AGENDA_REF, client.AGENDA_SIZE]).toEqual([server.AGENDA_REF, server.AGENDA_SIZE]);
     expect([...client.CONTAINER_SHAPES]).toEqual([...server.CONTAINER_SHAPES]);

@@ -167,7 +167,7 @@ describe('a new day keeps the agenda current', () => {
     expect(padDayStart(TODAY)).toBe(new Date(2026, 9, 28).getTime());
   });
 
-  it('drops an earlier day\'s Done line on the next write; today\'s and the owner\'s own move stay', () => {
+  it('drops every earlier day\'s Done line on the next write, his own move too (it is kept in its day); today\'s stays', () => {
     const s = state({ children: {}, pad: [
       line({ id: 'n1', section: 'done', at: YESTERDAY }),
       line({ id: 'n2', section: 'done', by: 'auto', why: 'done', at: YESTERDAY }),
@@ -177,7 +177,7 @@ describe('a new day keeps the agenda current', () => {
     ] });
     expect(padRolledOff(s.pad![0], TODAY)).toBe(true);
     expect(settlePad(s, TODAY)).toBe(true);
-    expect(s.pad!.map((p) => p.id)).toEqual(['n3', 'n4', 'n5']);
+    expect(s.pad!.map((p) => p.id)).toEqual(['n3', 'n5']);
     expect(settlePad(s, TODAY)).toBe(false);
   });
 
@@ -199,7 +199,7 @@ describe('a new day keeps the agenda current', () => {
       line({ id: 'n3', section: 'done', by: 'owner', at: YESTERDAY }),
       line({ id: 'n4', section: 'waiting', at: YESTERDAY }),
     ] }, look, TODAY);
-    expect(rows.done.map((r) => r.note)).toEqual(['n2', 'n3']);
+    expect(rows.done.map((r) => r.note)).toEqual(['n2']);
     expect(rows.waiting.map((r) => [r.note, !!r.stale])).toEqual([['n4', true]]);
   });
 

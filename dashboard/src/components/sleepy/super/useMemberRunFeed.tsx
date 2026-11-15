@@ -7,7 +7,7 @@ import { phoneAllows } from '../../../lib/phoneSurface';
 import { toFeedItems } from '../../aiteam/agentHistory';
 import { RunFoot } from '../../aiteam/RunFoot';
 import { conversationSlugs, dayRuleLabel } from '../../aiteam/teamModel';
-import { chatFilePath, runFootOf, stepsOpen, type ChatFeed, type FeedLabels, type FeedMeta } from '../chat/chatFeed';
+import { chatFilePath, type ChatFeed, type FeedLabels, type FeedMeta } from '../chat/chatFeed';
 import {
   EMPTY_RUN_FEED, RUN_FEED_POLL_MS, RUN_FEED_POLL_RUNNING_MS, anyRunning, landFirst, landFresh, landOlder,
   memberFeedSignature, withPinned, withSeen, type RunFeedState,
@@ -16,13 +16,6 @@ import {
 function hhmm(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function flip(set: ReadonlySet<string>, key: string, on: boolean): ReadonlySet<string> {
-  if (set.has(key) === on) return set;
-  const next = new Set(set);
-  if (on) next.add(key); else next.delete(key);
-  return next;
 }
 
 const FIRST_READ_RETRIES = [2000, 5000];
@@ -169,15 +162,6 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, dayTick]);
 
-  // What is open under each run. Steps the owner closed stay closed while the run works on.
-  const [stepsShown, setStepsShown] = useState<ReadonlySet<string>>(() => new Set());
-  const [stepsHidden, setStepsHidden] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleSteps = useCallback((meta: FeedMeta) => {
-    const open = stepsOpen(meta, stepsShown, stepsHidden);
-    setStepsShown((s) => flip(s, meta.sessionKey, !open));
-    setStepsHidden((s) => flip(s, meta.sessionKey, open));
-  }, [stepsShown, stepsHidden]);
-
   const items = useMemo(() => toFeedItems(state.sessions), [state.sessions]);
   return useMemo<ChatFeed | undefined>(() => {
     if (!enabled) return undefined;
@@ -195,20 +179,13 @@ export function useMemberRunFeed(member: string): ChatFeed | undefined {
       onLoadOlder: loadOlder,
       onRetry: () => { setState((s) => ({ ...s, failed: false })); readFirst(0); },
       onSeen,
-      // A run opens where it stands: its steps, else its document.
-      onBoundary: (meta) => {
-        if (runFootOf(meta).steps) toggleSteps(meta);
-      },
+      // No onBoundary: a run's boundary is a plain line. A run is drawn as a Super turn (owner
+      // 2026-11-14): its answer, its document, and while it runs the chat's own live steps line.
       runFoot: (meta, ctx) => (
-        <RunFoot
-          meta={meta}
-          steps={stepsOpen(meta, stepsShown, stepsHidden)}
-          onSteps={() => toggleSteps(meta)}
-          onOpenFile={ctx ? (p) => ctx.openFile(chatFilePath(p)) : undefined}
-        />
+        <RunFoot meta={meta} onOpenFile={ctx ? (p) => ctx.openFile(chatFilePath(p)) : undefined} />
       ),
       onDividerScrolled: () => {},
       onPinned: (pinned) => setState((s) => withPinned(s, pinned)),
     };
-  }, [enabled, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen, toggleSteps, stepsShown, stepsHidden]);
+  }, [enabled, items, state.nextBefore, state.failed, state.loaded, state.olderLoading, labels, loadOlder, readFirst, onSeen]);
 }

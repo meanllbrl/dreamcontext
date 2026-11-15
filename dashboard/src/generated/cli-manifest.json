@@ -758,6 +758,13 @@
       ]
     },
     {
+      "path": "automations condition",
+      "desc": "Print the APPROVED condition script of a routine; --run executes it once and prints true / false / error and its output (no agent starts, nothing is recorded). Test a draft in your own shell",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "automations create",
       "desc": "Scaffold a new automation manifest. Approved on the spot: made on this Mac, by you, your Super Agent or a member. Only risky text an agent run wrote waits for the owner's yes (a card in the chat, or the AI Team page)",
       "args": [
@@ -781,6 +788,8 @@
         "--app-tools",
         "--agent",
         "--job",
+        "--condition",
+        "--wake-when",
         "--answer"
       ]
     },
@@ -793,12 +802,14 @@
     },
     {
       "path": "automations edit",
-      "desc": "Change what a job or a member may run through an app while nobody watches; the owner's approval card asks again",
+      "desc": "Change a routine's condition, or what a job or a member may run through an app while nobody watches; the owner's approval card asks again when an agent changes it",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
-        "--app-tools"
+        "--app-tools",
+        "--condition",
+        "--wake-when"
       ]
     },
     {
@@ -4150,7 +4161,7 @@
     },
     {
       "path": "super note clear",
-      "desc": "Empty the agenda (or one section): a new day or a new piece of work starts",
+      "desc": "Empty the agenda (or one section) of your own lines: a new piece of work starts. The owner's own lines stay",
       "args": [
         "[section]"
       ]
@@ -4174,6 +4185,14 @@
       "desc": "A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h",
       "args": [
         "<id>"
+      ]
+    },
+    {
+      "path": "super note status",
+      "desc": "Set a line's status: not-started | in-progress | almost-done | waiting | done (the owner's own lines too, when it helps him)",
+      "args": [
+        "<id>",
+        "<status>"
       ]
     },
     {
@@ -4307,7 +4326,9 @@
         "--job",
         "--at",
         "--days",
-        "--reply"
+        "--reply",
+        "--condition",
+        "--wake-when"
       ]
     },
     {
@@ -4327,7 +4348,9 @@
         "--job",
         "--at",
         "--days",
-        "--reply"
+        "--reply",
+        "--condition",
+        "--wake-when"
       ]
     },
     {

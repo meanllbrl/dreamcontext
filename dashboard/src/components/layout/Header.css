@@ -79,52 +79,6 @@
   .header-search-pill-kbd { display: none; }
 }
 
-.zoom-controls {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-right: var(--space-2);
-  padding: 2px;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
-}
-
-.zoom-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-secondary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.zoom-btn:hover:not(:disabled) {
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.zoom-btn:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-.zoom-label {
-  font-size: var(--font-size-2xs);
-  color: var(--color-text-secondary);
-  min-width: 32px;
-  text-align: center;
-  user-select: none;
-  font-variant-numeric: tabular-nums;
-}
-
 .theme-toggle {
   display: flex;
   align-items: center;
@@ -148,7 +102,7 @@
    documented literal representing the "narrow mobile" breakpoint.
    Zoom is a desktop affordance; hiding it prevents header crowding at narrow. */
 @media (max-width: 640px) {
-  .zoom-controls {
+  .window-chrome-right .ns-zoom {
     display: none;
   }
 }

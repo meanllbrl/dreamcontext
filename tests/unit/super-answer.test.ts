@@ -239,6 +239,8 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     expect((await verb('present', { containers: ids })).status).toBe(200);
     expect((await readSuperState(root)).view).toMatchObject({ mode: 'present', layout: 'filmstrip' });
     expect((await verb('present', { containers: ids.slice(0, 5), layout: 'grid' })).status).toBe(400);
+    // A present over the one he looks at waits in the queue (sunum-sirasi); the next one starts clear.
+    expect((await verb('present', { containers: [] })).status).toBe(200);
     expect((await verb('present', { containers: [ids[0], ids[1], ids[0]] })).status).toBe(200);
     expect((await readSuperState(root)).view).toEqual({ mode: 'present', cards: [ids[0], ids[1]], layout: 'compare' });
     await verb('stack', { container: ids[0] });

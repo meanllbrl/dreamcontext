@@ -56,7 +56,7 @@ describe('the chrome wiring (source)', () => {
     expect(chrome).toContain("tRef.current('shell.notice.ceiling')");
   });
   it('⌘1-9 pick projectOrder[i] through addTab, and the new shell mounts no ProjectSwitcher', () => {
-    expect(chrome).toContain('projectOrderRef.current[Number(e.key) - 1]');
+    expect(chrome).toContain('projectOrderRef.current.filter((n) => !drawerHiddenRef.current.includes(n))[Number(e.key) - 1]'); // hidden projects are skipped (proje-gizle)
     // End anchor follows the classic return: c3976680 moved data-remote/data-touch to the new shell, f67d3671 added <SelectionBar />.
     const classicStart = chrome.indexOf('  return (\n    <ChromeContext.Provider value={chrome}>\n      <SelectionBar />\n      <ChromeSlotsProvider value={chromeSlots}>\n      <div className="window-chrome">');
     expect(classicStart).toBeGreaterThan(0);

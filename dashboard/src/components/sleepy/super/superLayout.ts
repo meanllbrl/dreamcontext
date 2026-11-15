@@ -119,6 +119,14 @@ export const STAGE = {
   /** An opened group's two text buttons (close group, minimize) take the exit's place. */
   GROUP_EXIT_W: 232,
   SWITCH_SEG_W: 96,
+  /** The presentation queue's control (task super-sahnesinde-sunum-sirasi, D7/D10): left of the
+   *  layout buttons while presenting; under QUEUE_NARROW_W it drops the names ("i/N ›" stays). */
+  QUEUE_STEP_W: 360,
+  QUEUE_STEP_SHORT_W: 104,
+  /** Off the queue (the stage floats with presentations waiting): "▶ N waiting · Continue" (D2). */
+  QUEUE_WAIT_W: 380,
+  QUEUE_WAIT_SHORT_W: 200,
+  QUEUE_NARROW_W: 1040,
   /** A card's own chrome around what it shows: the 1 px border on each side and the 36 px header
    *  (SuperSurface.css `.super-card-clip`, `.super-card-head`; drift-tested). A picture card in
    *  compare/grid is shrunk to its picture plus this (owner 2026-10-24). */
@@ -250,6 +258,10 @@ export interface StagePlan {
   strip?: StripPlan;
   /** While presenting: the top band's switcher and exit, at its right end. */
   controls?: Rect;
+  /** The presentation queue's control in the top band (D7, D2): `step` left of `controls` while a
+   *  queued presentation is on screen, `wait` at the band's right end while presentations wait
+   *  off screen. `short`: the narrow band's form (D10). */
+  queueBand?: { rect: Rect; kind: 'step' | 'wait'; short: boolean };
   /** The live jobs with no room: beside a page or a presentation, the ones the one rail column
    *  cannot hold, in a temporary tile at its foot; on the floating stage, the ones its sides cannot
    *  hold at the chat's width, in a pill beside Others (owner 2026-11-06). Its cards are drawn
@@ -373,6 +385,9 @@ export interface PlanOptions {
   layoutChoices?: number;
   /** The presentation shows one group whole: its close and minimize buttons replace the exit. */
   groupExit?: boolean;
+  /** The presentation queue's control (superTypes `queueCounter`): `step` while a queued
+   *  presentation of 2+ is on screen, `wait` while presentations wait off screen. */
+  queueBand?: 'step' | 'wait';
   /** The queue pill is showing in the top band: the float centre keeps its place under it. */
   queueUp?: boolean;
   /** The bar's MEASURED height (JobBar publishes it, superJobsStore `useQueueHeight`). A card row
@@ -919,6 +934,17 @@ function phoneFrame(f: Frame, { queue, terminals }: { queue: boolean; terminals:
   return { ...f, content, free: content, bandTop, phone: true };
 }
 
+/** The queue control's rect (D7, D10): `step` only beside a presentation's controls, `wait` only
+ *  off a presentation; short under STAGE.QUEUE_NARROW_W, and never wider than the band leaves. */
+function queueBandRect(f: Frame, kind: 'step' | 'wait' | undefined, mode: SuperView['mode'], controls: Rect | undefined): StagePlan['queueBand'] | undefined {
+  if (!kind || (kind === 'step') !== (mode === 'present' && !!controls)) return undefined;
+  const short = f.width < STAGE.QUEUE_NARROW_W;
+  const want = kind === 'step' ? (short ? STAGE.QUEUE_STEP_SHORT_W : STAGE.QUEUE_STEP_W) : (short ? STAGE.QUEUE_WAIT_SHORT_W : STAGE.QUEUE_WAIT_W);
+  const right = controls ? controls.x - STAGE.GAP / 2 : f.content.x + f.content.width;
+  const width = Math.max(0, Math.min(want, right - f.content.x));
+  return { rect: { x: right - width, y: f.bandTop, width, height: STAGE.BAND }, kind, short };
+}
+
 function centreAt(f: Frame, w: number): Rect {
   return { x: (f.width - w) / 2, y: f.content.y, width: w, height: f.content.height };
 }
@@ -1207,13 +1233,17 @@ function planWith(
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
     extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
+    // The queue's control holds the band's right end (left of a presentation's controls).
+    const qb = queueBandRect(f, opts.queueBand, mode, extra.controls);
+    const bandRight = qb ? qb.rect : extra.controls;
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
       width: f.width, height: f.height, narrow, phone, othersInHead: phone || inHead.others, agendaInHead: phone || inHead.agenda, mode, centre, cards, others,
-      othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
+      othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, bandRight), free: f.free,
       centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...(railPlan ? { rail: railPlan } : {}), ...extra,
+      ...(qb ? { queueBand: qb } : {}),
     };
   };
   const place = (id: string, rect: Rect, where: CardWhere) => {
@@ -1492,7 +1522,8 @@ function planWith(
     // bottom band, and neither is a reason to give up the top.
     const docked = (list.length === 0 && !opts.agendaPill) || (opts.terminals ?? 0) > 0;
     inHead.others = inHead.agenda = !docked;
-    const top = opts.queueUp ? f.content.y : STAGE.MARGIN;
+    // The top band holds something (the job bar's pill, the waiting presentations): the centre starts under it.
+    const top = opts.queueUp || opts.queueBand === 'wait' ? f.content.y : STAGE.MARGIN;
     const bottom = docked ? f.content.y + f.content.height : f.height - STAGE.MARGIN;
     return finish({ ...f.content, y: top, height: Math.max(0, bottom - top) }, f.content.width, 'float');
   }
@@ -1570,7 +1601,7 @@ function planWith(
     const zx = Math.max(f.othersZone.x, sc.x + sc.width + (othersFit ? STAGE.GAP : 0));
     f.othersZone = { ...f.othersZone, x: zx, width: f.width - zx };
   }
-  const top = opts.queueUp ? sc.y : STAGE.MARGIN;
+  const top = opts.queueUp || opts.queueBand === 'wait' ? sc.y : STAGE.MARGIN;
   const bottom = tallBottom ? f.height - STAGE.MARGIN : sc.y + sc.height;
   const centre: Rect = { ...sc, y: top, height: Math.max(0, bottom - top) };
 
@@ -1817,7 +1848,15 @@ export interface LayoutPatch extends OwnerViewFields {
    *  server makes it if the record has none, or brings it back from its pill, Others or a group.
    *  `min`: its close, which collapses it to the pill in the bottom-left corner (never removed). */
   agenda?: 'open' | 'min';
+  /** The owner's step through the presentation queue (task super-sahnesinde-sunum-sirasi): on
+   *  the item his window showed. The server answers with the next view; nothing is laid over the
+   *  push meanwhile (the window does not know the next item's layout). */
+  queue?: QueueStep;
 }
+
+/** A queue gesture: `next` passes the shown item and opens the next, `leave` passes it and floats
+ *  the stage with the rest waiting, `resume` opens the first waiting one. */
+export interface QueueStep { op: 'next' | 'leave' | 'resume'; item: string }
 
 /** How often the window reports the owner's look at an open group or a full-screen card, through
  *  `pollMs` and never slower than twice this (Light mode): inside the server's grace either way
@@ -1837,7 +1876,8 @@ type Staged = { containers: SuperContainer[]; groups?: SuperGroup[]; view: Super
 export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch): S {
   // A look changes nothing on the stage: the state stays as the server sent it (its view's
   // `auto` mark too, which a rebuilt view would drop for the length of a request).
-  if (Object.keys(patch).every((k) => k === 'touch')) return state;
+  // A queue step alone is the server's to answer: nothing to draw ahead of it.
+  if (Object.keys(patch).every((k) => k === 'touch' || k === 'queue')) return state;
   const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
   // Cards that leave what the view shows (the server's rule): to Others, resized, grouped, closed.
   const unshown = new Set<string>();

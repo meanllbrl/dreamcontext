@@ -74,6 +74,25 @@ import {
 } from '../../lib/task-objection.js';
 import type { RulesDoc } from '../../lib/task-filing-rules.js';
 import { TASK_SLUG_RE } from '../../lib/task-slug.js';
+import { hasOwnerKey } from '../owner-key.js';
+import { writeSuper } from '../../lib/super/inbox.js';
+import { superEntry } from '../../lib/super/store.js';
+import { tryOwnerMark } from '../../lib/super/owner-marks.js';
+import type { OwnerMarkInput } from '../../lib/super/owner-marks.js';
+
+/** A task the owner created or moved by hand rides his next message to the main Super
+ *  (owner-marks.ts), in its own record write right after the task file's. Only a request proven
+ *  his (the shell's owner key, never an app's) and only while that Super is on. Never fails the
+ *  task write: a failure is logged with the slug. */
+async function recordTaskMark(req: IncomingMessage, contextRoot: string, mark: Omit<OwnerMarkInput, 'at'>): Promise<void> {
+  if (!hasOwnerKey(req) || appFromHeader(req, contextRoot)) return;
+  try {
+    if (!superEntry(contextRoot).enabled) return;
+    await writeSuper(contextRoot, (s) => { tryOwnerMark(s, { ...mark, at: Date.now() }); });
+  } catch (err) {
+    console.warn(`[tasks] ${mark.key}: the owner's hand mark was not recorded: ${(err as Error).message}`);
+  }
+}
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -668,6 +687,7 @@ export async function handleTasksCreate(
     target: `state/${task.slug}.md`,
     summary: `Created task '${name.trim()}' with priority ${priority}`,
   });
+  await recordTaskMark(req, contextRoot, { key: `task:${task.slug}`, kind: 'task-created', text: name.trim(), ...(task.status ? { to: String(task.status) } : {}) });
 
   sendJson(res, 201, { task: toApiTask(task) });
 }
@@ -1526,6 +1546,7 @@ export async function handleTasksUpdate(
     // A task its owner closed ends its agent's job (a live run is stopped, nothing reopens it).
     endTaskJobIfClosed(contextRoot, slug);
     task = (await backend.get(slug)) ?? task;
+    await recordTaskMark(req, contextRoot, { key: `task:${slug}`, kind: 'task-status', text: String(existing.name ?? slug), from: String(existing.status), to: updates.status });
   }
 
   // Bidirectional invariant: the feature side (related_tasks membership)

@@ -8,7 +8,7 @@
  * `_meta{subtype:'super_state'}` down the Super Agent's own socket after every store write.
  */
 import type { ApiClient } from '../../../api/client';
-import { readSuperStateView, type SuperId, type SuperStateView } from '../../../lib/superTypes';
+import { readSuperStateView, type PadStatus, type SuperId, type SuperPadItem, type SuperStateView } from '../../../lib/superTypes';
 import type { LayoutPatch } from './superLayout';
 
 /**
@@ -29,6 +29,7 @@ export function forSuper(api: ApiClient, superId: SuperId = 'main'): ApiClient {
   const member = Object.create(api) as ApiClient;
   member.get = <T>(path: string): Promise<T> => api.get<T>(superRoute(path, superId));
   member.post = <T>(path: string, body: unknown): Promise<T> => api.post<T>(superRoute(path, superId), body);
+  member.ownerPost = <T>(path: string, body: unknown): Promise<T> => api.ownerPost<T>(superRoute(path, superId), body);
   return member;
 }
 
@@ -95,11 +96,37 @@ export async function postSuperEnd(api: ApiClient, child: string, superId: Super
   return readSuperStateView(r?.state);
 }
 
-/** `POST /api/super/pad` — the owner moved an agenda line by hand; the server never moves it again. */
-export async function postSuperPad(api: ApiClient, id: string, section: 'now' | 'done', superId: SuperId = 'main'): Promise<SuperStateView | null> {
+/** `POST /api/super/pad {id, status}` — his status change from the agenda (C6): in the owner's
+ *  name, so it rides his next message as a mark; without the key it still moves, unmarked. */
+export async function postSuperPadStatus(api: ApiClient, id: string, status: PadStatus, superId: SuperId = 'main'): Promise<SuperStateView | null> {
   api = forSuper(api, superId);
-  const r = await api.post<{ state?: unknown }>('/super/pad', { id, section });
+  const r = await api.ownerPost<{ state?: unknown }>('/super/pad', { id, status });
   return readSuperStateView(r?.state);
+}
+
+/** `POST /api/super/pad/add {text}` — his own line (owner key required; `pad_full` when full). */
+export async function postSuperPadAdd(api: ApiClient, text: string, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
+  const r = await api.ownerPost<{ state?: unknown }>('/super/pad/add', { text });
+  return readSuperStateView(r?.state);
+}
+
+/** `POST /api/super/pad/remove {id}` — his own OPEN line only. */
+export async function postSuperPadRemove(api: ApiClient, id: string, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
+  const r = await api.ownerPost<{ state?: unknown }>('/super/pad/remove', { id });
+  return readSuperStateView(r?.state);
+}
+
+/** One day of the agenda (`GET /api/super/agenda-day`, C4): its Done lines and its still-open ones. */
+export interface AgendaDay { date: string; done: SuperPadItem[]; open: SuperPadItem[] }
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+export async function fetchAgendaDay(api: ApiClient, date: string, superId: SuperId = 'main'): Promise<AgendaDay | null> {
+  if (!DAY_RE.test(date)) return null;
+  api = forSuper(api, superId);
+  const r = await api.get<Partial<AgendaDay>>(`/super/agenda-day?date=${date}`);
+  const list = (v: unknown): SuperPadItem[] => (Array.isArray(v) ? v.filter((p): p is SuperPadItem => !!p && typeof (p as SuperPadItem).id === 'string' && typeof (p as SuperPadItem).text === 'string' && typeof (p as SuperPadItem).at === 'number') : []);
+  return r && r.date === date ? { date, done: list(r.done), open: list(r.open) } : null;
 }
 
 /** `POST /api/super/owed/drop` — his "Gerek yok" on an unanswered line (owed.ts). The record's push redraws it. */

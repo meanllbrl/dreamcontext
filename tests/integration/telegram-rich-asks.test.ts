@@ -107,7 +107,7 @@ describe('the Super\'s own rich ask', () => {
     const q1 = lastWith('DE');
     const q2 = lastWith('Gönder');
     expect(labels(q1)).toEqual(['TR', 'DE', 'US', 'Not ekle']);
-    expect(labels(q2)).toEqual(['Bugün', 'Yarın', 'Not ekle', 'Gönder', 'Belirsiz, tekrar sor']);
+    expect(labels(q2)).toEqual(['Bugün', 'Yarın', 'Not ekle', 'Gönder', 'Belirsiz, tekrar sor', 'Zaten cevapladım']);
     tap(q1.result!.message_id, plain(q1), 'US');
     await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageReplyMarkup')).toHaveLength(1));
     tap(q1.result!.message_id, plain(q1), 'TR');

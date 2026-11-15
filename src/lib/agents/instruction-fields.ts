@@ -47,6 +47,9 @@ export const HASHED_FIELD_SIDE = {
   // super-rutin: a Super turn and a Telegram outflow are the owner's to grant.
   target: 'authority',
   reply: 'authority',
+  // kosullu-otomasyon: a condition runs as a shell command on this Mac, so only the owner grants it.
+  condition: 'authority',
+  conditionWake: 'authority',
   mode: 'authority',
 } as const satisfies Record<keyof ApprovalPayloadFields | 'mode', FieldSide>;
 
@@ -131,7 +134,7 @@ export interface WidenView {
 export const CREATE_BASELINE: Readonly<WidenView> = {
   prompt: '', soul: '', job: '', outputInstructions: '', model: null, effort: null, timeoutMinutes: null,
   outputDir: null, learning: null, review: 'off', flow: null, whiteboard: null, autonomy: 'balanced',
-  readTools: '', tool: null, app: '', appTools: '', target: '', reply: '', mode: 'call', enabled: true, fallbackTools: [], boardOnly: false,
+  readTools: '', tool: null, app: '', appTools: '', target: '', reply: '', condition: '', conditionWake: '', mode: 'call', enabled: true, fallbackTools: [], boardOnly: false,
 };
 
 /** Moving these never widens reach: cost, wording, drawing. */

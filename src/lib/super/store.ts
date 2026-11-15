@@ -1,15 +1,16 @@
 import { promises as fsp } from 'node:fs';
+import { isConditionData } from '../automations/condition.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
+  AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, PAD_STAGES, cleanPadText, MAX_OWNER_MARKS_BYTES, OWNER_MARK_KEY_RE, OWNER_MARK_KINDS, type OwnerMark, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
-  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
@@ -22,6 +23,7 @@ import { isSafeAutomationSlug } from '../agents/slot.js';
 import { renameWithRetry } from '../fs-retry.js';
 import { asOwnerLanguage } from './owner-language.js';
 import { bindingVerdict, currentBinding, noteOwnWrite } from './record-binding.js';
+import { archiveDoneLines } from './pad-archive.js';
 
 /**
  * The Super Agent's state file — `state/.super-agent.json`, one per vault (plan-r7 D2).
@@ -118,6 +120,14 @@ export function superRecordPath(contextRoot: string, id: SuperId = 'main'): stri
 export function superReadMarksPath(contextRoot: string, id: SuperId = 'main'): string {
   const member = memberOfSuperId(id);
   return member === null ? join(contextRoot, 'state', '.super', 'read-marks.json') : join(contextRoot, MEMBER_SUPER_DIR, `${member}.read-marks.json`);
+}
+
+/** Where `id`'s finished agenda lines are kept, one file per day (pad-archive.ts): main's
+ *  `state/.super/agenda-days/`, a member's beside its record (`members/<slug>.agenda-days/`), so
+ *  no member slug, `main` included, shares main's folder. Machine-local like the record. */
+export function superAgendaDaysDir(contextRoot: string, id: SuperId = 'main'): string {
+  const member = memberOfSuperId(id);
+  return member === null ? join(contextRoot, 'state', '.super', 'agenda-days') : join(contextRoot, MEMBER_SUPER_DIR, `${member}.agenda-days`);
 }
 
 /** `id`'s handoff file: main's `state/.super/handoff.md`, a member's beside its record. */
@@ -397,7 +407,9 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     if (q.kind === 'automation' && ((!automation && !member) || !decision)) continue;
     // A scheduled job names its Super automation and the fire it answers for (super-rutin C3).
     const scheduled = q.kind === 'schedule' && typeof q.automation === 'string' && okMember(q.automation)
-      && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire)) ? { automation: q.automation, fire: new Date(Date.parse(q.fire)).toISOString() } : undefined;
+      && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire))
+      ? { automation: q.automation, fire: new Date(Date.parse(q.fire)).toISOString(), ...(isConditionData(q.conditionData) && q.conditionData ? { conditionData: q.conditionData } : {}) }
+      : undefined;
     if (q.kind === 'schedule' && !scheduled) continue;
     // An owner item exists only for its wait (which card of the child he must act on).
     // Its mirror keeps the wait too (refusal fact included): without it the bar cannot tell a
@@ -715,13 +727,15 @@ export function collapseTeamCards(raw: Record<string, unknown>, team: readonly S
  * rows win: a row past either cap is dropped). A worktree a `--from` may have opened travels
  * with its branch, under the same rule as a child's.
  */
-/** The agenda notepad: known sections, one id each, a non-empty line, a finite time. */
-function sanitizePad(raw: unknown): SuperPadItem[] {
+/** The agenda notepad: known sections, one id each, a non-empty line, a finite time. A line
+ *  without `bornAt` gets `at` stamped once, so an old line's day never jumps on its first change.
+ *  `max`: the record's MAX_PAD; a day file (pad-archive.ts) reads with its own bound. */
+export function sanitizePad(raw: unknown, max: number = MAX_PAD): SuperPadItem[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperPadItem[] = [];
   const ids = new Set<string>();
   for (const p of raw) {
-    if (out.length >= MAX_PAD) break;
+    if (out.length >= max) break;
     if (!isRecord(p) || typeof p.id !== 'string' || !PAD_ID_RE.test(p.id) || ids.has(p.id)) continue;
     if (!oneOf(PAD_SECTIONS, p.section)) continue;
     const text = cleanPadText(p.text);
@@ -730,13 +744,49 @@ function sanitizePad(raw: unknown): SuperPadItem[] {
     ids.add(p.id);
     const toldAt = finite(p.toldAt);
     const by = p.by === 'auto' || p.by === 'owner' ? p.by : undefined;
+    const born = finite(p.bornAt);
     out.push({
       id: p.id, section: p.section, text, at,
+      bornAt: born !== undefined && born >= 0 && born <= at ? born : at,
+      ...(p.section === 'now' && oneOf(PAD_STAGES, p.stage) ? { stage: p.stage } : {}),
+      ...(p.author === 'owner' ? { author: 'owner' as const } : {}),
       ...(typeof p.for === 'string' && SESSION_ID_RE.test(p.for) ? { for: p.for } : {}),
       ...(by ? { by } : {}),
       ...(by === 'auto' && oneOf(PAD_AUTO_WHY, p.why) ? { why: p.why } : {}),
       ...(toldAt !== undefined && toldAt >= 0 ? { toldAt } : {}),
     });
+  }
+  return out;
+}
+
+/** The owner's hand marks (owner-marks.ts): a known key and kind, a cleaned line, a finite time;
+ *  one per key. Bounded by stored bytes: past MAX_OWNER_MARKS_BYTES the oldest go. */
+export function sanitizeOwnerMarks(raw: unknown): OwnerMark[] {
+  if (!Array.isArray(raw)) return [];
+  const out: OwnerMark[] = [];
+  const keys = new Set<string>();
+  const word = (v: unknown) => (typeof v === 'string' ? cleanPadText(v).slice(0, 40) : '');
+  for (const m of raw) {
+    if (!isRecord(m) || typeof m.key !== 'string' || !OWNER_MARK_KEY_RE.test(m.key) || keys.has(m.key)) continue;
+    if (!oneOf(OWNER_MARK_KINDS, m.kind)) continue;
+    const at = finite(m.at);
+    if (at === undefined || at < 0) continue;
+    const seq = finite(m.seq);
+    const from = word(m.from);
+    const to = word(m.to);
+    keys.add(m.key);
+    out.push({
+      key: m.key, kind: m.kind, text: cleanPadText(m.text), at,
+      ...(from ? { from } : {}), ...(to ? { to } : {}),
+      ...(seq !== undefined && seq > 0 && seq < 1e9 ? { seq: Math.floor(seq) } : {}),
+    });
+  }
+  let bytes = Buffer.byteLength(JSON.stringify(out), 'utf-8');
+  while (out.length && bytes > MAX_OWNER_MARKS_BYTES) {
+    let oldest = 0;
+    for (let i = 1; i < out.length; i++) if (out[i].at < out[oldest].at) oldest = i;
+    out.splice(oldest, 1);
+    bytes = Buffer.byteLength(JSON.stringify(out), 'utf-8');
   }
   return out;
 }
@@ -779,6 +829,8 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
     };
     const outward = sanitizeOutward(p.outward);
     if (outward) row.outward = outward;
+    const workOrigin = parseWorkOrigin(p.workOrigin);
+    if (workOrigin) row.workOrigin = workOrigin;
     if (row.maybeStarted && acceptableWorktree(p.startedIn, opts) && typeof p.startedBranch === 'string' && SUPER_BRANCH_RE.test(p.startedBranch)) {
       row.startedIn = p.startedIn;
       row.startedBranch = p.startedBranch;
@@ -916,13 +968,18 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   const owedSeq = Math.max(rawOwedSeq !== undefined && rawOwedSeq > 0 && rawOwedSeq < 1e9 ? Math.floor(rawOwedSeq) : 0, ...owed.map((d) => d.seq));
   const owedSince = finite(raw.owedSince);
   const ownerLanguage = asOwnerLanguage(raw.ownerLanguage);
+  // The presentation queue settles against the cards, and may open its next item (types.ts).
+  const pq = settlePresentQueue(raw.presentQueue, sanitizeView(raw.view, containers), containers);
+  const ownerMarks = sanitizeOwnerMarks(raw.ownerMarks);
+  const rawMarkSeq = finite(raw.ownerMarkSeq);
+  const ownerMarkSeq = Math.max(rawMarkSeq !== undefined && rawMarkSeq > 0 && rawMarkSeq < 1e9 ? Math.floor(rawMarkSeq) : 0, ...ownerMarks.map((m) => m.seq ?? 0));
   return {
     v: SUPER_STATE_VERSION,
     session,
     enabled: raw.enabled === true && session !== null,
     containers,
     groups,
-    view: sanitizeView(raw.view, containers),
+    view: pq.view,
     children,
     queue,
     notes,
@@ -938,12 +995,15 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(pad.length ? { pad } : {}),
     ...(padSeq ? { padSeq } : {}),
     ...(askShows.length ? { askShows } : {}),
+    ...(pq.queue ? { presentQueue: pq.queue } : {}),
     ...(member ? { member } : {}),
     ...(mainBatches.length ? { mainBatches } : {}),
     ...(owed.length ? { owed } : {}),
     ...(owedSeq ? { owedSeq } : {}),
     ...(owedSince !== undefined && owedSince > 0 ? { owedSince } : {}),
     ...(ownerLanguage ? { ownerLanguage } : {}),
+    ...(ownerMarks.length ? { ownerMarks } : {}),
+    ...(ownerMarkSeq ? { ownerMarkSeq } : {}),
   };
 }
 
@@ -1168,6 +1228,55 @@ const pendingArm = new Map<string, { enabled: boolean; children: Set<string> }>(
 export interface UpdateOpts extends SanitizeOpts {
   /** Told which children the phone-held invariant ended in this write (none: not called). */
   onDemoted?: (ids: string[]) => void;
+  /** Told which agenda lines added in THIS write were taken out again because the day archive
+   *  failed and the pad, with its unarchived Done lines put back, would pass MAX_PAD. */
+  onPadRefused?: (ids: string[]) => void;
+}
+
+/** One log line per path and error while the archive keeps failing (it is retried every write). */
+const archiveLogged = new Set<string>();
+
+/**
+ * The archive hook (C4): every Done line of the loaded pad that the new one no longer holds,
+ * whatever removed it (roll-off, `note drop`, `note clear`, a full pad's eviction), is appended
+ * to its day file before the record is written. A failure is reported, never thrown, and never
+ * cuts a line: the lines go back into the record; if that passes MAX_PAD, only lines new in this
+ * write leave (newest first), with their `pad:<id>` marks, and the caller is told. Mutates `next`.
+ */
+async function archiveGoneDone(contextRoot: string, id: SuperId, beforePad: readonly SuperPadItem[], next: SuperState): Promise<string[]> {
+  const kept = new Set((next.pad ?? []).map((p) => p.id));
+  const gone = beforePad.filter((p) => p.section === 'done' && !kept.has(p.id));
+  if (!gone.length) return [];
+  try {
+    await archiveDoneLines(contextRoot, id, gone);
+    return [];
+  } catch (err) {
+    const where = superAgendaDaysDir(contextRoot, id);
+    const msg = (err as Error).message;
+    const logKey = `${where}\u0000${msg}`;
+    if (!archiveLogged.has(logKey)) {
+      archiveLogged.add(logKey);
+      console.warn(`[super] ${where}: finished agenda lines were not archived, kept on the record: ${msg}`);
+    }
+    const order = new Map(beforePad.map((p, i) => [p.id, i]));
+    let pad = [...gone, ...(next.pad ?? [])].sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
+    const refused: string[] = [];
+    if (pad.length > MAX_PAD) {
+      const fresh = pad.filter((p) => !order.has(p.id)).sort((a, b) => b.at - a.at);
+      for (const p of fresh) {
+        if (pad.length <= MAX_PAD) break;
+        refused.push(p.id);
+        pad = pad.filter((x) => x.id !== p.id);
+      }
+    }
+    next.pad = pad;
+    if (refused.length && next.ownerMarks) {
+      const marks = new Set(refused.map((r) => `pad:${r}`));
+      next.ownerMarks = next.ownerMarks.filter((m) => !marks.has(m.key));
+      if (!next.ownerMarks.length) delete next.ownerMarks;
+    }
+    return refused;
+  }
 }
 
 /**
@@ -1190,9 +1299,12 @@ export function withSuperState(
     const { state: draft, foreign } = await loadSuperRecord(contextRoot, opts, id);
     if (foreign) await setAsideForeign(contextRoot, id);
     const before = beforeWrite(draft);
+    // `fn` mutates the draft in place: the archive hook diffs against this copy.
+    const beforePad = (draft.pad ?? []).map((p) => ({ ...p }));
     const out = fn(draft) ?? draft;
     const demoted = demotePhoneHeld(before, out);
     const next = ownedBy(sanitizeSuperState(out, opts), id);
+    const padRefused = await archiveGoneDone(contextRoot, id, beforePad, next);
     const mine = { enabled: next.enabled, children: new Set([...armedChildren(next)].map((cid) => cid.toLowerCase())) };
     pendingArm.set(key, mine);
     try {
@@ -1202,6 +1314,7 @@ export function withSuperState(
       if (pendingArm.get(key) === mine) pendingArm.delete(key);
     }
     if (demoted.length) opts.onDemoted?.(demoted);
+    if (padRefused.length) opts.onPadRefused?.(padRefused);
     return next;
   });
 }

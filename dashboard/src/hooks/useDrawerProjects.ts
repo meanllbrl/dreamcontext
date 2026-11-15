@@ -26,8 +26,9 @@ import { pollMs, useWindowActivity } from '../lib/windowActivity';
 
 type SuperMarks = NonNullable<FanoutFacts['superMarks']>;
 
-function marksOf(summary: { superWorking?: unknown; superAsking?: unknown } | null): SuperMarks {
-  return { working: typeof summary?.superWorking === 'number' ? summary.superWorking : 0, asking: summary?.superAsking === true };
+function marksOf(summary: { superWorking?: unknown; superAsking?: unknown; superWaiting?: unknown } | null): SuperMarks {
+  const waiting = typeof summary?.superWaiting === 'number' && summary.superWaiting > 0 ? Math.floor(summary.superWaiting) : 0;
+  return { working: typeof summary?.superWorking === 'number' ? summary.superWorking : 0, asking: summary?.superAsking === true, ...(waiting ? { waiting } : {}) };
 }
 
 /** The summary's `members`, each entry checked (another project's answer, read over the wire). */
@@ -84,7 +85,7 @@ export function perWindowOf(raw: unknown[]): Array<{ id: string; name: string; t
   });
 }
 
-export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean, folded: readonly string[] = []): {
+export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean, folded: readonly string[] = [], hidden: readonly string[] = []): {
   facts: Record<string, FanoutFacts>;
   /** A window row of a project that is not mounted, dragged: the row moves now, the roster on
    *  disk follows, and a fresh read settles it (a refused write puts the row back). */
@@ -176,9 +177,9 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
   const [marks, setMarks] = useState<Record<string, SuperMarks>>({});
   const [teams, setTeams] = useState<Record<string, DrawerEkipFacts>>({});
   const targets = useMemo(
-    () => foldedTargets(folded, mounted),
+    () => foldedTargets(folded, mounted, undefined, hidden),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [folded.join('\n'), mounted.join('\n')],
+    [folded.join('\n'), mounted.join('\n'), hidden.join('\n')],
   );
   useEffect(() => {
     setMarks((prev) => (Object.keys(prev).every((v) => targets.includes(v))

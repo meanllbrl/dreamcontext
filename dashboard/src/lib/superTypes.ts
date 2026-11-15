@@ -359,6 +359,8 @@ export interface SuperChild {
   /** The agenda (server-written): when its job last finished, and what the owner saw. */
   finishedAt?: number;
   seenAt?: number;
+  /** A member Super's child: whose work it does (MIRROR of src/lib/super/types.ts). */
+  workOrigin?: SuperWorkOrigin;
   /** The owner message it answers (`msgRef`), when the Super started it in his turn
    *  (server-written; the board writing field keeps its marks while it runs). */
   origin?: string;
@@ -675,6 +677,8 @@ export interface TeamChain {
   newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt' | 'request'>;
   /** The member's previous root ("önceki konuşma"): its run, and its session when this Mac knows it. */
   previous?: { id: string; runId: string; sessionId?: string };
+  /** Every request this card's jobs gave the member's own Super (its helpers are theirs). */
+  requests?: string[];
 }
 
 /**
@@ -688,6 +692,7 @@ export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, p
   const roots = mine.filter((j) => !j.followUpOf);
   const at = roots.findIndex((j) => j.id === root.id);
   const prev = at >= 0 ? roots[at + 1] : undefined;
+  const requests = [...new Set(mine.flatMap((j) => (j.request ? [j.request] : [])))];
   return {
     jobs: Math.max(1, mine.length),
     newest: {
@@ -696,7 +701,53 @@ export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, p
       ...(newest.model ? { model: newest.model } : {}), ...(newest.effort ? { effort: newest.effort } : {}), ...(newest.light ? { light: true as const } : {}),
     },
     ...(prev ? { previous: { id: prev.id, runId: prev.runId, ...(prevSessionId ? { sessionId: prevSessionId } : {}) } } : {}),
+    ...(requests.length ? { requests } : {}),
   };
+}
+
+/** The requests a member's one card gave its member's Super: the chain's, else the job's own. */
+export function teamRequestsOf(job: Pick<SuperTeamJob, 'request' | 'chain'>): string[] {
+  return job.chain?.requests ?? (job.request ? [job.request] : []);
+}
+
+/** One helper a member's Super started for main's request, as its card shows it (owner 2026-11-15). */
+export interface MemberHelper {
+  /** The child's session id (its transcript), or the pool row's id while it waits. */
+  id: string;
+  brief: string;
+  /** The child's row (server-written), `waiting` for a job its pool keeps until a slot frees. */
+  row: ChildRow | 'pooled';
+  live: boolean;
+  model?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+/**
+ * The helpers a member's card shows (owner 2026-11-15, option A): ONLY the children (and pool rows)
+ * of the member's own record whose work is one of THIS card's requests (`main:<request>`). The
+ * member's own or routine work never reaches main's card. Live first, then the newest. Pure.
+ */
+export function memberHelpersOf(rec: Pick<SuperStateView, 'children' | 'pool'> | null | undefined, requests: readonly string[]): MemberHelper[] {
+  if (!rec || !requests.length) return [];
+  const mine = new Set(requests.map((r) => `main:${r}`));
+  const out: MemberHelper[] = [];
+  for (const c of Object.values(rec.children)) {
+    if (!c.workOrigin || !mine.has(c.workOrigin)) continue;
+    // A child with no row yet: finished if it says so, else working (an older record's live child).
+    const row: ChildRow = c.row ?? (typeof c.finishedAt === 'number' ? 'done' : 'working');
+    out.push({
+      id: c.sessionId, brief: c.brief, row, live: row === 'working' || row === 'asking' || row === 'waiting',
+      ...(c.model ? { model: c.model } : {}), startedAt: c.startedAt,
+      ...(typeof c.finishedAt === 'number' ? { finishedAt: c.finishedAt } : {}),
+    });
+  }
+  for (const p of rec.pool) {
+    if (!p.workOrigin || !mine.has(p.workOrigin)) continue;
+    out.push({ id: p.id, brief: p.title, row: 'pooled', live: true, startedAt: p.createdAt });
+  }
+  const rank = (h: MemberHelper) => (h.row === 'pooled' ? 1 : h.live ? 0 : 2);
+  return out.sort((a, b) => rank(a) - rank(b) || (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
 }
 
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'asking', 'done', 'failed'] as const;
@@ -712,6 +763,8 @@ export interface SuperPoolItem {
   mode?: string;
   held?: boolean;
   maybeStarted?: boolean;
+  /** A member Super's job kept at its cap: whose work it does (MIRROR of src/lib/super/types.ts). */
+  workOrigin?: SuperWorkOrigin;
   createdAt: number;
 }
 
@@ -756,6 +809,38 @@ export interface SuperState {
   mainBatches?: string[];
   /** What the Super still owes the owner (server owed.ts): open debts and the newest closed. */
   owed?: SuperOwed[];
+  /** The stage's presentation queue (server types.ts `PresentQueue`). Absent = none. */
+  presentQueue?: PresentQueue;
+}
+
+/** One presentation on the stage's queue. MIRRORS `PresentItem` in src/lib/super/types.ts. */
+export interface PresentItem { id: string; cards: string[]; layout?: PresentLayout; layoutBy?: 'owner'; ask?: string; at: number }
+/** MIRRORS `PresentQueue` in src/lib/super/types.ts: unseen items, the head the next (or current). */
+export interface PresentQueue { items: PresentItem[]; seen: number; seq: number; showing?: string }
+export const PRESENT_ITEM_ID_RE = /^pq[0-9]{1,9}$/;
+
+/** The queue's counter (MIRRORS server `queueCounter`): i/N, how many wait, the head on screen.
+ *  `showing` here also needs the view to present the head's cards (a push may lag a gesture). */
+export function queueCounter(q: PresentQueue | undefined, view?: SuperView): { at: number; of: number; waiting: number; showing: boolean } {
+  const items = q?.items ?? [];
+  const head = items[0];
+  const shown = view ? (view.mode === 'present' ? view.cards ?? [] : []) : head?.cards ?? [];
+  const showing = !!q?.showing && head?.id === q.showing && shown.length > 0 && shown.every((id) => head.cards.includes(id));
+  return { at: (q?.seen ?? 0) + 1, of: (q?.seen ?? 0) + items.length, waiting: items.length - (showing ? 1 : 0), showing };
+}
+
+/** The queue as pushed: well-formed items only (the server settled it). A remote screen's view
+ *  carries no `at` or `seq` (handsfree contract `RemotePresentQueue`): the window reads neither. */
+function readPresentQueue(v: unknown): PresentQueue | undefined {
+  if (!isRecord(v) || !Array.isArray(v.items)) return undefined;
+  const items: PresentItem[] = [];
+  for (const i of v.items) {
+    if (!isRecord(i) || typeof i.id !== 'string' || !PRESENT_ITEM_ID_RE.test(i.id)) continue;
+    if (!Array.isArray(i.cards) || i.cards.length === 0 || !i.cards.every((c) => typeof c === 'string')) continue;
+    items.push({ ...(i as unknown as PresentItem), at: typeof i.at === 'number' ? i.at : 0 });
+  }
+  if (!items.length) return undefined;
+  return { items, seen: typeof v.seen === 'number' ? v.seen : 0, seq: typeof v.seq === 'number' ? v.seq : 0, ...(typeof v.showing === 'string' ? { showing: v.showing } : {}) };
 }
 
 /** One thing the Super owes the owner. MIRRORS `SuperOwed` in src/lib/super/types.ts
@@ -824,7 +909,15 @@ export interface SuperPadItem {
   id: string; section: PadSection; text: string; at: number;
   /** The job (child session id) the line follows; `by` who last moved it when not the super. */
   for?: string; by?: 'auto' | 'owner'; why?: PadAutoWhy; toldAt?: number;
+  /** When it was first written (its day; absent = `at`), a Now line's stage, and `owner` when he
+   *  wrote it himself (MIRRORED from the server, `src/lib/super/types.ts`). */
+  bornAt?: number; stage?: PadStage; author?: 'owner';
 }
+export const PAD_STAGES = ['todo', 'almost'] as const;
+export type PadStage = typeof PAD_STAGES[number];
+/** The five statuses a line shows (MIRRORED from the server). */
+export const PAD_STATUSES = ['not-started', 'in-progress', 'almost-done', 'waiting', 'done'] as const;
+export type PadStatus = typeof PAD_STATUSES[number];
 export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;
 export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
 /** A Now line with no job behind it, unchanged this long, is stale (the card flags it). */
@@ -1227,6 +1320,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),
     ...(Array.isArray(v.owed) && readOwed(v.owed).length ? { owed: readOwed(v.owed) } : {}),
+    ...(readPresentQueue(v.presentQueue) ? { presentQueue: readPresentQueue(v.presentQueue) } : {}),
     team,
     ...(teamLive ? { teamLive } : {}),
     ...(Array.isArray(v.bannered) ? { bannered: v.bannered.filter((b): b is string => typeof b === 'string') } : {}),

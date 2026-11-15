@@ -1,5 +1,5 @@
 import { buildQuestionAnswer } from './chatProtocol';
-import { unclearMessage } from '../components/sleepy/chat/surveyAnswers';
+import { unclearMessage, ALREADY_ANSWERED_MESSAGE } from '../components/sleepy/chat/surveyAnswers';
 import type { PendingItem } from '../components/sleepy/chatSession';
 import { HUB_VERBS, type AnswerPending, type HubResult, type HubVerb } from '../../../src/lib/telegram/contract.js';
 
@@ -56,7 +56,7 @@ export function parseAnswerPending(args: unknown): AnswerPending | null {
   }
   if (args.kind === 'unclear') {
     const unclear = typeof args.unclear === 'string' && args.unclear.length <= 4000 ? args.unclear : null;
-    return unclear === null ? null : { kind: 'unclear', requestId, ...(item ? { item } : {}), unclear };
+    return unclear === null ? null : { kind: 'unclear', requestId, ...(item ? { item } : {}), unclear, ...(args.already === true ? { already: true as const } : {}) };
   }
   return null;
 }
@@ -85,6 +85,7 @@ export function planHubAnswer(args: unknown, pending: readonly PendingItem[]): H
   }
   if (entry.kind !== 'question') return { ok: false, error: 'refused_kind' };
   if (a.kind === 'unclear') {
+    if (a.already) return { ok: true, requestId: a.requestId, behavior: 'deny', message: ALREADY_ANSWERED_MESSAGE };
     const first = entry.questions[0]?.question ?? '';
     return { ok: true, requestId: a.requestId, behavior: 'deny', message: unclearMessage(entry.questions, first ? { [first]: { chosen: [], text: a.unclear } } : {}) };
   }

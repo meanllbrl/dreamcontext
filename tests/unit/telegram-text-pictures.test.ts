@@ -201,6 +201,7 @@ describe('end to end: the Super answer with pictures reaches the fake bot', () =
       const hub = {
         send: (_ab: unknown, html: string, extra = {}) => transport.sendMessage(42, html, extra),
         notice: async () => {}, reply: async () => {}, sendButtons: async () => '',
+        rootOf: (a: { contextRoot: string | null }) => a.contextRoot,
       } as never;
       // What hub.onAssistantText does: the text in hub mode, then the answer's extras.
       for (const html of toTelegramMessages(text, { blocks: 'hub' })) await transport.sendMessage(42, html);
@@ -227,7 +228,7 @@ describe('end to end: the Super answer with pictures reaches the fake bot', () =
       const p = put(join(shots, 'tek.png'), png());
       const transport = new TelegramTransport({ token: '123:abc', baseUrl: bot.url, timeoutMs: 5000 });
       const ab = { key: 'k', target: 'super', scope: 'p', contextRoot: ctxRoot, binding: { chatId: 42 }, transport } as never;
-      const hub = { send: (_a: unknown, html: string) => transport.sendMessage(42, html), notice: async () => {}, reply: async () => {}, sendButtons: async () => '' } as never;
+      const hub = { send: (_a: unknown, html: string) => transport.sendMessage(42, html), notice: async () => {}, reply: async () => {}, sendButtons: async () => '', rootOf: (a: { contextRoot: string | null }) => a.contextRoot } as never;
       await sendAnswerBlocks(hub, ab, `Bak: ![tek resim](${p})`, 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [shots] });
       expect(bot.hits.map((h) => h.method)).toEqual(['sendPhoto']);
       expect(bot.hits[0].files).toEqual(['tek.png']);

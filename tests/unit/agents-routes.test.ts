@@ -306,6 +306,31 @@ describe('writes', () => {
     resetSuperIndex();
   });
 
+  it('withRoutines: its agenda days are kept in the trash and removed with the record; a folder left without a record goes too', async () => {
+    const { superRecordPath, superAgendaDaysDir, resetSuperIndex } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    const { writeFileSync } = await import('node:fs');
+    createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });
+    mkdirSync(superAgendaDaysDir(contextRoot, 'm:writer'), { recursive: true });
+    writeFileSync(join(superAgendaDaysDir(contextRoot, 'm:writer'), '2026-11-13.json'), JSON.stringify({ v: 1, day: '2026-11-13', lines: [] }));
+    writeFileSync(superRecordPath(contextRoot, 'm:writer'), JSON.stringify({ ...emptySuperState(), session: null, enabled: false, member: 'writer' }));
+    resetSuperIndex();
+    const del = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), del.res, { slug: 'writer' }, contextRoot);
+    expect(del.status()).toBe(200);
+    expect(existsSync(superAgendaDaysDir(contextRoot, 'm:writer'))).toBe(false);
+    const trash = join(projectRoot, String(del.body().trash));
+    expect(existsSync(join(trash, 'super', basename(projectRoot), 'writer.agenda-days', '2026-11-13.json'))).toBe(true);
+    // A days folder whose record is already gone still goes.
+    createAgent(contextRoot, { slug: 'scribe', title: 'Scribe', prompt: 'Write.' }, { approve: { now: NOW } });
+    mkdirSync(superAgendaDaysDir(contextRoot, 'm:scribe'), { recursive: true });
+    const del2 = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), del2.res, { slug: 'scribe' }, contextRoot);
+    expect(del2.status()).toBe(200);
+    expect(existsSync(superAgendaDaysDir(contextRoot, 'm:scribe'))).toBe(false);
+    resetSuperIndex();
+  });
+
   it('withRoutines on a GLOBAL member: its routine in another project is named by project and removed with it', async () => {
     const { addVault } = await import('../../src/lib/vaults.js');
     const other = mkdtempSync(join(tmpdir(), 'dc-agents-routes-'));

@@ -155,8 +155,11 @@ describe('the server: the same fields, the same set rule', () => {
   const owner = (body: Record<string, unknown>) => handleSuperLayout(req(body, {}), res(), {}, root);
   const onDisk = (): SuperState => JSON.parse(readFileSync(join(root, SUPER_STATE_REL), 'utf-8')) as SuperState;
 
+  // Over a presentation on screen a new one waits in the queue (sunum-sirasi): the agent ends
+  // the presentation first (`present --off`), then presents another set.
   it('a pick for the old set that lands after the agent presented another is ignored', async () => {
     await present(ids(3));
+    await present([]);
     await present(['t5', 't6']);
     await owner({ presentLayout: { layout: 'filmstrip', cards: ids(3) } });
     expect(onDisk().view).toEqual({ mode: 'present', cards: ['t5', 't6'], layout: 'compare' });
@@ -164,9 +167,10 @@ describe('the server: the same fields, the same set rule', () => {
 
   it('a bar toggle racing present: both orders end on the agent\'s set, the bar only on the set he saw', async () => {
     await present(ids(1));
-    await Promise.all([owner({ chat: { value: 'bar', cards: ids(1) } }), present(['t5', 't6'])]);
+    await Promise.all([owner({ chat: { value: 'bar', cards: ids(1) } }), present([]).then(() => present(['t5', 't6']))]);
     expect(onDisk().view.cards).toEqual(['t5', 't6']);
     expect(onDisk().view.chat).toBeUndefined();
+    await present([]);
     await present(ids(1));
     await owner({ chat: { value: 'bar', cards: ids(1) } });
     await present(ids(1));

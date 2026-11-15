@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkApproval } from './registry.js';
+import { checkApproval, manifestHash } from './registry.js';
 import { placement } from '../agents/active.js';
 import { dispatcherPlistPath } from './launchd.js';
 import { cadenceLabel, readAutomationCache } from './store.js';
@@ -63,6 +63,16 @@ export interface ApprovalCardFacts {
   approvalReason: string | null;
   enabled: boolean;
   nextFireAt: string | null;
+  /** The condition script, whole and normalized, a scheduled fire runs before any agent (null: none).
+   *  Every approving surface draws it line by line (kosullu-otomasyon D10). */
+  condition: string | null;
+  /** Which answer wakes the agent: `true` (the script exits 0) or `false` (it exits 1). */
+  conditionWake: boolean;
+  /** Why the condition cannot run, when it cannot: the card offers no approve then. */
+  conditionError: string | null;
+  /** The hash of the manifest these facts were read from: an approve sends it back, and the
+   *  server stamps only when it is still the disk's (409 otherwise). */
+  manifestHash: string;
 }
 
 /** The first meaningful lines of a prompt: no headings, no comments, no placeholder. */
@@ -134,6 +144,10 @@ export function approvalCardFacts(
     approvalReason: approval.approved ? null : approval.reason,
     enabled: m.enabled,
     nextFireAt: nextFireIso(m, opts.now, { projectRoot, home: opts.home }),
+    condition: m.condition ?? null,
+    conditionWake: m.conditionWake !== false,
+    conditionError: m.conditionError ?? null,
+    manifestHash: manifestHash(m),
   };
 }
 

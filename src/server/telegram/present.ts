@@ -20,7 +20,7 @@
 import { getChat, onChatAssistantText, onChatChange } from '../../lib/assistant/chat-registry.js';
 import { appLinkForContextRoot } from '../../lib/app-link.js';
 import { onStageVerb, type StageVerbEvent } from '../../lib/super/stage-events.js';
-import { readSuperState } from '../../lib/super/store.js';
+import { parseSuperId, readSuperState } from '../../lib/super/store.js';
 import type { SuperContainer, SuperState } from '../../lib/super/types.js';
 import { escapeHtml, splitReplySections } from '../../lib/telegram/format.js';
 import { NOT_SENT, cardOut, notSentLine, type CardContext, type CardOut } from './cards.js';
@@ -149,8 +149,9 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
 export function wirePresenter(hub: TelegramHub, deps: PresenterDeps): () => void {
   const pending = new Map<string, Pending>();
   const offVerb = onStageVerb((e) => {
-    if (e.superId !== 'main') return;
-    const ab = hub.superBindingOfVault(e.vault);
+    // Any Super with a bot of its own: main's on the Super's bot, a member's own on its bot (B2).
+    const id = parseSuperId(e.superId);
+    const ab = id ? hub.bindingOfSuper(e.vault, id, e.sessionId) : null;
     if (!ab) return;
     const p = pending.get(e.sessionId) ?? { key: ab.key, verbs: [], telegram: false };
     p.verbs.push(e);
@@ -181,14 +182,15 @@ export function wirePresenter(hub: TelegramHub, deps: PresenterDeps): () => void
 
   async function present(sessionId: string, p: Pending): Promise<void> {
     const ab = hub.active.get(p.key);
-    if (!ab || ab.disabled || !ab.contextRoot) return;
-    const state = await readSuperState(ab.contextRoot);
+    const b = ab && !ab.disabled ? hub.superOf(ab) : null;
+    if (!ab || !b) return;
+    const state = await readSuperState(b.root, b.id);
     const picked = presentedCards(state, p.verbs);
     if (!picked) return;
     const shown = picked.cards.slice(0, MAX_PRESENTED);
     const ctx: CardContext = {
-      contextRoot: ab.contextRoot, sessionId, pictures: !secretPending(sessionId), tunnelHost: deps.tunnelHost?.() ?? null,
-      snapshot: deps.snapshot, isGitIgnored: deps.isGitIgnored, mediaRoots: await superMediaRoots(ab.contextRoot),
+      contextRoot: b.root, sessionId, pictures: !secretPending(sessionId), tunnelHost: deps.tunnelHost?.() ?? null,
+      snapshot: deps.snapshot, isGitIgnored: deps.isGitIgnored, mediaRoots: await superMediaRoots(b.root),
       ...(deps.renderInsight ? { renderInsight: (id: string) => deps.renderInsight!(ab, sessionId, id) } : {}),
     };
     const outs: CardOut[] = [];

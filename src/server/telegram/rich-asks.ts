@@ -18,7 +18,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { getChat } from '../../lib/assistant/chat-registry.js';
-import { answerChildQuestion, superAnswerText, superUnclearText, unclearMessage } from '../../lib/super/answer.js';
+import { answerChildQuestion, superAnswerText, superUnclearText, superAlreadyText, unclearMessage, ALREADY_ANSWERED_MESSAGE } from '../../lib/super/answer.js';
 import { readSuperState } from '../../lib/super/store.js';
 import type { SuperQueueItem } from '../../lib/super/types.js';
 import { buildQuestionPicks, type AnswerPending } from '../../lib/telegram/contract.js';
@@ -95,7 +95,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const q = a.questions[qi];
     const rows = q.options.map((o) => [`${a.picks[qi].has(o.label) ? '✓ ' : ''}${o.label}`.slice(0, 60)]);
     rows.push([a.notes[qi] ? '✎ Notu değiştir' : 'Not ekle']);
-    if (qi === a.questions.length - 1) rows.push(['Gönder', 'Belirsiz, tekrar sor']);
+    if (qi === a.questions.length - 1) rows.push(['Gönder', 'Belirsiz, tekrar sor'], ['Zaten cevapladım']);
     return rows;
   }
 
@@ -230,7 +230,9 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     if (a) { a.done = true; asks.delete(askId); }
   }
 
-  async function submit(ab: ActiveBinding, a: RichAsk, unclear: boolean): Promise<string | null> {
+  async function submit(ab: ActiveBinding, a: RichAsk, mode: 'answer' | 'unclear' | 'already'): Promise<string | null> {
+    const already = mode === 'already';
+    const unclear = mode !== 'answer';
     const selections = Object.fromEntries(a.questions.map((q, i) => [q.question, [...a.picks[i]]]));
     const picked = buildQuestionPicks(a.questions, selections);
     // Every note goes, picked or not, as the Mac's buildQuestionAnswer carries them.
@@ -240,7 +242,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const t = a.target;
     if (t.kind === 'member') {
       return answerMemberPick(hub, ab, t.mirror, unclear
-        ? { kind: 'question', questions: a.questions, picked: {}, unclear: typed.join(' / ') }
+        ? { kind: 'question', questions: a.questions, picked: {}, unclear: typed.join(' / '), ...(already ? { already: true as const } : {}) }
         : { kind: 'question', questions: a.questions, picked, ...(Object.keys(notes).length ? { notes } : {}) });
     }
     if (t.kind === 'super-ask') {
@@ -248,26 +250,26 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
       const s = await readSuperState(ab.contextRoot);
       const item = s.queue.find((q) => q.id === t.item.id && q.state !== 'done');
       if (!item || !s.enabled || !s.session) return LINES.stale;
-      const text = unclear ? superUnclearText(item, unclearMessage(typed)) : superAnswerText(item, a.questions, picked, notes);
+      const text = already ? superAlreadyText(item) : unclear ? superUnclearText(item, unclearMessage(typed)) : superAnswerText(item, a.questions, picked, notes);
       const ok = await hub.injectText(ab, hub.syntheticUpdateId(), text, s.session);
-      return ok ? (unclear ? '↺ Tekrar sorulacak' : '✓ Gönderildi') : null;
+      return ok ? (already ? '↺ Zaten cevaplandı' : unclear ? '↺ Tekrar sorulacak' : '✓ Gönderildi') : null;
     }
     if (t.kind === 'child-question') {
       if (!ab.contextRoot) return LINES.stale;
       const r = await answerChildQuestion(ab.contextRoot, 'main', unclear
-        ? { item: t.item, requestId: t.requestId, unclear: typed.join(' / ') }
+        ? { item: t.item, requestId: t.requestId, unclear: already ? ALREADY_ANSWERED_MESSAGE : typed.join(' / ') }
         : { item: t.item, requestId: t.requestId, picked, notes });
       if (!r.ok) return r.error === 'no_window' ? LINES.waitingOnMac : LINES.stale;
-      return unclear ? '↺ Tekrar sorulacak' : '✓ Gönderildi';
+      return already ? '↺ Zaten cevaplandı' : unclear ? '↺ Tekrar sorulacak' : '✓ Gönderildi';
     }
     const token = superTokenOfSession(t.sessionId) ?? tokenOfSession(t.sessionId);
     if (!token) return LINES.waitingOnMac;
     const args: AnswerPending = unclear
-      ? { kind: 'unclear', requestId: t.requestId, unclear: typed.join(' / ') }
+      ? { kind: 'unclear', requestId: t.requestId, unclear: typed.join(' / '), ...(already ? { already: true as const } : {}) }
       : { kind: 'question', requestId: t.requestId, picked, ...(Object.keys(notes).length ? { notes } : {}) };
     const r = await sendHubCommand(token, 'answer_pending', args as unknown as Obj);
     if (!r.ok) return r.error === 'no_window' ? LINES.waitingOnMac : LINES.stale;
-    return unclear ? '↺ Tekrar sorulacak' : '✓ Gönderildi';
+    return already ? '↺ Zaten cevaplandı' : unclear ? '↺ Tekrar sorulacak' : '✓ Gönderildi';
   }
 
   /** A tap on a rich ask's message. */
@@ -291,9 +293,9 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
       return 'Not ekle';
     }
     const isLast = qi === a.questions.length - 1;
-    if (!isLast || (idx !== n + 1 && idx !== n + 2)) return LINES.stale;
+    if (!isLast || (idx !== n + 1 && idx !== n + 2 && idx !== n + 3)) return LINES.stale;
     a.done = true;
-    const out = (await submit(ab, a, idx === n + 2).catch(() => null)) ?? 'Gönderilemedi, tekrar dene.';
+    const out = (await submit(ab, a, idx === n + 3 ? 'already' : idx === n + 2 ? 'unclear' : 'answer').catch(() => null)) ?? 'Gönderilemedi, tekrar dene.';
     // Only a delivered answer (or an ask that no longer exists) ends it: a failed send can be
     // tapped again with the same picks.
     if (out === LINES.stale || (typeof out === 'string' && out.startsWith('✓')) || (typeof out === 'string' && out.startsWith('↺'))) asks.delete(a.id);

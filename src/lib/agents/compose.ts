@@ -119,6 +119,9 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     flow: m.flow ?? null,
     ...(m.app ? { app: m.app } : {}),
     ...(m.appTools?.length ? { appTools: m.appTools } : {}),
+    ...(m.condition ? { condition: m.condition } : {}),
+    ...(m.condition && m.conditionWake === false ? { conditionWake: false as const } : {}),
+    ...(m.conditionError ? { conditionError: m.conditionError } : {}),
     owner: m.owner ?? null,
     updated: null,
     path: m.path,
@@ -169,7 +172,7 @@ export function composeRun(
     ...(agent.owner ? { owner: agent.owner } : {}),
   };
   if (job) {
-    return {
+    return withConditionValidity({
       slug: job.slug,
       id: job.id,
       title: job.title,
@@ -189,6 +192,9 @@ export function composeRun(
       ...(job.app ? { app: job.app } : {}),
       ...(job.appTools?.length ? { appTools: job.appTools } : {}),
       ...identity,
+      ...(job.condition ? { condition: job.condition } : {}),
+      ...(job.condition && job.conditionWake === false ? { conditionWake: false as const } : {}),
+      ...(job.conditionError ? { conditionError: job.conditionError } : {}),
       // A routine answers to its own owner too, when that is someone else (`foreignOwner`).
       ...(job.owner && job.owner !== agent.owner ? { jobOwner: job.owner } : {}),
       runKind: 'automation',
@@ -196,7 +202,7 @@ export function composeRun(
       legacyKey: false,
       path: job.path,
       body: job.body,
-    };
+    });
   }
   const call = agent.call;
   return {
@@ -229,6 +235,18 @@ export function composeRun(
     path: agent.path,
     body: agent.body,
   };
+}
+
+/**
+ * The COMPOSED target's condition validity (kosullu-otomasyon C1): a condition on a board-limited
+ * agent, or on an on-call target, cannot run (a confined agent's check would run outside its
+ * confinement; a call has no scheduled fire). Such a target never fires and is never stamped.
+ */
+export function withConditionValidity(m: AutomationManifest): AutomationManifest {
+  if (!m.condition || m.conditionError) return m;
+  if (m.boardOnly === true) return { ...m, conditionError: 'a board-limited agent cannot have a condition (it would run outside its board)' };
+  if (m.mode === 'call') return { ...m, conditionError: 'an agent you only call has no scheduled fire, so it cannot have a condition' };
+  return m;
 }
 
 /**

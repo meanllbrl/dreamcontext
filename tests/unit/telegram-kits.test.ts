@@ -103,12 +103,14 @@ describe('mirrors and tokens', () => {
     expect(CHAT_KIT_TOKENS.light['--color-bg-elevated']).toBeTruthy();
   });
 
-  it('dream-html reads at the chat pane size (15px, 1.75), report pages get no reading tokens', () => {
+  it('dream-html reads at the chat pane size (14.5px, 1.5), report pages get no reading tokens', () => {
     const pane = readFileSync('dashboard/src/components/sleepy/ChatPane.css', 'utf-8');
-    expect(pane).toContain('--chat-text: calc(15px * var(--zoom, 1));');
-    expect(pane).toContain('--chat-line-height: 1.75;');
-    expect(CHAT_READING_TOKENS).toEqual({ '--chat-text': '15px', '--chat-line-height': '1.75' });
-    expect(chatHtmlTokens()['--chat-text']).toBe('15px');
+    const tokens = readFileSync('dashboard/src/styles/tokens.css', 'utf-8');
+    expect(pane).toContain('--chat-text: var(--font-size-base);');
+    expect(tokens).toContain('--font-size-base: calc(14.5px * var(--zoom));');
+    expect(pane).toContain('--chat-line-height: 1.5;');
+    expect(CHAT_READING_TOKENS).toEqual({ '--chat-text': '14.5px', '--chat-line-height': '1.5' });
+    expect(chatHtmlTokens()['--chat-text']).toBe('14.5px');
     expect(reportTokens()['--chat-text']).toBeUndefined();
   });
 

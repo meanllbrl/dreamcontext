@@ -6,8 +6,8 @@
  *   through the same `isAuthorized` gate as a message: only the paired owner's reactions count.
  * - A note never opens a turn, never owes a reply, never answers a card: it waits here, in
  *   memory, and rides the agent's NEXT turn as one server-written block (the Super: a
- *   `<telegram-reactions>` block beside his words or on an event turn; a member: lines in front
- *   of his next Telegram message). A block starting with `<` never shows in his replay.
+ *   `<telegram-reactions>` block beside his words or on an event turn; a member's bot feeds its
+ *   own Super the same way). A block starting with `<` never shows in his replay.
  * - Collapsing: one note per reacted message, the latest reaction wins; a removed reaction
  *   (empty `new_reaction`) drops that message's note. At most MAX_NOTES per agent, oldest out.
  *   A note older than NOTE_TTL_MS is old news and is dropped.
@@ -77,7 +77,7 @@ export function reactionLine(n: Pick<Note, 'emojis' | 'quote'>): string {
   return `[telegram reaction] ${n.emojis.join('')}${q ? ` on: ${q}` : ' on one of your messages'}`;
 }
 
-/** Notes waiting for an agent's next turn, keyed by the agent (a Super session id, a member binding). */
+/** Notes waiting for an agent's next turn, keyed by the agent (a Super session id: main's or a member's own). */
 export class ReactionNotes {
   private byKey = new Map<string, Note[]>();
 
@@ -102,7 +102,7 @@ export class ReactionNotes {
   clear(): void { this.byKey.clear(); }
 }
 
-/** The process-wide store: the hub adds, the Super's turn writer and the member path take. */
+/** The process-wide store: the hub adds, the Super's turn writer takes (main's or a member's own). */
 export const telegramReactionNotes = new ReactionNotes();
 
 /** The Super's block for its next turn, or null: taken (each note told once). */
@@ -112,9 +112,3 @@ export function takeSuperReactionBlock(sessionId: string, now: number = Date.now
   return [REACTION_BLOCK_OPEN, ...lines, REACTION_BLOCK_CLOSE].join('\n');
 }
 
-/** A member's lines for its next Telegram message (the meaning said inline: members get no Super briefing), or null. */
-export function takeMemberReactionText(bindingKey: string, now: number = Date.now()): string | null {
-  const lines = telegramReactionNotes.take(`member:${bindingKey}`, now);
-  if (!lines.length) return null;
-  return [...lines, `(${REACTION_MEANING})`].join('\n');
-}

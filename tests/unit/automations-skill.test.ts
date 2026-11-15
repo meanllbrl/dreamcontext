@@ -366,6 +366,9 @@ describe('approval surface — seventeen hashed fields, everywhere it is claimed
       // A turn of the Super, and where the result goes (super-rutin). LAST, omitted when unset.
       'target',
       'reply',
+      // The condition script and its wake switch (kosullu-otomasyon). LAST, omitted when none.
+      'condition',
+      'conditionWake',
     ]);
   });
 

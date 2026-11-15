@@ -104,6 +104,13 @@ describe('site A: composePrompt', () => {
     expect(run(manifest(), 'What changed today?')).toContain(START);
   });
 
+  it('a run whose results reach his phone gets the one Telegram writing rule; any other run does not (B2)', () => {
+    const phone = composePrompt(manifest(), '/p', NOW, '/o.md', undefined, null, null, null, null, false, null, true);
+    expect(phone).toContain('TELEGRAM: what you post and your result also reach');
+    expect(phone).toContain('`**Ayrıntı**`');
+    expect(run(manifest())).not.toContain('TELEGRAM:');
+  });
+
   it("without a soul ('' or absent) the prompt is byte-identical to one with no soul property", () => {
     const base = run(without(manifest()));
     expect(base).not.toContain(START);

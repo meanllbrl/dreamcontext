@@ -81,7 +81,7 @@ describe('drawer rows', () => {
     });
     expect(rows[0].source).toBe('mounted');
     expect(rows[0].children).toEqual([
-      { kind: 'super', on: true, selected: false, working: 0, asking: false },
+      { kind: 'super', on: true, selected: false, working: 0, asking: false, waiting: 0 },
       // No member row: a headless row alone is no Ekip row (plan-r10 1d reads `summary=1` `members`).
       { kind: 'window', id: 'main', name: 'Chat', working: 2, asking: 1, flagged: 1, other: 1, selected: true },
     ]);

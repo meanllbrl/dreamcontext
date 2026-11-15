@@ -1,5 +1,5 @@
 import { activityOf, getChat } from '../assistant/chat-registry.js';
-import { MAX_FLOAT, floatCount, type QueueKind, type SuperContainer, type SuperState } from './types.js';
+import { MAX_FLOAT, floatCount, queuedCards, type QueueKind, type SuperContainer, type SuperState } from './types.js';
 
 /**
  * A live child is a floating card (task super-canli-kart-sahnede, owner 2026-10-23, said many
@@ -54,8 +54,9 @@ export function ownerHolds(s: Pick<SuperState, 'children'>, c: Pick<SuperContain
   return !(fin !== undefined && fin > c.heldAt);
 }
 
-const shownIds = (s: Pick<SuperState, 'view'>): Set<string> =>
-  new Set(s.view.mode === 'half' && s.view.card ? [s.view.card] : s.view.mode === 'present' ? s.view.cards ?? [] : []);
+/** What the view shows, plus what a queued presentation still has to show (AC6). */
+const shownIds = (s: Pick<SuperState, 'view' | 'presentQueue'>): Set<string> =>
+  new Set([...(s.view.mode === 'half' && s.view.card ? [s.view.card] : s.view.mode === 'present' ? s.view.cards ?? [] : []), ...queuedCards(s)]);
 
 /**
  * Bring the stage back to `target` floating items by putting the oldest NON-live items in Others:

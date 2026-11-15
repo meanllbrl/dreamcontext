@@ -4,11 +4,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ChatItem, ChatSession, ChatToolItem, PendingQuestion } from '../../dashboard/src/components/sleepy/chatSession.js';
 import type { SuperQueueItem } from '../../dashboard/src/lib/superTypes.js';
 import { buildQuestionAnswer } from '../../dashboard/src/lib/chatProtocol.js';
-import { resolveAnswers, resolveNotes, togglePick, setText, unclearMessage } from '../../dashboard/src/components/sleepy/chat/surveyAnswers.js';
+import { resolveAnswers, resolveNotes, togglePick, setText, unclearMessage, ALREADY_ANSWERED_MESSAGE } from '../../dashboard/src/components/sleepy/chat/surveyAnswers.js';
 import {
   _resetOwnerAnswers, askPendingOf, askRefOf, askSpecOf, cardState, claimOwnerAnswer, jsonBlocks,
   noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent, parseSuperAnswer,
-  placeQuestionCards, releaseOwnerAnswer, sendToSuper, subscribeOwnerAnswers, superAnswerText, superUnclearText, trimOwnerAnswers,
+  placeQuestionCards, releaseOwnerAnswer, sendToSuper, subscribeOwnerAnswers, superAnswerText, superUnclearText, superAlreadyText, trimOwnerAnswers,
 } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
 
 const ROOT = join(__dirname, '..', '..');
@@ -261,7 +261,7 @@ describe('the answer: ONE message, in AskUserQuestion\'s answer words', () => {
     // The same picks a normal agent gets (its `answers` / `annotations`), in words.
     const wire = buildQuestionAnswer(qs, resolveAnswers(qs, picks), { notes: resolveNotes(qs, picks) }) as { answers: Record<string, string> };
     for (const [q, a] of Object.entries(wire.answers)) expect(text).toContain(`${JSON.stringify(q)}=${JSON.stringify(a)}`);
-    expect(parseSuperAnswer(text)).toEqual({ item: 'q-ask-1', unclear: false, values: ['Wait', 'Me, You'] });
+    expect(parseSuperAnswer(text)).toEqual({ item: 'q-ask-1', unclear: false, already: false, values: ['Wait', 'Me, You'] });
   });
 
   it('quotes inside the words survive the round trip', () => {
@@ -284,7 +284,21 @@ describe('the answer: ONE message, in AskUserQuestion\'s answer words', () => {
     expect(t).toContain('They wrote: "which fix?"');
     expect(t).toContain('dreamcontext super ask --json');
     expect(t).not.toMatch(/Ask again with AskUserQuestion/);
-    expect(parseSuperAnswer(t)).toEqual({ item: 'q-ask-1', unclear: true, values: [] });
+    expect(parseSuperAnswer(t)).toEqual({ item: 'q-ask-1', unclear: true, already: false, values: [] });
+  });
+
+  it('"Already answered": the same message on the window and the server, read back as his choice', async () => {
+    const t = superAlreadyText(askItem());
+    expect(t.split('\n')[0]).toBe('[super answer] item=q-ask-1 already');
+    expect(t).toContain('already answered this question');
+    expect(t).toContain('do not ask it again');
+    expect(parseSuperAnswer(t)).toEqual({ item: 'q-ask-1', unclear: false, already: true, values: [] });
+    const server = await import('../../src/lib/super/answer.js');
+    expect(server.ALREADY_ANSWERED_MESSAGE).toBe(ALREADY_ANSWERED_MESSAGE);
+    expect(server.superAlreadyText(askItem())).toBe(t);
+    // It closes the open ask like an answer does.
+    const { ownerAbouts } = await import('../../src/lib/super/inbox.js');
+    expect(ownerAbouts(t, [])).toEqual([{ kind: 'item', id: 'q-ask-1' }]);
   });
 
   it('anything else is not an answer (the owner\'s own words stay his bubble)', () => {
@@ -330,7 +344,7 @@ describe('ONE question component: the chat\'s own card, no look-alike', () => {
   it('the answer stands in the transcript as the card\'s receipt, not a bubble', () => {
     const pane = src('dashboard/src/components/sleepy/ChatPane.tsx');
     expect(pane).toMatch(/if \(item\.kind === 'user' && superView && parseSuperAnswer\(item\.text\)\) \{\s*return <SuperAnswerReceipt/);
-    expect(card).toMatch(/<SurveyReceipt unclear=\{answer\.unclear\} values=\{answer\.values\} \/>/);
+    expect(card).toMatch(/<SurveyReceipt unclear=\{answer\.unclear\} already=\{answer\.already\} values=\{answer\.values\} \/>/);
   });
 
   it('the job bar asks no question (owner 2026-11-13); showQuestionCard still opens the card', () => {

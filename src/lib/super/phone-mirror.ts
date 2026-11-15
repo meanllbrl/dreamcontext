@@ -423,7 +423,7 @@ export const DIGEST_MAX_OWED_GIST = 160;
 
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
-  pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
+  pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner'; bornAt?: number; stage?: string; author?: 'owner' }>;
   queue: ReadonlyArray<{
     id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true; member?: string; of?: string;
     /** An `owner` item's wait (or a mirror's copy of it): only its kind travels. */
@@ -452,7 +452,7 @@ export interface SuperDigestSource {
 export interface SuperDigest {
   /** `for` and `by` ride along so the phone's card rolls a day over and flags a stale line the
    *  way the desktop does (pad.ts: the owner's own move stays, a linked line is not stale). */
-  pad: Array<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
+  pad: Array<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner'; bornAt?: number; stage?: 'todo' | 'almost'; author?: 'owner' }>;
   /** What waits on the owner (`needsOwner`) and the questions queued behind an open one. `text`
    *  is the item's `ownerText` (an `owner` item's is the child's card: untrusted plain text),
    *  '' on a permission. */
@@ -519,6 +519,10 @@ export function superDigest(state: SuperDigestSource, opts: { titles?: DigestTit
       id: digestText(p.id, 12), section: p.section, text: digestText(p.text, DIGEST_MAX_PAD_TEXT), at: p.at,
       ...(typeof p.for === 'string' && p.for ? { for: digestText(p.for, 80) } : {}),
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
+      // The phone groups by who acts and dates by day, as the card does (task ajanda-gunluk).
+      ...(typeof p.bornAt === 'number' && Number.isFinite(p.bornAt) ? { bornAt: p.bornAt } : {}),
+      ...(p.stage === 'todo' || p.stage === 'almost' ? { stage: p.stage as 'todo' | 'almost' } : {}),
+      ...(p.author === 'owner' ? { author: 'owner' as const } : {}),
     }))
     .filter((p) => p.id && p.text);
   // Main Super's work in a member's Super (`main:*`, plan-r10 1) never waits on the owner.

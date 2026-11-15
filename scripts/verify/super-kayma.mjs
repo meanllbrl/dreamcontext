@@ -476,7 +476,7 @@ async function runOne(engine, VIEW) {
     await page.waitForTimeout(4000);
     const s1Later = await replyStart('TUR A');
     const g1 = await gap();
-    const btn1 = (await newBtn().innerText().catch(() => '')).trim();
+    const btn1 = ((await newBtn().getAttribute('aria-label').catch(() => '')) ?? '').trim();
     await shot('s1-c-idle-after-4s');
     const v1 = await finish('s1', { end: s1End, later: s1Later, button: btn1, gaps: { end: g1 } }, t1);
     ok('S1 his send moved the view to the bottom and followed (writes happened)', v1.moving > 0, JSON.stringify(v1));
@@ -486,7 +486,7 @@ async function runOne(engine, VIEW) {
     ok('S1 the reply\'s start is on screen at the end', !!s1End && s1End.replyTop !== null && s1End.replyTop >= -2 && s1End.replyTop < s1End.viewH, JSON.stringify(s1End));
     ok('S1 nothing moved in the 4 s after', !!s1Later && s1Later.replyTop === s1End?.replyTop, JSON.stringify({ s1End, s1Later }));
     ok('S1 no question card cut at the top', !!s1End && s1End.cutCards === 0, JSON.stringify(s1End));
-    if (s1End && s1End.dist > 60) ok('S1 stopped above the end: the button says "↓ N new"', /↓\s*\d+\s+new/.test(btn1), JSON.stringify(btn1));
+    if (s1End && s1End.dist > 60) ok('S1 stopped above the end: the button says "N new"', /\d+\s+new/.test(btn1), JSON.stringify(btn1));
 
     // ── S3: he answers the card (a send); the answer turn thinks, then streams ──
     console.log(`S3 ${engine} ${VIEW}`);
@@ -532,13 +532,13 @@ async function runOne(engine, VIEW) {
     await until(page, async () => count('turn-end') > n, 60000);
     await page.waitForTimeout(3000);
     const after = await gap();
-    const btn2 = (await newBtn().innerText().catch(() => '')).trim();
+    const btn2 = ((await newBtn().getAttribute('aria-label').catch(() => '')) ?? '').trim();
     await shot('s2-scrolled-up-idle');
     const v2 = await finish('s2', { before: before.scrollTop, after: after.scrollTop, button: btn2 });
     const idleWrites = result.scenarios.s2.log.filter((e) => e.k !== 'scroll' && e.t > t2 && Math.abs(e.to - e.from) >= 1).length;
     ok('S2 scrolled up: 0 moving writes while he idles', idleWrites === 0, JSON.stringify({ idleWrites, v2 }));
     ok('S2 the view did not move', Math.abs(after.scrollTop - before.scrollTop) <= 1, `${before.scrollTop} -> ${after.scrollTop}`);
-    ok('S2 the button shows below', /↓/.test(btn2), JSON.stringify(btn2));
+    ok('S2 the button shows below', btn2.length > 0, JSON.stringify(btn2));
 
     // ── S4: the button ──
     console.log(`S4 ${engine} ${VIEW}`);
@@ -628,7 +628,7 @@ async function runOne(engine, VIEW) {
       await until(page, async () => (await input().count()) > 0, 30000);
       await page.waitForTimeout(3000);
       const g7 = await gap();
-      const btn7 = (await newBtn().innerText().catch(() => '')).trim();
+      const btn7 = ((await newBtn().getAttribute('aria-label').catch(() => '')) ?? '').trim();
       await shot('s7-reopened');
       // Something still unread lands on its line instead (D7): only "nothing unread" must be at the bottom.
       if (/\d/.test(btn7)) console.log(`  · S7 reopened onto an unread line (${btn7}); bottom check skipped`);

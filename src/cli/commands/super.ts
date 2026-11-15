@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { SUPER_CONDITION_HELP } from '../../lib/automations/condition.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -67,6 +68,18 @@ export function notTheSuperAgent(env: NodeJS.ProcessEnv = process.env): { error:
   return base;
 }
 
+/**
+ * A connection the app took and then closed without an answer is not an app that is down: the
+ * verb may have run (field 2026-11-15: "not reachable: socket hang up" while the worktree had been
+ * made). Said so, with the check to run before trying again.
+ */
+export function droppedOrUnreachable(err: Error & { code?: string }): Record<string, unknown> {
+  if (err.code === 'ECONNRESET' || /socket hang up/i.test(err.message)) {
+    return { error: 'no_answer', message: `the app closed the connection before answering (${err.message}); it may have acted. Check \`dreamcontext super state\` (and \`super worktree list\`) before trying again` };
+  }
+  return { error: 'unreachable', message: `the app is not reachable: ${err.message}` };
+}
+
 export function callSuper(verb: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): Promise<CallResult> {
   // A key inherited from the Super Agent's shell does not make a member's run the Super Agent.
   const e = mayCallSuper(env) ? windowEnv(env) : null;
@@ -91,7 +104,7 @@ export function callSuper(verb: string, body: Record<string, unknown>, env: Node
         resolve({ status: res.statusCode ?? 0, body: parsed });
       });
     });
-    req.on('error', (err) => resolve({ status: 0, body: { error: 'unreachable', message: `the app is not reachable: ${err.message}` } }));
+    req.on('error', (err) => resolve({ status: 0, body: droppedOrUnreachable(err) }));
     req.write(payload);
     req.end();
   });
@@ -444,7 +457,9 @@ export function registerSuperCommand(program: Command): void {
     .option('--days <daily|mon,wed|mon-fri>', 'Which days (default daily)')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes: auto = wherever he is (Telegram while he is away, else the Mac; your turns only), telegram, or mac')
     .option('--headless', 'A plain automation that runs without you (its result reaches Telegram with --reply telegram)')
-    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}) }));
+    .option('--condition <script>', `A shell script that runs first at that time, with no model. ${SUPER_CONDITION_HELP}`)
+    .option('--wake-when <true|false>', 'With --condition: wake when the script is true (exit 0, default) or when it is NOT true (exit 1)')
+    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean; condition?: string; wakeWhen?: string }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}), ...(o.condition !== undefined ? { condition: o.condition } : {}), ...(o.wakeWhen !== undefined ? { wakeWhen: o.wakeWhen } : {}) }));
   sc.command('list')
     .description('Every scheduled job: id, when, where the answer goes, next run, last result')
     .action(() => run('schedule', { op: 'list' }));
@@ -454,7 +469,10 @@ export function registerSuperCommand(program: Command): void {
     .option('--at <HH:MM>', 'New time')
     .option('--days <daily|mon,wed|mon-fri>', 'New days')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes now ("send it to the Mac/Telegram")')
-    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string }) => run('schedule', { op: 'change', id, ...o }));
+    .option('--condition <script>', 'A new condition script (it pauses the job until the owner approves it on its card)')
+    .option('--no-condition', 'Remove the condition')
+    .option('--wake-when <true|false>', 'Wake when the condition is true or when it is NOT true')
+    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string; condition?: string | false; wakeWhen?: string }) => run('schedule', { op: 'change', id, ...o }));
   sc.command('cancel <id>')
     .description('Remove a scheduled job')
     .action((id: string) => run('schedule', { op: 'cancel', id }));
@@ -467,6 +485,9 @@ export function registerSuperCommand(program: Command): void {
   n.command('done <id>')
     .description('Move a line to Done (it finished, or the owner gave what you waited for)')
     .action((id: string) => run('note-done', { id }));
+  n.command('status <id> <status>')
+    .description('Set a line\'s status: not-started | in-progress | almost-done | waiting | done (the owner\'s own lines too, when it helps him)')
+    .action((id: string, status: string) => run('note-status', { id, status }));
   n.command('keep <id>')
     .description('A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h')
     .action((id: string) => run('note-keep', { id }));
@@ -474,7 +495,7 @@ export function registerSuperCommand(program: Command): void {
     .description('Remove a line that no longer holds')
     .action((id: string) => run('note-drop', { id }));
   n.command('clear [section]')
-    .description('Empty the agenda (or one section): a new day or a new piece of work starts')
+    .description('Empty the agenda (or one section) of your own lines: a new piece of work starts. The owner\'s own lines stay')
     .action((section?: string) => run('note-clear', section ? { section } : {}));
 
   s.command('ask [text]')

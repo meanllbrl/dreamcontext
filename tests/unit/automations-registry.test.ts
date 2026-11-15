@@ -348,6 +348,8 @@ describe('approvalFields', () => {
       appTools: '',
       target: '',
       reply: '',
+      condition: '',
+      conditionWake: '',
     });
   });
 
@@ -368,10 +370,12 @@ describe('APPROVAL_DIFF_FIELDS', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt', 'outputInstructions', 'model', 'effort', 'timeoutMinutes', 'outputDir', 'learning', 'review', 'flow',
       'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly', 'appTools', 'target', 'reply',
+      'condition', 'conditionWake',
     ]);
-    // 20: `target` and `reply` (super-rutin) appended LAST and omitted at their default, so no
-    // existing approval moves. Read the pattern a-new-field-in-a-consent-hash before changing it.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(20);
+    // 22: `condition` and `conditionWake` (kosullu-otomasyon) appended LAST and omitted when the
+    // manifest has no condition, so no existing approval moves. Read the pattern
+    // a-new-field-in-a-consent-hash before changing it.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(22);
   });
 
   it('keeps `flow`, `whiteboard`, `job`, `soul`, `autonomy`, `readTools` then `tool` LAST — the position is what preserves every legacy hash', () => {
@@ -379,7 +383,7 @@ describe('APPROVAL_DIFF_FIELDS', () => {
     // the end of its literal, and JSON.stringify emits keys in insertion order.
     // Any other position would shift the serialization of the fields around it
     // and re-block every already-approved automation on upgrade.
-    expect(APPROVAL_DIFF_FIELDS.slice(-12)).toEqual(['flow', 'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly', 'appTools', 'target', 'reply']);
+    expect(APPROVAL_DIFF_FIELDS.slice(-14)).toEqual(['flow', 'whiteboard', 'job', 'soul', 'autonomy', 'readTools', 'tool', 'app', 'boardOnly', 'appTools', 'target', 'reply', 'condition', 'conditionWake']);
   });
 });
 

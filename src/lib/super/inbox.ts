@@ -21,12 +21,13 @@ import { getAutomation, getRunTarget } from '../automations/store.js';
 import { approvalCardFacts, schedulerInstalled } from '../automations/approval-card.js';
 import { checkApproval } from '../automations/registry.js';
 import { formatLocalFire } from '../automations/schedule.js';
-import { SCHEDULE_LINE, fireClock, quotedJob, scheduleJob } from './schedule-job.js';
+import { SCHEDULE_LINE, fireClock, quotedJob, scheduleDataLines, scheduleJob } from './schedule-job.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { armTeamJobWatches, awaitedTeamItem, setMemberWaitSource, setRequestSource, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
 import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
+import { MAX_OWNER_MARKS_BLOCK, OWNER_MARKS_RULE, dropCarriedMarks, markHead } from './owner-marks.js';
 import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
 import { makeRoom } from './room.js';
@@ -888,7 +889,11 @@ export function noteHeld(s: SuperState): boolean {
  *  picture questions' cards (`settleAskShows`), and floats every live child's card (live.ts: a live job is never in Others or a group unless the
  *  owner put it there himself). */
 export type SuperWriteFn = (draft: SuperState) => SuperState | void;
-export interface SuperWriteOpts { onDemoted?: (ids: string[]) => void }
+export interface SuperWriteOpts {
+  onDemoted?: (ids: string[]) => void;
+  /** Lines added in this write that a failing day archive took out again (store.ts). */
+  onPadRefused?: (ids: string[]) => void;
+}
 
 /**
  * `writeSuper(root, fn)` writes main's record, as before Wave 2; `writeSuper(root, id, fn)` writes
@@ -934,7 +939,7 @@ export async function writeSuper(
     settlePad(out);
     return out;
   };
-  const sanitize = { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) };
+  const sanitize = { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}), ...(opts.onPadRefused ? { onPadRefused: opts.onPadRefused } : {}) };
   const next = await updateSuperState(key, draftRules, sanitize);
   afterSuperWrite(key, next);
   return next;
@@ -1525,7 +1530,7 @@ export interface AgendaAbout { kind: 'note' | 'item' | 'owed' | 'reply' | 'card'
  */
 export function ownerAbouts(text: string, heads: readonly { kind: AgendaAbout['kind']; id: string }[]): AgendaAbout[] {
   const out: AgendaAbout[] = heads.map(({ kind, id }) => ({ kind, id }));
-  const m = /^\[super answer\] item=([A-Za-z0-9_-]{1,64})(?: unclear)?(?:\n|$)/.exec(typeof text === 'string' ? text : '');
+  const m = /^\[super answer\] item=([A-Za-z0-9_-]{1,64})(?: unclear| already)?(?:\n|$)/.exec(typeof text === 'string' ? text : '');
   if (m) out.push({ kind: 'item', id: m[1] });
   return out;
 }
@@ -1738,6 +1743,76 @@ export function superOwedBlock(sessionId: string, text: string, tgRef?: string |
   ].join('\n');
 }
 
+/** Marks a block has carried whose clear has not landed yet, per super key (`key` + seq): a second
+ *  turn written in the same breath (a held replay's loop) never carries them again. */
+const carryingMarks = new Map<string, Set<string>>();
+const markId = (m: { key: string; seq?: number; at: number }) => `${m.key}\u0000${m.seq ?? `@${m.at}`}`;
+
+export interface OwnerMarksCarry { root: string; carried: Array<{ key: string; at: number; seq?: number }> }
+
+/**
+ * The block his next message to the Super carries (owner-marks.ts): what he did by hand since his
+ * last message, newest first, each text fenced; bounded by its own bytes (older marks fold into
+ * one plain line that is never stored). Starts with `<`: his replay never shows it. Null: none.
+ * The carried marks leave memory here; `superOwnerMarksCarried` clears them on disk after the
+ * write, `superOwnerMarksReturned` gives them back when nothing was written.
+ */
+export function superOwnerMarksBlock(sessionId: string): { text: string; carry: OwnerMarksCarry } | null {
+  const root = superKeyOfSession(sessionId);
+  if (!root) return null;
+  const key = keyOf(root);
+  const s = lastStates.get(key);
+  if (!s || !s.enabled || s.session !== sessionId || !s.ownerMarks?.length) return null;
+  const busy = carryingMarks.get(key);
+  const marks = s.ownerMarks.filter((m) => !busy?.has(markId(m))).sort((a, b) => b.at - a.at);
+  if (!marks.length) return null;
+  const vault = superVaultName(root);
+  const open = `<super-owner-marks items=${marks.length}>`;
+  const close = [OWNER_MARKS_RULE, '</super-owner-marks>'];
+  const lines: string[] = [];
+  let bytes = Buffer.byteLength([open, ...close].join('\n'), 'utf-8') + 64;
+  let folded = 0;
+  for (const m of marks) {
+    const one = [markHead(m, owedClock), wrapUntrusted(vault, `Line: ${m.text}`)];
+    const size = Buffer.byteLength(one.join('\n'), 'utf-8') + 2;
+    if (folded || bytes + size > MAX_OWNER_MARKS_BLOCK) { folded += 1; continue; }
+    lines.push(...one);
+    bytes += size;
+  }
+  if (folded) lines.push(`+${folded} earlier hand changes`);
+  const taken = carryingMarks.get(key) ?? new Set<string>();
+  for (const m of marks) taken.add(markId(m));
+  carryingMarks.set(key, taken);
+  return {
+    text: [open, ...lines, ...close].join('\n'),
+    carry: { root, carried: marks.map((m) => ({ key: m.key, at: m.at, ...(m.seq !== undefined ? { seq: m.seq } : {}) })) },
+  };
+}
+
+/** The message carrying them was written: only the carried marks leave the record (a mark made
+ *  in between stays for the next message). A failed write keeps them for the next one. */
+export function superOwnerMarksCarried(carry: OwnerMarksCarry): Promise<void> {
+  const key = keyOf(carry.root);
+  const release = () => {
+    const set = carryingMarks.get(key);
+    if (!set) return;
+    for (const c of carry.carried) set.delete(markId(c));
+    if (!set.size) carryingMarks.delete(key);
+  };
+  return track(writeSuper(carry.root, (s) => { dropCarriedMarks(s, carry.carried); }))
+    .then(() => undefined, (err) => { console.warn(`[super] carried hand marks were not cleared: ${(err as Error).message}`); })
+    .finally(release);
+}
+
+/** Nothing was written: the marks ride the next message. */
+export function superOwnerMarksReturned(carry: OwnerMarksCarry): void {
+  const key = keyOf(carry.root);
+  const set = carryingMarks.get(key);
+  if (!set) return;
+  for (const c of carry.carried) set.delete(markId(c));
+  if (!set.size) carryingMarks.delete(key);
+}
+
 /** His "Gerek yok" on one debt (the owner's own door). False: no such open debt. */
 export async function dropOwed(contextRoot: string, superId: SuperId, id: string): Promise<boolean> {
   let dropped = false;
@@ -1869,7 +1944,7 @@ function scheduleItemLines(root: string, item: SuperQueueItem): string[] {
   const head = `- item=${item.id} event=schedule automation=${slug}${item.fire ? ` at=${fireClock(item.fire)}` : ''}`;
   const job = slug ? scheduleJob(rootOf(root), slug) : null;
   if (!job || !job.ok) return [`${head} state=${job ? job.reason : 'gone'}`];
-  return [head, `  job: ${quotedJob(job.job)}`];
+  return [head, `  job: ${quotedJob(job.job)}`, ...scheduleDataLines(item.conditionData).map((l) => `    ${l}`)];
 }
 
 /** A member decision (`member=`), its live state read at delivery: approved here, on or off. */
@@ -2760,6 +2835,20 @@ export function syncOwnerDraft(s: SuperState, sid: string, e: ChatEntry | null, 
     }
     if (ownerWaitAnswered(sid, q.wait.kind, q.wait.id)) { closeOwnerAnswered(q); changed = true; continue; }
     orphans.push(q);
+  }
+  // An orphan card a newer card of the same kind REPLACED (`supersedesCard`, bekleyen-kapanmaz: a
+  // restart lost the registry's copy) closes instead of being held again. Its card record says
+  // so: that record applies the turn rule, live and read back, so two asks of one turn are never
+  // taken for a replacement here. A record not read back yet decides nothing: the wait is held,
+  // and the child's next card of its kind in a later turn replaces it in the registry.
+  for (let i = orphans.length - 1; i >= 0; i--) {
+    const q = orphans[i];
+    if (!isCardItem(q) || q.delivery || !q.card) continue;
+    const r = getCard(q.card.postingSession, q.card.cardRef);
+    if (r?.state !== 'closed' || r.closedBy !== 'superseded') continue;
+    q.state = 'done';
+    changed = true;
+    orphans.splice(i, 1);
   }
   // The record holds them, this process does not (a respawn, a restart): hold them again, as
   // one set, unless his answer already came in before the record was read.

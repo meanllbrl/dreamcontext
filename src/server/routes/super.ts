@@ -18,9 +18,10 @@ import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
-  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
+  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
@@ -54,7 +55,10 @@ import { ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
-import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/super/pad.js';
+import { ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
+import { tryOwnerMark } from '../../lib/super/owner-marks.js';
+import { agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
+import { hasOwnerKey } from '../owner-key.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
@@ -62,17 +66,18 @@ import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
-import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
+import { askShowState, askStillOpen, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
 import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, vaultLiveChildren, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
 } from '../../lib/super/capacity.js';
-import { knownMcpServers, mcpNeedingSignIn, unknownMcpNames } from '../../lib/super/lean-mcp.js';
+import { childMcpNeedingSignIn, connectorOnAccount, knownChildMcp, unknownMcpNames } from '../../lib/super/lean-mcp.js';
+import { listClaudeAccounts } from '../../lib/claude-accounts.js';
 import { readStatusCache } from '../../lib/mcp-live.js';
 import {
-  WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
+  WorktreeRefused, createChildWorktree, discardFreshWorktree, git, mergeChildren, removeChildWorktree, repoOfWorktree,
   worktreeStatus, type CreatedWorktree,
 } from '../../lib/super/worktrees.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
@@ -141,6 +146,14 @@ const DELEGATE_TIMEOUT_MS = 30_000;
 const MAX_OPEN_REFS = 12;
 /** How long past the frame's `deadline` the server still waits for the window's answer. */
 const DELEGATE_GRACE_MS = 5_000;
+/**
+ * How long a `delegate` call's socket may sit silent. The server closes an idle socket at 30 s
+ * (index.ts `server.setTimeout`), but this route legitimately waits longer before its first byte:
+ * the worktree (git, up to a minute a command) plus the window's 30 s and the grace. Under that
+ * cap the CLI got "socket hang up" with the worktree made and no child recorded (field
+ * 2026-11-15, twice in a row). Its own waits bound it, so this is only a backstop.
+ */
+export const DELEGATE_SOCKET_MS = 5 * 60_000;
 
 /** The vault's registered name for a context root (the chat registry's own fallback otherwise). */
 export function vaultNameOf(contextRoot: string): string {
@@ -565,7 +578,7 @@ function childTestMinutes(now: number): (worktree: string, branch?: string) => T
 
 export function worktreePreamble(w: Pick<CreatedWorktree, 'path' | 'branch' | 'repo'>, outward?: OutwardGrant): string {
   return `You work in your own git worktree: ${w.path} (branch ${w.branch}, repo ${w.repo}). `
-    + 'cd there first, then work and commit only there. '
+    + 'cd there first, then work and commit only there; if that folder is missing, do no work anywhere else: say so and stop. '
     + (outward ? 'Never merge into another branch; push only as the next line says.' : 'Never push and never merge into another branch.');
 }
 
@@ -589,13 +602,28 @@ function outwardGrant(c: SuperCaller, b: Record<string, unknown>, ref: string | 
 /** `super state`'s MCP part: the names `delegate --mcp` can grant, and among them the ones that
  *  need the owner's sign-in (`mcpSignIn`, from the accounts' last live readings): a child given
  *  one cannot use it, so that job waits on the owner, never on another delegate. */
-function mcpRows(root: string): { mcpServers: string[]; mcpSignIn?: string[]; mcpSignInDo?: string } {
-  const names = [...knownMcpServers(dirname(root)).keys()];
+function mcpRows(root: string): { mcpServers: string[]; mcpConnectors?: Array<{ name: string; connector: string; accounts?: string[] }>; mcpConnectorsDo?: string; mcpSignIn?: string[]; mcpSignInDo?: string } {
+  const { local, connectors, read } = knownChildMcp(dirname(root));
+  const names = [...local.keys(), ...connectors.keys()];
   let signIn: string[] = [];
-  try { signIn = mcpNeedingSignIn(names, readStatusCache()); } catch { /* names only */ }
+  try { signIn = childMcpNeedingSignIn(names, connectors, readStatusCache()); } catch { /* names only */ }
+  // A connector is the Claude ACCOUNT's: named with the accounts known to have it whenever a
+  // configured account is not (its list lacks it, or was never read), so a child on another
+  // account is never promised it (owner 2026-11-14).
+  let roster: string[] = [];
+  try { roster = listClaudeAccounts().map((a) => a.id); } catch { /* the recorded accounts */ }
+  if (!roster.length) roster = ['default'];
+  const rows = [...connectors.values()].map((c) => {
+    const on = roster.filter((id) => connectorOnAccount(c, id, read) === 'yes');
+    return { name: c.alias, connector: c.name, ...(on.length < roster.length ? { accounts: on } : {}) };
+  });
   return {
     mcpServers: names,
-    ...(signIn.length ? { mcpSignIn: signIn, mcpSignInDo: 'only the owner can sign these in: tell him once (Settings → MCP → Connect), and hold the job until he has' } : {}),
+    ...(rows.length ? {
+      mcpConnectors: rows,
+      mcpConnectorsDo: 'claude.ai connectors of the owner\'s Claude account: give one by its short name (`--mcp notion`); Claude children only (a Codex or Antigravity child cannot have them), and only on an account that has it (`accounts`, when not every account does)',
+    } : {}),
+    ...(signIn.length ? { mcpSignIn: signIn, mcpSignInDo: 'only the owner can sign these in: tell him once (Settings → MCP → Connect, or claude.ai for a connector), and hold the job until he has' } : {}),
   };
 }
 
@@ -603,7 +631,14 @@ function mcpRows(root: string): { mcpServers: string[]; mcpSignIn?: string[]; mc
  *  names the known ones so the agent can fix its call; names only, never a config. */
 function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
   if (!job.mcp?.length) return false;
-  const known = knownMcpServers(dirname(root));
+  const { all: known, local, connectors } = knownChildMcp(dirname(root));
+  // A claude.ai connector belongs to the Claude account: said, never dropped in silence.
+  const claudeOnly = job.tool ? job.mcp.filter((n) => connectors.has(n) && !local.has(n)) : [];
+  if (claudeOnly.length) {
+    const one = claudeOnly.length === 1;
+    refuse(res, 400, 'claude_only_mcp', `${claudeOnly.join(', ')} ${one ? 'is a claude.ai connector' : 'are claude.ai connectors'}: only a Claude child can use ${one ? 'it' : 'them'}, not ${job.tool === 'codex' ? 'Codex' : 'Antigravity'}. Delegate this job without --tool, or without ${one ? 'it' : 'them'}`);
+    return true;
+  }
   const missing = unknownMcpNames(job.mcp, known);
   if (!missing.length) return false;
   refuse(res, 400, 'unknown_mcp', `no MCP server named ${missing.join(', ')}; this project has: ${[...known.keys()].join(', ') || 'none'}`, { known: [...known.keys()] });
@@ -725,6 +760,31 @@ function readCardsOf(s: SuperState, shown: ReturnType<typeof applyAskShow>): str
 export const OWNER_KEPT_NOTE = 'NOT on his screen: the owner arranged his stage himself a moment ago, so it stays. Do not say it is on screen; tell him where it is (the card\'s title, on the stage or in Others) so he can open it.';
 /** A present that kept the owner's layout for the same cards: they ARE shown, in his layout. */
 export const OWNER_LAYOUT_NOTE = 'Shown, in the layout the owner picked for these same cards (his layout stays).';
+/** A presentation that joined the queue behind the one the owner is looking at (task
+ *  super-sahnesinde-sunum-sirasi, AC1): it is NOT on his screen yet. */
+export function queuedNote(at: number, of: number): string {
+  return `In the presentation queue (${at}/${of}), NOT on his screen: he is looking at another presentation, which stays. Do not say it is on screen; say it is waiting in the queue and opens when he moves on.`;
+}
+/** The reply's `presented` part for a present that waits (`queued`), or nothing when shown.
+ *  `cards`: what waits, named, since the reply's view is the presentation still on screen (the
+ *  chat's turn record reads them, dashboard turnCards.ts, to scroll to this answer on its step). */
+function queuedPart(r: { shown: boolean; at: number; of: number }, cards?: readonly string[]): Record<string, unknown> {
+  return r.shown ? {} : { queued: { at: r.at, of: r.of, ...(cards?.length ? { cards: [...cards] } : {}), note: queuedNote(r.at, r.of) } };
+}
+
+/** Every top-level key a `super present` reply may carry: its view, the owner's kept layout and
+ *  its note, the queue it joined, and where the push went (reportWindow). The chat's turn record
+ *  MIRRORS it (dashboard turnCards.ts PRESENT_REPLY_KEYS, drift-tested): a key added here and not
+ *  there makes every such answer lose its cards. */
+export const PRESENT_REPLY_KEYS = ['view', 'kept', 'note', 'queued', 'window', 'windowNote'] as const;
+
+/** A picture question whose pictures wait in the presentation queue: where, and the note. */
+function queuedAskPart(state: SuperState, item: string): Record<string, unknown> {
+  const q = state.presentQueue;
+  const i = (q?.items ?? []).findIndex((x) => x.ask === item);
+  if (!q || i < 0) return {};
+  return { queued: { at: q.seen + i + 1, of: q.seen + q.items.length }, note: queuedNote(q.seen + i + 1, q.seen + q.items.length) };
+}
 
 /** After the write: the picture chain, the phone's strip, and what the agent is told (D9). */
 function finishAskShow(
@@ -743,6 +803,7 @@ function finishAskShow(
   return {
     cards: r?.ids ?? [], ...(r?.ids.length ? { via: r.via } : {}), state: st,
     ...(st === 'skipped' ? { reason: 'owner_layout', note: OWNER_KEPT_NOTE } : {}),
+    ...(st === 'queued' ? queuedAskPart(state, item) : {}),
     ...(r?.cut ? { cut: r.cut } : {}),
     ...(prep.skipped.length ? { skipped: prep.skipped } : {}),
   };
@@ -766,14 +827,14 @@ const newPoolId = () => `p-${Date.now().toString(36)}-${randomBytes(4).toString(
  * Keep a job in the pool (plan r4 D9): the same prompt is pooled once (the row is reused), a
  * full pool (MAX_POOL rows or MAX_POOL_BYTES) keeps nothing. Returns the row's id, or why not.
  */
-async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
+async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant; workOrigin?: SuperWorkOrigin } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
   if (Buffer.byteLength(job.prompt, 'utf-8') > MAX_POOL_PROMPT) return { error: 'too_large' };
   const hash = promptHash(job.prompt);
   let out: { id: string; reused: boolean } | { error: 'pool_full' | 'too_large' } = { error: 'pool_full' };
   const state = await writeSuper(root, id, (s) => {
     const have = s.pool.find((p) => p.hash === hash);
     // The same job again: a grant his message made now rides the row it already has.
-    if (have) { if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; out = { id: have.id, reused: true }; return; }
+    if (have) { if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; if (extra.workOrigin) have.workOrigin = extra.workOrigin; out = { id: have.id, reused: true }; return; }
     if (s.pool.length >= MAX_POOL) { out = { error: 'pool_full' }; return; }
     const row: SuperPoolItem = {
       id: newPoolId(), title: job.title, prompt: job.prompt, hash, createdAt: Date.now(),
@@ -786,6 +847,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.tool ? { tool: job.tool } : {}),
       ...(extra.held ? { held: true } : {}),
       ...(extra.outward ? { outward: extra.outward } : {}),
+      ...(extra.workOrigin ? { workOrigin: extra.workOrigin } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
     s.pool.push(row);
@@ -794,6 +856,15 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
   // What the store kept is the truth: a row its caps dropped was not kept.
   if ('id' in out && !state.pool.some((p) => p.id === (out as { id: string }).id)) return { error: 'pool_full' };
   return out;
+}
+
+/**
+ * Whose work a started child does: what `--for` names, else the pool row's own origin when it
+ * starts from one (the job keeps the request it was held for, owner 2026-11-15), else the turn's.
+ * Pure.
+ */
+export function startOrigin(named: SuperWorkOrigin | undefined, fromRow: Pick<SuperPoolItem, 'workOrigin'> | undefined, turn: SuperWorkOrigin | undefined): SuperWorkOrigin | undefined {
+  return named ?? fromRow?.workOrigin ?? turn;
 }
 
 /** The pool as the agent reads it: what it wrote is fenced like every other stored line. */
@@ -858,7 +929,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
-    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}) }, c.superId);
+    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
     if ('error' in kept) {
       refuse(res, 409, kept.error === 'too_large' ? 'held' : 'pool_full', `${running}; the job was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
       return;
@@ -877,7 +948,11 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   // Started in the owner's own turn (not an event turn), or named his message (`--origin`): he
   // waits on its result (`awaited`).
   const awaited = ownersTurn(c) || !!origin;
+  // The answer can come later than the server's 30 s idle cap (DELEGATE_SOCKET_MS).
+  if (typeof res.setTimeout === 'function') res.setTimeout(DELEGATE_SOCKET_MS);
   let wt: CreatedWorktree | null = null;
+  /** True once the child is recorded with `wt`: from then on the worktree is the child's. */
+  let handedOver = false;
   try {
     if (job.worktree) {
       wt = await createChildWorktree({ projectRoot: dirname(root), repo: job.worktree, slug: job.slug, base: job.base });
@@ -909,16 +984,25 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // timeout, or the super process ending under it — may have opened a child (M4).
       const unconfirmed = r.ok || (r.error === 'no_window' && r.sent !== false);
       if (unconfirmed) {
+        // No child is recorded, so nothing would ever clean this worktree up: one nobody has
+        // touched yet (its branch still at its base, nothing in it) goes back, its branch too
+        // (owner, 2026-11-15: an orphan worktree after each failed delegate). A child the window
+        // did open past its answer finds no folder and says so; one that wrote in it keeps it.
+        const discarded = wt ? await discardFreshWorktree(wt).then(() => !existsSync(wt!.path)).catch(() => false) : false;
+        // The folder can go while `branch -D` fails: the slug is free again only with both gone.
+        const branchLeft = wt && discarded ? (await git(wt.repoPath, ['rev-parse', '--verify', '--quiet', `refs/heads/${wt.branch}`])).code === 0 : false;
+        const keptWt = wt && !discarded ? wt : null;
         if (fromRow) {
           await writeSuper(root, c.superId, (s) => {
             const p = s.pool.find((x) => x.id === fromRow.id);
             if (!p) return;
             p.maybeStarted = true;
-            if (wt) { p.startedIn = wt.path; p.startedBranch = wt.branch; }
+            if (keptWt) { p.startedIn = keptWt.path; p.startedBranch = keptWt.branch; }
           });
         }
         refuse(res, 409, 'delegate_unconfirmed', 'the window did not confirm the child in time; it may still have opened. Check `dreamcontext super state` before delegating again'
-          + (wt ? `; the worktree ${wt.path} (${wt.branch}) is kept` : ''), wt ? { worktree: wt.path, branch: wt.branch } : {});
+          + (keptWt ? `; the worktree ${keptWt.path} (${keptWt.branch}) is kept: something already wrote in it` : wt ? (branchLeft ? `; its fresh worktree was removed, its branch ${wt.branch} is still there` : `; its fresh worktree and branch ${wt.branch} were removed, so the same --slug works again`) : ''),
+          keptWt ? { worktree: keptWt.path, branch: keptWt.branch } : wt ? { worktreeRemoved: wt.path } : {});
         return;
       }
       // Refused by the window, or never sent (no socket): no child was told about the worktree.
@@ -935,6 +1019,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // this, main.ts): named in the record now, so its card says the model before any turn.
     // Its own `system/init` corrects it if Codex reports another (agent-chat.ts noteChildModel).
     const recordModel = job.model || (job.tool === 'codex' ? safeCodexStartModel() : '');
+    // The window opened a child that was told about the worktree: it is that child's now, even if
+    // the record below fails (a store error never takes a running child's folder away).
+    handedOver = true;
     const after = await writeSuper(root, c.superId, (s) => {
       const now = Date.now();
       s.children[sid] = {
@@ -962,6 +1049,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       if (heir) s.pad = s.pad?.map((p) => (p.for === heir ? { ...p, for: sid } : p));
       // Its agenda line, in the same write: Now, and it follows this child from here on.
       if (noteText) noted = putPadNote(s, 'now', noteText, sid);
+    }, {
+      // A failing day archive on a full pad takes this line out again (store.ts): `noteRefused`.
+      onPadRefused: (ids) => { if (noted && noted !== 'full' && ids.includes(noted.id)) noted = 'full'; },
     });
     // A member's child is tracked by its own super's inbox (Wave 2 step A2), never main's.
     if (startError) void pumpSuper(root, c.superId); else if (c.superId === 'main') expectChild(root, sid);
@@ -988,7 +1078,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // A named server that needs the owner's sign-in: a warning, never a block (the child may
     // still do the rest of the job), so the agent asks him instead of delegating it again.
     let signIn: string[] = [];
-    try { signIn = job.mcp?.length ? mcpNeedingSignIn(job.mcp, readStatusCache()) : []; } catch { /* no warning */ }
+    try { signIn = job.mcp?.length ? childMcpNeedingSignIn(job.mcp, knownChildMcp(dirname(root)).connectors, readStatusCache()) : []; } catch { /* no warning */ }
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
     ok(res, {
       sessionId: sid, ...cardOutcome(container, sid, after), ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
@@ -998,6 +1088,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
     });
   } catch (err) {
+    // A throw before any child was told about the worktree (the send, a store write) leaves it
+    // no owner: a fresh one goes back with its branch, like a refusal.
+    if (wt && !handedOver) await discardFreshWorktree(wt).catch(() => undefined);
     if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
     storeRefusal(res, err);
   } finally {
@@ -1155,7 +1248,8 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
     pad.splice(oldest, 1);
   }
   const next = nextPadId(pad, s.padSeq);
-  const note: SuperPadItem = { id: next.id, section, text, at: Date.now(), ...(forChild ? { for: forChild } : {}) };
+  const now = Date.now();
+  const note: SuperPadItem = { id: next.id, section, text, at: now, bornAt: now, ...(forChild ? { for: forChild } : {}) };
   s.pad = [...(forChild ? withoutTwins(pad, text) : pad), note];
   s.padSeq = next.seq;
   return note;
@@ -1163,8 +1257,28 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
 
 export async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main'): Promise<SuperPadItem | 'full'> {
   let out: SuperPadItem | 'full' = 'full';
-  await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); });
+  await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); }, {
+    onPadRefused: (ids) => { if (out !== 'full' && ids.includes(out.id)) out = 'full'; },
+  });
   return out;
+}
+
+/** The owner writes his own line (`POST /api/super/pad/add`): ALWAYS a new line (never the
+ *  same-text match, so his add never takes over a Super line), Not started, `author: 'owner'`
+ *  (and `by: 'owner'`, so an older server after a rollback still keeps its hands off). A full pad
+ *  gives up its oldest finished line first (archived in its day); with none, nothing is written. */
+function putOwnerLine(s: SuperState, text: string, now: number): SuperPadItem | 'full' {
+  const pad = [...(s.pad ?? [])];
+  if (pad.length >= MAX_PAD) {
+    const oldest = pad.findIndex((p) => p.section === 'done');
+    if (oldest < 0) return 'full';
+    pad.splice(oldest, 1);
+  }
+  const next = nextPadId(pad, s.padSeq);
+  const note: SuperPadItem = { id: next.id, section: 'now', stage: 'todo', text, at: now, bornAt: now, author: 'owner', by: 'owner' };
+  s.pad = [...pad, note];
+  s.padSeq = next.seq;
+  return note;
 }
 
 /**
@@ -1296,8 +1410,10 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
   // Cards whose size the owner chose: the agent's size is not written (decided inside the
   // locked write, so an owner resize landing meanwhile still wins).
   let kept: string[] = [];
-  // `--present`: whether the owner's own layout for these same cards was kept (presentCards).
+  // `--present`: whether the owner's own layout for these same cards was kept, and whether it
+  // is on his screen or waits in the queue (presentCards).
   let layoutKept = false;
+  let presented: { shown: boolean; at: number; of: number } = { shown: true, at: 1, of: 1 };
   // Touched before the write too, so a tidy pass racing it never moves what is being opened.
   touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
   // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
@@ -1369,7 +1485,9 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
     if (presentNow) {
       const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
       const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
-      layoutKept = presentCards(s, shown).kept;
+      const r = presentCards(s, shown);
+      layoutKept = r.kept;
+      presented = r;
     }
     // The picture chain: the next image open within the window joins where this one went.
     if (isMediaKind(kind as ContainerKind)) {
@@ -1391,7 +1509,8 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
     if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
   }
   door.done(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
-    ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) } } : {}),
+    ...(presentNow && presented.shown && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) } } : {}),
+    ...(presentNow ? queuedPart(presented) : {}),
     ...(note ? { kind, note } : {}) }, state);
 }
 
@@ -1712,7 +1831,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const warnings = [...ownershipWarnings(settled, running), ...noCardWarnings(settled, running)];
     // `teamLive` is the owner window's (member text, unfenced): the agent reads each team job's
     // status and last line from `team` below, fenced (D10).
-    const { teamLive: _ownerOnly, ...view } = superStateView(root, settled);
+    // His hand marks are heard only in the fenced block on his next message (owner-marks.ts).
+    const { teamLive: _ownerOnly, ownerMarks: _marks, ownerMarkSeq: _markSeq, ...view } = superStateView(root, settled) as ReturnType<typeof superStateView> & Pick<SuperState, 'ownerMarks' | 'ownerMarkSeq'>;
     // A line no job keeps true, unchanged for PAD_STALE_MS (pad.ts): keep it or close it. An
     // earlier day's Done line is gone even before the next write drops it.
     const pad = (view.pad ?? []).filter((p) => !padRolledOff(p, now)).map((p) => (padStale(p, now) ? { ...p, stale: true, staleMin: Math.floor((now - p.at) / 60_000) } : p));
@@ -1783,7 +1903,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     try {
       // A member's child does the work of the turn that started it unless `--for` names another.
-      const childOrigin = workFor.origin ?? (c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
+      const childOrigin = startOrigin(workFor.origin, fromRow, c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
       await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin, outward);
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.
@@ -1841,7 +1961,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   present: async (c, b, res) => {
     const raw = Array.isArray(b.containers) ? b.containers : [];
     if (raw.length === 0) {
-      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { s.view = { mode: 'float' }; });
+      await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { withdrawPresent(s); });
       ok(res, { view: { mode: 'float' } });
       return;
     }
@@ -1876,6 +1996,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     let kept = false;
+    let presented: { shown: boolean; at: number; of: number } = { shown: true, at: 1, of: 1 };
     // The presented pictures' shapes, read before the write (image-aspect.ts).
     const aspects = await imageAspects(dirname(c.who.contextRoot),
       c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
@@ -1884,10 +2005,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // A group presented whole comes out of Others: leaving the presentation finds it on the stage.
       for (const g of s.groups) if (raw.includes(g.id)) g.place = 'float';
       // One present (types.ts `presentCards`): the owner's same-set pick and a question the same
-      // cards show stay; other cards are a new presentation.
-      kept = presentCards(s, ids, layout).kept;
+      // cards show stay; other cards are a new presentation, queued while he looks at one.
+      const r = presentCards(s, ids, layout);
+      kept = r.kept;
+      presented = r;
     });
-    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}) });
+    ok(res, { view: state.view, ...(kept ? { kept: 'owner_layout', note: OWNER_LAYOUT_NOTE } : {}), ...queuedPart(presented, ids) });
   },
 
   stack: async (c, b, res) => {
@@ -2450,13 +2573,33 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     ok(res, { dropped: id });
   },
 
+  'note-status': async (c, b, res) => {
+    // One of the five statuses (pad.ts padStatus): `section` + `stage` stay the stored truth.
+    const id = str(b.id);
+    const status = str(b.status);
+    if (!status || !(PAD_STATUSES as readonly string[]).includes(status)) { refuse(res, 400, 'invalid_args', `status must be one of ${PAD_STATUSES.join(' | ')}`); return; }
+    if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    let note: SuperPadItem | null = null;
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+      const have = (s.pad ?? []).find((p) => p.id === id);
+      if (!have) return;
+      // The super set it itself: no longer the server's move. His own line keeps `by: 'owner'`.
+      const { why: _w, toldAt: _t, by, ...mine } = have;
+      note = { ...withPadStatus(mine, status as PadStatus, Date.now()), ...(ownerLine(have) && by ? { by } : {}) };
+      s.pad = [...(s.pad ?? []).filter((p) => p.id !== id), note];
+    });
+    if (!note) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    ok(res, { note });
+  },
+
   'note-clear': async (c, b, res) => {
     const section = str(b.section);
     if (section && !(PAD_SECTIONS as readonly string[]).includes(section)) { refuse(res, 400, 'invalid_args', `section must be one of ${PAD_SECTIONS.join(' | ')}`); return; }
     let cleared = 0;
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const pad = s.pad ?? [];
-      const keep = section ? pad.filter((p) => p.section !== section) : [];
+      // His own lines stay: `note clear` is the Super's sweep of its own lines (pad.ts ownerLine).
+      const keep = pad.filter((p) => ownerLine(p) || (section ? p.section !== section : false));
       cleared = pad.length - keep.length;
       s.pad = keep;
     });
@@ -3702,9 +3845,32 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
       if (raw.mode === 'half' || raw.mode === 'present') { raw.by = 'owner'; raw.ownerAt = Date.now(); }
     }
   }
+  // Closing a queued presentation he is looking at passes it and opens the next (AC2).
+  const q = s.presentQueue;
+  let step = readQueueStep(body);
+  if (!step && ownerView.exit && q?.showing && s.view.mode === 'present' && q.items[0]?.id === q.showing) {
+    const shown = s.view.cards ?? [];
+    const ex = ownerView.exit;
+    if (sameCardSet(shown, ex.cards) || sameCardSet(shown.filter((id) => !ex.closing.includes(id)), ex.cards)) {
+      step = { op: 'next', item: q.showing };
+      delete ownerView.exit;
+    }
+  }
   // The layout he picked, the chat bar, leaving: each only on the cards he saw (plan-r2 R2-E3).
   s.view = applyOwnerViewFields(s.view, ownerView, Date.now());
+  // A layout picked on a queued item is that item's own (D8): the queue does not move.
+  if (ownerView.presentLayout) notePresentLayout(s);
+  // His queue gesture, on the item his window showed (D2, AC2, AC5).
+  if (step) ownerQueueStep(s, step.op, step.item, askStillOpen(s));
   return s;
+}
+
+/** The owner's queue gesture in a layout body: `{ op: next|leave|resume, item: pq… }`. */
+export function readQueueStep(body: Record<string, unknown>): { op: 'next' | 'leave' | 'resume'; item: string } | null {
+  const v = body.queue;
+  const r = v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+  if (!r || (r.op !== 'next' && r.op !== 'leave' && r.op !== 'resume') || typeof r.item !== 'string' || !PRESENT_ITEM_ID_RE.test(r.item)) return null;
+  return { op: r.op, item: r.item };
 }
 
 
@@ -3770,7 +3936,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'open' | 'member' | 'owed';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'pad-add' | 'pad-remove' | 'open' | 'member' | 'owed';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>, superId: SuperId) => Promise<void>;
 
 /** The kinds the owner names himself; a file comes as `{ path }`, a chat or a job is the agent's. */
@@ -3904,16 +4070,53 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     noteSeenClick(contextRoot, marks.marks.map((m) => m.id));
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
-  pad: async (_req, res, contextRoot, body, superId) => {
-    // The owner moved an agenda line by hand (the card's Done / Put back): `by: 'owner'`, so the
-    // server never moves it again (pad.ts; pattern: the agent must not undo what the owner did).
+  pad: async (req, res, contextRoot, body, superId) => {
+    // The owner set an agenda line's status by hand (the card's circle, Done, Put back):
+    // `by: 'owner'`, so the server never moves it again (pad.ts; pattern: the agent must not undo
+    // what the owner did). `{ id, status }` (five values) or the older `{ id, section: now|done }`.
+    // A mark for his next message only when the request is proven his (owner-marks.ts).
     const id = typeof body.id === 'string' ? body.id : '';
-    const section = body.section === 'now' || body.section === 'done' ? body.section : null;
-    if (!PAD_ID_RE.test(id) || !section) { sendError(res, 400, 'invalid_body', 'give { id: <note id>, section: now | done }'); return; }
+    const status = (PAD_STATUSES as readonly unknown[]).includes(body.status) ? body.status as PadStatus
+      : body.section === 'done' ? 'done' : body.section === 'now' ? 'in-progress' : null;
+    if (!PAD_ID_RE.test(id) || !status) { sendError(res, 400, 'invalid_body', `give { id: <note id>, status: ${PAD_STATUSES.join(' | ')} }`); return; }
     // The same move Telegram's /gundem Bitti makes (pad-move.ts).
-    const { found, state } = await padMove(contextRoot, id, section, superId);
-    if (!found || !state) { sendError(res, 404, 'unknown_note', 'no such agenda line'); return; }
+    const { found, state } = await padMove(contextRoot, id, status, superId, { mark: !!req?.headers && hasOwnerKey(req) });
+    if (!found || !state) { sendError(res, 404, 'unknown_note', 'This line is closed and saved in its day.'); return; }
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
+  },
+  'pad-add': async (req, res, contextRoot, body, superId) => {
+    // His own line (C6): only from the app's own page with the shell's key.
+    if (!fromOwnerPage(req)) { sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can add a line.') }); return; }
+    const text = cleanPadText(body.text);
+    if (!text) { sendError(res, 400, 'invalid_body', 'a line is one line of text'); return; }
+    let note: SuperPadItem | 'full' = 'full';
+    const now = Date.now();
+    const state = await writeSuper(contextRoot, superId, (s) => {
+      note = putOwnerLine(s, text, now);
+      if (note !== 'full') tryOwnerMark(s, { key: `pad:${note.id}`, kind: 'pad-add', text, to: 'not-started', at: now });
+    }, { onPadRefused: (ids) => { if (note !== 'full' && ids.includes(note.id)) note = 'full'; } });
+    if (note === 'full') { sendJson(res, 409, { ok: false, error: 'pad_full', message: 'Agenda is full: close a line first.' }); return; }
+    sendJson(res, 200, { note, state: superStateView(contextRoot, state) });
+  },
+  'pad-remove': async (req, res, contextRoot, body, superId) => {
+    // His own OPEN line only: a Done line is history and goes to its day; a Super line closes with Done.
+    if (!fromOwnerPage(req)) { sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can remove a line.') }); return; }
+    const id = typeof body.id === 'string' ? body.id : '';
+    if (!PAD_ID_RE.test(id)) { sendError(res, 400, 'invalid_body', 'give { id: <note id> }'); return; }
+    let why: 'unknown_note' | 'not_owner' | 'not_open' | null = 'unknown_note';
+    const state = await writeSuper(contextRoot, superId, (s) => {
+      const have = (s.pad ?? []).find((p) => p.id === id);
+      if (!have) return;
+      if (!ownerLine(have)) { why = 'not_owner'; return; }
+      if (have.section === 'done') { why = 'not_open'; return; }
+      why = null;
+      s.pad = (s.pad ?? []).filter((p) => p.id !== id);
+      tryOwnerMark(s, { key: `pad:${id}`, kind: 'pad-remove', text: have.text, from: padStatus(have), at: Date.now() });
+    });
+    if (why === 'unknown_note') { sendError(res, 404, 'unknown_note', 'This line is closed and saved in its day.'); return; }
+    if (why === 'not_owner') { sendError(res, 409, 'not_owner', 'Only a line you added can be removed; close this one with Done.'); return; }
+    if (why === 'not_open') { sendError(res, 409, 'not_open', 'A finished line stays in its day.'); return; }
+    sendJson(res, 200, { removed: id, state: superStateView(contextRoot, state) });
   },
   recap: async (_req, res, contextRoot, _body, superId) => {
     const current = await readSuperState(contextRoot, superId, superSanitizeOpts());
@@ -3985,7 +4188,8 @@ export function ownerSuperId(req: IncomingMessage, res: ServerResponse, contextR
  */
 export async function stopMemberSuper(contextRoot: string, slug: string): Promise<SuperState> {
   const id = superIdOfMember(slug);
-  const state = await writeSuper(contextRoot, id, (s) => { s.enabled = false; });
+  // Its owner's hand marks go with it (owner-marks.ts), as main's in `disableSuper`.
+  const state = await writeSuper(contextRoot, id, (s) => { s.enabled = false; delete s.ownerMarks; });
   await noteMemberOff(contextRoot, slug, state);
   const live = [...(state.session ? [state.session] : []), ...Object.keys(state.children).filter((sid) => state.children[sid].endedAt === undefined)];
   for (const sid of live) {
@@ -4057,6 +4261,28 @@ export const handleSuperEnd = ownerRoute('end');
 export const handleSuperFresh = ownerRoute('fresh');
 export const handleSuperSeen = ownerRoute('seen');
 export const handleSuperPad = ownerRoute('pad');
+export const handleSuperPadAdd = ownerRoute('pad-add');
+export const handleSuperPadRemove = ownerRoute('pad-remove');
+
+/**
+ * GET /api/super/agenda-day?date=YYYY-MM-DD (C4): one day of the agenda. "Done that day" is the
+ * one read rule (pad-archive.ts `agendaDoneOn`); "Started that day, still open" is the live pad's
+ * open lines born that day. The Super is resolved as the pad routes resolve it.
+ */
+export async function handleSuperAgendaDay(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireSuperOwner(req, res)) return;
+  const superId = ownerSuperId(req, res, contextRoot);
+  if (!superId) return;
+  const date = new URL(req.url ?? '/', 'http://x').searchParams.get('date');
+  if (!okDay(date)) { sendError(res, 400, 'invalid_date', 'date is a day, YYYY-MM-DD'); return; }
+  try {
+    const state = await readSuperState(contextRoot, superId, superSanitizeOpts());
+    const pad = state.pad ?? [];
+    const done = await agendaDoneOn(contextRoot, superId, date, pad);
+    const open = pad.filter((p) => p.section !== 'done' && localDay(p.bornAt ?? p.at) === date);
+    sendJson(res, 200, { date, done, open });
+  } catch (err) { storeRefusal(res, err); }
+}
 export const handleSuperOpen = ownerRoute('open');
 export const handleSuperMember = ownerRoute('member');
 export const handleSuperOwedDrop = ownerRoute('owed');

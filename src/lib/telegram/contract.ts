@@ -337,7 +337,7 @@ export type DeliverHubResult = (token: string, id: unknown, result: HubResult) =
 export type AnswerPending =
   | { kind: 'permission'; requestId: string; choice: 'allow_once' | 'deny' }
   | { kind: 'question'; requestId: string; item?: string; picked: Record<string, string>; notes?: Record<string, string> }
-  | { kind: 'unclear'; requestId: string; item?: string; unclear: string };
+  | { kind: 'unclear'; requestId: string; item?: string; unclear: string; already?: true };
 
 /** The question shape a hub answer is built against (`RegistryQuestion`). */
 export interface AnswerQuestion {

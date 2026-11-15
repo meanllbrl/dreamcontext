@@ -47,9 +47,22 @@ const STANDIN = superStandin({
   main: "if (text.startsWith('[super handover]')) return 'arranged'; return 'ok';",
   member: "return 'Hello, I keep the desk.';",
   // The routine's headless run: long enough to be seen running, then its answer.
+  // It writes its own transcript (two tool steps, then its answer) under the session it reports,
+  // so the run has steps on this machine, as a real run does.
   headless: `
     if (prompt.includes('Weekly desk summary')) return 'Weekly: all quiet at the desk.';
+    const sid = randomUUID(); globalThis.__sid = sid;
+    const tdir = join(process.env.HOME, '.claude', 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
+    mkdirSync(tdir, { recursive: true });
+    const w = (o) => appendFileSync(join(tdir, sid + '.jsonl'), JSON.stringify({ ...o, cwd: process.cwd(), uuid: randomUUID(), timestamp: new Date().toISOString(), sessionId: sid }) + '\\n');
+    const use = (id, name, input) => w({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+    const res = (id, content) => w({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+    w({ type: 'user', message: { role: 'user', content: prompt } });
+    use('tu-1', 'Bash', { command: 'ls parcels' }); res('tu-1', 'a.pdf b.pdf c.pdf');
+    use('tu-2', 'Read', { file_path: 'returns.md' });
     await sleep(14000);
+    res('tu-2', 'one return');
+    w({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: ${JSON.stringify(ANSWER)} }] } });
     return ${JSON.stringify(ANSWER)};
   `,
 });
@@ -107,6 +120,8 @@ async function run(base) {
   const page = await context.newPage();
   const watch = watchPage(page, 'desk', { expected: [/status of 409/, /^409 POST \/api\/super\/member\b/] });
   ok('setup: main Super handed over', await handOver(page, base));
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: join(OUT, '0-normal-chat-1440.png') });
 
   await openMember(page, SLUG);
   const sid = `m:${SLUG}`;
@@ -128,6 +143,11 @@ async function run(base) {
   ok('(a) the run shows while it runs: its boundary says running', await until(page, async () => /running/.test((await runB.first().textContent().catch(() => '')) ?? ''), 30000),
     await runB.first().textContent().catch(() => 'none'));
   ok('(a) …with the Working line under it', (await st.locator(`[data-feed-working^="${RUN}::"]`).count()) === 1);
+  // Owner 2026-11-14: a run in flight is a Super turn in flight, the same live line, never a
+  // Working pill nor its steps in a box of their own.
+  ok('(a) …and that line is the Super view\'s own live line, not a Working pill', (await st.locator(`[data-feed-working^="${RUN}::"] [data-testid="super-live-line"], [data-feed-working^="${RUN}::"] [data-testid="super-steps"]`).count()) === 1
+    && (await st.locator(`[data-feed-working^="${RUN}::"] .chat-working`).count()) === 0);
+  ok('(a) no run steps in a box while it runs', (await st.locator('[data-testid="run-view"]').count()) === 0);
   const pos = await st.evaluate((root, [o, rn]) => {
     const all = [...root.querySelectorAll('*')];
     const msg = [...root.querySelectorAll('*')].find((e) => e.children.length === 0 && e.textContent?.trim() === 'Good morning desk');
@@ -146,8 +166,15 @@ async function run(base) {
   }, 60000), await runB.first().textContent().catch(() => 'none'));
   ok('(b) the run\'s answer is drawn on the member\'s page', await until(page, async () => (await st.getByText(ANSWER).count()) > 0, 20000));
   ok('(b) no Working line is left', (await st.locator(`[data-feed-working^="${RUN}::"]`).count()) === 0);
+  // Open the run's steps if the page offers them (the old code did, in a clipped box), so the
+  // screenshot shows what the owner saw; then the page must offer none (owner 2026-11-14).
+  const offered = st.locator(`[data-run-steps^="${RUN}::"]`);
+  if (await offered.count()) { await offered.first().click().catch(() => {}); await page.waitForTimeout(2500); }
+  await runB.first().scrollIntoViewIfNeeded().catch(() => {});
   await page.waitForTimeout(600);
   await page.screenshot({ path: join(OUT, '2-done-1440.png') });
+  ok('(b) a landed run offers no Steps link and draws no box: its answer stands as a normal turn', (await offered.count()) === 0 && (await st.locator('[data-testid="run-view"]').count()) === 0);
+  ok('(b) the run\'s boundary is a plain line, not a button', (await st.locator(`button[data-feed-boundary^="${RUN}::"]`).count()) === 0);
 
   // Owner 2026-11-08: no underlined "Full report"; the run's document is a tile that opens in the
   // chat's side file panel, never inline.

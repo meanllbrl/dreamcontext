@@ -1,5 +1,7 @@
 import { quoteTooThin } from './filing-basis.js';
 import { spawnMarkerFromEnv } from './session-origin.js';
+import { inAgentSession } from './session-id.js';
+import { createNeedsOwner, insideAgentRun } from './automations/types.js';
 
 /**
  * agent-filing-guard — what an AWAKE agent may file with `tasks create` (audit TK-1, TK-2).
@@ -88,4 +90,20 @@ export function checkAgentFiling(input: AgentGuardInput): AgentGuardVerdict {
   }
 
   return { ok: true, ownerAsked: false };
+}
+
+/**
+ * Is an agent driving this CLI process, in ANY of the ways the repo knows (kosullu-otomasyon C2)?
+ * A Claude Code, Codex or brain-MCP session or a spawned run (`agentSessionOf`), any bridge chat of
+ * the app, Antigravity's included (`inAgentSession`), a run, a member's conversation or crew
+ * (`insideAgentRun`), the Super's crew (`createNeedsOwner`). The ONE predicate behind every
+ * condition witness on the CLI: no witness is ever given while it is true. A CLI-process predicate
+ * only, never asked on the server.
+ *
+ * Its limit: it guards against mistakes and is not a security boundary. An unconfined agent can
+ * unset its own markers, but such an agent already has the same shell power; the confined tools
+ * are held by their write limits on `~/.dreamcontext`.
+ */
+export function agentDriven(env: NodeJS.ProcessEnv = process.env): boolean {
+  return agentSessionOf(env) !== null || inAgentSession(env) || insideAgentRun(env) || createNeedsOwner(env);
 }

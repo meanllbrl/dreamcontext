@@ -26,7 +26,6 @@ interface TitleBarProps {
   /** The pointer entered or left the drawer button: a hover peek of the drawer. */
   onDrawerHover?: (over: boolean) => void;
   zoom: number;
-  zoomLevels: readonly number[];
   onZoom: (level: number) => void;
   onCycleTheme: () => void;
   themeLabel: string;
@@ -49,7 +48,7 @@ interface TitleBarProps {
  */
 export function TitleBar({
   activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, onDrawerHover, waiting = 0, touch = false,
-  zoom, zoomLevels, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot, device,
+  zoom, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot, device,
 }: TitleBarProps) {
   const { t } = useI18n();
   const pickerRef = useRef<HTMLButtonElement>(null);
@@ -110,7 +109,7 @@ export function TitleBar({
         <div className="chrome-slot ns-tb-slot" ref={setRightSlot} />
         {!device && <div className="ns-tb-hf" data-no-drag><HandsfreeButton vault={activeVault} /></div>}
         {device?.tunnel && <div className="ns-tb-hf" data-no-drag data-testid="ns-phone-chip"><PhoneChip remote={device.remote} /></div>}
-        {!touch && <ZoomMenu zoom={zoom} levels={zoomLevels} onZoom={onZoom} />}
+        {!touch && <ZoomMenu zoom={zoom} onZoom={onZoom} />}
         <button type="button" className="ns-tb-btn" data-no-drag onClick={onCycleTheme} title={`${t('shell.theme')}: ${themeLabel}`} aria-label={`${t('shell.theme')}: ${themeLabel}`}>
           {dark ? (
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 1zm0 10a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 11zm7-3a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 15 8zM5 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 5 8zm7.07-4.07a.5.5 0 0 1 0 .71l-1.41 1.41a.5.5 0 1 1-.71-.71l1.41-1.41a.5.5 0 0 1 .71 0zM6.05 10.66a.5.5 0 0 1 0 .71l-1.41 1.41a.5.5 0 0 1-.71-.71l1.41-1.41a.5.5 0 0 1 .71 0zm7.72 3.12a.5.5 0 0 1-.71 0l-1.41-1.41a.5.5 0 1 1 .71-.71l1.41 1.41a.5.5 0 0 1 0 .71zM5.34 6.05a.5.5 0 0 1-.71 0L3.22 4.64a.5.5 0 0 1 .71-.71l1.41 1.41a.5.5 0 0 1 0 .71zM8 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" /></svg>

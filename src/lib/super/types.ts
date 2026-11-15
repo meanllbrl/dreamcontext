@@ -12,6 +12,7 @@ import type { OwnerCardKind, OwnerWaitKind } from './owner-wait.js';
 import type { CardSpec } from '../cards/public.js';
 import { parseViewBlock } from '../chat-view-spec.js';
 import type { OwnerLanguage } from './owner-language.js';
+import { MAX_TASK_SLUG_LENGTH } from '../task-slug.js';
 import type { OutwardGrant } from './outward.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
@@ -407,31 +408,277 @@ export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutB
 }
 
 /**
- * Present these cards (the `present` verb's write, and a picture question's, ask-show.ts): they
- * float, and the view shows them. The owner's layout pick for the same cards stays (`kept`), and
- * so does a question the same cards already show; another set is a new presentation. `ask`
- * names the question this presentation is for. Mutates `s`.
+ * One presentation on the stage's queue (task super-sahnesinde-sunum-sirasi…, owner 2026-11-14:
+ * "I was looking at one, you opened this and mine was gone; it should have joined the queue").
+ * Every presentation the Super makes (`present`, `open --present`, a picture question) is an item;
+ * the head is the one on screen when {@link PresentQueue.showing} names it. Items are UNSEEN: one
+ * leaves only by the owner's gesture (next, close, leave the queue), its cards closing, or its
+ * question closing. No count cap (D5): the same card set again updates its item.
+ */
+export interface PresentItem {
+  /** `pq<seq>`. */
+  id: string;
+  cards: string[];
+  layout?: PresentLayout;
+  /** The owner picked `layout` for this item (D8): an agent re-present of it keeps it. */
+  layoutBy?: 'owner';
+  /** The picture question this item shows (ask-show.ts). */
+  ask?: string;
+  at: number;
+}
+
+export interface PresentQueue {
+  /** Unseen items, in arrival order; the head is the next (or current) one. */
+  items: PresentItem[];
+  /** Items passed in this run (the counter's i = seen + 1, N = seen + items); 0 once empty. */
+  seen: number;
+  /** The last item number handed out. */
+  seq: number;
+  /** The head's id while the stage shows it. Absent: no item on screen (left, or another view). */
+  showing?: string;
+}
+
+export const PRESENT_ITEM_ID_RE = /^pq[0-9]{1,9}$/;
+
+/** The queue's counter, as the window and the CLI say it. */
+export function queueCounter(q: PresentQueue | undefined): { at: number; of: number; waiting: number; showing: boolean } {
+  const items = q?.items ?? [];
+  const showing = !!q?.showing && items[0]?.id === q.showing;
+  return { at: (q?.seen ?? 0) + 1, of: (q?.seen ?? 0) + items.length, waiting: items.length - (showing ? 1 : 0), showing };
+}
+
+/** Cards an unseen queue item still has to show: tidy, Others and the room never take them (AC6). */
+export function queuedCards(s: Pick<SuperState, 'presentQueue'>): Set<string> {
+  return new Set((s.presentQueue?.items ?? []).flatMap((i) => i.cards));
+}
+
+/** The raw view of an item (the store resolves its layout against the record). */
+export function presentItemView(item: PresentItem): SuperView {
+  return {
+    mode: 'present', cards: [...item.cards], ...(item.layout ? { layout: item.layout } : {}),
+    ...(item.layout && item.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
+    ...(item.ask ? { ask: item.ask } : {}),
+  };
+}
+
+/** The view shows this item: a presentation of its cards (a layout may show fewer of them), and
+ *  for a picture question, that question's. */
+function viewShowsItem(v: SuperView, item: PresentItem | undefined): boolean {
+  const shown = v.mode === 'present' ? v.cards ?? [] : [];
+  if (!item || !shown.length || !shown.every((id) => item.cards.includes(id))) return false;
+  return !item.ask || v.ask === item.ask;
+}
+
+/** The head is on screen right now (its `showing` mark, and the view still shows it). */
+function headShowing(s: Pick<SuperState, 'view' | 'presentQueue'>): boolean {
+  const q = s.presentQueue;
+  return !!q?.showing && q.items[0]?.id === q.showing && viewShowsItem(s.view, q.items[0]);
+}
+
+/** Put the head on screen (or float the stage when the queue is empty). Mutates `s`. */
+function showHead(s: Pick<SuperState, 'view' | 'presentQueue'>): void {
+  const q = s.presentQueue;
+  const head = q?.items[0];
+  if (!q || !head) { s.view = { mode: 'float' }; if (q) { delete q.showing; q.seen = 0; } return; }
+  s.view = presentItemView(head);
+  q.showing = head.id;
+}
+
+/** Is the owner looking at something a new presentation must not replace (D1, D6)? Any
+ *  presentation, whoever opened it; a side by side only while it is his current intent. */
+function stageTaken(s: Pick<SuperState, 'view' | 'containers' | 'children'>, now: number): boolean {
+  if (s.view.mode === 'present' && (s.view.cards ?? []).length) return true;
+  return s.view.mode === 'half' && ownerViewHeld(s, now);
+}
+
+export interface PresentResult {
+  /** The owner's own layout for these same cards stayed. */
+  kept: boolean;
+  /** On his screen now. False: it waits in the queue at `at` of `of`. */
+  shown: boolean;
+  at: number;
+  of: number;
+}
+
+/**
+ * Present these cards (the `present` verb's write, `open --present`, a picture question's,
+ * ask-show.ts). The cards float. The same cards already on screen are updated in place (the
+ * owner's layout pick and chat bar stay); the same cards waiting in the queue update their item
+ * (D5). Otherwise a new item: shown at once when nothing is presented (D6), else it joins the
+ * END of the queue and what he looks at stays (D1, AC1). Mutates `s`.
  */
 export function presentCards(
-  s: Pick<SuperState, 'containers' | 'view'>, ids: readonly string[], layout?: PresentLayout, ask?: string,
-): { kept: boolean } {
+  s: Pick<SuperState, 'containers' | 'view' | 'children' | 'presentQueue'>, ids: readonly string[], layout?: PresentLayout, ask?: string,
+  now: number = Date.now(),
+): PresentResult {
   for (const k of s.containers) if (ids.includes(k.id)) k.place = 'float';
+  const q: PresentQueue = s.presentQueue ?? (s.presentQueue = { items: [], seen: 0, seq: 0 });
   const prev = s.view;
-  const same = prev.mode === 'present' && sameCardSet(prev.cards ?? [], ids);
-  const question = ask ?? (same ? prev.ask : undefined);
-  // The owner's pick for these same cards is his (plan-r2 D10): the agent's order is written,
-  // the layout and the chat bar stay. Other cards are a new presentation.
-  if (same && prev.layoutBy === 'owner') {
-    s.view = { ...prev, cards: [...ids], ...(question ? { ask: question } : {}) };
-    return { kept: true };
-  }
-  // The same cards again with no layout keep the layout they have (and his chat bar with it).
-  const lay = layout ?? (same ? prev.layout : undefined);
-  s.view = {
-    mode: 'present', cards: [...ids], ...(lay ? { layout: lay } : {}), ...(same && prev.chat === 'bar' ? { chat: 'bar' as const } : {}),
-    ...(question ? { ask: question } : {}),
+  const counter = (item: PresentItem, shown: boolean): PresentResult => {
+    const i = q.items.indexOf(item);
+    // Waiting behind a presentation that is not a queue item (his own, or one from before the
+    // queue): that one counts as the first (AC1: "1/2").
+    const ahead = !shown && s.view.mode === 'present' && !headShowing(s) ? 1 : 0;
+    return { kept: false, shown, at: q.seen + ahead + (i < 0 ? 1 : i + 1), of: q.seen + ahead + Math.max(q.items.length, 1) };
   };
-  return { kept: false };
+  if (prev.mode === 'present' && sameCardSet(prev.cards ?? [], ids)) {
+    const question = ask ?? prev.ask;
+    const item = headShowing(s) ? q.items[0] : undefined;
+    // The owner's pick for these same cards is his (plan-r2 D10): the agent's order is written,
+    // the layout and the chat bar stay. The same cards again with no layout keep theirs.
+    const ownerKept = prev.layoutBy === 'owner';
+    const lay = ownerKept ? prev.layout : layout ?? prev.layout;
+    s.view = ownerKept
+      ? { ...prev, cards: [...ids], ...(question ? { ask: question } : {}) }
+      : {
+        mode: 'present', cards: [...ids], ...(lay ? { layout: lay } : {}), ...(prev.chat === 'bar' ? { chat: 'bar' as const } : {}),
+        ...(question ? { ask: question } : {}),
+      };
+    if (item) {
+      item.cards = [...ids];
+      if (!item.layoutBy && lay) item.layout = lay;
+      if (question) item.ask = question;
+    }
+    return { ...(item ? counter(item, true) : { shown: true, at: q.seen + 1, of: q.seen + Math.max(q.items.length, 1) }), kept: ownerKept };
+  }
+  // A picture question asked again (its cards replaced), or the same cards again, keep their one
+  // item (D5): updated where it waits, or opened now when nothing else is presented (D6).
+  const same = (ask ? q.items.find((x) => x.ask === ask) : undefined) ?? q.items.find((x) => sameCardSet(x.cards, ids));
+  if (same) {
+    const onScreen = same === q.items[0] && headShowing(s);
+    same.cards = [...ids];
+    if (layout && !same.layoutBy) same.layout = layout;
+    if (ask) same.ask = ask;
+    if (onScreen || !stageTaken(s, now)) {
+      q.items = [same, ...q.items.filter((x) => x !== same)];
+      showHead(s);
+      return counter(same, true);
+    }
+    return counter(same, false);
+  }
+  q.seq += 1;
+  const item: PresentItem = { id: `pq${q.seq}`, cards: [...ids], ...(layout ? { layout } : {}), ...(ask ? { ask } : {}), at: now };
+  if (stageTaken(s, now)) {
+    q.items.push(item);
+    return counter(item, false);
+  }
+  // Nothing presented: it opens now, ahead of whatever waits (D6).
+  q.items.unshift(item);
+  showHead(s);
+  return counter(item, true);
+}
+
+/** A picture question that is still open with the owner: its item waits instead of leaving (AC4). */
+export type AskStillOpen = (ask: string) => boolean;
+
+/**
+ * The owner's queue gesture (D2, AC2, AC5), guarded by the item his window showed: `next` (also
+ * closing the presentation) passes the head and opens the next, `leave` passes it and floats the
+ * stage with the rest waiting, `resume` opens the head. A head whose picture question is still
+ * open is not passed: it goes to the end and waits (AC4). Returns whether anything changed.
+ */
+export function ownerQueueStep(
+  s: Pick<SuperState, 'view' | 'presentQueue'>, op: 'next' | 'leave' | 'resume', item: string, askOpen: AskStillOpen,
+): boolean {
+  const q = s.presentQueue;
+  const head = q?.items[0];
+  if (!q || !head || head.id !== item) return false;
+  if (op === 'resume') { showHead(s); return true; }
+  if (!headShowing(s)) return false;
+  q.items.shift();
+  if (head.ask && askOpen(head.ask)) q.items.push(head); else q.seen += 1;
+  delete q.showing;
+  // Alone and re-queued (an unanswered question): it waits rather than opening again at once.
+  if (op === 'next' && q.items.length && q.items[0].id !== head.id) showHead(s);
+  else { s.view = { mode: 'float' }; if (!q.items.length) q.seen = 0; }
+  return true;
+}
+
+/** The Super ends its presentation (`present --off`): the item on screen is withdrawn (it is the
+ *  Super's to take back), the stage floats, and what waits keeps waiting. Mutates `s`. */
+export function withdrawPresent(s: Pick<SuperState, 'view' | 'presentQueue'>): void {
+  const q = s.presentQueue;
+  if (q && headShowing(s)) {
+    q.items.shift();
+    delete q.showing;
+    if (!q.items.length) q.seen = 0;
+  }
+  s.view = { mode: 'float' };
+}
+
+/** The owner picked a layout on the item on screen (D8): it is that item's, nothing else moves. */
+export function notePresentLayout(s: Pick<SuperState, 'view' | 'presentQueue'>): void {
+  const q = s.presentQueue;
+  const v = s.view;
+  if (!q || !headShowing(s) || v.mode !== 'present' || v.layoutBy !== 'owner' || !v.layout) return;
+  q.items[0].layout = v.layout;
+  q.items[0].layoutBy = 'owner';
+}
+
+/** A question closed (ask-show.ts): its item leaves the queue; on screen, the next opens. */
+export function dropAskItem(s: Pick<SuperState, 'view' | 'presentQueue'>, ask: string): void {
+  const q = s.presentQueue;
+  if (!q) return;
+  const gone = q.items.filter((x) => x.ask === ask);
+  if (!gone.length) return;
+  // On screen only while the view still shows it (the Super may have presented over it since).
+  const wasShowing = headShowing(s) && gone.includes(q.items[0]);
+  q.items = q.items.filter((x) => x.ask !== ask);
+  if (wasShowing) { q.seen += 1; delete q.showing; showHead(s); }
+  else if (!q.items.length) q.seen = 0;
+}
+
+/**
+ * The queue read against the record (store sanitize): known cards only, an item left with none
+ * leaves (D5: its cards closed), the same set once. `showing` holds only while the view shows
+ * the head's cards; when the head's own cards closed under it the next opens (AC2: a card's ✕).
+ * Returns the queue (absent when empty) and the view to use.
+ */
+export function settlePresentQueue(
+  raw: unknown, view: SuperView, containers: readonly (LayoutCard & { id: string })[],
+): { queue?: PresentQueue; view: SuperView } {
+  const rec = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  if (!rec || !Array.isArray(rec.items)) return { view };
+  const known = new Set(containers.map((c) => c.id));
+  const rawIds: string[] = [];
+  const items: PresentItem[] = [];
+  for (const x of rec.items as unknown[]) {
+    const r = x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : null;
+    if (!r || typeof r.id !== 'string' || !PRESENT_ITEM_ID_RE.test(r.id) || rawIds.includes(r.id)) continue;
+    rawIds.push(r.id);
+    const cards = Array.isArray(r.cards) ? [...new Set((r.cards as unknown[]).filter((id): id is string => typeof id === 'string' && known.has(id)))].slice(0, MAX_FILMSTRIP) : [];
+    if (!cards.length || items.some((i) => sameCardSet(i.cards, cards))) continue;
+    const layout = typeof r.layout === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(r.layout) ? r.layout as PresentLayout : undefined;
+    const at = typeof r.at === 'number' && Number.isFinite(r.at) ? r.at : 0;
+    items.push({
+      id: r.id, cards, ...(layout ? { layout } : {}), ...(layout && r.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
+      ...(typeof r.ask === 'string' && QUEUE_ID_RE.test(r.ask) ? { ask: r.ask } : {}), at,
+    });
+  }
+  const num = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < max ? Math.floor(v) : 0);
+  const q: PresentQueue = {
+    items, seen: items.length ? num(rec.seen, 1e6) : 0,
+    seq: Math.max(num(rec.seq, 1e9), ...items.map((i) => Number(i.id.slice(2)))),
+  };
+  let next = view;
+  const showing = typeof rec.showing === 'string' ? rec.showing : undefined;
+  if (showing) {
+    const head = items[0];
+    if (head?.id === showing && viewShowsItem(view, head)) q.showing = showing;
+    else if (rawIds.includes(showing) && !items.some((i) => i.id === showing)) {
+      // The item on screen lost its cards (closed): it is passed, and the next opens. Only when
+      // the stage was left floating by it, never over another view.
+      if (view.mode === 'float') {
+        q.seen += 1;
+        if (head) {
+          const shown = resolvePresent(presentItemView(head), containers);
+          if (shown) { next = shown; q.showing = head.id; }
+        } else next = { mode: 'float' };
+      }
+    }
+  }
+  if (!q.items.length) return { view: next, ...(q.seq ? { queue: { items: [], seen: 0, seq: q.seq } } : {}) };
+  return { queue: q, view: next };
 }
 
 /**
@@ -768,6 +1015,8 @@ export interface SuperQueueItem {
   /** A `schedule` item's fire (ISO): the Super automation's turn the owner scheduled (`automation`
    *  names it). The job text is read from the approved manifest at delivery, never stored here. */
   fire?: string;
+  /** A `schedule` item's condition output (kosullu-otomasyon C6): data the turn fences. */
+  conditionData?: string;
   /** A `member` item: the kind of the member's item it mirrors (`answers` names that item). */
   of?: MemberItemOf;
   /** An OWN item (K1): its `sessionId` is the record's own session. Only on `question`,
@@ -1249,6 +1498,9 @@ export interface SuperPoolItem {
   outward?: OutwardGrant;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
+  /** A member Super's job kept at its cap: whose work it does (as its child's `workOrigin`), so
+   *  the card of the request it serves shows it waiting. */
+  workOrigin?: SuperWorkOrigin;
   /** A `delegate --from` went unconfirmed: the child may be running. */
   maybeStarted?: boolean;
   startedIn?: string;
@@ -1303,6 +1555,8 @@ export interface SuperState {
   ownerLanguage?: OwnerLanguage;
   /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS (the presented one never dropped). Absent = none. */
   askShows?: AskShow[];
+  /** The stage's presentation queue (`PresentQueue`). Absent = never used. */
+  presentQueue?: PresentQueue;
   /** A member Super's record (`state/.super/members/<slug>.json`): its member slug. Absent = main. */
   member?: string;
   /** Batch ids of a member Super's turns that were main Super's work (`main:*`): the owner's unread
@@ -1316,6 +1570,11 @@ export interface SuperState {
   /** When this record started keeping debts (the first write after the upgrade): an item older
    *  than this is never owed. Absent = now. */
   owedSince?: number;
+  /** What the owner did by hand since his last message (owner-marks.ts). Never in the Super's
+   *  own `super state` view: it hears them only in the fenced block. Absent = none. */
+  ownerMarks?: OwnerMark[];
+  /** The last owner mark number handed out. */
+  ownerMarkSeq?: number;
 }
 
 /**
@@ -1397,7 +1656,43 @@ export interface SuperPadItem {
   why?: PadAutoWhy;
   /** When an event batch last told the super about this line (its auto move or its stale flag). */
   toldAt?: number;
+  /** When it was first written (ms): its day. Absent = `at` (stamped once by the store). */
+  bornAt?: number;
+  /** A Now line's stage (the five statuses, `padStatus`): `todo` = Not started, `almost` =
+   *  Almost done, absent = In progress. Only in `now`. */
+  stage?: PadStage;
+  /** `owner` = the owner wrote it himself (`POST /api/super/pad/add`): the server's automatic
+   *  rules never act on it (pad.ts `ownerLine`). Absent = the Super's. */
+  author?: 'owner';
 }
+export const PAD_STAGES = ['todo', 'almost'] as const;
+export type PadStage = typeof PAD_STAGES[number];
+/** The five statuses a line shows; `section` (+ `stage`) stays the stored truth (pad.ts). */
+export const PAD_STATUSES = ['not-started', 'in-progress', 'almost-done', 'waiting', 'done'] as const;
+export type PadStatus = typeof PAD_STATUSES[number];
+
+/** One thing the owner did by hand since his last message (owner-marks.ts): carried once, in a
+ *  `<super-owner-marks>` block on his next message to the Super, then cleared. */
+export interface OwnerMark {
+  /** `pad:<id>` or `task:<slug>`: one entry per thing, newer marks coalesce into it. */
+  key: string;
+  kind: OwnerMarkKind;
+  /** What it is about, one line (a pad line's text, a task's title). */
+  text: string;
+  from?: string;
+  to?: string;
+  at: number;
+  /** Monotonic per record: the carry clears by it, never by time alone. */
+  seq?: number;
+}
+export const OWNER_MARK_KINDS = ['pad-status', 'pad-add', 'pad-remove', 'task-created', 'task-status'] as const;
+export type OwnerMarkKind = typeof OWNER_MARK_KINDS[number];
+/** `task:` takes every slug a task file can have (task-slug.ts, MAX_TASK_SLUG_LENGTH): a shorter
+ *  cap dropped a long task's marks silently (edge-cases review, round 1). Keeps `.` and `_`:
+ *  a hand-named task file (fix_bug.md) is a task too. */
+export const OWNER_MARK_KEY_RE = new RegExp(`^(pad:n[1-9][0-9]{0,5}|task:[a-z0-9][a-z0-9._-]{0,${MAX_TASK_SLUG_LENGTH - 1}})$`);
+/** Stored marks are bounded by bytes, not count: past this the oldest are dropped. */
+export const MAX_OWNER_MARKS_BYTES = 64 * 1024;
 export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;
 export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
 /** A Now line with no job behind it that has not changed for this long is stale: `super state`
@@ -1997,7 +2292,7 @@ export const SUPER_VERBS = [
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
-  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
+  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',
   // The owner's scheduled jobs (super-rutin plan C4): main Super only.
@@ -2048,9 +2343,10 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data.
+
  */
-export const SUPER_BRIEF_REV = 45;
+export const SUPER_BRIEF_REV = 48;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

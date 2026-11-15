@@ -204,6 +204,8 @@ export async function disableSuper(contextRoot: string): Promise<SuperState> {
     for (const q of s.queue) if (q.kind === 'ask' || (q.kind === 'fresh' && q.state === 'pending') || (q.kind === 'owed' && q.state === 'pending')) q.state = 'done';
     // He is in the chat himself: nothing is owed him any more (owed.ts).
     closeAllForTakeback(s, Date.now());
+    // His hand marks were for the Super he handed the screen to; it is off now (owner-marks.ts).
+    delete s.ownerMarks;
     for (const sid of Object.keys(s.children)) {
       // In memory, never from disk: a note being delivered right now is already gone from
       // memory, and its persist deletes only the value it delivered (store.ts clearSuperNote).

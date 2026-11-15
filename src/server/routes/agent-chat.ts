@@ -80,6 +80,7 @@ import { createResumeAtReset, RESET_CONTINUE_TEXT } from '../../lib/resume-at-re
 import { isServerTurnText } from '../../lib/usage-readers.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs, storeServers } from '../../lib/mcp-store.js';
+import { recordConnectorUrls } from '../../lib/mcp-connectors.js';
 import { McpControl, isSafeAuthUrl, readStatusCache, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
 import { offCardQuestionFrame } from '../../lib/card-standalone.js';
 import { planQuestionFrame } from '../../lib/plan-question.js';
@@ -142,7 +143,7 @@ import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-lan
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
   childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
@@ -154,7 +155,7 @@ import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  connectorListSettled, connectorListSettleMs, knownMcpServers, mcpCardServers, mcpDrift, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
+  childMcpNeedingSignIn, connectorListSettled, connectorOnAccount, connectorListSettleMs, connectorRulesFor, knownChildMcp, knownMcpServers, leanAllowlist, mcpFileNames, mcpCardServers, mcpDrift, mcpGrantFor, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { openRequest } from '../../lib/super/request-answer.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
@@ -615,15 +616,18 @@ export function leanMcpForUpgrade(o: {
 /**
  * The MCP argv of a spawn: today's ({@link mcpConfigArgs} over `normal`) for every chat, or, for
  * a LEAN Super Agent child (orchestration plan r5 D14), `--strict-mcp-config` and only its
- * subset, the project's `.mcp.json` and the browser override (still last). A lean child with no
+ * subset, the project's `.mcp.json` and the browser override (still last). A lean child given a
+ * claude.ai connector drops strict for its settings' allowlist (`allowlisted`). A lean child with no
  * servers named and no project file gets `--strict-mcp-config` alone: no user MCP process.
  */
 export function leanChildMcpArgs(
-  lean: { leanMcpPath: string | null; projectMcp: string | null; browser: string | null } | null,
+  lean: { leanMcpPath: string | null; projectMcp: string | null; browser: string | null; allowlisted?: boolean } | null,
   normal: Array<string | null>,
 ): string[] {
   if (!lean) return mcpConfigArgs(normal);
-  return ['--strict-mcp-config', ...mcpConfigArgs([lean.leanMcpPath, lean.projectMcp, lean.browser])];
+  // `allowlisted`: the spawn's settings carry `allowedMcpServers` (a claude.ai connector was given),
+  // which narrows like strict does and, unlike strict, keeps that connector.
+  return [...(lean.allowlisted ? [] : ['--strict-mcp-config']), ...mcpConfigArgs([lean.leanMcpPath, lean.projectMcp, lean.browser])];
 }
 
 /**
@@ -1660,7 +1664,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // never a refusal that would lock the conversation out.
     const lean = leanMcpForUpgrade({
       assistant, mode, conversation: resumeId || sessionId, lean: url.searchParams.get('lean'), mcp: url.searchParams.get('mcp'),
-      recorded: delegatedChildMcp, known: () => knownMcpServers(projectRoot),
+      recorded: delegatedChildMcp, known: () => knownChildMcp(projectRoot).all,
     });
     if (lean === 'refuse') { rejectUpgrade(socket, 400); return; }
     const leanMcp = lean ?? undefined;
@@ -2497,10 +2501,16 @@ export function startChatSession(
   };
   const leanProjectMcp = opts.leanMcp ? projectMcpJson(projectRoot) : null;
   const leanProjectMcpSafe = leanProjectMcp && tmpPathOk(leanProjectMcp) ? leanProjectMcp : null;
+  /** The claude.ai connectors a lean Claude child was given (`--mcp notion`), each with the URL its
+   *  allowlist entry needs (lean-mcp.ts `connectorRulesFor`). Never for a Codex or Antigravity child:
+   *  connectors are Claude's, and `delegate` refuses them there. */
+  let leanConnectorRules: Array<{ alias: string; name: string; url: string }> = [];
   if (opts.leanMcp && !scopedCard) {
     try {
-      const known = knownMcpServers(projectRoot);
+      const childMcp = knownChildMcp(projectRoot);
+      const known = childMcp.local;
       leanMcpPath = writeLeanMcpConfig(opts.leanMcp.filter((n) => known.has(n)), known);
+      if (!bridgeTool && !app) leanConnectorRules = connectorRulesFor(opts.leanMcp.filter((n) => !known.has(n)), childMcp.connectors, activeAccountId || (listClaudeAccounts().length ? '' : 'default'), childMcp.read);
       if (leanMcpPath && !tmpPathOk(leanMcpPath)) {
         removeLeanMcpConfig(leanMcpPath);
         leanMcpPath = null;
@@ -2739,6 +2749,8 @@ export function startChatSession(
   // classifier reads them only from flag/user/managed settings, never the repo's own, so one
   // `--settings` file holds both. Written even under bypass — a live switch to auto keeps them.
   const spawnSettings: Record<string, unknown> = autoModeSettings();
+  /** The lean allowlist is in this spawn's settings file: the child runs without strict. */
+  let leanAllowlisted = false;
   let modeNoteArg: string[] = [];
   let cleanupModeNote = () => { /* nothing written */ };
   const tmpFiles: string[] = [];
@@ -2776,12 +2788,23 @@ export function startChatSession(
   // own would drop: the Bash gate (own assistant) and the file gate (own assistant and member). The carve-out for builders is not an app chat's business.
   if (app) delete spawnSettings.autoMode;
   if (app?.hooks) spawnSettings.hooks = { ...(spawnSettings.hooks as Record<string, unknown> | undefined), ...app.hooks };
+  // A lean child given a claude.ai connector: Claude Code's own MCP allowlist instead of
+  // `--strict-mcp-config` (which drops every connector): its files' servers by name, each
+  // connector by URL, nothing else. Only once this file is written does strict go
+  // (`leanAllowlisted`): no settings file, no connector, never a wider child.
+  if (leanConnectorRules.length) {
+    Object.assign(spawnSettings, leanAllowlist(
+      [...mcpFileNames(leanMcpPath), ...mcpFileNames(leanProjectMcpSafe), ...mcpFileNames(browserOverride?.configPath ?? null)],
+      leanConnectorRules,
+    ));
+  }
   try {
     const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
     if (!tmpPathOk(settings)) throw new Error('unsafe tmpdir');
     writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
     tmpFiles.push(settings);
     modeNoteArg = ['--settings', settings];
+    leanAllowlisted = leanConnectorRules.length > 0;
     
   } catch {
     // No carve-outs and no mode note this spawn — auto mode keeps its defaults. An app chat with no
@@ -2870,7 +2893,7 @@ export function startChatSession(
     // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
     // (strict would drop it) and the browser override, LAST as above. Never a store.
     // An app's own assistant: strict, and only the manifest's servers.
-    ...(scopedCard ? [] : leanChildMcpArgs(app?.own ? { leanMcpPath: app.mcpConfig, projectMcp: null, browser: null } : opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
+    ...(scopedCard ? [] : leanChildMcpArgs(app?.own ? { leanMcpPath: app.mcpConfig, projectMcp: null, browser: null } : opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null, allowlisted: leanAllowlisted && !scopedCard } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -3717,7 +3740,13 @@ export function startChatSession(
   const mcpPoll = async (): Promise<McpLiveServer[] | null> => {
     if (!alive || scopedCard) return null;
     try {
-      const servers = redactStatus(await mcpControl.status(), redactContextFor(projectRoot));
+      const raw = await mcpControl.status();
+      const servers = redactStatus(raw, redactContextFor(projectRoot));
+      // Where each claude.ai connector lives, for a lean child's allowlist (mcp-connectors.ts):
+      // only a chat that carries the account's whole connector list, as the status cache.
+      if (mcpAccount && !opts.leanMcp && !app?.own && !bridgeTool && !scopedCard) {
+        try { recordConnectorUrls(mcpAccount, raw); } catch { /* the last list stays */ }
+      }
       if (alive) mcpPublish(servers);
       return servers;
     } catch { return null; }
@@ -4000,6 +4029,11 @@ export function startChatSession(
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
     const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text, tgRef) : null;
     if (owedBlock) content.push({ type: 'text', text: owedBlock });
+    // What he did by hand since his last message (owner-marks.ts): his own words only, never a
+    // slash command, a server-written turn, a server continue, or a Telegram run report/schedule.
+    const handMarks = isSuper && !text.startsWith('/') && !serverContinue && !serverWritten && !receipt
+      && (tgSource === undefined || tgSource === 'telegram-text') ? superOwnerMarksBlock(chatRegistryId) : null;
+    if (handMarks) content.push({ type: 'text', text: handMarks.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
@@ -4012,6 +4046,10 @@ export function startChatSession(
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
     if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
+    if (handMarks) {
+      if (wrote) void superOwnerMarksCarried(handMarks.carry);
+      else superOwnerMarksReturned(handMarks.carry);
+    }
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
@@ -5632,7 +5670,10 @@ export function startChatSession(
     if (!asked.length) return;
     let grant: string[] = [];
     try {
-      grant = mcpGrantFor({ asked, have: [...spawnedMcp, ...mcpGranted], known: knownMcpServers(projectRoot), lean: !!opts.leanMcp });
+      // A lean Claude child may be granted a claude.ai connector too (`notion`); an ordinary chat
+      // already carries the account's connectors, so only the project's servers are news to it.
+      const known = opts.leanMcp ? knownChildMcp(projectRoot).all : knownMcpServers(projectRoot);
+      grant = mcpGrantFor({ asked, have: [...spawnedMcp, ...mcpGranted], known, lean: !!opts.leanMcp });
     } catch { return; }
     if (!grant.length) return;
     mcpGranted.push(...grant);
@@ -5642,7 +5683,13 @@ export function startChatSession(
     // wait on a receipt), and the successor's live status shows what is still missing.
     const after = new Set([...spawnedMcp, ...mcpGranted]);
     let signIn: string[] = asked;
-    try { signIn = mcpNeedingSignIn(asked, readStatusCache()); } catch { /* unknown: no receipt */ }
+    try {
+      const child = knownChildMcp(projectRoot);
+      // A connector this chat's ACCOUNT is not known to have is no promise of loaded tools: no
+      // receipt, the card stays the owner's and the successor's live row says what it has.
+      const notHere = asked.filter((n) => { const c = child.connectors.get(n); return !!c && !child.local.has(n) && connectorOnAccount(c, mcpAccount, child.read) !== 'yes'; });
+      signIn = [...childMcpNeedingSignIn(asked, child.connectors, readStatusCache()), ...notHere];
+    } catch { /* unknown: no receipt */ }
     if (asked.every((n) => after.has(n)) && !signIn.length) {
       const names = mcpGranted.join(', ');
       mcpGrantReceipt = JSON.stringify({
