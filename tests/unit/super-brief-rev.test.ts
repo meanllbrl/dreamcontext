@@ -148,10 +148,10 @@ describe('superBriefState', () => {
     const summary = { type: 'user', isCompactSummary: true, message: { content: [{ type: 'text', text: `summary ${SUPER_BRIEF_MARKER}` }] } };
     expect(superBriefState(j(old, owner('x', SUPER_BRIEF_TEXT), compact, summary), SUPER_BRIEF_REV).due).toBe(true);
   });
-  it('rev 14 (2026-10-27): a child\'s question (`shown=owner`) is already on the owner\'s bar: leave it unless settled', () => {
-    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(14);
+  it('rev 51 (2026-11-15): a child\'s question (`shown=owner`) waits on the Mac bar only, never Telegram; `queue ask` when he is away and must know', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(51);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
-      expect(t).toContain('one marked `shown=owner` is already on his\n  bar: else leave it, silent.');
+      expect(t).toContain('one marked `shown=owner` is already on his\n  Mac bar only, never on Telegram: if he is away and needs to know, put it to him with `queue ask`');
     }
   });
 

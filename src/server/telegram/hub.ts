@@ -17,8 +17,8 @@
  *    owner is ON TELEGRAM (his latest message to this Super came through this bot, under 24 h,
  *    see `onTelegram`) every section, whatever ref it opens with (job results, owed answers);
  *    while Telegram-started hands-free is on, every answer (marks stripped);
- *  - typing while the turn runs; one status message per Telegram message, rows = children and
- *    team jobs whose origin is that ref; the status line edited to its done state;
+ *  - typing while the turn runs (no server status message, owner 2026-11-15: the Super says its
+ *    jobs, or he asks with /durum);
  *  - the Super chat's own permission / question prompts as buttons answered through the window
  *    (`hub_command answer_pending`), so the Mac card closes;
  *  - every loss of a binding sends a last message from the IN-MEMORY binding first (C3, D3).
@@ -43,12 +43,11 @@ import { memberScope } from '../../lib/agents/scope.js';
 import type { SuperId, SuperState } from '../../lib/super/types.js';
 import { isOwnerProse, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
-import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
-  CALLBACK_DATA_RE, MEMBER_TELEGRAM_COMMANDS, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
+  CALLBACK_DATA_RE, MEMBER_TELEGRAM_COMMANDS, PAIRING_TTL_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, telegramSideSource, withTelegramRef,
-  type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart, type StatusState,
+  type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart,
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
 } from '../../lib/telegram/contract.js';
 import {
@@ -62,7 +61,7 @@ import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
 import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
-import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
+import { SILENT, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
 import { voiceAnswer } from '../../lib/telegram/voice-block.js';
@@ -97,7 +96,7 @@ export const MANAGER_PAIRING_TARGET = '@manager';
 export const INJECTOR_WAIT_MS = 45_000;
 /** The last-message send never waits longer than this on a binding loss (D3). */
 const LAST_MESSAGE_TIMEOUT_MS = 5_000;
-/** Typing and the live status message stop after this, whatever the turn does. */
+/** Typing stops after this, whatever the turn does. */
 const TURN_TYPING_CAP_MS = 2 * 60 * 60 * 1000;
 
 export const LINES = {
@@ -221,9 +220,6 @@ interface TgTurn {
   chatId: number;
   sessionId: string;
   startedAt: number;
-  statusMessageId: number | null;
-  statusText: string;
-  lastEditAt: number;
   typing: ReturnType<typeof setInterval> | null;
   answered: boolean;
 }
@@ -1060,17 +1056,16 @@ export class TelegramHub implements TelegramHubApi {
     }
   }
 
-  // ── Turn status: typing, one status message, the final line (plan "Status message", M2) ──
+  // ── Turn status: typing and the final line ──
 
   private beginTurn(ab: ActiveBinding, ref: string, sessionId: string): void {
-    const turn: TgTurn = { ref, key: ab.key, chatId: ab.binding.chatId, sessionId, startedAt: this.now(), statusMessageId: null, statusText: '', lastEditAt: 0, typing: null, answered: false };
+    const turn: TgTurn = { ref, key: ab.key, chatId: ab.binding.chatId, sessionId, startedAt: this.now(), typing: null, answered: false };
     this.turns.set(ref, turn);
     const tick = () => {
       // Never forever: a chat that died mid-turn, or a turn past its cap, stops typing.
       const live = getChat(sessionId);
       if (!live || live.status === 'gone' || this.now() - turn.startedAt > TURN_TYPING_CAP_MS) { this.endTurn(ref); return; }
       void ab.transport.sendChatAction(ab.binding.chatId, 'typing').catch(() => {});
-      void this.refreshStatus(turn).catch(() => {});
     };
     tick();
     turn.typing = setInterval(tick, TYPING_EVERY_MS);
@@ -1086,47 +1081,8 @@ export class TelegramHub implements TelegramHubApi {
     return t;
   }
 
-  /** The rows of one Telegram message: children and team jobs whose origin is its ref. */
-  async statusRows(ab: ActiveBinding, ref: string): Promise<{ state: StatusState; label: string; note?: string }[]> {
-    const b = this.superOf(ab);
-    if (!b) return [];
-    const s = await readSuperState(b.root, b.id);
-    const rows: { state: StatusState; label: string; note?: string }[] = [];
-    for (const c of Object.values(s.children)) {
-      if (c.origin !== ref) continue;
-      const live = getChat(c.sessionId);
-      const pending = live?.pendingQuestion?.isPermission;
-      const state: StatusState = pending ? 'waiting' : c.row === 'working' ? 'running' : c.row === 'asking' ? 'asking' : c.row === 'done' ? 'done'
-        : c.row === 'stuck' ? 'stuck' : c.row === 'gone' ? 'gone' : c.row === 'waiting' ? 'waiting' : 'running';
-      rows.push({ state, label: (c.brief || 'iş').slice(0, 60), note: pending ? 'izin bekliyor' : undefined });
-    }
-    for (const j of s.team) {
-      if (j.origin !== ref) continue;
-      let st: string = 'running';
-      try { st = teamJobStatus(b.root, j, null).status; } catch { /* running */ }
-      const state: StatusState = st === 'done' ? 'done' : st === 'failed' ? 'stuck' : st === 'asking' ? 'asking' : 'running';
-      rows.push({ state, label: `${j.member}: ${(j.brief || '').slice(0, 50)}` });
-    }
-    return rows;
-  }
-
-  private async refreshStatus(turn: TgTurn): Promise<void> {
-    const ab = this.active.get(turn.key);
-    if (!ab) return;
-    const rows = await this.statusRows(ab, turn.ref);
-    if (!rows.length) return;
-    const text = rows.map((r) => statusLineHtml(r.state, r.label, r.note)).join('\n');
-    if (text === turn.statusText) return;
-    if (turn.statusMessageId === null) {
-      const sent = await this.send(ab, text, SILENT);
-      turn.statusMessageId = sent.message_id;
-    } else {
-      if (this.now() - turn.lastEditAt < STATUS_EDIT_MIN_MS) return;
-      await ab.transport.editMessageText(ab.binding.chatId, turn.statusMessageId, text).catch(() => {});
-    }
-    turn.statusText = text;
-    turn.lastEditAt = this.now();
-  }
+  // No status message (owner 2026-11-15): Telegram carries only what the Super itself writes. The
+  // jobs of a turn are said by the Super, or asked for with /durum (commands.ts `statusText`).
 
   private noteUserSent(sessionId: string, source: string | undefined): void {
     // Presence is not read here: only words typed on the Mac end it (`backAtMac`), whichever chat.
@@ -1153,7 +1109,6 @@ export class TelegramHub implements TelegramHubApi {
         if (!ab) continue;
         void (async () => {
           await sending;
-          await this.refreshStatus({ ...t, lastEditAt: 0 }).catch(() => {});
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
           // for the owner says one plain line (it failed or stopped while he waits).
           if (!t.answered) await this.notice(ab, 'warn', LINES.endedSilent, true);

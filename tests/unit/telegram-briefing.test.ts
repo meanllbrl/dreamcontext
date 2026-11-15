@@ -7,6 +7,7 @@ describe('Telegram briefing line', () => {
   it('is in the briefing and in the update a running session gets', () => {
     expect(superBriefing()).toContain(SUPER_TELEGRAM_LINE);
     expect(SUPER_BRIEF_TEXT).toContain(SUPER_TELEGRAM_LINE);
+    expect(SUPER_TELEGRAM_LINE).toContain('A question, result or job-status list of a child never reaches his Telegram by itself');
     expect(SUPER_TELEGRAM_LINE).toContain('via="telegram"');
     expect(SUPER_TELEGRAM_LINE).toContain('super ask');
   });

@@ -1697,7 +1697,7 @@ async function askMainSuper(c: SuperCaller, res: ServerResponse, spec: SuperAskS
 async function answerMemberMirror(c: SuperCaller, res: ServerResponse, mirror: SuperQueueItem, text: string): Promise<void> {
   if (mirror.state === 'done') { refuse(res, 409, 'already_done', 'that question is already answered'); return; }
   if (mirror.of !== 'ask' || !mirror.member || !mirror.answers) {
-    refuse(res, 409, 'owner_only', 'only the owner answers this one (a child\'s question, a permission or a card only he can act on): it waits on his bar and, while he is away, on Telegram. Tell him in one line which member waits and why');
+    refuse(res, 409, 'owner_only', 'only the owner answers this one (a child\'s question, a permission or a card only he can act on): it waits on his bar (a permission or a card only he can act on is also on Telegram while he is away; the question of a job never is). Tell him in one line which member waits and why');
     return;
   }
   const root = c.who.contextRoot;
@@ -2452,6 +2452,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const q = s.queue.find((x) => x.id === id);
       if (q && q.kind === 'question' && q.state !== 'done') {
         q.state = 'escalated';
+        q.superAsked = true;
         q.ownerText = text;
         if (batch) { q.batch = batch; noteOwnerBatch(s, batch); }
         shown = applyAskShow(s, q.id, prep, c.who.contextRoot, now, s.children[child] ? child : undefined);

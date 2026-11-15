@@ -208,6 +208,14 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
     // At the Mac (`hub.ownerAway()` false) the Mac card is the only one: `at_mac`, nothing taken,
     // so the turn-away flush below sends it once he is away.
     telegram: ({ vault, sessionId, item }) => {
+      // Owner 2026-11-15: a child's question never goes to Telegram by itself. The Super reads it
+      // (`event=question`), answers it, or asks in its own words (`super ask`, `queue ask`): only
+      // those reach here (`superAsked`).
+      if (item.kind === 'question' && item.superAsked !== true) return false;
+      // The same for a member Super's child question mirrored into main's queue (owner decision
+      // 2026-11-15), even inside his own talk with that member: the member's Super asks with its
+      // own `super ask`, which is a member `ask`.
+      if (item.kind === 'member' && item.of === 'question') return false;
       const ab = ownerTalkBinding(hub, vault, item) ?? hub.superBindingOfVault(vault);
       if (!ab) return 'no_bot';
       if (!hub.ownerAway()) return 'at_mac';

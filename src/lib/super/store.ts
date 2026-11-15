@@ -488,6 +488,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       } } : {}),
       ...(team && q.partial === true ? { partial: true as const } : {}),
       ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
+      ...(q.kind === 'question' && !team && q.superAsked === true ? { superAsked: true as const } : {}),
       ...((isAsk || isMirror) && q.ownerTalk === true ? { ownerTalk: true as const } : {}),
       ...(q.kind === 'permission' && q.toSuper === true ? { toSuper: true as const } : {}),
       ...(options.length ? { options } : {}),

@@ -490,6 +490,20 @@ describe('commands (M4, N5, N6, P4)', () => {
     await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('<i>Paywall testi</i> · çalışıyor'))).toBe(true));
   });
 
+  it('no server status message: a turn\'s children are never listed on Telegram by the server (owner 2026-11-15)', async () => {
+    const { h, sent } = chat();
+    superWindow();
+    tg.push(TOKEN, textUpdate(OWNER, 'bir iş başlat'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    const { ref } = parseTelegramPrefix(sent[0]);
+    await writeState({ children: { c1: { sessionId: 'c1', brief: 'Paywall testi', row: 'working', startedAt: 1, adopted: false, origin: ref } } });
+    assistant(h, `<!-- re:${ref} -->\nBaşlattım`);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Başlattım'))).toBe(true));
+    endTurn(h);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(tg.texts().some((t) => t.includes('Paywall testi'))).toBe(false);
+  });
+
   /** The newest edit of the agenda message: what the phone shows now (text + keyboard). */
   const plain = (h: string) => h.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
   const lastEdit = () => tg.calls.filter((c) => c.method === 'editMessageText').pop()!;
