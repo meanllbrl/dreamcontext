@@ -94,6 +94,7 @@ import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { JumpToLatest } from './chat/JumpToLatest';
+import { isOwnSend } from './chat/ownSend';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
 import { answerRowAfter, followStep, ownAnchorIndex, shouldWrite } from './super/superScroll';
@@ -2982,12 +2983,11 @@ export function ChatPane({
 
   // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
   const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia);
-  // Nor, for the pin, is an event turn: the live chip is a user item too, and re-arming on it
-  // dragged a reader down on every event. Retry keeps `lastUserItem`: a failed event turn is
-  // what it sends again.
-  const lastOwnItem = superView
-    ? [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia && !it.echo && !it.queued && !superEventOf(it.text))
-    : lastUserItem;
+  // Nor, for the view, is anything that is not HIS send from this pane, in any chat: an event
+  // turn (re-arming on its live chip dragged a reader down on every event), a server-submitted
+  // opening prompt (sleep, a delegate run), a message typed elsewhere, a queue drain. Retry keeps
+  // `lastUserItem`: a failed event turn is what it sends again.
+  const lastOwnItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && isOwnSend(it));
 
   // Sending is unambiguous intent to watch the answer, so it re-arms sticking: a reply that
   // streams in off-screen because you had scrolled up is a bug, not a feature. Keyed on the

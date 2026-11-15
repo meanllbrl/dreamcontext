@@ -4,6 +4,7 @@ import {
   INPUT_QUIET_MS, answerRowAfter, followStep, ownAnchorIndex, shouldWrite,
 } from '../../dashboard/src/components/sleepy/super/superScroll';
 import { landingFor } from '../../dashboard/src/components/sleepy/super/superUnread';
+import { isOwnSend } from '../../dashboard/src/components/sleepy/chat/ownSend';
 
 const CLEAR = 64;
 const VIEW = 600;
@@ -110,7 +111,19 @@ describe('ONE scroll owner in the Super pane', () => {
     expect(pane).toMatch(/&& \(superView \|\| Date\.now\(\) - \(lastOwnItem\?\.ts \?\? 0\) < FRESH_SEND_MS\);/);
     expect(pane).toMatch(/if \(!sent\) \{\n\s+if \(!superView\) \{ setStick\(true\); scrollToBottom\(\); \}\n\s+return;\n\s+\}/);
     expect(pane).toMatch(/placeAtBottom\(lastUserItemId\);\n\s+\}, \[lastUserItemId/);
-    expect(pane).toMatch(/!it\.echo && !it\.queued && !superEventOf\(it\.text\)/);
+    expect(pane).toMatch(/const lastOwnItem = \[\.\.\.conv\.items\]\.reverse\(\)\.find\(\(it\): it is ChatUserItem => it\.kind === 'user' && isOwnSend\(it\)\);/);
+  });
+  it('only HIS send stops the view, in every chat: a server prompt, an event, an echo or a drain never does', () => {
+    const base = { kind: 'user' as const, id: 'u1', text: 'bir hikaye anlat', ts: 1 };
+    expect(isOwnSend(base)).toBe(true);
+    expect(isOwnSend({ ...base, serverPrompt: true })).toBe(false);
+    expect(isOwnSend({ ...base, echo: true })).toBe(false);
+    expect(isOwnSend({ ...base, queued: true })).toBe(false);
+    expect(isOwnSend({ ...base, superEvent: 'child-done' })).toBe(false);
+    expect(isOwnSend({ ...base, text: '', stageMedia: [{ ref: 'a' }] })).toBe(false);
+    // The server's opening prompt (sleep, a delegate run) is marked where it lands.
+    const session = readFileSync('dashboard/src/components/sleepy/chatSession.ts', 'utf8');
+    expect(session).toMatch(/const echoed: ChatUserItem = \{ kind: 'user', id: nextItemId\(\), text: ev\.text, ts: Date\.now\(\), serverPrompt: true \};/);
   });
   it('a queued message moves the view at his press, never at the queue drain (r1)', () => {
     const session = readFileSync('dashboard/src/components/sleepy/chatSession.ts', 'utf8');
