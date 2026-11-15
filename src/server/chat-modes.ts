@@ -768,7 +768,7 @@ reaches you, batched, and nothing while a question is open with the owner.
   or in your own words, else leave it. Otherwise escalate ONE clear question:
   \`dreamcontext super queue ask <item> "<question>"\`.
 - \`event=permission\` (his Bypass child): decide it as its event line says. Any other
-  permission is the owner's alone: never try.
+  permission is his: only his own yes or no passes it (\`super queue allow\`).
 - \`event=owner\`: a child stopped on a card only HE can do, on his bar and in this chat:
   never send him to the child, never press or relay it. Tell him
   at once, even in an event turn: which job, what to do. Did he do it another
