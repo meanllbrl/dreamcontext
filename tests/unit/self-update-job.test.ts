@@ -63,6 +63,11 @@ describe('startSelfUpdateJob', () => {
     expect(startSelfUpdateJob({ env: {}, ppid: 4242, platform: 'darwin' })).toBeUndefined();
   });
 
+  it("starts nothing on the app's own runtime: the app updater replaces the CLI, npm is never asked", () => {
+    const execPath = '/Applications/dreamcontext-beta.app/Contents/Resources/runtime/bin/node';
+    expect(startSelfUpdateJob({ env: APP_ENV, ppid: 4242, platform: 'darwin', execPath, firstTickMs: 1000, tickMs: 5000 })).toBeUndefined();
+  });
+
   it('the timer knobs come from the environment (the scratch end-to-end uses them)', async () => {
     vi.useFakeTimers();
     const stop = startSelfUpdateJob({ env: { ...APP_ENV, DREAMCONTEXT_SELF_UPDATE_FIRST_TICK_MS: '50' }, ppid: 4242, platform: 'darwin' });

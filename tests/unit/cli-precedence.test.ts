@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  classifyCli, readAppCliRecord, appCliRecordPath, shouldReexec,
+  classifyCli, readAppCliRecord, appCliRecordPath, recordValid, shouldReexec,
   type AppCliRecord, type CliKind,
 } from '../../src/lib/cli-precedence.js';
 
@@ -32,6 +32,16 @@ describe('C3′ classify vectors', () => {
         windows: v.os === 'win32', home: v.home, entry: v.entry, exec: v.exec,
         pkgName: v.pkgName, record: v.record, installLocation: v.installLocation,
       })).toBe(v.expect);
+    });
+  }
+});
+
+describe('C2′ record vectors (the bin/rt copy, and the Mac bundle form)', () => {
+  const recs = (vectors as unknown as { record: Array<{ name: string; os: string; home: string; version: string; node: string; entry: string; expect: boolean }> }).record;
+  it('has record vectors', () => expect(recs.length).toBeGreaterThanOrEqual(10));
+  for (const v of recs) {
+    it(v.name, () => {
+      expect(recordValid({ version: v.version, node: v.node, entry: v.entry }, v.home, v.os === 'win32')).toBe(v.expect);
     });
   }
 });

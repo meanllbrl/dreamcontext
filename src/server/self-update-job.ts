@@ -12,6 +12,7 @@ import { compareVersions } from '../lib/version-check.js';
 import { anyChatBusy } from './chat-activity.js';
 import { startUpgradeRun } from './upgrade-job.js';
 import { realPath } from '../lib/real-path.js';
+import { isAppRuntimeNode } from '../lib/onboarding/platform.js';
 
 export const SELF_UPDATE_FIRST_TICK_MS = 90_000;
 export const SELF_UPDATE_TICK_MS = 30 * 60_000;
@@ -23,6 +24,8 @@ export interface SelfUpdateJobGate {
   firstTickMs?: number;
   tickMs?: number;
   deps?: SelfUpdateDeps;
+  /** The server's node (tests); default `process.execPath`. */
+  execPath?: string;
 }
 
 const envMs = (v: string | undefined): number | undefined => {
@@ -89,6 +92,12 @@ export function startSelfUpdateJob(gate: SelfUpdateJobGate = {}): (() => void) |
   const reason = selfUpdateJobDisabledReason(env, gate.ppid ?? process.ppid, gate.platform ?? process.platform);
   if (reason) {
     console.log(`  [self-update] disabled: ${reason}`);
+    return undefined;
+  }
+  // On the app's own runtime the app updater replaces the whole bundle, CLI included; npm is not
+  // there to ask (a fresh Mac has none), so a check would only ever record "could not reach npm".
+  if (isAppRuntimeNode(gate.execPath ?? process.execPath)) {
+    console.log('  [self-update] disabled: the app runs its own CLI and updates it with the app');
     return undefined;
   }
   const deps: SelfUpdateDeps = { busy: () => anyChatBusy(), runUpgrade: runUpgradeJob, ...gate.deps };

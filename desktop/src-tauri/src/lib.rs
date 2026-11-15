@@ -730,7 +730,9 @@ fn write_cli_path_cache(path: &str) {
 /// older global CLI hid every in-app update (src/cli_choice.rs). Order:
 ///   1. DREAMCONTEXT_CLI env (explicit dev/test override).
 ///   2. Windows: the bundled CLI unless the global one is strictly newer.
-///      Elsewhere: the global CLI unless the bundled one is strictly newer.
+///      Mac: an app that ships its own runtime runs its own CLI unless the global one is a
+///      developer's linked checkout (npm exit, plan npmsiz-beta C3′); an older bundle with no
+///      runtime keeps the global CLI unless the bundled one is strictly newer.
 ///   3. Bundled `dist/index.js` resource (no global CLI installed yet).
 ///   4. Dev `<cwd>/dist/index.js` (running `npm run tauri dev` from the repo).
 fn resolve_cli(app: &AppHandle) -> Result<(String, Option<String>), String> {
@@ -763,6 +765,15 @@ fn resolve_cli(app: &AppHandle) -> Result<(String, Option<String>), String> {
     }
     #[cfg(not(windows))]
     if let Some(g) = global.as_ref() {
+        // An app that ships its own runtime (the npm-free build) runs its own CLI; only a
+        // developer's linked checkout outranks it (plan npmsiz-beta C3′).
+        let has_runtime = app.path().resource_dir().ok().is_some_and(|d| node_runtime::bundled_node(&d).is_some());
+        let home = node_runtime::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+        let kind = cli_choice::global_cli_kind(Path::new(g), &home);
+        if let Some(b) = bundled.as_ref().filter(|_| cli_choice::bundle_outranks_global(has_runtime, kind)) {
+            applog::log(&format!("[cli] this app carries its own runtime: running its CLI over the global {kind:?} at {g}"));
+            return Ok((b.to_string_lossy().into_owned(), global.clone()));
+        }
         if let Some(b) = bundled.as_ref().filter(|_| cli_choice::bundled_beats_global(global_version.as_deref(), bundled_version)) {
             applog::log(&format!(
                 "[cli] the bundled CLI {bundled_version} is newer than the global {} at {g}: running the bundled copy",
