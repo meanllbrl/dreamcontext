@@ -454,7 +454,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-fab { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
 .agenda-fab-btn {
   width: 40px; height: 40px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0;
-  border: 0; border-radius: var(--radius-full); background: var(--color-accent); color: var(--color-snow, #fff); cursor: pointer;
+  border: 0; border-radius: var(--radius-full); background: var(--color-accent-strong); color: var(--color-accent-text); cursor: pointer;
   box-shadow: 0 4px 14px color-mix(in srgb, var(--color-accent) 35%, transparent), 0 1px 3px rgba(0, 0, 0, 0.18);
   transition: transform 120ms ease;
 }
@@ -467,7 +467,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   box-shadow: inset 0 0 0 1px var(--color-border-focus), 0 6px 18px rgba(0, 0, 0, 0.22);
 }
 .agenda-fab-input, .agenda-fab-input:focus, .agenda-fab-input:focus-visible { flex: 1 1 auto; min-width: 0; height: 32px; padding: 0; border: 0; outline: none; box-shadow: none; background: none; font: inherit; color: var(--color-text); }
-.agenda-fab-go { width: 32px; height: 32px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-full); background: var(--color-accent); color: var(--color-snow, #fff); cursor: pointer; }
+.agenda-fab-go { width: 32px; height: 32px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-full); background: var(--color-accent-strong); color: var(--color-accent-text); cursor: pointer; }
 .agenda-fab-go:disabled { background: var(--color-bg-tertiary); color: var(--color-text-tertiary); cursor: default; }
 .agenda-fab-form .agenda-add-error { position: absolute; right: 0; bottom: calc(100% + 6px); max-width: 100%; padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); background: var(--color-bg-elevated); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); }
 /* The 1x1 tile: the + in its foot's corner, smaller; its box opens over the foot. */

@@ -964,6 +964,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-multi-',
   'super-multi-req-',
   'super-multi-req-home-',
+  'super-open-missing-',
+  'super-open-missing-home-',
   'super-origin-',
   'super-origin-home-',
   'super-outbox-home-',

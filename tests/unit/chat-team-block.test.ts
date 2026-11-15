@@ -296,6 +296,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "- Done holds today's; a past day's go by themselves. New work: `super note clear`. Write a",
       '  day or date, never "today"/"tomorrow". Recap, handover, fresh session: read the pad in',
       '  `super state`, close what he did or no longer holds.',
+      // 2026-11-15 (filmstrip-varsayilan): the default layout line now says filmstrip over grid.
+      '(1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip, 2+ clips filmstrip; a page with its child\'s chat: review).',
       // rev 33 (2026-11-08): the kept: owner_layout line grew its NOT-on-screen rule.
       '`kept: owner_layout` in the answer = he chose that layout: leave it.',
       // 2026-11-02 (rev 28): a Bypass child's leftover permission is the Super's to decide.
@@ -447,6 +449,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  undo it; mention one only when it changes what you do.',
       '- New work: `super note clear` (your lines only; his stay).',
       // rev 33 (2026-11-08): a kept or skipped presentation is never claimed as shown.
+      // 2026-11-15 (filmstrip-varsayilan): the default layout line says filmstrip over grid.
+      expect.stringContaining('(1 spotlight, 2 compare, 3-8 filmstrip'),
       expect.stringContaining('`state: skipped` or a `note` saying NOT on his screen'),
       // rev 46 (2026-11-14, sunum-sirasi): a present over his presentation waits in the queue.
       expect.stringContaining('answers `queued: {at, of}`: it waits its turn'),
