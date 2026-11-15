@@ -27,8 +27,9 @@ import { wouldRedact } from './format.js';
 import { authoredSecretHit } from './render.js';
 import type { RenderCardFrame, RenderCardResult, RenderCardRoot } from './contract.js';
 
-/** `WindowChrome.tsx` ZOOM_LEVELS (drift test in `tests/unit/telegram-render.test.ts`). */
-export const ZOOM_LEVELS: readonly number[] = [0.85, 0.9, 1.0, 1.1, 1.2];
+/** `dashboard/src/lib/zoom.ts` ZOOM_LEVELS, 0.75 … 1.5 in 5% steps (drift test in
+ *  `tests/unit/telegram-render.test.ts`). */
+export const ZOOM_LEVELS: readonly number[] = Array.from({ length: 16 }, (_, i) => Math.round((0.75 + i * 0.05) * 100) / 100);
 export const KNOWN_THEMES: readonly string[] = ['light', 'dark'];
 
 const SVG_TAGS = ['svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'marker', 'clippath', 'lineargradient', 'stop', 'title', 'desc'];

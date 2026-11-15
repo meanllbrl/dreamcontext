@@ -52,7 +52,6 @@ import { MemberAgendaTasks, MemberApprovalBand, MemberRefusalLine, MemberStageHe
 import { TaskStrip } from './TaskStrip';
 import './SuperSurface.css';
 import './superTone.css';
-import './superCentre.css';
 
 export { runFlights, prefersReducedMotion, type FlightRun } from './motionRunner';
 export { samePlan } from './StageMotion';

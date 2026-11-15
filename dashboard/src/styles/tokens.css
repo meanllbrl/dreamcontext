@@ -44,20 +44,26 @@
 
   --zoom: 1;
 
-  /* ClickUp type scale: 12 / 14 / 16 / 26 / 34 / 40 / 52 / 76 */
-  --font-size-2xs: calc(11px * var(--zoom)); /* chrome — title-bar / strip controls only */
+  /* The type scale at 100%, Claude Desktop's (owner 2026-11-15, "fontlar çok büyük, claude desktopla
+     aynı olsun, ölçek olarak da"): measured on its screen, body 14.5px on a 21px line and UI labels
+     13-14px, so the whole ClickUp scale (12/14/16/20/26/40/52/76) is set ~0.9x, ratios kept.
+     Every size is multiplied by --zoom: the title bar's zoom icon moves the whole scale at once. */
+  --font-size-2xs: calc(10.5px * var(--zoom)); /* chrome — title-bar / strip controls only */
   /* The smallest tap target a finger gets (WCAG 2.5.5), and the title bar that holds one
      (a touch screen on Mac mode's tunnel, hands-free sekmeler W2). */
   --touch-target: 44px;
   --titlebar-height-touch: calc(var(--touch-target) + var(--space-3));
-  --font-size-xs: calc(12px * var(--zoom));   /* caption */
-  --font-size-sm: calc(14px * var(--zoom));   /* body-sm — UI labels */
-  --font-size-base: calc(16px * var(--zoom)); /* body */
-  --font-size-lg: calc(20px * var(--zoom));   /* subheading-sm (interpolated) */
-  --font-size-xl: calc(26px * var(--zoom));   /* subheading */
-  --font-size-2xl: calc(40px * var(--zoom));  /* heading */
-  --font-size-3xl: calc(52px * var(--zoom));  /* heading-lg */
-  --font-size-display: calc(76px * var(--zoom)); /* display */
+  --font-size-xs: calc(11.5px * var(--zoom));   /* caption */
+  --font-size-sm: calc(13px * var(--zoom));   /* body-sm — UI labels */
+  /* The composer and side-menu rows (Claude Desktop's 14px). Read by a dozen surfaces that used to
+     fall back to a fixed 15px or inherit, so it was the one size the zoom never reached. */
+  --font-size-md: calc(14px * var(--zoom));
+  --font-size-base: calc(14.5px * var(--zoom)); /* body */
+  --font-size-lg: calc(18px * var(--zoom));   /* subheading-sm (interpolated) */
+  --font-size-xl: calc(23.5px * var(--zoom));   /* subheading */
+  --font-size-2xl: calc(36px * var(--zoom));  /* heading */
+  --font-size-3xl: calc(47px * var(--zoom));  /* heading-lg */
+  --font-size-display: calc(68px * var(--zoom)); /* display */
 
   --font-weight-light: 300;
   --font-weight-normal: 400;

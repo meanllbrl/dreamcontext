@@ -99,13 +99,17 @@ describe('the Super chat scrolls like Telegram (owner 2026-11-13, rule C)', () =
 
 describe('ONE scroll owner in the Super pane', () => {
   const pane = readFileSync('dashboard/src/components/sleepy/ChatPane.tsx', 'utf8');
-  it('every follow write in the Super view goes through superStep', () => {
-    expect(pane).toMatch(/if \(superRef\.current\) \{ superStep\(el\); return; \}/);
+  it('every follow write, in every chat, goes through superStep (owner 2026-11-15, Claude Desktop)', () => {
+    const body = pane.slice(pane.indexOf('const scrollToBottom = useCallback'), pane.indexOf('}, [superStep]);', pane.indexOf('const scrollToBottom = useCallback')));
+    expect(body).not.toMatch(/scrollTop = /);
+    expect(body.match(/superStep\((el|now)\)/g)).toHaveLength(2);
     expect(pane).not.toMatch(/holdAtUnread|useFollowUnread|followRowRef|SuperUnreadBar/);
   });
   it('only his own send moves the view: the mount and an echo do not', () => {
-    expect(pane).toMatch(/if \(superView && !sent\) return;/);
-    expect(pane).toMatch(/if \(superView\) \{ placeAtBottom\(lastUserItemId\); return; \}/);
+    // An ordinary chat's resumed history is no send either: a send is stamped just now.
+    expect(pane).toMatch(/&& \(superView \|\| Date\.now\(\) - \(lastOwnItem\?\.ts \?\? 0\) < FRESH_SEND_MS\);/);
+    expect(pane).toMatch(/if \(!sent\) \{\n\s+if \(!superView\) \{ setStick\(true\); scrollToBottom\(\); \}\n\s+return;\n\s+\}/);
+    expect(pane).toMatch(/placeAtBottom\(lastUserItemId\);\n\s+\}, \[lastUserItemId/);
     expect(pane).toMatch(/!it\.echo && !it\.queued && !superEventOf\(it\.text\)/);
   });
   it('a queued message moves the view at his press, never at the queue drain (r1)', () => {
@@ -133,11 +137,13 @@ describe('ONE scroll owner in the Super pane', () => {
     expect(pane).toMatch(/const refocusComposer = \(\) => \{ if \(window\.matchMedia\('\(hover: hover\)'\)\.matches\) session\.focus\(\); \};/);
     expect(pane).toMatch(/onGone=\{refocusComposer\}/);
   });
-  it('the follow re-arms only on HIS scroll to the bottom', () => {
-    expect(pane).toMatch(/setStick\(superView && stick && !stickRef\.current && !readerMoving \? false : stick\);/);
+  it('the follow re-arms only on HIS scroll to the bottom, in every chat', () => {
+    expect(pane).toMatch(/setStick\(stick && !stickRef\.current && !readerMoving \? false : stick\);/);
   });
-  it('the button strip is reserved all the time in the Super view', () => {
+  it('the ↓ button floats over the text in every chat: no strip is reserved (owner 2026-11-15)', () => {
     const css = readFileSync('dashboard/src/components/sleepy/ChatPane.css', 'utf8');
-    expect(css).toMatch(/\.chat-transcript--super > \.chat-scroll \{ margin-bottom: var\(--chat-float-strip\); \}/);
+    expect(css).not.toMatch(/--chat-float-strip/);
+    expect(css).toMatch(/\.chat-jump \{\n\s+position: absolute;[\s\S]*?width: 32px;\n\s+height: 32px;[\s\S]*?border-radius: var\(--radius-full\);/);
+    expect(pane).toMatch(/<JumpToLatest\n\s+shown=\{!atBottom\}/);
   });
 });

@@ -5,6 +5,8 @@ import { SelectionBar } from '../sleepy/chat/SelectionBar';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
+import { snapZoom } from '../../lib/zoom';
+import { ZoomMenu } from './newshell/ZoomMenu';
 import { trackPresence } from '../../lib/presence';
 import { focusedChatFor, onFocusedChat } from '../../lib/focusedChat';
 import { armFocusDiag, healUnfocusedPresses } from '../../lib/focusDiag';
@@ -176,7 +178,6 @@ export function useChrome(): ChromeApi {
 
 /* ─────────────────────────────── window-level chrome bits ─────────────────────────────── */
 
-const ZOOM_LEVELS = [0.85, 0.9, 1.0, 1.1, 1.2];
 const ZOOM_STORAGE_KEY = 'dreamcontext-zoom';
 
 function getStoredZoom(): number {
@@ -184,7 +185,8 @@ function getStoredZoom(): number {
     const stored = localStorage.getItem(ZOOM_STORAGE_KEY);
     if (stored !== null) {
       const val = parseFloat(stored);
-      if (ZOOM_LEVELS.includes(val)) return val;
+      // The old 10% steps (0.85 … 1.2) are all on the new 5% grid; anything else snaps to it.
+      if (Number.isFinite(val)) return snapZoom(val);
     }
   } catch { /* ignore */ }
   return 1.0;
@@ -945,8 +947,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     };
   }, []);
 
-  const setZoomLevel = useCallback((level: number) => {
-    if (!ZOOM_LEVELS.includes(level)) return;
+  const setZoomLevel = useCallback((value: number) => {
+    const level = snapZoom(value);
     setZoom(level);
     try { localStorage.setItem(ZOOM_STORAGE_KEY, String(level)); } catch { /* ignore */ }
   }, []);
@@ -1444,15 +1446,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     bounceNonce: 0,
   })), [open, activeVault, preview]);
 
-  const zoomIndex = ZOOM_LEVELS.indexOf(zoom);
-  const changeZoom = (delta: -1 | 1) => {
-    const nextIndex = zoomIndex + delta;
-    if (nextIndex < 0 || nextIndex >= ZOOM_LEVELS.length) return;
-    const next = ZOOM_LEVELS[nextIndex];
-    setZoom(next);
-    try { localStorage.setItem(ZOOM_STORAGE_KEY, String(next)); } catch { /* ignore */ }
-  };
-
   const cycleTheme = () => {
     setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
   };
@@ -1501,7 +1494,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             touch={coarse}
             onDrawerHover={onDrawerHover}
             zoom={zoom}
-            zoomLevels={ZOOM_LEVELS}
             onZoom={setZoomLevel}
             onCycleTheme={cycleTheme}
             themeLabel={themeLabel}
@@ -1654,11 +1646,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             {/* The active project's sleep tracker + update badge land here. */}
             <div className="chrome-slot" ref={setRightSlot} />
             <HandsfreeButton vault={activeVault} />
-            <div className="zoom-controls">
-              <button className="zoom-btn" onClick={() => changeZoom(-1)} disabled={zoomIndex <= 0} title="Zoom out">-</button>
-              <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-              <button className="zoom-btn" onClick={() => changeZoom(1)} disabled={zoomIndex >= ZOOM_LEVELS.length - 1} title="Zoom in">+</button>
-            </div>
+            <ZoomMenu zoom={zoom} onZoom={setZoomLevel} />
             <button className="theme-toggle" onClick={cycleTheme} title={`Theme: ${themeLabel}`}>
               {resolved === 'dark' ? (
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
