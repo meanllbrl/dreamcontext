@@ -550,10 +550,16 @@ function cleanOwnerWait(raw: unknown): { kind: OwnerWaitKind; id: string; key?: 
 
 /** A grant offer, re-validated: known sizes only (deduped, at most three), one-line texts capped.
  *  Control and bidi characters stay as text: every surface escapes what it draws. No size left:
- *  no offer (the surface then offers what is always true). */
+ *  no offer (the surface then offers what is always true), except a `rewrite` offer: a built-in
+ *  safety check no Allow can lift keeps its empty sizes, so no surface falls back to Allow once. */
 export function cleanGrantOffer(raw: unknown): GrantOffer | undefined {
   if (!isRecord(raw) || !Array.isArray(raw.sizes)) return undefined;
   const sizes = [...new Set(raw.sizes.filter((x): x is GrantSize => oneOf(GRANT_SIZES, x)))].slice(0, 3);
+  const rewrite = raw.rewrite === true;
+  if (rewrite) {
+    const why = typeof raw.onceOnlyReason === 'string' ? raw.onceOnlyReason.replace(/[\r\n]+/g, ' ').trim().slice(0, MAX_REFUSAL_REASON) : '';
+    return { sizes: [], rewrite: true, ...(why ? { onceOnlyReason: why } : {}) };
+  }
   if (!sizes.length) return undefined;
   const line = (v: unknown): string | undefined => {
     if (typeof v !== 'string') return undefined;

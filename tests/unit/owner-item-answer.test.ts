@@ -32,8 +32,9 @@ import { _resetChatRegistry, registerChat, registerCrewHandle, type ChatHandle }
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superKey } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.js';
 import {
-  _resetSuperInbox, _superInboxDrained, ownerItems, setGrantEnvForTest, setMemberGateForTest, settleAllowedOnce, wireSuperInbox, writeSuper,
+  REWRITE_TURN_HEAD, _resetSuperInbox, _superInboxDrained, ownerItems, reofferDraft, setGrantEnvForTest, setMemberGateForTest, settleAllowedOnce, wireSuperInbox, writeSuper,
 } from '../../src/lib/super/inbox.js';
+import { cleanGrantOffer } from '../../src/lib/super/store.js';
 import { ALLOWED_WAITING_TEXT, ALLOW_ONCE_SENTENCE, _resetOwnerAnswers, allowTurnText, answerOwnerItem, shownKeyOf } from '../../src/lib/super/answer.js';
 import { readOutbox } from '../../src/lib/super/outbox.js';
 import { teamJobStatus, teamLiveRows } from '../../src/lib/super/team.js';
@@ -276,6 +277,91 @@ describe('a refused call: Allow once', () => {
     expect(await answerShown(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'allow' } }))
       .toMatchObject({ ok: false, error: 'not_offered' });
     expect(listGrants()).toEqual([]);
+  });
+});
+
+/** Claude Code's built-in rm check, as 2.1.325 writes it (field 2026-11-15, Conor). */
+const SAFETY_TEXT = 'Permission for this command was denied by a built-in Claude Code safety check, not by the user. The check stops removals that can delete far more than intended.';
+function safetyRefuse(h: ChatHandle, command: string, id = 'toolu_s1'): void {
+  h.observe({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  h.observe({
+    type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: SAFETY_TEXT }] },
+    tool_result_meta: [{ id, permission_decision: { decision: 'reject', source: 'config', reason_type: 'safetyCheck', circuit_breaker: 'dangerousRemoval' } }],
+  });
+  h.observe({ type: 'result', subtype: 'success', is_error: false });
+}
+const RM = 'ROOT=/tmp/x; rm -rf "$ROOT/home"';
+
+describe('a call a built-in safety check refused (field 2026-11-15: Allow once pressed, nothing ran)', () => {
+  async function safetyItem(): Promise<{ session: string; item: SuperQueueItem; mirror: SuperQueueItem }> {
+    const session = await rotaSession();
+    safetyRefuse(crew(session, 'bypassPermissions'), RM);
+    await _superInboxDrained();
+    const item = (await rota()).queue.find((q) => q.own && q.kind === 'owner' && q.wait?.kind === 'refusal') as SuperQueueItem;
+    const mirror = (await main()).queue.find((q) => q.kind === 'member' && q.answers === item?.id) as SuperQueueItem;
+    expect(item).toBeTruthy();
+    expect(mirror).toBeTruthy();
+    return { session, item, mirror };
+  }
+
+  it('is born `safety` and offers no Allow, only a rewrite', async () => {
+    const { item } = await safetyItem();
+    expect(item.wait?.refusal?.source).toBe('safety');
+    expect(item.offer).toMatchObject({ sizes: [], rewrite: true });
+    expect(item.offer?.onceOnlyReason).toMatch(/no Allow can lift/);
+  });
+
+  it('"Ask it to rewrite": the session is told at once in plain words, the item and its mirror close, no grant', async () => {
+    const { session, item, mirror } = await safetyItem();
+    const turns: string[] = [];
+    registerCrewHandle(session, { sendServerTurn: (t) => { turns.push(t); return true; } });
+    expect(await answerOwnerItem(root, { record: 'main', item: mirror.id, via: 'chat', answer: { kind: 'refusal', action: 'rewrite' } }))
+      .toEqual({ ok: true, outcome: 'rewrite_asked' });
+    expect(turns).toHaveLength(1);
+    expect(turns[0].startsWith(REWRITE_TURN_HEAD)).toBe(true);
+    expect(turns[0]).toContain(RM);
+    expect(turns[0]).toContain('${ROOT:?}');
+    expect(turns[0]).not.toContain(ALLOW_ONCE_SENTENCE);
+    expect(listGrants()).toEqual([]);
+    await _superInboxDrained();
+    expect((await rota()).queue.find((q) => q.id === item.id)?.state).toBe('done');
+    expect((await main()).queue.find((q) => q.id === mirror.id)?.state).toBe('done');
+  });
+
+  it('an Allow from a surface still drawing one does the same, never a grant that cannot run', async () => {
+    const { session, item } = await safetyItem();
+    const r = await answerShown(root, { record: 'rota', item: item.id, via: 'telegram', answer: { kind: 'refusal', action: 'allow', size: 'once' } });
+    expect(r).toEqual({ ok: true, outcome: 'rewrite_asked' });
+    expect(listGrants()).toEqual([]);
+    // Not running: the note waits in the outbox for its first idle.
+    const box = await readOutbox(superKey(root, 'm:rota'));
+    expect(box.some((x) => x.child === session && x.text.startsWith(REWRITE_TURN_HEAD))).toBe(true);
+    expect((await rota()).queue.find((q) => q.id === item.id)?.state).toBe('done');
+  });
+
+  it('a rewrite is not offered for an ordinary refusal', async () => {
+    const { item } = await rotaRefused();
+    expect(await answerOwnerItem(root, { record: 'rota', item: item.id, via: 'bar', answer: { kind: 'refusal', action: 'rewrite' } }))
+      .toMatchObject({ ok: false, error: 'not_offered' });
+    expect((await rota()).queue.find((q) => q.id === item.id)?.state).not.toBe('done');
+  });
+
+  it('an item allowed before the source existed (`unknown`, the check named in its reason) closes when refused again, never offered again', () => {
+    const s = { ...emptySuperState(), session: MAIN, enabled: true };
+    const q: SuperQueueItem = {
+      id: 'q-old-1', sessionId: 'sess-c', kind: 'owner', state: 'escalated', createdAt: 1, allowed: 'once',
+      wait: { kind: 'refusal', id: 'rf-1', refusal: { tool: 'Bash', input: RM, whole: true, source: 'unknown', reason: SAFETY_TEXT } },
+    };
+    s.queue.push(q);
+    const out = reofferDraft(s, 'sess-c', new Set(['rf-1']), 2);
+    expect(out).toEqual([{ old: 'q-old-1', next: '', rewrite: true }]);
+    expect(s.queue).toHaveLength(1);
+    expect(s.queue[0].state).toBe('done');
+  });
+
+  it('the record keeps a rewrite offer with no size (else every surface would fall back to Allow once)', () => {
+    expect(cleanGrantOffer({ sizes: [], rewrite: true, onceOnlyReason: 'x' })).toEqual({ sizes: [], rewrite: true, onceOnlyReason: 'x' });
+    expect(cleanGrantOffer({ sizes: [] })).toBeUndefined();
   });
 });
 

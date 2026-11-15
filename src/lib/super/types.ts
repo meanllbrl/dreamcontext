@@ -1218,7 +1218,7 @@ export const MAX_OWNER_RESULT_TEXT = 8000;
 /** A refused tool call the owner may allow (K2), as the registry read it from the stream. The
  *  input is the CANONICAL input (grants `canonicalInput`), cut to PERMISSION_FULL_CAP: `whole`
  *  false means it was cut, and no surface may offer a grant for it (consent matches display). */
-export const REFUSAL_SOURCES = ['classifier', 'rule', 'mode', 'bridge', 'unknown'] as const;
+export const REFUSAL_SOURCES = ['classifier', 'rule', 'mode', 'bridge', 'safety', 'unknown'] as const;
 export type RefusalSource = typeof REFUSAL_SOURCES[number];
 export interface RefusalFact {
   tool: string;
@@ -1240,6 +1240,17 @@ export interface RefusalFact {
   cwd?: string;
 }
 export const MAX_REFUSAL_REASON = 300;
+/** The words Claude Code's own refusal opens with when one of its built-in safety checks stopped a
+ *  call (2.1.325: a removal it cannot resolve, `circuitBreaker: dangerousRemoval`). Only a person at
+ *  its own prompt may pass such a check; a PreToolUse allow (every grant) cannot. */
+export const SAFETY_CHECK_RE = /built-in Claude Code safety check/i;
+/** A refusal no grant can lift: born `safety`, or born before that source existed (`unknown`) with
+ *  Claude Code's own safety-check words in its reason. */
+export function isSafetyRefusal(r: Pick<RefusalFact, 'source' | 'reason'> | null | undefined): boolean {
+  return !!r && (r.source === 'safety' || (typeof r.reason === 'string' && SAFETY_CHECK_RE.test(r.reason)));
+}
+/** What the owner reads on such a card, in place of a size to allow. */
+export const SAFETY_REWRITE_REASON = "Claude Code's own safety check stopped it, and no Allow can lift that check. Ask the agent to rewrite it safely.";
 /** The most of a refused input a record keeps: the registry's PERMISSION_FULL_CAP (the same
  *  number, pinned equal in a test; the record cannot import the registry). */
 export const MAX_REFUSAL_INPUT = 16_000;
@@ -1260,7 +1271,7 @@ export type GrantSize = typeof GRANT_SIZES[number];
 export type OwnerAnswer =
   | { kind: 'question'; answers: Record<string, string> }
   | { kind: 'permission'; behavior: 'allow' | 'deny'; size?: GrantSize }
-  | { kind: 'refusal'; action: 'allow' | 'not_needed'; size?: GrantSize }
+  | { kind: 'refusal'; action: 'allow' | 'not_needed' | 'rewrite'; size?: GrantSize }
   | { kind: 'ask'; text: string }
   | { kind: 'dismiss' };
 
@@ -1280,11 +1291,16 @@ export interface OwnerAnswerRequest {
 }
 
 export type OwnerAnswerResult =
-  | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'dismissed' }
+  | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'rewrite_asked' | 'dismissed' }
   | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid' | 'changed'; message: string };
 
 /** What a surface may offer for one item (computed by the server, drawn by the window). */
-export interface GrantOffer { sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string }
+export interface GrantOffer {
+  sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string;
+  /** A built-in Claude Code safety check refused it (source `safety`): no grant can lift it, so no
+   *  Allow is offered; the card offers "Ask it to rewrite" (refusal action `rewrite`) instead. */
+  rewrite?: true;
+}
 
 /** One saved "always allowed" rule in a member profile's Permissions list (`rule` redacted). */
 export interface PermissionRuleView { id: string; member: string; form: 'script'; rule: string; createdAt: number }

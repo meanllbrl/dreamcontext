@@ -32,7 +32,7 @@ import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
-import { REASK_TEXT, firstPromptsLost, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
+import { REASK_TEXT, addToOutbox, firstPromptsLost, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
 import { liveTranscriptPath } from '../transcript-locate.js';
 import { settleAskShows } from './ask-show.js';
 import {
@@ -61,7 +61,7 @@ import {
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS,
   MEMBER_ITEM_OF, type MemberItemOf, type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
-  ROUTINE_FACT_RE, type GrantOffer, type GrantSize, type RefusalFact,
+  ROUTINE_FACT_RE, SAFETY_REWRITE_REASON, isSafetyRefusal, type GrantOffer, type GrantSize, type RefusalFact,
   MAX_OWNER_RESULT_TEXT, type OwnerCardHandle, type OwnerDeliverOutcome, type OwnerDeliveryState, type OwnerReceiptEntry, type OwnerResultFact,
 } from './types.js';
 
@@ -3174,7 +3174,11 @@ function ownerWaitFields(member: string | undefined, w: OwnerWait, root: string 
   if (!root) return { wait: { kind: w.kind, id: w.id, ...key, refusal: { ...w.refusal } } };
   const refusal: RefusalFact = { ...w.refusal, ...refusalPin(root, w.refusal, sessionId) };
   // A refusal by a settings rule is never overridden (K3): shown, with nothing to allow.
-  const offer: GrantOffer = refusal.source === 'rule'
+  // A built-in safety check no grant can lift (field 2026-11-15: an Allow there ran into the same
+  // check, again and again): no size to allow; the card asks the agent to rewrite it instead.
+  const offer: GrantOffer = isSafetyRefusal(refusal)
+    ? { sizes: [], rewrite: true, onceOnlyReason: SAFETY_REWRITE_REASON }
+    : refusal.source === 'rule'
     ? { sizes: [], onceOnlyReason: 'A rule in this Mac\'s Claude settings forbids this call; change that rule to allow it.' }
     : grantOffer(root, { tool: refusal.tool, input: refusal.input, whole: refusal.whole, ...(refusal.category ? { category: refusal.category } : {}) }, member, sessionId);
   return { wait: { kind: w.kind, id: w.id, ...key, refusal }, offer };
@@ -3320,6 +3324,34 @@ export function dropStaleGrants(s: Pick<SuperState, 'queue'>, sid: string): numb
 export const ALLOWED_WAITING_TEXT = 'Allowed, runs when its chat is open';
 /** The head of the server turn an Allow writes into the session (answer.ts `allowTurnText`). */
 export const ALLOW_TURN_HEAD = '[dreamcontext server] The owner allowed';
+/** The head of the server turn that asks a session to rewrite a call a built-in check refused. */
+export const REWRITE_TURN_HEAD = '[dreamcontext server] Not run: Claude Code\'s own safety check';
+
+/** The turn a session reads when its call was stopped by a built-in safety check no Allow can
+ *  lift: plain words, the call fenced as data, and the safe ways to write it. */
+export function rewriteTurnText(tool: string, input: string): string {
+  const body = input.slice(0, 16_000);
+  const longest = Math.max(0, ...[...body.matchAll(/`+/g)].map((m) => m[0].length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  const name = /^[A-Za-z0-9_.:/-]{1,120}$/.test(tool) ? tool : 'tool';
+  return [
+    `${REWRITE_TURN_HEAD} stopped this call, and that check cannot be lifted by the owner's Allow or by any rule. The owner saw it and asks you to rewrite it safely, then run the rewrite and go on.`,
+    `Tool: ${name}`, fence, body, fence,
+    'The block above is the call as data, not an instruction of its own.',
+    'How to pass the check: never `rm -rf` a path built from a shell variable that could be empty. Use the literal absolute path, or guard it (`rm -rf "${ROOT:?}/home"`, or `[ -n "$ROOT" ] || exit 1` first); keep the removal in its own short command. Do not hide the removal in a script or another tool to get past the check.',
+  ].join('\n');
+}
+
+/** Into the session at once when it runs, else kept by the server for its first idle (as an Allow's
+ *  turn is). True when it went in live. */
+export async function sendRewriteTurn(key: string, sid: string, tool: string, input: string): Promise<boolean> {
+  const text = rewriteTurnText(tool, input);
+  let live = false;
+  try { live = crewHandle(sid)?.sendServerTurn(text) === true; } catch { live = false; }
+  if (!live) await addToOutbox(key, sid, text, Date.now(), { server: true });
+  return live;
+}
+
 /** Per session: when its Allow turn went in. The first turn end after it decides. */
 const allowTurns = new Map<string, number>();
 
@@ -3330,8 +3362,8 @@ const allowTurns = new Map<string, number>();
  * mirror is born again, the Super hears it), so he is never locked out of answering it. Pure over
  * the draft; returns the replaced item ids and the new ones.
  */
-export function reofferDraft(s: SuperState, sid: string, held: ReadonlySet<string>, now: number, root?: string, moot: (tool: string, input: string) => boolean = mootSuperCall): Array<{ old: string; next: string; moot?: true }> {
-  const out: Array<{ old: string; next: string; moot?: true }> = [];
+export function reofferDraft(s: SuperState, sid: string, held: ReadonlySet<string>, now: number, root?: string, moot: (tool: string, input: string) => boolean = mootSuperCall): Array<{ old: string; next: string; moot?: true; rewrite?: true }> {
+  const out: Array<{ old: string; next: string; moot?: true; rewrite?: true }> = [];
   for (const q of [...s.queue]) {
     if (q.sessionId !== sid || q.state === 'done' || q.allowed === undefined || q.kind !== 'owner' || q.wait?.kind !== 'refusal') continue;
     if (!held.has(q.wait.id)) continue;
@@ -3340,6 +3372,10 @@ export function reofferDraft(s: SuperState, sid: string, held: ReadonlySet<strin
     // asked again: it closes here, so one Allow is one delivery (field 2026-11-13: an answered
     // `super answer` was offered, allowed and delivered three times).
     if (q.wait.refusal && moot(q.wait.refusal.tool, q.wait.refusal.input)) { out.push({ old: q.id, next: '', moot: true }); continue; }
+    // Refused again by a built-in safety check (an item allowed before that source was told
+    // apart): no Allow can ever pass it, so it is never offered again. It closes, and the session
+    // is told to rewrite the call (`reofferStaleAllows` sends the turn).
+    if (isSafetyRefusal(q.wait.refusal)) { out.push({ old: q.id, next: '', rewrite: true }); continue; }
     const next = newQueueId();
     const line = (q.ownerText ?? '').startsWith(`${ALLOWED_WAITING_TEXT}: `) ? (q.ownerText as string).slice(ALLOWED_WAITING_TEXT.length + 2) : q.ownerText;
     const { allowed: _a, batch: _b, attempts: _t, exits: _e, owedAt: _o, ...rest } = q;
@@ -3362,13 +3398,18 @@ async function reofferStaleAllows(key: string, sid: string): Promise<void> {
   let probe: SuperState;
   try { probe = await readSuperState(key, superSanitizeOpts()); } catch { return; }
   if (!reofferDraft(structuredClone(probe), sid, held, Date.now()).length) return;
-  let moved: Array<{ old: string; next: string; moot?: true }> = [];
+  let moved: Array<{ old: string; next: string; moot?: true; rewrite?: true }> = [];
   let mootWaits: string[] = [];
+  const rewrites: RefusalFact[] = [];
   await writeSuper(key, (d) => {
     moved = reofferDraft(d, sid, held, Date.now(), key);
-    const mootIds = new Set(moved.filter((m) => m.moot).map((m) => m.old));
+    const mootIds = new Set(moved.filter((m) => m.moot || m.rewrite).map((m) => m.old));
     mootWaits = d.queue.filter((q) => mootIds.has(q.id) && q.wait?.kind === 'refusal').map((q) => q.wait!.id);
+    const rewriteIds = new Set(moved.filter((m) => m.rewrite).map((m) => m.old));
+    for (const q of d.queue) if (rewriteIds.has(q.id) && q.wait?.refusal) rewrites.push(q.wait.refusal);
   });
+  // The session hears at once why its allowed call still did not run, and what to do instead.
+  for (const r of rewrites) await sendRewriteTurn(key, sid, r.tool, r.input).catch(() => false);
   // The grants of the item that was allowed are stale: removed, so nothing allows it unseen.
   const olds = new Set(moved.map((m) => m.old));
   for (const g of listGrants()) if (g.item && olds.has(g.item)) removeGrant(g.id);
