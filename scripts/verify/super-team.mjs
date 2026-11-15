@@ -36,6 +36,13 @@
  *   T6  (plan-r10 1e) an agent-made prompt edit (`agents edit` from inside the member's own run,
  *       DREAMCONTEXT_AGENT_SELF) stamps itself: the member is approved, the edit is traced, and its
  *       stage and "Üyeleri yönet" show no approve button anywhere. Screenshots at 1440 and 390.
+ *   T7  (owner 2026-11-15, option A) main asks Gantt a job and Gantt's own Super starts helpers:
+ *       one for its OWN work (`--for owner`), one for main's request, a third held in its pool
+ *       for the request. Main's Gantt card shows ONLY the request's two (the working one and
+ *       "waiting"), the small card "⧉ 2"; a click opens the helper's conversation in the card and
+ *       "← Gantt" goes back; "Open stage" sits in the card's head and the foot bar is gone.
+ *       Screenshots, light and dark: tile, card with helpers, a helper open, and Scout's card
+ *       (no helpers, no strip), in tmp/verify/super-team/.
  *   No console errors.
  */
 
@@ -81,6 +88,11 @@ const STANDIN = superStandin({
       report({ kind: 'three', steps });
       return 'asked the same member three times';
     }
+    if (text.includes('GO-HELPERS')) {
+      const steps = [cli('super', 'team', 'ask', ${JSON.stringify(MEMBER2)}, 'HELPERS: check the pixel and campaign tags before the launch.', '--brief', 'Launch check')];
+      report({ kind: 'helpers-ask', steps });
+      return 'asked for a launch check';
+    }
     if (text.includes('GO-STATE')) {
       const s = cli('super', 'state');
       report({ kind: 'state', team: s.json?.team ?? null, out: s.out.slice(0, 2000) });
@@ -89,8 +101,22 @@ const STANDIN = superStandin({
     return 'ok';`,
   // A member's own Super (DREAMCONTEXT_MEMBER_SUPER): its pump delivers main's request as a
   // [super events] turn; it closes it with \`super team done\` and answers the owner in text.
+  // T7's helpers never finish their turn: they stay working while the card is read.
+  child: `
+    if (text.includes('HOLD')) return null;
+    return 'ok';`,
   member: `
     const req = /- item=(\\S+) event=request/.exec(text);
+    // T7: helpers. One for its own work, two for main's request (the second waits in its pool).
+    if (req && text.includes('HELPERS')) {
+      const steps = [
+        cli('super', 'delegate', '--prompt', 'HOLD own weekly report', '--brief', 'Own weekly report', '--for', 'owner'),
+        cli('super', 'delegate', '--prompt', 'HOLD pixel events: is the event id sent twice?', '--brief', 'Pixel event check', '--for', req[1]),
+        cli('super', 'delegate', '--prompt', 'HOLD campaign tags', '--brief', 'Campaign tag check', '--for', req[1]),
+      ];
+      report({ kind: 'helpers-started', slug, item: req[1], steps: steps.map((x) => ({ status: x.status, out: x.out.slice(0, 300) })) });
+      return 'Two helpers are checking the launch.';
+    }
     if (req) {
       report({ kind: 'request-delivered', slug, item: req[1], text: text.slice(0, 3000) });
       const result = slug === ${JSON.stringify(MEMBER)} ? ${JSON.stringify(MEMBER_ANSWER)} : 'Done: ' + (text.split('Super Agent\\'tan: ')[1] || '').split('</untrusted-project-output>')[0].split('\\n')[0].slice(0, 80);
@@ -135,7 +161,9 @@ function setupScratch() {
   ]) if (r.status !== 0) throw new Error(`${what} failed: ${r.stderr || r.stdout}`);
   // A teammate's edit: the member is no longer approved on this Mac.
   appendFileSync(join(PROJ, '_dream_context', 'agents', `${MEMBER}.md`), 'It also checks the pricing page.\n');
-  if (!/needs approval/.test(dc('agents', 'list').stdout)) throw new Error('the member should need approval');
+  // Since plan-r10 1e a local hand edit can stay approved: T1/T2 then go red on their own, and the
+  // sections after them still run (they approve the member themselves).
+  if (!/needs approval/.test(dc('agents', 'list').stdout)) console.log('  NOTE: the edited member is still approved here: T1/T2\'s premise does not hold on this build');
 }
 
 async function startServer(port) {
@@ -244,6 +272,34 @@ async function run(engineName, base) {
   if (await page.locator('[data-testid="super-handover-btn"]:visible').count()) await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
   ok(tag('handed over'), await until(page, async () => reports().some((r) => r.kind === 'handover'), 90000));
 
+  // ONLY=T7: the helpers strip alone (owner 2026-11-15), for a build where T1-T6's own premises
+  // moved on. First a card with no helpers (Scout closes its request itself), then T7.
+  if (process.env.ONLY === 'T7') {
+    await section('T7-none', async () => {
+      console.log(`── ${engineName}: T7 a member card with no helpers`);
+      await superDoes(page, 'GO-TEAM', 'team');
+      const sTile = page.locator('[data-testid="super-team-tile"]:visible').filter({ hasText: 'Scout' });
+      await until(page, async () => (await sTile.count()) === 1, 45000);
+      await until(page, async () => reports().some((r) => r.kind === 'team-done' && r.slug === MEMBER), 60000);
+      const sId = await sTile.evaluate((el) => el.closest('[data-container-id]')?.getAttribute('data-container-id'));
+      const sFrame = page.locator(`[data-container-id="${sId}"]`).first();
+      const sb = await sTile.boundingBox();
+      await page.mouse.click(sb.x + sb.width / 2, sb.y + sb.height / 2);
+      const sConvo = sFrame.locator('[data-testid="team-job-conversation"]:visible').first();
+      await until(page, async () => /Signups fell 4%/.test(await sConvo.innerText().catch(() => '')), 45000);
+      ok(tag('T7 a card with no helpers draws no strip'), (await sConvo.getByTestId('team-helpers').count()) === 0);
+      ok(tag('T7 …"Open stage" in its head, no foot bar'), (await sFrame.locator('.super-card-actions').getByTestId('team-job-open-member').count()) === 1
+        && (await sConvo.getByTestId('team-job-open-member').count()) === 0);
+      for (const theme of ['light', 'dark']) {
+        await applyTheme(page, theme);
+        await page.waitForTimeout(500);
+        await sFrame.screenshot({ path: join(OUT_W1, `${engineName}-helpers-none-${theme}.png`) });
+      }
+      await applyTheme(page, 'light');
+      await sFrame.getByTestId('super-card-minimize').click().catch(() => {});
+      await page.waitForTimeout(800);
+    });
+  } else {
   console.log(`── ${engineName}: T1 a member not approved here`);
   const t1 = await superDoes(page, 'GO-TEAM', 'team');
   const s1 = t1?.steps?.[0];
@@ -435,7 +491,15 @@ async function run(engineName, base) {
   ok(tag('T4 …NEVER the empty "Say something to start"'), !/Say something to start/i.test(cardText) && !/Say something to start/i.test(await frame.innerText().catch(() => '')), cardText.slice(0, 300));
   ok(tag('T4 …and never the composer of a new conversation'), !/Start a new conversation/.test(await frame.innerHTML().catch(() => '')));
   ok(tag('T4 …no composer on the card (the owner writes on the member\'s stage)'), (await frame.locator('.chat-cmp-input, [data-testid="team-job-reply"]').count()) === 0);
-  ok(tag('T4 …and its "Sohbeti aç" button'), (await convo.getByTestId('team-job-open-member').count()) === 1);
+  ok(tag('T4 …its "Open stage" in the card\'s head, the foot bar gone'), (await frame.locator('.super-card-actions').getByTestId('team-job-open-member').count()) === 1
+    && (await convo.getByTestId('team-job-open-member').count()) === 0);
+  ok(tag('T4 …no helpers: no strip'), (await convo.getByTestId('team-helpers').count()) === 0);
+  for (const theme of ['light', 'dark']) {
+    await applyTheme(page, theme);
+    await page.waitForTimeout(400);
+    await frame.screenshot({ path: join(OUT_W1, `${engineName}-helpers-none-${theme}.png`) });
+  }
+  await applyTheme(page, 'light');
   // plan r4 E1: nothing pinned above the conversation; the request shows exactly once on the card.
   ok(tag('T4 …nothing pinned above it'), (await convo.getByTestId('team-job-request').count()) === 0);
   ok(tag('T4 …exactly one request block on main\'s card'), await until(page, async () => (await convo.getByTestId('super-request-block').count()) === 1, 15000), String(await convo.getByTestId('super-request-block').count()));
@@ -458,7 +522,7 @@ async function run(engineName, base) {
   await until(page, isOpen, 5000);
   // "Sohbeti aç": the member's stage, its one conversation, and there the owner writes.
   const memberStage = stage(page, `m:${MEMBER}`);
-  await convo.getByTestId('team-job-open-member').click().catch(() => {});
+  await frame.getByTestId('team-job-open-member').click().catch(() => {});
   await until(page, async () => (await memberStage.count()) > 0, 15000);
   await page.screenshot({ path: join(OUT, `${engineName}-team-card-member-stage.png`) });
   ok(tag('T4 "Sohbeti aç" opens Scout\'s stage'), (await memberStage.count()) > 0);
@@ -565,6 +629,87 @@ async function run(engineName, base) {
     const scope = (await modal.count()) ? modal : gStage;
     ok(tag(`T6 at ${w} px the member shows no approve button`), (await approveIn(scope)) === 0, String(await approveIn(scope)));
     await page.screenshot({ path: join(OUT_W1, `${engineName}-agent-edit-no-approve-${w}.png`) });
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  });
+
+  }
+  await section('T7', async () => {
+  console.log(`── ${engineName}: T7 a member's helpers on main's card`);
+  if (!(await toMainStage(page))) throw new Error('main stage did not come back');
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  for (const f of await page.locator('[data-container-id][data-kind="team"]').all()) {
+    if ((await f.getAttribute('data-where').catch(() => 'float')) !== 'float') await f.getByTestId('super-card-minimize').click().catch(() => {});
+  }
+  const t7 = await superDoes(page, 'GO-HELPERS', 'helpers-ask', 90000);
+  ok(tag('T7 main asks Gantt the launch check'), t7?.steps?.[0]?.status === 0, JSON.stringify(t7?.steps?.map((x) => x.out.slice(0, 200))));
+  ok(tag('T7 Gantt\'s Super starts its helpers'), await until(page, async () => countOf('helpers-started') > 0, 90000));
+  const started = reports().filter((r) => r.kind === 'helpers-started').at(-1);
+  const kids = () => Object.values(memberRecord(MEMBER2)?.children ?? {});
+  const forReq = (k) => k.workOrigin === `main:${started?.item}`;
+  ok(tag('T7 its record: one helper for its own work, one for the request, one kept in its pool for the request'),
+    await until(page, async () => kids().some((k) => k.workOrigin === 'owner') && kids().some(forReq)
+      && (memberRecord(MEMBER2)?.pool ?? []).some((p) => p.workOrigin === `main:${started?.item}`), 30000),
+    JSON.stringify({ steps: started?.steps, kids: kids().map((k) => [k.brief, k.workOrigin, k.row]), pool: memberRecord(MEMBER2)?.pool }));
+  const gTile = page.locator('[data-testid="super-team-tile"]:visible').filter({ hasText: 'Gantt' });
+  ok(tag('T7 the small card counts its two live helpers: "⧉ 2"'), await until(page, async () => /2/.test(await gTile.getByTestId('super-team-helpers-count').innerText().catch(() => '')), 30000),
+    await gTile.innerText().catch(() => ''));
+  // Seen, not only in the DOM: the chip lies inside the tile's box (the foot clipped it once).
+  const chipIn = await gTile.evaluate((el) => {
+    const c = el.querySelector('[data-testid="super-team-helpers-count"]');
+    if (!c) return false;
+    const a = el.getBoundingClientRect(); const b = c.getBoundingClientRect();
+    return b.width > 0 && b.left >= a.left && b.right <= a.right + 0.5 && b.top >= a.top && b.bottom <= a.bottom + 0.5;
+  }).catch(() => false);
+  ok(tag('T7 …and the chip is drawn inside the small card'), chipIn);
+  for (const theme of ['light', 'dark']) {
+    await applyTheme(page, theme);
+    await page.waitForTimeout(400);
+    await gTile.screenshot({ path: join(OUT_W1, `${engineName}-helpers-tile-${theme}.png`) });
+  }
+  await applyTheme(page, 'light');
+  const gId = await gTile.evaluate((el) => el.closest('[data-container-id]')?.getAttribute('data-container-id'));
+  const gFrame = page.locator(`[data-container-id="${gId}"]`).first();
+  const gb = await gTile.boundingBox();
+  await page.mouse.click(gb.x + gb.width / 2, gb.y + gb.height / 2);
+  const gConvo = gFrame.locator('[data-testid="team-job-conversation"]:visible').first();
+  await until(page, async () => (await gFrame.getAttribute('data-where').catch(() => 'float')) !== 'float' && await gConvo.isVisible().catch(() => false), 15000);
+  const strip = gConvo.getByTestId('team-helpers');
+  ok(tag('T7 the card shows the strip under its head'), await until(page, async () => (await strip.count()) === 1, 15000));
+  const chips = async () => (await strip.getByTestId('team-helper').allInnerTexts().catch(() => [])).join(' | ');
+  ok(tag('T7 …only the request\'s helpers: the pixel check working, the campaign check waiting'), await until(page, async () => {
+    const t = await chips();
+    return /Pixel event check/.test(t) && /Campaign tag check/.test(t) && /waiting|sırada/.test(t) && !/Own weekly report/.test(t);
+  }, 20000), await chips());
+  ok(tag('T7 …"Open stage" in the head, no foot bar'), (await gFrame.locator('.super-card-actions').getByTestId('team-job-open-member').count()) === 1
+    && (await gConvo.getByTestId('team-job-open-member').count()) === 0);
+  for (const theme of ['light', 'dark']) {
+    await applyTheme(page, theme);
+    await page.waitForTimeout(500);
+    await gFrame.screenshot({ path: join(OUT_W1, `${engineName}-helpers-card-${theme}.png`) });
+  }
+  await applyTheme(page, 'light');
+  await strip.getByTestId('team-helper').filter({ hasText: 'Pixel event check' }).click();
+  const hBody = gConvo.getByTestId('team-helper-body');
+  ok(tag('T7 a click opens the helper\'s conversation in the card'), await until(page, async () => /pixel events/i.test(await hBody.innerText().catch(() => '')), 20000),
+    await hBody.innerText().catch(() => '(none)'));
+  ok(tag('T7 …with "← Gantt" to go back'), /Gantt/.test(await gConvo.getByTestId('team-helper-back').innerText().catch(() => '')));
+  for (const theme of ['light', 'dark']) {
+    await applyTheme(page, theme);
+    await page.waitForTimeout(500);
+    await gFrame.screenshot({ path: join(OUT_W1, `${engineName}-helpers-open-${theme}.png`) });
+  }
+  await applyTheme(page, 'light');
+  await gConvo.getByTestId('team-helper-back').click();
+  ok(tag('T7 "← Gantt" brings the member\'s conversation back'), await until(page, async () => (await hBody.count()) === 0, 5000));
+  for (const [w, h] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(1500);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    ok(tag(`T7 at ${w} px nothing spills sideways`), overflow <= 0, String(overflow));
+    const nameW = await gFrame.locator('[data-testid="team-head-title"] .super-card-title').evaluate((el) => el.getBoundingClientRect().width).catch(() => 0);
+    ok(tag(`T7 at ${w} px the member's name is readable in the head`), nameW >= 30, String(nameW));
+    await page.screenshot({ path: join(OUT_W1, `${engineName}-helpers-${w}.png`) });
   }
   await page.setViewportSize({ width: 1600, height: 1000 });
   });

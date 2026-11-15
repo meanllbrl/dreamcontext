@@ -766,14 +766,14 @@ const newPoolId = () => `p-${Date.now().toString(36)}-${randomBytes(4).toString(
  * Keep a job in the pool (plan r4 D9): the same prompt is pooled once (the row is reused), a
  * full pool (MAX_POOL rows or MAX_POOL_BYTES) keeps nothing. Returns the row's id, or why not.
  */
-async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
+async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant; workOrigin?: SuperWorkOrigin } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
   if (Buffer.byteLength(job.prompt, 'utf-8') > MAX_POOL_PROMPT) return { error: 'too_large' };
   const hash = promptHash(job.prompt);
   let out: { id: string; reused: boolean } | { error: 'pool_full' | 'too_large' } = { error: 'pool_full' };
   const state = await writeSuper(root, id, (s) => {
     const have = s.pool.find((p) => p.hash === hash);
     // The same job again: a grant his message made now rides the row it already has.
-    if (have) { if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; out = { id: have.id, reused: true }; return; }
+    if (have) { if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; if (extra.workOrigin) have.workOrigin = extra.workOrigin; out = { id: have.id, reused: true }; return; }
     if (s.pool.length >= MAX_POOL) { out = { error: 'pool_full' }; return; }
     const row: SuperPoolItem = {
       id: newPoolId(), title: job.title, prompt: job.prompt, hash, createdAt: Date.now(),
@@ -786,6 +786,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.tool ? { tool: job.tool } : {}),
       ...(extra.held ? { held: true } : {}),
       ...(extra.outward ? { outward: extra.outward } : {}),
+      ...(extra.workOrigin ? { workOrigin: extra.workOrigin } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
     s.pool.push(row);
@@ -794,6 +795,15 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
   // What the store kept is the truth: a row its caps dropped was not kept.
   if ('id' in out && !state.pool.some((p) => p.id === (out as { id: string }).id)) return { error: 'pool_full' };
   return out;
+}
+
+/**
+ * Whose work a started child does: what `--for` names, else the pool row's own origin when it
+ * starts from one (the job keeps the request it was held for, owner 2026-11-15), else the turn's.
+ * Pure.
+ */
+export function startOrigin(named: SuperWorkOrigin | undefined, fromRow: Pick<SuperPoolItem, 'workOrigin'> | undefined, turn: SuperWorkOrigin | undefined): SuperWorkOrigin | undefined {
+  return named ?? fromRow?.workOrigin ?? turn;
 }
 
 /** The pool as the agent reads it: what it wrote is fenced like every other stored line. */
@@ -858,7 +868,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
-    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}) }, c.superId);
+    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
     if ('error' in kept) {
       refuse(res, 409, kept.error === 'too_large' ? 'held' : 'pool_full', `${running}; the job was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
       return;
@@ -1783,7 +1793,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     try {
       // A member's child does the work of the turn that started it unless `--for` names another.
-      const childOrigin = workFor.origin ?? (c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
+      const childOrigin = startOrigin(workFor.origin, fromRow, c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
       await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin, outward);
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.

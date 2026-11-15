@@ -359,6 +359,8 @@ export interface SuperChild {
   /** The agenda (server-written): when its job last finished, and what the owner saw. */
   finishedAt?: number;
   seenAt?: number;
+  /** A member Super's child: whose work it does (MIRROR of src/lib/super/types.ts). */
+  workOrigin?: SuperWorkOrigin;
   /** The owner message it answers (`msgRef`), when the Super started it in his turn
    *  (server-written; the board writing field keeps its marks while it runs). */
   origin?: string;
@@ -675,6 +677,8 @@ export interface TeamChain {
   newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt' | 'request'>;
   /** The member's previous root ("önceki konuşma"): its run, and its session when this Mac knows it. */
   previous?: { id: string; runId: string; sessionId?: string };
+  /** Every request this card's jobs gave the member's own Super (its helpers are theirs). */
+  requests?: string[];
 }
 
 /**
@@ -688,6 +692,7 @@ export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, p
   const roots = mine.filter((j) => !j.followUpOf);
   const at = roots.findIndex((j) => j.id === root.id);
   const prev = at >= 0 ? roots[at + 1] : undefined;
+  const requests = [...new Set(mine.flatMap((j) => (j.request ? [j.request] : [])))];
   return {
     jobs: Math.max(1, mine.length),
     newest: {
@@ -696,7 +701,53 @@ export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, p
       ...(newest.model ? { model: newest.model } : {}), ...(newest.effort ? { effort: newest.effort } : {}), ...(newest.light ? { light: true as const } : {}),
     },
     ...(prev ? { previous: { id: prev.id, runId: prev.runId, ...(prevSessionId ? { sessionId: prevSessionId } : {}) } } : {}),
+    ...(requests.length ? { requests } : {}),
   };
+}
+
+/** The requests a member's one card gave its member's Super: the chain's, else the job's own. */
+export function teamRequestsOf(job: Pick<SuperTeamJob, 'request' | 'chain'>): string[] {
+  return job.chain?.requests ?? (job.request ? [job.request] : []);
+}
+
+/** One helper a member's Super started for main's request, as its card shows it (owner 2026-11-15). */
+export interface MemberHelper {
+  /** The child's session id (its transcript), or the pool row's id while it waits. */
+  id: string;
+  brief: string;
+  /** The child's row (server-written), `waiting` for a job its pool keeps until a slot frees. */
+  row: ChildRow | 'pooled';
+  live: boolean;
+  model?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+/**
+ * The helpers a member's card shows (owner 2026-11-15, option A): ONLY the children (and pool rows)
+ * of the member's own record whose work is one of THIS card's requests (`main:<request>`). The
+ * member's own or routine work never reaches main's card. Live first, then the newest. Pure.
+ */
+export function memberHelpersOf(rec: Pick<SuperStateView, 'children' | 'pool'> | null | undefined, requests: readonly string[]): MemberHelper[] {
+  if (!rec || !requests.length) return [];
+  const mine = new Set(requests.map((r) => `main:${r}`));
+  const out: MemberHelper[] = [];
+  for (const c of Object.values(rec.children)) {
+    if (!c.workOrigin || !mine.has(c.workOrigin)) continue;
+    // A child with no row yet: finished if it says so, else working (an older record's live child).
+    const row: ChildRow = c.row ?? (typeof c.finishedAt === 'number' ? 'done' : 'working');
+    out.push({
+      id: c.sessionId, brief: c.brief, row, live: row === 'working' || row === 'asking' || row === 'waiting',
+      ...(c.model ? { model: c.model } : {}), startedAt: c.startedAt,
+      ...(typeof c.finishedAt === 'number' ? { finishedAt: c.finishedAt } : {}),
+    });
+  }
+  for (const p of rec.pool) {
+    if (!p.workOrigin || !mine.has(p.workOrigin)) continue;
+    out.push({ id: p.id, brief: p.title, row: 'pooled', live: true, startedAt: p.createdAt });
+  }
+  const rank = (h: MemberHelper) => (h.row === 'pooled' ? 1 : h.live ? 0 : 2);
+  return out.sort((a, b) => rank(a) - rank(b) || (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
 }
 
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'asking', 'done', 'failed'] as const;
@@ -712,6 +763,8 @@ export interface SuperPoolItem {
   mode?: string;
   held?: boolean;
   maybeStarted?: boolean;
+  /** A member Super's job kept at its cap: whose work it does (MIRROR of src/lib/super/types.ts). */
+  workOrigin?: SuperWorkOrigin;
   createdAt: number;
 }
 

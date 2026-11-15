@@ -6,6 +6,8 @@ import { teamStatusKind } from '../agentStatus';
 import { StatusRing } from './AgentCard';
 import { elapsedLabel, toneOfStatus } from './superHandover';
 import { useSpinSlot } from './spinSlots';
+import { useVaultId } from '../../../context/VaultContext';
+import { useMemberHelpers, useMemberSuperRecord } from './useMemberRecord';
 
 /** A team card's job and what the server read from the member's thread for it (the view's
  *  `teamLive`; null before the first read). */
@@ -51,6 +53,13 @@ export function TeamTile({ card }: { card: TeamCard }) {
   const spin = useSpinSlot(card.job.id, working);
   const facts = teamTileFacts(card);
   const line = card.lastLine || facts.brief;
+  // The helpers the member's Super runs for this card's requests (owner 2026-11-15): the chip a
+  // child tile shows for its background work, with how many are live.
+  // Read only while the member works on it: a finished card polls nothing for a chip it never shows.
+  const vault = useVaultId().vault ?? '';
+  const asked = !!card.job.request || !!card.job.chain?.requests?.length;
+  const rec = useMemberSuperRecord(vault, card.job.member, asked && status !== 'done' && status !== 'failed', null);
+  const liveHelpers = useMemberHelpers(rec.record, card).filter((h) => h.live).length;
   const runsOn = [facts.light ? t('super.team.light') : '', facts.model, facts.effort].filter(Boolean).join(' · ');
   return (
     <div className="super-tile" data-tile="team" data-kind={kind} data-super-tone={toneOfStatus(kind)} data-team-status={status} data-testid="super-team-tile" title={name}>
@@ -59,6 +68,13 @@ export function TeamTile({ card }: { card: TeamCard }) {
       <div className="super-tile-top">
         <StatusRing kind={kind} />
         <span className="super-tile-kind">{t('super.tile.kind.team')}</span>
+        {/* In the top row: the foot is full at the smallest size (state, jobs, time). */}
+        {liveHelpers > 0 && (
+          <span className="super-tile-chip super-team-helpers-count" data-testid="super-team-helpers-count"
+            title={t('superStage.team.helpersLive').replace('{n}', String(liveHelpers))} aria-label={t('superStage.team.helpersLive').replace('{n}', String(liveHelpers))}>
+            ⧉ {liveHelpers}
+          </span>
+        )}
       </div>
       <div className="super-team-who">
         <AgentAvatar of="agent" slug={card.job.member} title={name} hasPhoto={!!agent?.hasPhoto} size={24} />

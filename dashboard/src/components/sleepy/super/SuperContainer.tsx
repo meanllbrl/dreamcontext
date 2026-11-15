@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
+import { OpenStageButton, TeamHeadTitle } from './TeamHelpers';
 import { useI18n } from '../../../context/I18nContext';
 import { useVaultId } from '../../../context/VaultContext';
 import { pageFitKey, setPageFit } from '../../../lib/pageFit';
@@ -314,6 +315,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-stage-key={props.parked ? undefined : c.id}
       data-container-id={c.id}
       data-kind={c.kind}
+      data-open-stage={c.kind === 'team' && props.team && !props.remote ? 'true' : undefined}
       data-where={plan.where}
       data-shape={plan.shape}
       data-size={floating ? drawnSize : undefined}
@@ -390,7 +392,12 @@ export function SuperContainer(props: SuperContainerProps) {
             )}
           </>
         ) : (
-          <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
+          <>
+            {/* A member card's way to its member's own stage (owner 2026-11-15): in the head, not
+                at its foot. Not from the phone, which opens no stage here. */}
+            {c.kind === 'team' && props.team && !props.remote && <OpenStageButton member={props.team.job.member} />}
+            <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
+          </>
         )}
       </div>}
       {floating && !props.parked && menu && (
@@ -737,7 +744,7 @@ function LargeBody(p: BodyProps): ReactNode {
   }
   return (
     <div className="super-card-large" data-testid={c.kind === 'chat' ? 'super-shown-card' : undefined}>
-      <CardHead kind={c.kind} title={p.title} container={c} />
+      <CardHead kind={c.kind} title={p.title} container={c} team={p.team} />
       <div className="super-card-large-body">
         {c.kind === 'chat'
           ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
@@ -827,7 +834,9 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   );
 }
 
-function CardHead({ kind, title, container }: { kind: Container['kind']; title: string; container?: Container }) {
+function CardHead({ kind, title, container, team }: { kind: Container['kind']; title: string; container?: Container; team?: TeamCard }) {
+  // A member card: its member's face and name (owner 2026-11-15), never the glyph and slug.
+  if (kind === 'team' && team) return <div className="super-card-head"><TeamHeadTitle member={team.job.member} /></div>;
   return (
     <div className="super-card-head">
       <span className="super-card-glyph" aria-hidden>{KIND_GLYPH[kind]}</span>

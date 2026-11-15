@@ -15,7 +15,8 @@ import {
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout';
-import { teamChainOf } from '../../dashboard/src/lib/superTypes';
+import { memberHelpersOf, teamChainOf, teamRequestsOf } from '../../dashboard/src/lib/superTypes';
+import { helperMeta, helperStatusKind, shortModel } from '../../dashboard/src/components/sleepy/super/TeamHelpers';
 import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, newRoutineCardId, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
@@ -531,7 +532,7 @@ describe("the request on the member's own stage, live (super-team.mjs T3)", () =
     expect(pane.indexOf('const request = requestTurnOf(')).toBeLessThan(pane.indexOf('const line = <SuperEventLine'));
   });
   it("main's card pins nothing above the conversation; the record's request shows only until the transcript holds it (plan r4 E1)", () => {
-    const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
+    const card = src('dashboard/src/components/sleepy/super/useMemberRecord.ts') + src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
     expect(card).toMatch(/const item = requestId \? rec\?\.queue\.find\(\(x\) => x\.id === requestId && x\.kind === 'request'\) : undefined;/);
     expect(card).not.toContain('data-testid="team-job-request"');
     expect(card).not.toContain('data-testid="team-job-result"');
@@ -588,9 +589,88 @@ describe("a member's one card never redraws an old request at the end (2026-11-1
     expect(teamChainOf([root], root).newest.request).toBe('q-6nov');
   });
   it("the card's fallback is the newest request, and only while it has not reached the member", () => {
-    const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
+    const card = src('dashboard/src/components/sleepy/super/useMemberRecord.ts') + src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
     expect(card).toContain('const requestId = card.job.chain?.newest.request ?? card.job.request ?? null;');
     expect(card).toContain("undelivered: item.state !== 'done' && item.acceptedAt === undefined,");
     expect(card).toMatch(/\{memberRec\.request\?\.undelivered && requestId && \(\s*<RequestFallback session=\{memberSession\} running=\{running\} itemId=\{requestId\}/);
+  });
+});
+
+
+describe("main's member card shows the member's helpers for ITS job (owner 2026-11-15, option A)", () => {
+  const child = (sessionId: string, brief: string, workOrigin: string | undefined, row: string, at: number, extra: Record<string, unknown> = {}) =>
+    ({ sessionId, brief, adopted: false, startedAt: at, row, ...(workOrigin ? { workOrigin } : {}), ...extra });
+  const rec = (children: Array<ReturnType<typeof child>>, pool: Array<Record<string, unknown>> = []) =>
+    ({ children: Object.fromEntries(children.map((c) => [c.sessionId, c])), pool }) as never;
+
+  it('only children and pool rows of this card\'s requests; the member\'s own and routine work never', () => {
+    const helpers = memberHelpersOf(rec([
+      child('own-1', 'Own weekly report', 'owner', 'working', 1),
+      child('rt-1', 'Routine sweep', 'routine', 'working', 2),
+      child('other', 'Another job', 'main:q-other', 'working', 3),
+      child('px', 'Pixel event check', 'main:q-a', 'working', 4, { model: 'claude-fable-5-2' }),
+      child('old', 'Opening plan', 'main:q-b', 'done', 5, { finishedAt: 9 }),
+      child('nowo', 'No origin', undefined, 'working', 6),
+    ], [
+      { id: 'p-1', title: 'Campaign tag check', createdAt: 7, workOrigin: 'main:q-a' },
+      { id: 'p-2', title: 'Own later', createdAt: 8, workOrigin: 'owner' },
+    ]), ['q-a', 'q-b']);
+    expect(helpers.map((h) => h.id)).toEqual(['px', 'p-1', 'old']);
+    expect(helpers[0]).toMatchObject({ live: true, row: 'working', model: 'claude-fable-5-2' });
+    expect(helpers[1]).toMatchObject({ live: true, row: 'pooled', brief: 'Campaign tag check' });
+    expect(helpers[2]).toMatchObject({ live: false, row: 'done', finishedAt: 9 });
+  });
+  it('nothing without a record or a request (the strip is not drawn)', () => {
+    expect(memberHelpersOf(null, ['q-a'])).toEqual([]);
+    expect(memberHelpersOf(rec([child('px', 'x', 'main:q-a', 'working', 1)]), [])).toEqual([]);
+  });
+  it("the card's requests: every request of the member's chain, else the job's own", () => {
+    const job = (id: string, startedAt: number, extra: Record<string, unknown> = {}) =>
+      ({ id, member: 'gantt', runId: String(startedAt), jobKind: 'run' as const, queued: false, brief: id, startedAt, ...extra });
+    const root = job('r', 1, { request: 'q-1' });
+    const f1 = job('f1', 2, { request: 'q-2', followUpOf: 'r' });
+    const f2 = job('f2', 3, { request: 'q-2', followUpOf: 'r' });
+    expect(teamChainOf([f2, f1, root], root).requests).toEqual(['q-2', 'q-1']);
+    expect(teamRequestsOf({ ...root, chain: teamChainOf([f2, f1, root], root) })).toEqual(['q-2', 'q-1']);
+    expect(teamRequestsOf(root)).toEqual(['q-1']);
+    expect(teamRequestsOf(job('h', 1))).toEqual([]);
+  });
+  it('a helper speaks the one status language; its model is a short word', () => {
+    expect(helperStatusKind('working')).toBe('working');
+    expect(helperStatusKind('asking')).toBe('asking');
+    expect(helperStatusKind('waiting')).toBe('asking');
+    expect(helperStatusKind('pooled')).toBe('starting');
+    expect(helperStatusKind('done')).toBe('ready');
+    expect(helperStatusKind('stuck')).toBe('ended');
+    expect(helperStatusKind('gone')).toBe('ended');
+    expect(shortModel('claude-fable-5-2')).toBe('fable');
+    expect(shortModel(undefined)).toBe('');
+  });
+  it("a chip's word comes from its row: a wait on the owner never reads as the member's question", () => {
+    const t = (k: string) => ({ 'superStage.team.helperAsks': 'asks {name}', 'superStage.team.helperWaitsOwner': 'waits for you', 'superStage.team.helperWaiting': 'waiting' } as Record<string, string>)[k] ?? k;
+    const h = (row: string, extra: Record<string, unknown> = {}) => ({ id: 'x', brief: 'b', row, live: true, startedAt: 0, ...extra }) as never;
+    expect(helperMeta(t, h('asking'), 'Gantt')).toBe('asks Gantt');
+    expect(helperMeta(t, h('waiting'), 'Gantt')).toBe('waits for you');
+    expect(helperMeta(t, h('pooled'), 'Gantt')).toBe('waiting');
+    expect(helperMeta(t, h('done', { live: false, model: 'claude-opus-5-5', finishedAt: 5 * 60_000 }), 'Gantt')).toBe('opus · 5m');
+    // Stopped with no end time: no clock that keeps growing.
+    expect(helperMeta(t, h('gone', { live: false, model: 'claude-opus-5-5' }), 'Gantt')).toBe('opus');
+  });
+  it('a row-less child that finished is not counted live', () => {
+    const r = { children: { a: { sessionId: 'a', brief: 'a', adopted: false, startedAt: 1, finishedAt: 2, workOrigin: 'main:q-a' } }, pool: [] } as never;
+    expect(memberHelpersOf(r, ['q-a'])[0]).toMatchObject({ row: 'done', live: false });
+  });
+  it('a read that is off shows no record (a finished tile keeps no frozen count)', () => {
+    const hook = src('dashboard/src/components/sleepy/super/useMemberRecord.ts');
+    expect(hook).toContain('const rec = enabled ? held ?? q.data ?? null : null;');
+  });
+  it('the card draws the strip, opens a helper in place with a way back, and "Open stage" moved to the head', () => {
+    const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
+    expect(card).toContain('<TeamHelpers helpers={helpers}');
+    expect(card).toMatch(/<ChildTranscript key=\{picked\.id\} claudeId=\{picked\.id\}/);
+    expect(card).toContain('data-testid="team-helper-back"');
+    expect(card).not.toContain('team-job-open-member');
+    const frame = src('dashboard/src/components/sleepy/super/SuperContainer.tsx');
+    expect(frame).toMatch(/c\.kind === 'team' && props\.team && !props\.remote && <OpenStageButton member=\{props\.team\.job\.member\} \/>/);
   });
 });
