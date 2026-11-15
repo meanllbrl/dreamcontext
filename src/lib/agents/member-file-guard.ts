@@ -386,6 +386,6 @@ export function memberFileRefusal(file: string): string {
     `Blocked: ${file} is an AI Team member's file, and a hand edit drops its approval, so its next run stops and the owner gets a card.`,
     'Super Agent: `dreamcontext super team amend <member> --why "<the mistake>" --prompt-file <file>` (also --soul-file, --routine <slug> --job-file): the member stays approved and the owner can undo it.',
     'Any other session: tell the Super Agent what is wrong, or ask the owner to edit it on the AI Team page.',
-    'Name, team and place in the tree stay free: `dreamcontext agents edit <slug> --title|--team|--reports-to`. On/off: `dreamcontext automations enable|disable <slug>`.',
+    'Name, team and place in the tree stay free: `dreamcontext agents edit <slug> --title|--team|--reports-to|--photo <image file>`. On/off: `dreamcontext automations enable|disable <slug>`.',
   ].join(' ');
 }

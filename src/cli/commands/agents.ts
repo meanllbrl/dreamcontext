@@ -14,8 +14,10 @@ import {
   removeAgent,
   setAgentPlacement,
   setAgentShared,
+  updateAgent,
 } from '../../lib/agents/store.js';
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
+import { assertCanSetPhoto, readPhotoFile, removeAgentPhotoFiles, storeAgentPhoto } from '../../lib/agents/photo.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
 import { AmendmentRefused, amendMember, assertOwnMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
 import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
@@ -385,8 +387,9 @@ export function registerAgentsCommand(program: Command): void {
     .option('--no-learning', 'Stop keeping a pattern of lessons')
     .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
     .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
+    .option('--photo <file>', 'Its photo: a PNG, JPEG, GIF or WebP file (4 MB at most, no symlink); "none" removes it. Unhashed: stays approved')
     .option('--autonomy <level>', `How much it decides alone (${AGENT_AUTONOMY_LEVELS.join(', ')}); sets the permission mode of its sessions`)
-    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; quote?: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
+    .action((slug: string, opts: SoulOptions & { photo?: string; title?: string; prompt?: string; quote?: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
       const root = ensureContextRoot();
       try {
         const patch: AgentIdentityPatch = {};
@@ -402,10 +405,13 @@ export function registerAgentsCommand(program: Command): void {
         if (opts.learning !== undefined) patch.learning = opts.learning;
         const autonomy = readAutonomyOption(opts.autonomy);
         if (autonomy !== undefined) patch.autonomy = autonomy;
+        // The same validation and write path as the dashboard upload; the file is read and checked
+        // BEFORE anything is written, so a refused photo leaves the agent untouched.
+        const photoFile = opts.photo !== undefined && opts.photo !== 'none' ? readPhotoFile(opts.photo) : null;
         const place: AgentPlacementPatch = {};
         if (opts.reportsTo !== undefined) place.reportsTo = opts.reportsTo === 'none' ? null : opts.reportsTo;
         if (opts.team !== undefined) place.team = opts.team;
-        if (Object.keys(patch).length === 0 && Object.keys(place).length === 0) {
+        if (Object.keys(patch).length === 0 && Object.keys(place).length === 0 && opts.photo === undefined) {
           warn('Nothing to change.');
           return;
         }
@@ -429,6 +435,16 @@ export function registerAgentsCommand(program: Command): void {
           const placed = setAgentPlacement(root, slug, place);
           if (place.team && !listAgents(root).some((a) => a.reportsTo === slug)) {
             warn(`"${slug}" has no reports yet: its team "${placed.team}" shows once someone reports to it.`);
+          }
+        }
+        // Photo is not approval-hashed, so it is written directly (no re-approval, no card) and
+        // whoever runs this may set it, as with the title and the place in the team.
+        if (opts.photo !== undefined) {
+          assertCanSetPhoto(root, slug);
+          if (photoFile) updateAgent(root, slug, { photo: storeAgentPhoto(root, slug, photoFile) });
+          else {
+            updateAgent(root, slug, { photo: null });
+            removeAgentPhotoFiles(root, slug);
           }
         }
         if (viaDoor) {
