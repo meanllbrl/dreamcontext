@@ -78,6 +78,9 @@ import {
 } from '../../lib/automations/notifier.js';
 import { formatSchedule, nextFire } from '../../lib/automations/schedule.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
+import { MAX_PHOTO_BYTES, storeAgentPhoto, type ReceivedPhoto } from '../../lib/agents/photo.js';
+export { storeAgentPhoto };
+export type { ReceivedPhoto };
 import { allPendingQuestions, claimQuestion, pendingQuestion, pendingQuestionOfRun, settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { approvalQuestionTarget, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
@@ -1082,11 +1085,6 @@ export function isPreviewTruncation(incoming: string, current: string): boolean 
   return full.length > DESCRIPTION_MAX_CHARS && incoming.trim() === full.slice(0, DESCRIPTION_MAX_CHARS).trim();
 }
 
-/** An agent photo is a small square rendered at 56px at its largest. 4 MB is
- *  already absurdly generous for that and bounds what one manifest can pin
- *  into the brain directory. */
-const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
-
 function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
@@ -1654,12 +1652,6 @@ export async function handleAutomationsPhotoUpload(
   }
 }
 
-/** A sniffed upload: the bytes and the extension their magic bytes earn. */
-export interface ReceivedPhoto {
-  buf: Buffer;
-  ext: string;
-}
-
 /**
  * Read a photo upload, capped per chunk, typed by MAGIC BYTES only. Null when a
  * refusal (413, 400 empty, 415 type) has already been sent.
@@ -1677,26 +1669,6 @@ export async function receivePhoto(req: IncomingMessage, res: ServerResponse): P
     return null;
   }
   return { buf, ext: EXT_BY_IMAGE_TYPE[type] };
-}
-
-/**
- * Write `<photos dir>/<slug><ext>` — every component constructed here, none of
- * it client-chosen — and return the contextRoot-relative path for the `photo`
- * key. An agent has exactly ONE photo file, so a new upload in a different
- * format takes the old one with it: otherwise `daily.png` lingers after
- * `daily.webp` replaces it, unreferenced and undeletable from the UI.
- */
-export function storeAgentPhoto(contextRoot: string, slug: string, photo: ReceivedPhoto): string {
-  if (!isSafeAutomationSlug(slug)) throw new AutomationError(`Invalid agent: ${slug}`);
-  const rel = photoRelPathFor(slug, photo.ext);
-  const dir = automationPhotosDir(contextRoot);
-  mkdirSync(dir, { recursive: true });
-  for (const otherExt of Object.values(EXT_BY_IMAGE_TYPE)) {
-    if (otherExt === photo.ext) continue;
-    try { unlinkSync(join(dir, `${slug}${otherExt}`)); } catch { /* never existed */ }
-  }
-  writeFileSync(join(dir, `${slug}${photo.ext}`), photo.buf);
-  return rel;
 }
 
 /**
