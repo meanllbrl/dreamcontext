@@ -413,20 +413,20 @@ describe('origins', () => {
 });
 
 describe('one inbox per super', () => {
-  it('an owner message on a member stage never closes main\'s ask, nor the reverse; [About task] closes none', async () => {
+  it('an owner message on a member stage closes its own ask, never main\'s; main\'s closes only about its card', async () => {
     const { session } = await askRota();
     await writeSuper(root, (s) => { s.queue.push({ id: 'q-main-0000000a', sessionId: MAIN, kind: 'ask', state: 'escalated', createdAt: 1, ownerText: 'main ask' }); });
     await writeSuper(root, 'm:rota', (s) => { s.queue.push({ id: 'q-rota-0000000b', sessionId: session, kind: 'ask', state: 'escalated', createdAt: 1, ownerText: 'rota ask' }); });
+    // A member's own chat is a normal chat (owner 2026-11-15): his message there, about anything,
+    // closes ITS card (the member is told so), never main's.
     superOwnerSpoke(session, Date.now(), [], [{ kind: 'task', id: 'fix-login' }]);
     await _superInboxDrained();
-    expect((await rota()).queue.find((q) => q.id === 'q-rota-0000000b')?.state).toBe('escalated');
-    // A message about nothing answers no card (owner 2026-11-11); about the card, that card only.
-    superOwnerSpoke(session);
-    await _superInboxDrained();
-    expect((await rota()).queue.find((q) => q.id === 'q-rota-0000000b')?.state).toBe('escalated');
-    superOwnerSpoke(session, Date.now(), [], [{ kind: 'item', id: 'q-rota-0000000b' }]);
-    await _superInboxDrained();
     expect((await rota()).queue.find((q) => q.id === 'q-rota-0000000b')?.state).toBe('done');
+    expect((await main()).queue.find((q) => q.id === 'q-main-0000000a')?.state).toBe('escalated');
+    // Main's own card keeps the 2026-11-11 rule: a message about nothing, or about the member's
+    // card, answers none of its cards; about its card, that card only.
+    superOwnerSpoke(MAIN);
+    await _superInboxDrained();
     expect((await main()).queue.find((q) => q.id === 'q-main-0000000a')?.state).toBe('escalated');
     superOwnerSpoke(MAIN, Date.now(), [], [{ kind: 'item', id: 'q-rota-0000000b' }]);
     await _superInboxDrained();

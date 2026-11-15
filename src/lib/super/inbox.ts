@@ -416,6 +416,22 @@ function mirrorOf(kind: QueueKind): MemberItemOf | null {
 }
 
 /**
+ * THE routing decision for a member's item the owner must answer (owner 2026-11-15: "Ben Conor ile
+ * konuşuyorum neden sana geliyor bildirimler?"): is it his alone, from his OWN conversation with
+ * the member, so the project's Super Agent never hears it and never relays it? Yes for the
+ * member's own question asked in his turn (`ownerTalk`, stamped by `super ask`) and for an item
+ * of a child the member started for him (`workOrigin` owner). No for anything of work the Super
+ * Agent gave the member (`main:*`), a routine's, or the member's own permission or card (no turn
+ * stamp: they go through the Super Agent as before). Exported for tests.
+ */
+export function memberItemForOwnerOnly(state: Pick<SuperState, 'children'>, q: SuperQueueItem): boolean {
+  if (q.kind === 'ask') return q.ownerTalk === true;
+  const ch = Object.prototype.hasOwnProperty.call(state.children, q.sessionId) ? state.children[q.sessionId] : undefined;
+  if (!ch) return false;
+  return (q.workOrigin ?? ch.workOrigin) === 'owner';
+}
+
+/**
  * A member's record was written: what the owner must answer in it reaches MAIN's queue as `member`
  * mirrors, and a mirror whose member item is no longer his closes (owner 2026-11-10: an AI Team
  * member's approval card sat only on its own stage; his bar, the Super chat, Telegram and the Super
@@ -434,6 +450,8 @@ export async function syncMemberMirrors(memberKey: string, state: SuperState): P
   // mirrors close, and come back with what is still open when it is on again (K8).
   const off = memberBlocked(rootOf(memberKey), slug) === 'off';
   const want = off ? [] : ownerItems(state).filter((q) => mirrorOf(q.kind) !== null);
+  // His own conversation with the member (`memberItemForOwnerOnly`): the mirror is his alone.
+  const ownerOnly = new Set(want.filter((q) => memberItemForOwnerOnly(state, q)).map((q) => q.id));
   const wantIds = new Set(want.map((q) => q.id));
   const mainKey = keyOf(rootOf(memberKey));
   // Cheap when nothing changed (member records are written often): main's record is written only
@@ -472,7 +490,7 @@ export async function syncMemberMirrors(memberKey: string, state: SuperState): P
   const minted = new Map<string, string>();
   if (mainSuperRuns(rootOf(memberKey))) {
     for (const q of want) {
-      if (q.kind !== 'ask' || known.some((m) => m.answers === q.id)) continue;
+      if (q.kind !== 'ask' || ownerOnly.has(q.id) || known.some((m) => m.answers === q.id)) continue;
       const id = newQueueId();
       minted.set(q.id, id);
       holdOwnerRing(id, Date.now() + SUPER_FIRST_MS);
@@ -500,12 +518,15 @@ export async function syncMemberMirrors(memberKey: string, state: SuperState): P
       const of = mirrorOf(q.kind) as MemberItemOf;
       // A permission is drawn from the child's own request only (D7): no words ride its mirror.
       const text = of === 'permission' ? undefined : q.ownerText;
-      born = true;
+      // His alone: born on his list (`escalated`), never an event of the Super Agent's (no pump,
+      // no "Super first" hold); otherwise the Super Agent hears it first, as before.
+      const his = ownerOnly.has(q.id);
+      if (!his) born = true;
       const id = minted.get(q.id) ?? newQueueId();
-      if (of === 'ask') asksBorn.push({ mirror: id, item: q.id });
+      if (of === 'ask' && !his) asksBorn.push({ mirror: id, item: q.id });
       s.queue.push({
-        id, sessionId: q.sessionId, kind: 'member', state: 'pending', createdAt: now,
-        member: slug, answers: q.id, of,
+        id, sessionId: q.sessionId, kind: 'member', state: his ? 'escalated' : 'pending', createdAt: now,
+        member: slug, answers: q.id, of, ...(his ? { ownerTalk: true as const } : {}),
         ...(q.requestId ? { requestId: q.requestId } : {}),
         ...(text ? { ownerText: text } : {}),
         ...(q.ask ? { ask: q.ask } : {}),
@@ -762,7 +783,8 @@ function holdMemberAsks(memberKey: string, state: SuperState): void {
   if (!mainSuperRuns(memberKey)) return;
   for (const q of state.queue) {
     if (q.kind !== 'ask' || q.state !== 'escalated' || preHeld.has(q.id)) continue;
-    if (isMainWork(q.workOrigin)) continue;
+    // Main's work is not his; his own conversation's question is never held for the Super Agent.
+    if (isMainWork(q.workOrigin) || q.ownerTalk === true) continue;
     // Held at most the window: a mirror that never comes (main's write failed) frees it by itself.
     holdOwnerRing(q.id, Date.now() + SUPER_FIRST_MS);
     preHeld.add(q.id);
@@ -827,6 +849,12 @@ export async function memberAskReach(memberKey: string, state: SuperState, itemI
   const mirror = main?.queue.find((q) => q.kind === 'member' && q.answers === itemId && q.state !== 'done');
   if (!mirror) {
     return { mirrored: false, superFirst: false, note: 'It is NOT on the owner\'s Waiting on you list: the project\'s Super Agent is not handed over, so only your own page and a banner carry it. Say in one line that a question waits on your page, then end your turn.' };
+  }
+  if (mirror.ownerTalk) {
+    return {
+      mirrored: true, superFirst: false,
+      note: 'It is on the owner\'s Waiting on you list now, under your name, and on your own page: he is talking to you himself, so the project\'s Super Agent is not told and does not relay it. While he is away, Telegram carries it (your own bot when you have one). Say in one line that a question waits, then end your turn; never wait for it.',
+    };
   }
   const first = superFirst.has(mirror.id);
   return {
@@ -929,6 +957,9 @@ export async function writeSuper(
     // …and its own agenda (main's comes with its hand-over and reload).
     ensureMemberAgenda(out, superId);
     floatLiveChildren(out);
+    // A member record's first write by this version closes what an older one left open after his
+    // message (`movedPastAsks`), once: a record born now is marked with nothing to close.
+    if (superId !== 'main' && !out.movedPastDone) { closeMovedPastAsks(out); out.movedPastDone = true; }
     noteHeld(out);
     // The "allowed, waits for its call" mark lives exactly as long as its item (K3): a closed item
     // carries none, whoever closed it.
@@ -1472,7 +1503,7 @@ export function clearOwnerLease(contextRoot: string): void {
  * open `ask` is closed only when this message is written about it (`asksAnswered`): any other
  * message of his leaves it open (owner 2026-11-11).
  */
-export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = [], midTurn = false): void {
+export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = [], midTurn = false, ownWords = true): void {
   const root = superKeyOfSession(sessionId);
   if (!root) return;
   const key = keyOf(root);
@@ -1496,7 +1527,7 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
     // A member's turn for main Super that the owner steered into is his from now on: drawn in full.
     if (idOf(key) !== 'main') void track(writeSuper(key, (s) => { if (s.mainBatches?.includes(ob.batch)) s.mainBatches = s.mainBatches.filter((b) => b !== ob.batch); }));
   }
-  const answered = asksAnswered(lastStates.get(key), abouts);
+  const answered = asksAnswered(lastStates.get(key), abouts, ownWords && idOf(key) !== 'main');
   if (!answered.length) return;
   // The owed decision waits for this write (it reads before it writes: the lock alone is not order).
   const p = closeOpenAsks(key, sessionId, told, answered);
@@ -1535,9 +1566,34 @@ export function ownerAbouts(text: string, heads: readonly { kind: AgendaAbout['k
   return out;
 }
 
-export function asksAnswered(s: Pick<SuperState, 'queue'> | undefined, abouts: readonly AgendaAbout[]): string[] {
+export function asksAnswered(s: Pick<SuperState, 'queue'> | undefined, abouts: readonly AgendaAbout[], memberChat = false): string[] {
   const open = (s?.queue ?? []).filter((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin)).map((q) => q.id);
+  // A member's own chat is a normal chat (owner rules h7tjatns3j, 2026-11-15 "ben yaptım"): his
+  // message there answers its open question to him, as any chat's question card is answered by
+  // what he writes next. The Super Agent's own card keeps the 2026-11-11 rule above.
+  if (memberChat) return open;
   return open.filter((id) => abouts.some((a) => a.kind === 'item' && a.id === id));
+}
+
+/**
+ * A member's own open questions to the owner that he has written to the member AFTER (its owed
+ * ledger holds one `msg` per message, stamped when it arrived): what an older version left open
+ * although his message answers it now (`asksAnswered` with `memberChat`). Closed once per record,
+ * by its first write of this version (`movedPastDone`; the boot start writes one), never again: a
+ * Telegram run report opens a `msg` debt too, and must never close a card. Main's never: its rule.
+ */
+export function movedPastAsks(s: Pick<SuperState, 'queue' | 'owed'>): SuperQueueItem[] {
+  let last = 0;
+  for (const o of s.owed ?? []) if (o.kind === 'msg' && o.at > last) last = o.at;
+  if (!last) return [];
+  return s.queue.filter((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin) && last > q.createdAt);
+}
+
+function closeMovedPastAsks(s: SuperState): void {
+  for (const q of movedPastAsks(s)) {
+    closeAnswered(s, q.ask?.questions[0]?.question ?? q.ownerText ?? '');
+    q.state = 'done';
+  }
 }
 
 /**
@@ -1612,13 +1668,13 @@ export function heldBlock(contextRoot: string, s: SuperState, now = Date.now()):
  * question (`super ask`) is open, that message is its answer, and everything held while it was
  * open rides in the SAME message, as one more block. `items` go to `superOwnerSpoke`.
  */
-export function superAnswerDigest(sessionId: string, now = Date.now(), abouts: readonly AgendaAbout[] = []): { text: string; items: string[] } | null {
+export function superAnswerDigest(sessionId: string, now = Date.now(), abouts: readonly AgendaAbout[] = [], ownWords = true): { text: string; items: string[] } | null {
   const root = superKeyOfSession(sessionId);
   if (!root) return null;
   const s = lastStates.get(keyOf(root));
   if (!s || !s.enabled || s.session !== sessionId) return null;
   if (!s.queue.some((q) => q.kind === 'ask' && q.state === 'escalated')) return null;
-  if (!asksAnswered(s, abouts).length) return null;
+  if (!asksAnswered(s, abouts, ownWords && idOf(keyOf(root)) !== 'main').length) return null;
   // No event turn runs while his question is open: what the agenda moved by itself (pad.ts)
   // rides in this message too, and its note ids are marked told with the held items.
   const held = heldBlock(root, s, now);
@@ -1631,6 +1687,8 @@ export function superAnswerDigest(sessionId: string, now = Date.now(), abouts: r
 
 /** The block an owner message carries when it left his open question open. */
 export const ASK_STILL_OPEN = '<super-ask-still-open';
+/** The block an owner message in a MEMBER's own chat carries when it closed its open card. */
+export const ASK_CLOSED = '<super-ask-closed';
 
 /**
  * Read as the owner's message is written: his own question (`super ask`) is open and this
@@ -1639,11 +1697,21 @@ export const ASK_STILL_OPEN = '<super-ask-still-open';
  * walked past never blocks the queue unseen: answer his message; if it answers the card anyway,
  * or he moved on, `super queue done <id>`. A block starting with `<` the replay drops.
  */
-export function superAskStillOpen(sessionId: string, abouts: readonly AgendaAbout[] = []): string | null {
+export function superAskStillOpen(sessionId: string, abouts: readonly AgendaAbout[] = [], ownWords = true): string | null {
   const root = superKeyOfSession(sessionId);
   if (!root) return null;
   const s = lastStates.get(keyOf(root));
   if (!s || !s.enabled || s.session !== sessionId) return null;
+  const memberChat = idOf(keyOf(root)) !== 'main';
+  // A turn he did not write (a server continue, a run report) closes nothing: the rule below.
+  if (memberChat && ownWords) {
+    // His message closes the member's open card (`asksAnswered`): said to the member in this very
+    // message, so a card closed by words about something else is asked again, never lost silently.
+    const closing = s.queue.filter((q) => q.kind === 'ask' && q.state === 'escalated' && !isMainWork(q.workOrigin)
+      && !abouts.some((a) => a.kind === 'item' && a.id === q.id));
+    if (!closing.length) return null;
+    return `${ASK_CLOSED} items=${closing.map((q) => q.id).join(',')}>This message closed your open question card to him: in your own chat his next words are its answer, as in any chat. If they answer it, go on. If they are about something else and you still need his answer, answer this message first, then ask again with \`dreamcontext super ask\`.</super-ask-closed>`;
+  }
   const answered = asksAnswered(s, abouts);
   const open = s.queue.filter((q) => q.kind === 'ask' && q.state === 'escalated' && !isMainWork(q.workOrigin) && !answered.includes(q.id));
   if (!open.length) return null;
@@ -5012,7 +5080,10 @@ async function startMemberSupers(root: string, opts: { parked?: (sessionId: stri
     const key = superKey(root, superIdOfMember(slug));
     let s: SuperState;
     try { s = await readSuperState(key, superSanitizeOpts()); } catch { continue; }
-    if (bootRequests(structuredClone(s))) {
+    // A question an older version left open after he wrote to the member (`movedPastAsks`):
+    // closed once here, at the start of the version that answers it live (`asksAnswered`).
+    // Once per record (`movedPastDone`): a later debt may be a Telegram run report, never his words.
+    if (bootRequests(structuredClone(s)) || !s.movedPastDone) {
       try { s = await writeSuper(key, (d) => { bootRequests(d); }); } catch { continue; }
     } else noteHead(key, s);
     // A member's children are cut off by the same relaunch as main's.
