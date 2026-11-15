@@ -72,7 +72,7 @@ import {
 import { knownMcpServers, mcpNeedingSignIn, unknownMcpNames } from '../../lib/super/lean-mcp.js';
 import { readStatusCache } from '../../lib/mcp-live.js';
 import {
-  WorktreeRefused, createChildWorktree, discardFreshWorktree, mergeChildren, removeChildWorktree, repoOfWorktree,
+  WorktreeRefused, createChildWorktree, discardFreshWorktree, git, mergeChildren, removeChildWorktree, repoOfWorktree,
   worktreeStatus, type CreatedWorktree,
 } from '../../lib/super/worktrees.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
@@ -141,6 +141,14 @@ const DELEGATE_TIMEOUT_MS = 30_000;
 const MAX_OPEN_REFS = 12;
 /** How long past the frame's `deadline` the server still waits for the window's answer. */
 const DELEGATE_GRACE_MS = 5_000;
+/**
+ * How long a `delegate` call's socket may sit silent. The server closes an idle socket at 30 s
+ * (index.ts `server.setTimeout`), but this route legitimately waits longer before its first byte:
+ * the worktree (git, up to a minute a command) plus the window's 30 s and the grace. Under that
+ * cap the CLI got "socket hang up" with the worktree made and no child recorded (field
+ * 2026-11-15, twice in a row). Its own waits bound it, so this is only a backstop.
+ */
+export const DELEGATE_SOCKET_MS = 5 * 60_000;
 
 /** The vault's registered name for a context root (the chat registry's own fallback otherwise). */
 export function vaultNameOf(contextRoot: string): string {
@@ -565,7 +573,7 @@ function childTestMinutes(now: number): (worktree: string, branch?: string) => T
 
 export function worktreePreamble(w: Pick<CreatedWorktree, 'path' | 'branch' | 'repo'>, outward?: OutwardGrant): string {
   return `You work in your own git worktree: ${w.path} (branch ${w.branch}, repo ${w.repo}). `
-    + 'cd there first, then work and commit only there. '
+    + 'cd there first, then work and commit only there; if that folder is missing, do no work anywhere else: say so and stop. '
     + (outward ? 'Never merge into another branch; push only as the next line says.' : 'Never push and never merge into another branch.');
 }
 
@@ -877,7 +885,11 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   // Started in the owner's own turn (not an event turn), or named his message (`--origin`): he
   // waits on its result (`awaited`).
   const awaited = ownersTurn(c) || !!origin;
+  // The answer can come later than the server's 30 s idle cap (DELEGATE_SOCKET_MS).
+  if (typeof res.setTimeout === 'function') res.setTimeout(DELEGATE_SOCKET_MS);
   let wt: CreatedWorktree | null = null;
+  /** True once the child is recorded with `wt`: from then on the worktree is the child's. */
+  let handedOver = false;
   try {
     if (job.worktree) {
       wt = await createChildWorktree({ projectRoot: dirname(root), repo: job.worktree, slug: job.slug, base: job.base });
@@ -909,16 +921,25 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // timeout, or the super process ending under it — may have opened a child (M4).
       const unconfirmed = r.ok || (r.error === 'no_window' && r.sent !== false);
       if (unconfirmed) {
+        // No child is recorded, so nothing would ever clean this worktree up: one nobody has
+        // touched yet (its branch still at its base, nothing in it) goes back, its branch too
+        // (owner, 2026-11-15: an orphan worktree after each failed delegate). A child the window
+        // did open past its answer finds no folder and says so; one that wrote in it keeps it.
+        const discarded = wt ? await discardFreshWorktree(wt).then(() => !existsSync(wt!.path)).catch(() => false) : false;
+        // The folder can go while `branch -D` fails: the slug is free again only with both gone.
+        const branchLeft = wt && discarded ? (await git(wt.repoPath, ['rev-parse', '--verify', '--quiet', `refs/heads/${wt.branch}`])).code === 0 : false;
+        const keptWt = wt && !discarded ? wt : null;
         if (fromRow) {
           await writeSuper(root, c.superId, (s) => {
             const p = s.pool.find((x) => x.id === fromRow.id);
             if (!p) return;
             p.maybeStarted = true;
-            if (wt) { p.startedIn = wt.path; p.startedBranch = wt.branch; }
+            if (keptWt) { p.startedIn = keptWt.path; p.startedBranch = keptWt.branch; }
           });
         }
         refuse(res, 409, 'delegate_unconfirmed', 'the window did not confirm the child in time; it may still have opened. Check `dreamcontext super state` before delegating again'
-          + (wt ? `; the worktree ${wt.path} (${wt.branch}) is kept` : ''), wt ? { worktree: wt.path, branch: wt.branch } : {});
+          + (keptWt ? `; the worktree ${keptWt.path} (${keptWt.branch}) is kept: something already wrote in it` : wt ? (branchLeft ? `; its fresh worktree was removed, its branch ${wt.branch} is still there` : `; its fresh worktree and branch ${wt.branch} were removed, so the same --slug works again`) : ''),
+          keptWt ? { worktree: keptWt.path, branch: keptWt.branch } : wt ? { worktreeRemoved: wt.path } : {});
         return;
       }
       // Refused by the window, or never sent (no socket): no child was told about the worktree.
@@ -935,6 +956,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // this, main.ts): named in the record now, so its card says the model before any turn.
     // Its own `system/init` corrects it if Codex reports another (agent-chat.ts noteChildModel).
     const recordModel = job.model || (job.tool === 'codex' ? safeCodexStartModel() : '');
+    // The window opened a child that was told about the worktree: it is that child's now, even if
+    // the record below fails (a store error never takes a running child's folder away).
+    handedOver = true;
     const after = await writeSuper(root, c.superId, (s) => {
       const now = Date.now();
       s.children[sid] = {
@@ -998,6 +1022,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
     });
   } catch (err) {
+    // A throw before any child was told about the worktree (the send, a store write) leaves it
+    // no owner: a fresh one goes back with its branch, like a refusal.
+    if (wt && !handedOver) await discardFreshWorktree(wt).catch(() => undefined);
     if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
     storeRefusal(res, err);
   } finally {
