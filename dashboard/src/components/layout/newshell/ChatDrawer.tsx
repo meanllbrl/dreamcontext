@@ -394,7 +394,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const child = (row: DrawerProjectRow, c: DrawerChild) => {
     if (c.kind === 'super') {
       return (
-        <SuperRow key="super" vault={row.name} selected={c.selected} on={c.on} working={c.working} asking={c.asking} label={t('shell.drawer.superAgent')}
+        <SuperRow key="super" vault={row.name} selected={c.selected} on={c.on} working={c.working} asking={c.asking} waiting={c.waiting} label={t('shell.drawer.superAgent')}
           onPick={() => pick(row.name, { kind: 'super' })} />
       );
     }
@@ -753,18 +753,19 @@ function ProjectMark({ row }: { row: DrawerProjectRow }) {
 }
 
 /** The Super Agent row (option A): normal weight, ONE end mark (its question in red, its children
- *  at work as the spinner, else its unread replies); a question turns the row red with no hop;
- *  turned off, the name is muted and the row says "kapalı". */
-function SuperRow({ vault, selected, on, working, asking, label, onPick }: {
-  vault: string; selected: boolean; on: boolean; working: number; asking: boolean; label: string; onPick: () => void;
+ *  at work as the spinner, else its unread replies, else the presentations waiting on its stage);
+ *  a question turns the row red with no hop; turned off, the name is muted and the row says "kapalı". */
+function SuperRow({ vault, selected, on, working, asking, waiting, label, onPick }: {
+  vault: string; selected: boolean; on: boolean; working: number; asking: boolean; waiting: number; label: string; onPick: () => void;
 }) {
   const { t } = useI18n();
   const unread = useSuperUnreadCount(vault);
-  const mark: MarkState = { asking: asking ? 1 : 0, working: working > 0, unread };
+  const mark: MarkState = { asking: asking ? 1 : 0, working: working > 0, unread: unread > 0 ? unread : waiting };
   const words = [
     asking ? t('shell.drawer.superAsking') : '',
     working > 0 ? t('shell.drawer.superWorking').replace('{n}', String(working)) : '',
     unread > 0 ? t('super.unread.count').replace('{n}', String(unread)) : '',
+    waiting > 0 ? t('super.pq.sideCount').replace('{n}', String(waiting)) : '',
     on ? '' : t('shell.drawer.superOff'),
   ].filter(Boolean).join(', ');
   return (

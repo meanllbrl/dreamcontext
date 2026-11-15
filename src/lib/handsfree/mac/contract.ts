@@ -331,5 +331,11 @@ export interface SuperRemoteView {
   team?: RemoteTeamJob[];
   /** The queue head the job bar shows, or null. */
   head: { item: string; kind: string; text: string } | null;
+  /** The presentation queue (task super-sahnesinde-sunum-sirasi, AC7): the same queue the Mac
+   *  shows, its items' cards and the one on screen. Absent: empty. */
+  presentQueue?: RemotePresentQueue;
   rotating?: true;
 }
+
+/** The stage's presentation queue as a remote screen sees it: ids, cards and the counter. */
+export interface RemotePresentQueue { items: Array<{ id: string; cards: string[]; ask?: string }>; seen: number; showing?: string }

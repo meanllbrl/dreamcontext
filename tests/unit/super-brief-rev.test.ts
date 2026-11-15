@@ -205,6 +205,12 @@ describe('superBriefState', () => {
       expect(t).toContain('ask a reworded card with what was missing, never the same card.');
     }
   });
+  it('rev 46 (2026-11-14, sunum-sirasi): a present while he looks at another presentation is queued, never claimed as shown', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(46);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('answers `queued: {at, of}`: it waits its turn; say so, never that it is shown.');
+    }
+  });
   it('rev 42 (2026-11-12, super-push-red): a push, PR or deploy his own message named is the child\'s; a long brief is a file', () => {
     expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(42);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {

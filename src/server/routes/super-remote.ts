@@ -11,7 +11,7 @@ import { superRemoteView } from '../../lib/super/remote-view.js';
 import { teamLiveRows } from '../../lib/super/team.js';
 import { CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, PRESENT_LAYOUTS, type SuperState } from '../../lib/super/types.js';
 import type { SuperRemoteView } from '../../lib/handsfree/mac/contract.js';
-import { applyOwnerLayout, applyOwnerSeen, ownerSeenMarks } from './super.js';
+import { applyOwnerLayout, applyOwnerSeen, ownerSeenMarks, readQueueStep } from './super.js';
 
 /**
  * The Super Agent's stage for a REMOTE screen (hands-free sekmeler W1, D5): the computer or
@@ -41,7 +41,7 @@ const onlyKeys = (o: Record<string, unknown>, keys: readonly string[]): boolean 
 const strList = (v: unknown, max: number): v is string[] => Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string');
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
-const TOP_KEYS = ['cards', 'presentLayout', 'chat', 'exit', 'agenda', 'view'] as const;
+const TOP_KEYS = ['cards', 'presentLayout', 'chat', 'exit', 'agenda', 'view', 'queue'] as const;
 const CARD_KEYS = ['id', 'pos', 'size', 'order', 'place'] as const;
 
 function bad(message: string): never { throw new RemoteRefused(400, 'invalid_body', message); }
@@ -99,6 +99,13 @@ export function checkRemoteLayout(body: Record<string, unknown>): { patch: Recor
     if (!ex || !onlyKeys(ex, ['cards', 'closing']) || !strList(ex.cards, MAX_CONTAINERS)) bad('exit is { cards, closing: [] }');
     if (ex.closing !== undefined && !(Array.isArray(ex.closing) && ex.closing.length === 0)) bad('a remote screen closes no card, so exit.closing is []');
     patch.exit = { cards: [...(ex.cards as string[])], closing: [] };
+  }
+  if (body.queue !== undefined) {
+    // The presentation queue's step, the same on every screen (AC7): seen here is seen there.
+    const step = readQueueStep({ queue: body.queue });
+    const q = rec(body.queue);
+    if (!step || !q || !onlyKeys(q, ['op', 'item'])) bad('queue is { op: "next" | "leave" | "resume", item: "pq…" }');
+    patch.queue = { op: step!.op, item: step!.item };
   }
   if (body.agenda !== undefined) {
     if (body.agenda !== 'open' && body.agenda !== 'min') bad('agenda is "open" or "min"');

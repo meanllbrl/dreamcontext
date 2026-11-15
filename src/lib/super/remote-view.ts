@@ -201,6 +201,13 @@ export function superRemoteView(
     names,
     ...(team.length ? { team } : {}),
     head: head ? { item: head.id, kind: head.kind, text: digest.waiting.find((w) => w.id === head.id)?.text ?? '' } : null,
+    ...(state.presentQueue?.items.length ? {
+      presentQueue: {
+        items: state.presentQueue.items.map((i) => ({ id: i.id, cards: [...i.cards], ...(i.ask ? { ask: i.ask } : {}) })),
+        seen: state.presentQueue.seen,
+        ...(state.presentQueue.showing ? { showing: state.presentQueue.showing } : {}),
+      },
+    } : {}),
     ...(rotating ? { rotating: true as const } : {}),
   };
 }

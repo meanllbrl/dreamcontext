@@ -336,6 +336,13 @@ describe('super open … --present', () => {
     expect((r.json.result as Record<string, unknown>).presented).toBeUndefined();
   });
 
+  /** The owner left the presentation (the stage floats, nothing presented): a new one opens at once. */
+  const leaveStage = async () => {
+    const st = await readSuperState(root);
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...st, view: { mode: 'float' }, presentQueue: undefined }));
+    resetSuperIndex();
+  };
+
   it('--no-group --present presents the cards themselves; one picture is a spotlight', async () => {
     withShots();
     const r = await open({ kind: 'image', refs: shots.slice(0, 2), group: false, present: true });
@@ -344,6 +351,11 @@ describe('super open … --present', () => {
     expect(s.groups).toHaveLength(0);
     expect(s.view).toMatchObject({ mode: 'present', layout: 'compare' });
     expect(s.view.cards).toHaveLength(2);
+    // Over the presentation on screen it waits in the queue (task super-sahnesinde-sunum-sirasi).
+    const queued = await open({ kind: 'image', ref: shots[3], group: false, present: true });
+    expect((queued.json.result as Record<string, unknown>).queued).toMatchObject({ at: 2, of: 2 });
+    expect((await readSuperState(root)).view).toMatchObject({ layout: 'compare' });
+    await leaveStage();
     expect((await open({ kind: 'image', ref: shots[3], group: false, present: true })).status).toBe(200);
     s = await readSuperState(root);
     expect(s.view).toMatchObject({ mode: 'present', layout: 'spotlight' });
@@ -384,6 +396,7 @@ describe('super open … --present', () => {
     expect(s.view.cards).toEqual(s.groups[0].cards);
     const tall = ['p1', 'p2', 'p3'].map((n) => `tmp/shots/${n}.png`);
     for (const f of tall) writeFileSync(join(dir, 'acme', f), png(390, 844));
+    await leaveStage();
     expect((await open({ kind: 'image', refs: tall, group: false, present: true })).status).toBe(200);
     s = await readSuperState(root);
     expect(s.view).toMatchObject({ mode: 'present', layout: 'grid' });

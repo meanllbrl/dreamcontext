@@ -72,7 +72,7 @@ export interface DrawerFacts {
   /** The member whose conversation the chat area shows. */
   member?: string;
   /** The Super Agent row's marks: its children at work, and a question for the owner. */
-  superMarks?: { working: number; asking: boolean };
+  superMarks?: { working: number; asking: boolean; waiting?: number };
   /** The owner's chat tabs, each in its window (`DrawerSurfaceState.chats`). */
   chats?: DrawerChatFact[];
   /** The tab on screen. */
@@ -93,7 +93,7 @@ export interface FanoutFacts {
   /** Each saved window's name and tab count (`?summary=1`'s `perWindow`); absent on an older server. */
   windows?: Array<{ id: string; name: string; tabs: number }>;
   /** The same marks, read from that project's record. */
-  superMarks?: { working: number; asking: boolean };
+  superMarks?: { working: number; asking: boolean; waiting?: number };
   /** The Ekip row's read, collapsed projects included. */
   members?: EkipSummary[];
   identities?: EkipIdentity[];
@@ -113,7 +113,7 @@ export interface DrawerProjectInput {
 }
 
 export type DrawerChild =
-  | { kind: 'super'; on: boolean; selected: boolean; working: number; asking: boolean }
+  | { kind: 'super'; on: boolean; selected: boolean; working: number; asking: boolean; waiting: number }
   /** ONE Ekip row (plan-r10 1d): the project's own members, in the list's order; one count. */
   | { kind: 'team'; vault: string; members: EkipMember[]; count: number; asking: boolean; selected: boolean; openSlug?: string }
   | {
@@ -453,7 +453,7 @@ function childrenOf(
   const marks = mine?.superMarks ?? far?.superMarks;
   const children: DrawerChild[] = [
     // Always there, even before anything is read: it is how a project with no chat starts one.
-    { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking },
+    { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking, waiting: marks?.waiting ?? 0 },
   ];
   // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen. It goes LAST (plan
   // r4 R5): it is the one block that grows (the list opens in place), so it pushes nothing down.

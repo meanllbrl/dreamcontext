@@ -1719,6 +1719,83 @@
   flex: none;
 }
 .super-stage-exit:hover { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
+/* The presentation queue's control (task super-sahnesinde-sunum-sirasi, D2, D7, D10): a pill in the
+   top band, left of the layout buttons while presenting, at the band's right end while waiting. */
+.super-pq {
+  position: absolute;
+  z-index: var(--sz-queue);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  pointer-events: none;
+}
+/* The pill hugs what it says (its slot is the widest it may grow), with its own backdrop so it
+   reads over the dotted stage like the layout switch. */
+.super-pq-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+  height: var(--space-8);
+  box-sizing: border-box;
+  pointer-events: auto;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: var(--shadow-md);
+}
+.super-pq-pill > * { flex: none; }
+.super-pq-dots,
+.super-pq-text,
+.super-pq-play {
+  height: var(--space-8);
+  display: inline-flex;
+  align-items: center;
+}
+.super-pq-dots { gap: var(--space-1); }
+.super-pq-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text) 18%, transparent);
+  transition: width 160ms ease-out, background 160ms ease-out;
+}
+.super-pq-dot[data-past] { background: color-mix(in srgb, var(--color-accent) 40%, transparent); }
+.super-pq-dot[data-on] { width: var(--space-5); background: var(--color-accent); }
+@media (prefers-reduced-motion: reduce) { .super-pq-dot { transition: none; } }
+.super-pq-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.super-pq-count { font-weight: 700; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.super-pq-names { margin-left: var(--space-1); overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary); }
+.super-pq-play { font-size: var(--font-size-2xs); color: var(--color-text-secondary); }
+.super-pq-go {
+  height: calc(var(--space-8) - var(--space-1));
+  min-width: var(--space-8);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  border: none;
+  background: var(--color-accent-strong);
+  color: var(--color-text-on-brand);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.super-pq[data-short] .super-pq-go { padding: 0 var(--space-3); }
+.super-pq-go:hover { filter: brightness(1.08); }
+.super-pq-go:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
 .super-sheet-tabs {
   position: absolute;
   z-index: var(--sz-sheet);

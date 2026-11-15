@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { MAX_CONTAINERS, MAX_FLOAT, atLeastSize, floatCount, isPageKind, minSizeFor, type ContainerKind, type SuperContainer, type SuperState } from './types.js';
+import { MAX_CONTAINERS, MAX_FLOAT, atLeastSize, floatCount, isPageKind, minSizeFor, queuedCards, type ContainerKind, type SuperContainer, type SuperState } from './types.js';
 import type { SuperSignal } from './signals.js';
 import { makeRoom } from './room.js';
 
@@ -30,8 +30,10 @@ export function autoContainerId(kind: ContainerKind, ref: string): string {
   return `${kind}-${createHash('sha1').update(ref).digest('hex').slice(0, 12)}`;
 }
 
+/** On screen, or waiting in the presentation queue to be shown (AC6): automation leaves it. */
 const inView = (s: SuperState, id: string): boolean =>
-  (s.view.mode === 'half' && s.view.card === id && !s.view.auto) || (s.view.mode === 'present' && (s.view.cards ?? []).includes(id));
+  (s.view.mode === 'half' && s.view.card === id && !s.view.auto) || (s.view.mode === 'present' && (s.view.cards ?? []).includes(id))
+  || queuedCards(s).has(id);
 
 /** The page automation put side by side leaves it: the stage floats again. */
 function releaseAutoView(s: SuperState, id: string): void {

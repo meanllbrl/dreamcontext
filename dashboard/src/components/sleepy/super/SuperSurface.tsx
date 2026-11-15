@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
@@ -11,6 +11,8 @@ import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from '
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls, StripMarks, stripStartFor } from './StageParts';
+import { PresentQueue } from './PresentQueue';
+import { sendQueueJump } from './queueJump';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
@@ -226,6 +228,8 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
 const ADD_NOTE_MS = 4000;
 
 /** Leaving a group's presentation reopens its panel only if the stage answers within this long. */
+/** A queue step's answer must land this soon to scroll the chat (a late push is not his gesture). */
+const QUEUE_JUMP_MS = 5_000;
 const BACK_TO_GROUP_MS = 3000;
 
 /**
@@ -419,12 +423,19 @@ export function SuperSurface(props: SuperSurfaceProps) {
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!bandHead(state);
+  // The presentation queue (task super-sahnesinde-sunum-sirasi): its control steps while a queued
+  // presentation of 2+ is on screen, and says how many wait once he has left the queue (D2, D7).
+  const pq = state.presentQueue;
+  const qc = queueCounter(pq, view);
+  const pqHead = pq?.items[0];
+  const queueBand: 'step' | 'wait' | undefined = qc.showing && qc.of >= 2 ? 'step'
+    : !qc.showing && qc.waiting > 0 && view.mode !== 'present' ? 'wait' : undefined;
   // The bar's measured height (JobBar): the stage plans below its ACTUAL bottom (a wrapped card
   // row is taller than one line), so no card or agenda is ever drawn over it.
   const queueHeight = useQueueHeight(state.session);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
   );
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
@@ -737,10 +748,31 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const toggleBar = () => onLayout({ chat: { value: plan.chat === 'bar' ? null : 'bar', cards: presented } });
   // The group to reopen once the stage has left the presentation (the record answers first).
   const backTo = useRef<{ id: string; at: number } | null>(null);
+  // When the owner last stepped the queue: only his step scrolls the chat (AC3, D4).
+  const queueGestureAt = useRef(0);
   const exitPresentation = () => {
     backTo.current = shownGroup ? { id: shownGroup, at: Date.now() } : null;
+    // Closing a queued presentation opens the next (the server's rule): the chat follows it (AC3).
+    // The last one opens nothing, so no later push may take the mark (D4).
+    if (qc.showing && (pq?.items.length ?? 0) > 1) queueGestureAt.current = Date.now();
     onLayout(exitPatch());
   };
+  // ── The presentation queue's gestures (AC2, AC5): each names the item his window showed ──
+  const queueStep = (op: 'next' | 'leave' | 'resume') => {
+    if (!pq || !pqHead) return;
+    // Only a step that opens a presentation marks his gesture: "Finish" on the last opens none (D4).
+    if (op === 'resume' || (op === 'next' && pq.items.length > 1)) queueGestureAt.current = Date.now();
+    onLayout({ queue: { op, item: pqHead.id } });
+  };
+  // The item his gesture opened is shown: the Super chat scrolls to the answer that brought it
+  // (AC3). Only after his own step, never on a push (D4).
+  const shownItem = qc.showing ? pqHead : undefined;
+  useEffect(() => {
+    if (!shownItem || !state.session || Date.now() - queueGestureAt.current > QUEUE_JUMP_MS) return;
+    queueGestureAt.current = 0;
+    sendQueueJump(state.session, shownItem.cards);
+  }, [shownItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const itemName = (cards: readonly string[]) => { const c = byId.get(cards[0] ?? ''); return c ? titleOf(c) : ''; };
   useEffect(() => {
     const b = backTo.current;
     if (!b || plan.mode === 'present') return;
@@ -1343,7 +1375,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
         </button>
       )}
       {plan.controls && plan.layout && (
-        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
+        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout}
+          onExit={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation} leaveQueue={queueBand === 'step' && !shownGroup} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
+      )}
+      {plan.queueBand && pq && (
+        <PresentQueue rect={plan.queueBand.rect} kind={plan.queueBand.kind} short={plan.queueBand.short} at={qc.at} of={qc.of}
+          current={pqHead ? itemName(pqHead.cards) : ''} next={pq.items[1] ? itemName(pq.items[1].cards) : null}
+          waiting={pq.items.map((i) => itemName(i.cards))} onNext={() => queueStep('next')} onResume={() => queueStep('resume')} />
       )}
       {plan.strip && (
         <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />

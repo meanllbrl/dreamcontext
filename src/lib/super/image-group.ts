@@ -20,11 +20,11 @@
  * joins a card of the same kind only, and the fallback name is "PDFs" or "Videos".
  */
 import type { ContainerKind, SuperContainer, SuperGroup, SuperState, SuperView } from './types.js';
-import { MIN_GROUP_CARDS, cleanGroupName, isMediaKind } from './types.js';
+import { MIN_GROUP_CARDS, cleanGroupName, isMediaKind, queuedCards } from './types.js';
 import { jobMovedOn } from './tidy.js';
 
 /** What the plan reads of the record (the children: whose job moved on). */
-type Stage = { containers: readonly SuperContainer[]; groups: readonly SuperGroup[]; view: SuperView; children?: SuperState['children'] };
+type Stage = { containers: readonly SuperContainer[]; groups: readonly SuperGroup[]; view: SuperView; children?: SuperState['children']; presentQueue?: SuperState['presentQueue'] };
 
 /** How long after one image open the next one still joins its group. */
 export const IMAGE_CHAIN_MS = 2 * 60_000;
@@ -155,7 +155,8 @@ function chainTarget(s: Stage, prev: ImageChain, ids: readonly string[], forChil
     if (!g || g.place !== 'float' || !g.cards.includes(prev.card)) return null;
     return joinable(s, g, ids, forChild) ? { join: g.id } : null;
   }
-  const shown = s.view.mode === 'half' ? [s.view.card] : s.view.mode === 'present' ? s.view.cards ?? [] : [];
+  // On screen, or waiting in the presentation queue (AC6): a queued lone picture is never grouped.
+  const shown = [...(s.view.mode === 'half' ? [s.view.card] : s.view.mode === 'present' ? s.view.cards ?? [] : []), ...queuedCards(s)];
   if (card.place !== 'float' || shown.includes(card.id) || s.groups.some((g) => g.cards.includes(card.id))) return null;
   return { card: card.id };
 }

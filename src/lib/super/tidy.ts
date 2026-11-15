@@ -35,7 +35,7 @@
  * card's clock again, so nothing is swept at once after one.
  */
 import { resolve } from 'node:path';
-import { DONE_SETTLE_MS, isMediaKind, viewWithout, type SuperContainer, type SuperState } from './types.js';
+import { DONE_SETTLE_MS, isMediaKind, queuedCards, viewWithout, type SuperContainer, type SuperState } from './types.js';
 import { chatIsBusy, childIsLive, type BusyTest } from './live.js';
 import { retirable } from './room.js';
 
@@ -101,6 +101,9 @@ export function viewShows(view: unknown): string[] {
   return v.mode === 'present' && Array.isArray(v.cards) ? v.cards.filter((x): x is string => typeof x === 'string') : [];
 }
 const shownIds = (s: Pick<SuperState, 'view'>): string[] => viewShows(s.view);
+/** What the view shows plus what a queued presentation still has to show (AC6): neither is
+ *  put in Others, closed or retired. */
+const keptIds = (s: Pick<SuperState, 'view' | 'presentQueue'>): Set<string> => new Set([...shownIds(s), ...queuedCards(s)]);
 
 /** What anyone changing a card or a group changes. */
 function signatures(s: SuperState): Map<string, string> {
@@ -193,7 +196,7 @@ export function jobMovedOn(c: Pick<SuperContainer, 'forChild' | 'forAt'>, childr
  * answers when a card or a group was last touched (undefined: just now).
  */
 export function planTidy(s: SuperState, touched: (id: string) => number | undefined, now: number, busy: BusyTest = chatIsBusy): string[] {
-  const shown = new Set(shownIds(s));
+  const shown = keptIds(s);
   const grouped = new Set(s.groups.flatMap((g) => g.cards));
   const openFor = new Set(s.queue.filter((q) => q.state !== 'done').map((q) => q.sessionId));
   const bar = idleMs();
@@ -277,7 +280,7 @@ function othersKeeps(s: SuperState, c: SuperContainer, busy: BusyTest): boolean 
 export function planOthersClose(
   s: SuperState, touched: (id: string) => number | undefined, now: number, clockFrom = 0, busy: BusyTest = chatIsBusy,
 ): string[] {
-  const shown = new Set(shownIds(s));
+  const shown = keptIds(s);
   const grouped = new Set(s.groups.flatMap((g) => g.cards));
   const byId = new Map(s.containers.map((c) => [c.id, c] as const));
   const last = (ids: readonly string[]) => Math.max(clockFrom, ...ids.map((id) => touched(id) ?? now));
@@ -319,6 +322,8 @@ export function applyOthersClose(s: SuperState, ids: readonly string[]): void {
 export function presentSpent(s: SuperState, touched: (id: string) => number | undefined, now: number, busy: BusyTest = chatIsBusy): boolean {
   const v = s.view;
   if (v.mode !== 'present' || v.by === 'owner' || v.layoutBy === 'owner' || v.ask) return false;
+  // A queued presentation leaves only by his gesture (D4): never ended for him.
+  if (s.presentQueue?.showing) return false;
   let jobs = 0;
   let last = 0;
   for (const id of v.cards ?? []) {
@@ -385,7 +390,7 @@ export function retireKeep(
   const told = s.queue.some((q) => q.sessionId === sid && q.kind === 'done' && q.state === 'done' && q.batch !== undefined && q.createdAt >= ch.finishedAt!)
     || (ch.row === 'done' && ch.seenAt !== undefined && ch.seenAt >= ch.finishedAt);
   if (!told) return 'untold';
-  const shown = new Set(shownIds(s));
+  const shown = keptIds(s);
   const cards = s.containers.filter((c) => c.kind === 'chat' && c.ref === sid);
   if (cards.some((c) => shown.has(c.id))) return 'shown';
   if (cards.some((c) => c.pos || c.sizeBy === 'owner')) return 'owner_placed';

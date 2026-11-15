@@ -6,17 +6,17 @@
  * a child answering itself, the stale sweep, a hand-over or fresh session) and every way one
  * reaches the head (a permission ahead clears, a first question closes, a restart) is caught:
  *
- * - a closed question: the stage floats if it still shows that question, and the pictures it
- *   opened go to Others (a group of them as its group tile), unless the owner placed or sized
- *   them, or the view still shows them;
- * - the head question: its cards are presented (`view.ask` = the item), unless the owner set
- *   the view himself and it is still his current intent (`ownerViewHeld`: within
- *   OWNER_VIEW_HOLD_MS, not pinned to an ended job) (`skipped: owner_layout`, never later).
+ * - a closed question: its item leaves the presentation queue (on screen, the next item opens),
+ *   and the pictures it opened go to Others (a group of them as its group tile), unless the
+ *   owner placed or sized them, the view still shows them, or another queued item waits on them;
+ * - the head question: its cards are presented once (`view.ask` = the item) through the
+ *   presentation queue (types.ts presentCards): on screen when nothing is presented, else at the
+ *   end of the queue, so what the owner looks at stays (task super-sahnesinde-sunum-sirasi, D3).
  *
  * Pure: never imports inbox.js (inbox imports this).
  */
 import {
-  ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_ASK_PICTURES, OWNER_VIEW_HOLD_MS, leaveGroups, ownerViewHeld, presentCards, sameCardSet,
+  ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_ASK_PICTURES, dropAskItem, leaveGroups, presentCards, queuedCards,
   type AskShow, type SuperQueueItem, type SuperState,
 } from './types.js';
 import type { ImageChain } from './image-group.js';
@@ -26,29 +26,22 @@ function isOpen(q: SuperQueueItem | undefined): boolean {
   return !!q && q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question');
 }
 
-/** The owner arranged the stage himself, for other cards than these, and that is still his
- *  current intent (types.ts ownerViewHeld: recent, not pinned to a job that is over). An older
- *  arrangement of his never keeps a question's pictures off his screen. */
-function ownerArranged(s: SuperState, cards: readonly string[], now: number): boolean {
-  const v = s.view;
-  if (v.mode === 'present' && sameCardSet(v.cards ?? [], cards)) return false;
-  return ownerViewHeld(s, now, ownerHoldMs());
+/** Is this question still open with the owner (the queue's AC4: an unanswered one waits)? */
+export function askStillOpen(s: Pick<SuperState, 'queue'>): (ask: string) => boolean {
+  return (ask) => isOpen(s.queue.find((q) => q.id === ask));
 }
 
-/** Verify only: a shorter hold (scripts/verify/super-sunum-gorunur.mjs). */
-function ownerHoldMs(): number {
-  const v = Number(process.env.DREAMCONTEXT_SUPER_OWNER_HOLD_MS);
-  return Number.isInteger(v) && v > 0 ? v : OWNER_VIEW_HOLD_MS;
-}
-
-/** What the view shows right now. */
+/** What the view shows right now, and what a queued presentation still has to show. */
 function shownNow(s: SuperState): Set<string> {
   const v = s.view;
-  return new Set(v.mode === 'half' && v.card ? [v.card] : v.mode === 'present' ? v.cards ?? [] : []);
+  const out = queuedCards(s);
+  for (const id of v.mode === 'half' && v.card ? [v.card] : v.mode === 'present' ? v.cards ?? [] : []) out.add(id);
+  return out;
 }
 
 /** A closed question's pictures to Others (D2a). */
 function putBack(s: SuperState, e: AskShow): void {
+  dropAskItem(s, e.item);
   if (s.view.mode === 'present' && s.view.ask === e.item) s.view = { mode: 'float' };
   const shown = shownNow(s);
   // Its cards now and what it opened before a repeat ask replaced them (D2).
@@ -92,9 +85,8 @@ export function settleAskShows(s: SuperState, head: SuperQueueItem | null, now: 
   if (e && !e.presented && !e.skipped) {
     const cards = e.cards.filter((id) => s.containers.some((c) => c.id === id)).slice(0, MAX_ASK_PICTURES);
     if (!cards.length) entries = entries.filter((x) => x !== e);
-    else if (ownerArranged(s, cards, now)) entries = entries.map((x) => (x === e ? { ...x, skipped: 'owner_layout' as const } : x));
     else {
-      presentCards(s, cards, undefined, e.item);
+      presentCards(s, cards, undefined, e.item, now);
       entries = entries.map((x) => (x === e ? { ...x, cards, presented: true as const } : x));
     }
   }
@@ -104,11 +96,14 @@ export function settleAskShows(s: SuperState, head: SuperQueueItem | null, now: 
 }
 
 /** What `show.state` says about a question right after its write. */
-export function askShowState(s: SuperState, item: string): 'presented' | 'waiting' | 'skipped' | 'none' {
+export function askShowState(s: SuperState, item: string): 'presented' | 'queued' | 'waiting' | 'skipped' | 'none' {
   const e = s.askShows?.find((x) => x.item === item);
   if (!e) return 'none';
   if (e.skipped) return 'skipped';
-  return e.presented ? 'presented' : 'waiting';
+  if (!e.presented) return 'waiting';
+  // Handed to the stage: on his screen, or waiting its turn in the presentation queue.
+  return s.view.mode === 'present' && s.view.ask === item ? 'presented'
+    : (s.presentQueue?.items ?? []).some((x) => x.ask === item) ? 'queued' : 'presented';
 }
 
 /**
