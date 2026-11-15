@@ -61,3 +61,4 @@ dashboard/.verify-harness/
 # manifest (scripts/gen-rt-manifest.mjs): build outputs, never committed (plan npmsiz-beta C1).
 /desktop/src-tauri/resources/runtime/
 /desktop/src-tauri/resources/rt-manifest.json
+/desktop/src-tauri/resources/native/
