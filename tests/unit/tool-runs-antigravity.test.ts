@@ -7,14 +7,14 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { antigravityProfileDir } from '../../src/lib/antigravity-accounts.js';
 import { pickToolRunAccount, toolRunAccountArg } from '../../src/lib/automations/codex-account.js';
 import { runAccountIdOk, toolFieldsOf } from '../../src/lib/automations/store.js';
 import { agentGuardRefuses, isAgentSession } from '../../src/lib/owner-guard-cli.js';
 import { agentSessionId, inAgentSession } from '../../src/lib/session-id.js';
 import { setHookTool } from '../../src/lib/hook-tool.js';
-import { selectPromptRecall } from '../../src/cli/commands/hook.js';
+import { CODEX_JUDGE_ENV, judgeFor, selectPromptRecall } from '../../src/cli/commands/hook.js';
 import { ledgerRoots } from '../../src/lib/usage-ledger.js';
 import { codexRunArgs } from '../../src/lib/t3-bridge/headless-envelope.js';
 
@@ -79,20 +79,25 @@ describe('the session a command runs in', () => {
 });
 
 describe('recall under another tool', () => {
-  it('a Codex or Antigravity prompt hook never calls the Claude extractor', async () => {
+  it('a Codex or Antigravity prompt hook never gets the Haiku judge (the Codex judge only behind its flag)', async () => {
     const root = join(home, 'proj', '_dream_context');
     mkdirSync(root, { recursive: true });
     for (const tool of ['codex', 'antigravity'] as const) {
       setHookTool(tool);
-      const haiku = vi.fn(() => null);
-      const r = await selectPromptRecall('how does checkout work', root, 'haiku', { haiku, home });
-      expect(haiku).not.toHaveBeenCalled();
+      expect(judgeFor('haiku', {})).toBeNull();
+      expect(judgeFor('hybrid', {})).toBeNull();
+      const r = await selectPromptRecall('how does checkout work', root, 'haiku', { home });
       expect(r.label).toBe('BM25 · Haiku is Claude only');
     }
+    setHookTool('codex');
+    expect(judgeFor('haiku', { [CODEX_JUDGE_ENV]: '1' })).toBe('codex');
+    setHookTool('antigravity');
+    expect(judgeFor('haiku', { [CODEX_JUDGE_ENV]: '1' })).toBeNull();
     setHookTool(null);
-    const haiku = vi.fn(() => null);
-    await selectPromptRecall('how does checkout work', root, 'haiku', { haiku, home });
-    expect(haiku).toHaveBeenCalledOnce();
+    expect(judgeFor('haiku', {})).toBe('claude');
+    expect(judgeFor('hybrid', {})).toBe('claude');
+    expect(judgeFor('raw', {})).toBeNull();
+    expect(judgeFor('haiku', { DREAMCONTEXT_RECALL_JUDGE: 'off' })).toBeNull();
   });
 });
 

@@ -58,3 +58,8 @@ setMcpHomeRedirectForTests(homedir(), mkdtempSync(join(tmpdir(), 'dc-test-mcp-ho
 //    id ('sess-1') would see each other's markers and write into the developer's home: every block
 //    in full instead. A test of the once-per-session path deletes this and fakes HOME.
 process.env.DREAMCONTEXT_PROMPT_ONCE = '0';
+
+// 6. The prompt hook's recall judge is a paid `claude -p` call. No hook a test spawns may make one:
+//    the default mode then answers with its model-free rule. A test of the judged path sets
+//    DREAMCONTEXT_RECALL_JUDGE=on and points DREAMCONTEXT_RECALL_JUDGE_BIN at a stub.
+process.env.DREAMCONTEXT_RECALL_JUDGE = 'off';

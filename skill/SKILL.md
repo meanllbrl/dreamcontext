@@ -357,7 +357,7 @@ It refuses while a part is missing. Details → [tasks-and-features.md](referenc
 ## Memory & Knowledge — essentials
 
 - **Quick updates (no sleep):** edit `core/0.soul.md`/`core/2.memory.md`/`people/<slug>.md` directly; `dreamcontext core changelog add` for code changes; `dreamcontext tasks log` for progress.
-- **Recall modes:** default **`haiku`** (a small model picks docs); `raw` (BM25), `hybrid` (BM25 + embeddings; cloud tiers opt-in), `off`; switch with `dreamcontext recall on|raw|hybrid|off|status`. Auto-injected (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
+- **Recall modes:** default **`haiku`** (judged recall: free local search, one Haiku call picks what the turn needs, a file already in context is not sent again); `raw` (BM25), `hybrid` (BM25 + embeddings; cloud tiers opt-in), `off`; switch with `dreamcontext recall on|raw|hybrid|off|status`. Auto-injected (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
 - **Quick capture:** `dreamcontext memory remember "<text>"` writes a `type=note` CHANGELOG entry; sleep reconciles it later.
 - **Knowledge files:** `dreamcontext knowledge create <name>`; pin frequently-needed ones (`pinned: true`); `knowledge touch` after reading one; group files with `dreamcontext knowledge move <slug> <folder>`, never `mv` plus hand-edited links.
 

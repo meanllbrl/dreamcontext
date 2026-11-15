@@ -367,6 +367,86 @@ function markOnce(file: string, key: string, home: string, dir: string): 'marked
   } catch { return 'unmarked'; /* the next prompt prints it in full again */ }
 }
 
+// ─── Recall files already in this session's context ─────────────────────────
+//
+// The same marker file as firstInSession, so the same reset forgets them: SessionStart fires on
+// startup, resume, clear and compact (Claude Code's `source`), and after a compaction the earlier
+// turns, and the files delivered in them, are no longer in context. `recall:in:<key>` = delivered,
+// `recall:seen:<key>` = shown to the judge and not picked.
+
+const RECALL_IN = 'recall:in:';
+const RECALL_SEEN = 'recall:seen:';
+/** A runaway session never grows the marker file past this many recall keys (the oldest go). */
+export const SESSION_RECALL_MAX_KEYS = 2000;
+
+function readSeen(file: string): string[] {
+  try {
+    const seen = (JSON.parse(readFileSync(file, 'utf-8')) as { seen?: unknown }).seen;
+    return Array.isArray(seen) ? seen.filter((x): x is string => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+export interface SessionRecall { inContext: Set<string>; passedOver: Set<string> }
+
+/** The recall files this session's context holds, and those the judge passed over. Empty with no session id. */
+export function sessionRecall(sessionId: string, home: string = homedir()): SessionRecall {
+  const out: SessionRecall = { inContext: new Set(), passedOver: new Set() };
+  if (!sessionId.replace(/[^\w-]/g, '')) return out;
+  for (const k of readSeen(seenFile(sessionId, home))) {
+    if (k.startsWith(RECALL_IN)) out.inContext.add(k.slice(RECALL_IN.length));
+    else if (k.startsWith(RECALL_SEEN)) out.passedOver.add(k.slice(RECALL_SEEN.length));
+  }
+  for (const k of out.inContext) out.passedOver.delete(k);
+  return out;
+}
+
+/** Record a turn's delivery: `delivered` are now in context, `shown` minus them were passed over. Best effort. */
+export function markSessionRecall(sessionId: string, delivered: readonly string[], shown: readonly string[], home: string = homedir()): void {
+  if (!sessionId.replace(/[^\w-]/g, '') || (delivered.length === 0 && shown.length === 0)) return;
+  const file = seenFile(sessionId, home);
+  const seen = readSeen(file);
+  const have = new Set(seen);
+  const add = [...delivered.map((k) => RECALL_IN + k), ...shown.filter((k) => !delivered.includes(k)).map((k) => RECALL_SEEN + k)];
+  const next = [...seen, ...add.filter((k) => !have.has(k))];
+  // Keep the non-recall markers; cap the recall ones, oldest first out.
+  const recallKeys = next.filter((k) => k.startsWith('recall:'));
+  const drop = new Set(recallKeys.slice(0, Math.max(0, recallKeys.length - SESSION_RECALL_MAX_KEYS)));
+  try {
+    mkdirSync(join(home, '.dreamcontext', 'prompt-seen'), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ seen: next.filter((k) => !drop.has(k)) }), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, file);
+  } catch { /* the next turn may deliver a file again: a repeat costs tokens, a loss costs the file */ }
+}
+
+/** The owner's previous turn in this session (the judge reads it). Survives a compaction; swept with the markers. */
+function prevTurnFile(sessionId: string, home: string): string {
+  return join(home, '.dreamcontext', 'prompt-seen', `${sessionId.replace(/[^\w-]/g, '')}.turn.json`);
+}
+
+export const PREV_TURN_MAX_CHARS = 2000;
+
+export function readPrevOwnerTurn(sessionId: string, home: string = homedir()): string | null {
+  if (!sessionId.replace(/[^\w-]/g, '')) return null;
+  try {
+    const file = prevTurnFile(sessionId, home);
+    if (statSync(file).size > 16 * 1024) return null;
+    const v = (JSON.parse(readFileSync(file, 'utf-8')) as { text?: unknown }).text;
+    return typeof v === 'string' && v.trim() ? v : null;
+  } catch { return null; }
+}
+
+export function writePrevOwnerTurn(sessionId: string, text: string, home: string = homedir()): void {
+  if (!sessionId.replace(/[^\w-]/g, '')) return;
+  try {
+    mkdirSync(join(home, '.dreamcontext', 'prompt-seen'), { recursive: true, mode: 0o700 });
+    const file = prevTurnFile(sessionId, home);
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ text: text.slice(0, PREV_TURN_MAX_CHARS) }), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, file);
+  } catch { /* the next turn is judged without it */ }
+}
+
 /** Forget what this session was shown (SessionStart: startup, resume, clear, compact), and sweep old markers. */
 export function resetSessionOnce(sessionId: string, home: string = homedir()): void {
   const dir = join(home, '.dreamcontext', 'prompt-seen');
