@@ -2878,7 +2878,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       // A scheduled fire whose results go to a bot writes for his phone (the same rule as every bot).
       !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep
         && (manifest as AutomationManifest).target !== 'super'
-        && routineReachesPhone({ contextRoot, slug, agent: manifest.agent, reply: (manifest as AutomationManifest).reply ?? null, approvalHash: manifestHash(manifest as AutomationManifest), ...(home ? { home } : {}) }),,
+        && routineReachesPhone({ contextRoot, slug, agent: manifest.agent, reply: (manifest as AutomationManifest).reply ?? null, approvalHash: manifestHash(manifest as AutomationManifest), ...(home ? { home } : {}) }),
       gate?.kind === 'wake' ? gate.data : null,
     );
 

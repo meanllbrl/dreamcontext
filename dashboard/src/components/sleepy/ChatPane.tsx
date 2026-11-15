@@ -95,7 +95,6 @@ import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { answerForCards, sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { onQueueJump } from './super/queueJump';
-import { SuperNewButton } from './super/SuperNewButton';
 import { JumpToLatest } from './chat/JumpToLatest';
 import { isOwnSend } from './chat/ownSend';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
