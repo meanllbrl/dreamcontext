@@ -85,7 +85,7 @@ describe('hand over / take back (D5, D9, D17)', () => {
 
   it('a delegated child lands as a NON-active tab of the active pane (D5)', () => {
     expect(surface).toMatch(/setPanes\(\(prev\) => placeDelegatedChild\(prev, activePaneId, s\.id, nextPaneId\)\.panes\)/);
-    expect(surface).toMatch(/return \{ ok: true, result: \{ sessionId: s\.claudeId \} \}/);
+    expect(surface).toMatch(/return \{ ok: true, result: \{ sessionId: s\.claudeId, got, hidden \} \}/); // + got, hidden (2026-11-16, pencere-acilmiyor: a slow window's delegate is kept)
   });
 
   it('an expired `delegate` opens no child: the deadline is checked before any spawn, and again after the prompt wait', () => {
