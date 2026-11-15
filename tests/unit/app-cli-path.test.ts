@@ -57,6 +57,29 @@ describe('the app runtime', () => {
   });
 });
 
+describe('a one-run bundle (opened from the DMG, or App Translocation)', () => {
+  const runs = [
+    ['the mounted DMG', '/Volumes/dreamcontext/dreamcontext.app/Contents/Resources'],
+    ['App Translocation', '/private/var/folders/ab/T/AppTranslocation/1F2E/d/dreamcontext.app/Contents/Resources'],
+  ] as const;
+  for (const [name, res] of runs) {
+    it(`${name}: no launcher naming it and no rc line; a launcher from a lasting install stays`, () => {
+      const node = `${res}/runtime/bin/node`;
+      const entry = `${res}/dist/index.js`;
+      expect(ensureAppCliOnShellPath({ execPath: node, entry, home, platform: 'darwin', globalCli: '' })).toBeNull();
+      expect(existsSync(join(shimDir(), 'dreamcontext'))).toBe(false);
+      expect(existsSync(join(home, '.zshrc'))).toBe(false);
+      expect(appRuntimePath('/usr/bin:/bin', { execPath: node, entry, home, platform: 'darwin' }).split(':')).not.toContain(shimDir());
+
+      ensureAppCliOnShellPath({ execPath: APP_NODE, entry: ENTRY, home, platform: 'darwin', globalCli: '' });
+      const lasting = readFileSync(join(shimDir(), 'dreamcontext'), 'utf-8');
+      appRuntimePath('', { execPath: node, entry, home, platform: 'darwin' });
+      ensureAppCliOnShellPath({ execPath: node, entry, home, platform: 'darwin', globalCli: '' });
+      expect(readFileSync(join(shimDir(), 'dreamcontext'), 'utf-8')).toBe(lasting);
+    });
+  }
+});
+
 describe('anywhere else', () => {
   it('a global npm CLI: PATH unchanged, nothing written', () => {
     const node = '/opt/homebrew/bin/node';

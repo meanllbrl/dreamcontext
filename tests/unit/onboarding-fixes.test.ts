@@ -285,6 +285,16 @@ describe('shell-path fixes', () => {
     ]);
   });
 
+  it('cli-shell-path on the app opened from the DMG says to move it to Applications and writes nothing', async () => {
+    const execPath = '/Volumes/dreamcontext/dreamcontext.app/Contents/Resources/runtime/bin/node';
+    const { deps, shellPaths } = fakeDeps();
+    const r = await runFix('cli-shell-path', ctxFor({ execPath }), recordingSink().sink, signal(), {}, deps);
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain('Applications');
+    expect(shellPaths).toEqual([]);
+    expect(existsSync(join(home, '.dreamcontext', 'bin', 'cli', 'dreamcontext'))).toBe(false);
+  });
+
   it('a refused folder name comes back refused', async () => {
     const { deps } = fakeDeps(undefined, {
       addToShellPath: (dir) => ({ dir, line: '', wrote: [], alreadyConfigured: [], refused: 'unsafe-chars' }),

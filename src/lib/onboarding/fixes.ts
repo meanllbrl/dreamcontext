@@ -16,7 +16,7 @@ import { codexChildEnv, codexHealth, codexTooOld, findCodexBin, forgetCodexHealt
 import { ensureCliInstalled, type EnsureCliResult } from '../ensure-cli.js';
 import { findBridgeNode, resetBridgeNodeCache } from '../t3-bridge/node-floor.js';
 import { installManagedCodex, installPinnedNode, withCodexInstallLock, type NodePins } from './codex-install.js';
-import { cliAwarePath, cliShimDir } from '../automations/cli-path.js';
+import { cliAwarePath, cliShimDir, isEphemeralPath } from '../automations/cli-path.js';
 import { killPortable } from '../proc.js';
 import { spawnSpec } from '../win-cmd.js';
 import { withNodeDirOnPath } from '../git-sync/credentials.js';
@@ -416,6 +416,9 @@ function cliShellPath({ ctx, deps }: RecipeEnv): FixOutcome {
   // On the app's own runtime (plan npmsiz-beta C1) the launcher folder is the CLI's home on PATH:
   // write its launcher now (it names this very node and entry) and put that folder on PATH.
   if (isAppRuntimeNode(ctx.execPath, ctx.home)) {
+    if (isEphemeralPath(ctx.execPath)) {
+      return fail('failed', 'Move dreamcontext to your Applications folder, then open it from there.');
+    }
     cliAwarePath('', { execPath: ctx.execPath, home: ctx.home });
   }
   const dir = [join(managedNpmGlobal(ctx.home), 'bin'), dirname(ctx.execPath), cliShimDir(ctx.home)]

@@ -42,6 +42,18 @@ export function renderCliShim(execPath: string, entry: string): string {
   return `#!/bin/sh\n# Written by dreamcontext for headless runs. Rewritten when the CLI moves.\nexec ${shq(execPath)} ${shq(entry)} "$@"\n`;
 }
 
+/**
+ * A path macOS hands out for one run only: the mounted DMG, or a quarantined app's randomised
+ * App Translocation copy (same rule as `is_ephemeral` in desktop/src-tauri/src/app_manifest.rs).
+ * The shim outlives this process and the rc line points every terminal and hook at it, so it
+ * must never name such a path: once the DMG is ejected every hook would fail.
+ */
+export function isEphemeralPath(p: string | undefined): boolean {
+  if (!p) return false;
+  const s = p.split('\\').join('/');
+  return s.startsWith('/Volumes/') || s.includes('/AppTranslocation/');
+}
+
 function isExecutableFile(path: string): boolean {
   try {
     const st = statSync(path);
@@ -74,7 +86,8 @@ export function cliAwarePath(
   const nodeDir = dirname(execPath);
   if (!entries.includes(nodeDir)) entries = [...entries, nodeDir];
 
-  if (!hasCli(entries) && entry && process.platform !== 'win32') {
+  // A one-run path (DMG, App Translocation) writes no shim: the run keeps its PATH as it was.
+  if (!hasCli(entries) && entry && process.platform !== 'win32' && !isEphemeralPath(execPath) && !isEphemeralPath(entry)) {
     try {
       const dir = cliShimDir(opts.home);
       const shim = join(dir, 'dreamcontext');
