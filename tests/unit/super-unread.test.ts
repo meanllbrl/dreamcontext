@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DWELL_MS, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, landingFor, readSide, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
+  DWELL_MS, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, landingFor, readSide, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, leadIndex, mergeMarks, mostlyVisible, newestRead, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
   type ReadMarks, type UnreadItem,
 } from '../../dashboard/src/components/sleepy/super/superUnread';
 
@@ -263,5 +263,22 @@ describe('where a message START stands to the view (owner 2026-11-12)', () => {
 
   it('the door event keeps its name (showQuestionCard and the pane)', () => {
     expect(SUPER_QUESTION_EVENT).toBe('dc:super-question');
+  });
+});
+
+describe('a member stage is read at its newest message (owner 2026-11-15)', () => {
+  const items = [user('u1', 'reklam nasıl gidiyor', 1_000), text('a', 'eski cevap', 2_000), text('b', 'yeni cevap', 900_000)];
+  it('an older message he never scrolled up to does not hold `seen` back', () => {
+    const all = units(items);
+    const unread = unreadOf(all, marks(0, [{ key: all[1].key, ts: all[1].ts }]));
+    expect(unread.map((u) => u.itemId)).toEqual(['a']);
+    expect(newestRead(all, unread)).toBe(true);
+  });
+  it('the newest message unread: not read yet', () => {
+    const all = units(items);
+    expect(newestRead(all, unreadOf(all, marks(0)))).toBe(false);
+  });
+  it('no message at all: read', () => {
+    expect(newestRead([], [])).toBe(true);
   });
 });

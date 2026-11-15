@@ -64,6 +64,17 @@ export function useSuperUnread(vault: string | null, superId: SuperId): SuperUnr
   return useSyncExternalStore(subscribe, read, read);
 }
 
+/** A member's stage told the server it was read (`seen`): what draws the side menu's Team count
+ *  from the server's summary re-reads it now, not at its next poll. */
+const seenListeners = new Set<(vault: string) => void>();
+export function noteMemberSeen(vault: string): void {
+  for (const fn of [...seenListeners]) fn(vault);
+}
+export function onMemberSeen(fn: (vault: string) => void): () => void {
+  seenListeners.add(fn);
+  return () => { seenListeners.delete(fn); };
+}
+
 /** Tests only. */
 export function _superUnreadSize(): number { return counts.size; }
 

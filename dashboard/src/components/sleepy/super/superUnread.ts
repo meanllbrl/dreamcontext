@@ -121,6 +121,17 @@ export function unreadUnits(
   return units.sort((a, b) => a.ts - b.ts);
 }
 
+/**
+ * A member's stage is read when its NEWEST message is (plan r4 D7, owner 2026-11-15): what tells the
+ * server `seen`. Not "nothing unread": an older message he never scrolled up to held that false for
+ * days, so the Team row kept its number while he read every new reply. No message: read.
+ */
+export function newestRead(units: readonly UnreadUnit[], unread: readonly UnreadUnit[]): boolean {
+  if (units.length === 0) return true;
+  const last = units[units.length - 1];
+  return !unread.some((u) => u.key === last.key && u.ts === last.ts);
+}
+
 /** A mark covers its message at about its time: a replay dates a block by when it was written, the
  *  live stream by when it began. The same words further apart are another message; a position in
  *  the list could not say so, the replay keeps only the newest items. */

@@ -9,6 +9,7 @@ import { pollMs, onWindowActivity } from '../../../lib/windowActivity';
 import { startPulsedPoll, type PulsedPoll } from '../../../lib/pulsedPoll';
 import { buildRoster, ekipPulseKey, type EkipSummary, type TeamAgent } from '../../aiteam/teamModel';
 import { useVaultSuperRecords } from '../../sleepy/super/superRecordStore';
+import { onMemberSeen } from '../../sleepy/super/superUnreadStore';
 import { DRAWER_POLL_MS, headlessRowsOf, type DrawerFacts } from './drawerModel';
 
 /**
@@ -54,8 +55,10 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
     poller.current = p;
     // Back in front: read at once (plan r4 D8), a member's answer may have landed meanwhile.
     const offFocus = onWindowActivity((next, prev) => { if (next.focused && !prev.focused) p.poke(); });
-    return () => { p.stop(); if (poller.current === p) poller.current = null; offFocus(); };
-  }, [api, drawerVisible, agentSet]);
+    // A member's stage was just read: its number on the row goes now, not 15 s later.
+    const offSeen = onMemberSeen((v) => { if (v === vault) p.poke(); });
+    return () => { p.stop(); if (poller.current === p) poller.current = null; offFocus(); offSeen(); };
+  }, [api, drawerVisible, agentSet, vault]);
   const firstPulse = useRef(true);
   useEffect(() => {
     // The mount's own read already covers the first key.

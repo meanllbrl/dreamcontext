@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { _superUnreadSize, dropSuperUnread, publishSuperUnread, readSuperUnread } from '../../dashboard/src/components/sleepy/super/superUnreadStore';
+import { _superUnreadSize, dropSuperUnread, noteMemberSeen, onMemberSeen, publishSuperUnread, readSuperUnread } from '../../dashboard/src/components/sleepy/super/superUnreadStore';
 
 describe('keyed by vault and superId', () => {
   it('main is the default: an old caller publishes and reads main', () => {
@@ -72,5 +72,16 @@ describe('keyed by vault and superId', () => {
     const src = readFileSync(join(__dirname, '..', '..', 'dashboard/src/components/sleepy/super/superUnreadStore.ts'), 'utf-8');
     expect(src).toMatch(/export function useSuperUnreadCount\(vault: string \| null\): number \{\s*const read = \(\) => readSuperUnread\(vault, 'main'\)\.count;/);
     expect(src).toMatch(/export function useSuperUnread\(vault: string \| null, superId: SuperId\): SuperUnreadView/);
+  });
+});
+
+describe('a member stage read re-reads the Team summary', () => {
+  it('tells every listener the vault, and a listener that left hears nothing', () => {
+    const heard: string[] = [];
+    const off = onMemberSeen((v) => heard.push(v));
+    noteMemberSeen('ku-seen');
+    off();
+    noteMemberSeen('ku-seen');
+    expect(heard).toEqual(['ku-seen']);
   });
 });
