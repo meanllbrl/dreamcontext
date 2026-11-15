@@ -23,7 +23,7 @@
  * that does not fit is DRAWN smaller (the plan's `size`), the record is never touched.
  */
 import {
-  CONTAINER_SIZES, MAX_CONTAINERS, MAX_FILMSTRIP, MAX_PRESENT, PRESENT_LAYOUTS, SIZE_UNITS, applyGroupOp, applyOwnerViewFields, dissolveGroups,
+  CONTAINER_SIZES, MAX_CONTAINERS, MAX_FILMSTRIP, PRESENT_LAYOUTS, SIZE_UNITS, applyGroupOp, applyOwnerViewFields, dissolveGroups,
   leaveGroups, normalizeGroups, presentRange, resolvePresent, viewWithout,
   type ContainerShape, type ContainerSize, type GroupOp, type OwnerViewFields, type PresentLayout, type SuperContainer, type SuperGroup, type SuperState, type SuperView,
 } from '../../../lib/superTypes';
@@ -1812,7 +1812,7 @@ function drawnLayout(stored: PresentLayout | undefined, n: number): PresentLayou
     const r = presentRange(stored);
     if (n >= r.min && n <= r.max) return stored;
   }
-  return n <= 1 ? 'spotlight' : n === 2 ? 'compare' : n <= MAX_PRESENT ? 'grid' : 'filmstrip';
+  return n <= 1 ? 'spotlight' : n === 2 ? 'compare' : 'filmstrip';
 }
 
 /** Taller than wide by more than a hair: 'tall'. A floating tile is always square. */

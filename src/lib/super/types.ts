@@ -357,19 +357,15 @@ export function layoutFits(layout: PresentLayout, cards: readonly LayoutCard[]):
   return layout !== 'review' || isReviewSet(cards);
 }
 
-/** The layout the cards pick when none is given: 1 spotlight, a child's page with its chat
- *  review, 2 compare, 3-4 grid, 5+ filmstrip; 2+ clips (all video) or 2+ landscape pictures a
- *  filmstrip. */
+/** The layout the cards pick when none is given (owner 2026-11-15: filmstrip over grid): 1
+ *  spotlight, a child's page with its chat review, 2 compare, 3+ filmstrip; 2+ pictures or clips
+ *  (images and videos only) a filmstrip. Grid only when asked for (a side-by-side comparison). */
 export function defaultLayout(cards: readonly LayoutCard[]): PresentLayout {
   if (cards.length <= 1) return 'spotlight';
-  // Clips: one big player over a strip of the rest.
-  if (cards.length <= MAX_FILMSTRIP && cards.every((c) => c.kind === 'video')) return 'filmstrip';
+  // Pictures and clips: one big card over a strip of the rest, whatever their shape.
+  if (cards.length <= MAX_FILMSTRIP && cards.every((c) => c.kind === 'video' || c.kind === 'image')) return 'filmstrip';
   if (isReviewSet(cards)) return 'review';
-  // Landscape pictures (owner 2026-10-29: "if they are 16:9 use filmstrip, not grid, so we can see
-  // them"): a grid cell is too small for a wide shot, one big over a strip shows it.
-  if (cards.every((c) => c.kind === 'image' && (c.aspect ?? 0) >= LANDSCAPE_ASPECT)) return 'filmstrip';
-  if (cards.length === 2) return 'compare';
-  return cards.length <= MAX_PRESENT ? 'grid' : 'filmstrip';
+  return cards.length === 2 ? 'compare' : 'filmstrip';
 }
 
 /** The ONE resolver (store, route and window): an asked layout that takes the cards, else the

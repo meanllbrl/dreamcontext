@@ -113,12 +113,12 @@ describe('super present <group>', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('a group id presents all its cards (3 pictures: a grid); they stay in the group', async () => {
+  it('a group id presents all its cards (3 pictures: a filmstrip); they stay in the group', async () => {
     makeVault({ containers: [img('image-a'), img('image-b'), img('image-c')], groups: [{ id: 'grp-shots', name: 'shots', cards: ['image-a', 'image-b', 'image-c'], place: 'float' }] });
     const r = await present({ containers: ['grp-shots'] });
     expect(r.status).toBe(200);
     const s = await readSuperState(root);
-    expect(s.view).toMatchObject({ mode: 'present', cards: ['image-a', 'image-b', 'image-c'], layout: 'grid' });
+    expect(s.view).toMatchObject({ mode: 'present', cards: ['image-a', 'image-b', 'image-c'], layout: 'filmstrip' });
     expect(s.groups[0].cards).toEqual(['image-a', 'image-b', 'image-c']);
   });
 
@@ -138,7 +138,7 @@ describe('super present <group>', () => {
     expect((await present({ containers: ['grp-two'] })).status).toBe(200);
     const s = await readSuperState(root);
     expect(s.groups[0].place).toBe('float');
-    expect(s.view).toMatchObject({ mode: 'present', cards: ['image-a', 'image-b'], layout: 'compare' });
+    expect(s.view).toMatchObject({ mode: 'present', cards: ['image-a', 'image-b'], layout: 'filmstrip' });
   });
 
   it('an unknown group or card is still a 404', async () => {
@@ -161,26 +161,26 @@ const mixed = [
   card('insight-x', 'insight', 'weekly-active-users'), card('whiteboard-x', 'whiteboard', 'flows'),
 ];
 const KIND_CASES: { name: string; cards: SuperContainer[]; layout: string; state?: Partial<SuperState> }[] = [
-  { name: 'a PDF group (3: a grid)', cards: pdfs, layout: 'grid' },
+  { name: 'a PDF group (3: a filmstrip)', cards: pdfs, layout: 'filmstrip' },
   { name: 'a file group (2: compare)', cards: files, layout: 'compare' },
-  { name: 'a task group (4: a grid)', cards: tasks, layout: 'grid' },
+  { name: 'a task group (4: a filmstrip)', cards: tasks, layout: 'filmstrip' },
   { name: 'a mixed group (8 kinds: a filmstrip)', cards: mixed, layout: 'filmstrip' },
-  { name: 'a mixed group of 3 (picture, file, task: a grid)', cards: [mixed[0], mixed[3], mixed[4]], layout: 'grid' },
+  { name: 'a mixed group of 3 (picture, file, task: a filmstrip)', cards: [mixed[0], mixed[3], mixed[4]], layout: 'filmstrip' },
   { name: 'a finished child\'s chat with its site (review)', cards: [card('chat-kid', 'chat', 'kid-1'), card('web-kid', 'web', 'http://localhost:5173/', { by: 'auto', of: 'kid-1' })], layout: 'review',
     state: { children: { 'kid-1': { sessionId: 'kid-1', brief: 'the ledger site', adopted: true, startedAt: 1 } } } },
 ];
 
-describe('landscape pictures default to a filmstrip (owner 2026-10-29), the same on both sides', () => {
+describe('2+ pictures default to a filmstrip (owner 2026-10-29, 2026-11-15), the same on both sides', () => {
   const pic = (aspect?: number): SuperContainer => img(`image-${aspect}`, aspect === undefined ? {} : { aspect });
-  it('2+ pictures all at least LANDSCAPE_ASPECT wide: filmstrip; square, portrait, unknown or mixed: as before', () => {
+  it('2+ pictures of any shape: filmstrip; a picture with a PDF: compare', () => {
     const cases: [SuperContainer[], string][] = [
       [[pic(16 / 9), pic(1.6)], 'filmstrip'],
       [[pic(16 / 9), pic(16 / 9), pic(4 / 3)], 'filmstrip'],
       [[pic(16 / 9)], 'spotlight'],
-      [[pic(1), pic(1)], 'compare'],
-      [[pic(0.46), pic(0.46), pic(0.46)], 'grid'],
-      [[pic(16 / 9), pic(0.46), pic(16 / 9)], 'grid'],
-      [[pic(), pic(), pic()], 'grid'],
+            [[pic(0.46), pic(0.46), pic(0.46)], 'filmstrip'],
+      [[pic(16 / 9), pic(0.46), pic(16 / 9)], 'filmstrip'],
+      [[pic(), pic(), pic()], 'filmstrip'],
+      [[pic(1), pic(0.46)], 'filmstrip'],
       [[pic(16 / 9), { ...pic(16 / 9), id: 'pdf-x', kind: 'pdf' }], 'compare'],
     ];
     for (const [cards, want] of cases) {
@@ -313,7 +313,7 @@ describe('super open … --present', () => {
     for (const f of shots) writeFileSync(join(dir, 'acme', f), '');
   }
 
-  it('4 pictures open as one group AND are presented whole (a grid); the reply carries the view', async () => {
+  it('4 pictures open as one group AND are presented whole (a filmstrip); the reply carries the view', async () => {
     withShots();
     const r = await open({ kind: 'image', refs: shots, present: true });
     expect(r.status).toBe(200);
@@ -321,7 +321,7 @@ describe('super open … --present', () => {
     expect(s.groups).toHaveLength(1);
     const ids = s.groups[0].cards;
     expect(ids).toHaveLength(4);
-    expect(s.view).toMatchObject({ mode: 'present', cards: ids, layout: 'grid' });
+    expect(s.view).toMatchObject({ mode: 'present', cards: ids, layout: 'filmstrip' });
     const out = r.json.result as Record<string, unknown>;
     expect(out.view).toMatchObject({ mode: 'present', cards: ids });
     expect(out.presented).toMatchObject({ cards: ids });
@@ -349,12 +349,12 @@ describe('super open … --present', () => {
     expect(r.status).toBe(200);
     let s = await readSuperState(root);
     expect(s.groups).toHaveLength(0);
-    expect(s.view).toMatchObject({ mode: 'present', layout: 'compare' });
+    expect(s.view).toMatchObject({ mode: 'present', layout: 'filmstrip' });
     expect(s.view.cards).toHaveLength(2);
     // Over the presentation on screen it waits in the queue (task super-sahnesinde-sunum-sirasi).
     const queued = await open({ kind: 'image', ref: shots[3], group: false, present: true });
     expect((queued.json.result as Record<string, unknown>).queued).toMatchObject({ at: 2, of: 2 });
-    expect((await readSuperState(root)).view).toMatchObject({ layout: 'compare' });
+    expect((await readSuperState(root)).view).toMatchObject({ layout: 'filmstrip' });
     await leaveStage();
     expect((await open({ kind: 'image', ref: shots[3], group: false, present: true })).status).toBe(200);
     s = await readSuperState(root);
@@ -386,7 +386,7 @@ describe('super open … --present', () => {
     return b;
   };
 
-  it('landscape pictures (16:9) present as a filmstrip, not a grid; portrait ones keep the grid', async () => {
+  it('pictures present as a filmstrip, landscape or portrait (grid only when asked)', async () => {
     withShots();
     for (const f of shots) writeFileSync(join(dir, 'acme', f), png(1600, 900));
     expect((await open({ kind: 'image', refs: shots, present: true })).status).toBe(200);
@@ -399,7 +399,7 @@ describe('super open … --present', () => {
     await leaveStage();
     expect((await open({ kind: 'image', refs: tall, group: false, present: true })).status).toBe(200);
     s = await readSuperState(root);
-    expect(s.view).toMatchObject({ mode: 'present', layout: 'grid' });
+    expect(s.view).toMatchObject({ mode: 'present', layout: 'filmstrip' });
   });
 
   it('--present is media only, and a boolean', async () => {

@@ -744,7 +744,7 @@ plain, high-level lines in his words. Keep it true as you work:
 \`super half <card>\` (side by side), \`present <card…>\` (1-8), \`stack <card>\` (Others),
 \`group <card…>\`; \`--off\` / \`float\` undo. \`@card:<id>\` names a card he dropped on you.
 \`present … [--layout spotlight|compare|grid|filmstrip|review]\`: leave it off and the cards pick it
-(1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip, 2+ clips filmstrip; a page with its child's chat: review).
+(1 spotlight, 2 compare, 3-8 filmstrip, 2+ pictures or clips filmstrip; a page with its child's chat: review; grid only to compare side by side).
 \`kept: owner_layout\` in the answer = he chose that layout: leave it. \`state: skipped\` or a \`note\` saying NOT on his screen: never say it is shown; tell him where it is.
 A present while he looks at another presentation answers \`queued: {at, of}\`: it waits its turn; say so, never that it is shown.
 Sizes: \`super shape <card> small|medium|large|wide\` (or \`open … --size\`); large/wide for

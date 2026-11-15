@@ -212,8 +212,8 @@ describe('the kinds on both sides of the wire', () => {
     const mixed = [{ kind: 'video' as const, ref: 'a.mp4' }, { kind: 'image' as const, ref: 'b.png' }];
     expect(defaultLayout(clips)).toBe('filmstrip');
     expect(client.defaultLayout(clips)).toBe('filmstrip');
-    expect(defaultLayout(mixed)).toBe('compare');
-    expect(client.defaultLayout(mixed)).toBe('compare');
+    expect(defaultLayout(mixed)).toBe('filmstrip');
+    expect(client.defaultLayout(mixed)).toBe('filmstrip');
     expect([isMediaKind('pdf'), isMediaKind('video'), isMediaKind('image'), isMediaKind('web')]).toEqual([true, true, true, false]);
     expect([defaultSizeFor('pdf'), defaultSizeFor('video'), defaultSizeFor('image'), defaultSizeFor('agenda')]).toEqual(['large', 'wide', 'small', 'large']);
   });

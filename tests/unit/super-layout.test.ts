@@ -269,7 +269,7 @@ describe('groups on the stage (2026-10-20)', () => {
   it('12 cards, a group of two presented beside two others: every card has a place (end review)', () => {
     const list = Array.from({ length: MAX_FLOAT }, (_, i) => card(`c${i}`));
     const g: SuperGroup = { id: 'grp-1', name: 'X', cards: ['c0', 'c1'], place: 'float' };
-    const view: SuperView = { mode: 'present', cards: ['c0', 'c1', 'c2', 'c3'] };
+    const view: SuperView = { mode: 'present', cards: ['c0', 'c1', 'c2', 'c3'], layout: 'grid' };
     const p = planStage(grouped(list, [g], view), view, STAGES[2]);
     for (const c of list) expect(p.cards[c.id], c.id).toBeDefined();
     for (const id of ['c0', 'c1', 'c2', 'c3']) expect(p.cards[id].where).toBe('present');
@@ -458,7 +458,7 @@ describe('half, present, narrow (O5, O8, §0 C2)', () => {
   });
 
   it('present: the centre a left column, 1-4 cards on the right, the rest in Others', () => {
-    const p = planStage([card('a'), card('b'), card('c'), card('d'), card('e')], { mode: 'present', cards: ['a', 'b', 'c'] }, STAGES[3]);
+    const p = planStage([card('a'), card('b'), card('c'), card('d'), card('e')], { mode: 'present', cards: ['a', 'b', 'c'], layout: 'grid' }, STAGES[3]);
     expect(p.centre.x).toBe(STAGE.MARGIN);
     expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.PRESENT_MIN);
     expect(p.centre.width).toBeLessThanOrEqual(STAGE.PRESENT_MAX);

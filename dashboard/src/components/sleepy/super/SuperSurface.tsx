@@ -884,8 +884,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [props.onOpenCard]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
-  /** Every card of a group at once, in the layout its cards pick (2 compare, 3-4 grid, 5-8
-   *  filmstrip, clips filmstrip). The cards stay in the group; a group in Others comes out. */
+  /** Every card of a group at once, in the layout its cards pick (2 compare, 3-8
+   *  filmstrip, pictures and clips filmstrip). The cards stay in the group; a group in Others comes out. */
   const presentGroup = (id: string) => {
     const g = groupsById.get(id);
     const cards = g ? groupPresentCards(g, state.containers) : [];
