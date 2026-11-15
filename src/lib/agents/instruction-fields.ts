@@ -1,4 +1,4 @@
-import type { ApprovalPayloadFields } from '../automations/types.js';
+import { memberSuperProcess, type ApprovalPayloadFields } from '../automations/types.js';
 
 /**
  * WHICH SIDE OF THE LINE EACH MEMBER FIELD SITS ON. The one place that says it.
@@ -91,17 +91,20 @@ export type MemberActor = 'owner' | 'super' | 'session' | 'agent';
 /** The env keys of a process that never talks to the owner. */
 export const BACKGROUND_ENVS = ['DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_MEMBER_CREW', 'DREAMCONTEXT_AUTOMATION_RUN', 'DREAMCONTEXT_SUPER_CREW'] as const;
 
+/** The chat server sets these on EVERY chat it spawns, `''` meaning none (`agent-chat.ts`), so
+ *  only a value marks a background process; the run markers count once present, as before. */
+const ALWAYS_SET_ENVS: ReadonlySet<string> = new Set(['DREAMCONTEXT_MEMBER_CREW', 'DREAMCONTEXT_SUPER_CREW']);
+
 /**
- * The actor of a CLI process, read from its environment. `self` names the member a member run
- * belongs to (`DREAMCONTEXT_AGENT_SELF` or `DREAMCONTEXT_MEMBER_CREW`): from inside it only that
- * member may be edited without the card.
+ * The actor of a CLI process, read from its environment. `self` names what the process belongs to
+ * (a member's run `DREAMCONTEXT_AGENT_SELF`, its Super's crew `DREAMCONTEXT_MEMBER_CREW`, the member's
+ * own Super chat `memberSuperProcess`, any conversation with it `DREAMCONTEXT_AGENT_CHAT`, which an
+ * app's chat sets to `app-<slug>`): such a process edits that member only, and an app's chat none.
  */
 export function memberActorFromEnv(env: NodeJS.ProcessEnv = process.env): { actor: MemberActor; self: string | null } {
-  if (BACKGROUND_ENVS.some((k) => env[k] !== undefined)) {
-    const self = (env.DREAMCONTEXT_AGENT_SELF ?? env.DREAMCONTEXT_MEMBER_CREW ?? '').trim();
-    return { actor: 'agent', self: self || null };
-  }
-  if (env.CLAUDECODE !== undefined || env.DREAMCONTEXT_AGENT_CHAT !== undefined) return { actor: 'session', self: null };
+  const self = (env.DREAMCONTEXT_AGENT_SELF || env.DREAMCONTEXT_MEMBER_CREW || memberSuperProcess(env) || env.DREAMCONTEXT_AGENT_CHAT || '').trim() || null;
+  if (BACKGROUND_ENVS.some((k) => (ALWAYS_SET_ENVS.has(k) ? !!env[k] : env[k] !== undefined))) return { actor: 'agent', self };
+  if (env.CLAUDECODE !== undefined || env.DREAMCONTEXT_AGENT_CHAT !== undefined) return { actor: 'session', self };
   return { actor: 'owner', self: null };
 }
 

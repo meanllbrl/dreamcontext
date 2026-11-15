@@ -17,7 +17,7 @@ import {
 } from '../../lib/agents/store.js';
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
-import { AmendmentRefused, amendMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
+import { AmendmentRefused, amendMember, assertOwnMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
 import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import { describePendingChange, pendingChangeSentence } from '../../lib/agents/pending-change.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
@@ -48,6 +48,7 @@ import {
   EFFORT_LEVELS,
   createNeedsOwner,
   insideAgentRun,
+  memberSuperProcess,
   type AgentAutonomy,
   type EffortLevel,
 } from '../../lib/automations/types.js';
@@ -368,9 +369,10 @@ export function registerAgentsCommand(program: Command): void {
   agents
     .command('edit')
     .argument('<slug>', 'Agent slug')
-    .description('Edit an agent\'s identity; what was approved directly here stays approved')
+    .description('Edit an agent\'s identity; what was approved directly here stays approved. From inside a member (its own Super chat, its run, its crew) only that member')
     .option('--title <title>', 'Agent name')
     .option('--prompt <text>', 'Its prompt')
+    .option('--quote <words>', 'The owner\'s exact words this edit carries out: recorded and shown with it')
     .option('--soul <text>', 'How it works ("" removes it)')
     .option('--soul-file <path>', 'Read the soul from a file')
     .option('--soul-template <id>', `Replace the soul with a template (${SOUL_TEMPLATE_LIST})`)
@@ -384,7 +386,7 @@ export function registerAgentsCommand(program: Command): void {
     .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
     .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
     .option('--autonomy <level>', `How much it decides alone (${AGENT_AUTONOMY_LEVELS.join(', ')}); sets the permission mode of its sessions`)
-    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
+    .action((slug: string, opts: SoulOptions & { title?: string; prompt?: string; quote?: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
       const root = ensureContextRoot();
       try {
         const patch: AgentIdentityPatch = {};
@@ -408,6 +410,9 @@ export function registerAgentsCommand(program: Command): void {
           return;
         }
         const { actor, self } = memberActorFromEnv();
+        // A process of one member edits that member only (owner 2026-11-15), refused before the
+        // placement or any identity change lands.
+        assertOwnMember(self, slug);
         // A home board is a member's whole reach. Widening no longer waits for a card (a change made
         // on this Mac stamps), so a background run taking a member off its board, or moving it to
         // another, is refused outright, as its autonomy is. Adding a board narrows: allowed.
@@ -429,9 +434,13 @@ export function registerAgentsCommand(program: Command): void {
         if (viaDoor) {
           // One door with `team amend` (plan-r10 1e): checks, trace, revert, and the stamp rule.
           const { prompt, soul: newSoul, ...extra } = patch;
+          // The member's own Super chat correcting its own text: the owner talks to it there, so it
+          // writes as a Super does (`team amend`): approved, flagged text named on the trace row.
+          const ownSuper = memberSuperProcess() === slug && Object.keys(extra).length === 0;
           const a = amendMember(root, {
-            member: slug, by: actor as Exclude<typeof actor, 'owner'>, self,
-            why: `edited with \`dreamcontext agents edit\` from ${actor === 'session' ? 'a chat session' : 'a background run'}`,
+            member: slug, by: ownSuper ? 'super' : actor as Exclude<typeof actor, 'owner'>, self,
+            ...(opts.quote ? { quote: opts.quote } : {}),
+            why: `edited with \`dreamcontext agents edit\` from ${ownSuper ? 'its own Super chat' : actor === 'session' ? 'a chat session' : 'a background run'}`,
             ...(prompt !== undefined ? { prompt } : {}),
             ...(newSoul !== undefined ? { soul: newSoul } : {}),
             extra,

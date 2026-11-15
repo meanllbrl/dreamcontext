@@ -56,13 +56,14 @@
     },
     {
       "path": "agents edit",
-      "desc": "Edit an agent's identity; what was approved directly here stays approved",
+      "desc": "Edit an agent's identity; what was approved directly here stays approved. From inside a member (its own Super chat, its run, its crew) only that member",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
         "--title",
         "--prompt",
+        "--quote",
         "--soul",
         "--soul-file",
         "--soul-template",
@@ -4397,12 +4398,13 @@
     },
     {
       "path": "super team amend",
-      "desc": "Correct a member's instructions after a mistake: only its prompt, soul or a routine's job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
+      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
       "args": [
         "<member>"
       ],
       "valueFlags": [
         "--why",
+        "--quote",
         "--prompt-file",
         "--soul-file",
         "--routine",

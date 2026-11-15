@@ -1724,7 +1724,6 @@ async function answerMemberMirror(c: SuperCaller, res: ServerResponse, mirror: S
 /** Verbs only the project's own Super may run, and verbs only a member's Super may run. */
 const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
   'team-ask': { error: 'member_cannot_assign', message: 'a member\'s Super does not give other members work: tell whoever gave you this job what it needs' },
-  'team-amend': { error: 'main_only', message: 'only the project\'s Super Agent proposes a member change' },
   'team-answer': { error: 'main_only', message: 'only the project\'s Super Agent answers a member\'s question' },
   adopt: { error: 'main_only', message: 'a member\'s Super never adopts a chat: open your own children with `super delegate`' },
   schedule: { error: 'main_only', message: 'only the project\'s Super Agent sets the owner\'s scheduled jobs' },
@@ -3045,9 +3044,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   'team-amend': async (c, b, res) => {
-    // A member's instructions, corrected. Only the recorded Super Agent session reaches this door
-    // (`authorizeSuperAgent`): a child, the member itself and a terminal are refused above. Text
-    // fields only; anything else in the body is ignored, so no field of a member's reach can ride.
+    // A member's instructions, corrected. Only a recorded Super session reaches this door
+    // (`authorizeSuperAgent`): a child, a member's run and a terminal are refused above. The
+    // project's Super corrects any member; a member's own Super corrects ITSELF only, from the
+    // owner's feedback in its chat (owner 2026-11-15), `own_member_only` for another. Text fields
+    // only; anything else in the body is ignored, so no field of a member's reach can ride.
     if (!requireHandedOver(c, res)) return;
     const root = c.who.contextRoot;
     const member = str(b.member);
@@ -3059,6 +3060,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     try {
       const a = amendMember(root, {
         member, why: text(b.why) ?? '', prompt: text(b.prompt), soul: text(b.soul), job: text(b.job), routine: str(b.routine), session: c.who.sessionId,
+        self: memberOfSuperId(c.superId), quote: text(b.quote),
       });
       ok(res, {
         amendment: a.id,
