@@ -1498,6 +1498,9 @@ export interface SuperPoolItem {
   outward?: OutwardGrant;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
+  /** A member Super's job kept at its cap: whose work it does (as its child's `workOrigin`), so
+   *  the card of the request it serves shows it waiting. */
+  workOrigin?: SuperWorkOrigin;
   /** A `delegate --from` went unconfirmed: the child may be running. */
   maybeStarted?: boolean;
   startedIn?: string;

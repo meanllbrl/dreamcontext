@@ -34,7 +34,7 @@ import { MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_PROMPT, MAX_QUEUE, emptySuperStat
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
 import { resetCapacityForTests } from '../../src/lib/super/capacity.js';
-import { DEV_SERVER_LINE, handleSuperVerb } from '../../src/server/routes/super.js';
+import { DEV_SERVER_LINE, handleSuperVerb, startOrigin } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
 let dir: string;
@@ -165,6 +165,28 @@ describe('a capped delegate keeps its job', () => {
     for (let i = 1; i < MAX_POOL; i += 1) await verb('pool-add', { prompt: `fill ${i}` });
     expect((await verb('delegate', { prompt: 'no room' })).json).toMatchObject({ error: 'pool_full', kept: false });
     expect(commands()).toHaveLength(0);
+  });
+});
+
+describe("a member Super's held job keeps whose work it is (owner 2026-11-15, the helpers strip)", () => {
+  it('a pool row\'s workOrigin survives the read; a malformed one is dropped', async () => {
+    write();
+    const a = result(await verb('pool-add', { prompt: 'for main', brief: 'a' })).pooled as string;
+    const b = result(await verb('pool-add', { prompt: 'bad origin', brief: 'b' })).pooled as string;
+    const raw = JSON.parse(readFileSync(join(root, SUPER_STATE_REL), 'utf-8'));
+    for (const p of raw.pool) p.workOrigin = p.id === a ? 'main:q-mwh256q5-59d58295' : 'somebody else';
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(raw));
+    resetSuperIndex();
+    const pool = (await readSuperState(root)).pool;
+    expect(pool.find((p) => p.id === a)?.workOrigin).toBe('main:q-mwh256q5-59d58295');
+    expect(pool.find((p) => p.id === b)).toBeDefined();
+    expect(pool.find((p) => p.id === b)?.workOrigin).toBeUndefined();
+  });
+  it('a job started from its pool row keeps the request it was held for, unless --for names another', () => {
+    expect(startOrigin(undefined, { workOrigin: 'main:q-a' }, 'owner')).toBe('main:q-a');
+    expect(startOrigin('main:q-b', { workOrigin: 'main:q-a' }, 'owner')).toBe('main:q-b');
+    expect(startOrigin(undefined, {}, 'owner')).toBe('owner');
+    expect(startOrigin(undefined, undefined, undefined)).toBeUndefined();
   });
 });
 

@@ -829,6 +829,8 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
     };
     const outward = sanitizeOutward(p.outward);
     if (outward) row.outward = outward;
+    const workOrigin = parseWorkOrigin(p.workOrigin);
+    if (workOrigin) row.workOrigin = workOrigin;
     if (row.maybeStarted && acceptableWorktree(p.startedIn, opts) && typeof p.startedBranch === 'string' && SUPER_BRANCH_RE.test(p.startedBranch)) {
       row.startedIn = p.startedIn;
       row.startedBranch = p.startedBranch;

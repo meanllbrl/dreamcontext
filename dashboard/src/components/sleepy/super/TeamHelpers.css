@@ -1,0 +1,109 @@
+/* The helpers strip under a member card's head (owner 2026-11-15, option A). One row; a crowded
+   one scrolls sideways instead of wrapping into the conversation. Tokens only; the ring and the
+   chip border read `--tone` (superTone.css). */
+.super-team-helpers {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: none;
+}
+.super-team-helpers::-webkit-scrollbar { display: none; }
+.super-team-helpers-label {
+  font-size: var(--font-size-2xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  margin-right: var(--space-1);
+}
+.super-team-helper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 240px;
+  min-width: 0;
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--tone, var(--color-border)) 55%, var(--color-border));
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.super-team-helper[data-kind='ready'] { border-color: var(--color-border); }
+.super-team-helper:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg)); }
+.super-team-helper[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--color-accent) 13%, var(--color-bg));
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+.super-team-helper:disabled { cursor: default; opacity: 0.85; }
+.super-team-helper:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.super-team-helper-brief { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.super-team-helper-meta { font-family: var(--font-mono); font-size: var(--font-size-2xs); color: var(--color-text-tertiary); }
+.super-team-helper--more { color: var(--color-text-tertiary); background: transparent; border-color: var(--color-border); }
+
+/* "← member / helper": the way back from a helper's conversation to the member's. */
+.super-team-helper-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  min-width: 0;
+  flex: none;
+}
+.super-team-helper-back {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.super-team-helper-crumb-now { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The small card's count of live helpers (the same chip a child tile shows for background work). */
+.super-team-helpers-count { white-space: nowrap; margin-left: auto; flex: none; }
+
+/* "Open stage" in a member card's head (it replaced the bar at the card's foot). */
+.super-open-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: calc(28px * var(--zoom, 1));
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.super-open-stage:hover { border-color: var(--color-border-hover); }
+.super-open-stage:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+/* The head keeps room for "Open stage" + "ask about this" only where the button is drawn (never
+   on the phone). Measured: the button at its longest label plus the ask button and their gap. */
+.super-card-frame[data-open-stage='true']:not([data-where='float']) :is(.super-card-head, .super-card-large-head) { padding-right: calc(150px * var(--zoom, 1) + var(--space-6)); }
+.super-team-head-title { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.super-team-helpers-wrap { display: contents; }
+.super-card-actions .super-open-stage { margin-right: var(--space-1); align-self: center; }
+@media (max-width: 640px) {
+  .super-open-stage-label { display: none; }
+  .super-open-stage { width: calc(28px * var(--zoom, 1)); padding: 0; justify-content: center; }
+  .super-card-frame[data-open-stage='true']:not([data-where='float']) :is(.super-card-head, .super-card-large-head) { padding-right: calc(64px * var(--zoom, 1) + var(--space-4)); }
+}
