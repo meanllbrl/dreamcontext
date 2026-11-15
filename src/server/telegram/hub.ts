@@ -29,6 +29,7 @@
  */
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -95,6 +96,19 @@ const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.is
 export const MANAGER_PAIRING_TARGET = '@manager';
 /** How long a reopened Super has to register its injector (A3). */
 export const INJECTOR_WAIT_MS = 45_000;
+/** An owner message that cannot reach a closed Super waits this long for it, never dropped at the
+ *  first failed open (owner 2026-11-15: four "açılamadı" lines while the Mac's window was hidden). */
+export const INJECTOR_HOLD_MS = 2 * 60 * 60 * 1000;
+/** While a message waits, the Super's link is opened again this often. */
+export const INJECTOR_RETRY_MS = 2 * 60 * 1000;
+/** A voice note whose local transcription did not answer is tried again after these pauses (a busy
+ *  Mac: model reload, memory pressure, a full disk). At most 4 passes, about 2.5 minutes. */
+export const VOICE_RETRY_DELAYS_MS: readonly number[] = [15_000, 45_000, 90_000];
+/** "Tekrar dene" taps one voice note may take (owner 2026-11-15); past it he is told plainly. */
+export const VOICE_TAP_MAX = 5;
+/** The transcription failures a later pass can cure; a missing ffmpeg, no engine or a garbled
+ *  take cannot. */
+const VOICE_TRANSIENT = /stt_failed|stt_pressure|stt_load_failed/;
 /** The last-message send never waits longer than this on a binding loss (D3). */
 const LAST_MESSAGE_TIMEOUT_MS = 5_000;
 /** Typing and the live status message stop after this, whatever the turn does. */
@@ -103,6 +117,13 @@ const TURN_TYPING_CAP_MS = 2 * 60 * 60 * 1000;
 export const LINES = {
   superOff: "Bu projede Super kapalı; Mac'te açınca yazabilirsin.",
   cannotOpen: "Super Mac'te açılamadı; uygulamaya bakıp tekrar yaz.",
+  holding: "Mac'te sohbet şu an açılamadı; mesajların bekliyor, açılınca sırayla iletirim.",
+  heldExpired: "Bekleyen mesajların Mac'e ulaşmadı: sohbet iki saattir açılamadı. Uygulamaya bakıp tekrar gönder.",
+  voiceRetrying: 'Sesli notu şu an yazıya çeviremedim (Mac meşgul); birkaç dakika içinde yeniden deniyorum.',
+  voiceFailed: "Sesli notu yazıya çeviremedim. Tekrar dene'ye bas ya da yazarak gönder.",
+  voiceTapMax: (n: number) => `Bu sesli not ${n} kez denendi, yazıya çevrilemedi; yazarak gönder.`,
+  voiceRetryTap: 'Yeniden deniyorum…',
+  voiceGone: 'Bu sesli notun dosyası artık yok; yazarak gönder.',
   notWritten: "Mesajın Mac'e yazılamadı; tekrar gönder.",
   writtenNotDone: "Mesajın Mac'e yazıldı ama iş bitmedi; tekrar göndermeden önce Mac'e bak.",
   stale: 'Bu soru artık geçerli değil.',
@@ -159,6 +180,12 @@ export interface HubDeps {
   /** `open -g <link>`: reopens the Super window (A3). */
   openLink?: (url: string) => void;
   injectorWaitMs?: number;
+  /** How long an owner message waits for a closed Super (default `INJECTOR_HOLD_MS`). */
+  injectorHoldMs?: number;
+  /** How often a waiting message opens the Super's link again (default `INJECTOR_RETRY_MS`). */
+  injectorRetryMs?: number;
+  /** Pauses between automatic voice transcription passes (default `VOICE_RETRY_DELAYS_MS`). */
+  voiceRetryDelaysMs?: readonly number[];
   /** Lane C: OGG file → transcript; throws `ffmpeg_missing` when ffmpeg is absent. */
   transcribeVoice?: (oggPath: string) => Promise<string>;
   handsfree?: HubHandsfree;
@@ -833,14 +860,16 @@ export class TelegramHub implements TelegramHubApi {
       const saved = await saveInbound({ transport: ab.transport, contextRoot: root, media, now: this.now() });
       if (!saved.ok) { await this.notice(ab, 'file', saved.line, true); if (!msg.text && !msg.caption) { drop(); return; } }
       else if (media.kind === 'voice' || media.kind === 'audio') {
-        try {
-          spoken = await (this.deps.transcribeVoice ? this.deps.transcribeVoice(saved.path) : Promise.reject(new Error('no_transcriber')));
-        } catch (err) {
-          const missing = /ffmpeg_missing/.test((err as Error).message);
-          await this.notice(ab, 'warn', missing ? 'Sesli not için ffmpeg gerekli: Mac\'te brew install ffmpeg yaz.' : 'Sesli notu yazıya çeviremedim; yazarak gönder.', true);
-          paths.push(saved.path);
+        // Tried again while the Mac is busy; a note no pass cured waits on his "Tekrar dene"
+        // button, never as a bare file path in the agent's turn (owner 2026-11-15).
+        const heard = await this.transcribeVoiceNote(ab, saved.path, true);
+        if (heard.ok) {
+          spoken = heard.text;
+          await this.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {});
+        } else {
+          if (heard.retryable) await this.offerVoiceRetry(ab, saved.path, sessionId, 1);
+          if (!msg.text && !msg.caption) { drop(); return; }
         }
-        if (spoken !== null) await this.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {});
       } else paths.push(saved.path);
     }
     let text = inboundTurnText(msg, paths);
@@ -850,13 +879,72 @@ export class TelegramHub implements TelegramHubApi {
     const head = this.turnPrefix ? this.turnPrefix(ab, msg) : '';
     if (head) text = `${head}\n\n${text}`;
     // His own words beside the turn (C3): the header, quotes, forwards and file paths stay out.
-    const ref = await this.injectText(ab, updateId, text, sessionId, null, telegramOwnText(msg, spoken));
-    if (!ref) { drop(); return; }
+    const arrivedAt = this.pollIO(ab.scope, ab.target).read().pending.find((e) => e.updateId === updateId)?.at ?? this.now();
+    const ref = await this.injectText(ab, updateId, text, sessionId, null, telegramOwnText(msg, spoken), { arrivedAt });
+    // A hold cut short by a stop or a replaced binding keeps its journal entry: the next start
+    // reports it (recoverJournal) instead of it vanishing.
+    if (!ref) { if (this.serving(ab)) drop(); return; }
     const mid = Number(msg.message_id);
     if (Number.isSafeInteger(mid)) {
       this.noteReply(ab, mid, { ref, quote: inboundTurnText(msg, []) || (spoken ?? ''), from: 'owner' });
       this.noteOwnerMessage(ab, ref, mid);
     }
+  }
+
+  /**
+   * A voice note → its transcript. With `ladder`, a failure a later pass can cure (whisper not
+   * answering, memory pressure, the model reloading) is tried again after `VOICE_RETRY_DELAYS_MS`,
+   * and he hears once that it is being retried. `retryable` false = no tap can cure it (no ffmpeg,
+   * he was told how to install it).
+   */
+  private async transcribeVoiceNote(ab: ActiveBinding, path: string, ladder: boolean): Promise<{ ok: true; text: string } | { ok: false; retryable: boolean }> {
+    const delays = ladder ? (this.deps.voiceRetryDelaysMs ?? VOICE_RETRY_DELAYS_MS) : [];
+    const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => { const h = setTimeout(r, ms); h.unref?.(); }));
+    let told = false;
+    for (let pass = 0; ; pass++) {
+      try {
+        if (!this.deps.transcribeVoice) throw new Error('no_transcriber');
+        const text = await this.deps.transcribeVoice(path);
+        if (text.trim()) return { ok: true, text };
+        throw new Error('stt_failed');
+      } catch (err) {
+        const code = String((err as Error)?.message ?? '');
+        if (/ffmpeg_missing/.test(code)) {
+          await this.notice(ab, 'warn', 'Sesli not için ffmpeg gerekli: Mac\'te brew install ffmpeg yaz.', true);
+          return { ok: false, retryable: false };
+        }
+        if (!VOICE_TRANSIENT.test(code) || pass >= delays.length || !this.started) return { ok: false, retryable: true };
+        if (!told) { told = true; await this.notice(ab, 'info', LINES.voiceRetrying); }
+        await sleep(delays[pass]);
+      }
+    }
+  }
+
+  /** "Sesli notu yazıya çeviremedim" with a "Tekrar dene" button bound to that note's file and
+   *  Super; past `VOICE_TAP_MAX` tries a plain line instead. */
+  private async offerVoiceRetry(ab: ActiveBinding, path: string, sessionId: string, tries: number): Promise<void> {
+    if (tries > VOICE_TAP_MAX) { await this.notice(ab, 'warn', LINES.voiceTapMax(VOICE_TAP_MAX), true); return; }
+    await this.sendButtons(ab, noticeHtml('warn', LINES.voiceFailed), [['🔁 Tekrar dene']], { kind: 'voice-retry', sessionId, singleUse: true }, { path, tries })
+      .catch(() => this.notice(ab, 'warn', LINES.voiceFailed, true));
+  }
+
+  /**
+   * His "Tekrar dene" tap: the same file transcribed again, in this binding's order; heard, it goes
+   * to the agent as the voice note it was (echo + 🎙 turn); not heard, a fresh button. Its own cap
+   * (`VOICE_TAP_MAX`), never the agent's `voice retry` cap. Reached only past the tap check.
+   */
+  private voiceRetryTap(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }): string {
+    const path = typeof rec.data?.path === 'string' ? rec.data.path : '';
+    const tries = Number(rec.data?.tries) || 1;
+    const sessionId = rec.sessionId ?? '';
+    if (!path || !sessionId || !existsSync(path)) return LINES.voiceGone;
+    ab.chain = ab.chain.then(async () => {
+      const heard = await this.transcribeVoiceNote(ab, path, false);
+      if (!heard.ok) { if (heard.retryable) await this.offerVoiceRetry(ab, path, sessionId, tries + 1); return; }
+      await this.send(ab, voiceEchoHtml(heard.text), SILENT).catch(() => {});
+      await this.injectText(ab, this.syntheticUpdateId(), `🎙 ${heard.text}`, sessionId, null, heard.text, { arrivedAt: this.now() });
+    }).catch(() => { /* one failed link never stops the next delivery */ });
+    return LINES.voiceRetryTap;
   }
 
   // ── Native reply (B2): an answer to an OLDER owner message is a Telegram reply to it. Memory only. ──
@@ -966,10 +1054,20 @@ export class TelegramHub implements TelegramHubApi {
   /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
    *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
    *  status and typing begun. False = it did not reach the Super (the owner was told). */
-  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null, own = ''): Promise<string | false> {
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null, own = '', hold: { arrivedAt: number } | null = null): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
-    const inj = await this.waitInjector(ab, sessionId);
-    if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
+    // Only a caller on `ab.chain` (his message, his voice tap) may wait for a closed Super: a button
+    // handler runs inside the poll loop and keeps the 45 s fail-fast, as do run reports and schedules.
+    let inj: ReturnType<typeof chatInjector>;
+    if (hold) {
+      const r = await this.holdInjector(ab, sessionId, hold.arrivedAt);
+      if (r === 'stopped') return false;
+      if (r === 'expired') return false;
+      inj = r;
+    } else {
+      inj = await this.waitInjector(ab, sessionId);
+      if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
+    }
     const ref = this.mintRef(ab);
     telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as?.kind === 'run-report' ? { cardRef: as.cardRef } : {}) });
     this.journal(ab, (p) => p.map((e) => (e.updateId === updateId ? { ...e, ref, chatRegistryId: inj.chatRegistryId } : e)));
@@ -1016,6 +1114,57 @@ export class TelegramHub implements TelegramHubApi {
       const ref = randomInt(0, 36 ** 6).toString(36).padStart(6, '0');
       if (TG_REF_RE.test(ref) && !taken.has(ref) && !this.turns.has(ref)) return ref;
     }
+  }
+
+  /** A binding's current wait for a closed Super: its deadline counted from the FIRST waiting
+   *  message's arrival, told once when it starts and once when it runs out. */
+  private holding = new Map<BindingKey, { deadline: number; reported: boolean }>();
+
+  /** This binding is still the live one of a running hub. */
+  private serving(ab: ActiveBinding): boolean {
+    return this.started && this.active.get(ab.key) === ab && !ab.disabled && !ab.halted;
+  }
+
+  /**
+   * The injector for an owner message on `ab.chain`: the window reopened as `waitInjector` does,
+   * and when it does not come up the message WAITS (owner 2026-11-15) — the link opened again every
+   * `INJECTOR_RETRY_MS`, served the moment the Super registers. One spell per binding: it starts at
+   * the first waiting message's arrival and lasts `INJECTOR_HOLD_MS`; messages queued behind it share
+   * that deadline (order holds, none waits past it) and he hears "bekliyor" once and, if it runs out,
+   * "ulaşmadı" once. `stopped` = the hub stopped or the binding was replaced: nothing said.
+   */
+  private async holdInjector(ab: ActiveBinding, sessionId: string, arrivedAt: number): Promise<NonNullable<ReturnType<typeof chatInjector>> | 'stopped' | 'expired'> {
+    // Queued behind a stop: no link reopened, no "bekliyor" line, the journal keeps it.
+    if (!this.serving(ab)) return 'stopped';
+    let spell = this.holding.get(ab.key);
+    // A message that arrived after the last spell ran out opens a new one.
+    if (spell && arrivedAt > spell.deadline) { this.holding.delete(ab.key); spell = undefined; }
+    let inj = spell && this.now() >= spell.deadline ? chatInjector(sessionId) : await this.waitInjector(ab, sessionId);
+    if (!inj && !spell) {
+      spell = { deadline: arrivedAt + (this.deps.injectorHoldMs ?? INJECTOR_HOLD_MS), reported: false };
+      this.holding.set(ab.key, spell);
+      await this.notice(ab, 'warn', LINES.holding, true);
+    }
+    const retryMs = this.deps.injectorRetryMs ?? INJECTOR_RETRY_MS;
+    while (!inj && spell && this.serving(ab) && this.now() < spell.deadline) {
+      inj = await this.registeredWithin(sessionId, Math.min(retryMs, Math.max(0, spell.deadline - this.now())));
+      if (!inj && this.serving(ab) && this.now() < spell.deadline) inj = await this.waitInjector(ab, sessionId);
+    }
+    if (inj) { this.holding.delete(ab.key); return inj; }
+    if (!this.serving(ab)) { if (this.holding.get(ab.key) === spell) this.holding.delete(ab.key); return 'stopped'; }
+    if (spell && !spell.reported) { spell.reported = true; await this.notice(ab, 'warn', LINES.heldExpired, true); }
+    return 'expired';
+  }
+
+  /** The injector if the Super registers within `ms`, else null. Opens nothing. */
+  private registeredWithin(sessionId: string, ms: number): Promise<ReturnType<typeof chatInjector>> {
+    const have = chatInjector(sessionId);
+    if (have || ms <= 0) return Promise.resolve(have);
+    return new Promise((resolve) => {
+      const off = onChatInjector((sid) => { if (sid === sessionId) { clearTimeout(timer); off(); resolve(chatInjector(sid)); } });
+      const timer = setTimeout(() => { off(); resolve(null); }, ms);
+      timer.unref?.();
+    });
   }
 
   /** The live injector, or the Super window reopened through its session link and awaited (A3). */
@@ -1403,6 +1552,7 @@ export class TelegramHub implements TelegramHubApi {
 
   private async handleButton(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number): Promise<string | null> {
     if (rec.kind === 'handsfree') return this.deps.handsfree?.onCallback?.(this, ab.key, rec, idx) ?? LINES.stale;
+    if (rec.kind === 'voice-retry') return this.voiceRetryTap(ab, rec);
     if ((rec.kind === 'permission' || rec.kind === 'question') && rec.data?.queue !== true) {
       const sessionId = rec.sessionId ?? '';
       const entry = getChat(sessionId);
