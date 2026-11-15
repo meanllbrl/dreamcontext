@@ -26,10 +26,11 @@ import {
   closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, owedVisible, replyMarkRefs, nextOwedReveal,
 } from '../../src/lib/super/owed.js';
 import {
-  OWED_PREFIX, OWNER_PROSE_MIN_CHARS, _resetSuperInbox, _superInboxDrained, isOwnerProse, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes, ownerGist,
+  OWED_PREFIX, OWNER_PROSE_MIN_CHARS, _resetSuperInbox, _superInboxDrained, isOwnerProse, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes, ownerGist, ownerCardNote,
   superOwnerSpoke, superSaid, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
+import { superAlreadyText, superUnclearText } from '../../src/lib/super/answer.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import { ownerWords } from '../../src/lib/agents/team-roster.js';
@@ -295,6 +296,37 @@ describe('the ledger in the running inbox', () => {
     const d = openDebts(await readSuperState(root))[0];
     expect(d.gist).toBe('Which colour? → Mor; Ship it? → Evet (bugün)');
     expect(d.gist).not.toContain('[super answer]');
+  });
+
+  it('"Unclear? Ask again" and "Already answered" open no debt and never gist to "…"', async () => {
+    await boot();
+    const unclear = superUnclearText({ id: 'q_ab12' }, 'The user did not understand this question and did not answer it. Ask again with AskUserQuestion, written cold.');
+    const already = superAlreadyText({ id: 'q_cd34' });
+    expect(ownerCardNote(unclear)).toBe('unclear');
+    expect(ownerCardNote(already)).toBe('already');
+    expect(ownerGist(unclear)).toBe('Soruyu yeniden sor');
+    expect(ownerGist(already)).toBe('Zaten cevapladım');
+    expect(ownerGist(unclear, 'English')).toBe('Ask the question again');
+    expect(ownerGist(already, 'English')).toBe('Already answered');
+    await superOwnerOwes(SUPER, unclear);
+    await superOwnerOwes(SUPER, already);
+    expect(openDebts(await readSuperState(root))).toEqual([]);
+    // A real pick is still owed, and a card sent back blank gists its question, never "…".
+    expect(ownerCardNote('[super answer] item=q_ab12\nUser has answered your questions: "Ship it?"="Evet".')).toBeNull();
+    expect(ownerGist('[super answer] item=q_ab12\nUser has answered your questions: "Ship it?"="(no answer)".')).toBe('Ship it?');
+  });
+
+  it('a "…" debt an old tap left on disk is closed on read, so the agenda never counts it', () => {
+    const s = bare({
+      owedSeq: 2,
+      owed: [
+        { id: 'o1', kind: 'msg', ref: msgRef('a'), seq: 1, at: 10, gist: '…', nudges: OWED_NUDGES },
+        { id: 'o2', kind: 'msg', ref: msgRef('b'), seq: 2, at: 20, gist: 'Is the invoice page done?', nudges: OWED_NUDGES },
+      ],
+    } as Partial<SuperState>);
+    expect(openDebts(s).map((d) => d.id)).toEqual(['o2']);
+    expect(s.owed?.find((d) => d.id === 'o1')?.closed).toEqual({ at: 10, by: 'owner' });
+    expect((s.owed ?? []).filter((d) => owedVisible(d)).map((d) => d.id)).toEqual(['o2']);
   });
 
   it('a natural end with his message unanswered brings ONE [super owed] turn, drawn as an event line; twice, then it is his to see', async () => {
