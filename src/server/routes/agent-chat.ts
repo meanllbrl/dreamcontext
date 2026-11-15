@@ -140,7 +140,8 @@ import { ordinaryWorkAllows, ordinaryWorkMode } from '../../lib/super/ordinary-w
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
 import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-language.js';
-import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
+import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock, partRefs } from '../../lib/super/types.js';
+import { noteOwnerWords, waitingCards } from '../../lib/super/owner-consent.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
@@ -1135,6 +1136,23 @@ export function settleOwnerTurnSource(
   if (turn.telegram === 'run-report' || turn.telegram === 'schedule') return silentOwnerTurn(turn.telegram);
   if (source.via === 'telegram' ? turn.telegram !== 'telegram-text' : turn.telegram !== undefined) return silentOwnerTurn('telegram-unconfirmed');
   return source;
+}
+
+/**
+ * His own typed words in a Super chat, by the ref his `<owner-msg>` carries, or null: the source
+ * the ledger's classifier proved (the composer's mark, his phone, his Telegram text), never a
+ * slash command, a server-written turn, a continue, a run report, a schedule, an unconfirmed
+ * Telegram ref or an agent's unmarked `window send`. What `super queue allow --owner-ref` is
+ * checked against (owner-consent.ts).
+ */
+export function superOwnerWordsOf(
+  source: OwnerTurnSource,
+  turn: { text: string; serverText: boolean; serverWritten: boolean; telegram?: InjectedSource; tgRef: string | null },
+): { ref: string; parts: string[]; text: string; via: OwnerTurnVia } | null {
+  if (turn.serverWritten || turn.text.startsWith('/')) return null;
+  const proof = settleOwnerTurnSource(source, { text: turn.text, serverText: turn.serverText, ledgerChat: true, ...(turn.telegram ? { telegram: turn.telegram } : {}) });
+  if (!proof.writes) return null;
+  return { ref: turn.tgRef ?? msgRef(turn.text), parts: partRefs(turn.text, turn.tgRef ?? undefined), text: proof.own, via: proof.via };
 }
 
 /** The chat kind the ledger names (`surface`), or null for a chat whose turns are never his
@@ -3964,6 +3982,19 @@ export function startChatSession(
     // `<!-- re:<ref> -->` and the window draws which message it answers (replyMark.ts). Hashed
     // from the exact text the window sent; a slash command is no message of his.
     if (isSuper && !text.startsWith('/') && !serverWritten) content.push({ type: 'text', text: tgRef ? ownerMsgBlock(text, { ref: tgRef, via: 'telegram' }) : ownerMsgBlock(text) });
+    // His own typed words, as the server classified them (the composer's mark, his phone, his
+    // Telegram; never a server turn, a continue, a run report, a schedule or an agent's `window
+    // send`), kept by that ref: `super queue allow --owner-ref` passes one of his permissions only
+    // on such a message (owner-consent.ts). Decided here, never on the Super's word.
+    const words = isSuper ? superOwnerWordsOf(source, { text, serverText: serverContinue || isServerTurnText(text), serverWritten, telegram: tgSource, tgRef }) : null;
+    // His permissions waiting right now, read as he writes: what his words can be about.
+    if (words) {
+      const rec = superOfSession(chatRegistryId);
+      noteOwnerWords(chatRegistryId, {
+        ...words,
+        waiting: rec ? readSuperState(rec.root, rec.superId, superSanitizeOpts()).then((s) => waitingCards(s.queue)) : Promise.resolve(null),
+      });
+    }
     // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
     // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
     if (isSuper && !text.startsWith('/')) {

@@ -434,6 +434,12 @@ export function registerSuperCommand(program: Command): void {
     .description('Mark an item handled (never a permission: answer one with `super allow`)')
     .action((item: string) => run('queue-done', { item }));
 
+  q.command('allow <item>')
+    .description('Pass ONE of the owner\'s own permissions (a permission, a refused call or a member\'s, waiting on him) on a message he wrote you whose whole text is a plain yes (or, with --deny, a plain no). The server checks the ref against what it can prove he wrote (his Telegram or phone; a line typed on the Mac is refused `mac_words`: he taps the card there), after the card was born, used once; when several of his wait, his message must name which (the member\'s name). Refused: `not_owner_message`, `ref_used`, `before_card`, `not_consent`, `several_pending` (ask him which), `outward` (a push, publish, deploy, network or MCP tool, or code the card does not show: only his tap)')
+    .requiredOption('--owner-ref <ref>', 'The <owner-msg ref> of HIS message that said it')
+    .option('--deny', 'His message said no: deny it instead')
+    .action((item: string, o: { ownerRef: string; deny?: boolean }) => run('queue-allow', { item, ownerRef: o.ownerRef, deny: o.deny === true }));
+
   const p = s.command('pool').description('Jobs kept for later (the job list\'s Havuz)');
   job(p.command('add')
     .description('Keep a job for later; start it with `delegate --from <id>` when a slot frees')

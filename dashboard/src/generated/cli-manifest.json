@@ -4268,6 +4268,16 @@
       "group": true
     },
     {
+      "path": "super queue allow",
+      "desc": "Pass ONE of the owner's own permissions (a permission, a refused call or a member's, waiting on him) on a message he wrote you whose whole text is a plain yes (or, with --deny, a plain no). The server checks the ref against what it can prove he wrote (his Telegram or phone; a line typed on the Mac is refused `mac_words`: he taps the card there), after the card was born, used once; when several of his wait, his message must name which (the member's name). Refused: `not_owner_message`, `ref_used`, `before_card`, `not_consent`, `several_pending` (ask him which), `outward` (a push, publish, deploy, network or MCP tool, or code the card does not show: only his tap)",
+      "args": [
+        "<item>"
+      ],
+      "valueFlags": [
+        "--owner-ref"
+      ]
+    },
+    {
       "path": "super queue ask",
       "desc": "Escalate a child's question to the owner in your words: a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him. A Bypass child's permission you will not decide goes to him too, shown as the child's own request (your words never caption it: say why in your turn)",
       "args": [

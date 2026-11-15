@@ -46,7 +46,9 @@ import {
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach, settleOwnerReach } from '../../lib/super/owner-question.js';
 import { memberAskReach, pinnedMemberCard, planQuestion, superAnsweredFirst } from '../../lib/super/inbox.js';
-import { answerOwnerItem } from '../../lib/super/answer.js';
+import { answerOwnerItem, memberMirrorTarget, ownerItemCall } from '../../lib/super/answer.js';
+import { allowByOwnerWords } from '../../lib/super/owner-consent.js';
+import { getAgent } from '../../lib/agents/store.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
@@ -2493,6 +2495,33 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (item.card) await ownerCardItemsLeft(superKey(c.who.contextRoot, callerSuper(c)), [item]).catch(() => undefined);
     void pumpSuper(c.who.contextRoot, callerSuper(c));
     ok(res, { item: id, done: true });
+  },
+
+  // One of HIS permissions, passed on a message he wrote (owner 2026-11-15: "Neden izini buradan
+  // veremedim"): the server checks the ref against what IT saw him type in this chat, never the
+  // Super's word (owner-consent.ts). Refused: anything outward, several waiting with none named.
+  'queue-allow': async (c, b, res) => {
+    if (!requireHandedOver(c, res)) return;
+    const id = str(b.item);
+    if (!id || !QUEUE_ID_RE.test(id)) { refuse(res, 400, 'invalid_args', 'name the queue item (`dreamcontext super queue list`)'); return; }
+    const ref = str(b.ownerRef);
+    if (!ref || !MSG_REF_RE.test(ref)) { refuse(res, 400, 'invalid_args', '--owner-ref is the six-character ref of HIS message (its <owner-msg ref="…">)'); return; }
+    if (!c.state.session) { refuse(res, 409, 'not_handed_over', 'no Super session holds this record'); return; }
+    const root = c.who.contextRoot;
+    const r = await allowByOwnerWords(root, { superId: callerSuper(c), session: c.state.session, queue: c.state.queue }, { item: id, ref, deny: b.deny === true }, {
+      mirror: memberMirrorTarget,
+      call: ownerItemCall,
+      answer: answerOwnerItem,
+      memberName: (slug) => { try { return getAgent(root, slug)?.title?.trim() || null; } catch { return null; } },
+    });
+    if (!r.ok) {
+      const status = r.error === 'unknown_item' ? 404 : r.error === 'stale_request' ? 409 : 403;
+      refuse(res, status, r.error, r.message, r.pending ? { pending: r.pending } : {});
+      return;
+    }
+    if (!r.answer.ok) { refuse(res, r.answer.error === 'no_window' ? 409 : 403, r.answer.error, r.answer.message); return; }
+    void pumpSuper(root, callerSuper(c));
+    ok(res, { item: id, answered: r.behavior, outcome: r.answer.outcome });
   },
 
   'pool-add': async (c, b, res) => {

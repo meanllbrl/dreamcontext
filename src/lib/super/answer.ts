@@ -291,6 +291,18 @@ function allowTarget(item: SuperQueueItem): { tool: string; input: string } | nu
   return item.kind === 'owner' && r ? { tool: r.tool, input: r.input } : null;
 }
 
+/** The call an owner permission item would let run, with whether it is shown WHOLE (a cut command
+ *  can hide anything), read where `allowTarget` reads it; null when nothing is asked any more. A
+ *  refusal a settings rule made is never allowed (the rule wins): null too. */
+export function ownerItemCall(item: SuperQueueItem): { tool: string; input: string; whole: boolean } | null {
+  if (item.kind === 'permission') {
+    const pq = pendingRequest(getChat(item.sessionId), item.requestId);
+    return pq && pq.isPermission ? itemCall(pq) : null;
+  }
+  const r = item.wait?.refusal;
+  return item.kind === 'owner' && r && r.source !== 'rule' ? { tool: r.tool, input: r.input, whole: !!r.whole } : null;
+}
+
 /** Did the surface show exactly what would be allowed? (G2: consent matches display.) */
 function shownMatches(req: OwnerAnswerRequest, target: { tool: string; input: string }): boolean {
   const s = req.shown;
