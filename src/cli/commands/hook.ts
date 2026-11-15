@@ -115,7 +115,8 @@ import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-sta
 import {
   checkEditedFile, checkAtStop, takeTscResults, tscStopReason, tscWorkFor, defaultTscRunner, filterTscErrors, TSC_TIMEOUT_MS,
 } from '../../lib/tsc-check.js';
-import { shouldStartAutoSleep, currentAutoSleepFingerprint } from '../../lib/auto-sleep.js';
+import { shouldStartAutoSleep, currentAutoSleepFingerprint, isPidAlive } from '../../lib/auto-sleep.js';
+import { readDesktopServerFile } from '../../server/desktop-server-file.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import {
   recordAgentSession, UUID_RE,
@@ -856,7 +857,7 @@ export function recallViaDashboard(
   root: string,
   opts: { port?: number; timeoutMs?: number; home?: string; tier?: RecallTier } = {},
 ): Promise<PromptRecall | null> {
-  const port = opts.port ?? resolveDashboardPort();
+  const port = opts.port ?? resolveRecallServerPort(process.env, opts.home);
   const timeoutMs = opts.timeoutMs ?? RECALL_VIA_SERVER_TIMEOUT_MS;
   let vault: string | null = null;
   try {
@@ -2046,6 +2047,29 @@ export function resolveDashboardPort(): number {
     const n = parseInt(raw, 10);
     if (!Number.isNaN(n) && n > 0 && n < 65536) return n;
   }
+  return DEFAULT_DASHBOARD_PORT;
+}
+
+/**
+ * The port of the server that holds the recall model warm (the prompt hook's and `memory recall`'s
+ * server route): the env override, else the desktop app's own server as `~/.dreamcontext/desktop-server.json`
+ * records it (its pid alive), else the default. The app binds a random port and sets no env in the sessions
+ * it starts, so without the file every hook asked 4173, found nothing there, and loaded the query model
+ * in-process on every prompt. Only these read-only recall routes use it: `resolveDashboardPort` stays the
+ * auto-open path's port, which may ask the server on it to exit.
+ */
+export function resolveRecallServerPort(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+  alive: (pid: number) => boolean = isPidAlive,
+): number {
+  const raw = env.DREAMCONTEXT_DASHBOARD_PORT;
+  if (raw) {
+    const n = parseInt(raw, 10);
+    if (!Number.isNaN(n) && n > 0 && n < 65536) return n;
+  }
+  const f = readDesktopServerFile(home);
+  if (f !== null && Number.isInteger(f.port) && f.port > 0 && f.port < 65536 && alive(f.pid)) return f.port;
   return DEFAULT_DASHBOARD_PORT;
 }
 
