@@ -4,6 +4,8 @@ import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { RequestError } from '../../../api/client';
 import { CardHeader } from './molecules';
+import { isConditionUnseen, useApproveAutomation } from '../../../hooks/useAutomations';
+import { ConditionScript, conditionView } from '../../automations/ConditionScript';
 import type { AutomationViewSpec } from '../../../lib/chatViewSpec';
 import type { ChatSession } from '../chatSession';
 
@@ -58,7 +60,7 @@ export interface ApprovalCardFacts {
  * sits in the Super Agent's chat the server tells the super (`told`); anywhere else the decision
  * is reported into this conversation, so the agent that asked carries on.
  */
-type Phase = 'idle' | 'busy' | 'failed' | 'refused';
+type Phase = 'idle' | 'busy' | 'failed' | 'refused' | 'unseen';
 
 const SLOT = (s: string, vars: Record<string, string>) => s.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? '');
 
@@ -95,28 +97,29 @@ export function AutomationApprovalCard({ spec, session, report }: {
   });
   const [phase, setPhase] = useState<Phase>('idle');
   const [decided, setDecided] = useState<'approved' | 'rejected' | null>(null);
+  const approveRoutine = useApproveAutomation();
 
   const decide = useCallback(async (decision: 'approved' | 'rejected') => {
     const f = q.data?.card;
     if (!f || phase === 'busy') return;
     setPhase('busy');
     try {
-      const res = await api.post<{ card: ApprovalCardFacts; told: boolean }>(
-        `/automations/${encodeURIComponent(spec.slug)}/${decision === 'approved' ? 'approve' : 'reject'}`,
-        // `shownHash`: a condition is stamped only on what this card showed (kosullu-otomasyon C2).
-        { enable: decision === 'approved', sessionId: session?.claudeId, shownHash: f?.manifestHash },
-      );
+      // Approve is THE routine approve every door uses: it sends the hash of what this card showed
+      // (kosullu-otomasyon C2) and re-reads the card when the script moved under it.
+      const res = (decision === 'approved'
+        ? await approveRoutine.mutateAsync({ slug: spec.slug, shownHash: f.manifestHash, sessionId: session?.claudeId, enable: true })
+        : await api.post(`/automations/${encodeURIComponent(spec.slug)}/reject`, { sessionId: session?.claudeId })) as { card: ApprovalCardFacts; told: boolean };
       queryClient.setQueryData(key, { card: res.card, owned: true });
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       setDecided(decision);
       setPhase('idle');
       if (!res.told) report?.(decisionReport(res.card, decision));
     } catch (err) {
-      setPhase(err instanceof RequestError && err.code === 'owner_page_only' ? 'refused' : 'failed');
+      setPhase(err instanceof RequestError && err.code === 'owner_page_only' ? 'refused' : isConditionUnseen(err) ? 'unseen' : 'failed');
     }
     // `key` is rebuilt every render from the slug; the slug is what it depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, phase, q.data, queryClient, report, session, spec.slug]);
+  }, [api, approveRoutine, phase, q.data, queryClient, report, session, spec.slug]);
 
   if (q.isLoading) {
     return <div className="chat-viewcard chat-autocard" data-view-kind="automation"><CardHeader glyph="⏱" title={t('chat.autocard.loading')} /></div>;
@@ -152,12 +155,7 @@ export function AutomationApprovalCard({ spec, session, report }: {
         {(f.condition || f.conditionError) && (
           <>
             <dt>{t('chat.autocard.condition')}</dt>
-            <dd data-autocard-condition>
-              {f.condition && <pre className="chat-autocard-script">{f.condition}</pre>}
-              {f.conditionError
-                ? <span className="chat-autocard-sub chat-autocard-script-error">{SLOT(t('chat.autocard.condition.error'), { why: f.conditionError })}</span>
-                : <span className="chat-autocard-sub">{t(f.conditionWake ? 'chat.autocard.condition.wakeTrue' : 'chat.autocard.condition.wakeFalse')} {t('chat.autocard.condition.shell')}</span>}
-            </dd>
+            <dd data-autocard-condition><ConditionScript view={conditionView(f)} /></dd>
           </>
         )}
         <dt>{t('chat.autocard.until')}</dt>
@@ -179,6 +177,7 @@ export function AutomationApprovalCard({ spec, session, report }: {
       {decided === 'rejected' && <p className="chat-autocard-note">{t('chat.autocard.rejected')}</p>}
       {phase === 'refused' && <p className="chat-autocard-error">{t('chat.autocard.refused')}</p>}
       {phase === 'failed' && <p className="chat-autocard-error">{t('chat.autocard.failed')}</p>}
+      {phase === 'unseen' && <p className="chat-autocard-error" role="alert" data-condition-unseen>{t('chat.autocard.condition.unseen')}</p>}
       {!owned && <p className="chat-autocard-note">{t('chat.autocard.teammate')}</p>}
       {owned && !scheduled && state !== 'approved' && <p className="chat-autocard-note" data-approval-waits>{t('agents.approval.waitsCard')}</p>}
       {canAct && (
@@ -189,7 +188,8 @@ export function AutomationApprovalCard({ spec, session, report }: {
               {t('chat.autocard.reject')}
             </button>
           )}
-          <button type="button" className="chat-btn pill primary" disabled={phase === 'busy'} onClick={() => { void decide('approved'); }}>
+          {/* Off while the card re-reads: Approve grants only facts that are on screen. */}
+          <button type="button" className="chat-btn pill primary" disabled={phase === 'busy' || q.isFetching} onClick={() => { void decide('approved'); }}>
             {approveLabel}
           </button>
         </div>

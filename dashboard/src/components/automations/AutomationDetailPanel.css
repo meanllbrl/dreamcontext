@@ -162,6 +162,8 @@
 .adp-history-dot--blocked { background: var(--color-warning); }
 .adp-history-dot--orphaned { background: var(--color-error); }
 .adp-history-dot--deferred { background: var(--color-text-tertiary); }
+/* A quiet check (kosullu-otomasyon): nothing went wrong and no agent woke. */
+.adp-history-dot--condition-false { background: var(--color-text-tertiary); }
 /* Waiting on the reader, not broken — warning ink, never error ink. Same rule
    the board badge and the chat header's 'wait' tone follow. */
 .adp-history-dot--awaiting-review,

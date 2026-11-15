@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { conditionFacts, sendIfConditionUnseen, shownWitness } from './condition-witness.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { approvalCardFacts, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
@@ -671,20 +672,14 @@ export async function handleAutomationsApprove(
     // A condition is stamped only on the hash the owner was shown (kosullu-otomasyon C2): the card
     // sends `shownHash`, and a disk that moved since he looked refuses with 409, stamping nothing.
     // It proves the hash is fresh, not who sent it: the owner-page check above is the boundary.
-    const shownHash = typeof body.shownHash === 'string' ? body.shownHash : '';
-    if (manifest.condition && !shownHash) {
-      sendError(res, 409, 'condition_unseen', 'Not approved: this agent has a condition script. Reload its card, read the script and approve what you see.');
-      return;
-    }
+    const witness = shownWitness(res, manifest, body);
+    if (witness === null) return;
     // The owner's page: his consent covers a Super turn or a Telegram reply too (super-rutin C2).
     let entry;
     try {
-      entry = approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-page', shownHash ? { kind: 'shown', hash: shownHash } : undefined);
+      entry = approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-page', witness);
     } catch (err) {
-      if (err instanceof ConditionNeedsWitness) {
-        sendError(res, 409, 'condition_unseen', err.message);
-        return;
-      }
+      if (sendIfConditionUnseen(res, err)) return;
       throw err;
     }
     settleApprovalQuestions(contextRoot, manifest.slug);

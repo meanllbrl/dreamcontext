@@ -428,7 +428,7 @@ dreamcontext automations edit new-orders-check --condition '...'    # or --no-co
 dreamcontext automations condition new-orders-check [--run]        # print the approved script, or run it once
 ```
 
-**True, not true, or combined.** `--wake-when true` (the default) wakes the agent when the script exits 0; `--wake-when false` wakes it when the script is NOT true (exit 1), for "tell me if the backup did NOT run". Combine checks inside the one script with `&&`, `||` and `!`: `test -s inbox.json && ! test -f paused`, `curl -fsS "$URL" | grep -q open || test -s queue.txt`. There is no all/any field: one script, one answer.
+**True, not true, or combined.** `--wake-when true` (the default) wakes the agent when the script exits 0; `--wake-when false` wakes it when the script is NOT true (exit 1), for "tell me if the backup did NOT run". Combine checks inside the one script with `&&`, `||` and `!`: `test -s inbox.json && ! test -f paused`, `curl -fsS "$URL" | grep -q open || test -s queue.txt`. There is no all/any field: one script, one answer. `!` and `||` also turn an ERROR into an answer (`! grep -q x missing-file` exits 0 and wakes the agent): test that a file exists first when its absence must stay loud.
 
 **Only a scheduled fire checks.** Run now, `run --force`, an ask, a task step and a light run start the agent without the script.
 

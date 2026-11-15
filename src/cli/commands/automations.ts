@@ -381,7 +381,7 @@ function createBoundFromFlags(
  * `edit --condition|--no-condition|--wake-when`: write it, then re-stamp only a target that was
  * approved before, only when nothing but this patch moved (the re-read hash is the pre-image plus
  * the patch), and only with the owner's own terminal as the condition's witness. Otherwise the
- * change waits for his card, and the routine keeps running its last approved condition.
+ * change waits for his card and its schedule pauses (a Super or Telegram one always waits).
  */
 function editCondition(root: string, slug: string, cond: { condition?: string | null; conditionWake?: boolean }): void {
   const projectRoot = projectRootFor(root);
@@ -395,13 +395,18 @@ function editCondition(root: string, slug: string, cond: { condition?: string | 
   const wake = cond.condition === null ? true : cond.conditionWake ?? before.conditionWake !== false;
   const expected = { ...before, condition: nextCondition, conditionWake: nextCondition && !wake ? (false as const) : undefined, conditionError: undefined };
   const after = updateAutomation(root, slug, cond);
-  const restamp = wasApproved && manifestHash(withConditionValidity(expected as AutomationManifest)) === manifestHash(after);
-  const stamped = restamp && approveMadeHere(root, after, new Date(), undefined, undefined, terminalWitness());
+  // A Super turn or a Telegram outflow is approved only on his page or by his Super (consent):
+  // a terminal cannot give that, so such a change is never re-stamped here; it waits for his card.
+  const restamp = wasApproved && !needsOwnerConsent(after)
+    && manifestHash(withConditionValidity(expected as AutomationManifest)) === manifestHash(after);
+  if (restamp) approveMadeHere(root, after, new Date(), undefined, undefined, terminalWitness());
+  // What is said is what the registry now holds, never what the stamp call returned.
+  const approvedNow = checkApproval(projectRoot, after, undefined, 'run').approved;
   success(after.condition
-    ? `"${slug}" checks its condition first (${after.conditionWake === false ? 'wakes when NOT true' : 'wakes when true'})${stamped ? ' (approved on this machine)' : ''}.`
-    : `"${slug}" has no condition now: every scheduled fire wakes its agent${stamped ? ' (approved on this machine)' : ''}.`);
-  if (!stamped && !checkApproval(projectRoot, after, undefined, 'run').approved) {
-    warn('  The change waits for the owner: he approves it on its card. Until then it runs its last approved version.');
+    ? `"${slug}" checks its condition first (${after.conditionWake === false ? 'wakes when NOT true' : 'wakes when true'})${approvedNow ? ' (approved on this machine)' : ''}.`
+    : `"${slug}" has no condition now: every scheduled fire wakes its agent${approvedNow ? ' (approved on this machine)' : ''}.`);
+  if (!approvedNow) {
+    warn('  The change waits for the owner: he approves it on its card. Until then its schedule does not fire; Run now still runs its last approved version.');
     console.log(approvalCardBlock(slug));
   }
 }

@@ -2,6 +2,7 @@ import type { AgentFace } from '../../../src/lib/agents/figure.js';
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { RequestError } from '../api/client';
 import { phoneAllows } from '../lib/phoneSurface';
 import { pollMs } from '../lib/windowActivity';
 import type { ScheduleSlot } from '../../../src/lib/automations/types.js';
@@ -717,23 +718,42 @@ export function useUploadAgentPhoto() {
  *  `approve -y` calls after the human reviews every hashed field in full —
  *  see `AutomationDetailPanel`, which renders that same review before this
  *  fires). */
+/** True when an approve was refused because the script changed since the door drew it. */
+export function isConditionUnseen(err: unknown): boolean {
+  return err instanceof RequestError && err.code === 'condition_unseen';
+}
+
+/**
+ * THE approve of a routine, for every door (the chat card, the AI Team row, the Super's band).
+ * `shownHash` is required: the `manifestHash` of the payload the door drew, `undefined` only while
+ * none was read. A condition is stamped only when the disk still holds it (kosullu-otomasyon C2);
+ * a moved disk answers 409 `condition_unseen`, and then every read of that routine is refetched
+ * here, so the door shows the new script and its Approve waits for that read.
+ */
+export interface ApproveAutomationArg {
+  slug: string;
+  shownHash: string | undefined;
+  /** The chat the door sits in: a Super Agent hears the decision. */
+  sessionId?: string;
+  /** The chat card's "Approve and turn on". */
+  enable?: boolean;
+}
 export function useApproveAutomation() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    // `shownHash`: the `manifestHash` of the detail the owner read. A condition is stamped only
-    // when the disk still holds it (kosullu-otomasyon C2); a moved disk answers 409.
-    mutationFn: (arg: string | { slug: string; shownHash?: string }) => {
-      const { slug, shownHash } = typeof arg === 'string' ? { slug: arg, shownHash: undefined } : arg;
-      return api.post<{ slug: string; approval: { manifestSha256: string; approvedAt: string; payloadVersion: string } }>(
-        `/automations/${slug}/approve`,
-        shownHash ? { shownHash } : {},
-      );
-    },
+    mutationFn: ({ slug, shownHash, sessionId, enable }: ApproveAutomationArg) =>
+      api.post<{ slug: string; approval: { manifestSha256: string; approvedAt: string; payloadVersion: string }; card?: unknown; told?: boolean }>(
+        `/automations/${encodeURIComponent(slug)}/approve`,
+        { ...(shownHash ? { shownHash } : {}), ...(sessionId ? { sessionId } : {}), ...(enable ? { enable } : {}) },
+      ),
     onSuccess: (_data, arg) => {
-      const slug = typeof arg === 'string' ? arg : arg.slug;
       queryClient.invalidateQueries({ queryKey: ['automations'] });
-      queryClient.invalidateQueries({ queryKey: ['automations', slug] });
+      queryClient.invalidateQueries({ queryKey: ['automations', arg.slug] });
+    },
+    onError: (err, arg) => {
+      // The script moved under the door: re-read it (the detail and the card alike).
+      if (isConditionUnseen(err)) void queryClient.invalidateQueries({ queryKey: ['automations', arg.slug] });
     },
   });
 }

@@ -8,13 +8,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  approveMadeHere, conditionFieldsOf, createAutomation, getAutomation, getRunTarget, updateAutomation,
+  approveMadeHere, conditionFieldsOf, createAutomation, getAutomation, getRunTarget, recordRun, updateAutomation,
 } from '../../src/lib/automations/store.js';
+import { CONDITION_ERROR_PREFIX } from '../../src/lib/automations/condition.js';
 import {
   approveAutomation, approvePair, checkApproval, conditionNeedsWitness, getApproval, manifestHash,
 } from '../../src/lib/automations/registry.js';
 import { createAgent } from '../../src/lib/agents/store.js';
-import type { AutomationManifest } from '../../src/lib/automations/types.js';
+import type { AutomationManifest, RunEvent } from '../../src/lib/automations/types.js';
 
 const NOW = new Date('2026-11-15T09:00:00.000Z');
 const SCRIPT = '# new orders since the last check?\ntest -s orders/new.csv && cat orders/new.csv';
@@ -159,5 +160,38 @@ describe('a hand-planted condition with a ## line', () => {
     const read = getAutomation(ctx, 'planted')!;
     expect(read.condition).toBe('exit 0');
     expect(() => approveAutomation(proj, { ...read, conditionError: 'x' }, NOW, home, undefined, { kind: 'owner-terminal' })).toThrow(/cannot run/);
+  });
+});
+
+describe('the cache face after a condition recovers (end review r1)', () => {
+  const ev = (at: string, over: Partial<RunEvent>): RunEvent => ({
+    firedAt: at, startedAt: at, finishedAt: at, status: 'ok', durationMs: 10, outputPath: null, error: null,
+    exitCode: null, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0, ...over,
+  });
+
+  it('a quiet check after the script\'s own error steps the face back to the last real run', () => {
+    make();
+    recordRun(ctx, 'new-orders-check', ev('2026-11-14T09:00:00.000Z', { status: 'ok', outputPath: 'out/a.md', exitCode: 0 }));
+    recordRun(ctx, 'new-orders-check', ev('2026-11-15T09:00:00.000Z', { status: 'failed', error: `${CONDITION_ERROR_PREFIX}exit 6` }));
+    const after = recordRun(ctx, 'new-orders-check', ev('2026-11-15T10:00:00.000Z', { status: 'condition-false' }));
+    expect(after.status).toBe('ok');
+    expect(after.error).toBeNull();
+    expect(after.outputPath).toBe('out/a.md');
+    expect(after.lastRunAt).toBe('2026-11-14T09:00:00.000Z');
+  });
+
+  it('with no real run before it, the face is empty; an agent\'s own failure stays the face', () => {
+    make();
+    recordRun(ctx, 'new-orders-check', ev('2026-11-15T09:00:00.000Z', { status: 'failed', error: `${CONDITION_ERROR_PREFIX}timed out` }));
+    expect(recordRun(ctx, 'new-orders-check', ev('2026-11-15T10:00:00.000Z', { status: 'condition-false' })).status).toBeNull();
+    recordRun(ctx, 'new-orders-check', ev('2026-11-15T11:00:00.000Z', { status: 'failed', error: 'claude exited 1', exitCode: 1 }));
+    expect(recordRun(ctx, 'new-orders-check', ev('2026-11-15T12:00:00.000Z', { status: 'condition-false' })).status).toBe('failed');
+  });
+});
+
+describe('a condition that cannot run waits too (end review r1)', () => {
+  it('conditionNeedsWitness is true for conditionError, so a question is refused before its claim', () => {
+    const m = make();
+    expect(conditionNeedsWitness({ ...m, conditionError: 'no fence' }, null)).toBe(true);
   });
 });

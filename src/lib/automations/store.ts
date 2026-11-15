@@ -34,7 +34,7 @@ import {
   updateAgent,
 } from '../agents/store.js';
 import { approveAutomation, approvePair, checkApproval, ConditionNeedsWitness, type ApprovalConsent, type ConditionWitness } from './registry.js';
-import { CONDITION_HEADING, conditionInvalidReason, normalizeCondition } from './condition.js';
+import { CONDITION_ERROR_PREFIX, CONDITION_HEADING, conditionInvalidReason, normalizeCondition } from './condition.js';
 import {
   AutomationError,
   AUTOMATIONS_GITIGNORE_ENTRIES,
@@ -1275,7 +1275,14 @@ function recordRunUnlocked(
     ? [{ ...e, startedAt: prior[0].startedAt }, ...prior.slice(1)]
     : [e, ...prior].slice(0, HISTORY_LIMIT);
   // A quiet check is never the cache's face: "what happened most recently" stays the last real run.
-  const face = quiet
+  // It does prove the script runs again, so a face that was the CONDITION's error steps back to
+  // the last real run before it (none: no face), never "failed" for weeks after it recovered.
+  const conditionFailed = (r: { status: string | null; error: string | null } | null | undefined) =>
+    r?.status === 'failed' && (r.error ?? '').startsWith(CONDITION_ERROR_PREFIX);
+  const lastReal = conditionFailed(existing) ? prior.find((r) => r.status !== 'condition-false' && !conditionFailed(r)) ?? null : null;
+  const face = quiet && conditionFailed(existing)
+    ? { lastRunAt: lastReal?.startedAt ?? null, status: lastReal?.status ?? null, durationMs: lastReal?.durationMs ?? null, outputPath: lastReal?.outputPath ?? null, error: lastReal?.error ?? null, exitCode: lastReal?.exitCode ?? null }
+    : quiet
     ? { lastRunAt: existing?.lastRunAt ?? null, status: existing?.status ?? null, durationMs: existing?.durationMs ?? null, outputPath: existing?.outputPath ?? null, error: existing?.error ?? null, exitCode: existing?.exitCode ?? null }
     : { lastRunAt: e.startedAt, status: e.status, durationMs: e.durationMs, outputPath: e.outputPath, error: e.error, exitCode: e.exitCode };
   const cache: AutomationCache = {

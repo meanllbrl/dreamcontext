@@ -27,6 +27,9 @@ export const CONDITION_HELP = `${CONDITION_RECIPE} ${CONDITION_EXIT_RULE} ${COND
 /** The condition text of `super schedule add --help`. */
 export const SUPER_CONDITION_HELP = `${CONDITION_HELP} Combine checks inside the script (&&, ||, !). The owner approves the script on its card: until he does, the job waits.`;
 
+/** Every gate error's start: how a record says the CONDITION failed, not the agent's run. */
+export const CONDITION_ERROR_PREFIX = 'condition script: ';
+
 /** The fixed timeout of one check. */
 export const CONDITION_TIMEOUT_MS = 60_000;
 /** The grace between SIGTERM and SIGKILL of the script's process group. */

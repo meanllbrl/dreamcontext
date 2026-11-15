@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { useAgent, useAnswerBoardScope, useApproveAgent } from '../../hooks/useAgents';
-import { useApproveAutomation, useAutomation } from '../../hooks/useAutomations';
+import { isConditionUnseen, useApproveAutomation, useAutomation } from '../../hooks/useAutomations';
+import { ConditionScript, conditionView } from '../automations/ConditionScript';
 import { approvalSentence, pendingChangeLine, type PendingApproval } from './teamModel';
 import { TeamIcon } from './TeamIcons';
 
@@ -116,7 +117,11 @@ function ApprovalRow({
   const detail = item.kind === 'agent' ? agentDetail : routineDetail;
   const review = item.kind === 'agent' ? agentDetail.data?.review : routineDetail.data?.review;
   const pendingWrite = approveAgent.isPending || approveRoutine.isPending;
-  const ready = !!review && !detail.isFetching && detail.isFetchedAfterMount;
+  // The condition (kosullu-otomasyon C6): drawn whole above the review, never as its last raw
+  // line; a script that cannot run is never offered an approve.
+  const condition = conditionView(item.kind === 'agent' ? agentDetail.data : routineDetail.data?.automation);
+  const shownHash = item.kind === 'agent' ? agentDetail.data?.manifestHash : routineDetail.data?.manifestHash;
+  const ready = !!review && !detail.isFetching && detail.isFetchedAfterMount && !condition.conditionError;
 
   const toggle = () => {
     setError(null);
@@ -136,11 +141,12 @@ function ApprovalRow({
         onOpen(false);
         onToast(t('aiteam.approval.done').replace('{name}', item.kind === 'routine' ? item.title : agentTitle));
       },
-      onError: (err: unknown) => setError((err as Error).message),
+      // A moved script: the hook re-reads it, and Approve waits for that read.
+      onError: (err: unknown) => setError(isConditionUnseen(err) ? t('chat.autocard.condition.unseen') : (err as Error).message),
     };
-    if (item.kind === 'agent') approveAgent.mutate(item.slug, done);
     // The hash of the review this row showed: a condition is stamped only on what he read.
-    else approveRoutine.mutate({ slug: item.slug, shownHash: routineDetail.data?.manifestHash }, done);
+    if (item.kind === 'agent') approveAgent.mutate({ slug: item.slug, shownHash }, done);
+    else approveRoutine.mutate({ slug: item.slug, shownHash }, done);
   };
 
   return (
@@ -162,6 +168,7 @@ function ApprovalRow({
       {open && (
         <div className="aiteam-approval-review" data-approval-review>
           <p className="aiteam-approval-lead">{t('agents.approval.reviewLead')}</p>
+          {review && <ConditionScript view={condition} label />}
           <pre className="aiteam-approval-pre">
             {review ?? (detail.isError ? t('agents.page.loadFailed') : t('agents.page.loading'))}
           </pre>

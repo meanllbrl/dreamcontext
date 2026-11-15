@@ -5,6 +5,7 @@ import type { AgentFace } from '../../../src/lib/agents/figure.js';
 export type AgentAutonomy = 'ask' | 'balanced' | 'free';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { isConditionUnseen } from './useAutomations';
 
 /**
  * Agents: the dashboard's read and write surface over `/api/agents*` (`src/server/routes/agents.ts`).
@@ -139,6 +140,12 @@ export interface AgentDetail {
   pattern: AgentPattern;
   /** `field: value` lines, the same text the CLI's review prints. */
   review: string;
+  /** Its condition script (kosullu-otomasyon), drawn above the review; absent on an older backend. */
+  condition?: string | null;
+  conditionWake?: boolean;
+  conditionError?: string | null;
+  /** The hash of what this payload rendered: Approve sends it back as `shownHash`. */
+  manifestHash?: string;
 }
 
 /** Mirrors `AutomationPattern`: the playbook and the dated lessons. */
@@ -306,12 +313,19 @@ export function useApproveAgent() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (slug: string) =>
-      api.post<{ agent: AgentSummary }>(`/agents/${encodeURIComponent(slug)}/approve`, {}).then((r) => r.agent),
-    onSuccess: (_agent, slug) => {
+    // `shownHash`: the detail's `manifestHash`, as a routine's approve sends it (a condition is
+    // stamped only on what was drawn; a moved disk answers 409 and the detail is re-read).
+    mutationFn: ({ slug, shownHash, sessionId }: { slug: string; shownHash: string | undefined; sessionId?: string }) =>
+      api.post<{ agent: AgentSummary }>(`/agents/${encodeURIComponent(slug)}/approve`, {
+        ...(shownHash ? { shownHash } : {}), ...(sessionId ? { sessionId } : {}),
+      }).then((r) => r.agent),
+    onSuccess: (_agent, { slug }) => {
       invalidateAgent(queryClient, slug);
       // The approval can lift a blocked automation's gate too.
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
+    },
+    onError: (err, { slug }) => {
+      if (isConditionUnseen(err)) invalidateAgent(queryClient, slug);
     },
   });
 }

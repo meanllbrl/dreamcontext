@@ -36,7 +36,7 @@ import {
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, approvedTarget, conditionNeedsWitness, getApproval, manifestConditionSha, manifestHash, renderApprovalReview, type ApprovalEntry } from './registry.js';
-import { boundConditionData, conditionEnv, conditionWakes, killCondition, runCondition } from './condition.js';
+import { boundConditionData, CONDITION_ERROR_PREFIX, conditionEnv, conditionWakes, killCondition, runCondition } from './condition.js';
 import { claimPendingNotice } from '../agents/pending-change.js';
 import { buildRoutineForward, mintRunPostKey, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
 import { ownerAwayNow } from '../telegram/away-state.js';
@@ -639,7 +639,7 @@ export async function conditionGate(
   ctx: { cwd: string; fireAt: Date; slot?: string; now: () => Date },
 ): Promise<ConditionGateResult | null> {
   if (!opts.scheduledFire || (!m.condition && !m.conditionError)) return null;
-  const refuse = (why: string): ConditionGateResult => ({ kind: 'error', error: `condition script: ${why}`, durationMs: 0 });
+  const refuse = (why: string): ConditionGateResult => ({ kind: 'error', error: `${CONDITION_ERROR_PREFIX}${why}`, durationMs: 0 });
   if (m.conditionError) return refuse(`refused: ${m.conditionError}`);
   if (scope) return refuse('refused: board-limited agent');
   const sha = manifestConditionSha(m);
@@ -653,7 +653,7 @@ export async function conditionGate(
   const durationMs = Math.max(0, ctx.now().getTime() - started);
   if (result.verdict === 'error') {
     const tail = result.stderrTail.trim();
-    return { kind: 'error', error: `condition script: ${result.reason ?? 'error'}${tail ? `\n${tail}` : ''}`, durationMs };
+    return { kind: 'error', error: `${CONDITION_ERROR_PREFIX}${result.reason ?? 'error'}${tail ? `\n${tail}` : ''}`, durationMs };
   }
   return conditionWakes(result.verdict, m.conditionWake !== false) ? { kind: 'wake', data: result.data } : { kind: 'skip', durationMs };
 }

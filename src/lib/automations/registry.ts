@@ -888,6 +888,8 @@ export function manifestConditionSha(m: AutomationManifest): string | null {
 /** True when `m` has a condition that `entry`'s witness mark does not cover: such a target must
  *  never get a model-written approval question, and its answers stay unclaimed (C2). */
 export function conditionNeedsWitness(m: AutomationManifest, entry: ApprovalEntry | null | undefined): boolean {
+  // A condition that cannot run is never stamped (`conditionMarkFor` throws): it waits too.
+  if (m.conditionError) return true;
   const sha = manifestConditionSha(m);
   return sha !== null && entry?.conditionWitnessed !== sha;
 }

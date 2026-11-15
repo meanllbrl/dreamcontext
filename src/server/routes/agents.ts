@@ -8,6 +8,7 @@ import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
+import { conditionFacts, sendIfConditionUnseen, shownWitness } from './condition-witness.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import { narrowLiveMember } from './crew-binding.js';
 import { levelChatMode, narrowerMode } from '../../lib/agents/permission.js';
@@ -411,6 +412,8 @@ export async function handleAgentsShow(
     learning: target.learning,
     pattern: parsePattern(agent?.pattern ?? target.pattern),
     review: renderApprovalReview(approvalFields(target)),
+    // Its condition script and the hash of what this payload rendered: Approve sends it back.
+    ...conditionFacts(target),
     // The fields the one approval card names (a synced or waiting change, plan-r10 1e); null when
     // nothing waits or this Mac never stamped it with field hashes.
     changedFields: changedApprovalFields(dirname(contextRoot), target),
@@ -825,7 +828,10 @@ export async function handleAgentsApprove(
     const body = (await parseJsonBody(req)) ?? {};
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
-    approveAutomation(projectRoot, target, new Date());
+    // A condition is stamped only on the hash the page drew (the routine door's own rule).
+    const witness = shownWitness(res, target, body);
+    if (witness === null) return;
+    approveAutomation(projectRoot, target, new Date(), undefined, undefined, witness);
     settleApprovalQuestions(contextRoot, params.slug);
     // An approved change may move its level: its open chats follow.
     notifyAgentLevel(contextRoot, params.slug);
@@ -833,6 +839,7 @@ export async function handleAgentsApprove(
     await tellSuperMember(contextRoot, body.sessionId, params.slug, 'approved');
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
+    if (sendIfConditionUnseen(res, err)) return;
     sendWriteError(res, err, 'approve_failed', 'Failed to approve the agent.');
   }
 }

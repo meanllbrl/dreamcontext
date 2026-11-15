@@ -1408,6 +1408,15 @@ describe('conditions through the CLI (kosullu-otomasyon L3)', () => {
     expect(never.stdout).toMatch(/no approved condition/);
   });
 
+  it('edit on a Telegram routine never says approved: the terminal cannot give that consent (end review r1)', () => {
+    expect(create('nw-orders').exitCode).toBe(0);
+    writeFileSync(file('nw-orders'), readFileSync(file('nw-orders'), 'utf-8').replace(/^---\n/, '---\nreply: telegram\n'));
+    const out = run(['automations', 'edit', 'nw-orders', '--condition', 'test -s orders/late.csv'], projectDir, home);
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).not.toContain('approved on this machine');
+    expect(out.stdout + out.stderr).toMatch(/Until then its schedule does not fire/);
+  });
+
   it('edit --no-condition removes it; --wake-when false flips it', () => {
     create('nw-orders');
     const flip = run(['automations', 'edit', 'nw-orders', '--wake-when', 'false'], projectDir, home);
