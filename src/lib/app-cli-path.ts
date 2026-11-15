@@ -16,11 +16,7 @@
  *    its hooks find the CLI even before the rc is read (or when the rc could not be written).
  * Anywhere else (a global npm CLI, a dev checkout) nothing changes. Never throws.
  */
-import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { appCliRecordPath, recordValid, type AppCliRecord } from './cli-precedence.js';
-import { dreamcontextVersion } from './manifest.js';
 import { isAppRuntimeNode } from './onboarding/platform.js';
 import { cliAwarePath, cliShimDir } from './automations/cli-path.js';
 import { CLI_RC_MARKER, ensureDirOnShellPath, type ShellPathFix } from './claude-path.js';
@@ -68,45 +64,5 @@ export function ensureAppCliOnShellPath(
     return (o.addToShellPath ?? ensureDirOnShellPath)(dir, CLI_RC_MARKER);
   } catch {
     return null;
-  }
-}
-
-/**
- * At server start on the Mac app's own runtime: write `~/.dreamcontext/app-cli.json` naming this
- * bundle's node and entry (plan npmsiz-beta C2′, Mac bundle form), so the last npm release (the
- * bridge, src/cli/bridge.ts) hands every `dreamcontext` call over to the app's CLI. Written for
- * a lasting bundle only (recordValid refuses a DMG or translocated copy), as one temp file
- * renamed into place, never through a symlinked `~/.dreamcontext`, and only when it changed.
- * Returns whether the record now names this bundle. Never throws.
- */
-export function writeAppCliRecord(o: AppCliEnv & { version?: string | null } = {}): boolean {
-  if ((o.platform ?? process.platform) !== 'darwin' || !onAppRuntime(o)) return false;
-  try {
-    const home = o.home ?? homedir();
-    const node = realpathSync(o.execPath ?? process.execPath);
-    const entryRaw = 'entry' in o ? o.entry : process.argv[1];
-    if (!entryRaw) return false;
-    const entry = realpathSync(entryRaw);
-    const version = 'version' in o ? o.version : dreamcontextVersion();
-    if (!version || version === '0.0.0') return false;
-    const app = node.slice(0, -'/Contents/Resources/runtime/bin/node'.length);
-    const rec: AppCliRecord = { version, node, entry, appPath: app };
-    if (!recordValid(rec, home, false)) return false;
-    const dir = join(home, '.dreamcontext');
-    mkdirSync(dir, { recursive: true });
-    const st = lstatSync(dir);
-    if (st.isSymbolicLink() || !st.isDirectory()) return false;
-    const file = appCliRecordPath(home);
-    const body = `${JSON.stringify(rec, null, 2)}\n`;
-    try {
-      const f = lstatSync(file);
-      if (f.isFile() && readFileSync(file, 'utf-8') === body) return true;
-    } catch { /* no record yet */ }
-    const tmp = `${file}.tmp-${process.pid}`;
-    writeFileSync(tmp, body, { mode: 0o644 });
-    renameSync(tmp, file);
-    return true;
-  } catch {
-    return false;
   }
 }

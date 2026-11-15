@@ -176,7 +176,6 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-brain-mcp-',
   'dc-brain-token-',
   'dc-brainlock-',
-  'dc-bridge-',
   'dc-briefing-',
   'dc-briefing-cap-',
   'dc-briefing-hook-',

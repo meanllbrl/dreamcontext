@@ -12,7 +12,6 @@ import { compareVersions } from '../lib/version-check.js';
 import { anyChatBusy } from './chat-activity.js';
 import { startUpgradeRun } from './upgrade-job.js';
 import { realPath } from '../lib/real-path.js';
-import { isAppRuntimeNode } from '../lib/onboarding/platform.js';
 
 export const SELF_UPDATE_FIRST_TICK_MS = 90_000;
 export const SELF_UPDATE_TICK_MS = 30 * 60_000;
@@ -24,8 +23,6 @@ export interface SelfUpdateJobGate {
   firstTickMs?: number;
   tickMs?: number;
   deps?: SelfUpdateDeps;
-  /** The server's node (tests); default `process.execPath`. */
-  execPath?: string;
 }
 
 const envMs = (v: string | undefined): number | undefined => {
@@ -59,18 +56,15 @@ const real = (p: string): string => { try { return realPath(p); } catch { return
  * (DREAMCONTEXT_GLOBAL_CLI is not the running entry) — the global install's version when that is
  * strictly newer. Without it an app running the bundle never relaunched onto the global CLI its
  * own self-update had just upgraded. The relaunch then picks the global (it is newer), so this
- * cannot loop. On the app's own runtime the shell keeps its bundle over any npm global (npm exit,
- * plan npmsiz-beta C3′), so a newer npm copy is never a reason to relaunch: it would loop.
+ * cannot loop.
  */
 export function readyVersionOnDisk(
   env: NodeJS.ProcessEnv = process.env,
   argv1: string | undefined = process.argv[1],
   own: () => string = readDreamcontextVersionFromDisk,
   globalVersion: (entry: string) => string | null = (e) => cliPackageVersion(e),
-  execPath: string = process.execPath,
 ): string {
   const mine = own();
-  if (isAppRuntimeNode(execPath)) return mine;
   const global = env.DREAMCONTEXT_GLOBAL_CLI;
   if (!global || !argv1 || real(global) === real(argv1)) return mine;
   const g = globalVersion(global);
@@ -95,12 +89,6 @@ export function startSelfUpdateJob(gate: SelfUpdateJobGate = {}): (() => void) |
   const reason = selfUpdateJobDisabledReason(env, gate.ppid ?? process.ppid, gate.platform ?? process.platform);
   if (reason) {
     console.log(`  [self-update] disabled: ${reason}`);
-    return undefined;
-  }
-  // On the app's own runtime the app updater replaces the whole bundle, CLI included; npm is not
-  // there to ask (a fresh Mac has none), so a check would only ever record "could not reach npm".
-  if (isAppRuntimeNode(gate.execPath ?? process.execPath)) {
-    console.log('  [self-update] disabled: the app runs its own CLI and updates it with the app');
     return undefined;
   }
   const deps: SelfUpdateDeps = { busy: () => anyChatBusy(), runUpgrade: runUpgradeJob, ...gate.deps };

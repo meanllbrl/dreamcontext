@@ -6,11 +6,10 @@
  * Scratch HOME only.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appRuntimePath, ensureAppCliOnShellPath, writeAppCliRecord } from '../../src/lib/app-cli-path.js';
-import { readAppCliRecord } from '../../src/lib/cli-precedence.js';
+import { appRuntimePath, ensureAppCliOnShellPath } from '../../src/lib/app-cli-path.js';
 import { CLI_RC_MARKER } from '../../src/lib/claude-path.js';
 
 const APP_NODE = '/Applications/dreamcontext.app/Contents/Resources/runtime/bin/node';
@@ -19,7 +18,7 @@ let home: string;
 const saved = { HOME: process.env.HOME, SHELL: process.env.SHELL };
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'app-cli-path-')));
+  home = mkdtempSync(join(tmpdir(), 'app-cli-path-'));
   process.env.HOME = home;
   process.env.SHELL = '/bin/zsh';
 });
@@ -99,47 +98,6 @@ describe('a one-run bundle (opened from the DMG, or App Translocation)', () => {
     expect(existsSync(live)).toBe(true);
     expect(existsSync(outside)).toBe(true);
     rmSync(outside, { recursive: true, force: true });
-  });
-});
-
-describe('the app record (the npm bridge reads it)', () => {
-  function bundle(where: string): { node: string; entry: string; app: string } {
-    const app = join(where, 'dreamcontext-beta.app');
-    const node = join(app, 'Contents', 'Resources', 'runtime', 'bin', 'node');
-    const entry = join(app, 'Contents', 'Resources', 'dist', 'index.js');
-    mkdirSync(join(node, '..'), { recursive: true });
-    mkdirSync(join(entry, '..'), { recursive: true });
-    writeFileSync(node, '');
-    writeFileSync(entry, '');
-    return { node: realpathSync(node), entry: realpathSync(entry), app: realpathSync(app) };
-  }
-  const recordFile = () => join(home, '.dreamcontext', 'app-cli.json');
-
-  it('a lasting bundle writes a record the bridge accepts, and rewrites nothing when unchanged', () => {
-    const b = bundle(join(home, 'Applications'));
-    expect(writeAppCliRecord({ execPath: b.node, entry: b.entry, home, platform: 'darwin', version: '0.42.0' })).toBe(true);
-    expect(JSON.parse(readFileSync(recordFile(), 'utf-8'))).toEqual({ version: '0.42.0', node: b.node, entry: b.entry, appPath: b.app });
-    expect(readAppCliRecord(home, false)).toEqual({ version: '0.42.0', node: b.node, entry: b.entry, appPath: b.app });
-    const before = statSync(recordFile()).mtimeMs;
-    expect(writeAppCliRecord({ execPath: b.node, entry: b.entry, home, platform: 'darwin', version: '0.42.0' })).toBe(true);
-    expect(statSync(recordFile()).mtimeMs).toBe(before);
-  });
-
-  it('written even when an npm CLI is on the machine (that is the bridge case)', () => {
-    const b = bundle(join(home, 'Applications'));
-    expect(writeAppCliRecord({ execPath: b.node, entry: b.entry, home, platform: 'darwin', version: '0.42.0', globalCli: '/opt/homebrew/lib/node_modules/dreamcontext/dist/index.js' })).toBe(true);
-  });
-
-  it('nothing for a non-app node, Windows, an unknown version or a symlinked ~/.dreamcontext', () => {
-    const b = bundle(join(home, 'Applications'));
-    expect(writeAppCliRecord({ execPath: '/opt/homebrew/bin/node', entry: b.entry, home, platform: 'darwin', version: '0.42.0' })).toBe(false);
-    expect(writeAppCliRecord({ execPath: b.node, entry: b.entry, home, platform: 'win32', version: '0.42.0' })).toBe(false);
-    expect(writeAppCliRecord({ execPath: b.node, entry: b.entry, home, platform: 'darwin', version: '0.0.0' })).toBe(false);
-    const elsewhere = mkdtempSync(join(tmpdir(), 'app-cli-path-'));
-    symlinkSync(elsewhere, join(home, '.dreamcontext'));
-    expect(writeAppCliRecord({ execPath: b.node, entry: b.entry, home, platform: 'darwin', version: '0.42.0' })).toBe(false);
-    expect(existsSync(join(elsewhere, 'app-cli.json'))).toBe(false);
-    rmSync(elsewhere, { recursive: true, force: true });
   });
 });
 

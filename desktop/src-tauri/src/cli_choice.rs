@@ -131,23 +131,13 @@ fn is_semver(v: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// A record is valid when its version is plain X.Y.Z and both paths sit in `bin/rt/<version>/`,
-/// or (Mac) both name ONE lasting `.app` bundle (`<A>.app/Contents/Resources/runtime/bin/node` +
-/// `<A>.app/Contents/Resources/dist/index.js`), `<A>.app` right in /Applications or ~/Applications.
+/// A record is valid when its version is plain X.Y.Z and both paths sit in `bin/rt/<version>/`.
 #[allow(dead_code)]
 pub(crate) fn record_valid(rec: &AppCliRecord, home: &str, windows: bool) -> bool {
     if !is_semver(rec.version) { return false; }
     // A `.` or `..` segment could climb out of bin/rt while still starting with it.
     let dotted = |p: &str| p.replace('\\', "/").split('/').any(|seg| seg == ".." || seg == ".");
     if dotted(rec.node) || dotted(rec.entry) { return false; }
-    if !windows {
-        if let Some(app) = rec.node.strip_suffix("/Contents/Resources/runtime/bin/node") {
-            let parent = app.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
-            return app.ends_with(".app") && !app.contains('\\')
-                && rec.entry == format!("{app}/Contents/Resources/dist/index.js")
-                && (parent == "/Applications" || parent == format!("{}/Applications", norm(home, false)));
-        }
-    }
     let dir = format!("{}/.dreamcontext/bin/rt/{}/", norm(home, windows), if windows { rec.version.to_lowercase() } else { rec.version.to_string() });
     norm(rec.node, windows).starts_with(&dir) && norm(rec.entry, windows).starts_with(&dir)
 }
@@ -187,27 +177,6 @@ pub(crate) fn classify(f: &CliFacts) -> CliKind {
         return CliKind::LinkedCheckout;
     }
     CliKind::NotInstall
-}
-
-/// Mac (plan npmsiz-beta C3′, owner 15 Nov: leave npm): an app that carries its own runtime runs
-/// its own CLI; a global CLI outranks it only when it is a developer's linked checkout. Versions
-/// are not compared across kinds (the last npm release is the bridge and stays behind the app).
-#[cfg_attr(windows, allow(dead_code))]
-pub(crate) fn bundle_outranks_global(has_runtime: bool, global_kind: CliKind) -> bool {
-    has_runtime && global_kind != CliKind::LinkedCheckout
-}
-
-/// The kind of the global CLI the login shell found (`dreamcontext` on PATH, a symlink or the
-/// entry itself), by its realpath and the package.json two levels above it.
-#[cfg_attr(windows, allow(dead_code))]
-pub(crate) fn global_cli_kind(global: &Path, home: &str) -> CliKind {
-    let real = std::fs::canonicalize(global).unwrap_or_else(|_| global.to_path_buf());
-    let entry = real.to_string_lossy().into_owned();
-    let pkg_name = real.parent().and_then(Path::parent).map(|d| d.join("package.json"))
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string));
-    classify(&CliFacts { windows: false, home, entry: &entry, exec: "", pkg_name: pkg_name.as_deref(), record: None, install_location: None })
 }
 
 /// Does this process re-exec into the app copy? Only an npm global, only with a valid record,
@@ -250,42 +219,6 @@ mod tests {
             n += 1;
         }
         assert!(n >= 20, "the vector file lost rows: {n}");
-        let mut r = 0;
-        for c in v["record"].as_array().unwrap() {
-            let rec = AppCliRecord { version: c["version"].as_str().unwrap(), node: c["node"].as_str().unwrap(), entry: c["entry"].as_str().unwrap() };
-            assert_eq!(record_valid(&rec, c["home"].as_str().unwrap(), c["os"] == "win32"), c["expect"].as_bool().unwrap(), "{}", c["name"]);
-            r += 1;
-        }
-        assert!(r >= 10, "the record vectors lost rows: {r}");
-    }
-
-    #[test]
-    fn an_app_with_its_own_runtime_outranks_npm_but_not_a_linked_checkout() {
-        assert!(bundle_outranks_global(true, CliKind::NpmGlobal));
-        assert!(bundle_outranks_global(true, CliKind::NotInstall));
-        assert!(!bundle_outranks_global(true, CliKind::LinkedCheckout));
-        assert!(!bundle_outranks_global(false, CliKind::NpmGlobal), "an older bundle with no runtime keeps today's rule");
-        let root = std::env::temp_dir().join(format!("dc-kind-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let npm = root.join("prefix/lib/node_modules/dreamcontext");
-        std::fs::create_dir_all(npm.join("dist")).unwrap();
-        std::fs::write(npm.join("package.json"), r#"{"name":"dreamcontext"}"#).unwrap();
-        std::fs::write(npm.join("dist/index.js"), "").unwrap();
-        let checkout = root.join("code/dreamcontext");
-        std::fs::create_dir_all(checkout.join("dist")).unwrap();
-        std::fs::write(checkout.join("package.json"), r#"{"name":"dreamcontext"}"#).unwrap();
-        std::fs::write(checkout.join("dist/index.js"), "").unwrap();
-        let home = root.to_string_lossy().into_owned();
-        assert_eq!(global_cli_kind(&npm.join("dist/index.js"), &home), CliKind::NpmGlobal);
-        assert_eq!(global_cli_kind(&checkout.join("dist/index.js"), &home), CliKind::LinkedCheckout);
-        #[cfg(unix)]
-        {
-            // `npm link`: the bin is a symlink that resolves into the checkout.
-            let bin = root.join("bin-dreamcontext");
-            std::os::unix::fs::symlink(checkout.join("dist/index.js"), &bin).unwrap();
-            assert_eq!(global_cli_kind(&bin, &home), CliKind::LinkedCheckout);
-        }
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

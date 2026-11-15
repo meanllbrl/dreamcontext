@@ -43,27 +43,12 @@ function norm(p: string, windows: boolean): string {
 
 const SEMVER = /^\d+\.\d+\.\d+$/;
 
-const MAC_BUNDLE_NODE = '/Contents/Resources/runtime/bin/node';
-const MAC_BUNDLE_ENTRY = '/Contents/Resources/dist/index.js';
-
-/**
- * A record is valid when its version is plain X.Y.Z and both paths sit in `bin/rt/<version>/`,
- * or (Mac) both name ONE lasting `.app` bundle: `<A>.app/Contents/Resources/runtime/bin/node` and
- * `<A>.app/Contents/Resources/dist/index.js`, with `<A>.app` right in /Applications or ~/Applications
- * (where the app installs; never a DMG, a translocated copy, Downloads or a build folder).
- */
+/** A record is valid when its version is plain X.Y.Z and both paths sit in `bin/rt/<version>/`. */
 export function recordValid(rec: AppCliRecord, home: string, windows: boolean): boolean {
   if (!SEMVER.test(rec.version)) return false;
   // A `.` or `..` segment could climb out of bin/rt while still starting with it.
   const dotted = (p: string) => p.replace(/\\/g, '/').split('/').some((seg) => seg === '..' || seg === '.');
   if (dotted(rec.node) || dotted(rec.entry)) return false;
-  if (!windows && rec.node.endsWith(MAC_BUNDLE_NODE)) {
-    const app = rec.node.slice(0, -MAC_BUNDLE_NODE.length);
-    const parent = app.slice(0, app.lastIndexOf('/'));
-    return app.endsWith('.app') && !app.includes('\\')
-      && rec.entry === `${app}${MAC_BUNDLE_ENTRY}`
-      && (parent === '/Applications' || parent === `${norm(home, false)}/Applications`);
-  }
   const version = windows ? rec.version.toLowerCase() : rec.version;
   const dir = `${norm(home, windows)}/.dreamcontext/bin/rt/${version}/`;
   return norm(rec.node, windows).startsWith(dir) && norm(rec.entry, windows).startsWith(dir);
