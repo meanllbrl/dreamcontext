@@ -335,8 +335,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
                   onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>
                   <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
                 </button>
-                {/* A member's window (r8-07): the chevron beside "+", where the New window row used to sit. */}
-                {row.children.some((c) => c.kind === 'new-chat') && newChatMembers(row).length > 0 && (
+                {/* A member's window (r8-07): the chevron beside "+", where the New window row used to sit.
+                    Gated on the members only: the model's `new-chat` child exists just while a project has no
+                    chat, and the picker must stay reachable once it has one. */}
+                {newChatMembers(row).length > 0 && (
                   <button type="button" className="ns-dr-act ns-dr-newchat-menu" data-testid="new-chat-menu" aria-haspopup="menu"
                     aria-label={`${t('drawer.newChat.menu')}: ${row.name}`} title={t('drawer.newChat.menu')}
                     onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
