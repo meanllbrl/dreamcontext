@@ -81,14 +81,8 @@
   font-weight: var(--font-weight-bold);
   color: var(--color-text-secondary);
 }
-.super-agenda-sec-h::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: var(--color-text-tertiary); }
-.super-agenda-sec[data-section='waiting'] > .super-agenda-sec-h::before { background: var(--agenda-waiting); }
-.super-agenda-sec[data-section='super'] > .super-agenda-sec-h::before { background: var(--agenda-run); }
-.super-agenda-sec[data-section='mine'] > .super-agenda-sec-h::before { background: var(--color-accent); }
-.super-agenda-sec:is([data-section='done'], [data-section='dayDone']) > .super-agenda-sec-h::before { background: var(--agenda-done); }
 .agenda-earlier > summary { list-style: none; cursor: pointer; }
 .agenda-earlier > summary::-webkit-details-marker { display: none; }
-.agenda-earlier > summary .super-agenda-sec-h::before { background: var(--agenda-almost); }
 .super-agenda-n { font-weight: var(--font-weight-medium); color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
 /* Stale lines, said once on the group's head (never a pill per row): faint, like the count. */
 .super-agenda-stale-n { font-weight: var(--font-weight-medium); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -490,4 +484,3 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-board { flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: var(--space-3); align-items: start; overflow-x: auto; overscroll-behavior-x: contain; }
 .agenda-board-col { min-width: 0; padding: var(--space-1); border-radius: var(--radius-lg, 10px); background: color-mix(in srgb, var(--color-bg-secondary) 60%, transparent); }
 .agenda-board-col + .agenda-board-col { margin-top: 0; }
-.agenda-board-col[data-section='waiting'] > .super-agenda-sec-h::before { background: var(--agenda-waiting); }
