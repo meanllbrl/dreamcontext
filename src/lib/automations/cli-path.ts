@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { stableNodeExecPath } from '../onboarding/platform.js';
@@ -54,6 +54,31 @@ export function isEphemeralPath(p: string | undefined): boolean {
   return s.startsWith('/Volumes/') || s.includes('/AppTranslocation/');
 }
 
+/** This process's one-run launcher folder; folders of runs that ended are removed on the way. */
+function oneRunShimDir(home: string = homedir()): string {
+  const root = join(home, '.dreamcontext', 'bin', 'run');
+  try {
+    for (const name of readdirSync(root)) {
+      if (!/^\d+$/.test(name) || Number(name) === process.pid || pidAlive(Number(name))) continue;
+      const p = join(root, name);
+      const st = lstatSync(p);
+      if (st.isDirectory() && !st.isSymbolicLink()) rmSync(p, { recursive: true, force: true });
+    }
+  } catch {
+    // No folder yet, or unreadable: nothing to prune.
+  }
+  return join(root, String(process.pid));
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 function isExecutableFile(path: string): boolean {
   try {
     const st = statSync(path);
@@ -86,10 +111,14 @@ export function cliAwarePath(
   const nodeDir = dirname(execPath);
   if (!entries.includes(nodeDir)) entries = [...entries, nodeDir];
 
-  // A one-run path (DMG, App Translocation) writes no shim: the run keeps its PATH as it was.
-  if (!hasCli(entries) && entry && process.platform !== 'win32' && !isEphemeralPath(execPath) && !isEphemeralPath(entry)) {
+  if (!hasCli(entries) && entry && process.platform !== 'win32') {
     try {
-      const dir = cliShimDir(opts.home);
+      // A one-run path (DMG, App Translocation): the launcher goes into this process's own
+      // folder under the guarded `~/.dreamcontext/bin/run/`, so this run's spawns and hooks still
+      // find the CLI, while the lasting launcher (the one the rc line names) is never pointed at
+      // a path that is gone after the run.
+      const oneRun = isEphemeralPath(execPath) || isEphemeralPath(entry);
+      const dir = oneRun ? oneRunShimDir(opts.home) : cliShimDir(opts.home);
       const shim = join(dir, 'dreamcontext');
       const body = renderCliShim(execPath, entry);
       mkdirSync(dir, { recursive: true });

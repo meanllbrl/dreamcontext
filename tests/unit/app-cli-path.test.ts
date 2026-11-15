@@ -6,7 +6,7 @@
  * Scratch HOME only.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appRuntimePath, ensureAppCliOnShellPath } from '../../src/lib/app-cli-path.js';
@@ -69,7 +69,13 @@ describe('a one-run bundle (opened from the DMG, or App Translocation)', () => {
       expect(ensureAppCliOnShellPath({ execPath: node, entry, home, platform: 'darwin', globalCli: '' })).toBeNull();
       expect(existsSync(join(shimDir(), 'dreamcontext'))).toBe(false);
       expect(existsSync(join(home, '.zshrc'))).toBe(false);
-      expect(appRuntimePath('/usr/bin:/bin', { execPath: node, entry, home, platform: 'darwin' }).split(':')).not.toContain(shimDir());
+      // This run's own spawns still find the CLI, through a launcher in its run-only folder.
+      const spawnPath = appRuntimePath('/usr/bin:/bin', { execPath: node, entry, home, platform: 'darwin' }).split(':');
+      const runDir = join(home, '.dreamcontext', 'bin', 'run', String(process.pid));
+      expect(spawnPath).not.toContain(shimDir());
+      expect(spawnPath[0]).toBe(runDir);
+      expect(readFileSync(join(runDir, 'dreamcontext'), 'utf-8')).toContain(`'${node}' '${entry}'`);
+      expect(existsSync(join(home, '.zshrc'))).toBe(false);
 
       ensureAppCliOnShellPath({ execPath: APP_NODE, entry: ENTRY, home, platform: 'darwin', globalCli: '' });
       const lasting = readFileSync(join(shimDir(), 'dreamcontext'), 'utf-8');
@@ -78,6 +84,21 @@ describe('a one-run bundle (opened from the DMG, or App Translocation)', () => {
       expect(readFileSync(join(shimDir(), 'dreamcontext'), 'utf-8')).toBe(lasting);
     });
   }
+
+  it("a run folder whose process ended is removed; a live one and a symlink are kept", () => {
+    const root = join(home, '.dreamcontext', 'bin', 'run');
+    const dead = join(root, '999999999');
+    const live = join(root, String(process.ppid));
+    const outside = mkdtempSync(join(tmpdir(), 'app-cli-path-'));
+    mkdirSync(dead, { recursive: true });
+    mkdirSync(live, { recursive: true });
+    symlinkSync(outside, join(root, '999999998'));
+    appRuntimePath('', { execPath: '/Volumes/d/dreamcontext.app/Contents/Resources/runtime/bin/node', entry: '/Volumes/d/dreamcontext.app/Contents/Resources/dist/index.js', home, platform: 'darwin' });
+    expect(existsSync(dead)).toBe(false);
+    expect(existsSync(live)).toBe(true);
+    expect(existsSync(outside)).toBe(true);
+    rmSync(outside, { recursive: true, force: true });
+  });
 });
 
 describe('anywhere else', () => {

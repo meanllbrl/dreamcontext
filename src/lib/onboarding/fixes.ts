@@ -416,8 +416,13 @@ function cliShellPath({ ctx, deps }: RecipeEnv): FixOutcome {
   // On the app's own runtime (plan npmsiz-beta C1) the launcher folder is the CLI's home on PATH:
   // write its launcher now (it names this very node and entry) and put that folder on PATH.
   if (isAppRuntimeNode(ctx.execPath, ctx.home)) {
+    // Opened from the DMG or a translocated copy: its own path is gone after this run, so only a
+    // launcher a lasting install already wrote may go on PATH.
     if (isEphemeralPath(ctx.execPath)) {
-      return fail('failed', 'Move dreamcontext to your Applications folder, then open it from there.');
+      if (!existsSync(join(cliShimDir(ctx.home), 'dreamcontext'))) {
+        return fail('failed', 'Move dreamcontext to your Applications folder, then open it from there.');
+      }
+      return shellPathOutcome([deps.addToShellPath(cliShimDir(ctx.home), CLI_RC_MARKER)]);
     }
     cliAwarePath('', { execPath: ctx.execPath, home: ctx.home });
   }
