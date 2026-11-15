@@ -507,6 +507,19 @@ describe('the Super target', () => {
       expect(sent).toHaveLength(1);
     });
 
+    it('a voice note whose transcript comes back empty under load is retried, never dropped in silence', async () => {
+      reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      const answers = ['', 'yeniden duydum'];
+      Object.assign(deps(), { transcribeVoice: async () => answers.shift() ?? '' });
+      voice('v4');
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+      expect(parseTelegramPrefix(sent[0]).body).toBe('🎙 yeniden duydum');
+      expect(tg.texts().some((t) => t.includes('yeniden deniyorum'))).toBe(true);
+      expect(tg.texts().some((t) => t.includes('<blockquote expandable><i></i></blockquote>'))).toBe(false);
+    });
+
     it('a garbled take is not retried automatically: the button comes at once', async () => {
       reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
       const { inj, sent } = fakeInjector();

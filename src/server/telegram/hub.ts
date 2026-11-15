@@ -904,8 +904,10 @@ export class TelegramHub implements TelegramHubApi {
     for (let pass = 0; ; pass++) {
       try {
         if (!this.deps.transcribeVoice) throw new Error('no_transcriber');
-        const text = await this.deps.transcribeVoice(path);
-        if (text.trim()) return { ok: true, text };
+        const text = ((await this.deps.transcribeVoice(path)) ?? '').trim();
+        if (text) return { ok: true, text };
+        // An EMPTY transcript under load is a failure, never "nothing said": it takes the same
+        // retry path (the 21:45 note of 2026-11-15 was dropped in silence this way).
         throw new Error('stt_failed');
       } catch (err) {
         const code = String((err as Error)?.message ?? '');
