@@ -414,6 +414,9 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   // A round + floating at the card's bottom-right corner at every size (owner 15 Nov: "kartın sağ
   // alt köşesine bir floating artı butonu"); it opens a small box in place.
   const fab = onPadAdd && !readOnly && day === today && <AgendaFab onAdd={onPadAdd} explain={explain} onStart={() => setError(null)} />;
+  // Its own corner: a strip under the scrolling lines, so the visible list ends above the + and no
+  // line ever sits under it, at rest or scrolling (owner 15 Nov).
+  const strip = fab && <div className="agenda-strip" data-testid="super-agenda-strip">{fab}</div>;
   const pct = (n: number) => (progress.total ? Math.round((n / progress.total) * 100) : 0);
   const bar = (
     <div className="agenda-bar" aria-hidden>
@@ -591,14 +594,16 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           <div className="agenda-main-head">
             <span>{past ? tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) }) : groupName(filter === 'onit' ? 'super' : filter)}</span>
           </div>
-          {errorLine}
-          {past ? groupList(false) : (
-            <div className="agenda-groups" {...listHandlers}>
-              {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
-              {order(rows).map(rowOf)}
-            </div>
-          )}
-          {fab}
+          <div className="agenda-scroll">
+            {errorLine}
+            {past ? groupList(false) : (
+              <div className="agenda-groups" {...listHandlers}>
+                {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+                {order(rows).map(rowOf)}
+              </div>
+            )}
+          </div>
+          {strip}
         </div>
         {statusMenu}{floatingDetail}
       </div>
@@ -618,11 +623,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   if (size === 'large') {
     return (
       <div className="super-agenda" {...common}>
-        {header(true)}
-        {bar}
-        {errorLine}
-        {lines(false)}
-        {fab}
+        <div className="agenda-scroll">
+          {header(true)}
+          {bar}
+          {errorLine}
+          {lines(false)}
+        </div>
+        {strip}
         {statusMenu}{floatingDetail}
       </div>
     );
@@ -636,11 +643,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     return (
       <div className="super-agenda" {...common} data-detail={detailPane ? 'true' : undefined}>
         <div className="agenda-col">
-          {header(true)}
-          {bar}
-          {errorLine}
-          {lines(false)}
-          {fab}
+          <div className="agenda-scroll">
+            {header(true)}
+            {bar}
+            {errorLine}
+            {lines(false)}
+          </div>
+          {strip}
         </div>
         {detailPane}
         {statusMenu}
@@ -656,6 +665,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   return (
     <div className="super-agenda" {...common} data-detail={detailPane ? 'true' : undefined}>
       <div className="agenda-col">
+        <div className="agenda-scroll">
         {loadDay && <AgendaWeekStrip day={day} today={today} onDay={onDay} locale={locale} />}
         <div className="agenda-title-row">
           <h2 className="agenda-title">{new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(new Date(`${day}T12:00:00`))}</h2>
@@ -668,7 +678,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         </div>
         {errorLine}
         {lines(true)}
-        {fab}
+        </div>
+        {strip}
       </div>
       {detailPane}
       {statusMenu}
@@ -696,19 +707,6 @@ function AgendaFab({ onAdd, explain, onStart }: {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState('');
   const btnRef = useRef<HTMLButtonElement | null>(null);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  // While the list scrolls the + steps aside (fades and shrinks), so it never sits over a moving
-  // row's time or its Done / Ask; it comes back once the scroll stops.
-  const [scrolling, setScrolling] = useState(false);
-  useEffect(() => {
-    let el: HTMLElement | null = wrapRef.current?.parentElement ?? null;
-    while (el && !/(auto|scroll)/.test(getComputedStyle(el).overflowY)) el = el.parentElement;
-    if (!el) return;
-    let timer = 0;
-    const on = () => { setScrolling(true); window.clearTimeout(timer); timer = window.setTimeout(() => setScrolling(false), 450); };
-    el.addEventListener('scroll', on, { passive: true });
-    return () => { el?.removeEventListener('scroll', on); window.clearTimeout(timer); };
-  }, []);
   const close = (focusBack: boolean) => {
     setOpen(false); setText(''); setRefused('');
     if (focusBack) requestAnimationFrame(() => btnRef.current?.focus());
@@ -723,7 +721,7 @@ function AgendaFab({ onAdd, explain, onStart }: {
   };
   const label = t('super.agenda.addTitle');
   return (
-    <div ref={wrapRef} className="agenda-fab" data-open={open ? 'true' : undefined} data-scrolling={scrolling && !open ? 'true' : undefined}>
+    <div className="agenda-fab" data-open={open ? 'true' : undefined}>
       {open ? (
         <form
           className="agenda-fab-form"

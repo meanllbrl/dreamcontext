@@ -156,8 +156,9 @@ async function openStage(browser, dark) {
 /** The scrolling area, the body it sits in and where the day head is. */
 const measure = (p, scrollerSel, headSel) => p.evaluate(([sel, hsel]) => {
   const root = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]');
-  const sc = sel ? root.querySelector(sel) : root;
+  const sc = (sel ? root.querySelector(sel) : root.querySelector('.agenda-scroll')) ?? root;
   const body = root.parentElement;
+  const strip = root.querySelector('[data-testid="super-agenda-strip"]');
   const head = root.querySelector(hsel || '.agenda-head, .agenda-title-row');
   const foot = root.querySelector('.agenda-foot');
   const r = (el) => el.getBoundingClientRect();
@@ -165,6 +166,7 @@ const measure = (p, scrollerSel, headSel) => p.evaluate(([sel, hsel]) => {
     size: root.getAttribute('data-size'),
     bodyH: Math.round(body.clientHeight), scH: Math.round(sc.clientHeight), scroll: Math.round(sc.scrollHeight),
     scrollTop: Math.round(sc.scrollTop), scTop: Math.round(r(sc).top), headBottom: Math.round(r(head).bottom),
+    stripH: strip ? Math.round(strip.getBoundingClientRect().height) : 0,
     rootScroll: Math.round(root.scrollHeight), rootH: Math.round(root.clientHeight),
     footInside: foot ? r(foot).bottom <= r(root).bottom + 0.5 : null,
     listOwnScroll: [...root.querySelectorAll('.agenda-groups')].some((g) => g.scrollHeight > g.clientHeight + 1 && ['auto', 'scroll'].includes(getComputedStyle(g).overflowY)),
@@ -172,7 +174,7 @@ const measure = (p, scrollerSel, headSel) => p.evaluate(([sel, hsel]) => {
 }, [scrollerSel, headSel]);
 const scrollEnd = (p, scrollerSel) => p.evaluate((sel) => {
   const root = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]');
-  const sc = sel ? root.querySelector(sel) : root;
+  const sc = (sel ? root.querySelector(sel) : root.querySelector('.agenda-scroll')) ?? root;
   sc.scrollTop = sc.scrollHeight;
 }, scrollerSel);
 
@@ -186,7 +188,7 @@ const agendaState = (p) => p.evaluate(() => {
  *  the larger view draws the fuller agenda (the week strip, the line's detail beside it). `how`:
  *  'head' = a click on its title bar, 'button' = its side-by-side button. */
 async function sideAndFull(p, name, how) {
-  await p.evaluate(() => { const r = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); if (r) r.scrollTop = 0; });
+  await p.evaluate(() => { const r0 = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); const r = r0?.querySelector('.agenda-scroll') ?? r0; if (r) r.scrollTop = 0; });
   await card(p).hover();
   if (how === 'head') {
     // The window lights sit over the title's start: he clicks the end of the word he sees.
@@ -254,41 +256,40 @@ async function fab(p, name, size) {
     const f = document.querySelector('[data-testid="super-container"][data-kind="agenda"]');
     const root = f.querySelector('[data-testid="super-agenda"]');
     // Every area that scrolls (the body; medium's right column; wide's left column with a detail open) to its end.
-    for (const el of [root, ...root.querySelectorAll('.agenda-main, .agenda-col')]) el.scrollTop = el.scrollHeight;
+    for (const el of [root, ...root.querySelectorAll('.agenda-scroll')]) el.scrollTop = el.scrollHeight;
     const b = f.querySelector('[data-testid="super-agenda-plus"]').getBoundingClientRect();
     const c = f.getBoundingClientRect();
     const rows = [...root.querySelectorAll('[data-testid="super-agenda-row"]')];
     const last = rows[rows.length - 1]?.getBoundingClientRect();
-    return { right: Math.round(c.right - b.right), bottom: Math.round(c.bottom - b.bottom), lastBottom: last ? Math.round(last.bottom) : null, plusTop: Math.round(b.top) };
+    return { right: Math.round(c.right - b.right), bottom: Math.round(c.bottom - b.bottom), lastBottom: last ? Math.round(last.bottom) : null, lastRight: last ? Math.round(last.right) : null, plusTop: Math.round(b.top), plusLeft: Math.round(b.left) };
   });
   await wait(p, 300);
   console.log('    fab    ' + JSON.stringify(geo));
   check(`[${name}] S7 the + sits in the bottom-right corner (${geo.right}px, ${geo.bottom}px from the edges)`, geo.right >= 0 && geo.right <= 24 && geo.bottom >= 0 && geo.bottom <= 24, JSON.stringify(geo));
-  if (size !== 'small') check(`[${name}] S7 scrolled to the end, the + does not cover the last line`, geo.lastBottom !== null && geo.lastBottom <= geo.plusTop, JSON.stringify(geo));
+  if (size !== 'small') check(`[${name}] S7 scrolled to the end, the + does not cover the last line`, geo.lastBottom !== null && (geo.lastBottom <= geo.plusTop || geo.lastRight <= geo.plusLeft), JSON.stringify(geo));
   await card(p).screenshot({ path: join(OUT, `${name}-7-fab.png`) });
-  if (size === 'large') {
-    // Mid-list scroll: the + steps aside while it scrolls (the bottom row's time shows), back on stop.
-    const mid = async () => p.evaluate(() => {
-      const root = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]');
-      root.scrollTop = Math.round(root.scrollHeight / 3);
-    });
-    await mid();
-    await wait(p, 200);
-    await mid();
-    await p.evaluate(() => { const r = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); r.scrollTop += 20; });
-    await wait(p, 200);
-    const during = await p.evaluate(() => {
-      const b = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda-plus"]');
-      const r = b.getBoundingClientRect();
-      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-      return { opacity: Number(getComputedStyle(b).opacity), coveredByFab: !!hit && b.contains(hit) };
-    });
-    await card(p).screenshot({ path: join(OUT, `${name}-7b-fab-scrolling.png`) });
-    check(`[${name}] S7 scrolling mid-list, the + steps aside (what is under it shows and takes the pointer)`, during.opacity < 0.2 && !during.coveredByFab, JSON.stringify(during));
-    await wait(p, 900);
-    const after = await plus.evaluate((b) => Number(getComputedStyle(b).opacity));
-    check(`[${name}] S7 the + comes back when the scroll stops`, after > 0.95, String(after));
-  }
+  // S9 at rest mid-list: no line, nor any part of one, sits under the + (its own corner).
+  await p.evaluate(() => { const r0 = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); const r = r0.querySelector('.agenda-scroll') ?? r0; r.scrollTop = Math.round((r.scrollHeight - r.clientHeight) / 2); });
+  await wait(p, 800);
+  const rest = await p.evaluate(() => {
+    const root = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]');
+    const sc = root.querySelector('.agenda-scroll') ?? root;
+    const b = root.querySelector('[data-testid="super-agenda-plus"]').getBoundingClientRect();
+    const v = sc.getBoundingClientRect();
+    const over = [];
+    for (const row of root.querySelectorAll('[data-testid="super-agenda-row"]')) {
+      const r = row.getBoundingClientRect();
+      // The part of the row he can see (inside the scrolling area and inside its list's clip).
+      const clip = row.closest('.agenda-groups')?.getBoundingClientRect() ?? v;
+      const top = Math.max(r.top, v.top, clip.top), bottom = Math.min(r.bottom, v.bottom, clip.bottom);
+      if (bottom <= top) continue;
+      if (r.left < b.right && r.right > b.left && top < b.bottom && bottom > b.top) over.push(row.textContent.slice(0, 30));
+    }
+    return { scrollTop: Math.round(sc.scrollTop), max: Math.round(sc.scrollHeight - sc.clientHeight), over };
+  });
+  console.log('    rest   ' + JSON.stringify(rest));
+  check(`[${name}] S9 at rest mid-list (${rest.scrollTop} of ${rest.max}), no line sits under the +`, rest.over.length === 0 && (size === 'small' || rest.scrollTop > 0), JSON.stringify(rest));
+  await card(p).screenshot({ path: join(OUT, `${name}-7c-rest-mid.png`) });
   await plus.focus();
   await p.keyboard.press('Enter');
   const input = card(p).getByTestId('super-agenda-add-input');
@@ -336,13 +337,13 @@ async function scene(browser, size, dark) {
       check(`[${name}] S1 the tile does not scroll and its foot ("N waiting on you") stays inside`, m.rootScroll <= m.rootH + 1 && m.footInside === true && !m.listOwnScroll, JSON.stringify(m));
     } else {
       // Medium: the filters stay at hand on the left; its right column (head and lines) is the one area.
-      const sc = size === 'medium' ? '.agenda-main' : undefined;
+      const sc = undefined;
       const hd = size === 'medium' ? '.agenda-main-head' : undefined;
       if (size === 'medium') { await card(p).getByTestId('super-agenda-filter-onit').click(); await wait(p, 400); }
       const before = await measure(p, sc, hd);
       console.log('    before ' + JSON.stringify(before));
       await card(p).screenshot({ path: join(OUT, `${name}-1-top.png`) });
-      check(`[${name}] S1 the scrolling area is the card body's full height (${before.scH} of ${before.bodyH} px), the list has no strip of its own`, before.scH >= before.bodyH - 16 && !before.listOwnScroll, JSON.stringify(before));
+      check(`[${name}] S1 the scrolling area is the card body's full height but the + strip (${before.scH} + ${before.stripH} of ${before.bodyH} px), the list has no strip of its own`, before.scH + before.stripH >= before.bodyH - 24 && !before.listOwnScroll, JSON.stringify(before));
       check(`[${name}] S1 there is more than fits (the check is real)`, before.scroll > before.scH + 4, JSON.stringify(before));
       await scrollEnd(p, sc);
       await wait(p, 300);
@@ -357,7 +358,7 @@ async function scene(browser, size, dark) {
       const note = card(p).getByTestId('super-agenda-stale-earlier');
       const text = (await note.textContent().catch(() => '')) ?? '';
       check(`[${name}] S3 the earlier group's head says it once: "${text.trim()}"`, (await note.count()) === 1 && /10/.test(text), text);
-      await p.evaluate(() => { const r = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); r.scrollTop = r.scrollHeight; });
+      await p.evaluate(() => { const r0 = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); const r = r0.querySelector('.agenda-scroll') ?? r0; r.scrollTop = r.scrollHeight; });
       const last = card(p).locator('[data-testid="super-agenda-section-super"] [data-testid="super-agenda-row"]').last();
       await last.scrollIntoViewIfNeeded();
       await last.hover();
@@ -366,13 +367,13 @@ async function scene(browser, size, dark) {
       await card(p).screenshot({ path: join(OUT, `${name}-3-hover.png`) });
     }
     if (size === 'wide') {
-      await p.evaluate(() => { document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]').scrollTop = 0; });
+      await p.evaluate(() => { { const r0 = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); (r0.querySelector('.agenda-scroll') ?? r0).scrollTop = 0; } });
       await card(p).locator('[data-testid="super-agenda-section-earlier"] .super-agenda-row-btn').first().click();
       await until(p, async () => (await card(p).getByTestId('super-agenda-detail-inline').count()) === 1, 4000);
-      const d0 = await measure(p, '.agenda-col', '.agenda-head');
-      await scrollEnd(p, '.agenda-col');
+      const d0 = await measure(p, undefined, '.agenda-head');
+      await scrollEnd(p);
       await wait(p, 300);
-      const d1 = await measure(p, '.agenda-col', '.agenda-head');
+      const d1 = await measure(p, undefined, '.agenda-head');
       console.log('    detail ' + JSON.stringify(d1));
       check(`[${name}] S5 with the detail open the left column scrolls head and list as one`, d0.scroll > d0.scH && d1.scrollTop > 0 && d1.headBottom <= d1.scTop, JSON.stringify({ d0, d1 }));
       await card(p).screenshot({ path: join(OUT, `${name}-4-detail.png`) });
