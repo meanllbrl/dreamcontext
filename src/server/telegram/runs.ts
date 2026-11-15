@@ -35,7 +35,7 @@ import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from
 import { OWNER_CARD_TELEGRAM_LINE } from '../../lib/super/types.js';
 import { ownerCardLookup } from '../owner-receipts.js';
 import { cardRootOf, pressRoot } from '../routes/run-terminal.js';
-import { escapeHtml, redactSecrets, wouldRedact } from '../../lib/telegram/format.js';
+import { escapeHtml, redactSecrets, showsAsWritten } from '../../lib/telegram/format.js';
 import type { ButtonRecord } from '../../lib/telegram/contract.js';
 import { lastLine, relayLine, runOfSession, SECRET_PROMPT_RE, startRun, type Run } from '../runs/registry.js';
 import { setTelegramRunSink } from '../runs/delivery.js';
@@ -87,7 +87,7 @@ export function commandShowableAsIs(command: string): boolean {
 
 /** Telegram may offer Çalıştır: shown as is, and nothing in it the redactor would rewrite. */
 export function commandShowable(command: string): boolean {
-  return commandShowableAsIs(command) && !wouldRedact(command);
+  return commandShowableAsIs(command) && showsAsWritten(command);
 }
 
 const sha = (t: string) => createHash('sha256').update(t).digest('hex');
@@ -172,7 +172,8 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     const folder = `${basename(root)}${spec.cwd ? ` · ${spec.cwd}` : ''}`;
     const parts = [
       `<b>${escapeHtml(RUN_LINES.ask)}</b>`,
-      `<pre>${escapeHtml(spec.command)}</pre>`,
+      // Redacted before the escape, as every Telegram text is: a secret never leaves in clear.
+      `<pre>${escapeHtml(redactSecrets(spec.command))}</pre>`,
       `Klasör: <code>${escapeHtml(folder)}</code>`,
       escapeHtml(RUN_LINES.shell),
       ...(spec.why ? [`Ajanın notu: ${escapeHtml(redactSecrets(spec.why))}`] : []),

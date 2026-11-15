@@ -12,7 +12,8 @@
  *    second confirm tap before its text goes as an owner turn; `task`/`knowledge`/`core` → their
  *    title line; `board`/`develop`/`file`/`reveal`/anything else → "<label> (Mac'te)";
  *  - `dream-view` `insight` → its title line (inline insight pictures are a follow-up);
- *    `agent-thread` → the member named; `automation` → "Onay bekliyor: <slug> · Mac'te";
+ *    `agent-thread` → the member named; `automation` → its approval card, whole, with Onayla /
+ *    Reddet (automation-approvals.ts; the old "Onay bekliyor: <slug> · Mac'te" when it cannot go);
  *    `learned` → the rule's own receipt line (`learn`'s line 2) with a "Geri al" button for an
  *    active rule (learning loop C9); keeping or dropping a proposed one stays on the Mac.
  */
@@ -28,6 +29,7 @@ import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { RULE_ID_RE, undoRule } from '../../lib/rules-store.js';
 import { ownerLine } from '../../cli/commands/learn.js';
 import { locateRule } from '../routes/learned.js';
+import { sendAutomationCard } from './automation-approvals.js';
 
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
 const VIDEO_FILE = /\.(mp4|m4v|mov|webm)$/i;
@@ -90,6 +92,14 @@ export function viewLine(body: string): string | null {
   // The Onayla/Reddet buttons ride their own message (telegram/app-requests.ts) when he is away.
   if (v.type === 'app-request') return `✋ App onayı bekliyor · ${LINES.waitingOnMac}`;
   return null;
+}
+
+/** The slug an `automation` view names ('' when it names none), or null for any other block. */
+export function automationViewSlug(body: string): string | null {
+  let v: Obj | null;
+  try { v = obj(JSON.parse(body)); } catch { return null; }
+  if (!v || v.type !== 'automation') return null;
+  return typeof v.slug === 'string' ? v.slug : typeof v.id === 'string' ? v.id : '';
 }
 
 /** A `learned` view as its receipt line, plus whether its Undo button is offered (pure enough to test). */
@@ -206,6 +216,9 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
         continue;
       }
       if (learned) { await hub.reply(ab, learned.line); continue; }
+      // An automation's approval card: the whole card with Onayla / Reddet (automation-approvals.ts).
+      const auto = automationViewSlug(b.body);
+      if (auto !== null) { await sendAutomationCard(hub, ab, auto, sessionId).catch(() => false); continue; }
       const line = viewLine(b.body);
       if (line) await hub.reply(ab, line);
     }
