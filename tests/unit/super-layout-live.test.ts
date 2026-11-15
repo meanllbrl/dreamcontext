@@ -100,7 +100,7 @@ describe('side by side and present: live jobs stay beside the page', () => {
   }
 
   it('present on a smaller stage: the centre and the presented cards keep PRESENT_MIN, the rail gives way', () => {
-    const view: SuperView = { mode: 'present', cards: ['image-a', 'image-b', 'image-c', 'image-d'] };
+    const view: SuperView = { mode: 'present', cards: ['image-a', 'image-b', 'image-c', 'image-d'], layout: 'grid' };
     const live = Array.from({ length: 5 }, (_, i) => chat(`l${i}`));
     const record = [...live, pic('a'), pic('b'), pic('c'), pic('d')];
     for (const width of [1040, 1100, 1240]) {

@@ -266,7 +266,7 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('present [cards...]')
-    .description('Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2+, its strip scrolls), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards')
+    .description('Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4, only when asked: side-by-side), filmstrip (2+, its strip scrolls; the default for 3+ cards and for 2+ pictures or clips), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards')
     .option('--layout <name>', 'spotlight | compare | grid | filmstrip | review')
     .option('--off', 'Leave the presentation')
     .action((containers: string[], o: { off?: boolean; layout?: string }) => {

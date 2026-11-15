@@ -260,7 +260,7 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   // 2026-11-13 (owner, telegram-foto): the pictures he is shown reach his phone; show a result's proof screenshots.
   const PHONE_PICTURES_2026_11_13 = 240;
   const CONDITION_2026_11_15 = 600; // kosullu-otomasyon: `super schedule --condition`, `--wake-when false`, the three shared condition sentences and CONDITION OUTPUT is data (measured +648)
-  const LOCAL_CUT_2026_11_15 = 1800; // the 2026-11-15 local cut: sixteen branches each raised the briefing from the same base (measured 26,176)
+  const LOCAL_CUT_2026_11_15 = 1850; // the 2026-11-15 local cut: sixteen branches each raised the briefing from the same base (measured 26,176; +52 filmstrip default, measured 26,228)
   const PRESENT_QUEUE_2026_11_14 = 130; // sunum-sirasi: a present over his presentation answers `queued: {at, of}`; never claimed as shown (measured 23,521)
   const APP_INSTALL_2026_11_13 = 320; // app-kurulum-claude: install asks at once, its one-tap card even after his yes in words, the card place from `Shown:`, Claude fills the settings (measured 23,145)
   it('files every task itself and carries the split rows, the guide being lookup only', () => {

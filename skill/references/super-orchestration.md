@@ -356,7 +356,7 @@ merges them. Reply: "Started 6 (one messages Ayla), 2 wait for the invites API. 
 
 ## 7. Presentation layouts
 `super present <card…> [--layout <name>]` takes cards or a group (`grp-…`, all its cards). Leave `--layout` off and the cards pick it:
-1 spotlight, 2 compare, 3-4 grid, 5+ filmstrip (2+ clips or landscape pictures: filmstrip), and a page with its own child's chat (and browser) is
+1 spotlight, 2 compare, 3+ filmstrip (2+ pictures or clips: filmstrip; grid only when you ask for it, a side-by-side comparison), and a page with its own child's chat (and browser) is
 review. A wrong count for a named layout answers 400 naming the range. The owner can switch the layout
 from the stage's top band; an answer with `kept: owner_layout` means he chose it: leave it.
 Presentations queue (2026-11-14): a `present`, `open --present` or picture question while he looks

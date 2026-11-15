@@ -101,9 +101,9 @@ const message = (r: { json: Record<string, unknown> }) => JSON.stringify(r.json)
 const ids = (n: number) => tasks.slice(0, n).map((c) => c.id);
 
 describe('defaults: without --layout the cards pick it', () => {
-  it('1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip', async () => {
+  it('1 spotlight, 2 compare, 3-8 filmstrip (grid only when asked)', async () => {
     makeVault();
-    for (const [n, layout] of [[1, 'spotlight'], [2, 'compare'], [3, 'grid'], [4, 'grid'], [5, 'filmstrip'], [8, 'filmstrip']] as const) {
+    for (const [n, layout] of [[1, 'spotlight'], [2, 'compare'], [3, 'filmstrip'], [4, 'filmstrip'], [5, 'filmstrip'], [8, 'filmstrip']] as const) {
       // Off first: over a presentation on screen a new one waits in the queue (sunum-sirasi).
       await present([]);
       const r = await present(ids(n));
@@ -135,7 +135,7 @@ describe('defaults: without --layout the cards pick it', () => {
     expect(onDisk().view).toEqual({ mode: 'present', cards: [chat.id, agenda.id], layout: 'compare' });
     await present([]);
     await present([site.id, chat.id, agenda.id]);
-    expect(onDisk().view.layout).toBe('grid');
+    expect(onDisk().view.layout).toBe('filmstrip');
   });
 });
 
@@ -247,7 +247,7 @@ describe('the owner wins for his card set (D9, D10)', () => {
     expect(onDisk().view.layout).toBe('filmstrip');
     // A pick the cards cannot take is undone by the store.
     await owner({ presentLayout: { layout: 'review', cards: ids(3) } });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(3), layout: 'grid' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(3), layout: 'filmstrip' });
   });
 
   it('the agent re-presenting the same set (any order, with or without --layout) keeps it: kept owner_layout', async () => {

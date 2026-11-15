@@ -11,7 +11,7 @@
  *      slot (nothing swaps); ←/→ walk the same fixed order;
  *  F3  12 landscape shots: no cap, all 12 in the strip, it scrolls (‹ ›, wheel); → walks to the
  *      last and its slot scrolls into view;
- *  F4  three portrait shots keep the grid;
+ *  F4  three portrait shots are a filmstrip too (grid only when asked);
  *  zero console and page errors. DC_BEFORE=1 (the base build): the old open + present only.
  *
  * Run: npm run build && node scripts/verify/super-filmstrip.mjs [chromium|webkit]
@@ -378,10 +378,10 @@ async function flow(pw, base) {
     await page.waitForTimeout(500);
     ok('the wheel over the strip scrolls it', JSON.stringify(await where(page)) !== before, box0 ? '' : 'no surface box');
 
-    console.log('\n── F4: portrait shots keep the grid');
+    console.log('\n── F4: portrait shots are a filmstrip');
     await superVerb(page, `open image ${TALL.map((n) => `mockups/${n}.png`).join(' ')} --present`);
     await settle(page);
-    ok('three portrait shots are a grid', (await layoutOf(page)) === 'grid', `${await layoutOf(page)}`);
+    ok('three portrait shots are a filmstrip', (await layoutOf(page)) === 'filmstrip', `${await layoutOf(page)}`);
     await shot(page, `${tag}-6-portrait-grid.png`);
   }
 

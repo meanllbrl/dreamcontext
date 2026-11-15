@@ -177,7 +177,7 @@ describe('super types — server record <-> window mirror', () => {
       [undefined, [site, chat], 'review'],
       [undefined, [site, chat, browser], 'review'],
       [undefined, [chat, agenda], 'compare'],
-      [undefined, [site, chat, agenda], 'grid'],
+      [undefined, [site, chat, agenda], 'filmstrip'],
       ['review', [task('a'), task('b')], 'compare'],
       ['grid', [task('a'), task('b')], 'grid'],
       // An old record: no layout, five cards.
