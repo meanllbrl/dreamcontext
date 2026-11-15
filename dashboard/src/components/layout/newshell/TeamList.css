@@ -312,6 +312,13 @@
 .ns-team-sec-head { position: relative; display: flex; }
 .ns-team-end { flex: none; display: inline-flex; align-items: center; }
 .ns-team-setup { flex: none; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+/* "Set up team" shows on hover of the project's block or focus inside it (owner 2026-11-15); the
+   Team row itself stays. A finger has no hover: it stays. */
+.ns-dr-project .ns-team-setup { opacity: 0; transition: opacity var(--duration-fast, 120ms); }
+.ns-dr-project:is(:hover, :focus-within) .ns-team-setup { opacity: 1; }
+@media (hover: none), (max-width: 600px) {
+  .ns-dr-project .ns-team-setup { opacity: 1; }
+}
 .ns-team-more {
   position: absolute;
   right: var(--space-1);
