@@ -481,7 +481,7 @@ export interface ButtonRecord {
   textHash: string;
   /** `owner-card`: a CHILD's owner card (sahip-karti-yerinde K7, D3): Remind and Not needed only,
    *  never Run. */
-  kind: 'permission' | 'question' | 'approval' | 'run' | 'secret' | 'handsfree' | 'agenda' | 'confirm' | 'owner-card';
+  kind: 'permission' | 'question' | 'approval' | 'run' | 'secret' | 'handsfree' | 'agenda' | 'confirm' | 'owner-card' | 'voice-retry';
   requestId?: string;
   sessionId?: string;
   cardRef?: string;
