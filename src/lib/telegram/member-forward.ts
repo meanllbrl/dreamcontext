@@ -86,6 +86,9 @@ export interface ForwardInput {
   resultText?: string | null;
   /** A fire refused until he approves (K7): a changed manifest, or one never approved. */
   approvalNeeded?: 'awaiting-approval' | 'not-approved';
+  /** A fire deferred for an account (runner Step 4.6). Sent like a failure: always, opted in or
+   *  not (he must hear it did not run). `runsLater`: it is still owed when the wait ends. */
+  accountWait?: { until: number; kind: 'full' | 'none-open' | 'unknown'; runsLater: boolean };
   /** Only scheduled fires forward (Y2): never an ask, an app, a task, a board, a light job. */
   scheduled: boolean;
   runId: string;
@@ -149,6 +152,14 @@ export function routineReachesPhone(input: RouteInput & { home?: string }): bool
   } catch { return false; }
 }
 
+/** "17 Kasım Salı 07:00" in this Mac's zone (no case suffix to get wrong): when a waiting routine may start. */
+export function waitWhen(until: number): string {
+  const d = new Date(until);
+  const day = d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' });
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${day} ${hm}`;
+}
+
 export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) | null {
   if (!input.scheduled) return null;
   const home = input.home ?? homedir();
@@ -159,6 +170,7 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
   const { scope, target, viaSuper, optedIn } = forwardRoute(input, home);
   const failed = input.status === 'failed' || input.status === 'timeout';
   const approval = input.approvalNeeded ?? null;
+  const wait = input.accountWait ?? null;
   const asked = !approval && !!input.question && input.status.startsWith('awaiting');
   // Through the Super bot a question goes only while he is away (owner 2026-11-09); failures always.
   if (viaSuper && !failed && asked && !(input.away?.() ?? false)) return null;
@@ -173,7 +185,14 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
 
   const messages: string[] = [];
   const files: OutboundFile[] = [];
-  if (approval) {
+  if (wait) {
+    const head = `⏳ <b>${escapeHtml(title)}</b>: çalışmadı`;
+    messages.push(wait.kind === 'none-open'
+      ? `${head}, çünkü her hesap yalnız senin sohbetlerine ayrılmış. Mac'te Ayarlar > Claude hesaplarında birini rutinlere açarsın.`
+      : wait.kind === 'unknown'
+        ? `${head}, çünkü şu an hiçbir hesap rutin çalıştıramıyor (oturum kapalı ya da girişin yenilenmesi gerekiyor). Mac'te Ayarlar > Claude hesaplarına bakarsın.`
+        : `${head}, bütün hesaplar kullanım sınırına yakın. Bekleme bitişi: ${escapeHtml(waitWhen(wait.until))}. ${wait.runsLater ? 'Sonra kendiliğinden çalışır.' : 'Bu çalıştırma atlanır, sonraki saatinde çalışır.'}`);
+  } else if (approval) {
     messages.push(approval === 'awaiting-approval'
       ? `✋ <b>${escapeHtml(title)}</b>: talimatı değişti, çalışmadan önce onayını bekliyor. Değişikliği Mac'te görüp onaylarsın.`
       : `✋ <b>${escapeHtml(title)}</b>: hiç onaylanmadığı için çalışmadı. Mac'te, Agents sayfasında onaylarsın.`);

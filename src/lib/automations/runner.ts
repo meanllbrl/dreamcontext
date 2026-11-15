@@ -31,7 +31,8 @@ import { bridgeNode } from '../t3-bridge/node-floor.js';
 import { linkedWritableRoots } from '../t3-bridge/roots.js';
 import { recordToolRejection } from '../account-switch.js';
 import {
-  automationAccountWithoutProbe, pickAutomationAccount, protectedAutomationAccount, recordAccountWait, type AutomationAccount,
+  automationAccountWithoutProbe, heldAccountWait, pickAutomationAccount, protectedAutomationAccount, recordAccountWait, waitKindOf,
+  type AccountWaitKind, type AutomationAccount, type ProtectedPick,
 } from './account.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
@@ -1238,6 +1239,26 @@ export function approvalFactOf(status: RunStatus, error: string | null, m: Autom
   return kind === 'not-approved' ? `not-approved:${hash}` : null;
 }
 
+/** What the owner is told about a fire that waits for an account (Step 4.6). */
+export interface AccountWaitNotice {
+  /** `full`: when the earliest blocking window resets; otherwise only when it looks again. */
+  until: number;
+  kind: AccountWaitKind;
+  /** The fire is still inside its catch-up window at `until`, so it runs by itself then. */
+  runsLater: boolean;
+  /** UTC day of the deferral (YYYY-MM-DD): a wait with no reset is told at most once a day. */
+  day: string;
+}
+
+/**
+ * The once-only fact of an account wait. `full`: one per reset, by the minute (two readings of the
+ * same reset differ by milliseconds), so a later wait with another end is told again. `none-open`
+ * and `unknown` have no reset (their `until` moves on every recheck): once a day. PURE.
+ */
+export function accountWaitFactOf(w: Pick<AccountWaitNotice, 'until' | 'kind' | 'day'>): string {
+  return w.kind === 'full' ? `account-wait:${Math.round(w.until / 60_000)}` : `account-wait:${w.kind}:${w.day}`;
+}
+
 /** The first line a run writes to end itself as failed (see `declaredRunFailure`). */
 export const RUN_FAILED_PREFIX = 'RUN FAILED:';
 const DECLARED_FAILURE_LINES = 5;
@@ -2102,11 +2123,17 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     resultText?: string | null;
     /** The calls a light run's mode refused (uye-bildirim K7), recorded on its history row. */
     deniedCalls?: DeniedCall[];
+    /** A fire deferred because no account may take it (Step 4.6). Told to the owner once per wait. */
+    accountWait?: AccountWaitNotice;
   }): Promise<RunOutcome> => {
     // A fact that waits on the owner's approval goes to Telegram once (K7): never again for the
     // same fact, a coalesced repeat or a later tick included, and with the app closed too.
     const approvalFact = approvalFactOf(params.status, params.error, manifest as AutomationManifest);
-    const factTold = approvalFact ? readAutomationCache(contextRoot, slug)?.history.some((h) => h.toldFact === approvalFact) === true : false;
+    // The same once-only rule for an account wait (2026-11-15: a routine waited 32 hours and the
+    // owner learned it only by asking the member why it had not run).
+    const waitFact = params.accountWait ? accountWaitFactOf(params.accountWait) : null;
+    const toldFact = approvalFact ?? waitFact;
+    const factTold = toldFact ? readAutomationCache(contextRoot, slug)?.history.some((h) => h.toldFact === toldFact) === true : false;
     const event: RunEvent = {
       firedAt: fireAt.toISOString(),
       startedAt: params.startedAt.toISOString(),
@@ -2123,7 +2150,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       // A light run's own record (K7): its refusals are a fact the owner sees, a bypass run's never.
       ...(opts.override?.light ? { light: true as const } : {}),
       ...(opts.override?.light && params.deniedCalls?.length ? { deniedCalls: params.deniedCalls.slice(0, 10) } : {}),
-      ...(approvalFact ? { toldFact: approvalFact } : {}),
+      ...(toldFact ? { toldFact } : {}),
     };
     const cache = recordRun(contextRoot, slug, event, {
       advanceWatermark: params.advanceWatermark,
@@ -2132,6 +2159,13 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     // After recordRun (plan W4): the message is built now and sent once the lock is released.
     if (params.status === 'ok' || params.status === 'failed' || params.status === 'timeout' || params.status === 'awaiting-review') buildForward(params);
     else if (approvalFact && !factTold) buildForward({ ...params, approvalNeeded: approvalFact.startsWith('awaiting-approval:') ? 'awaiting-approval' : 'not-approved' });
+    else if (waitFact && !factTold && params.accountWait) {
+      buildForward({ ...params, accountWait: params.accountWait });
+      if (manifest.notify && !taskStep) {
+        const body = params.error ?? 'waiting for an account';
+        notifyFn(`${bannerTitle(manifest)}: waiting for an account`, body.length <= NOTIFY_BODY_MAX_CHARS ? body : `${body.slice(0, NOTIFY_BODY_MAX_CHARS - 1).trimEnd()}…`, NOTIFY_SOUND_OK, null, automationLink(contextRoot, slug, null, home));
+      }
+    }
     logFn(`automation "${slug}": ${params.status}${params.error ? ` — ${params.error}` : ''}`);
     // The run's terminal entry, AFTER `recordRun` so the thread can never claim
     // an outcome the cache does not have. Only the three statuses that mean the
@@ -2272,7 +2306,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   /** The Telegram message for this run, or none (member-forward.ts): its member's bot, else the
    *  project's Super bot (super-rutin). Only a scheduled fire, never a task step or a job the
    *  Super sent; best-effort, never the run's outcome. */
-  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null; approvalNeeded?: 'awaiting-approval' | 'not-approved' }): void => {
+  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null; approvalNeeded?: 'awaiting-approval' | 'not-approved'; accountWait?: AccountWaitNotice }): void => {
     try {
       const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
       // A Super automation's answer is the Super's own turn, never a forwarded run result.
@@ -2293,15 +2327,17 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         scheduled, runId: fireIso, entries, verified: verifiedRunPosts(entries, fireIso, runPostKey),
         home, log: logFn,
         ...(params.approvalNeeded ? { approvalNeeded: params.approvalNeeded } : {}),
+        ...(params.accountWait ? { accountWait: params.accountWait } : {}),
       });
     } catch (err) {
       logFn(`automation "${slug}": telegram forward skipped: ${(err as Error).message}`);
     }
   };
 
-  const shortCircuit = (status: RunStatus, error: string): Promise<RunOutcome> => {
+  const shortCircuit = (status: RunStatus, error: string, accountWait?: AccountWaitNotice): Promise<RunOutcome> => {
     const n = nowFn();
     return finalize({
+      ...(accountWait ? { accountWait } : {}),
       status,
       error,
       outputPath: null,
@@ -2575,17 +2611,30 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       return shortCircuit('deferred', `every ${toolName} account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
     }
   } else if (opts.unattended) {
-    const pick = await protectedAutomationAccount({ home: accountsHome, probe: opts.probeUsage, now: nowFn().getTime() });
+    // A wait another start recorded minutes ago is taken as is (no probe): every routine due in
+    // it defers HERE, so each one is queued and told, not only the first (2026-11-15).
+    const held = heldAccountWait(accountsHome, nowFn().getTime());
+    const pick: ProtectedPick = held
+      ? { waitUntil: held.wakeAt, ...(held.kind === 'none-open' ? { noneOpen: true as const } : held.kind === 'unknown' ? { unknown: true as const } : {}) }
+      : await protectedAutomationAccount({ home: accountsHome, probe: opts.probeUsage, now: nowFn().getTime() });
     if ('waitUntil' in pick) {
+      const kind = waitKindOf(pick);
       try {
-        recordAccountWait(pick.waitUntil, accountsHome, nowFn().getTime());
+        // Re-recording a held wait would restart its recheck clock and keep it forever.
+        if (!held) recordAccountWait(pick.waitUntil, accountsHome, nowFn().getTime(), kind);
         if (!opts.target && !opts.task) enqueueFire(projectRoot, slug, fireAt.toISOString(), home);
       } catch (err) {
         logFn(`warning: could not record the account wait for "${slug}": ${(err as Error).message}`);
       }
-      return shortCircuit('deferred', 'noneOpen' in pick && pick.noneOpen
+      const when = new Date(pick.waitUntil).toISOString();
+      // The queue drops a fire older than its catch-up window: say so, never "it runs later".
+      const runsLater = pick.waitUntil - fireAt.getTime() <= manifest.catchupHours * 3_600_000;
+      return shortCircuit('deferred', kind === 'none-open'
         ? NONE_OPEN_REASON
-        : `every account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
+        : kind === 'unknown'
+          ? `no account can take routines right now (signed out, or its login needs renewing); it looks again at ${when}`
+          : `every account is near its usage limit; it waits until ${when}${runsLater ? '' : ', past its catch-up window, so this run is skipped and the next scheduled one runs'}`,
+      { until: pick.waitUntil, kind, runsLater, day: nowFn().toISOString().slice(0, 10) });
     }
     protectedAccount = pick.account;
   }
