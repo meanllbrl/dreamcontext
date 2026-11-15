@@ -155,11 +155,11 @@ export function PresentFrame({ frame, strip, tabs, onNext }: { frame?: Rect; str
   return (
     <>
       {frame && <div className="super-present-frame" data-testid="super-present-frame" aria-hidden style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }} />}
-      <div className="super-present-tabs" role="tablist" aria-label={t('super.pq.label')} data-testid="super-present-tabs" style={{ left: strip.x, top: strip.y, width: strip.width, height: strip.height }}>
+      <div className="super-present-tabs" role="group" aria-label={t('super.pq.label')} data-testid="super-present-tabs" style={{ left: strip.x, top: strip.y, width: strip.width, height: strip.height }}>
         {tabs.map((tab) => {
           const label = tab.kind === 'next' ? t('super.pq.next').replace('{name}', tab.name) : tab.name;
           return (
-            <button key={tab.key} type="button" role="tab" className="super-present-tab" data-kind={tab.kind} aria-selected={tab.kind === 'current'}
+            <button key={tab.key} type="button" className="super-present-tab" data-kind={tab.kind} aria-current={tab.kind === 'current' ? 'true' : undefined}
               data-testid={tab.kind === 'next' ? 'super-pq-next' : `super-present-tab-${tab.kind}`} disabled={tab.kind === 'later'} title={label}
               tabIndex={tab.kind === 'later' ? -1 : 0} onClick={tab.kind === 'next' ? onNext : undefined}>
               {tab.kind === 'current' && <span className="super-present-tab-dot" aria-hidden />}

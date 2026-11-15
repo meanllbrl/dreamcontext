@@ -1812,8 +1812,8 @@
   outline: 2px solid var(--color-accent);
   outline-offset: var(--space-1);
 }
-/* The presentation queue's control (task super-sahnesinde-sunum-sirasi, D2, D7, D10): a pill in the
-   top band, left of the layout buttons while presenting, at the band's right end while waiting. */
+/* The presentation queue's control (task super-sahnesinde-sunum-sirasi, D2, D10): a pill at the top
+   band's right end while presentations wait off screen (on screen, the frame's tabs name them). */
 .super-pq {
   position: absolute;
   z-index: var(--sz-queue);

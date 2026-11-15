@@ -545,7 +545,7 @@ async function flow(pw, base) {
     ok(`${w}: two wide pictures stack as rows (auto)`, m.length === 2 && m[1].card && Math.abs(m[0].card.x - m[1].card.x) < 2 && Math.abs(m[0].card.y - m[1].card.y) > 100, JSON.stringify(m.map((x) => x.card)));
     ok(`${w}: each picture >= 1.4x 0.34.5 (${m.map((x) => Math.round(x.area ?? 0)).join(', ')} vs ${BASELINE[w]})`, m.every((x) => (x.area ?? 0) >= 1.4 * BASELINE[w]));
     checkCards(`${w} wide auto`, m, 0.85);
-    const label = await page.locator('[data-testid="super-layout-switch"] button').allInnerTexts().catch(() => []);
+    const label = await page.locator('[data-testid="super-layout-switch"] button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? '')).catch(() => []);
     ok(`${w}: the switcher reads Compare, never "Side by side" (${label.join('|')})`, label.some((t) => /Compare/.test(t)) && !label.some((t) => /Side by side/.test(t)));
     await shot(page, `v7-wide-auto-${w}x${h}.png`);
     await clickAnswer(page, 'Option A');
