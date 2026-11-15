@@ -1,4 +1,4 @@
-import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
+import { useSuperUnreadCount, useSuperUnreadTotal } from '../../sleepy/super/superUnreadStore';
 import { useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
@@ -11,7 +11,7 @@ import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { filterProjectRows, ownMembersOf, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
+import { filterProjectRows, hiddenGroupMark, ownMembersOf, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
 import './ChatDrawer.css';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
@@ -41,6 +41,12 @@ export interface ChatDrawerProps {
   onCloseProject(name: string): void;
   /** "Remove from app…": asks first, then drops the project from the list (its folder stays). */
   onRemoveProject?(name: string): void;
+  /** Projects the owner hid: folded into the "Hidden" group at the bottom (owner 2026-11-14). */
+  hidden?: readonly string[];
+  /** The eye on a row's hover, or the menu's "Hide project". Absent: hiding is not offered. */
+  onHideProject?(name: string): void;
+  /** "Show again" on a hidden project: back into the list where it was. */
+  onShowProject?(name: string): void;
   /** "+" beside Projects: the app's Add Project flow. */
   onNewProject(): void;
   /** Bumped by ⌘N: open the New chat window picker at its row. */
@@ -184,7 +190,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
     const y0 = e.clientY;
     let dragging = false;
     let over = -1;
-    const rowsEls = () => Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-drawer-project]') ?? []);
+    const rowsEls = () => Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-drawer-project]:not([data-hidden-project])') ?? []);
     const move = (ev: PointerEvent) => {
       if (!dragging && Math.hypot(ev.clientX - x0, ev.clientY - y0) < DRAG_START_PX) return;
       dragging = true;
@@ -199,7 +205,13 @@ export function ChatDrawer(p: ChatDrawerProps) {
       window.removeEventListener('pointercancel', onCancel);
       setDrag(null);
       if (!dragging) return;
-      if (drop) p.onDrop(name, over);
+      // `over` counts the LIST's rows (a hidden project is no target): hand over its place in
+      // the full order, which is what the window's order holds.
+      if (drop) {
+        const before = listRef.current[over]?.name;
+        const at = before === undefined ? p.rows.length : p.rows.findIndex((r) => r.name === before);
+        p.onDrop(name, at < 0 ? p.rows.length : at);
+      }
       // The click that ends a drag is not a toggle; nothing outside this row is ever held back.
       justDragged.current = true;
       setTimeout(() => { justDragged.current = false; }, 0);
@@ -254,8 +266,85 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const [search, setSearch] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const searching = !!search?.trim();
-  const shownRows = searching ? filterProjectRows(p.rows, search!) : p.rows;
+  // A search reaches every project, hidden ones too, in one flat list.
+  const split = splitHiddenRows(p.rows, p.hidden ?? []);
+  const shownRows = searching ? filterProjectRows(p.rows, search!) : split.shown;
+  const hiddenRows = searching ? [] : split.hidden;
+  const listRef = useRef<DrawerProjectRow[]>(shownRows);
+  listRef.current = shownRows;
+  const hiddenSet = new Set(p.hidden ?? []);
+  /** The Hidden group: closed by default; it opens by itself when the project on screen is in it. */
+  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const hiddenActive = hiddenRows.some((r) => r.active);
+  useEffect(() => { if (hiddenActive) setHiddenOpen(true); }, [hiddenActive]);
   useEffect(() => { if (search !== null) searchRef.current?.focus(); }, [search !== null]);
+
+  /** One project row with its children; `inGroup` = drawn inside the Hidden group (no drag). */
+  const projectRow = (row: DrawerProjectRow, i: number, inGroup: boolean) => (
+          <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
+            data-hidden-project={inGroup ? row.name : undefined}
+            data-drop-before={!inGroup && drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
+            data-dragging={drag?.name === row.name ? 'true' : undefined}>
+            {/* Sibling buttons, never one inside the other: the row's own toggle (name, notes, mark),
+                "+" and "⋯". The rest of the row (the gaps) toggles on a pointer click. */}
+            <ProjectRowShell row={row} className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
+              onPointerDown={p.device ? undefined : (e) => { if (!searching && !inGroup) startDrag(e, row.name); }}
+              onClick={(e) => {
+                if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
+                p.onToggleExpanded(row.name);
+              }}
+              onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
+              {(words) => (<>
+              <button type="button" className="ns-dr-toggle" aria-expanded={row.expanded} data-testid="drawer-project-row"
+                aria-label={words ? `${[row.name, row.otherWindow ? t('shell.drawer.otherWindow') : '', row.asleep ? t('shell.drawer.asleep') : ''].filter(Boolean).join(', ')} (${words})` : undefined}
+                title={words ? `${row.name} (${words})` : undefined}
+                onClick={() => { if (!justDragged.current) p.onToggleExpanded(row.name); }}
+                onKeyDown={(e) => { if (!searching) onRowKey(e, row.name); }}>
+                <span className="ns-dr-pic">
+                  {row.logo
+                    ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
+                    : <span className="ns-dr-initial" aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span>}
+                </span>
+                <span className="ns-dr-t">{row.name}</span>
+                {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
+                {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
+                {/* Folded, the ONE mark of everything it hides (option A); open, the rows carry theirs. */}
+                <ProjectMark row={row} />
+              </button>
+              {/* Over the row's end on hover or keyboard focus (always on a finger): "+" opens a new Claude
+                  window at once (a member's window: the chevron on New chat, or the Team rows), "⋯" the project's menu. */}
+              <span className="ns-dr-acts">
+                {/* The eye beside "+" (owner 2026-11-14): one click hides the project, or, in the
+                    Hidden group, shows it again. */}
+                {!p.device && (hiddenSet.has(row.name) ? p.onShowProject : p.onHideProject) && (
+                  hiddenSet.has(row.name) ? (
+                    <button type="button" className="ns-dr-act ns-dr-hide" aria-label={`${t('shell.drawer.showProject')}: ${row.name}`} title={t('shell.drawer.showProject')}
+                      data-testid="drawer-project-show" onClick={(e) => { e.stopPropagation(); p.onShowProject?.(row.name); }}>
+                      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /></svg>
+                    </button>
+                  ) : (
+                    <button type="button" className="ns-dr-act ns-dr-hide" aria-label={`${t('shell.drawer.hideProject')}: ${row.name}`} title={t('shell.drawer.hideProject')}
+                      data-testid="drawer-project-hide" onClick={(e) => { e.stopPropagation(); p.onHideProject?.(row.name); }}>
+                      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /><path d="M2.8 13.2L13.2 2.8" /></svg>
+                    </button>
+                  )
+                )}
+                <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`} title={t('shell.drawer.newWindow')}
+                  data-testid="drawer-project-add"
+                  onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>
+                  <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
+                </button>
+                <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
+                  data-testid="drawer-project-more" aria-haspopup="menu"
+                  onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'project', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
+                  <svg className="ns-dr-ico ns-dr-ico--fill" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></svg>
+                </button>
+              </span>
+              </>)}
+            </ProjectRowShell>
+            {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
+          </div>
+  );
 
   const pick = (vault: string, intent: DrawerIntent) => {
     p.onIntent(vault, intent);
@@ -461,56 +550,14 @@ export function ChatDrawer(p: ChatDrawerProps) {
           </span>
         </div>
         {searching && shownRows.length === 0 && <div className="ns-dr-empty" data-testid="drawer-project-nomatch">{t('shell.drawer.noProjectMatch')}</div>}
-        {shownRows.map((row, i) => (
-          <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
-            data-drop-before={drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
-            data-dragging={drag?.name === row.name ? 'true' : undefined}>
-            {/* Sibling buttons, never one inside the other: the row's own toggle (name, notes, mark),
-                "+" and "⋯". The rest of the row (the gaps) toggles on a pointer click. */}
-            <ProjectRowShell row={row} className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
-              onPointerDown={p.device ? undefined : (e) => { if (!searching) startDrag(e, row.name); }}
-              onClick={(e) => {
-                if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
-                p.onToggleExpanded(row.name);
-              }}
-              onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
-              {(words) => (<>
-              <button type="button" className="ns-dr-toggle" aria-expanded={row.expanded} data-testid="drawer-project-row"
-                aria-label={words ? `${[row.name, row.otherWindow ? t('shell.drawer.otherWindow') : '', row.asleep ? t('shell.drawer.asleep') : ''].filter(Boolean).join(', ')} (${words})` : undefined}
-                title={words ? `${row.name} (${words})` : undefined}
-                onClick={() => { if (!justDragged.current) p.onToggleExpanded(row.name); }}
-                onKeyDown={(e) => { if (!searching) onRowKey(e, row.name); }}>
-                <span className="ns-dr-pic">
-                  {row.logo
-                    ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
-                    : <span className="ns-dr-initial" aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span>}
-                </span>
-                <span className="ns-dr-t">{row.name}</span>
-                {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
-                {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
-                {/* Folded, the ONE mark of everything it hides (option A); open, the rows carry theirs. */}
-                <ProjectMark row={row} />
-              </button>
-              {/* Over the row's end on hover or keyboard focus (always on a finger): "+" opens a new Claude
-                  window at once (a member's window: the chevron on New chat, or the Team rows), "⋯" the project's menu. */}
-              <span className="ns-dr-acts">
-                <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`} title={t('shell.drawer.newWindow')}
-                  data-testid="drawer-project-add"
-                  onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>
-                  <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
-                </button>
-                <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
-                  data-testid="drawer-project-more" aria-haspopup="menu"
-                  onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'project', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
-                  <svg className="ns-dr-ico ns-dr-ico--fill" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="12.5" cy="8" r="1.2" /></svg>
-                </button>
-              </span>
-              </>)}
-            </ProjectRowShell>
-            {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
+        {shownRows.map((row, i) => projectRow(row, i, false))}
+        {drag && drag.over >= shownRows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}
+        {hiddenRows.length > 0 && (
+          <div className="ns-dr-hidden" data-open={hiddenOpen ? 'true' : undefined} data-testid="drawer-hidden-group">
+            <HiddenGroupRow rows={hiddenRows} open={hiddenOpen} label={t('shell.drawer.hiddenGroup')} onToggle={() => setHiddenOpen((o) => !o)} />
+            {hiddenOpen && hiddenRows.map((row, i) => projectRow(row, i, true))}
           </div>
-        ))}
-        {drag && drag.over >= p.rows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}
+        )}
       </div>
       {p.globalTeam && (
         // r8-12: outside every project, at the very bottom.
@@ -630,6 +677,12 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 onClick={() => { closeMenu(); p.onCloseProject(menu.name!); }}>
                 {t('shell.drawer.closeProject')}
               </button>
+              {(hiddenSet.has(menu.name) ? p.onShowProject : p.onHideProject) && (
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid={hiddenSet.has(menu.name) ? 'drawer-project-show-item' : 'drawer-project-hide-item'}
+                onClick={() => { closeMenu(); if (hiddenSet.has(menu.name!)) p.onShowProject?.(menu.name!); else p.onHideProject?.(menu.name!); }}>
+                {t(hiddenSet.has(menu.name) ? 'shell.drawer.showProject' : 'shell.drawer.hideProject')}
+              </button>
+              )}
               {p.onRemoveProject && (
               <>
               <hr className="ns-drawer-menu-sep" aria-hidden="true" />
@@ -672,6 +725,26 @@ function ProjectRowShell({ row, className, children, ...rest }: {
   const { t } = useI18n();
   const mark = useProjectMark(row);
   return <div className={className} {...askRow(mark.asking)} {...rest}>{children(markWords(t, mark))}</div>;
+}
+
+/** The Hidden group's row: a chevron, the eye, "Hidden" and how many. Closed, it carries ONE mark
+ *  summed from every hidden project (a question in red, work as the spinner, unread replies), so
+ *  hiding a project never hides what waits on the owner. */
+function HiddenGroupRow({ rows, open, label, onToggle }: { rows: readonly DrawerProjectRow[]; open: boolean; label: string; onToggle: () => void }) {
+  const { t } = useI18n();
+  const superUnread = useSuperUnreadTotal(rows.map((r) => r.name));
+  const mark: MarkState = (open ? undefined : hiddenGroupMark(rows, superUnread)) ?? { asking: 0, working: false, unread: 0 };
+  const words = markWords(t, mark);
+  return (
+    <button type="button" className="ns-dr-row ns-dr-hidden-row" aria-expanded={open} data-testid="drawer-hidden-row" {...askRow(mark.asking)}
+      aria-label={`${label} (${rows.length}${words ? `, ${words}` : ''})`} onClick={onToggle}>
+      <svg className="ns-dr-ico ns-dr-hidden-chev" viewBox="0 0 16 16" aria-hidden="true"><path d={open ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'} /></svg>
+      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /><path d="M2.8 13.2L13.2 2.8" /></svg>
+      <span className="ns-dr-t">{label}</span>
+      <span className="ns-dr-hidden-n">{rows.length}</span>
+      <span className="ns-dr-end" data-testid="drawer-hidden-mark"><StatusMark {...mark} /></span>
+    </button>
+  );
 }
 
 function ProjectMark({ row }: { row: DrawerProjectRow }) {

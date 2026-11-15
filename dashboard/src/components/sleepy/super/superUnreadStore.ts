@@ -66,3 +66,10 @@ export function useSuperUnread(vault: string | null, superId: SuperId): SuperUnr
 
 /** Tests only. */
 export function _superUnreadSize(): number { return counts.size; }
+
+/** The main Super's unread replies summed over `vaults` (the drawer's Hidden group mark). A
+ *  number, so `useSyncExternalStore` compares it by value. */
+export function useSuperUnreadTotal(vaults: readonly string[]): number {
+  const read = () => vaults.reduce((n, v) => n + readSuperUnread(v, 'main').count, 0);
+  return useSyncExternalStore(subscribe, read, read);
+}

@@ -1154,6 +1154,8 @@ interface LauncherUiSettings {
   lastVault?: string | null;
   projectOrder?: string[];
   drawerExpanded?: string[];
+  /** Projects hidden from the drawer (its folded "Hidden" group). */
+  hiddenProjects?: string[];
   drawerWidth?: number;
   drawerOpen?: boolean;
   /** The dashboard theme, kept app-global so dreamcontext App windows (their own processes and
@@ -1207,6 +1209,8 @@ export function coerceLauncherUiPartial(raw: Record<string, unknown>): Partial<L
   if (order) out.projectOrder = order;
   const expanded = projectNames(raw.drawerExpanded);
   if (expanded) out.drawerExpanded = expanded;
+  const hidden = projectNames(raw.hiddenProjects);
+  if (hidden) out.hiddenProjects = hidden;
   if (typeof raw.drawerWidth === 'number' && Number.isFinite(raw.drawerWidth)) {
     out.drawerWidth = Math.min(DRAWER_WIDTH_MAX, Math.max(DRAWER_WIDTH_MIN, Math.round(raw.drawerWidth)));
   }
