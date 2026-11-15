@@ -11,6 +11,9 @@ import type { ChatItem } from '../chatSession';
  * pinned over the chat: "şu kartlar da kaymıyor altta kalıyor"). The job bar on top is the "it
  * waits on you" signal, and its verbs bring the card into view.
  *
+ * The same rule places the Super's own open question whose asking call is not drawn and a member's
+ * wait with no card (`placedByTime`, owner 2026-11-15): asked before his next message, drawn above it.
+ *
  * The chat's TAIL (the strip under the last message) holds an owner card only as a fallback: one
  * that still waits on him (`tailHolds`) but has no place on screen (posted before the first drawn
  * message, behind "Show earlier messages", or before any message at all), so a wait is never lost.
@@ -68,6 +71,39 @@ export function placeOwnerCards(items: readonly SuperQueueItem[]): { all: SuperQ
  *  mirrors that carry a card (`members`), all under the one rule above. */
 export function ownerCardItemsOf(view: { cards?: readonly SuperQueueItem[]; members?: readonly SuperQueueItem[] } | null | undefined): SuperQueueItem[] {
   return [...(view?.cards ?? []), ...(view?.members ?? []).filter((q) => !!q.card)];
+}
+
+/** What the Super chat places by time (`anchorOwnerCards`), and which of those are the Super's own
+ *  questions and which a member's wait with no card (each kind draws its own component). */
+export interface PlacedByTime {
+  items: SuperQueueItem[];
+  questions: ReadonlySet<string>;
+  members: ReadonlySet<string>;
+}
+
+export const NOTHING_TIMED: PlacedByTime = { items: [], questions: new Set(), members: new Set() };
+
+/**
+ * Everything the Super chat asks the owner that is drawn in the transcript by WHEN it was asked:
+ * every owner card (`ownerCards`, from `placeOwnerCards(...).all`), each open question of the
+ * Super whose asking call has no live card drawn (`callAnchored`: its call folded into an event
+ * line, compacted away, or asked in a way the transcript cannot read), and each member's wait
+ * with no card. Before 2026-11-15 those questions and waits went straight to the tail, so a
+ * question asked before the owner's next message was drawn UNDER it (owner: "Sorunun altına
+ * geçmeliydi"). Only one with no place on screen falls back to the tail now (`SuperQuestionTail`).
+ */
+export function placedByTime(
+  view: { open?: readonly SuperQueueItem[]; members?: readonly SuperQueueItem[] } | null | undefined,
+  ownerCards: readonly SuperQueueItem[],
+  callAnchored: ReadonlySet<string>,
+): PlacedByTime {
+  const open = (view?.open ?? []).filter((q) => !callAnchored.has(q.id));
+  const members = (view?.members ?? []).filter((q) => !q.card);
+  return {
+    items: [...ownerCards, ...open, ...members],
+    questions: new Set(open.map((q) => q.id)),
+    members: new Set(members.map((q) => q.id)),
+  };
 }
 
 /** When a transcript item happened (ms). */

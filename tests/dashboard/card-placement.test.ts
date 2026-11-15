@@ -42,7 +42,7 @@ vi.mock('../../dashboard/src/components/sleepy/chat/InlineTerminal.js', () => ({
 
 const { SuperQuestionTail } = await import('../../dashboard/src/components/sleepy/super/SuperQuestionCard.js');
 const { publishSuperQuestions, _resetOwnerSlots, slotCardItems } = await import('../../dashboard/src/components/sleepy/super/superJobsStore.js');
-const { placeOwnerCards, anchorOwnerCards, tailHolds, ownerCardItemsOf } = await import('../../dashboard/src/components/sleepy/super/cardPlacement.js');
+const { placeOwnerCards, anchorOwnerCards, tailHolds, ownerCardItemsOf, placedByTime } = await import('../../dashboard/src/components/sleepy/super/cardPlacement.js');
 const { openOwnerQuestions, openMemberMirrors } = await import('../../dashboard/src/components/sleepy/super/superQuestions.js');
 const { refusalItemsOf, _resetOwnerItems } = await import('../../dashboard/src/components/sleepy/super/ownerAnswer.js');
 const { _resetCardRecords } = await import('../../dashboard/src/lib/cardRecords.js');
@@ -309,5 +309,56 @@ describe('the other tail kinds (question, ask, member wait, refusal) leave it wh
     expect(tailHolds({ state: 'escalated' })).toBe(true);
     expect(tailHolds({ state: 'pending' })).toBe(true);
     expect(tailHolds({ state: 'done' })).toBe(false);
+  });
+});
+
+describe("the Super's own question stays where it was asked, above his next message (owner 2026-11-15)", () => {
+  // The owner's screenshot, 15 Nov: the Super asked about a refund (its `super ask` call folded into
+  // an event line), he then wrote about a scroll area, and the question card was drawn UNDER his
+  // message: an unanchored open question went straight to the chat's tail.
+  const ask = (over: Partial<SuperQueueItem> = {}): SuperQueueItem => ({
+    id: 'q-refund', sessionId: 'SUPER', kind: 'ask', state: 'escalated', createdAt: 2_000, ownerText: 'What about the refund?',
+    ask: { questions: [{ question: 'What about the refund?', options: [{ label: 'Close' }, { label: 'Keep' }] }] },
+    ...over,
+  } as SuperQueueItem);
+
+  it('an open question whose call is not drawn is placed by time: after a1, before his next message u2', () => {
+    const q = ask();
+    const timed = placedByTime({ open: [q] }, [], new Set());
+    expect([...timed.questions]).toEqual(['q-refund']);
+    const at = anchorOwnerCards(TRANSCRIPT, timed.items);
+    expect([...at.keys()]).toEqual(['a1']);
+    const order = TRANSCRIPT.map((it) => it.id);
+    expect(order.indexOf('a1')).toBeLessThan(order.indexOf('u2'));
+  });
+
+  it('a question whose asking call has a live card is not placed twice', () => {
+    const timed = placedByTime({ open: [ask()] }, [], new Set(['q-refund']));
+    expect(timed.items).toEqual([]);
+    expect(timed.questions.size).toBe(0);
+  });
+
+  it("a member's wait with no card is placed by time too; a member mirror with a card stays with the owner cards", () => {
+    const wait = { id: 'q-wait', sessionId: 'M', kind: 'member', member: 'turing', of: 'question', state: 'escalated', createdAt: 3_200 } as SuperQueueItem;
+    const withCard = card('run', { id: 'q-mc', kind: 'member', member: 'turing', of: 'owner' } as Partial<SuperQueueItem>);
+    const timed = placedByTime({ members: [wait, withCard] }, [], new Set());
+    expect([...timed.members]).toEqual(['q-wait']);
+    expect([...anchorOwnerCards(TRANSCRIPT, timed.items).keys()]).toEqual(['u2']);
+  });
+
+  it('the tail draws neither a question placed in the transcript nor a member wait placed there; one with no place stays', () => {
+    const wait = { id: 'q-wait', sessionId: 'M', kind: 'member', member: 'turing', of: 'question', state: 'escalated', createdAt: 3_200 } as SuperQueueItem;
+    publishSuperQuestions('SUPER', { open: [ask()], members: [wait], cards: [], superSession: undefined, sessionFor: () => undefined, titleFor: () => '', pausedFor: () => false } as never, `t${++n}`);
+    const draw = (anchored: Set<string>, placed: Set<string>) => renderToStaticMarkup(createElement(SuperQuestionTail, { session: { claudeId: 'SUPER' } as never, anchored, placedCards: placed }));
+    const none = draw(new Set(), new Set());
+    expect(none).toContain('data-testid="super-question-card"');
+    expect(none).toContain('data-testid="super-member-card"');
+    const placed = draw(new Set(['q-refund']), new Set(['q-wait']));
+    expect(placed).not.toContain('super-question-card');
+    expect(placed).not.toContain('super-member-card');
+  });
+
+  it('a question asked before the first message on screen has no place: left to the tail', () => {
+    expect(anchorOwnerCards(TRANSCRIPT, [ask({ createdAt: 500 })]).size).toBe(0);
   });
 });

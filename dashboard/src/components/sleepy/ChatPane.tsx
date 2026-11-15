@@ -84,9 +84,9 @@ import { memberSuperId } from './super/memberStageModel';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
 import type { SuperId, SuperQueueItem } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
-import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
+import { MemberWaitCard, SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { OwnerCardSlot } from './super/OwnerCardSlot';
-import { anchorOwnerCards, ownerCardItemsOf, placeOwnerCards, tailHolds } from './super/cardPlacement';
+import { anchorOwnerCards, NOTHING_TIMED, ownerCardItemsOf, placedByTime, placeOwnerCards, tailHolds } from './super/cardPlacement';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
@@ -2478,7 +2478,7 @@ export function ChatPane({
     }
     // The phone's mirror draws them too (its cards come from /api/agent/super-questions).
     if (superView) for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
-    if (superView && placedOwnerCards.length) drawnForCards.push(...drawn);
+    if (superView) drawnForCards.push(...drawn);
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
@@ -2571,11 +2571,20 @@ export function ChatPane({
     return ids.flatMap((id) => questionCards.get(id) ?? [])
       .map((c) => ({ ...c, live: c.live && latestAsk.get(c.item) === c.toolItemId }));
   };
-  // An owner card, under the last item drawn before it was posted (cardPlacement.ts).
+  // Everything the owner is asked that has no asking call drawn above, under the last item drawn
+  // before it was asked (cardPlacement.ts): an owner card, the Super's own open question whose
+  // call is folded into an event line or not in the transcript, a member's wait with no card.
+  // None of them goes to the chat's end while it has a place, so his later messages stay BELOW
+  // it (owner 2026-11-15: a question asked before his message was drawn under it).
+  const callAnchored = new Set<string>();
+  for (const cards of questionCards.values()) for (const c of cards) if (c.live && latestAsk.get(c.item) === c.toolItemId) callAnchored.add(c.item);
+  const { items: timedItems, questions: timedQuestions, members: timedMembers } = superView
+    ? placedByTime(superQuestionView, placedOwnerCards, callAnchored)
+    : NOTHING_TIMED;
   let ownerCardsAt: Map<string, SuperQueueItem[]> | null = null;
   const settledOf = (seg: RunSegment<ChatItem>): SuperQueueItem[] => {
-    if (!placedOwnerCards.length) return [];
-    ownerCardsAt ??= anchorOwnerCards(drawnForCards, placedOwnerCards);
+    if (!timedItems.length) return [];
+    ownerCardsAt ??= anchorOwnerCards(drawnForCards, timedItems);
     const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
     return ids.flatMap((id) => ownerCardsAt!.get(id) ?? []);
   };
@@ -2593,7 +2602,12 @@ export function ChatPane({
       return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} />;
     }),
     ...settledOf(seg).map((q) => {
+      if (timedQuestions.has(q.id)) {
+        anchoredQuestions.add(q.id);
+        return <SuperQuestionCard key={`timed-question-${q.id}`} ask={{ item: q.id, kind: q.kind === 'ask' ? 'ask' : 'question', toolItemId: '', live: true }} session={session} />;
+      }
       placedCards.add(q.id);
+      if (timedMembers.has(q.id)) return <MemberWaitCard key={`member-${q.id}`} item={q} paused={!!superQuestionView?.pausedFor?.(q.sessionId)} />;
       return (
         <OwnerCardSlot
           key={`owner-card-${q.id}`}
