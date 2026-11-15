@@ -36,7 +36,7 @@ import { join } from 'node:path';
 import { parseViewBlock } from '../chat-view-spec.js';
 import { findTranscriptBySessionId } from '../transcript-locate.js';
 import type { OwnerCardHandle } from '../super/types.js';
-import { answeredBy, type OwnerWait } from '../super/owner-wait.js';
+import { answeredBy, supersedesCard, type OwnerWait } from '../super/owner-wait.js';
 import { parseTelegramPrefix, CARD_RECORD_CAP, CLOSED_CARDS_CAP } from '../telegram/contract.js';
 import { canonicalJson, type CardCloseReason, type CardKind, type CardRunInfo, type CardSpec, type PublicCard } from './public.js';
 
@@ -63,6 +63,10 @@ export interface CardRecordEntry {
   exit?: number | null;
   /** Rebuilt from the transcript after a restart: never announced again (Telegram, J1). */
   rebuilt?: true;
+  /** The assistant message it was posted in, and the turn (`<session>:<n>` live, `r:<n>` read
+   *  back): cards of one message or one turn never supersede each other. */
+  messageUuid?: string;
+  turn?: string;
 }
 
 const FENCE = /```dream-view[^\S\r\n]*\r?\n([\s\S]*?)```/g;
@@ -224,7 +228,7 @@ function capRecords(list: CardRecordEntry[]): CardRecordEntry[] {
 }
 
 /** The chat registry calls this with every top-level assistant text (chat-registry.ts). */
-export function noteAssistantCards(sessionId: string, vault: string, messageUuid: string, text: string): void {
+export function noteAssistantCards(sessionId: string, vault: string, messageUuid: string, text: string, turn?: string): void {
   if (!isSessionUuid(sessionId) || !messageUuid) return;
   const found = cardsInText(text);
   if (!found.length) return;
@@ -235,9 +239,12 @@ export function noteAssistantCards(sessionId: string, vault: string, messageUuid
   for (const { index, spec } of found) {
     const cardRef = cardRefOf(sessionId, messageUuid, index, spec);
     if (list.some((r) => r.cardRef === cardRef)) continue;
-    // A re-post of the same id is a new ask: the older open copy closes (H1).
+    // A re-post is a new ask: the older open copy closes (H1), and so does an older open card
+    // of the same kind under another id (bekleyen-kapanmaz, `supersedesCard`).
     for (const old of list) {
-      if (old.id === spec.id && old.kind === spec.type && old.state === 'open' && !old.run) {
+      if (old.messageUuid === messageUuid || old.state !== 'open' || old.run) continue;
+      const laterTurn = turn === undefined || old.turn !== turn;
+      if ((old.id === spec.id && old.kind === spec.type) || (laterTurn && supersedesCard({ kind: spec.type }, old))) {
         old.state = 'closed';
         old.closedBy = 'superseded';
         persistClosed(sessionId, old.cardRef, 'superseded');
@@ -245,7 +252,7 @@ export function noteAssistantCards(sessionId: string, vault: string, messageUuid
     }
     const closed = !!closedFile?.closed.includes(cardRef);
     const closedBy = closed ? reasonFromFile(closedFile, cardRef) : undefined;
-    list = [...list, { sessionId, id: spec.id, cardRef, kind: spec.type, spec, state: closed ? 'closed' : 'open', ...(closedBy ? { closedBy } : {}), vault, seq: ++seq, run: null }];
+    list = [...list, { sessionId, id: spec.id, cardRef, kind: spec.type, spec, state: closed ? 'closed' : 'open', ...(closedBy ? { closedBy } : {}), vault, seq: ++seq, run: null, messageUuid, ...(turn !== undefined ? { turn } : {}) }];
     changed = true;
   }
   if (!changed) return;
@@ -366,7 +373,9 @@ export function rebuildCards(sessionId: string, vault: string, jsonl: string, tr
   }
   const closedFile = readClosedFile(sessionId);
   const rows = jsonl.split('\n').slice(-REBUILD_ROWS);
-  const found: Array<{ uuid: string; index: number; spec: CardSpec; legacy: boolean; at: number }> = [];
+  const found: Array<{ uuid: string; index: number; spec: CardSpec; legacy: boolean; at: number; turn: string }> = [];
+  // A turn starts at each user row with words (a tool result carries none): the live rule's turn.
+  let readTurn = 0;
   const ownerLines: Array<{ at: number; text: string }> = [];
   // Legacy until the marker row is passed. No file, or no marker: every card is legacy, and the
   // legacy rule can only ever close a card, never open one the file closed.
@@ -378,9 +387,10 @@ export function rebuildCards(sessionId: string, vault: string, jsonl: string, tr
     const uuid = typeof row.uuid === 'string' ? row.uuid : '';
     if (closedFile?.since && uuid === closedFile.since) afterMarker = true;
     if (row.type === 'assistant' && uuid) {
-      for (const c of cardsInText(rowText(row))) found.push({ uuid, ...c, legacy: !afterMarker, at });
+      for (const c of cardsInText(rowText(row))) found.push({ uuid, ...c, legacy: !afterMarker, at, turn: `r:${readTurn}` });
     } else if (row.type === 'user') {
       const text = rowText(row);
+      if (text) readTurn += 1;
       if (text && !parseTelegramPrefix(text).ref) ownerLines.push({ at, text });
     }
   });
@@ -409,12 +419,13 @@ export function rebuildCards(sessionId: string, vault: string, jsonl: string, tr
     let state: 'open' | 'closed' = inFile ? 'closed' : 'open';
     let closedBy = inFile ? reasonFromFile(closedFile, cardRef) : undefined;
     if (state === 'open' && f.legacy && legacyClosed.has(f)) { state = 'closed'; closedBy = 'answered'; }
-    // A later copy of the same id supersedes an earlier open one.
-    for (const old of list) if (old.id === f.spec.id && old.kind === f.spec.type) supersede(old);
-    list.push({ sessionId, id: f.spec.id, cardRef, kind: f.spec.type, spec: f.spec, state, ...(closedBy ? { closedBy } : {}), vault, seq: 0, run: null, rebuilt: true });
+    // A later copy of the same id, or a later card of the same kind (`supersedesCard`), from
+    // another message supersedes an earlier open one: the live rule, read back.
+    for (const old of list) if (old.messageUuid !== f.uuid && ((old.id === f.spec.id && old.kind === f.spec.type) || (old.turn !== f.turn && supersedesCard({ kind: f.spec.type }, old)))) supersede(old);
+    list.push({ sessionId, id: f.spec.id, cardRef, kind: f.spec.type, spec: f.spec, state, ...(closedBy ? { closedBy } : {}), vault, seq: 0, run: null, rebuilt: true, messageUuid: f.uuid, turn: f.turn });
   }
-  // A live copy of the same id is newer than anything read back.
-  for (const old of list) if (live.some((l) => l.id === old.id && l.kind === old.kind)) supersede(old);
+  // A live card is newer than anything read back (same id, or the same kind from another message).
+  for (const old of list) if (live.some((l) => l.messageUuid !== old.messageUuid && ((l.id === old.id && l.kind === old.kind) || supersedesCard(l, old)))) supersede(old);
   // Transcript order: the read-back cards first, then the live ones ("newest copy" reads seq).
   const merged = [...list, ...live];
   for (const r of merged) r.seq = ++seq;

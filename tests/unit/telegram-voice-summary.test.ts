@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { splitVoiceBlocks, voiceAnswer } from '../../src/lib/telegram/voice-block.js';
 import { voiceCaptionHtml } from '../../src/lib/telegram/system-lines.js';
 import { TelegramHub, type ActiveBinding } from '../../src/server/telegram/hub.js';
-import { memberAdapter } from '../../src/server/telegram/member.js';
 import { SUPER_TELEGRAM_LINE, superBriefing } from '../../src/server/chat-modes.js';
 import { buildAskBlock } from '../../src/lib/automations/runner.js';
 import type { SpeakSummaryResult } from '../../src/server/voice-speak.js';
@@ -126,20 +125,14 @@ describe('Super answers (hub.onAssistantText)', () => {
   });
 });
 
-describe('a member bot (member.ts watchRun)', () => {
-  it("speaks the block of the member's post through its own bot, replying to his message", async () => {
+describe("a member's bot (one path for every bot, owner 2026-11-14)", () => {
+  it("speaks the block of its own Super's answer through its own bot, replying to his message", async () => {
     const { hub, ab, log, spoken } = setup('ozetci', OK, join(home, '_dream_context'));
-    const adapter = memberAdapter({
-      say: () => ({ ok: true, status: 200, body: { runId: 'r1', entryId: 'ask' } }),
-      readRun: () => [
-        { id: 'ask', kind: 'user', text: 'sesli özetle' },
-        { id: 'e1', kind: 'agent', text: `Tamam.\n\n${BLOCK}` },
-        { id: 'e2', kind: 'system', event: 'ok', text: '' },
-      ] as never,
-      watchEveryMs: 1,
-    });
-    await adapter.onMessage(hub, ab.key, { message: { message_id: 9, text: 'sesli özetle', chat: { id: 777 }, from: { id: 777 } } });
-    for (let i = 0; i < 100 && !log.some((l) => l.method === 'sendVoice'); i++) await new Promise((r) => setTimeout(r, 5));
+    const sid = 'member-sess';
+    (hub as unknown as { superSessions: Map<string, string> }).superSessions.set(sid, ab.key);
+    (hub as unknown as { presence: Map<string, unknown> }).presence.set(ab.key, { via: 'telegram', at: Date.now() });
+    hub.noteReply(ab, 9, { ref: 'abc123', quote: 'sesli özetle', from: 'owner' });
+    expect(await hub.onAssistantText(sid, `<!-- re:abc123 -->\nTamam.\n\n${BLOCK}`, { turns: [], inputs: undefined })).toBe(true);
     expect(spoken).toEqual(['Dört boyda da iş yapılır. Kart seni bekliyor.']);
     expect(log.find((l) => l.method === 'sendVoice')!.extra).toMatchObject({ replyTo: 9 });
     expect(log.filter((l) => l.method === 'sendMessage').map((l) => l.text).join('\n')).not.toContain('dream-voice');

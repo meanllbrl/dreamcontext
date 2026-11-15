@@ -418,6 +418,8 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * actual 11,807.
    * 2026-11-14 (zaten-cevapladim): +117 for the Already-answered line (read his last messages before
    * asking; the denial sends you back to his words). Ceiling stays 12000; actual ~11,924.
+   * 2026-11-15 (bekleyen-kapanmaz): the run card paragraph says a later card of the same kind
+   * replaces the earlier open one, so what the agent needs now goes in ONE message. Actual 11,952.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12000);
@@ -431,7 +433,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11924)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11952)).toBeLessThanOrEqual(20);
   });
 
   /**

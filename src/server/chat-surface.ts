@@ -185,7 +185,8 @@ Drawn with a ▶ that opens a real terminal for them; its exit code and output t
 to you. Never say "run this in your terminal", and never send an interactive command through
 Bash: it hangs with nobody at the keyboard. ONE line: a \`\\n\` in \`command\` drops the card; use
 \`&&\`. The bare command with any \`cd\` inside it, never an absolute \`cwd\`: it runs in your
-working folder. \`why\` says what makes it theirs.
+working folder. \`why\` says what makes it theirs. A later card of the same kind (run,
+secret, checklist, mcp) replaces your earlier open one: what you need now goes in ONE message.
 
 \`\`\`dream-view
 {"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}
