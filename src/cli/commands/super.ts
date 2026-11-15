@@ -68,6 +68,18 @@ export function notTheSuperAgent(env: NodeJS.ProcessEnv = process.env): { error:
   return base;
 }
 
+/**
+ * A connection the app took and then closed without an answer is not an app that is down: the
+ * verb may have run (field 2026-11-15: "not reachable: socket hang up" while the worktree had been
+ * made). Said so, with the check to run before trying again.
+ */
+export function droppedOrUnreachable(err: Error & { code?: string }): Record<string, unknown> {
+  if (err.code === 'ECONNRESET' || /socket hang up/i.test(err.message)) {
+    return { error: 'no_answer', message: `the app closed the connection before answering (${err.message}); it may have acted. Check \`dreamcontext super state\` (and \`super worktree list\`) before trying again` };
+  }
+  return { error: 'unreachable', message: `the app is not reachable: ${err.message}` };
+}
+
 export function callSuper(verb: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): Promise<CallResult> {
   // A key inherited from the Super Agent's shell does not make a member's run the Super Agent.
   const e = mayCallSuper(env) ? windowEnv(env) : null;
@@ -92,7 +104,7 @@ export function callSuper(verb: string, body: Record<string, unknown>, env: Node
         resolve({ status: res.statusCode ?? 0, body: parsed });
       });
     });
-    req.on('error', (err) => resolve({ status: 0, body: { error: 'unreachable', message: `the app is not reachable: ${err.message}` } }));
+    req.on('error', (err) => resolve({ status: 0, body: droppedOrUnreachable(err) }));
     req.write(payload);
     req.end();
   });

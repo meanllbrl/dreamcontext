@@ -351,6 +351,63 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
     expect(await pending).toMatchObject({ ok: false, error: 'no_window', sent: true });
   });
 
+  // Field 2026-11-15: twice "socket hang up", the worktree made, no child recorded, the orphan left
+  // for the agent to remove by hand before the same --slug worked.
+  it('an unconfirmed delegate rolls its untouched worktree and branch back, and its socket outlives the 30 s idle cap', { timeout: 30_000 }, async () => {
+    const { handleSuperVerb, wc, root } = await setup();
+    const path = join(home, '.claude-worktrees', 'product-super-orphan');
+    const sup = wc.mintWindowToken({
+      // The window answers without a session id: the server cannot tell whether a child opened.
+      send: (f) => { if (f.subtype === 'super_command') setImmediate(() => wc.deliverSuperResult(sup.token, f.id, { ok: true, result: {} })); return true; },
+      vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
+    });
+    const res = fakeRes();
+    const timeouts: number[] = [];
+    (res as unknown as { setTimeout: (ms: number) => void }).setTimeout = (ms) => { timeouts.push(ms); };
+    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'orphan' }), res, { verb: 'delegate' });
+    expect(res.status).toBe(409);
+    expect(res.json).toMatchObject({ error: 'delegate_unconfirmed', worktreeRemoved: path });
+    expect(existsSync(path)).toBe(false);
+    expect(g(repo, 'branch', '--list', 'super/orphan')).toBe('');
+    // Longer than the window's 30 s + grace + a worktree's git: never cut at the server's 30 s.
+    expect(timeouts.length).toBe(1);
+    expect(timeouts[0]).toBeGreaterThan(60_000);
+  });
+
+  it('an unconfirmed delegate keeps a worktree something already committed in', { timeout: 30_000 }, async () => {
+    const { handleSuperVerb, wc, root } = await setup();
+    const path = join(home, '.claude-worktrees', 'product-super-wrote');
+    const sup = wc.mintWindowToken({
+      send: (f) => {
+        if (f.subtype !== 'super_command') return true;
+        // A child the window did open, already at work in its folder.
+        commitIn(path, 'child.txt', 'work\n');
+        setImmediate(() => wc.deliverSuperResult(sup.token, f.id, { ok: true, result: {} }));
+        return true;
+      },
+      vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
+    });
+    const res = fakeRes();
+    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'wrote' }), res, { verb: 'delegate' });
+    expect(res.json).toMatchObject({ error: 'delegate_unconfirmed', worktree: path, branch: 'super/wrote' });
+    expect(existsSync(path)).toBe(true);
+    expect(g(repo, 'branch', '--list', 'super/wrote')).toContain('super/wrote');
+  });
+
+  it('a throw after the worktree was made (the send itself) rolls it back too', { timeout: 30_000 }, async () => {
+    const { handleSuperVerb, wc, root } = await setup();
+    const path = join(home, '.claude-worktrees', 'product-super-threw');
+    const sup = wc.mintWindowToken({
+      send: (f) => { if (f.subtype === 'super_command') throw new Error('socket broke'); return true; },
+      vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
+    });
+    const res = fakeRes();
+    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'threw' }), res, { verb: 'delegate' });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(existsSync(path)).toBe(false);
+    expect(g(repo, 'branch', '--list', 'super/threw')).toBe('');
+  });
+
   it('a frame that was never sent still discards the fresh worktree and its branch', { timeout: 30_000 }, async () => {
     const { handleSuperVerb, wc, root } = await setup();
     const path = join(home, '.claude-worktrees', 'product-super-never');
