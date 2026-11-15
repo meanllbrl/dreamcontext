@@ -11,12 +11,13 @@
 //    runs stale code; a cache that cannot be written leaves the start as it was. Its folder is the
 //    user's own cache folder, never a temp folder (compile-cache-dir.ts says why).
 //
-// Nothing here prints, reads argv or sets an environment variable (Node 22.16 leaves
+// Apart from the bridge (3), nothing here prints, reads argv or sets an environment variable (Node 22.16 leaves
 // NODE_COMPILE_CACHE unset): `dist/cli.js` sees the same process.argv (argv[1] stays this file)
 // and runs exactly as before.
 import './inspector-guard.js';
 import nodeModule from 'node:module';
 import { compileCacheDir } from './compile-cache-dir.js';
+import { runBridge } from './bridge.js';
 
 type WithCompileCache = { enableCompileCache?: (dir: string) => unknown };
 try {
@@ -25,6 +26,10 @@ try {
 } catch {
   // A cache is a speed-up only; the start goes on without it.
 }
+
+// 3. The npm bridge (bridge.ts): an npm copy on a Mac with the app hands over to the app's CLI
+//    here, before the bundle below is compiled; otherwise it returns and the CLI runs as before.
+runBridge();
 
 // A computed specifier, so the bundler leaves `cli.js` a file of its own instead of inlining it.
 await import(new URL('./cli.js', import.meta.url).href);
