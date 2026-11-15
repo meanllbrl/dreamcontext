@@ -1457,7 +1457,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {addMenu && <SuperAddMenu at={addMenu} stage={{ width: plan.width, height: plan.height }} toggleRef={noToggle} busy={addBusy} onOpen={openCard} onClose={closeAddMenu} />}
       {full && (
         <CardSelectionScope id={full.id} onComment={props.onCommentCardText} onCommented={() => setFull(null)}>
-          <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />
+          <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} agenda={() => renderAgenda('full')} />
         </CardSelectionScope>
       )}
     </div>

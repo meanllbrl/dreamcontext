@@ -293,6 +293,7 @@ async function main() {
     await shot(page, '01-large-light.png');
     await cardShot(page, '01b-large-light-card.png');
 
+    await agendaCard(page).getByTestId('super-agenda-plus').click();
     await agendaCard(page).getByTestId('super-agenda-add-input').fill('Beta için fiyat fikrini yaz');
     await agendaCard(page).getByTestId('super-agenda-add-submit').click();
     ok('the owner adds a line: Added by you, Not started, author owner', await until(page, async () => (await section(page, 'mine').locator('[data-testid="super-agenda-row"]').filter({ hasText: 'Beta için fiyat' }).count()) === 1

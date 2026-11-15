@@ -23,7 +23,9 @@ export function FloatLayer({ anchorOf, place, onClose, children, className, test
   const ref = useRef<HTMLDivElement | null>(null);
   const [style, setStyle] = useState<CSSProperties>({ position: 'fixed', left: -9999, top: 0, visibility: 'hidden' });
   const anchor = anchorOf();
-  const host = (anchor?.closest('.super-surface') as HTMLElement | null) ?? (typeof document !== 'undefined' ? document.body : null);
+  // Drawn in the surface its anchor lives in: the stage, or the agenda's full screen (an overlay
+  // over the stage), so the layer always stacks above what it was opened from (review r2).
+  const host = (anchor?.closest('.agenda-fullscreen, .super-surface') as HTMLElement | null) ?? (typeof document !== 'undefined' ? document.body : null);
   useLayoutEffect(() => {
     const a = anchorOf();
     const el = ref.current;

@@ -37,6 +37,9 @@ const HOME = join(SCRATCH, 'home');
 const ACME = join(SCRATCH, 'acme');
 const RECORD = join(ACME, '_dream_context', 'state', '.super-agent.json');
 const failures = [];
+// The Mac app's owner key (the shell stub below hands it to the page): his add box and marks.
+const KEY = 'verifyOwnerKey_0123456789abcdefghijklmnopqrstuv';
+const SHELL = `window.__TAURI_INTERNALS__ = { invoke: async (cmd) => (cmd === 'owner_key' ? ${JSON.stringify(KEY)} : cmd === 'confirm_dialog' ? true : null), transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };`;
 const consoleErrors = [];
 const check = (name, ok, detail) => {
   console.log(`  ${ok ? '✓' : '✗'} ${name}${ok ? '' : ` ${detail ?? ''}`}`);
@@ -117,7 +120,8 @@ function seed(size) {
 
 async function server() {
   const PATH = [join(HOME, '.local', 'bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
-  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(PORT)], { cwd: ACME, env: { ...env(), PATH }, stdio: 'ignore' });
+  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(PORT)], { cwd: ACME, env: { ...env(), PATH, DREAMCONTEXT_OWNER_KEY_STDIN: '1' }, stdio: ['pipe', 'ignore', 'ignore'] });
+  srv.stdin.write(`${KEY}\n`);
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(`http://127.0.0.1:${PORT}/`)).ok) return srv; } catch { /* up soon */ }
     await new Promise((r) => setTimeout(r, 300));
@@ -132,6 +136,7 @@ const card = (p) => p.locator('[data-testid="super-container"][data-kind="agenda
 
 async function openStage(browser, dark) {
   const ctx = await browser.newContext({ viewport: { width: 1888, height: 1000 }, colorScheme: dark ? 'dark' : 'light', deviceScaleFactor: 2 });
+  await ctx.addInitScript(SHELL);
   await ctx.addInitScript((d) => { try { localStorage.setItem('theme', d ? 'dark' : 'light'); localStorage.setItem('dreamcontext-theme', d ? 'dark' : 'light'); } catch { /* */ } }, dark);
   const p = await ctx.newPage();
   p.setDefaultTimeout(6000);
@@ -170,6 +175,129 @@ const scrollEnd = (p, scrollerSel) => p.evaluate((sel) => {
   const sc = sel ? root.querySelector(sel) : root;
   sc.scrollTop = sc.scrollHeight;
 }, scrollerSel);
+
+const agendaState = (p) => p.evaluate(() => {
+  const f = document.querySelector('[data-testid="super-container"][data-kind="agenda"]');
+  const a = f?.querySelector('[data-testid="super-agenda"]');
+  const b = f?.getBoundingClientRect();
+  return { where: f?.getAttribute('data-where'), size: a?.getAttribute('data-size'), w: Math.round(b?.width ?? 0), h: Math.round(b?.height ?? 0) };
+});
+/** S6: the agenda opens side by side (half page) from its own controls, and full screen from there;
+ *  the larger view draws the fuller agenda (the week strip, the line's detail beside it). `how`:
+ *  'head' = a click on its title bar, 'button' = its side-by-side button. */
+async function sideAndFull(p, name, how) {
+  await p.evaluate(() => { const r = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); if (r) r.scrollTop = 0; });
+  await card(p).hover();
+  if (how === 'head') {
+    // The window lights sit over the title's start: he clicks the end of the word he sees.
+    const pt = await card(p).locator('.super-card-head .super-card-title').evaluate((el) => {
+      const r = document.createRange(); r.selectNodeContents(el); const b = r.getBoundingClientRect();
+      return { x: b.right - 4, y: b.top + b.height / 2 };
+    });
+    await p.mouse.click(pt.x, pt.y);
+  }
+  else await card(p).getByTestId('super-agenda-side').click();
+  await wait(p, 1200);
+  const half = await agendaState(p);
+  console.log('    half   ' + JSON.stringify(half));
+  check(`[${name}] S6 its ${how === 'head' ? 'title bar' : 'side-by-side button'} opens it side by side (half page), the full agenda drawn`, half.where === 'half' && half.size === 'full' && half.w >= 500, JSON.stringify(half));
+  check(`[${name}] S6 side by side it shows more: the week strip`, (await card(p).locator('.agenda-week').count()) === 1);
+  await p.screenshot({ path: join(OUT, `${name}-5-half.png`) });
+  const btn = card(p).getByTestId('super-card-fullscreen-btn');
+  const has = (await btn.count()) === 1;
+  if (has) await btn.click();
+  await wait(p, 800);
+  const fs = p.getByTestId('super-agenda-fullscreen');
+  const fsOk = has && await fs.isVisible().catch(() => false) && (await fs.locator('[data-testid="super-agenda"][data-size="full"]').count()) === 1;
+  check(`[${name}] S6 from side by side its full-screen button opens the agenda over the window`, fsOk, JSON.stringify({ has }));
+  if (fsOk) {
+    const box = await fs.boundingBox();
+    check(`[${name}] S6 full screen covers the window`, box && box.width >= 1880 && box.height >= 990, JSON.stringify(box));
+    await fs.locator('[data-testid="super-agenda-section-earlier"] .super-agenda-row-btn').first().click();
+    await wait(p, 500);
+    check(`[${name}] S6 full screen: a line's detail opens beside the list`, (await fs.getByTestId('super-agenda-detail-inline').count()) === 1);
+    // Its status menu opens in front of the full screen and takes the click (review r2).
+    await fs.getByTestId('super-agenda-status').first().click();
+    await wait(p, 400);
+    const menu = await p.evaluate(() => {
+      const m = document.querySelector('.agenda-menu');
+      if (!m) return { open: false };
+      const b = m.getBoundingClientRect();
+      const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return { open: true, inMenu: !!hit && m.contains(hit) };
+    });
+    check(`[${name}] S6 full screen: a line's status menu opens in front and takes the click`, menu.open && menu.inMenu, JSON.stringify(menu));
+    await p.screenshot({ path: join(OUT, `${name}-6b-full-menu.png`) });
+    await p.keyboard.press('Escape');
+    await wait(p, 300);
+    await p.screenshot({ path: join(OUT, `${name}-6-full.png`) });
+    await p.keyboard.press('Escape');
+    await wait(p, 300);
+    if (await fs.isVisible().catch(() => false)) await p.keyboard.press('Escape');
+    await wait(p, 400);
+    check(`[${name}] S6 Esc closes full screen`, !(await fs.isVisible().catch(() => false)));
+  }
+  // Back to the floating card for the next scene.
+  await card(p).hover();
+  await card(p).getByTestId('super-card-minimize').click().catch(() => {});
+  await until(p, async () => (await agendaState(p)).where === 'float', 4000);
+}
+
+/** S7: the + floats at the card's bottom-right corner, keeps out of the last line, opens a small box
+ *  in place (Escape cancels, Enter adds). */
+async function fab(p, name, size) {
+  const plus = card(p).getByTestId('super-agenda-plus');
+  check(`[${name}] S7 no "Add a line" row in the head any more`, (await card(p).locator('.agenda-head + .agenda-bar + .agenda-add, .agenda-add.agenda-add').count()) === 0);
+  check(`[${name}] S7 the + is there`, (await plus.count()) === 1);
+  if (!(await plus.count())) return;
+  const geo = await p.evaluate(() => {
+    const f = document.querySelector('[data-testid="super-container"][data-kind="agenda"]');
+    const root = f.querySelector('[data-testid="super-agenda"]');
+    // Every area that scrolls (the body; medium's right column; wide's left column with a detail open) to its end.
+    for (const el of [root, ...root.querySelectorAll('.agenda-main, .agenda-col')]) el.scrollTop = el.scrollHeight;
+    const b = f.querySelector('[data-testid="super-agenda-plus"]').getBoundingClientRect();
+    const c = f.getBoundingClientRect();
+    const rows = [...root.querySelectorAll('[data-testid="super-agenda-row"]')];
+    const last = rows[rows.length - 1]?.getBoundingClientRect();
+    return { right: Math.round(c.right - b.right), bottom: Math.round(c.bottom - b.bottom), lastBottom: last ? Math.round(last.bottom) : null, plusTop: Math.round(b.top) };
+  });
+  await wait(p, 300);
+  console.log('    fab    ' + JSON.stringify(geo));
+  check(`[${name}] S7 the + sits in the bottom-right corner (${geo.right}px, ${geo.bottom}px from the edges)`, geo.right >= 0 && geo.right <= 24 && geo.bottom >= 0 && geo.bottom <= 24, JSON.stringify(geo));
+  if (size !== 'small') check(`[${name}] S7 scrolled to the end, the + does not cover the last line`, geo.lastBottom !== null && geo.lastBottom <= geo.plusTop, JSON.stringify(geo));
+  await card(p).screenshot({ path: join(OUT, `${name}-7-fab.png`) });
+  await plus.focus();
+  await p.keyboard.press('Enter');
+  const input = card(p).getByTestId('super-agenda-add-input');
+  check(`[${name}] S7 the + opens by keyboard into a small box, focused`, await until(p, async () => (await input.isVisible()) && (await input.evaluate((el) => el === document.activeElement)), 3000));
+  await card(p).screenshot({ path: join(OUT, `${name}-8-fab-open.png`) });
+  await p.keyboard.press('Escape');
+  check(`[${name}] S7 Escape cancels: the + is back`, await until(p, async () => (await input.count()) === 0 && (await plus.count()) === 1, 3000));
+  if (size === 'large') {
+    await plus.click();
+    await input.fill('Call the partner school back');
+    await p.keyboard.press('Enter');
+    check(`[${name}] S7 Enter adds the line (it lands under his own lines)`, await until(p, async () => (await card(p).locator('[data-testid="super-agenda-row"]').filter({ hasText: 'Call the partner school back' }).count()) === 1, 8000));
+    check(`[${name}] S7 the box closes after adding`, await until(p, async () => (await input.count()) === 0, 3000));
+  }
+}
+
+/** S8: list or board, his pick; the board is three columns, waiting, on it, done. */
+async function boardView(p, name) {
+  check(`[${name}] S8 the list is the default`, (await card(p).getByTestId('super-agenda-view-list').getAttribute('aria-pressed')) === 'true' && (await card(p).getByTestId('super-agenda-board').count()) === 0);
+  await card(p).getByTestId('super-agenda-view-board').click();
+  await wait(p, 400);
+  const cols = await card(p).locator('[data-testid="super-agenda-board"] > .agenda-board-col').count();
+  const counts = await card(p).locator('[data-testid="super-agenda-board"] .agenda-board-col').evaluateAll((els) => els.map((e) => e.querySelectorAll('[data-testid="super-agenda-row"]').length));
+  check(`[${name}] S8 the board shows three columns with every line (${counts.join('/')})`, cols === 3 && counts[0] === 3 && counts[1] >= 12 && counts[2] === 3, JSON.stringify(counts));
+  await card(p).screenshot({ path: join(OUT, `${name}-9-board.png`) });
+  await p.reload();
+  await until(p, async () => (await card(p).isVisible()), 15000);
+  await wait(p, 1500);
+  check(`[${name}] S8 his pick holds after a reload`, (await card(p).getByTestId('super-agenda-board').count()) === 1);
+  await card(p).getByTestId('super-agenda-view-list').click();
+  await wait(p, 300);
+}
 
 async function scene(browser, size, dark) {
   const name = `${size}-${dark ? 'dark' : 'light'}`;
@@ -226,6 +354,9 @@ async function scene(browser, size, dark) {
       check(`[${name}] S5 with the detail open the left column scrolls head and list as one`, d0.scroll > d0.scH && d1.scrollTop > 0 && d1.headBottom <= d1.scTop, JSON.stringify({ d0, d1 }));
       await card(p).screenshot({ path: join(OUT, `${name}-4-detail.png`) });
     }
+    if (size === 'large' || size === 'wide') await boardView(p, name);
+    await fab(p, name, size);
+    if (size === 'large' || size === 'small') await sideAndFull(p, name, size === 'small' ? 'button' : 'head');
   } finally {
     await ctx.close();
   }
@@ -233,7 +364,7 @@ async function scene(browser, size, dark) {
 
 const browser = await chromium.launch();
 try {
-  for (const size of ['small', 'medium', 'large', 'wide']) {
+  for (const size of (arg('only', '') ? arg('only').split(',') : ['small', 'medium', 'large', 'wide'])) {
     seed(size);
     const srv = await server();
     try {

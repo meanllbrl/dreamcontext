@@ -42,11 +42,16 @@ export type CardFullscreen =
   | { kind: 'video'; path: string; title: string }
   | { kind: 'html'; path: string; title: string }
   | { kind: 'page'; href: string; title: string }
-  | { kind: 'board'; path: string; title: string };
+  | { kind: 'board'; path: string; title: string }
+  /** The agenda at its fullest (week, every chip, the line's detail beside it) over the window. */
+  | { kind: 'agenda'; title: string };
 
 /** The full-screen subject of a card, or null when it has none (yet). */
 export function fullscreenOf(c: Container, title: string, allowedHref: string | null): CardFullscreen | null {
   if (c.kind === 'image') return { kind: 'image', path: c.ref, title };
+  // The agenda opens full screen from its card and from side by side (owner 15 Nov: "tıklayıp daha
+  // detaylı göremiyorum"), drawn at its fullest size.
+  if (c.kind === 'agenda') return { kind: 'agenda', title };
   if (c.kind === 'pdf') return { kind: 'pdf', path: c.ref, title };
   if (c.kind === 'video') return { kind: 'video', path: c.ref, title };
   if (c.kind === 'board') return { kind: 'board', path: c.ref, title };
@@ -344,7 +349,16 @@ export function SuperContainer(props: SuperContainerProps) {
       }}
       onPointerDown={floating && !props.parked ? (e) => { if (!inFullscreen(e.target) && !onControl(c, e.target)) props.onPress(e, c.id); } : undefined}
       onClick={thumb ? () => props.onSelectThumb?.(c.id)
-        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button') && !onControl(c, e.target) && !inFullscreen(e.target)) openCard(); } : undefined}
+        : floating && !props.parked ? (e) => {
+          const el = e.target as HTMLElement;
+          if (el.closest('button') || onControl(c, e.target) || inFullscreen(e.target)) return;
+          // The agenda's list is live (learned rule d5xlppqj5a) and takes its own clicks; the rest of
+          // the card, its title bar, opens it side by side the way a click on the card did before
+          // the Günlük agenda (owner 15 Nov). The head is pointer-inert on a floating card, so its
+          // click lands on the frame: "outside the list", never "inside the head".
+          if (c.kind === 'agenda') { if (!el.closest('.super-agenda')) props.onSideBySide(c.id); return; }
+          openCard();
+        } : undefined}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
@@ -384,6 +398,8 @@ export function SuperContainer(props: SuperContainerProps) {
             {/* A 160 px tile holds the lights and two buttons: To Others joins size and full
                 screen in its ⋯ menu. */}
             {!props.remote && !small && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
+            {/* The agenda's body takes every click: its way to side by side is a button of its own. */}
+            {c.kind === 'agenda' && <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} testId="super-agenda-side" />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
             {small ? (
               <IconButton icon="more" label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')} onClick={() => setMenu((m) => (m ? null : 'more'))} testId="super-card-more" expanded={!!menu} />
@@ -399,6 +415,7 @@ export function SuperContainer(props: SuperContainerProps) {
             {/* A member card's way to its member's own stage (owner 2026-11-15): in the head, not
                 at its foot. Not from the phone, which opens no stage here. */}
             {c.kind === 'team' && props.team && !props.remote && <OpenStageButton member={props.team.job.member} />}
+            {c.kind === 'agenda' && openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen-btn" />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
           </>
         )}
