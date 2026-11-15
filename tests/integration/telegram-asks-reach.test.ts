@@ -268,11 +268,17 @@ describe('answered elsewhere', () => {
     expect(withButton('Gönder')).toHaveLength(0);
   });
 
-  it('a child\'s question the Super put to him itself (queue ask) does reach Telegram', async () => {
-    childAsks();
+  it('a child\'s question the Super put to him itself (queue ask) does reach Telegram, and says Cevaplandı when answered on the Mac', async () => {
+    const child = childAsks();
     await writeState({ queue: [{ ...childItem(), superAsked: true }] });
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
+    child.answered('req-q', { [CARD.questions[0].question]: 'Bu taslak olur', [CARD.questions[1].question]: "Mac'te değilken" });
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2));
+    const edits = tg.calls.filter((c) => c.method === 'editMessageText');
+    expect(String(edits[0].params.text)).toContain('✓ Cevaplandı: Bu taslak olur');
+    expect(String(edits[1].params.text)).toContain("✓ Cevaplandı: Mac'te değilken");
+    for (const e of edits) expect(e.params.reply_markup).toBeUndefined();
   });
 
   it('a member Super\'s child question mirrored to main goes nowhere on Telegram (owner 2026-11-15)', async () => {

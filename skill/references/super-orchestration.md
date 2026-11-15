@@ -48,7 +48,7 @@ children that finish fast. Verbs are in
    A Plan unit's prompt carries the premise question's answer, the Environment (repo, base branch
    + SHA, sync mode, tools), what is out of scope, the owner's decisions and the validation method
    (his, else "related tests + tsc": the full suite runs once per release cut, detached), so its "ask first" has little left to ask. Answer every child question
-   the brief or the brain settles (`super answer`), else leave a `shown=owner` one;
+   the brief or the brain settles (`super answer`), else a `shown=owner` one waits on his Mac bar only (never Telegram): put it to him with `queue ask` if he is away and must know;
    escalate only per §2.
 9. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.
 10. **As children finish:** use the result, then `dreamcontext super end <child>` in the same turn (a

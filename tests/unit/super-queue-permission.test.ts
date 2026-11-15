@@ -99,6 +99,8 @@ describe('questions escalate one at a time', () => {
     const one = await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
     expect(one.status).toBe(200);
     expect(one.json.result).toMatchObject({ escalated: true });
+    // The stamp Telegram lets through (owner 2026-11-15): only a question the Super itself put to him.
+    expect((await readSuperState(root)).queue.find((q) => q.id === 'q-ask1')?.superAsked).toBe(true);
     const two = await verb('queue-ask', { item: 'q-ask2', text: 'Which region?' });
     expect(two.json.result).toMatchObject({ escalated: true, waiting: true });
     const s = await readSuperState(root);
