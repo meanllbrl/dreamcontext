@@ -27,8 +27,11 @@ import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../
 import {
   enterHookProject, firstActInSession, firstInSession, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
   resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
-  SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind,
+  markSessionRecall, readPrevOwnerTurn, sessionRecall, writePrevOwnerTurn,
+  SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind, type SessionRecall,
 } from '../../lib/hook-delivery.js';
+import { judgedRecall, type JudgedHit, type JudgedRecall } from '../../lib/recall-judged.js';
+import { callDir as judgeCallDir, type RunJudgeOpts } from '../../lib/recall-judge.js';
 import type { SleepState, Bookmark, SessionRecord } from './sleep.js';
 import { readSleepState, writeSleepState, resolveRecallMode, type RecallMode } from './sleep.js';
 import {
@@ -72,7 +75,7 @@ import { bindingsByConversation, consumeOnce, listGrants } from '../../lib/grant
 import type { Grant } from '../../lib/grants/types.js';
 import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, loadSkillDocs, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { bm25Search, docKey, loadSkillDocs, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
 import {
@@ -93,7 +96,6 @@ import {
   currentVaultTarget,
   type FederatedHit,
 } from '../../lib/federation-recall.js';
-import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -728,7 +730,6 @@ export interface PromptRecallDeps {
   env?: NodeJS.ProcessEnv;
   /** Injectable home for the tier, consent and key lookups (tests). */
   home?: string;
-  haiku?: typeof haikuRecall;
   /** The running dashboard's warm recall (tests inject; `null` = never ask it). */
   viaDashboard?: ((prompt: string, root: string, opts?: { tier?: RecallTier }) => Promise<PromptRecall | null>) | null;
 }
@@ -755,18 +756,9 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
     return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K, { collapseFamilies: true }), label: 'BM25 · Haiku is Claude only', haiku: false, timing: null };
   }
   if (recallMode === 'haiku') {
-    const result = (deps.haiku ?? haikuRecall)(prompt, root);
-    if (result === 'skip') {
-      if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku: skip (no searchable intent)');
-    } else if (result !== null && result.length > 0) {
-      return { hits: result, label: 'Haiku', haiku: true, timing: null };
-    } else if (result !== null) {
-      if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku: 0 docs selected');
-    } else {
-      if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku failed, falling back to BM25');
-      return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K, { collapseFamilies: true }), label: 'BM25', haiku: false, timing: null };
-    }
-    return { hits: [], label: 'BM25', haiku: false, timing: null };
+    // The model-free side of the default mode: the judge's fallback when it is off or cannot run
+    // (judgedPromptRecall is the default path; the old single-call index extractor is retired from the hook).
+    return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K, { collapseFamilies: true }), label: 'BM25', haiku: false, timing: null };
   }
 
   const resolved = recallMode === 'hybrid' ? resolvePromptTier(root, env, deps.home) : null;
@@ -786,6 +778,93 @@ export async function selectPromptRecall(prompt: string, root: string, recallMod
   }
   const label = resolved !== null ? hybridNotReadyLabel(tier, hybridNotReadyReason(root, resolved, deps.home)) : 'BM25';
   return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_INJECT_TOP_K, { collapseFamilies: true }), label, haiku: false, timing: null };
+}
+
+/**
+ * What the prompt hook does when the judge is late (30 s) or fails this once: deliver nothing extra.
+ * Measured on the 111 train turns (feature PRD § Judged recall): the model-free BM25 top 3 reached
+ * 29.8% precision and stayed silent on 2 of 9 nothing-fits turns, so silence is the safer side. A judge
+ * that cannot run at all (no claude, signed out, out of quota) gets the model-free rule instead.
+ */
+export const JUDGE_FALLBACK: 'nothing' | 'search' = 'nothing';
+
+/** The Codex judge: off until it is measured (Codex quota opens 24 Nov). Haiku never runs under Codex. */
+export const CODEX_JUDGE_ENV = 'DREAMCONTEXT_RECALL_CODEX_JUDGE';
+export const CODEX_JUDGE_MODEL = 'gpt-6-luna';
+
+/** Which judge this prompt may use, or null: the model-free rule answers (raw, off, Antigravity, Codex without the flag). */
+export function judgeFor(recallMode: RecallMode, env: NodeJS.ProcessEnv = process.env): 'claude' | 'codex' | null {
+  if (recallMode !== 'haiku' && recallMode !== 'hybrid') return null;
+  if (env.DREAMCONTEXT_RECALL_JUDGE === 'off') return null;
+  const tool = hookTool();
+  if (tool === null) return 'claude';
+  if (tool === 'codex' && env[CODEX_JUDGE_ENV] === '1') return 'codex';
+  return null;
+}
+
+export interface JudgedPromptRecall {
+  result: JudgedRecall;
+  label: string;
+}
+
+/**
+ * The judged recall of one prompt (feature memory-recall-bm25 § Judged recall): free candidates on this
+ * Mac (BM25 + e5, or the cloud index on a cloud-tier vault), one judge call, must and confident picks.
+ * Files already in this session's context are neither shown nor delivered again.
+ */
+export async function judgedPromptRecall(
+  prompt: string, prev: string | null, root: string, recallMode: RecallMode, judge: 'claude' | 'codex',
+  o: { env?: NodeJS.ProcessEnv; home?: string; seen?: SessionRecall } = {},
+): Promise<JudgedPromptRecall> {
+  const env = o.env ?? process.env;
+  const tier = recallMode === 'hybrid' ? resolvePromptTier(root, env, o.home).tier : 'local';
+  const corpus = buildCorpusCached(root);
+  let judgeOpts: RunJudgeOpts = {};
+  if (judge === 'codex') {
+    const { askCommand, readAskOutput } = await import('../../lib/cross-tool-ask.js');
+    const cwd = judgeCallDir();
+    judgeOpts = {
+      commandFor: (p) => {
+        const c = askCommand({ tool: 'codex', write: false, model: CODEX_JUDGE_MODEL, cwd, prompt: p } as Parameters<typeof askCommand>[0], p);
+        if ('error' in c) throw new Error(c.error);
+        return { ...c, stdin: '' };
+      },
+      parse: (stdout) => {
+        const d = readAskOutput(stdout);
+        return d ? { ok: !d.isError && !!d.text, text: d.text, costUsd: 0, sawResult: true, isError: d.isError } : { ok: false, text: '', costUsd: 0, sawResult: false, isError: false, error: 'no_result' };
+      },
+      cwd,
+    };
+  }
+  const { whenLinesLookup } = await import('../../lib/when-lines.js');
+  const result = await judgedRecall(prompt, prev, corpus, root, {
+    tier, home: o.home,
+    inContext: o.seen?.inContext, passedOver: o.seen?.passedOver,
+    whenLines: whenLinesLookup(root, o.home),
+    judge: judgeOpts,
+  });
+  const where = result.channel === 'voyage' ? 'cloud index' : result.channel === 'e5' ? 'local search' : 'keyword search';
+  const label = `${judge === 'codex' ? 'Codex judge' : 'Haiku'} · ${where}`;
+  return { result, label };
+}
+
+/**
+ * The judged block: must picks first, then confident ones, each with the judge's reason and the passage
+ * it read. No count cap: every pick arrives (the hook's byte budget still applies to the whole turn).
+ */
+export function renderJudgedBlock(hits: readonly JudgedHit[], label: string): string[] {
+  const lines: string[] = ['', `— Memory recall (${label}, top ${hits.length}) —`];
+  for (const h of hits) {
+    const size = h.doc.type === 'insight' ? '' : `  (${hitSize(h.doc.body)})`;
+    lines.push(`  [${h.doc.type}${h.level >= 2 ? ' · must' : ''}] ${h.doc.relPath}${size}`);
+    if (h.reason) lines.push(`    Why: ${capLine(h.reason, RECALL_SNIPPET_MAX_CHARS)}`);
+    else if (h.doc.description) lines.push(`    ${capLine(h.doc.description, RECALL_SNIPPET_MAX_CHARS)}`);
+    if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug));
+    const at = h.section.heading ? `§ ${capLine(h.section.heading, 80)}: ` : '';
+    const text = h.section.text.slice(0, 200);
+    if (text) lines.push(`    > ${at}${text}${h.section.text.length > 200 ? '…' : ''}`);
+  }
+  return lines;
 }
 
 /**
@@ -3203,7 +3282,7 @@ export function registerHookCommand(program: Command): void {
         const call = input.toolCall as { name: string; args?: unknown };
         const raw = (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, unknown>;
         if (movesGuardedPlace(command ? 'Bash' : call.name, command ? toolInput : raw, agy.cwd)) {
-          deny('Blocked: this moves, removes or copies over a place that holds dreamcontext\'s write gate or the Meta token file. Agents never do that; leave it and say so.');
+          deny('Blocked: this moves, removes or copies over a place that holds dreamcontext\'s write gate, its own program files or the Meta token file. Agents never do that; leave it and say so.');
           return;
         }
         if ((path && isAntigravityGateFile(path)) || (command && shellWriteTarget(command, agy.cwd, isAntigravityGateFile))) {
@@ -3214,7 +3293,7 @@ export function registerHookCommand(program: Command): void {
         // tools. Any brain's token file counts: the hook may run in another project.
         const tokenFile = (p: string): boolean => isMarketingEnvPath(p, agy.cwd) || /\/_dream_context\/marketing\/\.env$/i.test(p);
         if ((path && tokenFile(path)) || (command && (shellWriteTarget(command, agy.cwd, tokenFile) || shellTouchesGuarded(command)))) {
-          deny('Blocked: this file holds Meta access tokens, or this command touches dreamcontext\'s gate. Agents never write them: setup is `mk init`, and rotation is the owner\'s. To verify config, run `dreamcontext mk config check`.');
+          deny('Blocked: this file holds Meta access tokens, or this command touches dreamcontext\'s gate or its own program files. Agents never write them: setup is `mk init`, and rotation is the owner\'s. To verify config, run `dreamcontext mk config check`.');
           return;
         }
       }
@@ -3719,21 +3798,63 @@ export function registerHookCommand(program: Command): void {
             const recallMode = resolveRecallMode(root);
 
             if (recallMode !== 'off') {
-              const { hits, label, haiku, timing } = await selectPromptRecall(prompt, root, recallMode);
-              const timingLine = recallTimingLine(timing);
-              if (timingLine) console.error(timingLine);
+              // This session's context (Claude Code only: its SessionStart fires on startup, resume,
+              // clear and compact, and resets it; another tool's reset is not known, so it re-delivers).
+              const recallSid = hookTool() === null && promptSessionId ? promptSessionId : '';
+              const seen = sessionRecall(recallSid);
+              // The owner's previous turn (the judge reads it), then this turn becomes the previous one.
+              const prevOwner = promptSessionId ? readPrevOwnerTurn(promptSessionId) : null;
+              if (promptSessionId && ownerText !== null) writePrevOwnerTurn(promptSessionId, prompt);
 
-              // Hits are ordered by rankScore (field/recency/synonym signals), but the
-              // gate must test the RAW BM25 score, which may not sit at index 0 after
-              // re-ranking (see recallGatePasses).
-              const ownShown = recallGatePasses(hits, haiku, prompt);
-              if (ownShown) {
-                const lines = renderRecallBlock(hits, label);
-                emitPromptBlock('recall', lines.join('\n'));
-                hadRecallHits = true;
-                // No knowledge_access bump here (audit MM-13): a hit printed is not a file read, and
-                // counting every printed hit gave pinned files 300+ "accesses" of pure recall noise.
-                // `knowledge touch` still counts.
+              let hits: RecallHit[] = [];
+              let haiku = false;
+              let ownShown = false;
+              const judge = judgeFor(recallMode);
+              let judged: JudgedPromptRecall | null = null;
+              if (judge !== null) {
+                judged = await judgedPromptRecall(prompt, prevOwner, root, recallMode, judge, { seen });
+                const r = judged.result;
+                if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') {
+                  console.error(JSON.stringify({ judged: r.outcome, channel: r.channel, shown: r.shown.length, picked: r.hits.length, searchMs: r.searchMs, judgeMs: r.judgeMs, usd: r.usd }));
+                }
+                if (process.env.DREAMCONTEXT_DEBUG && r.cause) console.error(`[recall] judge: ${r.outcome} (${r.cause})`);
+                if (r.hits.length > 0) {
+                  emitPromptBlock('recall', renderJudgedBlock(r.hits, judged.label).join('\n'));
+                  hadRecallHits = true;
+                  ownShown = true;
+                  haiku = true;
+                  hits = r.hits.map((h) => ({ doc: h.doc, score: 0, rankScore: 0, snippet: h.reason }));
+                }
+                // Passed over only when the judge decided: a failed or late judge looked at nothing.
+                markSessionRecall(recallSid, r.hits.map((h) => docKey(h.doc)), r.outcome === 'picked' ? r.shown : []);
+                // A judge that was late or answered badly this once: JUDGE_FALLBACK (nothing extra). A judge
+                // that cannot run at all (no claude, signed out, out of quota) makes this a no-model machine:
+                // the model-free rule answers, as it does for every user without a model.
+                const failed = r.outcome === 'judge_failed' || r.outcome === 'judge_timeout' || r.outcome === 'judge_unusable' || r.outcome === 'judge_no_time';
+                const lasting = r.outcome === 'judge_failed' && /not found|not signed in|rate limited|could not start/.test(r.cause ?? '');
+                if (failed && (JUDGE_FALLBACK === 'search' || lasting)) judged = null;
+              }
+              if (judged === null) {
+                const picked = await selectPromptRecall(prompt, root, recallMode);
+                const timingLine = recallTimingLine(picked.timing);
+                if (timingLine) console.error(timingLine);
+                haiku = picked.haiku;
+                // A file this context already holds is not delivered again.
+                hits = picked.hits.filter((h) => !seen.inContext.has(docKey(h.doc)));
+
+                // Hits are ordered by rankScore (field/recency/synonym signals), but the
+                // gate must test the RAW BM25 score, which may not sit at index 0 after
+                // re-ranking (see recallGatePasses).
+                ownShown = recallGatePasses(hits, haiku, prompt);
+                if (ownShown) {
+                  const lines = renderRecallBlock(hits, picked.label);
+                  emitPromptBlock('recall', lines.join('\n'));
+                  hadRecallHits = true;
+                  markSessionRecall(recallSid, hits.map((h) => docKey(h.doc)), []);
+                  // No knowledge_access bump here (audit MM-13): a hit printed is not a file read, and
+                  // counting every printed hit gave pinned files 300+ "accesses" of pure recall noise.
+                  // `knowledge touch` still counts.
+                }
               }
               // This vault's raw BM25 top, to weigh a peer against. Haiku hits carry score 0, so in that
               // mode it is a BM25 pass over the same query (the corpus is cached; only when a peer is wired).
@@ -4082,6 +4203,20 @@ export function registerHookCommand(program: Command): void {
           },
         }));
       }
+    });
+
+  // --- hook when-lines-writer <root> (hidden) ---
+  // The detached writer `sleep done` starts (lib/when-lines.ts): the recall judge's "needed when" lines.
+  hook
+    .command('when-lines-writer <root>', { hidden: true })
+    .action(async (contextRoot: string) => {
+      try {
+        // Only a brain folder: the writer reads its files and sends them to the judge's model.
+        const root = resolve(contextRoot);
+        if (basename(root) !== '_dream_context' || !statSync(root).isDirectory()) return;
+        const { runWhenLinesWriter } = await import('../../lib/when-lines.js');
+        await runWhenLinesWriter(root);
+      } catch { /* detached: nothing to report to */ }
     });
 
   // --- hook pre-compact ---

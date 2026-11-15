@@ -177,7 +177,7 @@ async function main(browser) {
     check('1: no member gets its own row', (await p.locator('[data-drawer-project="acme"] [data-testid="drawer-member-row"]').count()) === 0 && !acmeText.includes('Scout'), acmeText);
     check('1: one Ekip row for the project', (await teamRow.count()) === 1, String(await teamRow.count()));
     check('2: no closed Chat row on an empty project', (await p.locator('[data-drawer-project="globex"] [data-testid="drawer-window-row"]').count()) === 0);
-    check('2: New Chat there instead', await seen(p, '[data-drawer-project="globex"] [data-testid="drawer-new-chat"]'));
+    check('2: the project header offers New window instead', await seen(p, '[data-drawer-project="globex"] [data-testid="drawer-project-add"]'));
     check('2: a saved chat keeps its row', await seen(p, '[data-drawer-project="initech"] [data-testid="drawer-window-row"]'));
     // 3: the member's own Super stage, opened from the Ekip list.
     await teamRow.first().click().catch(() => {});
@@ -218,7 +218,7 @@ async function main(browser) {
     await shot(p, '4-chat-far-end');
     // A far project with no chat and no Super on: its Super hands over.
     // 2: New Chat is real: a tab, and the composer has the keys.
-    await clickProjectRow(p, 'globex', 'drawer-new-chat').catch(() => {});
+    await clickProjectRow(p, 'globex', 'drawer-project-add').catch(() => {});
     await wait(p, 2500);
     await shot(p, '2-new-chat');
     check('2: New Chat opened a chat', await seen(p, '.project-instance:not([hidden]) .chat-pane textarea, .project-instance:not([hidden]) .chat-pane [contenteditable="true"]'));

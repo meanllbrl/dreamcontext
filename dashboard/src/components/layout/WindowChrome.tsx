@@ -5,6 +5,8 @@ import { SelectionBar } from '../sleepy/chat/SelectionBar';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
+import { snapZoom } from '../../lib/zoom';
+import { ZoomMenu } from './newshell/ZoomMenu';
 import { trackPresence } from '../../lib/presence';
 import { focusedChatFor, onFocusedChat } from '../../lib/focusedChat';
 import { armFocusDiag, healUnfocusedPresses } from '../../lib/focusDiag';
@@ -50,7 +52,7 @@ import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, buildGlobalTeam, ekipByProject, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, intentLands, moveInOrder, NO_DEVICE_CHATS,
+  buildDrawerRows, buildGlobalTeam, ekipByProject, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
   type DeviceChats, type DrawerFacts,
 } from './newshell/drawerModel';
 import { useDrawerProjects } from '../../hooks/useDrawerProjects';
@@ -176,7 +178,6 @@ export function useChrome(): ChromeApi {
 
 /* ─────────────────────────────── window-level chrome bits ─────────────────────────────── */
 
-const ZOOM_LEVELS = [0.85, 0.9, 1.0, 1.1, 1.2];
 const ZOOM_STORAGE_KEY = 'dreamcontext-zoom';
 
 function getStoredZoom(): number {
@@ -184,7 +185,8 @@ function getStoredZoom(): number {
     const stored = localStorage.getItem(ZOOM_STORAGE_KEY);
     if (stored !== null) {
       const val = parseFloat(stored);
-      if (ZOOM_LEVELS.includes(val)) return val;
+      // The old 10% steps (0.85 … 1.2) are all on the new 5% grid; anything else snaps to it.
+      if (Number.isFinite(val)) return snapZoom(val);
     }
   } catch { /* ignore */ }
   return 1.0;
@@ -945,8 +947,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     };
   }, []);
 
-  const setZoomLevel = useCallback((level: number) => {
-    if (!ZOOM_LEVELS.includes(level)) return;
+  const setZoomLevel = useCallback((value: number) => {
+    const level = snapZoom(value);
     setZoom(level);
     try { localStorage.setItem(ZOOM_STORAGE_KEY, String(level)); } catch { /* ignore */ }
   }, []);
@@ -1152,11 +1154,52 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     setOrderRev((n) => n + 1);
   }, []);
 
+  /* ── Hidden projects (owner 2026-11-14, option A): folded into ONE "Hidden" group at the
+     bottom of the drawer, its mark the sum of theirs. The project hidden while on screen stays
+     in the list until the owner switches away (`hideDeferred`). ⌘1-9 skip hidden projects. ── */
+  const [hiddenStored, setHiddenStored] = useState<string[]>(() => readLayoutPrefs().hiddenProjects);
+  const [hideDeferred, setHideDeferred] = useState<string | null>(null);
+  const hideProject = useCallback((name: string) => {
+    setHiddenStored((cur) => {
+      if (cur.includes(name)) return cur;
+      const next = [...cur, name];
+      writeLayoutPrefs({ hiddenProjects: next });
+      return next;
+    });
+    // Folded, so its mark is read on every poll (a folded hidden project is never capped out).
+    setDrawerExpanded((cur) => {
+      if (!cur.includes(name)) return cur;
+      const next = cur.filter((n) => n !== name);
+      writeLayoutPrefs({ drawerExpanded: next });
+      return next;
+    });
+    if (name === activeVault) setHideDeferred(name);
+  }, [activeVault]);
+  const showProject = useCallback((name: string) => {
+    setHiddenStored((cur) => {
+      if (!cur.includes(name)) return cur;
+      const next = cur.filter((n) => n !== name);
+      writeLayoutPrefs({ hiddenProjects: next });
+      return next;
+    });
+    setHideDeferred((d) => (d === name ? null : d));
+  }, []);
+  useEffect(() => {
+    if (hideDeferred && activeVault !== hideDeferred) setHideDeferred(null);
+  }, [activeVault, hideDeferred]);
+  // A device shell drives another machine's set and edits nothing: no Hidden group there.
+  const drawerHidden = useMemo(
+    () => (deviceShell ? [] : effectiveHidden(hiddenStored, hideDeferred).filter((n) => projectOrder.includes(n))),
+    [deviceShell, hiddenStored, hideDeferred, projectOrder],
+  );
+  const drawerHiddenRef = useRef(drawerHidden);
+  drawerHiddenRef.current = drawerHidden;
+
   const mountedNames = useMemo(() => open.filter((p) => !p.cold).map((p) => p.vault), [open]);
   const drawerFolded = useMemo(() => projectOrder.filter((name) => !drawerExpanded.includes(name)), [projectOrder, drawerExpanded]);
   // A device shell reads no project's roster or team (its drawer is chats only), so no fan-out
   // and no vault-less avatar request.
-  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell && !deviceShell ? drawerExpanded : [], mountedNames, drawerVisible, newShell && !deviceShell ? drawerFolded : []);
+  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell && !deviceShell ? drawerExpanded : [], mountedNames, drawerVisible, newShell && !deviceShell ? drawerFolded : [], drawerHidden);
   // The Mac's running chats, for the chat rows of projects this window has not mounted.
   const { live: liveChats, answered: liveAnswered } = useDrawerChats({ activeVault, drawerVisible, enabled: newShell });
   // A device shell's one published fact: memoized on the read and the tabs, a constant elsewhere.
@@ -1408,7 +1451,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
         // key is left alone (⌃N moves a line down in the composer).
         e.preventDefault();
       } else if (/^[1-9]$/.test(e.key) && !inChat) {
-        const target = projectOrderRef.current[Number(e.key) - 1];
+        const target = projectOrderRef.current.filter((n) => !drawerHiddenRef.current.includes(n))[Number(e.key) - 1];
         if (!target) return;
         e.preventDefault();
         markProjectSwitch(target);
@@ -1443,15 +1486,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     // that edge into a nonce, alongside the publisher that makes the edge happen at all.
     bounceNonce: 0,
   })), [open, activeVault, preview]);
-
-  const zoomIndex = ZOOM_LEVELS.indexOf(zoom);
-  const changeZoom = (delta: -1 | 1) => {
-    const nextIndex = zoomIndex + delta;
-    if (nextIndex < 0 || nextIndex >= ZOOM_LEVELS.length) return;
-    const next = ZOOM_LEVELS[nextIndex];
-    setZoom(next);
-    try { localStorage.setItem(ZOOM_STORAGE_KEY, String(next)); } catch { /* ignore */ }
-  };
 
   const cycleTheme = () => {
     setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
@@ -1501,7 +1535,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             touch={coarse}
             onDrawerHover={onDrawerHover}
             zoom={zoom}
-            zoomLevels={ZOOM_LEVELS}
             onZoom={setZoomLevel}
             onCycleTheme={cycleTheme}
             themeLabel={themeLabel}
@@ -1532,7 +1565,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onIntent={(vault, intent) => void queueDrawerIntent(vault, intent)}
                 onHistory={openHistory}
                 onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); closeOverlay(); }}
-                onMove={(name, delta) => reorder(moveInOrder(projectOrder, name, delta))}
+                onMove={(name, delta) => reorder(moveAmong(projectOrder, drawerHidden, name, delta))}
                 onDrop={(name, before) => reorder(dropInOrder(projectOrder, name, before))}
                 onMoveWindow={(vault, windowId, before) => {
                   // Read now, not from the row: another window can take a project at any time, and
@@ -1552,6 +1585,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 }}
                 onCloseProject={(name) => closeTab(name)}
                 {...(deviceShell ? {} : { onRemoveProject: (name: string) => { void removeProject(name); } })}
+                hidden={drawerHidden}
+                {...(deviceShell ? {} : { onHideProject: hideProject, onShowProject: showProject })}
                 newWindowNonce={newWindowNonce}
                 globalTeam={globalTeam}
                 onSwitchMember={switchMember}
@@ -1654,11 +1689,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             {/* The active project's sleep tracker + update badge land here. */}
             <div className="chrome-slot" ref={setRightSlot} />
             <HandsfreeButton vault={activeVault} />
-            <div className="zoom-controls">
-              <button className="zoom-btn" onClick={() => changeZoom(-1)} disabled={zoomIndex <= 0} title="Zoom out">-</button>
-              <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-              <button className="zoom-btn" onClick={() => changeZoom(1)} disabled={zoomIndex >= ZOOM_LEVELS.length - 1} title="Zoom in">+</button>
-            </div>
+            <ZoomMenu zoom={zoom} onZoom={setZoomLevel} />
             <button className="theme-toggle" onClick={cycleTheme} title={`Theme: ${themeLabel}`}>
               {resolved === 'dark' ? (
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">

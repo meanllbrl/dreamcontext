@@ -731,167 +731,28 @@ export async function handleVoiceTts(
     }
 
     const cfg = readVoiceConfig();
-    // CHAT COMPLETIONS again, and STREAMING is not optional: the API refuses audio output
-    // without `stream: true`, and refuses `mp3` WITH it. So speech arrives as headerless
-    // pcm16 at 24 kHz, in SSE deltas, and is given its RIFF header here.
-    /**
-     * The last resort when the chat model will not read the line: a REAL text-to-speech
-     * model, on the same key.
-     *
-     * `google/gemini-3.1-flash-tts-preview` cannot "answer the line instead of reading it" —
-     * it has no conversation to have — so it ends the one failure mode the verbatim guard
-     * could otherwise only turn into silence. Measured at 0.75-1.37x realtime against the
-     * chat model's 0.31-0.55x, which is why it is the fallback rather than the default: 2.4x
-     * slower is worth paying on the rare chunk that would otherwise be dropped, and not on
-     * every chunk. It detects the language itself and takes no language parameter.
-     */
-    const speakWithRealTts = async (): Promise<Buffer | null> => {
-      // The owner's pick, translated — this model has its own voice list and would refuse
-      // `onyx` outright. A REFUSED voice is retried once with the known-good one rather than
-      // dropping the chunk: the rescue path exists to stop a sentence going missing, and it
-      // must not become a new way for one to go missing over a preference.
-      const voices = [fallbackVoice(cfg.voice || DEFAULT_VOICE), FALLBACK_VOICE_DEFAULT];
-      for (const candidate of AUDIO_MODELS.speechFallback) {
-        for (const voice of [...new Set(voices)]) {
-          try {
-            const r = await fetch(`${OPENROUTER_BASE}/audio/speech`, {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_HEADERS },
-              signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
-              // `pcm` is the ONLY format this model accepts, and it is the same 24 kHz mono
-              // pcm16 the chat path returns — so the WAV wrapper below serves both.
-              body: JSON.stringify({ model: candidate, input: spoken, voice, response_format: 'pcm' }),
-            });
-            if (!r.ok) {
-              logUpstream('tts-fallback', r.status, await r.text().catch(() => ''), key);
-              continue;
-            }
-            return Buffer.from(await r.arrayBuffer());
-          } catch (err) {
-            if (gone.signal.aborted) return null;
-            console.error('[voice:tts] fallback failed', err);
-          }
-        }
-      }
-      return null;
-    };
-
-    const generate = async (): Promise<StreamedSpeech> => {
-      const upstream = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          ...OPENROUTER_HEADERS,
-        },
-        signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
-        body: JSON.stringify({
-          model: model.id,
-          stream: true,
-          modalities: ['text', 'audio'],
-          audio: { voice: cfg.voice || DEFAULT_VOICE, format: 'pcm16' },
-          // The few-shot sits between the system prompt and the line, and is what makes a
-          // one-word line get READ rather than answered. See `JARVIS_FEWSHOT`.
-          // The previous line rides along as context — see `speechMessages`.
-          messages: speechMessages(spoken, prev),
-        }),
-      });
-      if (!upstream.ok) {
-        logUpstream('tts', upstream.status, await upstream.text().catch(() => ''), key);
-        throw new Error(`upstream ${upstream.status}`);
-      }
-      return collectStreamedAudio(upstream, key);
-    };
-
-    // ── GENERATE, THEN CHECK WHAT WAS ACTUALLY SAID ────────────────────────────────────
-    //
-    // The model answers the line instead of reading it often enough that speech cannot be
-    // taken on trust (`verbatim.ts` holds the measurements). The check is cheap — the words
-    // it is speaking ride along in the same stream — and the retry is worth its cost because
-    // the failure is STOCHASTIC: the same sentence that was answered in one round is read
-    // correctly in the next, so a second attempt usually lands.
-    let speech: StreamedSpeech;
-    let retried = false;
-    try {
-      speech = await generate();
-      if (!readVerbatim(spoken, speech.transcript) && !gone.signal.aborted) {
-        retried = true;
-        console.warn(
-          `[voice:tts] the model answered the line instead of reading it `
-          + `(match ${verbatimRatio(spoken, speech.transcript).toFixed(2)}) — retrying`,
-        );
-        speech = await generate();
-      }
-    } catch (err) {
-      if (gone.signal.aborted) {
-        // Nobody is waiting for this chunk any more: the slot goes back now, not in seconds.
-        chunkLog('abandoned', { retried });
-        return;
-      }
-      console.error('[voice:tts] request failed', err);
-      chunkLog('failed', { retried });
+    const r = await synthChunk({ spoken, prev, key, modelId: model.id, voice: cfg.voice || DEFAULT_VOICE, tailMs, gone: gone.signal });
+    if (r.outcome === 'abandoned') { chunkLog('abandoned', { retried: r.retried }); return; }
+    if (r.outcome === 'failed') {
+      chunkLog('failed', { retried: r.retried });
       sendJson(res, 502, { error: 'tts_failed', message: 'Speech failed for this chunk.' });
       return;
     }
-
-    if (gone.signal.aborted) {
-      chunkLog('abandoned', { retried });
-      return;
-    }
-    if (!readVerbatim(spoken, speech.transcript)) {
-      // Twice over. The chunk is DROPPED rather than played, and the distinction is the whole
-      // point of this route: a missing sentence is a gap in speech the owner can still read on
-      // screen, while a played one is the agent saying something it never wrote. 204 is the
-      // queue's "skip and keep going" (AC10), so the rest of the answer is unaffected.
-      // TWICE the chat model answered instead of reading. Rather than drop the sentence —
-      // a hole in the speech the owner can only find by reading the screen — hand it to a
-      // real TTS, which cannot make this mistake.
-      console.warn('[voice:tts] the chat model would not read the line — using the TTS model');
-      const rescued = await speakWithRealTts();
-      if (gone.signal.aborted) {
-        chunkLog('abandoned', { retried });
-        return;
-      }
-      if (!rescued || rescued.length === 0) {
-        chunkLog('dropped-not-read', { ratio: Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) });
-        res.writeHead(204).end();
-        return;
-      }
-      const wav = wavFromPcm16(normalizeSpeech(trimSpeechTail(rescued, tailMs)), PCM16_SAMPLE_RATE);
-      console.info(`[voice:tts] ${pcmSeconds(rescued).toFixed(1)}s spoken by the fallback`);
-      chunkLog('spoken-by-fallback', { seconds: Number(pcmSeconds(rescued).toFixed(1)) });
-      res.writeHead(200, {
-        'Content-Type': 'audio/wav',
-        'Content-Length': wav.length,
-        'Cache-Control': 'no-store',
-      });
-      res.end(wav);
-      return;
-    }
-
-    const pcm = speech.audio;
-    if (pcm.length === 0) {
-      // The model answered in text only — a refusal, or a chunk it decided was nothing to
-      // say. Treated exactly like an unspeakable chunk: skip it and keep the queue moving.
-      chunkLog('dropped-no-audio', { retried });
+    if (r.outcome === 'dropped-not-read') {
+      chunkLog('dropped-not-read', { ratio: r.ratio });
       res.writeHead(204).end();
       return;
     }
-
-    // NORMALISED BEFORE IT IS WRAPPED. This is the only point in the path where the answer
-    // can actually be made louder: after this it is a WAV played through a master volume the
-    // app does not own. See `normalizeSpeech` for why the client's gain node cannot do it.
-    // The seam first: the model's half-second tail cut to a breath (`trimSpeechTail`).
-    const trimmed = trimSpeechTail(pcm, tailMs);
-    const audio = wavFromPcm16(normalizeSpeech(trimmed), PCM16_SAMPLE_RATE);
-    console.info(`[voice:tts] ${pcmSeconds(pcm).toFixed(1)}s spoken`);
-    chunkLog('spoken', {
-      retried,
-      seconds: Number(pcmSeconds(trimmed).toFixed(1)),
-      trimmedMs: Math.round((pcmSeconds(pcm) - pcmSeconds(trimmed)) * 1000),
-      // Below 1 means the voice left words out (a full read scores 1.00, measured 2026-10-13).
-      ratio: speech.transcript ? Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) : null,
-    });
+    if (r.outcome === 'dropped-no-audio') {
+      // The model answered in text only — a refusal, or a chunk it decided was nothing to
+      // say. Treated exactly like an unspeakable chunk: skip it and keep the queue moving.
+      chunkLog('dropped-no-audio', { retried: r.retried });
+      res.writeHead(204).end();
+      return;
+    }
+    const audio = wavFromPcm16(r.pcm!, PCM16_SAMPLE_RATE);
+    if (r.outcome === 'spoken-by-fallback') chunkLog('spoken-by-fallback', { seconds: r.rawSeconds });
+    else chunkLog('spoken', { retried: r.retried, seconds: r.seconds, trimmedMs: r.trimmedMs, ratio: r.ratio });
     res.writeHead(200, {
       'Content-Type': 'audio/wav',
       'Content-Length': audio.length,
@@ -908,6 +769,156 @@ export async function handleVoiceTts(
     res.off('close', onClose);
     ttsGate.release();
   }
+}
+
+/** What one chunk's synthesis came to. `pcm` (pcm16, 24 kHz mono, tail trimmed and normalised)
+ *  is set only for the two spoken outcomes. */
+export type SynthOutcome = 'spoken' | 'spoken-by-fallback' | 'dropped-not-read' | 'dropped-no-audio' | 'abandoned' | 'failed';
+export interface SynthResult {
+  outcome: SynthOutcome;
+  pcm?: Buffer;
+  retried: boolean;
+  /** Verbatim match of what was said (null: the provider sent no transcript). */
+  ratio?: number | null;
+  /** Seconds after the tail trim (`spoken`). */
+  seconds?: number;
+  /** Seconds as the fallback produced them (`spoken-by-fallback`). */
+  rawSeconds?: number;
+  trimmedMs?: number;
+}
+
+/**
+ * ONE chunk of speech, made: the chat model (streamed pcm16), its verbatim check and one retry,
+ * then a real TTS model when the chat model will not read the line. Shared by the Mac voice
+ * mode's `/tts` route and the Telegram voice summary (`server/voice-speak.ts`), so both speak
+ * with the same model chain, voice and guard. `spoken` is already `speakable()`; the key and the
+ * model are resolved by the caller. Never logs or returns the key.
+ */
+export async function synthChunk(o: {
+  spoken: string; prev?: string; key: string; modelId: string; voice: string; tailMs: number; gone: AbortSignal;
+}): Promise<SynthResult> {
+  const { spoken, prev, key, tailMs } = o;
+  const gone = { signal: o.gone };
+  /**
+   * The last resort when the chat model will not read the line: a REAL text-to-speech
+   * model, on the same key.
+   *
+   * `google/gemini-3.1-flash-tts-preview` cannot "answer the line instead of reading it" —
+   * it has no conversation to have — so it ends the one failure mode the verbatim guard
+   * could otherwise only turn into silence. Measured at 0.75-1.37x realtime against the
+   * chat model's 0.31-0.55x, which is why it is the fallback rather than the default: 2.4x
+   * slower is worth paying on the rare chunk that would otherwise be dropped, and not on
+   * every chunk. It detects the language itself and takes no language parameter.
+   */
+  const speakWithRealTts = async (): Promise<Buffer | null> => {
+    // The owner's pick, translated — this model has its own voice list and would refuse
+    // `onyx` outright. A REFUSED voice is retried once with the known-good one rather than
+    // dropping the chunk: the rescue path exists to stop a sentence going missing, and it
+    // must not become a new way for one to go missing over a preference.
+    const voices = [fallbackVoice(o.voice), FALLBACK_VOICE_DEFAULT];
+    for (const candidate of AUDIO_MODELS.speechFallback) {
+      for (const voice of [...new Set(voices)]) {
+        try {
+          const r = await fetch(`${OPENROUTER_BASE}/audio/speech`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_HEADERS },
+            signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
+            // `pcm` is the ONLY format this model accepts, and it is the same 24 kHz mono
+            // pcm16 the chat path returns — so the WAV wrapper below serves both.
+            body: JSON.stringify({ model: candidate, input: spoken, voice, response_format: 'pcm' }),
+          });
+          if (!r.ok) {
+            logUpstream('tts-fallback', r.status, await r.text().catch(() => ''), key);
+            continue;
+          }
+          return Buffer.from(await r.arrayBuffer());
+        } catch (err) {
+          if (gone.signal.aborted) return null;
+          console.error('[voice:tts] fallback failed', err);
+        }
+      }
+    }
+    return null;
+  };
+
+  const generate = async (): Promise<StreamedSpeech> => {
+    const upstream = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        ...OPENROUTER_HEADERS,
+      },
+      signal: untilGoneOr(TTS_TIMEOUT_MS, gone.signal),
+      body: JSON.stringify({
+        model: o.modelId,
+        stream: true,
+        modalities: ['text', 'audio'],
+        audio: { voice: o.voice, format: 'pcm16' },
+        // The few-shot sits between the system prompt and the line, and is what makes a
+        // one-word line get READ rather than answered. See `JARVIS_FEWSHOT`.
+        // The previous line rides along as context — see `speechMessages`.
+        messages: speechMessages(spoken, prev),
+      }),
+    });
+    if (!upstream.ok) {
+      logUpstream('tts', upstream.status, await upstream.text().catch(() => ''), key);
+      throw new Error(`upstream ${upstream.status}`);
+    }
+    return collectStreamedAudio(upstream, key);
+  };
+
+  // ── GENERATE, THEN CHECK WHAT WAS ACTUALLY SAID ────────────────────────────────────
+  // The model answers the line instead of reading it often enough that speech cannot be
+  // taken on trust (`verbatim.ts`); the failure is STOCHASTIC, so a second attempt usually lands.
+  let speech: StreamedSpeech;
+  let retried = false;
+  try {
+    speech = await generate();
+    if (!readVerbatim(spoken, speech.transcript) && !gone.signal.aborted) {
+      retried = true;
+      console.warn(
+        `[voice:tts] the model answered the line instead of reading it `
+        + `(match ${verbatimRatio(spoken, speech.transcript).toFixed(2)}) — retrying`,
+      );
+      speech = await generate();
+    }
+  } catch (err) {
+    // Nobody is waiting for this chunk any more: the slot goes back now, not in seconds.
+    if (gone.signal.aborted) return { outcome: 'abandoned', retried };
+    console.error('[voice:tts] request failed', err);
+    return { outcome: 'failed', retried };
+  }
+  if (gone.signal.aborted) return { outcome: 'abandoned', retried };
+  if (!readVerbatim(spoken, speech.transcript)) {
+    // TWICE the chat model answered instead of reading. Rather than drop the sentence (a hole
+    // in the speech the owner can only find by reading the screen), hand it to a real TTS,
+    // which cannot make this mistake. Dropped only when that fails too: a missing sentence is
+    // a gap, a played one is the agent saying something it never wrote.
+    console.warn('[voice:tts] the chat model would not read the line — using the TTS model');
+    const rescued = await speakWithRealTts();
+    if (gone.signal.aborted) return { outcome: 'abandoned', retried };
+    if (!rescued || rescued.length === 0) {
+      return { outcome: 'dropped-not-read', retried, ratio: Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) };
+    }
+    console.info(`[voice:tts] ${pcmSeconds(rescued).toFixed(1)}s spoken by the fallback`);
+    return { outcome: 'spoken-by-fallback', retried, pcm: normalizeSpeech(trimSpeechTail(rescued, tailMs)), rawSeconds: Number(pcmSeconds(rescued).toFixed(1)) };
+  }
+  // The model answered in text only (a refusal, or nothing to say): skipped like an
+  // unspeakable chunk.
+  const pcm = speech.audio;
+  if (pcm.length === 0) return { outcome: 'dropped-no-audio', retried };
+  // NORMALISED BEFORE IT IS WRAPPED: the only point where the answer can be made louder
+  // (`normalizeSpeech`). The seam first: the model's half-second tail cut to a breath.
+  const trimmed = trimSpeechTail(pcm, tailMs);
+  console.info(`[voice:tts] ${pcmSeconds(pcm).toFixed(1)}s spoken`);
+  return {
+    outcome: 'spoken', retried, pcm: normalizeSpeech(trimmed),
+    seconds: Number(pcmSeconds(trimmed).toFixed(1)),
+    trimmedMs: Math.round((pcmSeconds(pcm) - pcmSeconds(trimmed)) * 1000),
+    // Below 1 means the voice left words out (a full read scores 1.00, measured 2026-10-13).
+    ratio: speech.transcript ? Number(verbatimRatio(spoken, speech.transcript).toFixed(2)) : null,
+  };
 }
 
 /**

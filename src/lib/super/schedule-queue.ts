@@ -19,6 +19,7 @@ import { lstatSync, readdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isValidScope, readTelegramJson, scopeOfContextRoot, telegramBase, writeTelegramJson } from '../telegram/config.js';
+import { isConditionData } from '../automations/condition.js';
 
 export interface ScheduleItem {
   v: 1;
@@ -26,6 +27,9 @@ export interface ScheduleItem {
   fireIso: string;
   /** Written by the tick for a fire it found past catch-up: only a "kaçtı" notice, never a turn. */
   missed?: true;
+  /** What the automation's condition script printed on the fire it woke for (kosullu-otomasyon
+   *  C6), bounded by `boundConditionData`. Data only: every door fences it. */
+  data?: string;
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,119}$/;
@@ -52,6 +56,7 @@ function cleanItem(v: unknown, slug: string, ms: number): ScheduleItem | null {
   return {
     v: 1, slug, fireIso: new Date(ms).toISOString(),
     ...(o.missed === true ? { missed: true as const } : {}),
+    ...(isConditionData(o.data) && o.data ? { data: o.data } : {}),
   };
 }
 
@@ -59,7 +64,7 @@ function cleanItem(v: unknown, slug: string, ms: number): ScheduleItem | null {
 export function writeScheduleItem(contextRoot: string, item: Omit<ScheduleItem, 'v'>, home: string = homedir()): void {
   const scope = scopeOfContextRoot(contextRoot);
   const fireIso = new Date(Date.parse(item.fireIso)).toISOString();
-  writeTelegramJson(itemFile(scope, item.slug, fireIso, home), { v: 1, slug: item.slug, fireIso, ...(item.missed ? { missed: true } : {}) }, home);
+  writeTelegramJson(itemFile(scope, item.slug, fireIso, home), { v: 1, slug: item.slug, fireIso, ...(item.missed ? { missed: true } : {}), ...(isConditionData(item.data) && item.data ? { data: item.data } : {}) }, home);
 }
 
 

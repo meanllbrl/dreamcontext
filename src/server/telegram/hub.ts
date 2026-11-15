@@ -17,16 +17,20 @@
  *    owner is ON TELEGRAM (his latest message to this Super came through this bot, under 24 h,
  *    see `onTelegram`) every section, whatever ref it opens with (job results, owed answers);
  *    while Telegram-started hands-free is on, every answer (marks stripped);
- *  - typing while the turn runs; one status message per Telegram message, rows = children and
- *    team jobs whose origin is that ref; the status line edited to its done state;
+ *  - typing while the turn runs (no server status message, owner 2026-11-15: the Super says its
+ *    jobs, or he asks with /durum);
  *  - the Super chat's own permission / question prompts as buttons answered through the window
  *    (`hub_command answer_pending`), so the Mac card closes;
  *  - every loss of a binding sends a last message from the IN-MEMORY binding first (C3, D3).
  *
- * Member targets go through `member.ts` (the member's thread), the manager through `manager.ts`.
+ * Every bot takes this one path (owner 2026-11-14, B2): a member's bot talks to that member's OWN
+ * Super (`ensureMemberSuper`, born on its first message), the Super's bot to the project's main
+ * Super (`superOf`). The manager goes through `manager.ts`.
  */
+import { appendOpenLog } from '../../lib/window-open-log.js';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -35,15 +39,17 @@ import {
 } from '../../lib/assistant/chat-registry.js';
 import { appLinkForContextRoot } from '../../lib/app-link.js';
 import { listVaults } from '../../lib/vaults.js';
-import { readSuperState } from '../../lib/super/store.js';
+import { readSuperState, superIdOfMember } from '../../lib/super/store.js';
+import { ensureMemberSuper, type MemberBirth } from '../../lib/super/member-birth.js';
+import { memberScope } from '../../lib/agents/scope.js';
+import type { SuperId, SuperState } from '../../lib/super/types.js';
 import { isOwnerProse, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
-import { teamJobStatus } from '../../lib/super/team.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
-  CALLBACK_DATA_RE, MEMBER_TELEGRAM_COMMANDS, PAIRING_TTL_MS, STATUS_EDIT_MIN_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
+  CALLBACK_DATA_RE, MEMBER_TELEGRAM_COMMANDS, PAIRING_TTL_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, telegramSideSource, withTelegramRef,
-  type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart, type StatusState,
+  type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart,
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
 } from '../../lib/telegram/contract.js';
 import {
@@ -55,10 +61,14 @@ import { onOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
 import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '../../lib/telegram/auth.js';
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
-import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
-import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
+import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
+import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
+import { SILENT, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
+import { voiceAnswer } from '../../lib/telegram/voice-block.js';
+import { sendVoiceSummary } from './voice-reply.js';
+import type { SpeakSummaryResult } from '../voice-speak.js';
 import { cleanOwnerText, inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
@@ -86,14 +96,34 @@ const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.is
 export const MANAGER_PAIRING_TARGET = '@manager';
 /** How long a reopened Super has to register its injector (A3). */
 export const INJECTOR_WAIT_MS = 45_000;
+/** An owner message that cannot reach a closed Super waits this long for it, never dropped at the
+ *  first failed open (owner 2026-11-15: four "açılamadı" lines while the Mac's window was hidden). */
+export const INJECTOR_HOLD_MS = 2 * 60 * 60 * 1000;
+/** While a message waits, the Super's link is opened again this often. */
+export const INJECTOR_RETRY_MS = 2 * 60 * 1000;
+/** A voice note whose local transcription did not answer is tried again after these pauses (a busy
+ *  Mac: model reload, memory pressure, a full disk). At most 4 passes, about 2.5 minutes. */
+export const VOICE_RETRY_DELAYS_MS: readonly number[] = [15_000, 45_000, 90_000];
+/** "Tekrar dene" taps one voice note may take (owner 2026-11-15); past it he is told plainly. */
+export const VOICE_TAP_MAX = 5;
+/** The transcription failures a later pass can cure; a missing ffmpeg, no engine or a garbled
+ *  take cannot. */
+const VOICE_TRANSIENT = /stt_failed|stt_pressure|stt_load_failed/;
 /** The last-message send never waits longer than this on a binding loss (D3). */
 const LAST_MESSAGE_TIMEOUT_MS = 5_000;
-/** Typing and the live status message stop after this, whatever the turn does. */
+/** Typing stops after this, whatever the turn does. */
 const TURN_TYPING_CAP_MS = 2 * 60 * 60 * 1000;
 
 export const LINES = {
   superOff: "Bu projede Super kapalı; Mac'te açınca yazabilirsin.",
   cannotOpen: "Super Mac'te açılamadı; uygulamaya bakıp tekrar yaz.",
+  holding: "Mac'te sohbet şu an açılamadı; mesajların bekliyor, açılınca sırayla iletirim.",
+  heldExpired: "Bekleyen mesajların Mac'e ulaşmadı: sohbet iki saattir açılamadı. Uygulamaya bakıp tekrar gönder.",
+  voiceRetrying: 'Sesli notu şu an yazıya çeviremedim (Mac meşgul); birkaç dakika içinde yeniden deniyorum.',
+  voiceFailed: "Sesli notu yazıya çeviremedim. Tekrar dene'ye bas ya da yazarak gönder.",
+  voiceTapMax: (n: number) => `Bu sesli not ${n} kez denendi, yazıya çevrilemedi; yazarak gönder.`,
+  voiceRetryTap: 'Yeniden deniyorum…',
+  voiceGone: 'Bu sesli notun dosyası artık yok; yazarak gönder.',
   notWritten: "Mesajın Mac'e yazılamadı; tekrar gönder.",
   writtenNotDone: "Mesajın Mac'e yazıldı ama iş bitmedi; tekrar göndermeden önce Mac'e bak.",
   stale: 'Bu soru artık geçerli değil.',
@@ -104,7 +134,16 @@ export const LINES = {
   conflict: "Bu bot başka yerde de dinleniyor, bağlantı durdu; BotFather'da token'ı yenile.",
   tamper: "Bu botun Mac'teki kaydı değişti; güvenlik için bağlantı durdu.",
   endedSilent: "Bu tur cevap yazmadan bitti; tekrar yaz ya da Mac'e bak.",
+  memberUnknownCommand: 'Bu komut yok. Bu botun komutları: /dur /durum',
+  superOnlyCommand: (cmd: string) => `/${cmd} yalnız Super'in botunda var. Bu botun komutları: /dur /durum`,
+  memberNotFound: "Bu üyeyi Mac'te bulamadım; üyenin Mac'te kayıtlı olduğundan emin ol.",
+  memberOff: (who: string) => `${who} Mac'te kapalı; açınca buradan yazabilirsin.`,
+  memberUnapproved: (who: string) => `${who} Mac'te onayını bekliyor; onaylayınca buradan yazabilirsin.`,
+  memberNotOwner: (who: string) => `${who} bir ekip arkadaşının üyesi; buradan yazılamaz.`,
 } as const;
+
+/** The Super a binding talks to: the project's main Super, or the member's own. */
+export interface BoundSuper { root: string; id: SuperId }
 
 // ─── Dependencies (tests inject fakes) ──────────────────────────────────────
 
@@ -127,11 +166,6 @@ export interface HubHandsfree {
   isOn?(): boolean;
 }
 
-export interface HubMember {
-  /** An authorized message to a member bot. */
-  onMessage(hub: TelegramHub, key: BindingKey, update: Obj): Promise<UpdateDisposition>;
-}
-
 
 export interface HubDeps {
   home?: string;
@@ -146,16 +180,25 @@ export interface HubDeps {
   /** `open -g <link>`: reopens the Super window (A3). */
   openLink?: (url: string) => void;
   injectorWaitMs?: number;
+  /** How long an owner message waits for a closed Super (default `INJECTOR_HOLD_MS`). */
+  injectorHoldMs?: number;
+  /** How often a waiting message opens the Super's link again (default `INJECTOR_RETRY_MS`). */
+  injectorRetryMs?: number;
+  /** Pauses between automatic voice transcription passes (default `VOICE_RETRY_DELAYS_MS`). */
+  voiceRetryDelaysMs?: readonly number[];
   /** Lane C: OGG file → transcript; throws `ffmpeg_missing` when ffmpeg is absent. */
   transcribeVoice?: (oggPath: string) => Promise<string>;
   handsfree?: HubHandsfree;
-  member?: HubMember;
+  /** A member's own Super, born on its first message (tests inject; default `ensureMemberSuper`). */
+  memberSuper?: (contextRoot: string, slug: string, home: string) => Promise<MemberBirth>;
   /** Mac banner (tamper, conflict, unkeyed unbind). */
   banner?: (title: string, body: string) => void;
   /** Binding a bot makes sure the launchd dispatcher exists (lane B). */
   ensureDispatcher?: () => void;
   /** A non-JPG member photo → JPG for `setMyProfilePhoto` (default: macOS `sips`; tests inject). */
   toJpeg?: JpegConverter;
+  /** A `dream-voice` block → OGG/Opus (voice-speak.ts; tests inject). */
+  speakSummary?: (text: string) => Promise<SpeakSummaryResult>;
 }
 
 export type BindingKey = string; // `${scope}/${target}`
@@ -205,9 +248,6 @@ interface TgTurn {
   chatId: number;
   sessionId: string;
   startedAt: number;
-  statusMessageId: number | null;
-  statusText: string;
-  lastEditAt: number;
   typing: ReturnType<typeof setInterval> | null;
   answered: boolean;
 }
@@ -304,7 +344,7 @@ export class TelegramHub implements TelegramHubApi {
 
   /**
    * The bot's command menu, set once per start per bot: the Super's four (/dur /durum /gundem
-   * /handsfree), a member's two (/dur /durum, its own work only; member-commands.ts).
+   * /handsfree), a member's two (/dur /durum, its own Super's work; commands.ts).
    * A refusal is logged and retried at the next bind or start, never blocking either.
    */
   private async syncCommands(ab: ActiveBinding): Promise<void> {
@@ -638,11 +678,16 @@ export class TelegramHub implements TelegramHubApi {
 
   /** Markdown → one or more Telegram messages. */
   /** `blocks: 'hub'` only from a caller that draws the blocks itself afterwards (the Super's
-   *  answer paths call `answerExtras`); every other caller (members, notices) keeps "Mac'te" lines. */
-  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string }, blocks: 'hub' | 'mac' = 'mac', fold = ab.target !== 'super'): Promise<void> {
-    // A member's result folds when long; the Super's words and any question never do (owner 2026-11-11).
+   *  answer paths call `answerExtras`); every other caller (notices) keeps "Mac'te" lines.
+   *  `reply.answers`: the owner turn this text answers; when he wrote again since, the first
+   *  message is a native Telegram reply to his (B2). */
+  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string; answers?: string }, blocks: 'hub' | 'mac' = 'mac', fold = false): Promise<void> {
+    // No bot's conversation folds (owner 2026-11-14, B2): a Super's words, a member's own Super's
+    // words and every question read whole. Only a routine's forwarded result folds (member-forward.ts).
+    const first = this.replyParamsFor(ab, reply?.answers);
+    let n = 0;
     for (const html of toTelegramMessages(redactSecrets(md), { blocks, fold })) {
-      const sent = await this.send(ab, html);
+      const sent = await this.send(ab, html, n++ === 0 && first ? first : {});
       if (reply && Number.isSafeInteger(sent?.message_id)) this.noteReply(ab, sent.message_id, { ref: reply.ref, quote: reply.quote ?? md, from: 'super' });
     }
   }
@@ -659,6 +704,68 @@ export class TelegramHub implements TelegramHubApi {
 
   // ── Inbound ──
 
+  // ── The Super a binding talks to (one path for every bot, owner 2026-11-14) ──
+
+  /** The project a binding talks in: its own, or for a global member the first registered project
+   *  that sees it (named residual: one project per global member). */
+  rootOf(ab: ActiveBinding): string | null {
+    if (ab.contextRoot) return ab.contextRoot;
+    if (ab.scope !== 'global' || ab.target === 'super') return null;
+    for (const v of listVaults(this.home)) {
+      const root = join(v.path, '_dream_context');
+      try { if (memberScope(root, ab.target, this.home) === 'global') return root; } catch { /* next */ }
+    }
+    return null;
+  }
+
+  /** The Super of a binding: main for the Super's bot, the member's own for a member's bot. */
+  superOf(ab: ActiveBinding): BoundSuper | null {
+    const root = this.rootOf(ab);
+    if (!root) return null;
+    return { root, id: ab.target === 'super' ? 'main' : superIdOfMember(ab.target) };
+  }
+
+  /** The live binding whose bot talks to this Super (`vault`'s main, or a member's own), or null.
+   *  The chat's own mapping first; else the bindings, by the Super they talk to and its project. */
+  bindingOfSuper(vault: string, id: SuperId, sessionId?: string): ActiveBinding | null {
+    if (sessionId) {
+      const ab = this.bindingOfSession(sessionId);
+      if (ab && !ab.disabled && this.superOf(ab)?.id === id) return ab;
+    }
+    let vroot: string | null = null;
+    try { const v = listVaults(this.home).find((x) => x.name === vault); vroot = v ? join(v.path, '_dream_context') : null; } catch { vroot = null; }
+    for (const ab of this.active.values()) {
+      if (ab.disabled) continue;
+      const b = this.superOf(ab);
+      if (b && b.id === id && (ab.projectName === vault || (vroot !== null && b.root === vroot))) return ab;
+    }
+    return null;
+  }
+
+  /** The bound Super's record, or null (no project, unreadable). A member's unborn Super reads empty. */
+  async readBound(ab: ActiveBinding): Promise<SuperState | null> {
+    const b = this.superOf(ab);
+    if (!b) return null;
+    try { return await readSuperState(b.root, b.id); } catch { return null; }
+  }
+
+  /** A member's own Super, born on its first message, judged on every one (`ensureMemberSuper`). */
+  private async memberSession(ab: ActiveBinding, root: string): Promise<string | null> {
+    const birth = this.deps.memberSuper
+      ?? (async (r: string, slug: string, home: string) => {
+        const { stopMemberSuper } = await import('../routes/super.js');
+        return ensureMemberSuper(r, slug, home, { stopSuper: stopMemberSuper });
+      });
+    let r: MemberBirth;
+    try { r = await birth(root, ab.target, this.home); } catch { r = { ok: false, status: 404, error: 'unknown_member', message: '' }; }
+    if (r.ok) return r.session;
+    const line = r.error === 'member_off' ? LINES.memberOff(ab.target)
+      : r.error === 'member_unapproved' ? LINES.memberUnapproved(ab.target)
+        : r.error === 'not_owner' ? LINES.memberNotOwner(ab.target) : LINES.memberNotFound;
+    await this.notice(ab, r.error === 'unknown_member' ? 'warn' : 'info', line, r.error === 'unknown_member');
+    return null;
+  }
+
   async onUpdate(key: BindingKey, u: Obj): Promise<UpdateDisposition> {
     const ab = this.active.get(key);
     if (!ab || ab.disabled) return 'accepted';
@@ -669,15 +776,16 @@ export class TelegramHub implements TelegramHubApi {
     if (cb) { await this.onCallback(ab, cb); return 'accepted'; }
     const msg = obj(u.message);
     if (!msg) return 'accepted';
-    if (ab.target !== 'super') return this.deps.member ? this.deps.member.onMessage(this, key, u) : 'accepted';
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
     // A reply to a live run's output goes to that run's stdin before anything else (W4, H6).
     if (this.messageHook && await this.messageHook(ab, msg)) return 'accepted';
     if (text.startsWith('/')) {
       if (await this.deps.handsfree?.onCommand?.(this, key, u)) return 'accepted';
       if (this.commandHook && await this.commandHook(ab, u)) return 'accepted';
-      if (/^\/start(?:@\w+)?(?:\s|$)/.test(text)) { await this.reply(ab, 'Buradayım. Yaz, Super Mac\'te okusun.'); return 'accepted'; }
-      await this.notice(ab, 'info', LINES.unknownCommand);
+      const isSuper = ab.target === 'super';
+      if (/^\/start(?:@\w+)?(?:\s|$)/.test(text)) { await this.reply(ab, isSuper ? 'Buradayım. Yaz, Super Mac\'te okusun.' : "Buradayım. Yaz, Mac'te okusun."); return 'accepted'; }
+      const cmd = /^\/([a-z_]+)/i.exec(text)?.[1]?.toLowerCase() ?? '';
+      await this.notice(ab, 'info', isSuper ? LINES.unknownCommand : cmd === 'gundem' || cmd === 'handsfree' ? LINES.superOnlyCommand(cmd) : LINES.memberUnknownCommand);
       return 'accepted';
     }
     if (text && this.interceptText && await this.interceptText(ab, msg)) return 'accepted';
@@ -695,10 +803,8 @@ export class TelegramHub implements TelegramHubApi {
     // Only what the bot sent: a reaction on his own message quotes nothing.
     const mapped = this.replyOf(ab, r.messageId);
     const quote = this.sentQuotes.get(`${ab.key}:${r.messageId}`) ?? (mapped?.from === 'super' ? mapped.quote : null);
-    if (ab.target !== 'super') { telegramReactionNotes.add(`member:${ab.key}`, r.messageId, r.emojis, quote, this.now()); return; }
-    if (!ab.contextRoot) return;
-    let session: string | null = null;
-    try { session = (await readSuperState(ab.contextRoot))?.session ?? null; } catch { session = null; }
+    // The bound Super's next turn reads it (main's, or the member's own).
+    const session = (await this.readBound(ab))?.session ?? null;
     if (session) telegramReactionNotes.add(`super:${session}`, r.messageId, r.emojis, quote, this.now());
   }
 
@@ -719,38 +825,48 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   private async onOwnerMessage(ab: ActiveBinding, updateId: number, msg: Obj): Promise<UpdateDisposition> {
-    if (!ab.contextRoot) return 'accepted';
-    let state;
-    try { state = await readSuperState(ab.contextRoot); } catch { state = null; }
-    if (!state?.enabled || !state.session) { await (this.superOff ? this.superOff(ab) : this.notice(ab, 'info', LINES.superOff)); return 'accepted'; }
+    const root = this.rootOf(ab);
+    if (!root) { if (ab.target !== 'super') await this.notice(ab, 'warn', LINES.memberNotFound, true); return 'accepted'; }
+    let session: string | null;
+    if (ab.target === 'super') {
+      const state = await this.readBound(ab);
+      if (!state?.enabled || !state.session) { await (this.superOff ? this.superOff(ab) : this.notice(ab, 'info', LINES.superOff)); return 'accepted'; }
+      session = state.session;
+    } else {
+      // A member's own Super: born on the first message, judged on every one (off, unapproved).
+      session = await this.memberSession(ab, root);
+      if (!session) return 'accepted';
+    }
     const media = pickInboundMedia(msg);
     this.journal(ab, (p) => [...p, { updateId, kind: media ? 'media' : 'text', written: false, at: this.now() }]);
     // Confirmed now (journaled); delivered in order behind the previous message.
-    const session = state.session;
-    ab.chain = ab.chain.then(() => this.deliver(ab, updateId, msg, session).catch(async () => {
+    const sid = session;
+    ab.chain = ab.chain.then(() => this.deliver(ab, updateId, msg, sid, root).catch(async () => {
       this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
       await this.notice(ab, 'warn', LINES.notWritten, true);
     })).catch(() => { /* one failed link never stops the next delivery */ });
     return 'accepted';
   }
 
-  private async deliver(ab: ActiveBinding, updateId: number, msg: Obj, sessionId: string): Promise<void> {
+  private async deliver(ab: ActiveBinding, updateId: number, msg: Obj, sessionId: string, root: string): Promise<void> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     const paths: string[] = [];
     let spoken: string | null = null;
     const media = pickInboundMedia(msg);
     if (media) {
-      const saved = await saveInbound({ transport: ab.transport, contextRoot: ab.contextRoot!, media, now: this.now() });
+      const saved = await saveInbound({ transport: ab.transport, contextRoot: root, media, now: this.now() });
       if (!saved.ok) { await this.notice(ab, 'file', saved.line, true); if (!msg.text && !msg.caption) { drop(); return; } }
       else if (media.kind === 'voice' || media.kind === 'audio') {
-        try {
-          spoken = await (this.deps.transcribeVoice ? this.deps.transcribeVoice(saved.path) : Promise.reject(new Error('no_transcriber')));
-        } catch (err) {
-          const missing = /ffmpeg_missing/.test((err as Error).message);
-          await this.notice(ab, 'warn', missing ? 'Sesli not için ffmpeg gerekli: Mac\'te brew install ffmpeg yaz.' : 'Sesli notu yazıya çeviremedim; yazarak gönder.', true);
-          paths.push(saved.path);
+        // Tried again while the Mac is busy; a note no pass cured waits on his "Tekrar dene"
+        // button, never as a bare file path in the agent's turn (owner 2026-11-15).
+        const heard = await this.transcribeVoiceNote(ab, saved.path, true);
+        if (heard.ok) {
+          spoken = heard.text;
+          await this.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {});
+        } else {
+          if (heard.retryable) await this.offerVoiceRetry(ab, saved.path, sessionId, 1);
+          if (!msg.text && !msg.caption) { drop(); return; }
         }
-        if (spoken !== null) await this.send(ab, voiceEchoHtml(spoken), SILENT).catch(() => {});
       } else paths.push(saved.path);
     }
     let text = inboundTurnText(msg, paths);
@@ -760,10 +876,96 @@ export class TelegramHub implements TelegramHubApi {
     const head = this.turnPrefix ? this.turnPrefix(ab, msg) : '';
     if (head) text = `${head}\n\n${text}`;
     // His own words beside the turn (C3): the header, quotes, forwards and file paths stay out.
-    const ref = await this.injectText(ab, updateId, text, sessionId, null, telegramOwnText(msg, spoken));
-    if (!ref) { drop(); return; }
+    const arrivedAt = this.pollIO(ab.scope, ab.target).read().pending.find((e) => e.updateId === updateId)?.at ?? this.now();
+    const ref = await this.injectText(ab, updateId, text, sessionId, null, telegramOwnText(msg, spoken), { arrivedAt });
+    // A hold cut short by a stop or a replaced binding keeps its journal entry: the next start
+    // reports it (recoverJournal) instead of it vanishing.
+    if (!ref) { if (this.serving(ab)) drop(); return; }
     const mid = Number(msg.message_id);
-    if (Number.isSafeInteger(mid)) this.noteReply(ab, mid, { ref, quote: inboundTurnText(msg, []) || (spoken ?? ''), from: 'owner' });
+    if (Number.isSafeInteger(mid)) {
+      this.noteReply(ab, mid, { ref, quote: inboundTurnText(msg, []) || (spoken ?? ''), from: 'owner' });
+      this.noteOwnerMessage(ab, ref, mid);
+    }
+  }
+
+  /**
+   * A voice note → its transcript. With `ladder`, a failure a later pass can cure (whisper not
+   * answering, memory pressure, the model reloading) is tried again after `VOICE_RETRY_DELAYS_MS`,
+   * and he hears once that it is being retried. `retryable` false = no tap can cure it (no ffmpeg,
+   * he was told how to install it).
+   */
+  private async transcribeVoiceNote(ab: ActiveBinding, path: string, ladder: boolean): Promise<{ ok: true; text: string } | { ok: false; retryable: boolean }> {
+    const delays = ladder ? (this.deps.voiceRetryDelaysMs ?? VOICE_RETRY_DELAYS_MS) : [];
+    const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => { const h = setTimeout(r, ms); h.unref?.(); }));
+    let told = false;
+    for (let pass = 0; ; pass++) {
+      try {
+        if (!this.deps.transcribeVoice) throw new Error('no_transcriber');
+        const text = ((await this.deps.transcribeVoice(path)) ?? '').trim();
+        if (text) return { ok: true, text };
+        // An EMPTY transcript under load is a failure, never "nothing said": it takes the same
+        // retry path (the 21:45 note of 2026-11-15 was dropped in silence this way).
+        throw new Error('stt_failed');
+      } catch (err) {
+        const code = String((err as Error)?.message ?? '');
+        if (/ffmpeg_missing/.test(code)) {
+          await this.notice(ab, 'warn', 'Sesli not için ffmpeg gerekli: Mac\'te brew install ffmpeg yaz.', true);
+          return { ok: false, retryable: false };
+        }
+        if (!VOICE_TRANSIENT.test(code) || pass >= delays.length || !this.started) return { ok: false, retryable: true };
+        if (!told) { told = true; await this.notice(ab, 'info', LINES.voiceRetrying); }
+        await sleep(delays[pass]);
+      }
+    }
+  }
+
+  /** "Sesli notu yazıya çeviremedim" with a "Tekrar dene" button bound to that note's file and
+   *  Super; past `VOICE_TAP_MAX` tries a plain line instead. */
+  private async offerVoiceRetry(ab: ActiveBinding, path: string, sessionId: string, tries: number): Promise<void> {
+    if (tries > VOICE_TAP_MAX) { await this.notice(ab, 'warn', LINES.voiceTapMax(VOICE_TAP_MAX), true); return; }
+    await this.sendButtons(ab, noticeHtml('warn', LINES.voiceFailed), [['🔁 Tekrar dene']], { kind: 'voice-retry', sessionId, singleUse: true }, { path, tries })
+      .catch(() => this.notice(ab, 'warn', LINES.voiceFailed, true));
+  }
+
+  /**
+   * His "Tekrar dene" tap: the same file transcribed again, in this binding's order; heard, it goes
+   * to the agent as the voice note it was (echo + 🎙 turn); not heard, a fresh button. Its own cap
+   * (`VOICE_TAP_MAX`), never the agent's `voice retry` cap. Reached only past the tap check.
+   */
+  private voiceRetryTap(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }): string {
+    const path = typeof rec.data?.path === 'string' ? rec.data.path : '';
+    const tries = Number(rec.data?.tries) || 1;
+    const sessionId = rec.sessionId ?? '';
+    if (!path || !sessionId || !existsSync(path)) return LINES.voiceGone;
+    ab.chain = ab.chain.then(async () => {
+      const heard = await this.transcribeVoiceNote(ab, path, false);
+      if (!heard.ok) { if (heard.retryable) await this.offerVoiceRetry(ab, path, sessionId, tries + 1); return; }
+      await this.send(ab, voiceEchoHtml(heard.text), SILENT).catch(() => {});
+      await this.injectText(ab, this.syntheticUpdateId(), `🎙 ${heard.text}`, sessionId, null, heard.text, { arrivedAt: this.now() });
+    }).catch(() => { /* one failed link never stops the next delivery */ });
+    return LINES.voiceRetryTap;
+  }
+
+  // ── Native reply (B2): an answer to an OLDER owner message is a Telegram reply to it. Memory only. ──
+
+  /** `${key}:${ref}` → the owner's Telegram message that opened that turn. */
+  private ownerMsgOfRef = new Map<string, number>();
+  /** Per binding: the owner's latest message id. */
+  private lastOwnerMsg = new Map<BindingKey, number>();
+
+  private noteOwnerMessage(ab: ActiveBinding, ref: string, messageId: number): void {
+    this.ownerMsgOfRef.set(`${ab.key}:${ref}`, messageId);
+    if (this.ownerMsgOfRef.size > 2000) this.ownerMsgOfRef.delete(this.ownerMsgOfRef.keys().next().value as string);
+    this.lastOwnerMsg.set(ab.key, messageId);
+  }
+
+  /** The `reply_parameters` an answer to `ref` carries: only when the owner wrote again since that
+   *  message (an answer to his latest one reads in place, a quote would be noise). */
+  private replyParamsFor(ab: ActiveBinding, ref: string | undefined): Obj | null {
+    if (!ref) return null;
+    const mid = this.ownerMsgOfRef.get(`${ab.key}:${ref}`);
+    if (mid === undefined || this.lastOwnerMsg.get(ab.key) === mid) return null;
+    return { reply_parameters: { message_id: mid, allow_sending_without_reply: true } };
   }
 
   // ── Replies (M4, N6): message_id → what a reply to it means. Memory only (it holds a quote). ──
@@ -777,6 +979,49 @@ export class TelegramHub implements TelegramHubApi {
 
   replyOf(ab: ActiveBinding, messageId: number): { ref: string; quote: string; from: 'super' | 'owner' } | null {
     return this.replies.get(`${ab.key}:${messageId}`) ?? null;
+  }
+
+  /** The owner's own message under `ref` in this binding's chat (the newest), or null: what a
+   *  spoken summary replies to. Read from this binding's entries only. */
+  ownerMessageOf(ab: ActiveBinding, refs: readonly (string | null | undefined)[]): number | null {
+    const head = `${ab.key}:`;
+    // In order: the first ref that names one of his messages wins (a part ref never does: it falls
+    // through to the turn's own ref).
+    for (const ref of refs) {
+      if (!ref) continue;
+      let found: number | null = null;
+      for (const [k, e] of this.replies) {
+        if (e.from !== 'owner' || e.ref !== ref || !k.startsWith(head)) continue;
+        const mid = Number(k.slice(head.length));
+        if (Number.isSafeInteger(mid) && (found === null || mid > found)) found = mid;
+      }
+      if (found !== null) return found;
+    }
+    return null;
+  }
+
+  /**
+   * One owner-facing answer to Telegram: its text as before, then its `dream-voice` block spoken as
+   * a voice bubble (plan telegram-sesli-ozet, C4a; one block per text, `voiceAnswer`). True when
+   * anything landed.
+   * A failed text send throws, as `sendMarkdown` does; the voice never throws.
+   */
+  async sendAnswer(ab: ActiveBinding, md: string, sessionId: string | null, reply: { ref: string; quote?: string; answers?: string } | undefined, blocks: 'hub' | 'mac', replyRefs: readonly (string | null | undefined)[] = []): Promise<boolean> {
+    const { text, voice } = voiceAnswer(md);
+    let landed = false;
+    if (text.trim()) {
+      await this.sendMarkdown(ab, text, reply ? { ...reply, quote: reply.quote === md ? text : reply.quote } : undefined, blocks);
+      landed = true;
+    }
+    if (text.trim()) await this.answerExtras?.(ab, text, sessionId ?? '').catch(() => {});
+    if (voice) {
+      const spoke = await sendVoiceSummary(this, ab, voice, {
+        replyTo: this.ownerMessageOf(ab, replyRefs),
+        sessionId,
+      });
+      landed = spoke || landed;
+    }
+    return landed;
   }
 
   /** W5 seams, set by `wireTelegramW5`: commands (/dur /durum /gundem), the header a turn opens
@@ -808,10 +1053,20 @@ export class TelegramHub implements TelegramHubApi {
   /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
    *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
    *  status and typing begun. False = it did not reach the Super (the owner was told). */
-  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null, own = ''): Promise<string | false> {
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null, own = '', hold: { arrivedAt: number } | null = null): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
-    const inj = await this.waitInjector(ab, sessionId);
-    if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
+    // Only a caller on `ab.chain` (his message, his voice tap) may wait for a closed Super: a button
+    // handler runs inside the poll loop and keeps the 45 s fail-fast, as do run reports and schedules.
+    let inj: ReturnType<typeof chatInjector>;
+    if (hold) {
+      const r = await this.holdInjector(ab, sessionId, hold.arrivedAt);
+      if (r === 'stopped') return false;
+      if (r === 'expired') return false;
+      inj = r;
+    } else {
+      inj = await this.waitInjector(ab, sessionId);
+      if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
+    }
     const ref = this.mintRef(ab);
     telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as?.kind === 'run-report' ? { cardRef: as.cardRef } : {}) });
     this.journal(ab, (p) => p.map((e) => (e.updateId === updateId ? { ...e, ref, chatRegistryId: inj.chatRegistryId } : e)));
@@ -860,15 +1115,85 @@ export class TelegramHub implements TelegramHubApi {
     }
   }
 
+  /** A binding's current wait for a closed Super: its deadline counted from the FIRST waiting
+   *  message's arrival, told once when it starts and once when it runs out. */
+  private holding = new Map<BindingKey, { deadline: number; reported: boolean }>();
+
+  /** This binding is still the live one of a running hub. */
+  private serving(ab: ActiveBinding): boolean {
+    return this.started && this.active.get(ab.key) === ab && !ab.disabled && !ab.halted;
+  }
+
+  /**
+   * The injector for an owner message on `ab.chain`: the window reopened as `waitInjector` does,
+   * and when it does not come up the message WAITS (owner 2026-11-15) — the link opened again every
+   * `INJECTOR_RETRY_MS`, served the moment the Super registers. One spell per binding: it starts at
+   * the first waiting message's arrival and lasts `INJECTOR_HOLD_MS`; messages queued behind it share
+   * that deadline (order holds, none waits past it) and he hears "bekliyor" once and, if it runs out,
+   * "ulaşmadı" once. `stopped` = the hub stopped or the binding was replaced: nothing said.
+   */
+  private async holdInjector(ab: ActiveBinding, sessionId: string, arrivedAt: number): Promise<NonNullable<ReturnType<typeof chatInjector>> | 'stopped' | 'expired'> {
+    // Queued behind a stop: no link reopened, no "bekliyor" line, the journal keeps it.
+    if (!this.serving(ab)) return 'stopped';
+    let spell = this.holding.get(ab.key);
+    // A message that arrived after the last spell ran out opens a new one.
+    if (spell && arrivedAt > spell.deadline) { this.holding.delete(ab.key); spell = undefined; }
+    let inj = spell && this.now() >= spell.deadline ? chatInjector(sessionId) : await this.waitInjector(ab, sessionId);
+    if (!inj && !spell) {
+      spell = { deadline: arrivedAt + (this.deps.injectorHoldMs ?? INJECTOR_HOLD_MS), reported: false };
+      this.holding.set(ab.key, spell);
+      await this.notice(ab, 'warn', LINES.holding, true);
+    }
+    const retryMs = this.deps.injectorRetryMs ?? INJECTOR_RETRY_MS;
+    while (!inj && spell && this.serving(ab) && this.now() < spell.deadline) {
+      inj = await this.registeredWithin(sessionId, Math.min(retryMs, Math.max(0, spell.deadline - this.now())));
+      if (!inj && this.serving(ab) && this.now() < spell.deadline) inj = await this.waitInjector(ab, sessionId);
+    }
+    if (inj) { this.holding.delete(ab.key); return inj; }
+    if (!this.serving(ab)) { if (this.holding.get(ab.key) === spell) this.holding.delete(ab.key); return 'stopped'; }
+    if (spell && !spell.reported) { spell.reported = true; await this.notice(ab, 'warn', LINES.heldExpired, true); }
+    return 'expired';
+  }
+
+  /** The injector if the Super registers within `ms`, else null. Opens nothing. */
+  private registeredWithin(sessionId: string, ms: number): Promise<ReturnType<typeof chatInjector>> {
+    const have = chatInjector(sessionId);
+    if (have || ms <= 0) return Promise.resolve(have);
+    return new Promise((resolve) => {
+      const off = onChatInjector((sid) => { if (sid === sessionId) { clearTimeout(timer); off(); resolve(chatInjector(sid)); } });
+      const timer = setTimeout(() => { off(); resolve(null); }, ms);
+      timer.unref?.();
+    });
+  }
+
   /** The live injector, or the Super window reopened through its session link and awaited (A3). */
   private async waitInjector(ab: ActiveBinding, sessionId: string) {
     const have = chatInjector(sessionId);
     if (have) return have;
-    const link = ab.contextRoot ? appLinkForContextRoot(ab.contextRoot, { kind: 'session', claudeId: sessionId } as never, this.home) : null;
+    // A member's own Super opens on its stage through the same session link (AgentSurface).
+    const root = this.rootOf(ab);
+    const link = root ? appLinkForContextRoot(root, { kind: 'session', claudeId: sessionId } as never, this.home) : null;
     if (!link) return null;
+    const asked = this.now();
+    appendOpenLog('telegram_open', { session: sessionId.slice(0, 8) }, this.home);
     return new Promise<ReturnType<typeof chatInjector>>((resolve) => {
       let done = false;
-      const finish = (v: ReturnType<typeof chatInjector>) => { if (done) return; done = true; clearTimeout(timer); off(); resolve(v); };
+      const finish = (v: ReturnType<typeof chatInjector>) => {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        appendOpenLog(v ? 'telegram_opened' : 'telegram_open_timeout', { session: sessionId.slice(0, 8), ms: this.now() - asked }, this.home);
+        // Timed out: keep listening a while, so the log says whether (and when) it opened after all.
+        if (!v) {
+          const lateOff = onChatInjector((sid) => {
+            if (sid !== sessionId) return;
+            lateOff(); clearTimeout(lateTimer);
+            appendOpenLog('telegram_opened_late', { session: sessionId.slice(0, 8), ms: this.now() - asked }, this.home);
+          });
+          const lateTimer = setTimeout(() => lateOff(), 5 * 60_000);
+          lateTimer.unref?.();
+        }
+        off(); resolve(v);
+      };
       const off = onChatInjector((sid) => { if (sid === sessionId) finish(chatInjector(sid)); });
       const timer = setTimeout(() => finish(null), this.deps.injectorWaitMs ?? INJECTOR_WAIT_MS);
       timer.unref?.();
@@ -878,7 +1203,6 @@ export class TelegramHub implements TelegramHubApi {
 
   private onRefWritten(chatRegistryId: string, ref: string): void {
     for (const ab of this.active.values()) {
-      if (ab.target !== 'super') continue;
       const s = this.pollIO(ab.scope, ab.target).read();
       if (!s.pending.some((e) => e.ref === ref && e.chatRegistryId === chatRegistryId && !e.written)) continue;
       this.journal(ab, (p) => p.map((e) => (e.ref === ref && e.chatRegistryId === chatRegistryId ? { ...e, written: true } : e)));
@@ -890,7 +1214,6 @@ export class TelegramHub implements TelegramHubApi {
     const t = this.turns.get(ref);
     if (t && (!written || getChat(chatRegistryId)?.status === 'gone' || !getChat(chatRegistryId))) this.endTurn(ref);
     for (const ab of this.active.values()) {
-      if (ab.target !== 'super') continue;
       const s = this.pollIO(ab.scope, ab.target).read();
       const hit = s.pending.find((e) => e.ref === ref && e.chatRegistryId === chatRegistryId);
       if (!hit) continue;
@@ -902,17 +1225,16 @@ export class TelegramHub implements TelegramHubApi {
     }
   }
 
-  // ── Turn status: typing, one status message, the final line (plan "Status message", M2) ──
+  // ── Turn status: typing and the final line ──
 
   private beginTurn(ab: ActiveBinding, ref: string, sessionId: string): void {
-    const turn: TgTurn = { ref, key: ab.key, chatId: ab.binding.chatId, sessionId, startedAt: this.now(), statusMessageId: null, statusText: '', lastEditAt: 0, typing: null, answered: false };
+    const turn: TgTurn = { ref, key: ab.key, chatId: ab.binding.chatId, sessionId, startedAt: this.now(), typing: null, answered: false };
     this.turns.set(ref, turn);
     const tick = () => {
       // Never forever: a chat that died mid-turn, or a turn past its cap, stops typing.
       const live = getChat(sessionId);
       if (!live || live.status === 'gone' || this.now() - turn.startedAt > TURN_TYPING_CAP_MS) { this.endTurn(ref); return; }
       void ab.transport.sendChatAction(ab.binding.chatId, 'typing').catch(() => {});
-      void this.refreshStatus(turn).catch(() => {});
     };
     tick();
     turn.typing = setInterval(tick, TYPING_EVERY_MS);
@@ -928,46 +1250,8 @@ export class TelegramHub implements TelegramHubApi {
     return t;
   }
 
-  /** The rows of one Telegram message: children and team jobs whose origin is its ref. */
-  async statusRows(ab: ActiveBinding, ref: string): Promise<{ state: StatusState; label: string; note?: string }[]> {
-    if (!ab.contextRoot) return [];
-    const s = await readSuperState(ab.contextRoot);
-    const rows: { state: StatusState; label: string; note?: string }[] = [];
-    for (const c of Object.values(s.children)) {
-      if (c.origin !== ref) continue;
-      const live = getChat(c.sessionId);
-      const pending = live?.pendingQuestion?.isPermission;
-      const state: StatusState = pending ? 'waiting' : c.row === 'working' ? 'running' : c.row === 'asking' ? 'asking' : c.row === 'done' ? 'done'
-        : c.row === 'stuck' ? 'stuck' : c.row === 'gone' ? 'gone' : c.row === 'waiting' ? 'waiting' : 'running';
-      rows.push({ state, label: (c.brief || 'iş').slice(0, 60), note: pending ? 'izin bekliyor' : undefined });
-    }
-    for (const j of s.team) {
-      if (j.origin !== ref) continue;
-      let st: string = 'running';
-      try { st = teamJobStatus(ab.contextRoot, j, null).status; } catch { /* running */ }
-      const state: StatusState = st === 'done' ? 'done' : st === 'failed' ? 'stuck' : st === 'asking' ? 'asking' : 'running';
-      rows.push({ state, label: `${j.member}: ${(j.brief || '').slice(0, 50)}` });
-    }
-    return rows;
-  }
-
-  private async refreshStatus(turn: TgTurn): Promise<void> {
-    const ab = this.active.get(turn.key);
-    if (!ab) return;
-    const rows = await this.statusRows(ab, turn.ref);
-    if (!rows.length) return;
-    const text = rows.map((r) => statusLineHtml(r.state, r.label, r.note)).join('\n');
-    if (text === turn.statusText) return;
-    if (turn.statusMessageId === null) {
-      const sent = await this.send(ab, text, SILENT);
-      turn.statusMessageId = sent.message_id;
-    } else {
-      if (this.now() - turn.lastEditAt < STATUS_EDIT_MIN_MS) return;
-      await ab.transport.editMessageText(ab.binding.chatId, turn.statusMessageId, text).catch(() => {});
-    }
-    turn.statusText = text;
-    turn.lastEditAt = this.now();
-  }
+  // No status message (owner 2026-11-15): Telegram carries only what the Super itself writes. The
+  // jobs of a turn are said by the Super, or asked for with /durum (commands.ts `statusText`).
 
   private noteUserSent(sessionId: string, source: string | undefined): void {
     // Presence is not read here: only words typed on the Mac end it (`backAtMac`), whichever chat.
@@ -994,7 +1278,6 @@ export class TelegramHub implements TelegramHubApi {
         if (!ab) continue;
         void (async () => {
           await sending;
-          await this.refreshStatus({ ...t, lastEditAt: 0 }).catch(() => {});
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
           // for the owner says one plain line (it failed or stopped while he waits).
           if (!t.answered) await this.notice(ab, 'warn', LINES.endedSilent, true);
@@ -1025,11 +1308,9 @@ export class TelegramHub implements TelegramHubApi {
    *  for chats no Telegram text has reached yet). */
   async refreshSuperSessions(): Promise<void> {
     for (const ab of this.active.values()) {
-      if (ab.target !== 'super' || !ab.contextRoot) continue;
-      try {
-        const s = await readSuperState(ab.contextRoot);
-        if (s.session) this.superSessions.set(s.session, ab.key);
-      } catch { /* unreadable: nothing routes */ }
+      // Main's or the member's own: unreadable or unborn, nothing routes.
+      const s = await this.readBound(ab);
+      if (s?.session) this.superSessions.set(s.session, ab.key);
     }
   }
 
@@ -1039,7 +1320,6 @@ export class TelegramHub implements TelegramHubApi {
    *  (`onBackAtMac` ends only an `auto` run). */
   private backAtMac(at: number): void {
     for (const ab of this.active.values()) {
-      if (ab.target !== 'super') continue;
       if (this.presence.has(ab.key)) this.presence.set(ab.key, { via: 'mac', at });
     }
     try { this.deps.handsfree?.onBackAtMac?.(this); } catch { /* best-effort */ }
@@ -1064,7 +1344,7 @@ export class TelegramHub implements TelegramHubApi {
    *  back-at-Mac. AI Team member bots never read it (their rule: questions and failures always). */
   ownerAway(): boolean {
     try { if (this.deps.handsfree?.isOn?.()) return true; } catch { /* unknown: the presence fact decides */ }
-    for (const ab of this.active.values()) if (ab.target === 'super' && !ab.disabled && this.onTelegram(ab)) return true;
+    for (const ab of this.active.values()) if (!ab.disabled && this.onTelegram(ab)) return true;
     return false;
   }
 
@@ -1076,17 +1356,14 @@ export class TelegramHub implements TelegramHubApi {
     if (!this.ownerAway()) return;
     writeAwayState(true, this.home, this.now());
     for (const ab of [...this.active.values()]) {
-      if (ab.target !== 'super' || ab.disabled || !ab.contextRoot) continue;
-      const root = ab.contextRoot;
+      if (ab.disabled || !this.superOf(ab)) continue;
       void (async () => {
-        try {
-          const s = await readSuperState(root);
-          if (s.enabled && s.session) {
-            this.superSessions.set(s.session, ab.key);
-            const own = getChat(s.session);
-            if (own?.status === 'asking' && own.pendingQuestion) await this.sendPrompt(ab, s.session, own.pendingQuestion);
-          }
-        } catch { /* unreadable: the next turn-away tries again */ }
+        const s = await this.readBound(ab);
+        if (s?.enabled && s.session) {
+          this.superSessions.set(s.session, ab.key);
+          const own = getChat(s.session);
+          if (own?.status === 'asking' && own.pendingQuestion) await this.sendPrompt(ab, s.session, own.pendingQuestion).catch(() => {});
+        }
         for (const f of [...this.awayFlushers]) await f(ab).catch(() => {});
       })();
     }
@@ -1125,21 +1402,20 @@ export class TelegramHub implements TelegramHubApi {
     const inputs = at ? at.inputs : this.turnInputs.get(sessionId);
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
-    if (!ab || ab.disabled || ab.target !== 'super') return false;
+    if (!ab || ab.disabled) return false;
     // A server-opened event turn the Mac folds into one quiet line (a permission decision, a
     // note, row chatter) is not for the owner: nothing of it goes out. The same call the Mac
     // folds by; a result he waits on, a job waiting on him, an owed answer are owner batches.
     // A reply written for him (`isOwnerProse`) goes out whatever the turn: the Mac draws it too.
-    if (ab.contextRoot && !isOwnerProse(text)) {
-      const folds = await readSuperState(ab.contextRoot).then((st) => superTurnFolds(at?.mark ?? superTurnMark(sessionId), st.ownerBatches), () => false);
-      if (folds) return false;
+    if (!isOwnerProse(text)) {
+      const st = await this.readBound(ab);
+      if (st && superTurnFolds(at?.mark ?? superTurnMark(sessionId), st.ownerBatches)) return false;
     }
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
       if (!all.trim()) return false;
-      await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all }, this.extrasMode());
-      await this.answerExtras?.(ab, all, sessionId).catch(() => {});
-      return true;
+      const refs = splitReplySections(text).flatMap((s) => s.refs);
+      return this.sendAnswer(ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
     }
     const sections = splitReplySections(text);
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
@@ -1152,17 +1428,13 @@ export class TelegramHub implements TelegramHubApi {
       if ((!hit && !wide) || !s.text.trim()) continue;
       tried = true;
       // One section that does not land does not stop the next.
-      try { await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text }, this.extrasMode()); } catch { continue; }
-      sent = true;
-      await this.answerExtras?.(ab, s.text, sessionId).catch(() => {});
+      try { if (await this.sendAnswer(ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     if (!turns.length || inputs?.mac || !text.trim()) return false;
-    await this.sendMarkdown(ab, text, { ref: msgRef(text) }, this.extrasMode());
-    await this.answerExtras?.(ab, text, sessionId).catch(() => {});
-    return true;
+    return this.sendAnswer(ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
   }
 
   // ── Buttons (plan "Button integrity") ──
@@ -1255,6 +1527,7 @@ export class TelegramHub implements TelegramHubApi {
 
   private async handleButton(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number): Promise<string | null> {
     if (rec.kind === 'handsfree') return this.deps.handsfree?.onCallback?.(this, ab.key, rec, idx) ?? LINES.stale;
+    if (rec.kind === 'voice-retry') return this.voiceRetryTap(ab, rec);
     if ((rec.kind === 'permission' || rec.kind === 'question') && rec.data?.queue !== true) {
       const sessionId = rec.sessionId ?? '';
       const entry = getChat(sessionId);
@@ -1311,6 +1584,9 @@ export class TelegramHub implements TelegramHubApi {
 
   /** The Super chat's own pending prompt as buttons (permission: allow once / deny only). */
   private async sendPrompt(ab: ActiveBinding, sessionId: string, q: PendingQuestion): Promise<void> {
+    // A member's own Super asks the owner through the main Super's bot, as before (one place
+    // closes it, asks.ts): its bot never sends that prompt a second time.
+    if (this.superOf(ab)?.id !== 'main') return;
     // At the Mac: the Mac card only, and nothing marked sent (`flushAway` sends it if he turns away).
     if (!this.ownerAway() || this.sentPrompts.has(q.requestId)) return;
     this.sentPrompts.add(q.requestId);
@@ -1355,22 +1631,16 @@ export class TelegramHub implements TelegramHubApi {
 
 /** The most of a command a Telegram message shows: more would be consent to text he never saw. */
 export const TG_COMMAND_MAX = 1500;
-/** Control, hidden and direction-changing characters (built from a string so the file holds only
- *  escapes, never the raw characters). */
-const HIDDEN_CHARS = '\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f\\u061c\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2060-\\u2069\\ufeff';
-const HIDDEN_ONE = new RegExp(`[${HIDDEN_CHARS}]`);
-const HIDDEN_ALL = new RegExp(`[${HIDDEN_CHARS}]`, 'g');
-
 /** Does a message show this command whole and as it is: it fits, the redactor changes nothing, and
  *  no hidden or direction-changing character is in it? Only then may a card offer any Allow. */
 export function shownWhole(command: string): boolean {
-  return command.length <= TG_COMMAND_MAX && redactSecrets(command) === command && !HIDDEN_ONE.test(command);
+  return command.length <= TG_COMMAND_MAX && showsAsWritten(command) && !hasHiddenChars(command);
 }
 
 /** A command as a Telegram card draws it: secrets redacted, every hidden or direction-changing
  *  character drawn as a visible escape (as the profile's rules are), cut at the message's size. */
 export function visibleCommand(command: string): string {
-  return redactSecrets(command).replace(HIDDEN_ALL, (c) => `\\u{${c.codePointAt(0)!.toString(16).padStart(4, '0')}}`).slice(0, TG_COMMAND_MAX);
+  return showHiddenChars(redactSecrets(command)).slice(0, TG_COMMAND_MAX);
 }
 
 /** The line a card says when it cannot show the command whole: no Allow there, the Mac has it. */

@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useState } from 'react';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingQuestion } from '../chatSession';
+import { ALREADY_ANSWERED_MESSAGE } from '../chat/surveyAnswers';
 import { SurveyCard, SurveyReceipt, type SurveyHost, type SurveyRead } from '../chat/SurveyCard';
 import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { OwnerCardSlot } from './OwnerCardSlot';
@@ -15,10 +16,10 @@ import { CardHeader } from '../chat/molecules';
 import { GrantDecision } from '../chat/RefusalCard';
 import '../chat/AgentThreadCard.css';
 import {
-  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText,
+  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, oneChoiceQuestion, rewriteAnswer, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText,
 } from './ownerAnswer';
 import {
-  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
+  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText, superAlreadyText,
   type AskRef,
 } from './superQuestions';
 
@@ -145,7 +146,7 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
   // Handed off either way: a refused send re-mounts the card (`attempt`), its own failure path.
   const host: SurveyHost = {
     answerQuestion: (_requestId, questions, picked, notes) => { send(superAnswerText(item, questions, picked, notes)); return true; },
-    answer: (_requestId, opts) => { send(superUnclearText(item, opts.message ?? '')); return true; },
+    answer: (_requestId, opts) => { send(opts.message === ALREADY_ANSWERED_MESSAGE ? superAlreadyText(item) : superUnclearText(item, opts.message ?? '')); return true; },
   };
   return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} />);
 }
@@ -153,16 +154,19 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
 const NONE_PLACED: ReadonlySet<string> = new Set();
 
 /**
- * Every OPEN question whose asking call is not drawn above (folded into an event line, behind
- * "Show earlier messages", compacted away, or asked in a way the transcript cannot read): at the
- * chat's end, so the question is always in the chat.
+ * Every OPEN question, owner card or member wait with NO place on screen: neither its asking call
+ * nor any drawn item from before it was asked is in the transcript (behind "Show earlier
+ * messages", or before any message at all). At the chat's end, so a wait is never lost. One that
+ * has a place is drawn there by time (cardPlacement.ts), never here: the tail sits under his
+ * later messages, and a question asked before them must stay above them (owner 2026-11-15).
  */
 export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED }: {
   session: ChatSession;
-  /** The item ids that already have a live card in the rendered transcript. */
+  /** The question ids that already have a live card in the rendered transcript (at their call or
+   *  by time). */
   anchored: ReadonlySet<string>;
-  /** The owner-card items drawn in their place in the transcript (cardPlacement.ts); none = every
-   *  waiting one has no place on screen. */
+  /** The owner-card and member-wait items drawn in their place in the transcript
+   *  (cardPlacement.ts); none = every waiting one has no place on screen. */
   placedCards?: ReadonlySet<string>;
 }) {
   const view = useSuperQuestions(session.claudeId);
@@ -172,7 +176,7 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
   // transcript (cardPlacement.ts). Here only one that still waits on the owner and has no place on
   // screen (posted behind "Show earlier messages"), so the wait is never lost.
   const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.filter((q) => !placedCards.has(q.id)).map((q) => q.id));
-  const members = (view.members ?? []).filter((q) => !q.card || waiting.has(q.id));
+  const members = (view.members ?? []).filter((q) => (q.card ? waiting.has(q.id) : !placedCards.has(q.id)));
   const cards = (view.cards ?? []).filter((q) => waiting.has(q.id));
   if (!rest.length && !members.length && !cards.length) return null;
   return (
@@ -206,7 +210,7 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
  * member's page draws) is one Open button that brings the member's page, as before.
  * Leaves the chat when the member's item closes, wherever it was answered (Telegram, its page).
  */
-function MemberWaitCard({ item, paused = false }: { item: SuperQueueItem; paused?: boolean }) {
+export function MemberWaitCard({ item, paused = false }: { item: SuperQueueItem; paused?: boolean }) {
   const slug = item.member ?? '';
   const agent = useAgent(slug || null).data?.agent;
   const name = agent?.title || slug;
@@ -251,6 +255,7 @@ function MemberWaitBody({ item, name, slug, hasPhoto }: { item: SuperQueueItem; 
           busy={answer.busy}
           onAllow={(size) => answer.submit(allowAnswer(row === 'refusal' ? 'refusal' : 'permission', size))}
           onDecline={() => answer.submit(declineAnswer(row))}
+          onRewrite={() => answer.submit(rewriteAnswer())}
           onOpen={open}
         />
       ) : questions.length
@@ -323,7 +328,7 @@ export function SuperAnswerReceipt({ text, itemId }: { text: string; itemId?: st
   if (!answer) return null;
   return (
     <div data-testid="super-answer-receipt" data-item={answer.item} data-item-id={itemId}>
-      <SurveyReceipt unclear={answer.unclear} values={answer.values} />
+      <SurveyReceipt unclear={answer.unclear} already={answer.already} values={answer.values} />
     </div>
   );
 }

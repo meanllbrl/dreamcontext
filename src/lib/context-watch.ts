@@ -29,6 +29,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from './gitignore.js';
+import { TASK_SLUG_RE } from './task-slug.js';
 import { isSafeSessionId } from './transcript-locate.js';
 import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
 import { HANDOFF_FIELDS } from './handoff-readiness.js';
@@ -708,7 +709,7 @@ function claimRung(contextRoot: string, sessionId: string, state: NudgeState | n
 function paneTask(contextRoot: string, tab: string | null): string | null {
   if (!tab) return null;
   const rec = readHandoffRecord(contextRoot, tab);
-  if (!rec || rec.kind === 'super' || !/^[a-z0-9][a-z0-9-]{0,239}$/.test(rec.task)) return null;
+  if (!rec || rec.kind === 'super' || !TASK_SLUG_RE.test(rec.task)) return null;
   try { return lstatSync(join(contextRoot, 'state', `${rec.task}.md`)).isFile() ? rec.task : null; } catch { return null; }
 }
 

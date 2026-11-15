@@ -1,12 +1,14 @@
-import { useContext, useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClientContext } from '@tanstack/react-query';
 import { useApi, useVaultId } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useAgents } from '../../hooks/useAgents';
 import { identitiesOf, membersOf } from '../../hooks/useDrawerProjects';
 import { onWindowActivity, pollMs } from '../../lib/windowActivity';
+import { startPulsedPoll, type PulsedPoll } from '../../lib/pulsedPoll';
 import { requestManageMembers, requestOpenAgents } from '../../lib/openAgents';
-import { buildEkip, memberWaitCounts, projectEkip, type EkipSummary } from '../aiteam/teamModel';
+import { buildEkip, ekipPulseKey, memberWaitCounts, projectEkip, type EkipSummary } from '../aiteam/teamModel';
+import { useVaultSuperRecords } from '../sleepy/super/superRecordStore';
 import { fetchSuperState } from '../sleepy/super/superApi';
 import { buildGlobalTeam, DRAWER_POLL_MS } from './newshell/drawerModel';
 import { TeamSection } from './newshell/TeamSection';
@@ -35,28 +37,34 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
   // counts every item, not just the summary's one `asking` (a refused or stalled job is there only).
   const [waits, setWaits] = useState<Record<string, number>>({});
 
+  // The project's Super records as pushed live (`ekipPulseKey`): an owner answer re-reads both at
+  // once, so the row leaves red with his answer, never at the next poll.
+  const records = useVaultSuperRecords(vaultId);
+  const pulse = useMemo(() => ekipPulseKey(records), [records]);
+  const poller = useRef<PulsedPoll | null>(null);
   useEffect(() => {
-    let gone = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const read = () => {
-      void Promise.all([
+    const p = startPulsedPoll(
+      (current) => Promise.all([
         api.get<{ members?: unknown }>('/agent/sessions?summary=1').then(
-          (s) => { if (!gone) setSummaries(membersOf(s)); },
+          (s) => { if (current()) setSummaries(membersOf(s)); },
           () => { /* the last answer stays */ },
         ),
         // Unreadable (null): the last counts stay, like the summary's.
-        fetchSuperState(api).then((st) => { if (!gone && st) setWaits(memberWaitCounts(st.enabled ? st.queue : [])); }),
-      ]).finally(() => { if (!gone) timer = setTimeout(read, pollMs(DRAWER_POLL_MS)); });
-    };
-    read();
+        fetchSuperState(api).then((st) => { if (current() && st) setWaits(memberWaitCounts(st.enabled ? st.queue : [])); }),
+      ]),
+      () => pollMs(DRAWER_POLL_MS),
+    );
+    poller.current = p;
     // Back in front: read at once (plan r4 D8).
-    const offFocus = onWindowActivity((next, prev) => {
-      if (gone || !next.focused || prev.focused) return;
-      if (timer) clearTimeout(timer);
-      read();
-    });
-    return () => { gone = true; offFocus(); if (timer) clearTimeout(timer); };
+    const offFocus = onWindowActivity((next, prev) => { if (next.focused && !prev.focused) p.poke(); });
+    return () => { p.stop(); if (poller.current === p) poller.current = null; offFocus(); };
   }, [api]);
+  const firstPulse = useRef(true);
+  useEffect(() => {
+    // The mount's own read already covers the first key.
+    if (firstPulse.current) { firstPulse.current = false; return; }
+    poller.current?.poke();
+  }, [pulse]);
 
   const all = useMemo(() => buildEkip(summaries, identitiesOf(agentsQ.data ?? []), [], waits), [summaries, agentsQ.data, waits]);
   const own = useMemo(() => projectEkip(all), [all]);

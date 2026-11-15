@@ -2,7 +2,7 @@ import { useCallback, useState, useSyncExternalStore } from 'react';
 import { RequestError } from '../../../api/client';
 import { useApi } from '../../../context/VaultContext';
 import {
-  GRANT_SIZES, type GrantOffer, type GrantSize, type OwnerAnswer, type OwnerAnswerRequest, type OwnerAnswerResult, type OwnerAnswerVia,
+  GRANT_SIZES, SAFETY_REWRITE_REASON, isSafetyRefusal, type GrantOffer, type GrantSize, type OwnerAnswer, type OwnerAnswerRequest, type OwnerAnswerResult, type OwnerAnswerVia,
   type RefusalFact, type SuperQueueItem,
 } from '../../../lib/superTypes';
 import { askQuestionsOf } from './superQuestions';
@@ -84,6 +84,8 @@ export interface GrantChoices {
   onceOnlyReason?: string;
   notChecked?: string;
   rule?: string;
+  /** A built-in safety check refused it: no Allow, "Ask it to rewrite" instead. */
+  rewrite?: true;
 }
 
 /** The record an item lives in, as the owner-answer route names it: a member's record carries
@@ -109,6 +111,9 @@ export function mainCrewItem(record: string, item: Pick<SuperQueueItem, 'kind'>)
 export function grantChoices(item: SuperQueueItem, call: ShownCall | null, record: string): GrantChoices {
   if (!call || !call.whole) return { sizes: [] };
   const offer: GrantOffer | undefined = item.offer;
+  // A built-in safety check no Allow can lift (its offer says so, or an item born before that
+  // source existed names the check in its reason): the card asks for a rewrite, never an Allow.
+  if (offer?.rewrite || isSafetyRefusal(item.wait?.refusal)) return { sizes: [], rewrite: true, onceOnlyReason: offer?.onceOnlyReason ?? SAFETY_REWRITE_REASON };
   const listed = offer ? offer.sizes : ['once' as const];
   const mainCrew = mainCrewItem(record, item);
   const sizes = GRANT_SIZES.filter((s) => listed.includes(s) && !(s === 'member' && mainCrew));
@@ -135,6 +140,11 @@ export function noAllowReasonKey(call: ShownCall | null, canOpen: boolean): stri
 /** The answer for an Allow of the given size, by what the row is. */
 export function allowAnswer(kind: OwnerRowKind, size: GrantSize): OwnerAnswer {
   return kind === 'refusal' ? { kind: 'refusal', action: 'allow', size } : { kind: 'permission', behavior: 'allow', size };
+}
+
+/** "Ask it to rewrite" on a call a built-in safety check refused. */
+export function rewriteAnswer(): OwnerAnswer {
+  return { kind: 'refusal', action: 'rewrite' };
 }
 
 /** His no: Deny on a permission, Not needed on a refusal or a stalled member. */
@@ -247,7 +257,7 @@ export interface OwnerAnswerState {
 /** What a surface shows after one answer: a 403 (no owner key), a closed window or a size no
  *  longer offered falls back to Open; a second answer is told; anything else may be tried again. */
 export function answerStateAfter(r: SendResult): OwnerAnswerState {
-  if (r.ok) return { busy: false, fallback: false, note: r.outcome === 'allowed_waiting' ? 'owner.answer.allowedWaiting' : null };
+  if (r.ok) return { busy: false, fallback: false, note: r.outcome === 'allowed_waiting' ? 'owner.answer.allowedWaiting' : r.outcome === 'rewrite_asked' ? 'owner.answer.rewriteAsked' : null };
   return {
     busy: false,
     fallback: r.openInstead,

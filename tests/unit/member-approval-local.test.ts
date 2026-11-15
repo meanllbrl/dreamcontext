@@ -31,7 +31,7 @@ import { handleAgentsSetEnabled, handleAgentsUpdate } from '../../src/server/rou
 import { handleAutomationsEnable, handleAutomationsUpdate } from '../../src/server/routes/automations.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 
-const ENVS = ['CLAUDECODE', 'DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_MEMBER_CREW', 'DREAMCONTEXT_AUTOMATION_RUN', 'DREAMCONTEXT_SUPER_CREW', 'DREAMCONTEXT_AGENT_CHAT'];
+const ENVS = ['CLAUDECODE', 'DREAMCONTEXT_AGENT_SELF', 'DREAMCONTEXT_MEMBER_CREW', 'DREAMCONTEXT_AUTOMATION_RUN', 'DREAMCONTEXT_SUPER_CREW', 'DREAMCONTEXT_AGENT_CHAT', 'DREAMCONTEXT_MEMBER_SUPER', 'CLAUDE_CODE_SESSION_ID', 'DREAMCONTEXT_TAB_SESSION'];
 const PROMPT = 'Plan the projects.\nWrite the plan as a list.';
 
 let projectRoot: string;
@@ -106,6 +106,39 @@ describe('who is asking (the environment of the process)', () => {
     expect(memberActorFromEnv({ CLAUDECODE: '1', DREAMCONTEXT_SUPER_CREW: '1' })).toEqual({ actor: 'agent', self: null });
     expect(memberActorFromEnv({ DREAMCONTEXT_MEMBER_CREW: 'gantt' })).toEqual({ actor: 'agent', self: 'gantt' });
     expect(memberActorFromEnv({ DREAMCONTEXT_AUTOMATION_RUN: 'r1', DREAMCONTEXT_AGENT_SELF: 'pixel' })).toEqual({ actor: 'agent', self: 'pixel' });
+    // Every chat the app spawns carries the crew markers, '' meaning none: the owner's own chat.
+    expect(memberActorFromEnv({ CLAUDECODE: '1', DREAMCONTEXT_SUPER_CREW: '', DREAMCONTEXT_MEMBER_CREW: '' })).toEqual({ actor: 'session', self: null });
+    // A member's own Super chat belongs to that member.
+    expect(memberActorFromEnv({ CLAUDECODE: '1', DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_MEMBER_SUPER: 'gantt', DREAMCONTEXT_AGENT_CHAT: 'gantt', DREAMCONTEXT_MEMBER_CREW: '' })).toEqual({ actor: 'agent', self: 'gantt' });
+    // A member opened in an ordinary Chat tab: the owner's conversation, and that member's.
+    expect(memberActorFromEnv({ CLAUDECODE: '1', DREAMCONTEXT_AGENT_CHAT: 'gantt', DREAMCONTEXT_SUPER_CREW: '', DREAMCONTEXT_MEMBER_CREW: '', DREAMCONTEXT_MEMBER_SUPER: '' })).toEqual({ actor: 'session', self: 'gantt' });
+    // An app's chat belongs to the app: no member is its own.
+    expect(memberActorFromEnv({ CLAUDECODE: '1', DREAMCONTEXT_AGENT_CHAT: 'app-tahmin', DREAMCONTEXT_SUPER_CREW: '' })).toEqual({ actor: 'session', self: 'app-tahmin' });
+  });
+});
+
+describe('a member writes itself only, and his words lift a ceiling only where he talks', () => {
+  it('a member in an ordinary Chat tab edits itself, approved; another member is refused', async () => {
+    member();
+    member('pixel');
+    for (const [k, v] of Object.entries({ CLAUDECODE: '1', DREAMCONTEXT_AGENT_CHAT: 'gantt', DREAMCONTEXT_SUPER_CREW: '', DREAMCONTEXT_MEMBER_CREW: '', DREAMCONTEXT_MEMBER_SUPER: '' })) vi.stubEnv(k, v);
+    expect((await run(['agents', 'edit', 'gantt', '--prompt', `${PROMPT}\nSend the plan to ops@team.example.`])).code).toBe(0);
+    expect(approved('gantt')).toBe(true);
+    const other = await run(['agents', 'edit', 'pixel', '--prompt', `${PROMPT}\nSend the plan to ops@team.example.`]);
+    expect(other.code).toBe(1);
+    expect(other.out).toContain('own_member_only');
+    expect(getAgent(contextRoot, 'pixel')?.prompt).toBe(PROMPT);
+  });
+
+  it('a background run carrying a quote stays under the daily ceiling', async () => {
+    member();
+    asAgent('gantt');
+    for (let n = 1; n <= 3; n += 1) {
+      expect((await run(['agents', 'edit', 'gantt', '--prompt', `${PROMPT}\nStep ${n}.`, '--quote', 'planı her zaman kısa tut'])).code).toBe(0);
+    }
+    const capped = await run(['agents', 'edit', 'gantt', '--prompt', `${PROMPT}\nStep 4.`, '--quote', 'planı her zaman kısa tut']);
+    expect(capped.code).toBe(1);
+    expect(capped.out).toContain('amend_limit');
   });
 });
 
@@ -188,14 +221,49 @@ describe('the one card', () => {
     expect(approved('pixel')).toBe(false);
   });
 
-  it('a member\'s own run editing ANOTHER member is made on this Mac: stamped, traced', async () => {
+  it('a member\'s own run editing ANOTHER member is refused (owner 2026-11-15: a member corrects itself only)', async () => {
     member();
     member('pixel');
     asAgent('gantt');
-    expect((await run(['agents', 'edit', 'pixel', '--prompt', `${PROMPT}\nKeep it short.`])).code).toBe(0);
-    expect(approved('pixel')).toBe(true);
-    expect(listAmendments(projectRoot, 'pixel')[0]).toMatchObject({ by: 'agent' });
-    expect(listAmendments(projectRoot, 'pixel')[0].waits).toBeUndefined();
+    const r = await run(['agents', 'edit', 'pixel', '--prompt', `${PROMPT}\nKeep it short.`]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('own_member_only');
+    expect(getAgent(contextRoot, 'pixel')?.prompt).toBe(PROMPT);
+    expect(listAmendments(projectRoot, 'pixel')).toHaveLength(0);
+    // Its own: stamped, traced.
+    expect((await run(['agents', 'edit', 'gantt', '--prompt', `${PROMPT}\nKeep it short.`])).code).toBe(0);
+    expect(approved('gantt')).toBe(true);
+    expect(listAmendments(projectRoot, 'gantt')[0]).toMatchObject({ by: 'agent' });
+  });
+
+  it('the owner\'s own chat (every chat carries the crew markers EMPTY) is a session: his risky edit lands approved', async () => {
+    member();
+    vi.stubEnv('CLAUDECODE', '1');
+    vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '');
+    vi.stubEnv('DREAMCONTEXT_MEMBER_CREW', '');
+    expect((await run(['agents', 'edit', 'gantt', '--prompt', `${PROMPT}\nSend the plan to ops@team.example.`])).code).toBe(0);
+    expect(approved('gantt')).toBe(true);
+    expect(listAmendments(projectRoot, 'gantt')[0]).toMatchObject({ by: 'session' });
+    expect(listAmendments(projectRoot, 'gantt')[0].waits).toBeUndefined();
+  });
+
+  it('a member\'s own Super chat corrects itself from his feedback: approved with his words; another member refused', async () => {
+    member();
+    member('pixel');
+    for (const [k, v] of Object.entries({ CLAUDECODE: '1', DREAMCONTEXT_SUPER_CREW: '1', DREAMCONTEXT_MEMBER_SUPER: 'gantt', DREAMCONTEXT_AGENT_CHAT: 'gantt', DREAMCONTEXT_MEMBER_CREW: '' })) vi.stubEnv(k, v);
+    // A new address is flagged; from his own member's chat it lands anyway.
+    const mine = await run(['agents', 'edit', 'gantt', '--prompt', `${PROMPT}\nSend the plan to ops@team.example.`, '--quote', 'planı ops@team.example adresine de gönder']);
+    expect(mine.code).toBe(0);
+    expect(approved('gantt')).toBe(true);
+    const [row] = listAmendments(projectRoot, 'gantt');
+    expect(row).toMatchObject({ by: 'super', quote: 'planı ops@team.example adresine de gönder', risks: [expect.stringContaining('a new address')] });
+    expect(row.waits).toBeUndefined();
+    revertAmendment(contextRoot, 'gantt', row.id);
+    expect(getAgent(contextRoot, 'gantt')?.prompt).toBe(PROMPT);
+    const other = await run(['agents', 'edit', 'pixel', '--prompt', 'Plan the projects.']);
+    expect(other.code).toBe(1);
+    expect(other.out).toContain('own_member_only');
+    expect(getAgent(contextRoot, 'pixel')?.prompt).toBe(PROMPT);
   });
 
   it('an agent\'s clean edit of a global member stamps; its risky one waits', async () => {
@@ -388,12 +456,12 @@ describe('review round 1 (plan-r10 1e)', () => {
 });
 
 describe('the hash is untouched', () => {
-  it('20 reviewed fields (target and reply last); a stamp\'s field hashes live beside the hash, never in it', () => {
-    expect(APPROVAL_DIFF_FIELDS).toHaveLength(20);
+  it('22 reviewed fields (condition and conditionWake last); a stamp\'s field hashes live beside the hash, never in it', () => {
+    expect(APPROVAL_DIFF_FIELDS).toHaveLength(22);
     member();
     const entry = getApproval(projectRoot, 'gantt', undefined, 'agent')!;
     expect(entry.manifestSha256).toBe(manifestHash(target('gantt')));
     expect(Object.keys(entry.fieldHashes ?? {})).toEqual(expect.arrayContaining([...APPROVAL_DIFF_FIELDS, 'mode']));
-    expect(Object.keys(approvalFields(target('gantt')))).toHaveLength(20);
+    expect(Object.keys(approvalFields(target('gantt')))).toHaveLength(22);
   });
 });

@@ -36,8 +36,8 @@
 
 import { outwardAction } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
-import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
-import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
+import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, supersedesCard, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+import { imagesInPreviews, SAFETY_CHECK_RE, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
 import type { OpenRequest, RequestResponse } from '../super/request-answer.js';
 import {
@@ -278,10 +278,12 @@ function emitOwner(e: ChatEntry): void {
  *  an open CARD wait already held is never the one evicted (sahip-karti-yerinde K2: it may have a
  *  running action or an owed receipt): the newcomer beyond the cap is the one not tracked, and
  *  the child is told the owner already has that many open cards. Other kinds keep the newest. */
-function setOwnerWaits(e: ChatEntry, next: OwnerWait[]): void {
+/** `changed`: the list may read the same, but a card in it is a new copy (a same-id re-post):
+ *  the listeners are told anyway. */
+function setOwnerWaits(e: ChatEntry, next: OwnerWait[], changed = false): void {
   const cur = e.ownerWaits ?? [];
   const key = (ws: OwnerWait[]) => ws.map((w) => `${w.kind}:${w.id}:${w.line}`).join('\n');
-  if (key(cur) === key(next)) return;
+  if (key(cur) === key(next) && !changed) return;
   let kept = next;
   if (next.length > MAX_OWNER_WAITS) {
     const held = new Set(cur.filter((w) => isOwnerCardKind(w.kind)).map(waitKey));
@@ -301,7 +303,7 @@ function setOwnerWaits(e: ChatEntry, next: OwnerWait[]): void {
   }
   if (kept.length) e.ownerWaits = kept.slice(-MAX_OWNER_WAITS); else delete e.ownerWaits;
   pruneOrigins(e);
-  if (key(cur) === key(e.ownerWaits ?? [])) return;
+  if (key(cur) === key(e.ownerWaits ?? []) && !changed) return;
   emitOwner(e);
 }
 
@@ -324,6 +326,9 @@ export interface OwnerWaitOrigin { messageUuid: string; conversationId: string; 
 /** By `<session>\n<kind>:<id>`; bounded per chat by the waits it holds (dropped with them). */
 const waitOrigins = new Map<string, OwnerWaitOrigin>();
 const originKey = (sid: string, w: { kind: string; id: string }): string => `${sid}\n${waitKey(w)}`;
+/** The turn each open card wait was posted in (`ChatEntry.lastTurn.resultSeq` then), by the same
+ *  key: only a card of a LATER turn replaces it (bekleyen-kapanmaz). Pruned with the waits. */
+const waitTurns = new Map<string, number>();
 
 /** The frame the chat's open card wait `kind:id` was posted in, or null (an adopted wait, a
  *  restart: the item already carries its handle). Server-internal. */
@@ -333,6 +338,7 @@ export function ownerWaitOrigin(sessionId: string, kind: string, id: string): Ow
 function pruneOrigins(e: ChatEntry): void {
   const live = new Set((e.ownerWaits ?? []).map((w) => originKey(e.sessionId, w)));
   for (const k of [...waitOrigins.keys()]) if (k.startsWith(`${e.sessionId}\n`) && !live.has(k)) waitOrigins.delete(k);
+  for (const k of [...waitTurns.keys()]) if (k.startsWith(`${e.sessionId}\n`) && !live.has(k)) waitTurns.delete(k);
 }
 
 /** A receipt the SERVER delivered for an owner-proven card action (K4, K6): it closes the wait
@@ -844,16 +850,34 @@ export function registerChat(init: {
         if (text) {
           // The server's own run/secret card records (plan H1): keyed by this message's uuid.
           const uuid = typeof frame.uuid === 'string' ? frame.uuid : typeof (frame.message as { id?: unknown } | undefined)?.id === 'string' ? (frame.message as { id: string }).id : '';
-          if (uuid) noteAssistantCards(e.sessionId, e.vault, uuid, text);
+          // The turn this frame belongs to: the last turn end the chat saw. Every frame of one
+          // turn (text, a tool call, more text) shares it, so cards of ONE turn never replace
+          // each other (supersedesCard), whatever frame each came in.
+          const turn = e.lastTurn?.resultSeq ?? 0;
+          if (uuid) noteAssistantCards(e.sessionId, e.vault, uuid, text, `${e.sessionId}:${turn}`);
           // Read the whole text, before the cap: a card at the end of a long reply still counts.
           const cards = ownerCardsIn(text);
           if (cards.length) {
-            const keep = (e.ownerWaits ?? []).filter((w) => !cards.some((c) => c.kind === w.kind && c.id === w.id));
+            const held = (e.ownerWaits ?? []).filter((w) => !cards.some((c) => c.kind === w.kind && c.id === w.id));
+            // A card of the same kind under ANOTHER id, posted in a LATER turn, replaces the earlier
+            // one (`supersedesCard`, bekleyen-kapanmaz): the old wait is settled, so its item closes
+            // and never comes back. A wait with no turn noted (adopted after a restart) is older.
+            const replaced = held.filter((w) => waitTurns.get(originKey(e.sessionId, w)) !== turn && cards.some((c) => supersedesCard(c, w)));
+            const keep = held.filter((w) => !replaced.includes(w));
             // A card posted again is a new ask, even under an id he answered before.
             if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
+            if (replaced.length) e.ownerAnswered = [...(e.ownerAnswered ?? []).filter((k) => !replaced.some((w) => waitKey(w) === k)), ...replaced.map(waitKey)].slice(-MAX_ANSWERED);
+            // The SAME card posted again (same kind and id) from another message: the wait list
+            // reads unchanged, but the card is a new copy (its record closed the old one), so the
+            // inbox must hear it and move the item onto the new copy (kart-alta-yapisma-2).
+            const reposted = !!uuid && cards.some((c) => {
+              const o = waitOrigins.get(originKey(e.sessionId, c));
+              return !!o && o.messageUuid !== uuid && (e.ownerWaits ?? []).some((w) => w.kind === c.kind && w.id === c.id);
+            });
             // The frame each card came from (K1): the inbox makes the item's card handle from it.
             if (uuid) for (const c of cards) waitOrigins.set(originKey(e.sessionId, c), { messageUuid: uuid, conversationId: e.conversationId ?? '', text });
-            setOwnerWaits(e, [...keep, ...cards]);
+            for (const c of cards) waitTurns.set(originKey(e.sessionId, c), turn);
+            setOwnerWaits(e, [...keep, ...cards], reposted);
           }
           // The whole text, marks included, to whoever routes answers (the Telegram hub, W2).
           emitAssistantText(e.sessionId, text);
@@ -1053,6 +1077,7 @@ export function _resetChatRegistry(): void {
   ownerListeners.clear();
   unheard.clear();
   waitOrigins.clear();
+  waitTurns.clear();
   assistantListeners.clear();
   userSentListeners.clear();
   injectors.clear();
@@ -1160,6 +1185,10 @@ export function refusalSource(
   if (source === 'hook' || (!source && reasonType === 'hook')) return null;
   if (reasonType === 'mode' && (mode === 'plan' || mode === 'dontAsk')) return null;
   if (/^user/.test(source) || reasonType === 'user_reject' || kind === 'interrupted') return null;
+  // A built-in safety check (an `rm` it cannot resolve): only a person at Claude Code's own prompt
+  // may pass it, so no grant ever can. Told apart before `rule`: it reads `source: config` too.
+  if (reasonType === 'safetyCheck' || str(pd?.reasonType) === 'safetyCheck' || !!str(pd?.circuit_breaker) || !!str(pd?.circuitBreaker)
+    || SAFETY_CHECK_RE.test(str(deniedEvent?.message))) return 'safety';
   if (reasonType === 'classifier' || kind === 'automode-blocked') return 'classifier';
   if (reasonType === 'bridge' || source === 'bridge') return 'bridge';
   if (reasonType === 'rule' || (source === 'config' && !reasonType)) return 'rule';
@@ -1263,8 +1292,10 @@ function settleTurnRefusals(e: ChatEntry, t: TurnRefusals, result: Record<string
     for (const id of ids) {
       const rej = t.rejected.get(id);
       const ev = t.denied.get(id)?.frame ?? null;
-      const source = refusalSource(rej?.meta ?? null, ev, e.permissionMode);
-      if (!source) continue;
+      const read = refusalSource(rej?.meta ?? null, ev, e.permissionMode);
+      if (!read) continue;
+      // The tool_result's own words name a built-in safety check even when its meta does not.
+      const source = read !== 'safety' && SAFETY_CHECK_RE.test(rej?.text ?? '') ? 'safety' : read;
       const fromEvent = ev && typeof ev.tool_name === 'string' ? { tool: ev.tool_name, input: ev.tool_input } : null;
       const call = t.calls.get(id) ?? fromEvent ?? backstop.get(id) ?? null;
       // The input from the call itself; an event or the result's list only when the call frame

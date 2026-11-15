@@ -23,7 +23,7 @@ import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState, updateSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
-import { handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
+import { PRESENT_REPLY_KEYS, handleSuperLayout, handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createProgram } from '../../src/cli/program.js';
 
@@ -101,9 +101,11 @@ const message = (r: { json: Record<string, unknown> }) => JSON.stringify(r.json)
 const ids = (n: number) => tasks.slice(0, n).map((c) => c.id);
 
 describe('defaults: without --layout the cards pick it', () => {
-  it('1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip', async () => {
+  it('1 spotlight, 2 compare, 3-8 filmstrip (grid only when asked)', async () => {
     makeVault();
-    for (const [n, layout] of [[1, 'spotlight'], [2, 'compare'], [3, 'grid'], [4, 'grid'], [5, 'filmstrip'], [8, 'filmstrip']] as const) {
+    for (const [n, layout] of [[1, 'spotlight'], [2, 'compare'], [3, 'filmstrip'], [4, 'filmstrip'], [5, 'filmstrip'], [8, 'filmstrip']] as const) {
+      // Off first: over a presentation on screen a new one waits in the queue (sunum-sirasi).
+      await present([]);
       const r = await present(ids(n));
       expect(r.status, `${n}`).toBe(200);
       expect(onDisk().view, `${n}`).toEqual({ mode: 'present', cards: ids(n), layout });
@@ -115,8 +117,10 @@ describe('defaults: without --layout the cards pick it', () => {
     makeVault();
     await present([site.id, chat.id]);
     expect(onDisk().view.layout).toBe('review');
+    await present([]);
     await present([site.id, chat.id, browser.id]);
     expect(onDisk().view.layout).toBe('review');
+    await present([]);
     await present([browser.id, chat.id]);
     expect(onDisk().view.layout).toBe('review');
     makeVault({ containers: [chat, card('web-2', { kind: 'web', ref: 'http://127.0.0.1:5174/', by: 'auto', of: 'someone-else' })],
@@ -129,8 +133,9 @@ describe('defaults: without --layout the cards pick it', () => {
     makeVault();
     await present([chat.id, agenda.id]);
     expect(onDisk().view).toEqual({ mode: 'present', cards: [chat.id, agenda.id], layout: 'compare' });
+    await present([]);
     await present([site.id, chat.id, agenda.id]);
-    expect(onDisk().view.layout).toBe('grid');
+    expect(onDisk().view.layout).toBe('filmstrip');
   });
 });
 
@@ -174,6 +179,7 @@ describe('the route refuses what a layout cannot take', () => {
     expect(onDisk().view.layout).toBe('grid');
     await present(ids(2), 'filmstrip');
     expect(onDisk().view.layout).toBe('filmstrip');
+    await present([]);
     await present([site.id, chat.id], 'compare');
     expect(onDisk().view.layout).toBe('compare');
   });
@@ -241,7 +247,7 @@ describe('the owner wins for his card set (D9, D10)', () => {
     expect(onDisk().view.layout).toBe('filmstrip');
     // A pick the cards cannot take is undone by the store.
     await owner({ presentLayout: { layout: 'review', cards: ids(3) } });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(3), layout: 'grid' });
+    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(3), layout: 'filmstrip' });
   });
 
   it('the agent re-presenting the same set (any order, with or without --layout) keeps it: kept owner_layout', async () => {
@@ -255,11 +261,15 @@ describe('the owner wins for his card set (D9, D10)', () => {
     r = await present(ids(3), 'grid');
     expect(r.status).toBe(200);
     expect((r.json.result as Record<string, unknown>).kept).toBe('owner_layout');
+    // The chat's turn record knows every key of this reply (turnCards PRESENT_REPLY_KEYS mirrors it).
+    for (const k of Object.keys(r.json.result as Record<string, unknown>)) expect(PRESENT_REPLY_KEYS as readonly string[]).toContain(k);
     expect(onDisk().view.layout).toBe('filmstrip');
-    // Another set is a new presentation: the agent's layout, his marks gone.
+    // Another set is a new presentation: it waits in the queue, his presentation stays (sunum-sirasi).
     r = await present(ids(2));
     expect((r.json.result as Record<string, unknown>).kept).toBeUndefined();
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ids(2), layout: 'compare' });
+    expect((r.json.result as Record<string, unknown>).queued).toMatchObject({ at: 2, of: 2 });
+    for (const k of Object.keys(r.json.result as Record<string, unknown>)) expect(PRESENT_REPLY_KEYS as readonly string[]).toContain(k);
+    expect(onDisk().view).toMatchObject({ cards: ids(3), layout: 'filmstrip', layoutBy: 'owner' });
   });
 
   it('chat and exit apply only to the same set; an exit also lands over a close still on its way', async () => {

@@ -32,13 +32,13 @@ import {
   CARD_OVERFLOW_TEXT, _resetChatRegistry, dropOwnerWait, getChat, registerChat, registerCrewHandle, type ChatHandle,
 } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
-import { emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.js';
+import { READOPT_GRACE_MS, emptySuperState, type SuperQueueItem } from '../../src/lib/super/types.js';
 import {
-  PARKED_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, lookupOwnerCard, moveCardItems, noteChatStarted, noteChildParking,
+  PARKED_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, lookupOwnerCard, moveCardItems, noteChatStarted, noteChildParking, noteServerStopping,
   startSuperInbox, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, noteSuperSend } from '../../src/lib/super/owner-wait.js';
-import { _resetCardsForTests, cardRefOf, listCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
+import { _resetCardsForTests, cardRefOf, getCard, listCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
 import { _resetOwnerReceiptsForTests } from '../../src/server/owner-receipts.js';
 import { deliverWindowResult, mintWindowToken, resetWindowControl, sendWindowCommand } from '../../src/lib/window-control.js';
 import { buildRunReport } from '../../dashboard/src/components/sleepy/chat/runReport.js';
@@ -175,18 +175,69 @@ describe('an owner card a crew child leaves is a record the server holds (K1, K2
     expect(ev).not.toMatch(/event=gone/);
   });
 
-  it('a real exit (no park) still says `gone`, with the card item still open (K2)', async () => {
+  // Owner 15 Nov (kart-alta-yapisma-2): only a PARK keeps a card past the process; a real exit
+  // leaves nobody to take the result, so the card is withdrawn and nothing counts it.
+  it('a real exit (no park) says `gone`, and its card is withdrawn (record `dropped`)', async () => {
     const { hs, delivered } = await boot([C1]);
     say(hs[0], fence(RUN));
     hs[0].observe({ type: 'result' });
     await drain();
+    const [item] = await openCards(C1);
     hs[0].exited();
     await advance(60_000);
     expect(await ofKind('gone', C1)).toHaveLength(1);
     expect(await ofKind('parked', C1)).toHaveLength(0);
-    expect(await openCards(C1)).toHaveLength(1);
-    expect((await state()).children[C1].row).toBe('waiting');
+    expect(await openCards(C1)).toHaveLength(0);
+    expect(getCard(C1, item.card!.cardRef)).toMatchObject({ state: 'closed', closedBy: 'dropped' });
+    expect((await state()).children[C1].row).toBe('gone');
     expect(delivered.map((d) => d.text).join('\n')).toMatch(/event=gone/);
+  });
+
+  it('a real exit keeps a card he already acted on (its result is held for the child): K2', async () => {
+    const { hs } = await boot([C1]);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    const [item] = await openCards(C1);
+    await writeSuper(root, (s) => { const q = s.queue.find((x) => x.id === item.id); if (q) q.delivery = 'held:cap'; });
+    hs[0].exited();
+    await advance(60_000);
+    expect((await state()).queue.find((q) => q.id === item.id)).toMatchObject({ delivery: 'held:cap', state: expect.not.stringMatching(/^done$/) });
+    expect(getCard(C1, item.card!.cardRef)?.state).toBe('open');
+  });
+
+  it('the server\'s own stop kills the child: a park, its card stays open (K2)', async () => {
+    const { hs } = await boot([C1]);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    const [item] = await openCards(C1);
+    noteServerStopping();
+    hs[0].exited();
+    await advance(60_000);
+    expect((await openCards(C1)).map((q) => q.id)).toEqual([item.id]);
+    expect(getCard(C1, item.card!.cardRef)?.state).toBe('open');
+  });
+
+  it('a relaunch whose child does not come back withdraws nothing: no exit was seen (K2)', async () => {
+    const { hs } = await boot([C1]);
+    say(hs[0], fence(RUN));
+    hs[0].observe({ type: 'result' });
+    await drain();
+    const [item] = await openCards(C1);
+    // A child the relaunch brings back (on the stage: `superRestoreHold` null), so its grace arms.
+    await writeSuper(root, (s) => { s.children[C1].adopted = true; });
+    // The app relaunches: a new process, the child never re-registers.
+    _resetSuperInbox();
+    _resetChatRegistry();
+    resetSuperIndex();
+    await startSuperInbox([root]);
+    attachSuperInbox({ id: `inbox-${Math.random()}`, sessionId: SUPER, attached: () => true, idle: () => true, deliver: async () => true });
+    await drain();
+    await advance(READOPT_GRACE_MS + 60_000);
+    expect(await ofKind('gone', C1)).toHaveLength(1);
+    expect((await openCards(C1)).map((q) => q.id)).toEqual([item.id]);
+    expect(getCard(C1, item.card!.cardRef)?.closedBy).not.toBe('dropped');
   });
 
   it('the 11 Nov replay: post, park, resume, idle, park ends with ONE open item and zero gone events', async () => {
@@ -236,13 +287,16 @@ describe('an owner card a crew child leaves is a record the server holds (K1, K2
     const { hs } = await boot([C1]);
     const told: string[] = [];
     registerCrewHandle(C1, { sendServerTurn: (t) => { told.push(t); return true; } });
-    say(hs[0], ['a', 'b', 'c', 'd'].map((id) => fence(runCard(id))).join('\n'), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    // Three kinds first; then two mcp cards in a later message: no kind is replaced
+    // (supersedesCard replaces only an earlier card of the SAME kind), and the fifth is over the cap.
+    const mcp = (id: string) => fence({ type: 'mcp', id, why: `connect ${id}`, servers: [id] });
+    say(hs[0], [fence(runCard('a')), fence({ type: 'secret', id: 'b', title: 'Key b', fields: [{ key: 'B_KEY' }] }), fence({ type: 'checklist', id: 'c', title: 'Steps c', items: [{ id: '1', text: 'one' }] })].join('\n'), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
     await drain();
-    say(hs[0], fence(runCard('e')), 'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+    say(hs[0], `${mcp('d')}\n${mcp('e')}`, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
     await drain();
     expect(getChat(C1)?.ownerWaits?.map((w) => w.id)).toEqual(['a', 'b', 'c', 'd']);
     expect((await openCards(C1)).map((q) => q.wait?.id).sort()).toEqual(['a', 'b', 'c', 'd']);
-    expect(told).toEqual([CARD_OVERFLOW_TEXT({ kind: 'run', id: 'e' })]);
+    expect(told).toEqual([CARD_OVERFLOW_TEXT({ kind: 'mcp', id: 'e' })]);
     expect(told[0]).toMatch(/already has 4 open cards/);
   });
 
@@ -343,12 +397,13 @@ describe('who closes a card (K4 attribution)', { timeout: 60_000 }, () => {
 
   it('a server-marked receipt closes its card BY ID (whatever its text), and only that card', () => {
     const h = posted();
-    say(h, fence(runCard('other')), 'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+    // Another kind: a later run card would replace the first one (supersedesCard).
+    say(h, fence({ type: 'secret', id: 'other', title: 'Other key', fields: [{ key: 'OTHER_KEY' }] }), 'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
     expect(waits()).toEqual(['gcloud-login', 'other']);
     // A mark naming no open card closes nothing.
     h.userSent('[ran in chat]\n$ echo nope', { server: true, ownerReceipt: { kind: 'run', id: 'nope' } });
     expect(waits()).toEqual(['gcloud-login', 'other']);
-    h.userSent('anything at all', { server: true, ownerReceipt: { kind: 'run', id: 'other' } });
+    h.userSent('anything at all', { server: true, ownerReceipt: { kind: 'secret', id: 'other' } });
     expect(waits()).toEqual(['gcloud-login']);
   });
 });

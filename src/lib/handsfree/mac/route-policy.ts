@@ -232,6 +232,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/launcher/upgrade/status': deny(INSTALL),
   'GET /api/launcher/self-update': deny(INSTALL),
   'POST /api/launcher/self-update': deny(INSTALL),
+  'GET /api/launcher/update-channel': deny(INSTALL),
+  'POST /api/launcher/update-channel': deny(INSTALL),
   'POST /api/launcher/relaunch': deny(LAUNCHER),
   'GET /api/launcher/federation-graph': deny(OTHER_PROJECTS),
   'POST /api/launcher/connection': deny(OTHER_PROJECTS),
@@ -295,6 +297,10 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/seen': deny(SUPER),
   'POST /api/super/owed/drop': deny(SUPER),
   'POST /api/super/pad': deny(SUPER),
+  'POST /api/super/pad/add': deny(SUPER),
+  'POST /api/super/pad/remove': deny(SUPER),
+  // The Super never reads past days through it: it has `super state`.
+  'GET /api/super/agenda-day': deny(SUPER),
   'POST /api/super/open': deny(SUPER),
   'POST /api/super/member': deny(SUPER),
   // The bar's in-place answer can write a grant and the owner's words into a member's Super, so it

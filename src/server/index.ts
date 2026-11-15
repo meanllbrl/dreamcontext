@@ -1,4 +1,5 @@
 import { handleAgentTools } from './routes/agent-tools.js';
+import { ensureAppCliOnShellPath } from '../lib/app-cli-path.js';
 import { handleAgentToolHandoff } from './routes/agent-tool-handoff.js';
 import {
   handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
@@ -33,12 +34,12 @@ import { setOwnerQuestionSinks } from '../lib/super/owner-question.js';
 import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { notchCovers } from '../lib/notch-state.js';
 import { recordNotification } from '../lib/notification-log.js';
-import { startSuperInbox } from '../lib/super/inbox.js';
+import { noteServerStopping, startSuperInbox } from '../lib/super/inbox.js';
 import { startSuperSchedule } from './super-schedule.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -77,6 +78,8 @@ import {
   handleLauncherUpgrade,
   handleLauncherUpgradeStatus,
   handleLauncherSelfUpdateGet,
+  handleLauncherUpdateChannelGet,
+  handleLauncherUpdateChannelPost,
   handleLauncherSelfUpdatePost,
   handleLauncherRelaunch,
   handleLauncherFederationGraph,
@@ -687,6 +690,9 @@ export function buildRouter(): Router {
   router.post('/api/super/seen', handleSuperSeen);
   router.post('/api/super/owed/drop', handleSuperOwedDrop);
   router.post('/api/super/pad', handleSuperPad);
+  router.post('/api/super/pad/add', handleSuperPadAdd);
+  router.post('/api/super/pad/remove', handleSuperPadRemove);
+  router.get('/api/super/agenda-day', handleSuperAgendaDay);
   router.post('/api/super/open', handleSuperOpen);
   router.post('/api/super/member', handleSuperMember);
   router.post('/api/assistant/look', handleAssistantLook);
@@ -718,6 +724,8 @@ export function buildRouter(): Router {
   router.get('/api/launcher/upgrade/status', handleLauncherUpgradeStatus);
   router.get('/api/launcher/self-update', handleLauncherSelfUpdateGet);
   router.post('/api/launcher/self-update', handleLauncherSelfUpdatePost);
+  router.get('/api/launcher/update-channel', handleLauncherUpdateChannelGet);
+  router.post('/api/launcher/update-channel', handleLauncherUpdateChannelPost);
   router.post('/api/launcher/relaunch', handleLauncherRelaunch);
   router.get('/api/launcher/federation-graph', handleLauncherFederationGraph);
   router.post('/api/launcher/connection', handleLauncherConnectionCreate);
@@ -1559,6 +1567,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   // nested-claude walk runs past the server and reads a human pane as nested when the server
   // itself was started from inside a Claude Code session.
   prepareDashboardEnv(process.env, process.pid);
+  // On the app's own Node (a Mac with no npm): `dreamcontext` on the Terminal's PATH with no click.
+  const appCli = ensureAppCliOnShellPath();
+  if (appCli?.refused || (appCli && !appCli.wrote.length && !appCli.alreadyConfigured.length)) {
+    console.warn(`[setup] dreamcontext could not be put on the Terminal's PATH; add by hand: ${appCli.line || appCli.dir}`);
+  }
   const { port, contextRoot, open, host = '127.0.0.1' } = options;
   const router = buildRouter();
   const dashboardDir = getDashboardDir();
@@ -1673,6 +1686,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       const shutdown = () => {
         if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
         shuttingDown = true;
+        // Every child this stop ends is a park, never a real exit: their cards for the owner stay
+        // open across the relaunch (K2, kart-alta-yapisma-2).
+        noteServerStopping();
         console.log('\n  Shutting down...');
         unpublishDesktopServer();
         stopAppsSweeper();

@@ -328,8 +328,8 @@ async function run() {
     ok('what stood on screen ~1 s went read, what lay above did not', n1 > 0 && n1 < n0, `${n1} of ${n0}`);
     // Rule C (owner 2026-11-13): his send was followed until the new answer's start reached the
     // top; the rest waits below the button with its count.
-    const rest = (await newBtn.innerText().catch(() => '')).trim();
-    ok('stopped at the answer\'s start: "↓ N new" for what waits below', /↓\s*\d+\s+new/.test(rest), JSON.stringify(rest));
+    const rest = ((await newBtn.getAttribute('aria-label').catch(() => '')) ?? '').trim();
+    ok('stopped at the answer\'s start: "N new" for what waits below', /\d+\s+new/.test(rest), JSON.stringify(rest));
     await shot('kod-sonra-1440');
     const server = await page.evaluate(async () => (await fetch('/api/agent/super-read')).json().catch(() => null));
     console.log('   marks', JSON.stringify(server)?.slice(0, 160));
@@ -345,9 +345,9 @@ async function run() {
     ok('a reload keeps what was read and what was not', nReload > 0 && nReload <= n1, `${nReload} after ${n1}`);
     ok('the opening lands with the first unread and its line on screen', await until(page, firstLineInView, 6000));
     await shot('kod-sonra-acilis-1440');
-    const below = await newBtn.innerText().catch(() => '');
+    const below = (await newBtn.getAttribute('aria-label').catch(() => '')) ?? '';
     console.log('   button after landing:', JSON.stringify(below));
-    ok('the way down is on offer, with what is new below', (await newBtn.count()) === 1 && /↓/.test(below), JSON.stringify(below));
+    ok('the way down is on offer, with what is new below', (await newBtn.count()) === 1 && below.length > 0, JSON.stringify(below));
     await blur(false);
     await page.waitForTimeout(2200);
     const n2 = await badge();

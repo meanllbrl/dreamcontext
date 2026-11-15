@@ -276,6 +276,8 @@ describe('the spawn', () => {
     const normal = ['/shared.json', null, '/browser.json'];
     expect(leanChildMcpArgs(null, normal)).toEqual(mcpConfigArgs(normal));
     expect(leanChildMcpArgs({ leanMcpPath: null, projectMcp: null, browser: '/b.json' }, normal)).toEqual(['--strict-mcp-config', '--mcp-config', '/b.json']);
+    // Given a claude.ai connector: its settings carry the allowlist, so strict (which drops every connector) goes.
+    expect(leanChildMcpArgs({ leanMcpPath: '/l.json', projectMcp: null, browser: '/b.json', allowlisted: true }, normal)).toEqual(['--mcp-config', '/l.json', '/b.json']);
   });
 
   it('leftover subsets of a server that is gone are swept at start; a live server\'s stay', () => {

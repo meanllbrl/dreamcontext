@@ -537,7 +537,7 @@ describe('the agenda digest on a phone mirror (task hands-free-telefonda-super-a
     const { ws } = startSuper();
     const phone = await joined();
     expect(new Set(digests(phone).map((d) => d.key)).size).toBe(1);
-    expect(digests(phone)[0].pad).toEqual([{ id: 'n1', section: 'now', text: 'Fixing the paywall', at: 1 }]);
+    expect(digests(phone)[0].pad).toEqual([{ id: 'n1', section: 'now', text: 'Fixing the paywall', at: 1, bornAt: 1 }]);
     expect(digests(ws)).toHaveLength(0);
   });
 

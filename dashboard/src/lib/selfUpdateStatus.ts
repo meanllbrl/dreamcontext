@@ -45,3 +45,21 @@ export function statusLine(view: SelfUpdateView, t: (k: string) => string): stri
     default: return fill('settings.selfUpdate.status.unknown');
   }
 }
+
+/** GET /api/launcher/update-channel (src/server/routes/launcher.ts `updateChannelView`). */
+export interface UpdateChannelView {
+  channel: 'stable' | 'beta';
+  appVersion: string | null;
+  stableVersion: string | null;
+  /** Off Beta, on a build newer than stable: it stays until stable passes it. */
+  staysUntilStable: boolean;
+  desktop: boolean;
+}
+
+/** The line under the Beta row: on, off, or off with the build in place staying (never a downgrade). */
+export function channelStatusLine(v: UpdateChannelView, t: (k: string) => string): string {
+  if (!v.desktop) return t('settings.beta.status.desktopOnly');
+  if (v.channel === 'beta') return t('settings.beta.status.on');
+  if (v.staysUntilStable && v.appVersion) return t('settings.beta.status.stays').replace('{installed}', v.appVersion);
+  return t('settings.beta.status.off');
+}

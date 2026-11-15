@@ -43,15 +43,16 @@ export function parseRenderCard(r: unknown): Extract<RenderCardResult, { ok: tru
   return o as unknown as Extract<RenderCardResult, { ok: true }>;
 }
 
-export function insightRenderer(snapshot: Snapshotter, opts: { appCss?: () => string } = {}) {
+export function insightRenderer(snapshot: Snapshotter, opts: { appCss?: () => string; rootOf?: (ab: ActiveBinding) => string | null } = {}) {
   return async (ab: ActiveBinding, sessionId: string, containerId: string): Promise<Buffer[] | null> => {
-    if (!ab.contextRoot) return null;
+    // The project the bot talks in (a global member's binding names none: the hub's `rootOf`).
+    const root = opts.rootOf ? opts.rootOf(ab) : ab.contextRoot;
+    if (!root) return null;
     const token = superTokenOfSession(sessionId);
     if (!token) return null;
     const r = await sendHubCommand(token, 'render_card', { target: { kind: 'container', id: containerId } }, { timeoutMs: 10_000 }).catch(() => null);
     const result = parseRenderCard(r);
     if (!result) return null;
-    const root = ab.contextRoot;
     const page = sealInsight({ result, appCss: (opts.appCss ?? bundledAppCss)(), labHtml: (slug) => readCache(root, slug)?.html ?? null });
     if (!page) return null;
     return snapshot(sessionId, page, Math.max(200, Math.min(1600, Math.round(result.size.w))));

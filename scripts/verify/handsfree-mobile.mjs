@@ -594,7 +594,7 @@ try {
 
   // F7: the quiet project: a New chat row, and a one-line empty state, not the setup screen.
   await expand(ph, 'quiet');
-  report.check('F7 the quiet project offers a New chat row', await until(async () => (await projRow(ph, 'quiet').locator('[data-testid="drawer-new-chat"]').count()) === 1, 6000));
+  report.check('F7 the quiet project offers New window on its header', await until(async () => (await projRow(ph, 'quiet').locator('[data-testid="drawer-project-add"]').count()) === 1, 6000));
   await pick(ph, 'quiet');
   if (await drawerShown(ph)) await ph.getByTestId('ns-drawer-toggle').click();
   const empty = ph.locator('.project-instance:not([hidden]) [data-testid="chat-empty"]');
@@ -612,7 +612,7 @@ try {
   await openDrawer(ph);
   await expand(ph, 'other');
   const otherRows = await projRow(ph, 'other').locator('[data-testid="drawer-chat-row"] .ns-dr-t').allTextContents();
-  report.check('11 the handed-over project lists its Super Agent row and offers New chat in the drawer', (await projRow(ph, 'other').locator('[data-testid="drawer-new-chat"]').count()) === 1
+  report.check('11 the handed-over project lists its Super Agent row and offers New chat in the drawer', (await projRow(ph, 'other').locator('[data-testid="drawer-project-add"]').count()) === 1
     && otherRows[0] === 'Super Agent', JSON.stringify(otherRows));
   report.check('11 no hand-over anywhere on the phone', (await ph.locator('[data-testid="super-handover-btn"]:visible').count()) === 0);
   // 12: History with the handed-over project ACTIVE: its own past chats are listed like any.

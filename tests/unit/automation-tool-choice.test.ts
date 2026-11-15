@@ -11,6 +11,8 @@ import { approveAutomation, checkApproval, canonicalApprovalPayload } from '../.
 import { runAutomation, type SpawnImpl } from '../../src/lib/automations/runner.js';
 import { createAutomation, getAutomation, readAutomationCache, updateAutomation } from '../../src/lib/automations/store.js';
 import { adoptPrimaryCodexAccount, recordCodexUsage } from '../../src/lib/codex-accounts.js';
+import { agentNotPickedMessage, setPickedAgents } from '../../src/lib/agent-pick.js';
+import { readThread } from '../../src/lib/automations/threads.js';
 
 vi.mock('../../src/lib/claude-path.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/lib/claude-path.js')>()),
@@ -112,6 +114,71 @@ describe('an automation on Codex', () => {
     const moved = updateAutomation(contextRoot, 'digest', { tool: 'codex' });
     expect(moved.tool).toBe('codex');
     expect(checkApproval(projectRoot, moved, home, 'run').approved).toBe(false);
+  });
+});
+
+// Plan npmsiz-beta C17: a job whose agent is not picked on this Mac does not start (deny-only).
+describe('the agent pick', () => {
+  const run = (slug: string, impl: SpawnImpl, extra: Record<string, unknown> = {}) =>
+    runAutomation(contextRoot, slug, { now: () => NOW, home, spawnImpl: impl, killImpl: vi.fn(), notify: () => {}, log: () => {}, ...extra });
+
+  it('with Claude unpicked, a job with no stored tool says the sentence and spawns nothing, attended or not', async () => {
+    setPickedAgents(['codex'], home);
+    make('plain');
+    for (const extra of [{}, { unattended: true }]) {
+      const { impl, calls } = spawnOnce(ENVELOPE);
+      const outcome = await run('plain', impl, extra);
+      expect(outcome.status).toBe('blocked');
+      expect(outcome.error).toBe(agentNotPickedMessage('claude'));
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it('a still-owed refused fire narrates nothing on repeat ticks: no thread entry, fire stays owed', async () => {
+    setPickedAgents(['codex'], home);
+    make('plain');
+    for (let tick = 0; tick < 2; tick++) {
+      const { impl, calls } = spawnOnce(ENVELOPE);
+      expect((await run('plain', impl, { unattended: true })).status).toBe('blocked');
+      expect(calls).toHaveLength(0);
+    }
+    expect(readThread(contextRoot, 'plain')).toEqual([]);
+    expect(readAutomationCache(contextRoot, 'plain')?.lastFireAt ?? null).toBeNull();
+  });
+
+  it('a changed manifest is refused before its approval question, which would spawn Claude', async () => {
+    make('plain');
+    updateAutomation(contextRoot, 'plain', { prompt: 'Write something else.' });
+    setPickedAgents(['codex'], home);
+    const { impl, calls } = spawnOnce(ENVELOPE);
+    const outcome = await run('plain', impl);
+    expect(outcome.error).toBe(agentNotPickedMessage('claude'));
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a pick listing Codex never moves an absent-tool job onto Codex; a job set to Codex runs on Codex', async () => {
+    signIn();
+    setPickedAgents(['codex'], home);
+    make('digest', 'codex');
+    const { impl, calls } = spawnOnce(ENVELOPE);
+    expect((await run('digest', impl)).status).toBe('ok');
+    expect(calls[0]!.bin).toBe('/fake/bin/node');
+    make('plain');
+    const second = spawnOnce(ENVELOPE);
+    await run('plain', second.impl);
+    expect(second.calls).toHaveLength(0);
+  });
+
+  it('a Codex job is refused when only Claude is picked; no pick record refuses nothing', async () => {
+    signIn();
+    make('digest', 'codex');
+    setPickedAgents(['claude'], home);
+    const refused = spawnOnce(ENVELOPE);
+    expect((await run('digest', refused.impl)).error).toBe(agentNotPickedMessage('codex'));
+    expect(refused.calls).toHaveLength(0);
+    rmSync(join(home, '.dreamcontext', 'agents.json'));
+    const ran = spawnOnce(ENVELOPE);
+    expect((await run('digest', ran.impl)).status).toBe('ok');
   });
 });
 

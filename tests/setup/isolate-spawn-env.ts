@@ -1,4 +1,7 @@
 import { scrubSpawnEnv } from '../../src/lib/session-origin.js';
+import {
+  AGENT_BOARD_ENV, AGENT_CHAT_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV, MEMBER_CREW_ENV, SUPER_CREW_ENV,
+} from '../../src/lib/automations/types.js';
 import { setCapacityFactsForTests } from '../../src/lib/super/capacity.js';
 import { setMcpHomeRedirectForTests } from '../../src/lib/mcp-store.js';
 import { mkdtempSync } from 'node:fs';
@@ -27,8 +30,18 @@ delete process.env.DREAMCONTEXT_DESKTOP;
 // 2c. An agent running the suite passes its own session markers (Claude Code's CLAUDECODE and
 //     CLAUDE_CODE_SESSION_ID, a Codex thread, the brain MCP mark) to every CLI the tests launch,
 //     and `tasks create` then holds them to the agent guard (agent-filing-guard.ts: no Super child
-//     files, no agent sub-task). CI has none of these. A test that needs an agent session sets them itself.
-for (const key of ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID', 'DREAMCONTEXT_VIA_BRAIN_MCP']) delete process.env[key];
+//     files, no agent sub-task). The same holds for a bridge chat's tool mark and an agent run's or a
+//     crew's markers (a Super's or a member's crew, a member's own run or chat): `agentDriven` reads
+//     them all, so a suite run from inside a Super's crew saw every "owner shell" as an agent (an
+//     owner-only approve line went missing, 2026-11-15). CI has none of these. A test that needs an
+//     agent session sets them itself.
+for (const key of [
+  'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID', 'DREAMCONTEXT_VIA_BRAIN_MCP', 'DREAMCONTEXT_AGENT_TOOL',
+  AGENT_SELF_ENV, AGENT_CHAT_ENV, AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, MEMBER_CREW_ENV, SUPER_CREW_ENV,
+]) delete process.env[key];
+// 2d. A Chat or terminal spawn hands its MCP config down as DREAMCONTEXT_MCP_CFG_<n>. A suite run from
+//     inside one inherits them, and every spawn test that expects a clean env goes red. CI has none.
+for (const key of Object.keys(process.env)) if (key.startsWith('DREAMCONTEXT_MCP_CFG_')) delete process.env[key];
 
 // 3. `super delegate` holds a job when THIS machine is short of room (orchestration plan r5 D11).
 //    The suite must not pass or fail by the developer's swap: every test sees a roomy machine
@@ -48,3 +61,8 @@ setMcpHomeRedirectForTests(homedir(), mkdtempSync(join(tmpdir(), 'dc-test-mcp-ho
 //    id ('sess-1') would see each other's markers and write into the developer's home: every block
 //    in full instead. A test of the once-per-session path deletes this and fakes HOME.
 process.env.DREAMCONTEXT_PROMPT_ONCE = '0';
+
+// 6. The prompt hook's recall judge is a paid `claude -p` call. No hook a test spawns may make one:
+//    the default mode then answers with its model-free rule. A test of the judged path sets
+//    DREAMCONTEXT_RECALL_JUDGE=on and points DREAMCONTEXT_RECALL_JUDGE_BIN at a stub.
+process.env.DREAMCONTEXT_RECALL_JUDGE = 'off';

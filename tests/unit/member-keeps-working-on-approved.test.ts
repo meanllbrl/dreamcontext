@@ -62,13 +62,14 @@ function okSpawn() {
 
 const ctx = () => join(repo, '_dream_context');
 
-/** The owner creates the member; then a background run (another member's crew) rewrites it with a
+/** The owner creates the member; then a background run (a routine, no member of its own: since
+ *  2026-11-15 another member's process may not edit it at all, `own_member_only`) rewrites it with a
  *  new address in its text, which the risk filter holds for the owner's card. */
 async function memberWithWaitingChange(): Promise<void> {
   expect((await run(['agents', 'create', 'ua', '--title', 'UA', '--prompt', APPROVED])).code).toBe(0);
-  vi.stubEnv('DREAMCONTEXT_AGENT_SELF', 'someone-else');
+  vi.stubEnv('DREAMCONTEXT_AUTOMATION_RUN', 'run-1');
   expect((await run(['agents', 'edit', 'ua', '--prompt', WAITING])).code).toBe(0);
-  vi.stubEnv('DREAMCONTEXT_AGENT_SELF', undefined as unknown as string);
+  vi.stubEnv('DREAMCONTEXT_AUTOMATION_RUN', undefined as unknown as string);
   const raw = getRunTarget(ctx(), 'ua', 'agent')!;
   expect(raw.prompt).toContain('WAITING-MARKER');
   expect(checkApproval(repo, raw, undefined, 'run')).toMatchObject({ approved: false, reason: 'manifest-changed' });

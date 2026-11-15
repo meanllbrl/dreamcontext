@@ -162,7 +162,7 @@ export function routineNeeds(facts: RoutineFacts): RoutineNeed[] {
 
 // ─── Disk ─────────────────────────────────────────────────────────────────────
 
-const STATUSES: readonly string[] = ['ok', 'failed', 'timeout', 'blocked', 'deferred', 'orphaned', 'awaiting-review', 'awaiting-approval'];
+const STATUSES: readonly string[] = ['ok', 'failed', 'timeout', 'blocked', 'deferred', 'orphaned', 'awaiting-review', 'awaiting-approval', 'condition-false'];
 
 /** A history row re-read field by field: a hand-edited or older row degrades to fewer facts. */
 function readRow(raw: unknown): RoutineRunRow | null {

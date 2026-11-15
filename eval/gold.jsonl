@@ -34,7 +34,7 @@
 {"id":"q034","query":"control-plane API'da prototype pollution nasıl engelleniyor","expected":["knowledge/control-plane-api"],"alt":["feature/control-panel"],"category":"mixed","lang":"mixed"}
 {"id":"q035","query":"multi-review skill'de router specialists'i nasıl dispatch ediyor","expected":["knowledge/multi-reviewer-pattern"],"alt":["feature/multi-review-skill"],"category":"mixed","lang":"mixed"}
 {"id":"q036","query":"ECC competitive analysis'te onların bizden üstün olduğu yerler","expected":["knowledge/competitive-analysis-ecc"],"alt":[],"category":"mixed","lang":"mixed"}
-{"id":"q037","query":"npm publish öncesi yapılması gereken checklist adımları","expected":["knowledge/publish-checklist"],"alt":[],"category":"mixed","lang":"mixed"}
+{"id":"q037","query":"npm publish öncesi yapılması gereken checklist adımları","expected":["knowledge/release-publish-checklist"],"alt":[],"category":"mixed","lang":"mixed"}
 {"id":"q038","query":"goal-skill pack'in iteration cap'i ve escalate davranışı","expected":["feature/context-gate-and-goal-skill"],"alt":[],"category":"mixed","lang":"mixed"}
 {"id":"q039","query":"what's the current state of the dashboard control panel work","expected":["feature/control-panel"],"alt":["feature/web-dashboard"],"category":"recency","lang":"en"}
 {"id":"q040","query":"latest memory recall design — are we on haiku now","expected":["knowledge/haiku-recall-architecture"],"alt":["knowledge/decision-mem0-vs-bm25-recall","feature/memory-recall-bm25"],"category":"recency","lang":"en"}
@@ -48,7 +48,7 @@
 {"id":"q048","query":"vault-registry-multivault","expected":["knowledge/vault-registry-multivault"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q049","query":"competitive analysis everything-claude-code","expected":["knowledge/competitive-analysis-ecc"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q050","query":"control-plane-api","expected":["knowledge/control-plane-api"],"alt":[],"category":"field-match","lang":"en"}
-{"id":"q051","query":"publish checklist","expected":["knowledge/publish-checklist"],"alt":[],"category":"field-match","lang":"en"}
+{"id":"q051","query":"publish checklist","expected":["knowledge/release-publish-checklist"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q052","query":"manifest based install update","expected":["feature/manifest-based-install-update"],"alt":["knowledge/manifest-bootstrap-safety-pattern"],"category":"field-match","lang":"en"}
 {"id":"q053","query":"server security hardening task","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api"],"category":"field-match","lang":"en"}
 {"id":"q054","query":"multi-product support tags onboarding domain","expected":["feature/multi-product-support"],"alt":[],"category":"field-match","lang":"en"}

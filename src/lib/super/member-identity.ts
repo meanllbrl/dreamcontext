@@ -3,7 +3,7 @@ import { basename, dirname, join, relative } from 'node:path';
 import { getAgent } from '../agents/store.js';
 import { readLocalJson, updateLocalJson } from '../local-store.js';
 import { retireMemberSuper } from './inbox.js';
-import { superIdOfMember, superReadMarksPath, superRecordPath } from './store.js';
+import { superAgendaDaysDir, superIdOfMember, superReadMarksPath, superRecordPath } from './store.js';
 
 /**
  * A MEMBER'S STATE BELONGS TO THE MEMBER, NOT TO ITS NAME (owner 2026-11-08). The member's Super
@@ -36,6 +36,12 @@ function plainDir(path: string): void {
   const st = lstatSync(path, { throwIfNoEntry: false });
   if (st && (st.isSymbolicLink() || !st.isDirectory())) throw new Error(`${path} is not a plain folder`);
   mkdirSync(path, { recursive: true });
+}
+
+/** A plain folder, never through a link (the member's agenda days). */
+function plainFolder(path: string): boolean {
+  const st = lstatSync(path, { throwIfNoEntry: false });
+  return !!st && st.isDirectory() && !st.isSymbolicLink();
 }
 
 /** A plain file, never through a link. */
@@ -80,11 +86,14 @@ async function settleOnce(
   if (prev && prev !== id) {
     const sid = superIdOfMember(slug);
     const files = [superRecordPath(contextRoot, sid), superReadMarksPath(contextRoot, sid)].filter(plainFile);
-    if (files.length > 0) {
+    // Its agenda days follow the record (task ajanda-gunluk C4), even a folder left without one.
+    const days = superAgendaDaysDir(contextRoot, sid);
+    if (files.length > 0 || plainFolder(days)) {
       try { await deps.stopSuper?.(contextRoot, slug); } catch { /* the old state still leaves the new member */ }
       retireMemberSuper(contextRoot, slug);
       // Re-read after the stop: only what is still there moves.
       files.splice(0, files.length, ...files.filter(plainFile));
+      if (plainFolder(days)) files.push(days);
       const trashRoot = join(contextRoot, 'state', '.trash');
       plainDir(trashRoot);
       const ignore = join(trashRoot, '.gitignore');

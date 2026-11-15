@@ -20,7 +20,7 @@ import { redactSecrets, wouldRedact } from './format.js';
 /** Labels only the hub's own messages carry (N4). */
 export const SYSTEM_BUTTON_LABELS = [
   'Şifreyi gir', 'Telefonda aç', 'Telefon linkini aç', 'Onayla', 'Reddet', 'Çalıştır', 'İzin ver', "Super'i aç",
-  'Gönder', 'Not ekle', 'Belirsiz', 'Bitti', 'Yaz', 'Sahnede aç',
+  'Gönder', 'Not ekle', 'Belirsiz', 'Zaten cevapladım', 'Bitti', 'Yaz', 'Sahnede aç',
 ] as const;
 
 const LINE_SEPARATORS = new RegExp(`[${String.fromCharCode(0x2028)}${String.fromCharCode(0x2029)}]`, "g");

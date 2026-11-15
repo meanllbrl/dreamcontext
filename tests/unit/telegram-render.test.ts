@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { agentUrlButton, cleanTitle, posesAsSystem, webCardLine } from '../../src/lib/telegram/urls.js';
 import { authoredSecretHit, dataPayloads, dreamHtmlPage, reportPage, SEALED_MAIN_SCRIPT } from '../../src/lib/telegram/render.js';
 import { scanInsightBody, sealInsight, validRoot, ZOOM_LEVELS } from '../../src/lib/telegram/insight-seal.js';
+import { ZOOM_LEVELS as WINDOW_ZOOM_LEVELS } from '../../dashboard/src/lib/zoom.js';
 import { buildLabSrcdocServer } from '../../src/lib/telegram/lab-kit.js';
 import { labTokens, chatHtmlTokens } from '../../src/lib/telegram/kit-tokens.js';
 import { markdownToTelegramHtml } from '../../src/lib/telegram/format.js';
@@ -161,10 +162,9 @@ describe('insight seal (S1, S3, T4)', () => {
     expect(validRoot({ ...r, zoom: 3 })).toBeNull();
     expect(validRoot({ ...r, tokens: { '--x': 'red;}</style>' } })).toBeNull();
   });
-  it('ZOOM_LEVELS mirrors WindowChrome', () => {
-    const src = readFileSync('dashboard/src/components/layout/WindowChrome.tsx', 'utf8');
-    const m = /const ZOOM_LEVELS = \[([^\]]+)\]/.exec(src)!;
-    expect(m[1].split(',').map(Number)).toEqual([...ZOOM_LEVELS]);
+  it('ZOOM_LEVELS mirrors the window zoom (dashboard/src/lib/zoom.ts)', () => {
+    expect([...ZOOM_LEVELS]).toEqual([...WINDOW_ZOOM_LEVELS]);
+    expect(ZOOM_LEVELS).toContain(1.05);
   });
 });
 

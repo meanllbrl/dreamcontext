@@ -101,8 +101,8 @@ export const CHAT_KIT_TOKENS: Record<KitScheme, Record<string, string>> = {
 
 /** The chat pane's reading tokens at zoom 1 (dream-html only; report pages get none). */
 export const CHAT_READING_TOKENS: Record<string, string> = {
-  "--chat-text": "15px",
-  "--chat-line-height": "1.75"
+  "--chat-text": "14.5px",
+  "--chat-line-height": "1.5"
 };
 
 /** HTML_KIT_TOKENS resolved per theme: what the Lab's `resolveKitTokens()` returns. */

@@ -158,13 +158,15 @@ describe('agents edit from a session', () => {
     expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'scout', 'agent')!, undefined, 'run').approved).toBe(true);
   });
 
-  it('a member\'s own run edits itself and another member cleanly with no card', async () => {
+  it('a member\'s own run edits itself cleanly with no card; another member is refused (it corrects itself only)', async () => {
     await run(['agents', 'create', 'pixel', '--title', 'Pixel', '--prompt', 'Draw things.']);
     vi.stubEnv('DREAMCONTEXT_AGENT_SELF', 'scout');
     expect((await run(['agents', 'edit', 'scout', '--prompt', 'Look around, then report.'])).code).toBe(0);
     expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'scout', 'agent')!, undefined, 'run').approved).toBe(true);
-    expect((await run(['agents', 'edit', 'pixel', '--prompt', 'Draw things, then report.'])).code).toBe(0);
-    expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'pixel', 'agent')!, undefined, 'run').approved).toBe(true);
+    const other = await run(['agents', 'edit', 'pixel', '--prompt', 'Draw things, then report.']);
+    expect(other.code).toBe(1);
+    expect(other.out).toContain('own_member_only');
+    expect(getAgent(contextRoot, 'pixel')?.prompt).toBe('Draw things.');
   });
 
   it('still lets a session rename a member or place it in the team', async () => {

@@ -320,11 +320,14 @@ describe('one stacking order on the stage', () => {
 });
 
 describe('every agenda line is read whole', () => {
-  it('no line clamp, no ellipsis, no nowrap on its lines', () => {
+  it('no line clamp, no ellipsis, no nowrap on its lines (small and medium widgets aside)', () => {
     const css = readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperAgenda.css', import.meta.url), 'utf-8');
     const rules = [...css.matchAll(/([^{}]*\.super-agenda-(?:name|line)[^{}]*)\{([^}]*)\}/g)];
     expect(rules.length).toBeGreaterThanOrEqual(2);
     for (const [, sel, body] of rules) {
+      // The one exception (owner 14 Nov, approved drawing son-boyutlar): the small and medium
+      // widgets cut a line to one row; its tooltip and its detail hold the whole line.
+      if (/\[data-size='small'\], \[data-size='medium'\]/.test(sel)) continue;
       expect(body, sel).not.toMatch(/line-clamp|text-overflow:\s*ellipsis|white-space:\s*nowrap/);
     }
   });

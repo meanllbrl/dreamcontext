@@ -63,49 +63,114 @@ export function OrbitPath({ plan }: { plan: StagePlan }) {
  *  presentation showing a PDF still leaves on Esc (owner 2026-10-28, "every kind of group"). */
 export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--embedded), .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu';
 
+/** The presentation frame's icons (outline, 16 px on a 32 px button; owner 2026-11-15, option C). */
+const PATHS: Record<string, string> = {
+  spotlight: 'M3 5h18v14H3z',
+  compare: 'M3 5h8v14H3zM13 5h8v14h-8z',
+  grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+  filmstrip: 'M3 3h18v12H3zM3 18h4v3H3zM10 18h4v3h-4zM17 18h4v3h-4z',
+  review: 'M3 4h11v16H3zM17 4h4v16h-4z',
+  ask: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z',
+  close: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+  minimize: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
+  exit: 'M18 6 6 18M6 6l12 12',
+};
+export function StageIcon({ name }: { name: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d={PATHS[name] ?? PATHS.exit} />
+    </svg>
+  );
+}
+
 /**
- * A presentation's controls at the top band's right end (plan-r2 D11, D12): the layouts these
- * cards can take (only when there is a choice), then the way back to the floating stage.
+ * A presentation's actions as icons at the top band's right end (owner 2026-11-15, option C
+ * "Çerçeve"): the layouts these cards can take (only when there is a choice), then the way out.
+ * Every icon names itself on hover and focus (`data-tip`) and to a screen reader (`aria-label`).
+ * The box is exactly as wide as superLayout's `controlsWidth` plans it.
  */
-export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false, closable = 0, onCloseGroup }: {
+export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false, closable = 0, onCloseGroup, onAsk, leaveQueue = false }: {
   rect: Rect; layouts: readonly PresentLayout[]; current: PresentLayout; onPick: (l: PresentLayout) => void; onExit: () => void;
   /** The presentation shows one group whole: "Minimize" goes back to that group's panel, "Close group" closes its cards. */
   toGroup?: boolean;
   /** How many of the group's cards a close would end (running jobs stay); 0 draws the button off. */
   closable?: number;
   onCloseGroup?: () => void;
+  /** "Ask about this" on the group (owner 2026-11-14): the same about-card chip a group tile's ask puts in the Super composer. */
+  onAsk?: () => void;
+  /** A queued presentation of 2+ is shown: the exit leaves the queue (the rest keep waiting). */
+  leaveQueue?: boolean;
 }) {
   const { t } = useI18n();
   const [ask, setAsk] = useState(false);
+  const icon = (name: string, label: string, onClick: () => void, extra: { testid: string; pressed?: boolean; disabled?: boolean; expanded?: boolean; layout?: string; title?: string }) => (
+    <button key={extra.testid} type="button" className="super-icon-btn" data-testid={extra.testid} data-tip={label} aria-label={label}
+      aria-pressed={extra.pressed} aria-expanded={extra.expanded} disabled={extra.disabled} data-layout={extra.layout} title={extra.title} onClick={onClick}>
+      <StageIcon name={name} />
+    </button>
+  );
   return (
     <div className="super-stage-controls" data-testid="super-stage-controls" data-asking={ask && toGroup ? "true" : undefined} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
-      {layouts.length > 1 && (
-        <div className="super-layout-switch" role="group" aria-label={t('super.layout.switch')} data-testid="super-layout-switch">
-          {layouts.map((l) => (
-            <button key={l} type="button" className="super-layout-seg" aria-pressed={l === current} data-layout={l}
-              data-testid={`super-layout-${l}`} onClick={() => { if (l !== current) onPick(l); }}>
-              {t(`super.layout.${l}`)}
-            </button>
-          ))}
+      <div className="super-icon-bar">
+        {layouts.length > 1 && (
+          <>
+            <div className="super-layout-switch" role="group" aria-label={t('super.layout.switch')} data-testid="super-layout-switch">
+              {layouts.map((l) => icon(l, t(`super.layout.${l}`), () => { if (l !== current) onPick(l); }, { testid: `super-layout-${l}`, pressed: l === current, layout: l }))}
+            </div>
+            <span className="super-icon-sep" aria-hidden />
+          </>
+        )}
+        {toGroup ? (
+          <>
+            {onAsk && icon('ask', t('super.card.askAbout'), onAsk, { testid: 'super-stage-group-ask' })}
+            {icon('close', t('super.stage.closeGroup'), () => setAsk((v) => !v), { testid: 'super-stage-group-close', disabled: closable < 1 || !onCloseGroup, expanded: ask })}
+            {icon('minimize', t('super.card.minimize'), onExit, { testid: 'super-stage-group-minimize', title: 'Esc' })}
+          </>
+        ) : icon(leaveQueue ? 'minimize' : 'exit', t(leaveQueue ? 'super.stage.leaveQueue' : 'super.stage.exit'), onExit, { testid: 'super-stage-exit', title: leaveQueue ? undefined : 'Esc' })}
+      </div>
+      {toGroup && ask && closable > 0 && (
+        <div className="super-close-choice super-stage-group-ask" role="group" aria-label={t('super.group.closeAsk')} data-testid="super-stage-group-close-choice">
+          <span className="super-close-choice-q">{t('super.group.closeAsk')}</span>
+          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-stage-group-close-end"
+            onClick={() => { setAsk(false); onCloseGroup?.(); }}>
+            {t('super.group.closeEnd').replace('{n}', String(closable))}
+          </button>
         </div>
       )}
-      {toGroup ? (
-        <>
-          <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-close" disabled={closable < 1 || !onCloseGroup}
-            aria-expanded={ask} onClick={() => setAsk((v) => !v)}>{t('super.stage.closeGroup')}</button>
-          <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-minimize" onClick={onExit} title="Esc">{t('super.card.minimize')}</button>
-          {ask && closable > 0 && (
-            <div className="super-close-choice super-stage-group-ask" role="group" aria-label={t('super.group.closeAsk')} data-testid="super-stage-group-close-choice">
-              <span className="super-close-choice-q">{t('super.group.closeAsk')}</span>
-              <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-stage-group-close-end"
-                onClick={() => { setAsk(false); onCloseGroup?.(); }}>
-                {t('super.group.closeEnd').replace('{n}', String(closable))}
-              </button>
-            </div>
-          )}
-        </>
-      ) : <button type="button" className="super-stage-exit" data-testid="super-stage-exit" onClick={onExit} title="Esc">{t('super.stage.exit')}</button>}
     </div>
+  );
+}
+
+/** One tab of the presentation frame: what is shown, what comes next, what waits after it. */
+export interface PresentTab { key: string; name: string; count: number; kind: 'current' | 'next' | 'later' }
+
+/**
+ * The presentation's frame and its tab strip (owner 2026-11-15, option C "Çerçeve"): the shown
+ * presentation is the open tab, joined to the frame; the next one sits beside it and opens on a
+ * click; the rest wait as quiet tabs. Tabs shrink and truncate like browser tabs, so the strip
+ * never reaches the icons whatever the width.
+ */
+export function PresentFrame({ frame, strip, tabs, onNext }: { frame?: Rect; strip: Rect; tabs: readonly PresentTab[]; onNext: () => void }) {
+  const { t } = useI18n();
+  return (
+    <>
+      {frame && <div className="super-present-frame" data-testid="super-present-frame" aria-hidden style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }} />}
+      <div className="super-present-tabs" role="group" aria-label={t('super.pq.label')} data-testid="super-present-tabs" style={{ left: strip.x, top: strip.y, width: strip.width, height: strip.height }}>
+        {tabs.map((tab) => {
+          const label = tab.kind === 'next' ? t('super.pq.next').replace('{name}', tab.name) : tab.name;
+          return (
+            <button key={tab.key} type="button" className="super-present-tab" data-kind={tab.kind} aria-current={tab.kind === 'current' ? 'true' : undefined}
+              data-testid={tab.kind === 'next' ? 'super-pq-next' : `super-present-tab-${tab.kind}`} disabled={tab.kind === 'later'} title={label}
+              tabIndex={tab.kind === 'later' ? -1 : 0} onClick={tab.kind === 'next' ? onNext : undefined}>
+              {tab.kind === 'current' && <span className="super-present-tab-dot" aria-hidden />}
+              <span className="super-present-tab-name">{tab.name}</span>
+              {tab.count > 1 && <span className="super-present-tab-count">{tab.count}</span>}
+              {tab.kind === 'next' && <span className="super-present-tab-badge">{t('super.pq.nextBadge')}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

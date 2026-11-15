@@ -28,26 +28,15 @@
   /* The tallest a clip may play inline (cards.css `.chat-md-video`). A token so a surface that
      sizes a clip from its aspect (the agents channel) caps it at the same height. */
   --chat-media-max-h: 460px;
-  /* The transcript's READING size — one notch under the app's 16px body token, which reads
-     oversized in a dense conversation column (owner call 07-25, same "calmer over sharper"
-     bias as the embedded terminal's 14.5px). Interpolated on the token scale exactly like
-     --font-size-lg, and still multiplied by --zoom so the window's `- 100% +` control keeps
-     working. Every transcript surface that carries prose reads THIS, so the chat's reading
-     size stays tunable from one place. */
-  --chat-text: calc(15px * var(--zoom, 1));
-  /* …and the RHYTHM that size is set in. 1.6 is a UI line-height; a long answer set in it — a
-     review report with headings, a numbered findings list and inline code on every other line —
-     packs into a wall (owner report 08-02, "okuması güç oluyor"). 1.75 is the leading a body
-     column of this measure wants, and it is unitless so a nested 13px caption or a code chip
-     scales its own leading rather than inheriting a fixed px. Same contract as --chat-text: every
-     transcript surface that carries prose reads THIS, so the chat's reading comfort stays tunable
-     from one place. */
-  --chat-line-height: 1.75;
-  /* The gap BETWEEN blocks has to grow with the leading, not stay behind it: at 1.75 the old 12px
-     paragraph margin is barely wider than the space between two lines inside a paragraph, so the
-     paragraphs stop reading as paragraphs. Raising the leading alone would have traded one wall
-     for a smoother one. */
-  --chat-block-gap: var(--space-4);
+  /* The transcript's READING size and rhythm, Claude Desktop's (owner 2026-11-15): the body token
+     (14.5px at 100%, times --zoom) on a 1.5 line, about the 21px Claude sets its answers on. This
+     replaces 15px on 1.75 (owner 08-02, "okuması güç oluyor"): the new word is the Claude match.
+     Every transcript surface that carries prose reads THESE, so the chat stays tunable from one
+     place; unitless, so a nested 13px caption or code chip scales its own leading. */
+  --chat-text: var(--font-size-base);
+  --chat-line-height: 1.5;
+  /* The gap between blocks, Claude's ~12px paragraph space at that leading. */
+  --chat-block-gap: var(--space-3);
 }
 
 /* ── Live rail — linked task chip + goal-skill / council live bars ──────────────────
@@ -130,15 +119,6 @@
   display: flex;
 }
 
-/* A control floating over the transcript's bottom (the unread pill, "Latest") never covers what
-   the transcript holds, an inline card's buttons least of all: while one shows, the scroller
-   gives up the strip it stands in, so nothing scrolls under it at any width (owner, 11 Nov). */
-.chat-transcript { --chat-float-strip: calc(32px + var(--space-3) * 2); }
-.chat-transcript:has(> .chat-jump) > .chat-scroll { margin-bottom: var(--chat-float-strip); }
-/* The Super chat keeps that strip ALL the time (owner 2026-11-13, "telegram gibi"): its "↓ N yeni"
-   button comes and goes as he reads, and a strip that came with it shrank the view and moved rows. */
-.chat-transcript--super > .chat-scroll { margin-bottom: var(--chat-float-strip); }
-
 .chat-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -180,32 +160,58 @@
    section rejected it for exactly this reason; the rail toggle's own fix (the transform-only
    glide) does not depend on it. */
 
-/* ── Jump to latest (shown only while the view is NOT stuck to the bottom) ─────────── */
+/* ── Jump to latest (chat/JumpToLatest.tsx) ──────────────────────────────────────────
+   A round ↓ floating OVER the transcript's text, centred above the composer, as Claude Desktop
+   draws it (owner 2026-11-15, "yazının üstünde"). It takes no room: the strip the scroller once
+   gave up for it (owner 11 Nov) is gone, so showing or hiding it moves no row. It shows only while
+   the view is above the end, so at the end it covers nothing. */
 
 .chat-jump {
   position: absolute;
   bottom: var(--space-3);
   left: 50%;
+  z-index: 4;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 14px;
+  justify-content: center;
   border-radius: var(--radius-full);
   border: 1px solid var(--color-border);
   background: var(--color-bg-elevated, var(--color-bg-secondary));
   color: var(--color-text-secondary);
   box-shadow: var(--shadow-md, var(--shadow-sm));
   font-family: inherit;
-  font-size: var(--font-size-xs, 12px);
-  font-weight: 600;
   cursor: pointer;
   animation: chat-jump-in 140ms ease-out;
 }
 .chat-jump:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .chat-jump:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+/* The Super chat's unseen count, on the circle's upper right edge. */
+.chat-jump-badge {
+  position: absolute;
+  top: -6px;
+  left: calc(100% - 12px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
 @keyframes chat-jump-in { from { opacity: 0; transform: translate(-50%, 6px); } }
 @media (prefers-reduced-motion: reduce) { .chat-jump { animation: none; } }
+/* Under a finger the circle is small: its hit area reaches a step around it. */
+@media (hover: none) {
+  .chat-jump::after { content: ""; position: absolute; inset: calc(-1 * var(--space-2)); }
+}
 
 /* ── ⌘F bar (chat/ChatFindBar.tsx) ──────────────────────────────────────────────────
    Pinned over the transcript's top-right corner, outside the scroller, above the
@@ -294,7 +300,7 @@
 
 /* ── An agent's past sessions above its conversation (chatFeed.ts, the AI Team stage) ── */
 
-/* A session's boundary: the dashed divider, clickable (a run opens its activity, a talk its tab). */
+/* A session's boundary: the dashed divider, clickable when the host gives it something to open. */
 .chat-feed-boundary {
   width: 100%;
   padding: 0;
@@ -310,6 +316,9 @@
 .chat-feed-boundary:focus-visible { color: var(--color-text-secondary); text-decoration: underline; }
 /* It opens something: the mark says so, after the words and before the rule. */
 .chat-feed-boundary-go { margin-left: var(--space-1, 4px); }
+/* A boundary that opens nothing (a member's chat): a plain line, no pointer, no underline. */
+.chat-feed-boundary--still { cursor: default; }
+.chat-feed-boundary--still:hover { color: var(--color-text-tertiary); text-decoration: none; }
 .chat-feed-report { display: block; text-align: left; }
 .chat-feed-failure { color: var(--color-error); }
 .chat-feed-boundary--failed { color: var(--color-error); }
@@ -333,9 +342,8 @@
 }
 /* A routine run in a member's conversation (aiteam/RunFoot.tsx): what opens under its last row. */
 .run-foot { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-1) 0 var(--space-3); min-width: 0; }
-.run-foot-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
-.run-view { position: relative; display: flex; flex-direction: column; height: min(60vh, 520px); min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-bg); }
-.run-report { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); min-width: 0; overflow-wrap: anywhere; }
+/* A run's answer with no session to show (a team card's previous run): prose in the flow, no box of its own. */
+.run-report { padding: 0 var(--space-3); min-width: 0; overflow-wrap: anywhere; }
 .run-view-note { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
 .chat-feed-end {
   align-self: center;

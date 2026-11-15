@@ -18,12 +18,13 @@
  * acme-storefront; members Rota (asks the owner a question), Mira (two live children from two
  * `super delegate`), Pera (works only for main: main's `team ask` request, so "Super için"), Kip
  * (turned off), Gantt (reviewer of Rota's task, idle); one global member Ada
- * (~/.dreamcontext/agents/ada.md in the scratch HOME) with a hand edit after its approval (a
- * hash mismatch: its one approval card waits); task set-the-annual-plan-price: doer Rota,
+ * (~/.dreamcontext/agents/ada.md in the scratch HOME) that was never approved on this Mac (its one
+ * approval card waits); task set-the-annual-plan-price: doer Rota,
  * reviewer Gantt.
  *
- *   (a) ONE Ekip row (`drawer-team-row`) with faces and one count = owner-facing questions +
- *       owner unread + approval cards of the project's members (from summary=1 `members`).
+ *   (a) ONE Ekip row (`drawer-team-row`), no faces, with ONE end mark (option A): the red count of
+ *       owner-facing questions + approval cards, else a spinner while members work for the owner,
+ *       else the grey unread count (from summary=1 `members`).
  *   (b) its list (`team-list`, opened in place under the row): Rota first, Mira before Pera, Pera
  *       "Super için" with no count, Kip dimmed, no global member, no switch (plan r4 R2); Kip's
  *       stage's Üye card switch (`member-card-switch`) turns it on through
@@ -39,7 +40,7 @@
  *       `super-task-strip[data-task=<slug>]`; a message sent there reaches Rota's Super with
  *       `[About task <slug>]` (read in the stand-in's stdin).
  *   (g) Ada's stage shows `member-approval-band` and `member-project-chip`.
- *   (h) "Üyeleri yönet" (`team-manage`) opens `manage-members-modal`, with no chat pane inside.
+ *   (h) "Üyeleri yönet" (`team-manage`, in the Team row's "⋯" menu) opens `manage-members-modal`, with no chat pane inside.
  *   (i) phone 390: `phone-team-row` and `phone-global-team-row`; the sheet (`phone-team-sheet`)
  *       opens Rota's conversation (the phone's mirror tab of her live Super), and her open question
  *       is answered there: the summary stops asking and her Super gets the answer.
@@ -51,7 +52,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -140,8 +141,13 @@ function setupScratch() {
   for (const [slug, title, prompt] of MEMBERS) steps.push([`agent ${slug}`, dc('agents', 'create', slug, '--title', title, '--prompt', prompt)]);
   steps.push(['global ada', dc('agents', 'create', 'ada', '--scope', 'global', '--title', 'Ada', '--prompt', 'Reklam bütçesini bütün projelerde izler.')]);
   for (const [what, r] of steps) if (r.status !== 0) throw new Error(`${what} failed: ${r.stderr || r.stdout}`);
-  // A change Ada's owner never stamped (a hand edit after its approval): its one card waits.
-  appendFileSync(join(HOME, '.dreamcontext', 'agents', 'ada.md'), 'Haftalık özet de yazar.\n');
+  // Ada was never approved on this Mac (her grant is gone from the machine's `global` bucket): her one
+  // card waits and she cannot run. A hand edit after an approval no longer does this: it keeps the
+  // member working on its last approved text (owner 2026-11-08, `approvedTarget`), so it is no card.
+  const ledger = join(HOME, '.dreamcontext', 'automations.json');
+  const reg = JSON.parse(readFileSync(ledger, 'utf-8'));
+  delete reg.projects?.global?.agentApprovals?.ada;
+  writeFileSync(ledger, JSON.stringify(reg, null, 2));
   // The task: doer Rota, reviewer Gantt, starting tomorrow (nothing runs).
   writeFileSync(join(PROJ, '_dream_context', 'state', `${TASK}.md`), [
     '---', 'id: task_annualplan', 'name: Set the annual plan price', 'description: Set the annual plan price',
@@ -198,16 +204,17 @@ const overlapping = (boxes) => {
 };
 
 /** The visible buttons of a member stage's header (the nearest ancestor of `super-member-name`
- *  holding two or more buttons), as boxes. */
+ *  holding two or more VISIBLE buttons: at 390 the member head itself holds only "Profile", the
+ *  agenda, jobs and ⋯ chips sit in the bar around it), as boxes. */
 const headerButtons = (page, superId) => stage(page, superId).getByTestId('super-member-name').evaluate((name) => {
-  let head = name.parentElement;
-  while (head && head.querySelectorAll('button, [role="button"]').length < 2 && !head.matches('[data-testid="super-surface"]')) head = head.parentElement;
-  if (!head) return [];
-  return [...head.querySelectorAll('button, [role="button"]')].map((b) => {
+  const boxes = (root) => [...root.querySelectorAll('button, [role="button"]')].map((b) => {
     const r = b.getBoundingClientRect();
     const cs = getComputedStyle(b);
     return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' ? { x: r.x, y: r.y, width: r.width, height: r.height, label: (b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 30) } : null;
   }).filter(Boolean);
+  let head = name.parentElement;
+  while (head && boxes(head).length < 2 && !head.matches('[data-testid="super-surface"]')) head = head.parentElement;
+  return head ? boxes(head) : [];
 }).catch(() => []);
 
 /** The last whole number a row shows (its count), 0 when it shows none. */
@@ -217,13 +224,32 @@ async function summaryMembers(page) {
   const r = await pageFetch(page, VAULT, 'GET', '/agent/sessions?summary=1');
   return Array.isArray(r.json?.members) ? r.json.members : [];
 }
-/** The count the plan pins for a row: owner-facing questions + owner unread + approval cards. */
-// The folded Ekip row (task ekip-satiri, criterion 4 and plan r2): a ring with the number of members
-// working for the owner when any does, else the aggregate count, where a member working for main's
-// Super or turned off adds only its approval card (teamModel.ts ekipCount / ekipWorkingCount).
-const countOf = (ms) => ms.reduce((n, m) => n + (m.approval ? 1 : 0)
-  + (m.superOnly || !m.enabled ? 0 : (m.asking ? 1 : 0) + (Number(m.unread) || 0)), 0);
+// The folded Ekip row's ONE end mark (option A, owner 2026-11-09; teamModel.ts ekipMark): what waits
+// on the owner wins (a filled red count: each approval card plus each open owner-facing question,
+// `waiting` or 1), else work for the owner (a small grey spinner), else unread replies (a grey count).
+// A member working for main's Super or turned off adds only its approval card. No faces, no ring.
+const askingOf = (ms) => ms.reduce((n, m) => n + (m.approval ? 1 : 0)
+  + (m.asking && !m.superOnly && m.enabled ? Math.max(1, Number(m.waiting) || 0) : 0), 0);
+const unreadOf = (ms) => ms.reduce((n, m) => n + (m.enabled && !m.superOnly ? (Number(m.unread) || 0) : 0), 0);
 const workingOf = (ms) => ms.filter((m) => m.enabled && !m.superOnly && Number(m.ownerWorking) > 0).length;
+/** What the one mark must be for these members: {kind, n} (n = 0 for the spinner and for none). */
+const wantMark = (ms) => {
+  const asking = askingOf(ms);
+  if (asking > 0) return { kind: 'asking', n: asking };
+  if (workingOf(ms) > 0) return { kind: 'working', n: 0 };
+  const unread = unreadOf(ms);
+  return unread > 0 ? { kind: 'unread', n: unread } : { kind: 'none', n: 0 };
+};
+/** What a row draws: its one mark's kind and number. */
+async function drawnMark(loc) {
+  for (const kind of ['asking', 'working', 'unread']) {
+    const el = loc.getByTestId(`mark-${kind}`);
+    const n = await el.count();
+    if (n > 1) return { kind: 'many', n };
+    if (n === 1) return { kind, n: kind === 'working' ? 0 : lastInt(await el.innerText()) };
+  }
+  return { kind: 'none', n: 0 };
+}
 
 async function handOver(page, base) {
   await page.goto(`${base}/?vault=${VAULT}`, { waitUntil: 'domcontentloaded' });
@@ -282,7 +308,14 @@ async function run(engineName, base, port) {
   await toMainStage(page);
   await ensureDrawer(page);
   const menu = page.locator('[data-testid="new-chat-menu"]:visible').first();
-  const openMenu = async () => { await ensureDrawer(page); if (!(await page.locator('[data-testid="new-chat-claude"]:visible').count())) await page.locator('[data-testid="new-chat-menu"]:visible').first().click(); };
+  // The chevron sits beside the project row's "+" and shows on the row's hover (its box takes no
+  // pointer until then): hover the row through the always-there "+", as a person does, then click.
+  const openMenu = async () => {
+    await ensureDrawer(page);
+    if (await page.locator('[data-testid="new-chat-claude"]:visible').count()) return;
+    await page.locator('[data-testid="drawer-project-add"]:visible').first().hover();
+    await page.locator('[data-testid="new-chat-menu"]:visible').first().click();
+  };
   ok(tag('(d) the New chat chevron is there'), await until(page, async () => (await menu.count()) === 1, 15000));
   await openMenu().catch(() => {});
   ok(tag('(d) it offers Claude and the members'), await until(page, async () =>
@@ -345,21 +378,16 @@ async function run(engineName, base, port) {
   ok(tag('(a) Rota\'s question reaches the summary (asking, owner-facing)'), await until(page, async () =>
     (await summaryMembers(page)).some((m) => m.slug === 'rota' && m.asking), 20000), JSON.stringify(await summaryMembers(page)));
   ok(tag('(a) ONE Ekip row for the project'), await until(page, async () => (await row.count()) === 1 && await row.isVisible(), 15000), String(await row.count()));
+  // Option A (owner 2026-11-09): the Team row has no faces and no ring, only its one end mark.
   const faces = await row.locator('img, .agent-av').count();
-  ok(tag('(a) with faces (one to three)'), faces >= 1 && faces <= 3, String(faces));
-  let want = -1;
-  let shown = -1;
-  let ring = false;
-  ok(tag('(a) its one mark: the ring (members working for the owner) when any works, else owner questions + owner unread + approval cards'), await until(page, async () => {
-    const own = (await summaryMembers(page)).filter((m) => !m.global);
-    const working = workingOf(own);
-    ring = working > 0;
-    want = ring ? working : countOf(own);
-    shown = ring
-      ? ((await row.getByTestId('mark-working').count()) === 1 && (await row.getByTestId('team-row-count').count()) === 0 ? lastInt(await row.getByTestId('mark-working').innerText()) : -1)
-      : lastInt(await row.innerText());
-    return want >= 1 && shown === want;
-  }, 20000), `${ring ? 'ring' : 'count'}: row ${shown}, summary ${want}: ${(await row.innerText().catch(() => '')).replace(/\s+/g, ' ')}`);
+  ok(tag('(a) the row draws no faces (option A)'), faces === 0, String(faces));
+  let want = { kind: 'none', n: 0 };
+  let shown = { kind: 'none', n: 0 };
+  ok(tag('(a) its ONE mark: owner questions + approval cards in red, else a spinner while members work for the owner, else unread'), await until(page, async () => {
+    want = wantMark((await summaryMembers(page)).filter((m) => !m.global));
+    shown = await drawnMark(row);
+    return want.kind !== 'none' && shown.kind === want.kind && shown.n === want.n;
+  }, 20000), `row ${JSON.stringify(shown)}, summary ${JSON.stringify(want)}: ${(await row.innerText().catch(() => '')).replace(/\s+/g, ' ')}`);
   await shots(page, '01', 'ekip-row', () => ensureDrawer(page));
 
   console.log(`── ${engineName}: (b) its list and the switch`);
@@ -374,7 +402,10 @@ async function run(engineName, base, port) {
   ok(tag('(b) no global member in the project\'s list'), at('ada') === -1, JSON.stringify(order));
   const peraRow = list.locator('[data-testid="team-list-member"][data-slug="pera"]');
   const peraText = (await peraRow.innerText().catch(() => '')).replace(/\s+/g, ' ');
-  ok(tag('(b) Pera is tagged "Super için"'), /Super için|for (the )?Super/i.test(peraText), peraText);
+  // "Super için" is a glyph on the face's corner (SuperBadge), its words in the aria-label and title.
+  const peraBadge = peraRow.locator('[data-testid="team-mark-super"]');
+  const peraSays = `${await peraBadge.getAttribute('aria-label').catch(() => '')} ${await peraBadge.getAttribute('title').catch(() => '')}`;
+  ok(tag('(b) Pera is tagged "Super için"'), (await peraBadge.count()) === 1 && /Super için|for (the )?Super/i.test(peraSays), `${peraText} | ${peraSays}`);
   ok(tag('(b) …with no count'), !/(^|\s)\d+(\s|$)/.test(peraText), peraText);
   ok(tag('(b) Kip is drawn off (dimmed)'), (await list.locator('[data-testid="team-list-member"][data-slug="kip"]').getAttribute('data-off').catch(() => null)) === 'true');
   // r3 R2: the sidebar list has no switch; it is on the member's stage, in its Üye card.
@@ -418,13 +449,13 @@ async function run(engineName, base, port) {
     return !!g && others.every((t) => g.top > t);
   }, VAULT);
   ok(tag('(c) at the bottom, below every project'), below);
-  let gWant = -1;
-  let gShown = -1;
-  ok(tag('(c) its count takes Ada\'s approval card once'), await until(page, async () => {
-    gWant = countOf((await summaryMembers(page)).filter((m) => m.global));
-    gShown = lastInt(await grow.innerText());
-    return gWant >= 1 && gShown === gWant;
-  }, 15000), `row ${gShown}, summary ${gWant}`);
+  let gWant = { kind: 'none', n: 0 };
+  let gShown = { kind: 'none', n: 0 };
+  ok(tag('(c) its one mark takes Ada\'s approval card once'), await until(page, async () => {
+    gWant = wantMark((await summaryMembers(page)).filter((m) => m.global));
+    gShown = await drawnMark(grow);
+    return gWant.kind === 'asking' && gShown.kind === gWant.kind && gShown.n === gWant.n;
+  }, 15000), `row ${JSON.stringify(gShown)}, summary ${JSON.stringify(gWant)}, members ${JSON.stringify((await summaryMembers(page)).filter((m) => m.global))}`);
   await shots(page, '03', 'global-ekip-row', () => ensureDrawer(page));
   const glist = page.locator('[data-testid="global-team-list"]:visible');
   const openGlist = async () => { await ensureDrawer(page); if (!(await glist.count())) await grow.click(); };
@@ -443,7 +474,10 @@ async function run(engineName, base, port) {
   const modal = page.locator('[data-testid="manage-members-modal"]:visible');
   const openModal = async () => {
     if (await modal.count()) return;
-    await openList();
+    // "Üyeleri yönet" is in the Team row's "⋯" menu (option A, 2026-11-09), which shows on the row's hover.
+    await ensureDrawer(page);
+    await row.hover();
+    await page.locator('[data-testid="drawer-team-row-section"] [data-testid="team-more"]:visible').first().click();
     await page.locator('[data-testid="team-manage"]:visible').first().click();
   };
   await openModal();

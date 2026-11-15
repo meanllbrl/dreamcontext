@@ -18,6 +18,20 @@ const CTX = { surface: 'desktop' as const, platform: 'darwin' as const };
 const byId = (checks: ReadinessCheck[]) => Object.fromEntries(checks.map((c) => [c.id, c]));
 
 describe('evaluateChecks', () => {
+  it('a fresh Mac on the app\'s own runtime: no Node, npm or CLI install row; the CLI only needs PATH', () => {
+    const facts: ShellFacts = { shell: '/bin/zsh', cltInstalled: false };
+    const extra: ExtraFacts = {
+      ...READY_EXTRA, runningNodeVersion: '24.21.0', npmBesideExec: false, appRuntime: true,
+      cliBinOffPath: '/Users/u/.dreamcontext/bin/cli/dreamcontext', claudeBin: null, claudeAuth: null,
+    };
+    const c = byId(evaluateChecks(facts, extra, CTX));
+    expect(c.node).toMatchObject({ status: 'ok', version: '24.21.0' });
+    expect(c.node.fix).toBeNull();
+    expect(c.npm.status).toBe('ok');
+    expect(c.cli).toMatchObject({ status: 'needs-action', reason: 'not-on-path', fix: { id: 'cli-shell-path' } });
+    expect(c.claude).toMatchObject({ status: 'missing', fix: { id: 'claude-install' } });
+  });
+
   it('a ready machine: every check ok, in CHECK_IDS order, account is an email, never a token', () => {
     const checks = evaluateChecks(READY_FACTS, READY_EXTRA, CTX);
     expect(checks.map((c) => c.id)).toEqual([...CHECK_IDS]);

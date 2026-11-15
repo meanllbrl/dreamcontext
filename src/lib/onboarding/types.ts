@@ -98,6 +98,12 @@ export interface ExtraFacts {
   runningNodeVersion: string;
   /** An `npm` sits next to the running node. */
   npmBesideExec: boolean;
+  /**
+   * The running node is the one the desktop app ships (plan npmsiz-beta C1): the app needs no
+   * Node or npm of the user's, so those two rows are done, and its CLI reaches the terminal
+   * through `~/.dreamcontext/bin/cli`. Absent = false.
+   */
+  appRuntime?: boolean;
   /** `findClaudeBin()`: a `claude` in a known install folder, whether or not the shell sees it. */
   claudeBin: string | null;
   /** A `dreamcontext` installed in a known global folder the shell does not resolve. */

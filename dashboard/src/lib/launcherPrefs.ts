@@ -102,11 +102,13 @@ export interface LayoutPrefs {
   lastVault: string | null;
   projectOrder: string[];
   drawerExpanded: string[];
+  /** Projects the owner hid from the drawer: they sit in its folded "Hidden" group at the bottom. */
+  hiddenProjects: string[];
   drawerWidth: number | null;
   drawerOpen: boolean | null;
 }
 
-const NO_LAYOUT: LayoutPrefs = { lastVault: null, projectOrder: [], drawerExpanded: [], drawerWidth: null, drawerOpen: null };
+const NO_LAYOUT: LayoutPrefs = { lastVault: null, projectOrder: [], drawerExpanded: [], hiddenProjects: [], drawerWidth: null, drawerOpen: null };
 
 /** What "never chosen" means since W3: the new shell. Re-exported by `uxMode.ts` as
  *  `DEFAULT_SHELL`; kept here so the Settings row and the gate cannot disagree. */
@@ -136,6 +138,7 @@ export function initLauncherPrefsFromServer(): Promise<void> {
         lastVault: typeof raw.lastVault === 'string' ? raw.lastVault : null,
         projectOrder: names(raw.projectOrder),
         drawerExpanded: names(raw.drawerExpanded),
+        hiddenProjects: names(raw.hiddenProjects),
         drawerWidth: typeof raw.drawerWidth === 'number' ? raw.drawerWidth : null,
         drawerOpen: typeof raw.drawerOpen === 'boolean' ? raw.drawerOpen : null,
       };

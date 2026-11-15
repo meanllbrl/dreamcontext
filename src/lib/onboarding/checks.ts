@@ -68,6 +68,10 @@ function judge(id: CheckId, facts: ShellFacts, extra: ExtraFacts): Verdict {
     case 'network':
       return extra.online ? { status: 'ok' } : { status: 'missing', reason: 'offline' };
     case 'node': {
+      // The app ships its own Node: nothing of the user's is needed, and the app's is on no PATH.
+      if (extra.appRuntime && (nodeMajor(extra.runningNodeVersion) ?? 0) >= MIN_NODE_MAJOR) {
+        return { status: 'ok', version: extra.runningNodeVersion };
+      }
       if ((nodeMajor(extra.runningNodeVersion) ?? 0) < MIN_NODE_MAJOR) {
         return { status: 'missing', reason: 'too-old', version: extra.runningNodeVersion };
       }
@@ -79,7 +83,7 @@ function judge(id: CheckId, facts: ShellFacts, extra: ExtraFacts): Verdict {
       return { status: 'ok', version: facts.nodeVersion };
     }
     case 'npm':
-      return facts.npm || extra.npmBesideExec ? { status: 'ok' } : { status: 'missing', reason: 'no-npm' };
+      return facts.npm || extra.npmBesideExec || extra.appRuntime ? { status: 'ok' } : { status: 'missing', reason: 'no-npm' };
     case 'cli':
       if (facts.dreamcontext) return { status: 'ok' };
       if (extra.cliBinOffPath) return { status: 'needs-action', reason: 'not-on-path', fix: 'cli-shell-path' };

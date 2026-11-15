@@ -414,9 +414,124 @@ describe('the Super target', () => {
     await vi.waitFor(() => expect(sent).toHaveLength(1));
   });
 
-  it('the window never opens → "Super\'i Mac\'te açamadım"', async () => {
-    tg.push(TOKEN, textUpdate(OWNER, 'aç'));
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.startsWith("⚠️ <i>Super Mac'te açılamadı"))).toBe(true), { timeout: 5000 });
+  describe('a Super that does not open: his messages wait, told once (owner 2026-11-15, Ege)', () => {
+    const HOLDING = "⚠️ <i>Mac'te sohbet şu an açılamadı; mesajların bekliyor, açılınca sırayla iletirim.</i>";
+    const deps = () => (hub as unknown as { deps: Record<string, unknown> }).deps;
+
+    it('the Ege evening: "Alo", "Alooo", "Hâlâ yok mu" while the window stays shut → one notice, no "açılamadı" per message, all three delivered in order when the chat opens', async () => {
+      Object.assign(deps(), { injectorRetryMs: 50 });
+      tg.push(TOKEN, textUpdate(OWNER, 'Alo'));
+      tg.push(TOKEN, textUpdate(OWNER, 'Alooo'));
+      tg.push(TOKEN, textUpdate(OWNER, 'Hâlâ yok mu'));
+      await vi.waitFor(() => expect(tg.texts()).toContain(HOLDING), { timeout: 5000 });
+      // The link is opened again while they wait.
+      await vi.waitFor(() => expect(opened.length).toBeGreaterThanOrEqual(2), { timeout: 5000 });
+      expect(tg.texts().filter((t) => t === HOLDING)).toHaveLength(1);
+      expect(tg.texts().some((t) => t.includes('açılamadı; uygulamaya bakıp'))).toBe(false);
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      await vi.waitFor(() => expect(sent).toHaveLength(3), { timeout: 5000 });
+      expect(sent.map((t) => parseTelegramPrefix(t).body)).toEqual(['Alo', 'Alooo', 'Hâlâ yok mu']);
+      expect(tg.texts().filter((t) => t === HOLDING)).toHaveLength(1);
+    });
+
+    it('past the hold, the messages of one spell share its deadline and are reported once as not delivered', async () => {
+      const EXPIRED = "⚠️ <i>Bekleyen mesajların Mac'e ulaşmadı: sohbet iki saattir açılamadı. Uygulamaya bakıp tekrar gönder.</i>";
+      Object.assign(deps(), { injectorRetryMs: 30, injectorHoldMs: 600 });
+      tg.push(TOKEN, textUpdate(OWNER, 'aç'));
+      tg.push(TOKEN, textUpdate(OWNER, 'hâlâ'));
+      const t0 = Date.now();
+      await vi.waitFor(() => expect(tg.texts()).toContain(EXPIRED), { timeout: 5000 });
+      // The second message failed with the first, not one more hold after it.
+      await new Promise((r) => setTimeout(r, 400));
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(tg.texts().filter((t) => t === EXPIRED)).toHaveLength(1);
+      expect(tg.texts().filter((t) => t === HOLDING)).toHaveLength(1);
+      const pollFile = join(bindingDir(scopeOfContextRoot(root), 'super', home), 'poll.json');
+      expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([]);
+    });
+
+    it('a stop during the hold says nothing false and keeps the message in the journal for the next start', async () => {
+      Object.assign(deps(), { injectorRetryMs: 50 });
+      tg.push(TOKEN, textUpdate(OWNER, 'bekle'));
+      await vi.waitFor(() => expect(tg.texts()).toContain(HOLDING), { timeout: 5000 });
+      await hub.stop();
+      await new Promise((r) => setTimeout(r, 400));
+      expect(tg.texts().some((t) => t.includes('ulaşmadı'))).toBe(false);
+      const pollFile = join(bindingDir(scopeOfContextRoot(root), 'super', home), 'poll.json');
+      expect(JSON.parse(readFileSync(pollFile, 'utf-8')).pending).toEqual([expect.objectContaining({ written: false })]);
+    });
+  });
+
+  describe('a voice note the Mac cannot transcribe right now (owner 2026-11-15)', () => {
+    const deps = () => (hub as unknown as { deps: Record<string, unknown> }).deps;
+    const voice = (id: string) => { tg.files.set(id, Buffer.from('OggS')); tg.push(TOKEN, textUpdate(OWNER, '', { text: undefined, voice: { file_id: id, file_size: 4 } })); };
+
+    it('whisper not answering is tried again: told once, the transcript reaches the agent', async () => {
+      reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      let calls = 0;
+      Object.assign(deps(), { transcribeVoice: async () => { calls += 1; if (calls < 3) throw new Error('stt_failed'); return 'markete gideceğim'; } });
+      voice('v1');
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+      expect(parseTelegramPrefix(sent[0]).body).toBe('🎙 markete gideceğim');
+      expect(calls).toBe(3);
+      expect(tg.texts().filter((t) => t.includes('yeniden deniyorum'))).toHaveLength(1);
+    });
+
+    it('never transcribed: no bare file path reaches the agent; "Tekrar dene" retries the same file and sends the words as a normal turn', async () => {
+      reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      let up = false;
+      const seen: string[] = [];
+      Object.assign(deps(), { transcribeVoice: async (p: string) => { seen.push(p); if (!up) throw new Error('stt_failed'); return 'tekrar denedim'; } });
+      voice('v2');
+      await vi.waitFor(() => expect(tg.sent().some((c) => JSON.stringify(c.params).includes('Tekrar dene'))).toBe(true), { timeout: 5000 });
+      expect(seen).toHaveLength(4); // the automatic ladder ran first
+      await new Promise((r) => setTimeout(r, 50));
+      expect(sent).toHaveLength(0);
+      const msg = tg.sent().find((c) => JSON.stringify(c.params).includes('Tekrar dene'))!;
+      const data = (msg.params.reply_markup as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard[0][0].callback_data;
+      const tap = { callback_query: { id: 'cb', data, from: { id: OWNER }, message: { message_id: msg.result!.message_id, chat: { id: OWNER, type: 'private' }, text: String((msg.result as unknown as { text: string }).text) } } };
+      up = true;
+      tg.push(TOKEN, tap);
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+      expect(parseTelegramPrefix(sent[0]).body).toBe('🎙 tekrar denedim');
+      expect(new Set(seen).size).toBe(1); // the same file each time
+      expect(tg.sent('answerCallbackQuery').at(-1)?.params.text).toBe('Yeniden deniyorum…');
+      // The button was single use: a second tap is stale.
+      tg.push(TOKEN, tap);
+      await vi.waitFor(() => expect(tg.sent('answerCallbackQuery').at(-1)?.params.text).toBe('Bu soru artık geçerli değil.'));
+      expect(sent).toHaveLength(1);
+    });
+
+    it('a voice note whose transcript comes back empty under load is retried, never dropped in silence', async () => {
+      reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      const answers = ['', 'yeniden duydum'];
+      Object.assign(deps(), { transcribeVoice: async () => answers.shift() ?? '' });
+      voice('v4');
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+      expect(parseTelegramPrefix(sent[0]).body).toBe('🎙 yeniden duydum');
+      expect(tg.texts().some((t) => t.includes('yeniden deniyorum'))).toBe(true);
+      expect(tg.texts().some((t) => t.includes('<blockquote expandable><i></i></blockquote>'))).toBe(false);
+    });
+
+    it('a garbled take is not retried automatically: the button comes at once', async () => {
+      reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+      const { inj, sent } = fakeInjector();
+      reg.registerChatInjector(SID, inj);
+      let calls = 0;
+      Object.assign(deps(), { transcribeVoice: async () => { calls += 1; throw new Error('garbled'); } });
+      voice('v3');
+      await vi.waitFor(() => expect(tg.sent().some((c) => JSON.stringify(c.params).includes('Tekrar dene'))).toBe(true), { timeout: 5000 });
+      expect(calls).toBe(1);
+      expect(tg.texts().some((t) => t.includes('yeniden deniyorum'))).toBe(false);
+      expect(sent).toHaveLength(0);
+    });
   });
 
   it('a permission prompt becomes buttons; a forged tap is refused; the real tap answers through hub_command', async () => {

@@ -43,7 +43,8 @@ writeFileSync(transcript, [
 // No dreamcontext/agent variable of the caller's session (a desktop Chat tab, a Codex or Claude
 // session, a Super crew) reaches the hooks: the golden must not depend on where it was run.
 const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(DREAMCONTEXT_|CLAUDE|CODEX_|ANTIGRAVITY_)/.test(k)));
-const env = { ...inherited, HOME, DREAMCONTEXT_TAB_SESSION: TAB, DREAMCONTEXT_BRAIN_SYNC: '0', DREAMCONTEXT_RECALL_CLOUD: '0', CLAUDE_PROJECT_DIR: PROJ };
+// No paid recall judge from a golden run: the default mode answers with its model-free rule.
+const env = { ...inherited, HOME, DREAMCONTEXT_TAB_SESSION: TAB, DREAMCONTEXT_BRAIN_SYNC: '0', DREAMCONTEXT_RECALL_CLOUD: '0', DREAMCONTEXT_RECALL_JUDGE: 'off', CLAUDE_PROJECT_DIR: PROJ };
 
 // [output file, hook, payload]. Track T W3 added the `.env` deny and the Stop hook.
 const runs = [

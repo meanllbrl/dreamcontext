@@ -4,7 +4,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { ToolBadge } from './atoms';
 import { CardHeader } from './molecules';
 import {
-  allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, refusalItemsOf, useOwnerAnswer, useSessionGrantItems, visibleText,
+  allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, refusalItemsOf, rewriteAnswer, useOwnerAnswer, useSessionGrantItems, visibleText,
   type GrantChoices, type ShownCall, noAllowReasonKey } from '../super/ownerAnswer';
 
 /**
@@ -37,7 +37,7 @@ export function sizeWords(size: GrantSize, t: (k: string) => string, memberName:
   };
 }
 
-export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDecline, onOpen }: {
+export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDecline, onOpen, onRewrite }: {
   kind: 'permission' | 'refusal';
   call: ShownCall;
   choices: GrantChoices;
@@ -47,6 +47,8 @@ export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDec
   onDecline: () => void;
   /** Where he decides a call this card cannot allow: drawn as Open when no Allow is. */
   onOpen?: () => void;
+  /** A built-in safety check refused it (`choices.rewrite`): the agent is asked to rewrite it. */
+  onRewrite?: () => void;
 }) {
   const { t } = useI18n();
   const [size, setSize] = useState<GrantSize>(choices.sizes[0] ?? 'once');
@@ -60,7 +62,7 @@ export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDec
         <p className="chat-permcard-desc">{words.lead}</p>
         <pre className="chat-permcard-raw" data-testid="grant-command">{visibleText(call.input, true)}</pre>
         {choices.onceOnlyReason && <p className="chat-permcard-why" data-testid="grant-once-only">{choices.onceOnlyReason}</p>}
-        {choices.sizes.length === 0 && (
+        {choices.sizes.length === 0 && !choices.rewrite && (
           <p className="chat-permcard-why" data-testid="grant-none">{t(noAllowReasonKey(call, !!onOpen))}</p>
         )}
       </div>
@@ -87,7 +89,10 @@ export function GrantDecision({ kind, call, choices, words, busy, onAllow, onDec
           <button type="button" className="chat-btn pill" data-testid="grant-decline" disabled={busy} onClick={onDecline}>
             {t(kind === 'refusal' ? 'owner.answer.notNeeded' : 'owner.answer.deny')}
           </button>
-          {pick ? (
+          {choices.rewrite && onRewrite ? (
+            // No Allow can lift a built-in safety check: the one choice that does something.
+            <button type="button" className="chat-btn pill primary" data-testid="grant-rewrite" disabled={busy} onClick={onRewrite}>{t('owner.answer.rewrite')}</button>
+          ) : pick ? (
             <button type="button" className="chat-btn pill primary" data-testid="grant-allow" disabled={busy} onClick={() => onAllow(pick)}>
               {t(several ? 'owner.answer.allow' : 'owner.answer.allowOnce')}
             </button>
@@ -139,6 +144,7 @@ export function RefusalCard({ record, item, who, memberName, via = 'member-chat'
           busy={answer.busy}
           onAllow={(size) => answer.submit(allowAnswer('refusal', size))}
           onDecline={() => answer.submit(declineAnswer('refusal'))}
+          onRewrite={() => answer.submit(rewriteAnswer())}
           {...(onOpen ? { onOpen } : {})}
         />
       ) : (

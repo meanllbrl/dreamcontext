@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApi, useInstanceEvent } from '../../../context/VaultContext';
 import { useAgents } from '../../../hooks/useAgents';
 import { useAgentFeed, useAutomations } from '../../../hooks/useAutomations';
@@ -6,7 +6,10 @@ import { identitiesOf, membersOf } from '../../../hooks/useDrawerProjects';
 import { AGENT_SURFACE_EXPANDED_EVENT } from '../../../lib/agentSettings';
 import { DRAWER_SURFACE_EVENT, type DrawerSurfaceState } from '../../../lib/drawerIntents';
 import { pollMs, onWindowActivity } from '../../../lib/windowActivity';
-import { buildRoster, type EkipSummary, type TeamAgent } from '../../aiteam/teamModel';
+import { startPulsedPoll, type PulsedPoll } from '../../../lib/pulsedPoll';
+import { buildRoster, ekipPulseKey, type EkipSummary, type TeamAgent } from '../../aiteam/teamModel';
+import { useVaultSuperRecords } from '../../sleepy/super/superRecordStore';
+import { onMemberSeen } from '../../sleepy/super/superUnreadStore';
 import { DRAWER_POLL_MS, headlessRowsOf, type DrawerFacts } from './drawerModel';
 
 /**
@@ -39,24 +42,29 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
   // The set of agents: a member made or deleted re-reads the summary at once, so a deleted member
   // leaves the Team list with the delete, not at the next 15 s read.
   const agentSet = useMemo(() => (agentsQ.data ?? []).map((a) => a.slug).sort().join('\n'), [agentsQ.data]);
+  // The project's Super records as pushed live: an owner answer closes its item (and main's
+  // mirror) there first, and the summary is re-read at once, never at the next poll.
+  const records = useVaultSuperRecords(vault);
+  const pulse = useMemo(() => ekipPulseKey(records), [records]);
+  const poller = useRef<PulsedPoll | null>(null);
   useEffect(() => {
-    let gone = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const read = () => {
-      void api.get<{ members?: unknown }>('/agent/sessions?summary=1').then(
-        (summary) => { if (!gone) setMembers(membersOf(summary)); },
-        () => { /* a failed read keeps the last answer */ },
-      ).finally(() => { if (!gone && drawerVisible) timer = setTimeout(read, pollMs(DRAWER_POLL_MS)); });
-    };
-    read();
+    const p = startPulsedPoll(
+      (current) => api.get<{ members?: unknown }>('/agent/sessions?summary=1').then((summary) => { if (current()) setMembers(membersOf(summary)); }),
+      () => (drawerVisible ? pollMs(DRAWER_POLL_MS) : null),
+    );
+    poller.current = p;
     // Back in front: read at once (plan r4 D8), a member's answer may have landed meanwhile.
-    const offFocus = onWindowActivity((next, prev) => {
-      if (gone || !next.focused || prev.focused) return;
-      if (timer) clearTimeout(timer);
-      read();
-    });
-    return () => { gone = true; offFocus(); if (timer) clearTimeout(timer); };
-  }, [api, drawerVisible, agentSet]);
+    const offFocus = onWindowActivity((next, prev) => { if (next.focused && !prev.focused) p.poke(); });
+    // A member's stage was just read: its number on the row goes now, not 15 s later.
+    const offSeen = onMemberSeen((v) => { if (v === vault) p.poke(); });
+    return () => { p.stop(); if (poller.current === p) poller.current = null; offFocus(); offSeen(); };
+  }, [api, drawerVisible, agentSet, vault]);
+  const firstPulse = useRef(true);
+  useEffect(() => {
+    // The mount's own read already covers the first key.
+    if (firstPulse.current) { firstPulse.current = false; return; }
+    poller.current?.poke();
+  }, [pulse]);
   const [surface, setSurface] = useState<DrawerSurfaceState>({ superOn: false, superSelected: false });
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<DrawerSurfaceState>(DRAWER_SURFACE_EVENT, (s) => { if (s) setSurface(s); });

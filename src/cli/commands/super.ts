@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { SUPER_CONDITION_HELP } from '../../lib/automations/condition.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -67,6 +68,18 @@ export function notTheSuperAgent(env: NodeJS.ProcessEnv = process.env): { error:
   return base;
 }
 
+/**
+ * A connection the app took and then closed without an answer is not an app that is down: the
+ * verb may have run (field 2026-11-15: "not reachable: socket hang up" while the worktree had been
+ * made). Said so, with the check to run before trying again.
+ */
+export function droppedOrUnreachable(err: Error & { code?: string }): Record<string, unknown> {
+  if (err.code === 'ECONNRESET' || /socket hang up/i.test(err.message)) {
+    return { error: 'no_answer', message: `the app closed the connection before answering (${err.message}); it may have acted. Check \`dreamcontext super state\` (and \`super worktree list\`) before trying again` };
+  }
+  return { error: 'unreachable', message: `the app is not reachable: ${err.message}` };
+}
+
 export function callSuper(verb: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): Promise<CallResult> {
   // A key inherited from the Super Agent's shell does not make a member's run the Super Agent.
   const e = mayCallSuper(env) ? windowEnv(env) : null;
@@ -91,7 +104,7 @@ export function callSuper(verb: string, body: Record<string, unknown>, env: Node
         resolve({ status: res.statusCode ?? 0, body: parsed });
       });
     });
-    req.on('error', (err) => resolve({ status: 0, body: { error: 'unreachable', message: `the app is not reachable: ${err.message}` } }));
+    req.on('error', (err) => resolve({ status: 0, body: droppedOrUnreachable(err) }));
     req.write(payload);
     req.end();
   });
@@ -253,7 +266,7 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('present [cards...]')
-    .description('Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2+, its strip scrolls), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards')
+    .description('Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4, only when asked: side-by-side), filmstrip (2+, its strip scrolls; the default for 3+ cards and for 2+ pictures or clips), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards')
     .option('--layout <name>', 'spotlight | compare | grid | filmstrip | review')
     .option('--off', 'Leave the presentation')
     .action((containers: string[], o: { off?: boolean; layout?: string }) => {
@@ -383,18 +396,20 @@ export function registerSuperCommand(program: Command): void {
     .action((item: string, text: string) => run('team-answer', { item, text }));
 
   team.command('amend <member>')
-    .description('Correct a member\'s instructions after a mistake: only its prompt, soul or a routine\'s job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`')
+    .description('Correct a member\'s instructions after a mistake or the owner\'s feedback: only its prompt, soul or a routine\'s job. The project\'s Super Agent corrects any member; a member\'s own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`')
     .requiredOption('--why <line>', 'The mistake this fixes, in a line the owner reads')
+    .option('--quote <words>', 'The owner\'s exact words this carries out ("next time do it like this"): shown with the change')
     .option('--prompt-file <path>', 'A file with its whole new prompt')
     .option('--soul-file <path>', 'A file with its whole new soul (empty removes it)')
     .option('--routine <slug>', 'The routine whose job changes')
     .option('--job-file <path>', 'A file with the routine\'s whole new job (needs --routine; empty removes it)')
-    .action((member: string, o: { why: string; promptFile?: string; soulFile?: string; routine?: string; jobFile?: string }) => {
+    .action((member: string, o: { why: string; quote?: string; promptFile?: string; soulFile?: string; routine?: string; jobFile?: string }) => {
       if (!o.promptFile && !o.soulFile && !o.jobFile) return usage('name what changes: --prompt-file, --soul-file or --job-file');
       let body: Record<string, unknown>;
       try {
         body = {
           member, why: o.why,
+          ...(o.quote ? { quote: o.quote } : {}),
           ...(o.promptFile ? { prompt: readFileSync(o.promptFile, 'utf-8') } : {}),
           ...(o.soulFile ? { soul: readFileSync(o.soulFile, 'utf-8') } : {}),
           ...(o.jobFile ? { job: readFileSync(o.jobFile, 'utf-8') } : {}),
@@ -418,6 +433,12 @@ export function registerSuperCommand(program: Command): void {
   q.command('done <item>')
     .description('Mark an item handled (never a permission: answer one with `super allow`)')
     .action((item: string) => run('queue-done', { item }));
+
+  q.command('allow <item>')
+    .description('Pass ONE of the owner\'s own permissions (a permission, a refused call or a member\'s, waiting on him) on a message he wrote you whose whole text is a plain yes (or, with --deny, a plain no). The server checks the ref against what it can prove he wrote (his Telegram or phone; a line typed on the Mac is refused `mac_words`: he taps the card there), after the card was born, used once; when several of his wait, his message must name which (the member\'s name). Refused: `not_owner_message`, `ref_used`, `before_card`, `not_consent`, `several_pending` (ask him which), `outward` (a push, publish, deploy, network or MCP tool, or code the card does not show: only his tap)')
+    .requiredOption('--owner-ref <ref>', 'The <owner-msg ref> of HIS message that said it')
+    .option('--deny', 'His message said no: deny it instead')
+    .action((item: string, o: { ownerRef: string; deny?: boolean }) => run('queue-allow', { item, ownerRef: o.ownerRef, deny: o.deny === true }));
 
   const p = s.command('pool').description('Jobs kept for later (the job list\'s Havuz)');
   job(p.command('add')
@@ -444,7 +465,9 @@ export function registerSuperCommand(program: Command): void {
     .option('--days <daily|mon,wed|mon-fri>', 'Which days (default daily)')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes: auto = wherever he is (Telegram while he is away, else the Mac; your turns only), telegram, or mac')
     .option('--headless', 'A plain automation that runs without you (its result reaches Telegram with --reply telegram)')
-    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}) }));
+    .option('--condition <script>', `A shell script that runs first at that time, with no model. ${SUPER_CONDITION_HELP}`)
+    .option('--wake-when <true|false>', 'With --condition: wake when the script is true (exit 0, default) or when it is NOT true (exit 1)')
+    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean; condition?: string; wakeWhen?: string }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}), ...(o.condition !== undefined ? { condition: o.condition } : {}), ...(o.wakeWhen !== undefined ? { wakeWhen: o.wakeWhen } : {}) }));
   sc.command('list')
     .description('Every scheduled job: id, when, where the answer goes, next run, last result')
     .action(() => run('schedule', { op: 'list' }));
@@ -454,7 +477,10 @@ export function registerSuperCommand(program: Command): void {
     .option('--at <HH:MM>', 'New time')
     .option('--days <daily|mon,wed|mon-fri>', 'New days')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes now ("send it to the Mac/Telegram")')
-    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string }) => run('schedule', { op: 'change', id, ...o }));
+    .option('--condition <script>', 'A new condition script (it pauses the job until the owner approves it on its card)')
+    .option('--no-condition', 'Remove the condition')
+    .option('--wake-when <true|false>', 'Wake when the condition is true or when it is NOT true')
+    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string; condition?: string | false; wakeWhen?: string }) => run('schedule', { op: 'change', id, ...o }));
   sc.command('cancel <id>')
     .description('Remove a scheduled job')
     .action((id: string) => run('schedule', { op: 'cancel', id }));
@@ -467,6 +493,9 @@ export function registerSuperCommand(program: Command): void {
   n.command('done <id>')
     .description('Move a line to Done (it finished, or the owner gave what you waited for)')
     .action((id: string) => run('note-done', { id }));
+  n.command('status <id> <status>')
+    .description('Set a line\'s status: not-started | in-progress | almost-done | waiting | done (the owner\'s own lines too, when it helps him)')
+    .action((id: string, status: string) => run('note-status', { id, status }));
   n.command('keep <id>')
     .description('A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h')
     .action((id: string) => run('note-keep', { id }));
@@ -474,7 +503,7 @@ export function registerSuperCommand(program: Command): void {
     .description('Remove a line that no longer holds')
     .action((id: string) => run('note-drop', { id }));
   n.command('clear [section]')
-    .description('Empty the agenda (or one section): a new day or a new piece of work starts')
+    .description('Empty the agenda (or one section) of your own lines: a new piece of work starts. The owner\'s own lines stay')
     .action((section?: string) => run('note-clear', section ? { section } : {}));
 
   s.command('ask [text]')

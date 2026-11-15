@@ -1,5 +1,5 @@
 import { getChat } from '../assistant/chat-registry.js';
-import { MAX_CONTAINERS, MAX_FLOAT, floatCount, type SuperContainer, type SuperState } from './types.js';
+import { MAX_CONTAINERS, MAX_FLOAT, floatCount, queuedCards, type SuperContainer, type SuperState } from './types.js';
 
 /**
  * Room in the card record (task super-kart-kaydi-…, owner 2026-10-23: "I don't see the new job
@@ -62,7 +62,8 @@ export function retirable(s: SuperState, c: SuperContainer, live: LiveTest): boo
 /** The cards that may go to make room, in the order they go. */
 export function retirableCards(s: SuperState, keep: readonly string[] = [], live: LiveTest = chatIsLive): string[] {
   const grouped = new Set(s.groups.flatMap((g) => g.cards));
-  const shown = new Set(s.view.mode === 'half' ? [s.view.card ?? ''] : s.view.mode === 'present' ? s.view.cards ?? [] : []);
+  // What the view shows, and what a queued presentation still has to show (AC6).
+  const shown = new Set([...(s.view.mode === 'half' ? [s.view.card ?? ''] : s.view.mode === 'present' ? s.view.cards ?? [] : []), ...queuedCards(s)]);
   const kept = new Set(keep);
   const ok = s.containers.filter((c) => !kept.has(c.id) && !grouped.has(c.id) && !shown.has(c.id)
     && c.sizeBy !== 'owner' && !c.pos && retirable(s, c, live));

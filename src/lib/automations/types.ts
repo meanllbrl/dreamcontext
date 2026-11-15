@@ -45,6 +45,9 @@ export const RUN_STATUSES = [
   'orphaned',
   'awaiting-review',
   'awaiting-approval',
+  // A scheduled fire whose condition script said "do not wake" (kosullu-otomasyon): no model
+  // turn, no notify, never a failure, never the cache's face. Consecutive rows fold into one.
+  'condition-false',
 ] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
@@ -542,6 +545,20 @@ export interface AutomationManifest {
    * Approval-hashed when `telegram`/`auto`, OMITTED otherwise and LAST; consent as `target`.
    */
   reply?: AutomationReply;
+  /**
+   * The routine's CONDITION (`## Condition`, one fenced `sh` block; kosullu-otomasyon plan C1): a
+   * shell script a scheduled fire runs first, with no model. It lives in the file that holds the
+   * schedule (a split routine's job file, never the agent file). Normalized (CRLF→LF, trimmed).
+   * Approval-hashed, OMITTED when absent and LAST, and runs only under an approval entry whose
+   * witness mark equals its sha (`ApprovalEntry.conditionWitnessed`).
+   */
+  condition?: string;
+  /** `condition_wake: false`: wake when the script is NOT true (exit 1). Absent = wake on true.
+   *  Hashed after `condition`, only beside one, and part of its witness sha. */
+  conditionWake?: false;
+  /** Why the condition (or its composed target) cannot run: the target never fires and is never
+   *  stamped while this is set. Unhashed (it is derived from hashed fields). */
+  conditionError?: string;
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;
@@ -595,6 +612,12 @@ export interface AutomationJob {
   app?: string;
   /** `app_tools:`, absent otherwise. Hashed, see `AutomationManifest.appTools`. */
   appTools?: string[];
+  /** `## Condition`, absent otherwise. Hashed, see `AutomationManifest.condition`. */
+  condition?: string;
+  /** `condition_wake: false`, absent otherwise. See `AutomationManifest.conditionWake`. */
+  conditionWake?: false;
+  /** Why the job's own condition section is invalid, absent otherwise. */
+  conditionError?: string;
   /** Its creator's login (`owner:`), unhashed; null before the migration stamps it. */
   owner: string | null;
   /** When its owner last wrote it (`updated:`), unhashed. */
@@ -1159,6 +1182,10 @@ export interface ApprovalPayloadFields {
   target: string;
   /** Hashed: where the result goes (Telegram is outflow). '' at the default. */
   reply: string;
+  /** Hashed: the condition script a scheduled fire runs before any model. '' when none. */
+  condition: string;
+  /** Hashed beside a condition: which answer wakes the agent ('true' or 'false'). '' when none. */
+  conditionWake: string;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1321,6 +1348,8 @@ export const APPROVAL_DIFF_FIELDS = [
   // re-block everyone): every existing approval keeps its hash.
   'target',
   'reply',
+  'condition',
+  'conditionWake',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

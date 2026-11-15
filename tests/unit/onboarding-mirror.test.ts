@@ -13,7 +13,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as lib from '../../src/lib/onboarding/types.js';
-import { CHECK_COPY, REASON_COPY, FIX_COPY, INITIALIZER_KICKOFF_PROMPT } from '../../src/lib/onboarding/copy.js';
+import { CHECK_COPY, REASON_COPY, FIX_COPY, FIX_FAILURES, FIX_FAILURE_COPY, FIX_RETRY, INITIALIZER_KICKOFF_PROMPT, fixFailureSentence } from '../../src/lib/onboarding/copy.js';
 import * as dash from '../../dashboard/src/lib/onboardingTypes.js';
 import {
   initializerKickoffPrompt,
@@ -30,8 +30,12 @@ const I18N = join(ROOT, 'dashboard', 'src', 'context', 'I18nContext.tsx');
 const TOKENS = join(ROOT, 'dashboard', 'src', 'styles', 'tokens.css');
 
 /** Every `'onboarding.…': '…'` (or "…") pair in the file. Keys may hold hyphens (`claude-auth`). */
-function onboardingKeys(): Map<string, string> {
-  const src = readFileSync(I18N, 'utf-8');
+function onboardingKeys(lang: 'en' | 'tr' = 'en'): Map<string, string> {
+  const file = readFileSync(I18N, 'utf-8');
+  const cut = file.indexOf('const TR_PARTIAL');
+  const end = file.indexOf('\n};', cut);
+  // English: the `en` block before TR_PARTIAL; Turkish: the TR_PARTIAL block itself.
+  const src = lang === 'en' ? file.slice(0, cut) : file.slice(cut, end);
   const out = new Map<string, string>();
   const re = /'(onboarding\.[a-zA-Z0-9_.-]+)':\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g;
   let m: RegExpExecArray | null;
@@ -67,6 +71,26 @@ describe('i18n copy', () => {
     for (const [code, text] of Object.entries(REASON_COPY)) {
       expect(keys.get(`onboarding.reason.${code}`)).toBe(text);
     }
+  });
+
+  it('C11: every fix failure is one sentence and a retry, in English and Turkish, with no command or stack', () => {
+    const tr = onboardingKeys('tr');
+    expect(keys.get('onboarding.failure.retry')).toBe(FIX_RETRY);
+    expect(tr.get('onboarding.failure.retry')).toBe('Tekrar dene');
+    for (const code of FIX_FAILURES) {
+      const en = keys.get(`onboarding.failure.${code}`);
+      const t = tr.get(`onboarding.failure.${code}`);
+      expect({ code, en }).toEqual({ code, en: FIX_FAILURE_COPY[code] });
+      expect({ code, tr: (t ?? '').length > 0 && t !== en }).toEqual({ code, tr: true });
+      for (const s of [en!, t!]) {
+        expect(s).not.toMatch(/`|\bnpm\b|\bsudo\b|dreamcontext |\bat .*:\d+|Error:|\u2014/);
+        // One sentence of what happened, then the nudge: at most two short sentences.
+        expect(s.split(/[.!?](?:\s|$)/).filter(Boolean).length).toBeLessThanOrEqual(2);
+      }
+    }
+    expect(fixFailureSentence('nope')).toBe(FIX_FAILURE_COPY.failed);
+    expect(fixFailureSentence(undefined)).toBe(FIX_FAILURE_COPY.failed);
+    expect(fixFailureSentence('offline')).toBe(FIX_FAILURE_COPY.offline);
   });
 
   it('carries every field of every fix exactly as the lib, including both scope notes', () => {

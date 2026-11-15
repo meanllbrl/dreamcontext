@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { appRuntimePath } from '../../lib/app-cli-path.js';
 import { bindTake, voiceTakeBlock, type TakeRecord } from '../../lib/voice/voiceLog.js';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -79,6 +80,7 @@ import { createResumeAtReset, RESET_CONTINUE_TEXT } from '../../lib/resume-at-re
 import { isServerTurnText } from '../../lib/usage-readers.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs, storeServers } from '../../lib/mcp-store.js';
+import { recordConnectorUrls } from '../../lib/mcp-connectors.js';
 import { McpControl, isSafeAuthUrl, readStatusCache, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
 import { offCardQuestionFrame } from '../../lib/card-standalone.js';
 import { planQuestionFrame } from '../../lib/plan-question.js';
@@ -138,10 +140,11 @@ import { ordinaryWorkAllows, ordinaryWorkMode } from '../../lib/super/ordinary-w
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
 import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-language.js';
-import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
+import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock, partRefs } from '../../lib/super/types.js';
+import { noteOwnerWords, waitingCards } from '../../lib/super/owner-consent.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
   childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
@@ -153,7 +156,7 @@ import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  connectorListSettled, connectorListSettleMs, knownMcpServers, mcpCardServers, mcpDrift, mcpGrantFor, mcpNeedingSignIn, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
+  childMcpNeedingSignIn, connectorListSettled, connectorOnAccount, connectorListSettleMs, connectorRulesFor, knownChildMcp, knownMcpServers, leanAllowlist, mcpFileNames, mcpCardServers, mcpDrift, mcpGrantFor, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { openRequest } from '../../lib/super/request-answer.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
@@ -614,15 +617,18 @@ export function leanMcpForUpgrade(o: {
 /**
  * The MCP argv of a spawn: today's ({@link mcpConfigArgs} over `normal`) for every chat, or, for
  * a LEAN Super Agent child (orchestration plan r5 D14), `--strict-mcp-config` and only its
- * subset, the project's `.mcp.json` and the browser override (still last). A lean child with no
+ * subset, the project's `.mcp.json` and the browser override (still last). A lean child given a
+ * claude.ai connector drops strict for its settings' allowlist (`allowlisted`). A lean child with no
  * servers named and no project file gets `--strict-mcp-config` alone: no user MCP process.
  */
 export function leanChildMcpArgs(
-  lean: { leanMcpPath: string | null; projectMcp: string | null; browser: string | null } | null,
+  lean: { leanMcpPath: string | null; projectMcp: string | null; browser: string | null; allowlisted?: boolean } | null,
   normal: Array<string | null>,
 ): string[] {
   if (!lean) return mcpConfigArgs(normal);
-  return ['--strict-mcp-config', ...mcpConfigArgs([lean.leanMcpPath, lean.projectMcp, lean.browser])];
+  // `allowlisted`: the spawn's settings carry `allowedMcpServers` (a claude.ai connector was given),
+  // which narrows like strict does and, unlike strict, keeps that connector.
+  return [...(lean.allowlisted ? [] : ['--strict-mcp-config']), ...mcpConfigArgs([lean.leanMcpPath, lean.projectMcp, lean.browser])];
 }
 
 /**
@@ -1130,6 +1136,23 @@ export function settleOwnerTurnSource(
   if (turn.telegram === 'run-report' || turn.telegram === 'schedule') return silentOwnerTurn(turn.telegram);
   if (source.via === 'telegram' ? turn.telegram !== 'telegram-text' : turn.telegram !== undefined) return silentOwnerTurn('telegram-unconfirmed');
   return source;
+}
+
+/**
+ * His own typed words in a Super chat, by the ref his `<owner-msg>` carries, or null: the source
+ * the ledger's classifier proved (the composer's mark, his phone, his Telegram text), never a
+ * slash command, a server-written turn, a continue, a run report, a schedule, an unconfirmed
+ * Telegram ref or an agent's unmarked `window send`. What `super queue allow --owner-ref` is
+ * checked against (owner-consent.ts).
+ */
+export function superOwnerWordsOf(
+  source: OwnerTurnSource,
+  turn: { text: string; serverText: boolean; serverWritten: boolean; telegram?: InjectedSource; tgRef: string | null },
+): { ref: string; parts: string[]; text: string; via: OwnerTurnVia } | null {
+  if (turn.serverWritten || turn.text.startsWith('/')) return null;
+  const proof = settleOwnerTurnSource(source, { text: turn.text, serverText: turn.serverText, ledgerChat: true, ...(turn.telegram ? { telegram: turn.telegram } : {}) });
+  if (!proof.writes) return null;
+  return { ref: turn.tgRef ?? msgRef(turn.text), parts: partRefs(turn.text, turn.tgRef ?? undefined), text: proof.own, via: proof.via };
 }
 
 /** The chat kind the ledger names (`surface`), or null for a chat whose turns are never his
@@ -1659,7 +1682,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // never a refusal that would lock the conversation out.
     const lean = leanMcpForUpgrade({
       assistant, mode, conversation: resumeId || sessionId, lean: url.searchParams.get('lean'), mcp: url.searchParams.get('mcp'),
-      recorded: delegatedChildMcp, known: () => knownMcpServers(projectRoot),
+      recorded: delegatedChildMcp, known: () => knownChildMcp(projectRoot).all,
     });
     if (lean === 'refuse') { rejectUpgrade(socket, 400); return; }
     const leanMcp = lean ?? undefined;
@@ -2496,10 +2519,16 @@ export function startChatSession(
   };
   const leanProjectMcp = opts.leanMcp ? projectMcpJson(projectRoot) : null;
   const leanProjectMcpSafe = leanProjectMcp && tmpPathOk(leanProjectMcp) ? leanProjectMcp : null;
+  /** The claude.ai connectors a lean Claude child was given (`--mcp notion`), each with the URL its
+   *  allowlist entry needs (lean-mcp.ts `connectorRulesFor`). Never for a Codex or Antigravity child:
+   *  connectors are Claude's, and `delegate` refuses them there. */
+  let leanConnectorRules: Array<{ alias: string; name: string; url: string }> = [];
   if (opts.leanMcp && !scopedCard) {
     try {
-      const known = knownMcpServers(projectRoot);
+      const childMcp = knownChildMcp(projectRoot);
+      const known = childMcp.local;
       leanMcpPath = writeLeanMcpConfig(opts.leanMcp.filter((n) => known.has(n)), known);
+      if (!bridgeTool && !app) leanConnectorRules = connectorRulesFor(opts.leanMcp.filter((n) => !known.has(n)), childMcp.connectors, activeAccountId || (listClaudeAccounts().length ? '' : 'default'), childMcp.read);
       if (leanMcpPath && !tmpPathOk(leanMcpPath)) {
         removeLeanMcpConfig(leanMcpPath);
         leanMcpPath = null;
@@ -2738,6 +2767,8 @@ export function startChatSession(
   // classifier reads them only from flag/user/managed settings, never the repo's own, so one
   // `--settings` file holds both. Written even under bypass — a live switch to auto keeps them.
   const spawnSettings: Record<string, unknown> = autoModeSettings();
+  /** The lean allowlist is in this spawn's settings file: the child runs without strict. */
+  let leanAllowlisted = false;
   let modeNoteArg: string[] = [];
   let cleanupModeNote = () => { /* nothing written */ };
   const tmpFiles: string[] = [];
@@ -2775,12 +2806,23 @@ export function startChatSession(
   // own would drop: the Bash gate (own assistant) and the file gate (own assistant and member). The carve-out for builders is not an app chat's business.
   if (app) delete spawnSettings.autoMode;
   if (app?.hooks) spawnSettings.hooks = { ...(spawnSettings.hooks as Record<string, unknown> | undefined), ...app.hooks };
+  // A lean child given a claude.ai connector: Claude Code's own MCP allowlist instead of
+  // `--strict-mcp-config` (which drops every connector): its files' servers by name, each
+  // connector by URL, nothing else. Only once this file is written does strict go
+  // (`leanAllowlisted`): no settings file, no connector, never a wider child.
+  if (leanConnectorRules.length) {
+    Object.assign(spawnSettings, leanAllowlist(
+      [...mcpFileNames(leanMcpPath), ...mcpFileNames(leanProjectMcpSafe), ...mcpFileNames(browserOverride?.configPath ?? null)],
+      leanConnectorRules,
+    ));
+  }
   try {
     const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
     if (!tmpPathOk(settings)) throw new Error('unsafe tmpdir');
     writeFileSync(settings, JSON.stringify(spawnSettings), { encoding: 'utf-8', mode: 0o600 });
     tmpFiles.push(settings);
     modeNoteArg = ['--settings', settings];
+    leanAllowlisted = leanConnectorRules.length > 0;
     
   } catch {
     // No carve-outs and no mode note this spawn — auto mode keeps its defaults. An app chat with no
@@ -2869,7 +2911,7 @@ export function startChatSession(
     // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
     // (strict would drop it) and the browser override, LAST as above. Never a store.
     // An app's own assistant: strict, and only the manifest's servers.
-    ...(scopedCard ? [] : leanChildMcpArgs(app?.own ? { leanMcpPath: app.mcpConfig, projectMcp: null, browser: null } : opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
+    ...(scopedCard ? [] : leanChildMcpArgs(app?.own ? { leanMcpPath: app.mcpConfig, projectMcp: null, browser: null } : opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null, allowlisted: leanAllowlisted && !scopedCard } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -3014,6 +3056,8 @@ export function startChatSession(
   const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, [MEMBER_SUPER_ENV]: memberSuperEnv, [MEMBER_CREW_ENV]: memberCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}) } as Record<string, string | undefined>;
   // An app chat's hook and listed verbs call `dreamcontext` with no login-shell PATH behind them.
   if (app) childEnv.PATH = cliAwarePath(childEnv.PATH ?? '');
+  // On the app's own Node the CLI lives only in its launcher folder: every chat's hooks need it.
+  else childEnv.PATH = appRuntimePath(childEnv.PATH ?? '');
   // Held from the spawn to the child's exit; nothing async ran since `appChatHasRoom`.
   const releaseAppSlot = app ? reserveAppChat(app.hash, appSeat) : () => { /* not an app chat */ };
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
@@ -3714,7 +3758,13 @@ export function startChatSession(
   const mcpPoll = async (): Promise<McpLiveServer[] | null> => {
     if (!alive || scopedCard) return null;
     try {
-      const servers = redactStatus(await mcpControl.status(), redactContextFor(projectRoot));
+      const raw = await mcpControl.status();
+      const servers = redactStatus(raw, redactContextFor(projectRoot));
+      // Where each claude.ai connector lives, for a lean child's allowlist (mcp-connectors.ts):
+      // only a chat that carries the account's whole connector list, as the status cache.
+      if (mcpAccount && !opts.leanMcp && !app?.own && !bridgeTool && !scopedCard) {
+        try { recordConnectorUrls(mcpAccount, raw); } catch { /* the last list stays */ }
+      }
       if (alive) mcpPublish(servers);
       return servers;
     } catch { return null; }
@@ -3932,6 +3982,19 @@ export function startChatSession(
     // `<!-- re:<ref> -->` and the window draws which message it answers (replyMark.ts). Hashed
     // from the exact text the window sent; a slash command is no message of his.
     if (isSuper && !text.startsWith('/') && !serverWritten) content.push({ type: 'text', text: tgRef ? ownerMsgBlock(text, { ref: tgRef, via: 'telegram' }) : ownerMsgBlock(text) });
+    // His own typed words, as the server classified them (the composer's mark, his phone, his
+    // Telegram; never a server turn, a continue, a run report, a schedule or an agent's `window
+    // send`), kept by that ref: `super queue allow --owner-ref` passes one of his permissions only
+    // on such a message (owner-consent.ts). Decided here, never on the Super's word.
+    const words = isSuper ? superOwnerWordsOf(source, { text, serverText: serverContinue || isServerTurnText(text), serverWritten, telegram: tgSource, tgRef }) : null;
+    // His permissions waiting right now, read as he writes: what his words can be about.
+    if (words) {
+      const rec = superOfSession(chatRegistryId);
+      noteOwnerWords(chatRegistryId, {
+        ...words,
+        waiting: rec ? readSuperState(rec.root, rec.superId, superSanitizeOpts()).then((s) => waitingCards(s.queue)) : Promise.resolve(null),
+      });
+    }
     // ...and names the language he writes in (owner-language.ts): a briefing rule hundreds of
     // thousands of tokens back lost to English notes and tool output (Tilki 2026-11-08).
     if (isSuper && !text.startsWith('/')) {
@@ -3989,14 +4052,22 @@ export function startChatSession(
     // "write about this", a Telegram reply to its card) or is a tapped option's answer: any other
     // message of his, a reply ↩ to some message included, leaves it open (owner 2026-11-11).
     const abouts = isSuper ? ownerAbouts(text, aboutHeads(text)) : [];
-    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
+    // His own words (never a server continue, a server-written turn, a receipt or a Telegram run
+    // report/schedule): only they answer a member's open card in its own chat (inbox.ts).
+    const ownWords = !text.startsWith('/') && !serverContinue && !serverWritten && !receipt
+      && (tgSource === undefined || tgSource === 'telegram-text');
+    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts, ownWords) : null;
     if (held) content.push({ type: 'text', text: held.text });
     // His open question left open by this message: the super is told, so it never blocks unseen.
-    const stillOpen = isSuper && !text.startsWith('/') ? superAskStillOpen(chatRegistryId, abouts) : null;
+    const stillOpen = isSuper && !text.startsWith('/') ? superAskStillOpen(chatRegistryId, abouts, ownWords) : null;
     if (stillOpen) content.push({ type: 'text', text: stillOpen });
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
     const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text, tgRef) : null;
     if (owedBlock) content.push({ type: 'text', text: owedBlock });
+    // What he did by hand since his last message (owner-marks.ts): his own words only, never a
+    // slash command, a server-written turn, a server continue, or a Telegram run report/schedule.
+    const handMarks = isSuper && ownWords ? superOwnerMarksBlock(chatRegistryId) : null;
+    if (handMarks) content.push({ type: 'text', text: handMarks.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
@@ -4005,10 +4076,14 @@ export function startChatSession(
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
-    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
     if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
+    if (handMarks) {
+      if (wrote) void superOwnerMarksCarried(handMarks.carry);
+      else superOwnerMarksReturned(handMarks.carry);
+    }
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
@@ -4237,6 +4312,13 @@ export function startChatSession(
     if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
   }
 
+  /** The SERVER ends this child (a detached child's idle or busy reap, the drain on an autonomy
+   *  change): nobody chose to end the job, so it is a park (K2), never a real exit. A card it
+   *  holds for the owner stays open (kart-alta-yapisma-2: only a real exit withdraws one). */
+  function serverDrain(): void {
+    if (registry) noteChildParking(chatRegistryId);
+    drain();
+  }
   /** (Re)arm the reaping of a DETACHED child for its current state. A no-op while attached.
    *  Idle: ended after `detachIdleMs()` (15 min) of continuous idleness. Busy: never reaped
    *  for lack of a socket, up to `detachBusyCapMs()` (4 h) after it lost its socket. */
@@ -4246,13 +4328,13 @@ export function startChatSession(
       if (detachIdleTimer) { clearTimeout(detachIdleTimer); detachIdleTimer = null; }
       if (!detachCapTimer) {
         const left = Math.max(0, detachBusyCapMs() - (Date.now() - detachedAt));
-        detachCapTimer = setTimeout(() => { detachCapTimer = null; drain(); }, left);
+        detachCapTimer = setTimeout(() => { detachCapTimer = null; serverDrain(); }, left);
       }
       return;
     }
     if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
     if (!detachIdleTimer) {
-      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; drain(); }, detachIdleMs());
+      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; serverDrain(); }, detachIdleMs());
     }
   }
 
@@ -4363,7 +4445,7 @@ export function startChatSession(
       settled = true;
       fn(accepted);
     };
-    if (detached && turnsInFlight === 0) { drain(); return () => { /* already given up */ }; }
+    if (detached && turnsInFlight === 0) { serverDrain(); return () => { /* already given up */ }; }
     if (detached) {
       // Every hold it has, the rotated conversation's too: the respawn resumes THAT one.
       const lent = ownHolds();
@@ -4372,7 +4454,7 @@ export function startChatSession(
       return settleOnce((accepted) => {
         // Accepted: the new process holds the conversation now; `holdLent` keeps the drain
         // from releasing its hold.
-        if (accepted) { drain(); return; }
+        if (accepted) { serverDrain(); return; }
         if (!holdLent || !alive) return;
         // Refused: take the holds back — unless someone else took a conversation meanwhile,
         // in which case the child stays lent and never releases them.
@@ -5629,7 +5711,10 @@ export function startChatSession(
     if (!asked.length) return;
     let grant: string[] = [];
     try {
-      grant = mcpGrantFor({ asked, have: [...spawnedMcp, ...mcpGranted], known: knownMcpServers(projectRoot), lean: !!opts.leanMcp });
+      // A lean Claude child may be granted a claude.ai connector too (`notion`); an ordinary chat
+      // already carries the account's connectors, so only the project's servers are news to it.
+      const known = opts.leanMcp ? knownChildMcp(projectRoot).all : knownMcpServers(projectRoot);
+      grant = mcpGrantFor({ asked, have: [...spawnedMcp, ...mcpGranted], known, lean: !!opts.leanMcp });
     } catch { return; }
     if (!grant.length) return;
     mcpGranted.push(...grant);
@@ -5639,7 +5724,13 @@ export function startChatSession(
     // wait on a receipt), and the successor's live status shows what is still missing.
     const after = new Set([...spawnedMcp, ...mcpGranted]);
     let signIn: string[] = asked;
-    try { signIn = mcpNeedingSignIn(asked, readStatusCache()); } catch { /* unknown: no receipt */ }
+    try {
+      const child = knownChildMcp(projectRoot);
+      // A connector this chat's ACCOUNT is not known to have is no promise of loaded tools: no
+      // receipt, the card stays the owner's and the successor's live row says what it has.
+      const notHere = asked.filter((n) => { const c = child.connectors.get(n); return !!c && !child.local.has(n) && connectorOnAccount(c, mcpAccount, child.read) !== 'yes'; });
+      signIn = [...childMcpNeedingSignIn(asked, child.connectors, readStatusCache()), ...notHere];
+    } catch { /* unknown: no receipt */ }
     if (asked.every((n) => after.has(n)) && !signIn.length) {
       const names = mcpGranted.join(', ');
       mcpGrantReceipt = JSON.stringify({
@@ -5725,7 +5816,7 @@ export function startChatSession(
       // Detached (pane closed, phone locked): a reattach respawns it (adoptSocket). An idle one
       // with nothing held is ended now instead, so no process keeps running at the old level
       // in the meantime; the conversation stays on disk and its next open resumes it.
-      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0 && !mcpGrantReceipt) drain();
+      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0 && !mcpGrantReceipt) serverDrain();
       return;
     }
     handedOff = true;

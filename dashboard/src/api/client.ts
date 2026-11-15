@@ -220,6 +220,18 @@ export class ApiClient {
     }
   }
 
+  /** A PATCH in the owner's name (a task's status by hand, a kanban drag): the same key
+   *  {@link ownerPost} carries, so his hand changes ride his next message to the Super. */
+  async ownerPatch<T>(path: string, body: unknown): Promise<T> {
+    const { ownerKey } = await import('../lib/desktop');
+    const key = await ownerKey();
+    return this.request<T>(path, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      headers: key ? { 'X-Dreamcontext-Owner-Key': key } : {},
+    });
+  }
+
   patch<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>(path, {
       method: 'PATCH',

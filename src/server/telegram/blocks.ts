@@ -12,7 +12,8 @@
  *    second confirm tap before its text goes as an owner turn; `task`/`knowledge`/`core` → their
  *    title line; `board`/`develop`/`file`/`reveal`/anything else → "<label> (Mac'te)";
  *  - `dream-view` `insight` → its title line (inline insight pictures are a follow-up);
- *    `agent-thread` → the member named; `automation` → "Onay bekliyor: <slug> · Mac'te";
+ *    `agent-thread` → the member named; `automation` → its approval card, whole, with Onayla /
+ *    Reddet (automation-approvals.ts; the old "Onay bekliyor: <slug> · Mac'te" when it cannot go);
  *    `learned` → the rule's own receipt line (`learn`'s line 2) with a "Geri al" button for an
  *    active rule (learning loop C9); keeping or dropping a proposed one stays on the Mac.
  */
@@ -28,6 +29,7 @@ import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { RULE_ID_RE, undoRule } from '../../lib/rules-store.js';
 import { ownerLine } from '../../cli/commands/learn.js';
 import { locateRule } from '../routes/learned.js';
+import { sendAutomationCard } from './automation-approvals.js';
 
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
 const VIDEO_FILE = /\.(mp4|m4v|mov|webm)$/i;
@@ -92,6 +94,14 @@ export function viewLine(body: string): string | null {
   return null;
 }
 
+/** The slug an `automation` view names ('' when it names none), or null for any other block. */
+export function automationViewSlug(body: string): string | null {
+  let v: Obj | null;
+  try { v = obj(JSON.parse(body)); } catch { return null; }
+  if (!v || v.type !== 'automation') return null;
+  return typeof v.slug === 'string' ? v.slug : typeof v.id === 'string' ? v.id : '';
+}
+
 /** A `learned` view as its receipt line, plus whether its Undo button is offered (pure enough to test). */
 export function learnedMessage(contextRoot: string, body: string, home?: string): { line: string; id: string; undo: boolean } | null {
   let v: Obj | null;
@@ -105,11 +115,13 @@ export function learnedMessage(contextRoot: string, body: string, home?: string)
 }
 
 /** The "Geri al" tap on a learned rule's Telegram line: his own chat, his tap. */
-export async function onLearnedButton(ab: ActiveBinding, data: Obj, home?: string): Promise<string> {
+export async function onLearnedButton(hub: TelegramHub, ab: ActiveBinding, data: Obj, home?: string): Promise<string> {
   const id = typeof data.id === 'string' ? data.id : '';
-  if (!ab.contextRoot || !RULE_ID_RE.test(id)) return LINES.stale;
+  // The project this bot talks in (a global member's binding names none: `rootOf`).
+  const root = hub.rootOf(ab);
+  if (!root || !RULE_ID_RE.test(id)) return LINES.stale;
   try {
-    const found = locateRule(ab.contextRoot, id, home);
+    const found = locateRule(root, id, home);
     if (!found) return 'Bu kural bu projede yok.';
     const change = undoRule(found.ref, id, { by: 'owner', conversation: 'telegram' });
     if (!change.ok) return change.reason.slice(0, 180);
@@ -130,17 +142,23 @@ export const MAX_TEXT_PICTURES = 10;
  */
 export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text: string, pictures: boolean, deps: Pick<BlocksDeps, 'mediaRoots' | 'isGitIgnored'> = {}): Promise<number> {
   const local = markdownImages(text).filter((i) => !i.web);
-  if (!local.length || !ab.contextRoot) return 0;
+  const root = hub.rootOf(ab);
+  if (!local.length) return 0;
+  if (!root) {
+    // Never a silent drop: the text already left the picture out ('hub' mode).
+    await hub.notice(ab, 'file', `${local.length === 1 ? 'Resim' : `${local.length} resim`} gönderilemedi: bu botun projesi Mac'te bulunamadı.`);
+    return 0;
+  }
   const seen = new Set<string>();
   const wanted = local.filter((i) => (seen.has(i.src) ? false : (seen.add(i.src), true)));
   const lines: string[] = [];
   const items: MediaItem[] = [];
-  const roots = pictures ? await (deps.mediaRoots ?? superMediaRoots)(ab.contextRoot) : [];
+  const roots = pictures ? await (deps.mediaRoots ?? superMediaRoots)(root) : [];
   for (const img of wanted) {
     const name = cleanTitle(imageName(img), 80);
     if (!pictures) { lines.push(notSentLine('Resim: ', name, NOT_SENT.secret)); continue; }
     if (items.length >= MAX_TEXT_PICTURES) { lines.push(notSentLine('Resim: ', name, `bir mesajda en çok ${MAX_TEXT_PICTURES} resim gider, Mac'te açık`)); continue; }
-    const f = readProjectFile({ contextRoot: ab.contextRoot, mediaRoots: roots, ...(deps.isGitIgnored ? { isGitIgnored: deps.isGitIgnored } : {}) }, img.src);
+    const f = readProjectFile({ contextRoot: root, mediaRoots: roots, ...(deps.isGitIgnored ? { isGitIgnored: deps.isGitIgnored } : {}) }, img.src);
     if (!f.ok) { lines.push(notSentLine('Resim: ', name, cardWhy(f.reason))); continue; }
     const kind = IMAGE_FILE.test(f.file.name) ? 'photo' : VIDEO_FILE.test(f.file.name) ? 'video' : null;
     if (!kind) { lines.push(notSentLine('Resim: ', name, NOT_SENT.format)); continue; }
@@ -190,13 +208,17 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
       }
     } else if (b.lang === 'dream-view') {
       let learned: ReturnType<typeof learnedMessage> = null;
-      try { learned = ab.contextRoot ? learnedMessage(ab.contextRoot, b.body) : null; } catch { learned = null; }
+      const root = hub.rootOf(ab);
+      try { learned = root ? learnedMessage(root, b.body) : null; } catch { learned = null; }
       if (learned?.undo) {
         const sent = await hub.sendButtons(ab, escapeHtml(learned.line), [['Geri al']], { kind: 'confirm', singleUse: true }, { action: 'learned-undo', id: learned.id }).catch(() => null);
         if (sent === null) await hub.reply(ab, learned.line);
         continue;
       }
       if (learned) { await hub.reply(ab, learned.line); continue; }
+      // An automation's approval card: the whole card with Onayla / Reddet (automation-approvals.ts).
+      const auto = automationViewSlug(b.body);
+      if (auto !== null) { await sendAutomationCard(hub, ab, auto, sessionId).catch(() => false); continue; }
       const line = viewLine(b.body);
       if (line) await hub.reply(ab, line);
     }
@@ -214,9 +236,9 @@ export async function onAskButton(hub: TelegramHub, ab: ActiveBinding, data: Obj
     return null;
   }
   if (idx !== 0) return 'Vazgeçildi';
-  if (!ab.contextRoot) return LINES.stale;
-  const { readSuperState } = await import('../../lib/super/store.js');
-  const s = await readSuperState(ab.contextRoot);
+  // The Super this bot talks to: main's, or the member's own.
+  const s = await hub.readBound(ab);
+  if (!s) return LINES.stale;
   if (!s.enabled || !s.session) return LINES.superOff;
   const ok = await hub.injectText(ab, hub.syntheticUpdateId(), ask.text, s.session);
   return ok ? '✓ Gönderildi' : null;

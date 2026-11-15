@@ -117,6 +117,10 @@ export interface ChatUserItem {
   /** Sent by the queue's own drain (`maybeFlushQueue`), minutes after his press: the press moved
    *  the Super view (ChatPane `onQueued`), so this arrival never moves it again (scroll rule 1). */
   queued?: true;
+  /** An opening prompt the server submitted for this chat (`prompt_echo`: sleep, a delegate run,
+   *  brain-resolve): drawn as his message so the run shows what it was asked, but no send of his,
+   *  so it never stops the view at its answer (ChatPane `lastOwnItem`). */
+  serverPrompt?: true;
 }
 export interface ChatTextItem {
   kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number;
@@ -2193,7 +2197,7 @@ export function createChatSession(
         // stacking a duplicate bubble.
         const last = conv.items[conv.items.length - 1];
         if (last?.kind === 'user' && last.text === ev.text) return;
-        const echoed: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now() };
+        const echoed: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now(), serverPrompt: true };
         conv = { ...conv, items: [...conv.items, echoed] };
         // The turn is already in flight server-side — keep the working indicator honest even
         // if the CLI's first frame is still seconds away (hooks, spawn).

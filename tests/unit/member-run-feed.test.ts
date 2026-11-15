@@ -14,6 +14,8 @@ import {
   EMPTY_RUN_FEED, anyRunning, landFirst, landFresh, landOlder, memberFeedSignature, withPinned, withSeen,
 } from '../../dashboard/src/components/sleepy/super/memberRunFeed';
 import type { AgentHistoryPage } from '../../dashboard/src/hooks/useAgents';
+import { runLiveSteps } from '../../dashboard/src/components/sleepy/super/runLiveSteps';
+import type { HistoryEntry } from '../../dashboard/src/components/sleepy/chatSession';
 
 const T = (hm: string) => `2026-11-08T${hm}:00.000Z`;
 const ms = (hm: string) => Date.parse(T(hm));
@@ -131,11 +133,11 @@ describe('a run\'s document is a tile, never a link or an inline report', () => 
     const [withDoc] = toFeedItems([session('a', '08:00', '08:01', { hasDocument: true, document: doc })]);
     const [without] = toFeedItems([session('b', '09:00', '09:01')]);
     expect(runFootOf(withDoc.feed).document).toEqual(doc);
-    expect(runFootOf(without.feed)).toEqual({ steps: false, document: null });
+    expect(runFootOf(without.feed)).toEqual({ document: null });
   });
-  it('steps stay as they were: offered when a session is on this machine', () => {
+  it('a landed run offers no steps, even with its session on this machine (owner 2026-11-14)', () => {
     const [it] = toFeedItems([session('a', '08:00', '08:01', { claudeId: 'sess-1' })]);
-    expect(runFootOf(it.feed).steps).toBe(true);
+    expect(runFootOf(it.feed)).toEqual({ document: null });
   });
   it('the pane opens a run\'s document from the brain folder (project-relative, never twice)', () => {
     expect(chatFilePath('automations/output/x/2026-11-08.md')).toBe('_dream_context/automations/output/x/2026-11-08.md');
@@ -144,5 +146,27 @@ describe('a run\'s document is a tile, never a link or an inline report', () => 
   it('the tile\'s lines: two lines, headings lose their marks, marks stripped', () => {
     expect(documentHead('# Daily news\n\n**Top** story: x\nthird')).toBe('Daily news Top story: x');
     expect(documentHead('')).toBeUndefined();
+  });
+});
+
+describe('a run in flight carries the Super turn\'s live steps, the tail after its last words', () => {
+  const tool = (id: string, over: Partial<HistoryEntry> = {}): HistoryEntry => ({ kind: 'tool', toolUseId: id, name: 'Bash', input: { command: 'ls' }, status: 'done', result: 'ok', at: 1000, ...over });
+  it('drops the composed prompt and every step before the run last spoke', () => {
+    const steps = runLiveSteps([
+      { kind: 'user', text: 'the runner prompt' }, tool('a'), { kind: 'text', text: 'Reading the inbox.' }, tool('b'), tool('c'),
+    ]);
+    expect(steps.map((s) => s.toolUseId)).toEqual(['b', 'c']);
+  });
+  it('the last call with no result yet is the one in hand; a finished or failed one is not', () => {
+    expect(runLiveSteps([tool('a'), tool('b', { result: undefined })]).map((s) => s.status)).toEqual(['done', 'running']);
+    expect(runLiveSteps([tool('a', { status: 'error', result: undefined })])[0].status).toBe('error');
+    expect(runLiveSteps([tool('a')])[0].status).toBe('done');
+  });
+  it('no steps when the run has just written words, or has done nothing yet', () => {
+    expect(runLiveSteps([tool('a'), { kind: 'text', text: 'Done: three items.' }])).toEqual([]);
+    expect(runLiveSteps([{ kind: 'user', text: 'the runner prompt' }])).toEqual([]);
+  });
+  it('words that are only whitespace do not end the stretch', () => {
+    expect(runLiveSteps([tool('a'), { kind: 'text', text: '  ' }, tool('b')]).map((s) => s.toolUseId)).toEqual(['a', 'b']);
   });
 });

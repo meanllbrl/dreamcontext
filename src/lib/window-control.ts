@@ -78,10 +78,31 @@ interface Pending {
   sent: boolean;
   resolve: (r: WindowResult) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** A `super_command` whose caller still takes an answer after its timeout ({@link LateOpts}). */
+  late?: LateOpts;
+}
+
+/**
+ * A `super_command` the window may still act on after the caller stopped waiting (`super
+ * delegate` on a Mac too slow to open the child in time, field 2026-11-15): its answer, when it
+ * comes within `lateMs` of the timeout, goes to `onLate`; none by then, `onLate` gets
+ * `{ ok: false, error: 'late_timeout', sent: true }`. Exactly one `onLate` call either way.
+ */
+export interface LateOpts {
+  lateMs: number;
+  onLate: (r: WindowResult) => void;
+}
+
+interface LateWait {
+  token: string;
+  sessionId?: string;
+  onLate: (r: WindowResult) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 const channels = new Map<string, WindowChannel>();
 const pending = new Map<string, Pending>();
+const lateWaits = new Map<string, LateWait>();
 let baseUrl = '';
 
 /** The loopback URL the CLI posts to, learned once the server is listening. */
@@ -120,6 +141,21 @@ export function channelFor(token: unknown): string | null {
     if (k.length === given.length && timingSafeEqual(k, given)) return known;
   }
   return null;
+}
+
+function waitLate(id: string, p: Pending, late: LateOpts): void {
+  const timer = setTimeout(() => finishLate(id, { ok: false, error: 'late_timeout', sent: true }), Math.max(0, late.lateMs));
+  timer.unref?.();
+  lateWaits.set(id, { token: p.token, ...(p.sessionId ? { sessionId: p.sessionId } : {}), onLate: late.onLate, timer });
+}
+
+function finishLate(id: string, r: WindowResult): boolean {
+  const w = lateWaits.get(id);
+  if (!w) return false;
+  clearTimeout(w.timer);
+  lateWaits.delete(id);
+  try { w.onLate(r); } catch { /* the caller's own handler logs */ }
+  return true;
 }
 
 function settle(id: string, r: WindowResult): boolean {
@@ -185,15 +221,23 @@ function sendCommand(
   token: string,
   verb: string,
   args: Record<string, unknown>,
-  opts: { timeoutMs?: number },
+  opts: { timeoutMs?: number; late?: LateOpts },
 ): Promise<WindowResult> {
   const channel = channels.get(token);
   if (!channel) return Promise.resolve(noWindow(subtype, false));
   const id = randomBytes(16).toString('hex');
   return new Promise<WindowResult>((resolve) => {
-    const timer = setTimeout(() => settle(id, noWindow(subtype, true)), opts.timeoutMs ?? WINDOW_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      const p = pending.get(id);
+      // Written and not answered: a caller that takes a late answer keeps listening (LateOpts).
+      if (p?.late && p.sent) waitLate(id, p, p.late);
+      settle(id, noWindow(subtype, true));
+    }, opts.timeoutMs ?? WINDOW_TIMEOUT_MS);
     timer.unref?.();
-    const p: Pending = { token, subtype, resolve, timer, sent: false, ...(channel.sessionId ? { sessionId: channel.sessionId } : {}) };
+    const p: Pending = {
+      token, subtype, resolve, timer, sent: false, ...(channel.sessionId ? { sessionId: channel.sessionId } : {}),
+      ...(subtype === 'super_command' && opts.late ? { late: opts.late } : {}),
+    };
     pending.set(id, p);
     // A member Super's verb names its super (plan-r10 1); main's frame stays exactly as before.
     const superId = subtype === 'super_command' && channel.superId && channel.superId !== 'main' ? { superId: channel.superId } : {};
@@ -260,13 +304,22 @@ export function sendSuperCommand(
   token: string,
   verb: string,
   args: Record<string, unknown>,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; late?: LateOpts } = {},
 ): Promise<WindowResult> {
   return sendCommand('super_command', token, verb, args, opts);
 }
 
 function deliver(subtype: CommandSubtype, token: string, id: unknown, r: WindowResult): boolean {
   if (typeof id !== 'string') return false;
+  const w = subtype === 'super_command' ? lateWaits.get(id) : undefined;
+  if (w) {
+    // The same socket rule as an answer in time: its own token, or the same chat's newer one.
+    if (w.token !== token) {
+      const now = channels.get(token);
+      if (!w.sessionId || !now || now.sessionId !== w.sessionId) return false;
+    }
+    return finishLate(id, r);
+  }
   const p = pending.get(id);
   if (!p || p.subtype !== subtype) return false;
   if (p.token !== token) {
@@ -290,6 +343,7 @@ export function deliverSuperResult(token: string, id: unknown, r: WindowResult):
 /** Test seam. */
 export function resetWindowControl(): void {
   for (const id of [...pending.keys()]) settle(id, { ok: false, error: 'no_window' });
+  for (const [id, w] of [...lateWaits]) { clearTimeout(w.timer); lateWaits.delete(id); }
   channels.clear();
   baseUrl = '';
 }

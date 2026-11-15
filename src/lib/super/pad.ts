@@ -13,15 +13,39 @@
  * - A line about a job replaces its unlinked twin; an answered question closes the Waiting line
  *   about it (`padAbout`).
  * - A new day: a Done line from before today drops off by itself (owner 2026-10-28: yesterday's
- *   results still sat on the card as today's). A line the owner moved by hand stays.
+ *   results still sat on the card as today's) into its day file (pad-archive.ts), his included.
+ * - A line the owner wrote himself (`ownerLine`) is his: none of these rules acts on it.
  *
  * Every auto move and every stale line is told to the super once, in the next event batch
  * (`padNotice`), so it can reverse a wrong move (`note keep` / `note add`); the owner sees the
  * move on the card and can put it back with one press.
  */
-import { PAD_STALE_MS, type PadAutoWhy, type SuperPadItem, type SuperState } from './types.js';
+import { PAD_STALE_MS, type PadAutoWhy, type PadStatus, type SuperPadItem, type SuperState } from './types.js';
 
 const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+
+/** A line the owner wrote himself: no automatic rule acts on it (never moved, twin-removed,
+ *  answer-closed, folded stale, told about, or cleared by `note clear`). The Super's explicit
+ *  note commands still change it. */
+export function ownerLine(p: Pick<SuperPadItem, 'author'>): boolean {
+  return p.author === 'owner';
+}
+
+/** A line's status, of five (types.ts PAD_STATUSES), from its stored section and stage. */
+export function padStatus(p: Pick<SuperPadItem, 'section' | 'stage'>): PadStatus {
+  if (p.section === 'done') return 'done';
+  if (p.section === 'waiting') return 'waiting';
+  return p.stage === 'todo' ? 'not-started' : p.stage === 'almost' ? 'almost-done' : 'in-progress';
+}
+
+/** `p` in `status`, stamped `now` (every change is an update, a stage-only one included). Pure:
+ *  `by`, `why` and `toldAt` are the caller's. */
+export function withPadStatus(p: SuperPadItem, status: PadStatus, now: number): SuperPadItem {
+  const { stage: _s, ...rest } = p;
+  const section = status === 'done' ? 'done' : status === 'waiting' ? 'waiting' : 'now';
+  const stage = status === 'not-started' ? 'todo' as const : status === 'almost-done' ? 'almost' as const : undefined;
+  return { ...rest, section, ...(stage ? { stage } : {}), at: now };
+}
 
 /** Why the job a line is about is over, or null while it still runs (or waits). */
 export function padJobOver(s: Pick<SuperState, 'children'>, sid: string): PadAutoWhy | null {
@@ -44,14 +68,16 @@ export function padDayStart(now: number): number {
  *  owner put back by hand: the server no longer moves it, so only this flag can): a Now line, or
  *  a Waiting line left from an earlier day (what he was to do yesterday has often been done). */
 export function padStale(p: SuperPadItem, now: number): boolean {
+  if (ownerLine(p)) return false;
   if (p.for && p.by !== 'owner') return false;
   if (now - p.at < PAD_STALE_MS) return false;
   return p.section === 'now' || (p.section === 'waiting' && p.at < padDayStart(now));
 }
 
-/** A Done line from an earlier day that the server drops: its day is over. The owner's own move stays. */
+/** A Done line from an earlier day that the server drops: its day is over. His own lines and his
+ *  moves too: the store keeps every dropped Done line whole in its day file (pad-archive.ts). */
 export function padRolledOff(p: SuperPadItem, now: number): boolean {
-  return p.section === 'done' && p.by !== 'owner' && p.at < padDayStart(now);
+  return p.section === 'done' && p.at < padDayStart(now);
 }
 
 /** The job is plainly running again: a row that is only cleared for a moment (a gone child
@@ -68,7 +94,7 @@ export function settlePad(s: SuperState, now = Date.now()): boolean {
   let dropped = false;
   for (const p of pad) {
     if (padRolledOff(p, now)) { dropped = true; continue; }
-    if (!p.for || p.by === 'owner') { stay.push(p); continue; }
+    if (!p.for || p.by === 'owner' || ownerLine(p)) { stay.push(p); continue; }
     const over = padJobOver(s, p.for);
     if (p.section === 'now' && over) {
       // Done goes to the end of the pad (the newest finished line), stamped now, like `note done`.
@@ -93,6 +119,7 @@ export function padNotice(s: Pick<SuperState, 'pad'>, now = Date.now()): { lines
   const lines: string[] = [];
   const ids: string[] = [];
   for (const p of s.pad ?? []) {
+    if (ownerLine(p)) continue;
     const told = p.toldAt !== undefined && p.toldAt >= p.at;
     if (p.by === 'auto' && p.section === 'done' && !told) {
       lines.push(p.why === 'answered'
@@ -129,12 +156,12 @@ export function padAbout(a: string, b: string): boolean {
 }
 
 /** A line the super wrote freehand and nothing else keeps true. */
-const unlinked = (p: SuperPadItem) => !p.for && p.by !== 'owner';
+const unlinked = (p: SuperPadItem) => !p.for && p.by !== 'owner' && !ownerLine(p);
 
 /** A job's line arrives: its older unlinked twin in Now goes, the new line says the same. A
  *  Waiting line is his and a stale one rests folded: neither is deleted on a likeness. Pure. */
 export function withoutTwins(pad: readonly SuperPadItem[], text: string, now = Date.now()): SuperPadItem[] {
-  return pad.filter((p) => !(unlinked(p) && p.section === 'now' && !padStale(p, now) && padAbout(p.text, text)));
+  return pad.filter((p) => ownerLine(p) || !(unlinked(p) && p.section === 'now' && !padStale(p, now) && padAbout(p.text, text)));
 }
 
 /** He answered this question: the Waiting line about it moves to Done (seen on the card, told to

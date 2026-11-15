@@ -312,3 +312,86 @@ describe('readable on a phone (owner 2026-11-10)', () => {
     expect(parts.join('')).toContain('İğdır');
   });
 });
+
+/** The two Ege replies of the owner's screenshot (2026-11-14), written by TELEGRAM_WRITING_RULE (B2). */
+const EGE_2154 = [
+  "**Karakterimi Ege Fitness'a göre yeniden yazdım, onayını bekliyor** 🤙",
+  '',
+  '**Kim**',
+  '- Ege Cinel, eski burslu basketbolcu (UNLV)',
+  '- Kanal UNSATISFIED, en çok izlenen video 1,55M',
+  '',
+  '**Aldım** (14 video okudum)',
+  '- Açılış/kapanış sloganları, kanka/abicim dili, TR-EN karışık',
+  '> **Ege Fitness**',
+  '> Hayat bir maç. Yenilgiyi kabul ederim, denememeyi asla.',
+  '',
+  '**Almadım**',
+  '- Hakaret, "it gibi çalış"',
+  '- Uykuyu kısmak: dizin ve 30 dk kuralın izin vermez',
+  '',
+  '**Senden**',
+  '- AI Team sayfasında yeni soulu onayla',
+  '',
+  'Haydi bakalım: bugün tartı + A seansı. Ege Fitness out, peace.',
+].join('\n');
+const EGE_2203 = [
+  '**Evet kanka, şu an izliyorum** 🤙',
+  '',
+  '**Şu an**',
+  '- 25 Eylül vlogundayım',
+  '',
+  "**Kuyrukta 8 video** (14 Kasım'a kadar)",
+  '- Motor turu, kamp',
+  '- Olympia Talha sırt antrenmanı',
+  '- "Kendi yolunu nasıl bulursun"',
+  '',
+  '**Sonra**',
+  '- Karakter analizini güncelleyip buraya yazarım',
+  '> **Ayrıntı**',
+  "> Paralel koşu 21:59'da başladı, son dönem videolarının altyazısını çekiyor. Bitince yeni soul yine AI Team'de onayına düşer.",
+  '',
+  'Haydi bakalım.',
+].join('\n');
+
+describe('B2: every element with one job (owner 2026-11-14)', () => {
+  it('a list never glues to the sentences around it, the screenshot wall included', () => {
+    expect(markdownToTelegramHtml('Selam Mehmet, Ege burada.\n- Tartı verisi yok\n- Bugün: A seansı\nBu ilk keşif seansı.'))
+      .toBe('Selam Mehmet, Ege burada.\n\n• Tartı verisi yok\n• Bugün: A seansı\n\nBu ilk keşif seansı.');
+  });
+
+  it('a line that leads into its list keeps it: a colon, or a bold head with a note beside it', () => {
+    expect(markdownToTelegramHtml('Paralel koşu sürüyor.\nKuyrukta 8 video var:\n- a\n- b')).toBe('Paralel koşu sürüyor.\nKuyrukta 8 video var:\n• a\n• b');
+    expect(markdownToTelegramHtml('**Aldım** (14 video)\n- a')).toBe('<b>Aldım</b> (14 video)\n• a');
+  });
+
+  it('a quote opening with **Ayrıntı** opens folded; a speaker quote stays open', () => {
+    expect(markdownToTelegramHtml('> **Ayrıntı**\n> uzun detay')).toBe('<blockquote expandable><b>Ayrıntı</b>\nuzun detay</blockquote>');
+    expect(markdownToTelegramHtml('> **Details**\n> long detail')).toContain('<blockquote expandable>');
+    expect(markdownToTelegramHtml('> **Ege Fitness**\n> Hayat bir maç.')).toBe('<blockquote><b>Ege Fitness</b>\nHayat bir maç.</blockquote>');
+    // A lone head with nothing under it is no fold.
+    expect(markdownToTelegramHtml('> **Ayrıntı**')).toBe('<blockquote><b>Ayrıntı</b></blockquote>');
+  });
+
+  it('code and a command block reach the phone as code', () => {
+    expect(markdownToTelegramHtml('- `_dream_context/tmp/rapor.html`')).toBe('• <code>_dream_context/tmp/rapor.html</code>');
+    expect(markdownToTelegramHtml("Mac'te kur:\n```bash\nnpm i -g ./x.tgz\n```")).toBe("Mac'te kur:\n<pre><code class=\"language-bash\">npm i -g ./x.tgz</code></pre>");
+  });
+
+  it('a table becomes one bullet per row (Telegram draws none)', () => {
+    expect(markdownToTelegramHtml('| Ürün | Fiyat | Dönem |\n|---|---|---|\n| Liven | 19,99 $ | ay |\n| Headway | 9,99 $ | hafta |'))
+      .toBe('• Liven: Fiyat 19,99 $ · Dönem ay\n• Headway: Fiyat 9,99 $ · Dönem hafta');
+  });
+
+  it('the two Ege replies draw as the agreed B2 look', () => {
+    const a = markdownToTelegramHtml(EGE_2154);
+    expect(a.startsWith("<b>Karakterimi Ege Fitness'a göre yeniden yazdım, onayını bekliyor</b> 🤙\n\n<b>Kim</b>\n• Ege Cinel")).toBe(true);
+    expect(a).toContain('<b>Aldım</b> (14 video okudum)\n• Açılış');
+    expect(a).toContain('<blockquote><b>Ege Fitness</b>\nHayat bir maç. Yenilgiyi kabul ederim, denememeyi asla.</blockquote>\n\n<b>Almadım</b>');
+    expect(a.endsWith('• AI Team sayfasında yeni soulu onayla\n\nHaydi bakalım: bugün tartı + A seansı. Ege Fitness out, peace.')).toBe(true);
+    const b = markdownToTelegramHtml(EGE_2203);
+    expect(b).toContain('<b>Sonra</b>\n• Karakter analizini güncelleyip buraya yazarım\n<blockquote expandable><b>Ayrıntı</b>\nParalel koşu');
+    expect(b.endsWith('</blockquote>\n\nHaydi bakalım.')).toBe(true);
+    for (const html of [a, b]) expect(splitTelegramHtml(html)).toHaveLength(1);
+  });
+});

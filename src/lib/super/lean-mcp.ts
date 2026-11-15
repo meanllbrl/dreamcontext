@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { storeServers, syncImports } from '../mcp-store.js';
+import { readConnectorUrls, type ConnectorUrls } from '../mcp-connectors.js';
+import { connectorAlias } from '../mcp-wire.js';
 
 /**
  * Lean children (orchestration plan r5 D14, O6): a Super Agent's delegated child starts with
@@ -54,6 +56,139 @@ export function knownMcpServers(projectRoot: string, home: string = homedir()): 
     out.set(name, cfg);
   }
   return out;
+}
+
+/** One claude.ai connector a Claude child may be given, by its short name (`notion`). */
+export interface ChildConnector {
+  /** What `delegate --mcp` and an `mcp` card name it: `connectorAlias`, settled against clashes. */
+  alias: string;
+  /** Claude Code's own name: `claude.ai Notion`. */
+  name: string;
+  /** The accounts whose last reading listed it, with that account's URL for it. */
+  urls: Record<string, string>;
+}
+
+/**
+ * The claude.ai connectors a Claude child may be given, by short name (owner 2026-11-14): every
+ * connector some account's live reading listed (`mcp-connectors.ts`: the URL is what lets one
+ * through a lean child's allowlist). An alias a local server already uses, or another connector
+ * took first (names sorted), becomes `claudeai-<alias>`, then `<alias>-2`, ...: the local name
+ * always keeps its meaning.
+ */
+export function knownConnectors(localNames: Iterable<string>, urls: ConnectorUrls): Map<string, ChildConnector> {
+  const byName = new Map<string, Record<string, string>>();
+  for (const [account, rows] of Object.entries(urls)) {
+    for (const [name, e] of Object.entries(rows)) {
+      if (!connectorAlias(name)) continue;
+      const m = byName.get(name) ?? {};
+      m[account] = e.url;
+      byName.set(name, m);
+    }
+  }
+  const taken = new Set(localNames);
+  const out = new Map<string, ChildConnector>();
+  for (const name of [...byName.keys()].sort((a, b) => a.localeCompare(b))) {
+    const base = connectorAlias(name);
+    let alias = base;
+    if (taken.has(alias) || FORBIDDEN_KEYS.has(alias)) alias = `claudeai-${base}`.slice(0, 40).replace(/-+$/, '');
+    for (let i = 2; (taken.has(alias) || FORBIDDEN_KEYS.has(alias)) && i < 100; i += 1) alias = `${base.slice(0, 36)}-${i}`;
+    if (!MCP_NAME_RE.test(alias) || taken.has(alias)) continue;
+    taken.add(alias);
+    out.set(alias, { alias, name, urls: byName.get(name)! });
+  }
+  return out;
+}
+
+/** Everything a child may be given: the project's servers (`knownMcpServers`) and the
+ *  account's claude.ai connectors (`knownConnectors`), which never shadow a local name. */
+export function knownChildMcp(projectRoot: string, home: string = homedir()): {
+  local: Map<string, Record<string, unknown>>;
+  connectors: Map<string, ChildConnector>;
+  /** Both, by name: what a name check (`delegate --mcp`, a card's grant) reads. */
+  all: Map<string, unknown>;
+  /** The accounts whose connector list some reading recorded (`connectorOnAccount`). */
+  read: Set<string>;
+} {
+  const local = knownMcpServers(projectRoot, home);
+  let connectors = new Map<string, ChildConnector>();
+  let read = new Set<string>();
+  try {
+    const urls = readConnectorUrls(home);
+    connectors = knownConnectors(local.keys(), urls);
+    read = new Set(Object.keys(urls));
+  } catch { /* local only */ }
+  const all = new Map<string, unknown>(local);
+  for (const [alias, c] of connectors) all.set(alias, c);
+  return { local, connectors, all, read };
+}
+
+/**
+ * Does THIS account have the connector (owner 2026-11-14: a connector is the Claude account's,
+ * and a child on another account may not have it)? `yes`: its last recorded list names it;
+ * `no`: its list was recorded without it; `unknown`: no list of this account was recorded yet.
+ * The one rule `super state`, a child's allowlist and a grant's receipt all read.
+ */
+export function connectorOnAccount(c: ChildConnector, accountId: string, read: ReadonlySet<string>): 'yes' | 'no' | 'unknown' {
+  if (accountId && c.urls[accountId]) return 'yes';
+  return accountId && read.has(accountId) ? 'no' : 'unknown';
+}
+
+/**
+ * The connectors among `names`, each with the URL its allowlist entry needs: the child's own
+ * account's URL when it has the connector, else another account's (one connector, one URL). An
+ * account whose recorded list lacked it may have connected it since (the card sends the owner to
+ * claude.ai for exactly that), and an allowlisted URL that loads nothing costs nothing; what the
+ * child is PROMISED (`super state`, a grant's receipt) reads `connectorOnAccount`, never this.
+ * Local names are not here.
+ */
+export function connectorRulesFor(
+  names: readonly string[], connectors: ReadonlyMap<string, ChildConnector>, accountId: string, read: ReadonlySet<string>,
+): Array<{ alias: string; name: string; url: string }> {
+  const out: Array<{ alias: string; name: string; url: string }> = [];
+  for (const n of names) {
+    const c = connectors.get(n);
+    if (!c) continue;
+    const url = connectorOnAccount(c, accountId, read) === 'yes' ? c.urls[accountId] : Object.values(c.urls)[0];
+    if (url) out.push({ alias: n, name: c.name, url });
+  }
+  return out;
+}
+
+/**
+ * The `--settings` part that lets a lean child keep `servers` (by name: the files it is given)
+ * and the named connectors (by URL) and nothing else: Claude Code's own MCP policy, which
+ * replaces `--strict-mcp-config` for such a child (strict drops every connector).
+ */
+export function leanAllowlist(servers: readonly string[], connectors: ReadonlyArray<{ url: string }>): { allowedMcpServers: Array<{ serverName: string } | { serverUrl: string }> } {
+  return {
+    allowedMcpServers: [
+      ...[...new Set(servers)].map((serverName) => ({ serverName })),
+      ...[...new Set(connectors.map((c) => c.url))].map((serverUrl) => ({ serverUrl })),
+    ],
+  };
+}
+
+/** The server names one `{ mcpServers }` file holds; [] when it cannot be read. */
+export function mcpFileNames(path: string | null): string[] {
+  if (!path) return [];
+  try {
+    const servers = (JSON.parse(readFileSync(path, 'utf-8')) as { mcpServers?: unknown }).mcpServers;
+    return servers && typeof servers === 'object' && !Array.isArray(servers) ? Object.keys(servers) : [];
+  } catch { return []; }
+}
+
+/**
+ * `mcpNeedingSignIn` over child names: a connector alias is read by its claude.ai name
+ * (cells `claude.ai Notion|claudeai`), answered back by the alias.
+ */
+export function childMcpNeedingSignIn(
+  names: readonly string[],
+  connectors: ReadonlyMap<string, ChildConnector>,
+  cache: Readonly<Record<string, { cells: Readonly<Record<string, { status: string }>> }>>,
+): string[] {
+  const real = names.map((n) => connectors.get(n)?.name ?? n);
+  const need = new Set(mcpNeedingSignIn(real, cache));
+  return names.filter((n, i) => need.has(real[i]));
 }
 
 /**

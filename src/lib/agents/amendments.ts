@@ -86,6 +86,8 @@ export interface Amendment {
   /** The Super Agent session that made it. */
   session: string | null;
   why: string;
+  /** The owner's words this change carries out (`--quote`), as given. */
+  quote?: string;
   changes: AmendmentChange[];
   revertedAt?: string;
 }
@@ -98,7 +100,7 @@ const EMPTY = (): AmendmentFile => ({ members: {} });
 
 export type AmendmentRefusalCode =
   | 'unknown_member' | 'unknown_routine' | 'invalid_args' | 'amend_global' | 'amend_no_change' | 'amend_too_large'
-  | 'amend_unapproved' | 'amend_unreviewed_change' | 'amend_section_heading' | 'amend_limit' | 'amend_needs_owner' | 'owner_reverted'
+  | 'amend_unapproved' | 'amend_unreviewed_change' | 'amend_section_heading' | 'amend_limit' | 'amend_needs_owner' | 'owner_reverted' | 'own_member_only'
   | 'unknown_amendment' | 'already_reverted' | 'amendment_superseded';
 
 /** A named refusal the caller can act on; nothing was written. */
@@ -227,9 +229,12 @@ export interface AmendInput {
   session?: string | null;
   /** Who writes it. Default `super` (the `team amend` door). */
   by?: AmendBy;
-  /** The member a member run belongs to (`DREAMCONTEXT_AGENT_SELF` / `DREAMCONTEXT_MEMBER_CREW`).
-   *  Informational since 2026-11-07: a member's run editing another member is made on this Mac too. */
+  /** What the writing process belongs to (a member's run, its Super's crew, its own Super chat, a
+   *  conversation with it; `memberActorFromEnv`). Such a process corrects THAT member only (owner
+   *  2026-11-15): another member is refused `own_member_only`. */
   self?: string | null;
+  /** The owner's words this change carries out ("next time do it like this"), recorded with it. */
+  quote?: string;
   /** Other identity fields written in the same change (a session's or an agent's `agents edit`):
    *  judged by `widensAuthority`, never by the text checks. */
   extra?: Omit<AgentIdentityPatch, 'prompt' | 'soul'>;
@@ -344,6 +349,9 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
   if (why.length > AMENDMENT_LIMITS.whyChars) throw new AmendmentRefused('invalid_args', 400, `--why is at most ${AMENDMENT_LIMITS.whyChars} characters.`);
   if (input.job !== undefined && !input.routine) throw new AmendmentRefused('invalid_args', 400, 'a job belongs to a routine: name it with --routine.');
 
+  assertOwnMember(input.self, member);
+  const quote = (input.quote ?? '').replace(/\s+/g, ' ').trim().slice(0, AMENDMENT_LIMITS.whyChars);
+
   const agent = getAgent(contextRoot, member, home);
   if (!agent) throw new AmendmentRefused('unknown_member', 404, `no AI Team member "${member}" in this project (\`dreamcontext agents list\`).`);
   const global = agent.scope === 'global';
@@ -401,8 +409,10 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
     member,
     by,
     session: input.session ?? null,
-    why,
+    // His words ride the reason line the AI Team page shows.
+    why: quote ? `${why} · “${quote}”` : why,
     changes,
+    ...(quote ? { quote } : {}),
     ...(risks.length ? { risks } : {}),
     ...(widened.length ? { widened } : {}),
     ...(stamp && approvedBefore ? {} : { waits: true as const }),
@@ -447,6 +457,14 @@ export function amendMember(contextRoot: string, input: AmendInput, opts: AmendO
   }
   return entry;
 }
+
+/** A process of one member (`memberActorFromEnv`'s `self`, the token's member super) corrects that
+ *  member only (owner 2026-11-15). The one refusal, shared by every door. */
+export function assertOwnMember(self: string | null | undefined, member: string): void {
+  if (!self || self === member) return;
+  throw new AmendmentRefused('own_member_only', 403, `this process belongs to "${self}", and corrects only that member's own instructions. Tell the Super Agent what "${member}" got wrong.`);
+}
+
 
 /**
  * The trace of a member an agent or a session created (plan-r10 1e): who, when, what the risk

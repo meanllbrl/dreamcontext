@@ -1268,3 +1268,64 @@ describe('automations bound to an agent (create picks an agent)', () => {
     expect(bad.status()).toBe(400);
   });
 });
+
+// ─── kosullu-otomasyon C2: a condition is stamped only on the hash the owner was shown ────────
+
+describe('approve routes and a condition script', () => {
+  const SCRIPT = 'test -s orders/new.csv && cat orders/new.csv';
+  const conditional = (slug: string) => createAutomation(contextRoot, {
+    slug, title: 'Northwind new orders', days: 'daily', at: '09:00', prompt: 'Summarise the new orders.', condition: SCRIPT,
+  });
+
+  it('the detail carries the script and the hash it rendered', async () => {
+    conditional('nw-orders');
+    const show = makeRes();
+    await handleAutomationsShow(getReq, show.res, { slug: 'nw-orders' }, contextRoot);
+    const body = show.body() as { automation: { condition: string; conditionWake: boolean }; manifestHash: string; review: string };
+    expect(body.automation.condition).toBe(SCRIPT);
+    expect(body.automation.conditionWake).toBe(true);
+    expect(body.manifestHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.review).toContain('orders/new.csv');
+  });
+
+  it('no shownHash, or a stale one, is 409 and stamps nothing; the shown hash stamps', async () => {
+    conditional('nw-orders');
+    const none = makeRes();
+    await handleAutomationsApprove(makePostReqWithBody({}), none.res, { slug: 'nw-orders' }, contextRoot);
+    expect(none.status()).toBe(409);
+    expect(getApproval(projectRoot, 'nw-orders')).toBeNull();
+
+    const stale = makeRes();
+    await handleAutomationsApprove(makePostReqWithBody({ shownHash: 'a'.repeat(64) }), stale.res, { slug: 'nw-orders' }, contextRoot);
+    expect(stale.status()).toBe(409);
+    expect(getApproval(projectRoot, 'nw-orders')).toBeNull();
+
+    const show = makeRes();
+    await handleAutomationsShow(getReq, show.res, { slug: 'nw-orders' }, contextRoot);
+    const ok = makeRes();
+    await handleAutomationsApprove(makePostReqWithBody({ shownHash: show.body().manifestHash }), ok.res, { slug: 'nw-orders' }, contextRoot);
+    expect(ok.status()).toBe(200);
+    expect(getApproval(projectRoot, 'nw-orders')?.conditionWitnessed).toBeTruthy();
+  });
+
+  it('a routine without a condition still approves with no body', async () => {
+    makeAutomation('plain-one', { approve: false });
+    const r = makeRes();
+    await handleAutomationsApprove(makePostReqWithBody({}), r.res, { slug: 'plain-one' }, contextRoot);
+    expect(r.status()).toBe(200);
+  });
+
+  it('an approval question never approves an unwitnessed condition: 409, the question stays open', async () => {
+    conditional('nw-orders');
+    const q = createQuestion(contextRoot, {
+      slug: 'nw-orders', runFiredAt: '2026-11-15T09:00:00.000Z', kind: 'approval', sessionId: null, channel: 'chat',
+      question: 'Approve the edited manifest?', nowISO: '2026-11-15T09:00:01.000Z',
+    });
+    const r = makeRes();
+    await handleAutomationsQuestionAnswer(makePostReqWithBody({ answer: 'approve' }), r.res, { id: q.id }, contextRoot);
+    expect(r.status()).toBe(409);
+    expect(String((r.body() as { error?: { message?: string } }).error?.message ?? JSON.stringify(r.body()))).toMatch(/condition script/);
+    expect(getApproval(projectRoot, 'nw-orders')).toBeNull();
+    expect(claimQuestion(contextRoot, q, 'reject', 'dashboard').claimed).toBe(true);
+  });
+});

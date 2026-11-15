@@ -14,7 +14,7 @@ import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { closeInboxRows, listInboxRows, raiseInboxRow, retargetInboxRows, type InboxRow } from '../owner-inbox.js';
 import { hasProjectMember, listGlobalAgentSlugs } from './scope.js';
-import { readAccountWait } from '../automations/account.js';
+import { accountWaitHolds } from '../automations/account.js';
 import { clearRunSidecar, getRunTarget, lockPathFor, readRunSidecar } from '../automations/store.js';
 import { allPendingQuestions, writeQuestion } from '../automations/hitl.js';
 import { appendThreadEntry } from '../automations/threads.js';
@@ -331,7 +331,7 @@ export function startDueTaskJobs(contextRoot: string, deps: TaskJobDeps = {}): s
     // A sleep holds the brain: nothing starts until it ends (its next settle drains again).
     const sleep = inspectSleepLock(readSleepState(contextRoot), now.getTime());
     if (sleep.locked && !sleep.stale) return started;
-    if (readAccountWait(home, now.getTime()) !== null) return started;
+    if (accountWaitHolds(home, now.getTime()) !== null) return started;
     scanOutsideAssignments(contextRoot, home);
     noteShadowedGlobalAgents(contextRoot, home);
 

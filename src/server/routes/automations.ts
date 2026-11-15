@@ -7,10 +7,11 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { conditionFacts, sendIfConditionUnseen, shownWitness } from './condition-witness.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { approvalCardFacts, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
-import { tellSuperAutomationDecision } from '../../lib/super/automation-event.js';
+import { approveAsOwner, rejectAsOwner } from '../automation-decision.js';
 import { foreignOwner, ownerLabel } from '../../lib/agents/owner.js';
 import { globalAgentExists } from '../../lib/agents/scope.js';
 import { memberCallState } from '../../lib/agents/team-roster.js';
@@ -54,6 +55,9 @@ import {
   approvedTarget, checkApproval, getApproval,
   renderApprovalReview,
   approveAutomation,
+  ConditionNeedsWitness,
+  conditionNeedsWitness,
+  manifestHash,
   listRegisteredProjects,
   registerProject,
   revokeApproval,
@@ -74,6 +78,9 @@ import {
 } from '../../lib/automations/notifier.js';
 import { formatSchedule, nextFire } from '../../lib/automations/schedule.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
+import { MAX_PHOTO_BYTES, storeAgentPhoto, type ReceivedPhoto } from '../../lib/agents/photo.js';
+export { storeAgentPhoto };
+export type { ReceivedPhoto };
 import { allPendingQuestions, claimQuestion, pendingQuestion, pendingQuestionOfRun, settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { approvalQuestionTarget, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
@@ -501,6 +508,11 @@ export async function handleAutomationsShow(
         // Hashed when set, LAST (super-rutin): a turn of the Super itself, and where the result goes.
         target: manifest.target ?? '',
         reply: manifest.reply ?? '',
+        // Hashed when set, LAST (kosullu-otomasyon): the script a scheduled fire runs before any
+        // agent wakes, and which verdict wakes it. The reviewer reads the whole script here.
+        condition: manifest.condition ?? null,
+        conditionWake: manifest.conditionWake !== false,
+        conditionError: manifest.conditionError ?? null,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -520,6 +532,9 @@ export async function handleAutomationsShow(
       // Every hashed field as the `field: value` lines the CLI's approve prints (the same
       // renderer the agent profile's review uses): what Approve grants, in one readable block.
       review: renderApprovalReview(approvalFields(manifest)),
+      // The hash of exactly what this payload rendered: Approve sends it back as `shownHash`, so a
+      // condition is stamped only when the disk still holds what the owner read (C2).
+      manifestHash: manifestHash(manifest),
       // The fields the one approval card names (plan-r10 1e); null when nothing waits.
       changedFields: changedApprovalFields(dirname(contextRoot), manifest),
       cache: isPhoneSocket(req) ? phoneCache(readAutomationCache(contextRoot, manifest.slug)) : readAutomationCache(contextRoot, manifest.slug),
@@ -655,14 +670,20 @@ export async function handleAutomationsApprove(
     }
     if (refuseNotOwner(res, manifest)) return;
     const body = (await parseJsonBody(req)) ?? {};
-    const projectRoot = dirname(contextRoot);
-    registerProject(projectRoot);
-    // The owner's page: his consent covers a Super turn or a Telegram reply too (super-rutin C2).
-    const entry = approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-page');
-    settleApprovalQuestions(contextRoot, manifest.slug);
-    const after = body.enable === true && !manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, true) : manifest;
-    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'approved');
-    sendJson(res, 200, { slug: manifest.slug, approval: entry, card: approvalCardFacts(projectRoot, after), told });
+    // A condition is stamped only on the hash the owner was shown (kosullu-otomasyon C2): the card
+    // sends `shownHash`, and a disk that moved since he looked refuses with 409, stamping nothing.
+    // It proves the hash is fresh, not who sent it: the owner-page check above is the boundary.
+    const witness = shownWitness(res, manifest, body);
+    if (witness === null) return;
+    // THE owner's yes, the one body the Telegram card calls too (automation-decision.ts).
+    let out;
+    try {
+      out = await approveAsOwner(contextRoot, manifest, { witness, enable: body.enable === true, sessionId: body.sessionId });
+    } catch (err) {
+      if (sendIfConditionUnseen(res, err)) return;
+      throw err;
+    }
+    sendJson(res, 200, { slug: manifest.slug, approval: out.entry, card: out.card, told: out.told });
   } catch (err) {
     if (sendIfNotOwner(res, err)) return;
     sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
@@ -691,12 +712,9 @@ export async function handleAutomationsReject(
     }
     if (refuseNotOwner(res, manifest)) return;
     const body = (await parseJsonBody(req)) ?? {};
-    // A NO takes back a yes given earlier too: an approval left standing would let any session's
-    // `automations enable` run it on the grant he just withdrew.
-    revokeApproval(dirname(contextRoot), manifest.slug);
-    const after = manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, false) : manifest;
-    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'rejected');
-    sendJson(res, 200, { slug: manifest.slug, card: approvalCardFacts(dirname(contextRoot), after), told });
+    // THE owner's no, the one body the Telegram card calls too (automation-decision.ts).
+    const out = await rejectAsOwner(contextRoot, manifest, { sessionId: body.sessionId });
+    sendJson(res, 200, { slug: manifest.slug, card: out.card, told: out.told });
   } catch (err) {
     if (sendIfNotOwner(res, err)) return;
     sendError(res, 500, 'reject_failed', 'Failed to reject the automation.');
@@ -723,17 +741,6 @@ export async function handleAutomationsCard(
     sendJson(res, 200, { card: approvalCardFacts(dirname(contextRoot), manifest), owned: foreignOwner(manifest) === null });
   } catch {
     sendError(res, 500, 'card_failed', 'Failed to read the automation.');
-  }
-}
-
-/** Queue the decision for the Super Agent when the card sits in its chat (or a child's). */
-async function tellSuper(contextRoot: string, sessionId: unknown, slug: string, decision: 'approved' | 'rejected'): Promise<boolean> {
-  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(sessionId)) return false;
-  try {
-    return await tellSuperAutomationDecision(contextRoot, sessionId, slug, decision);
-  } catch {
-    // The decision itself is written; a super that cannot hear it reads it from `show`.
-    return false;
   }
 }
 
@@ -916,6 +923,12 @@ export async function handleAutomationsQuestionAnswer(
           : `Automation not found: ${question.slug}`);
         return;
       }
+      // A condition is approved only where the owner reads the script (C2): never through a
+      // question. Refused before the claim, so the question stays open for a reject.
+      if (APPROVAL_DECISIONS[decision] && manifest && conditionNeedsWitness(manifest, getApproval(dirname(contextRoot), manifest.slug, undefined, manifest.runKind === 'agent' ? 'agent' : 'automation'))) {
+        sendError(res, 409, 'condition_unseen', `"${question.slug}" has a condition script: approve it on its card in the chat or on the AI Team page, where you read the script.`);
+        return;
+      }
       const claim = claimQuestion(contextRoot, question, answer, 'dashboard');
       if (!claim.claimed) {
         sendError(res, 409, 'refused', claim.reason);
@@ -1072,11 +1085,6 @@ export function isPreviewTruncation(incoming: string, current: string): boolean 
   return full.length > DESCRIPTION_MAX_CHARS && incoming.trim() === full.slice(0, DESCRIPTION_MAX_CHARS).trim();
 }
 
-/** An agent photo is a small square rendered at 56px at its largest. 4 MB is
- *  already absurdly generous for that and bounds what one manifest can pin
- *  into the brain directory. */
-const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
-
 function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
@@ -1175,12 +1183,13 @@ function slugifyTitle(title: string): string {
  * tick and never look here, and the owner's first agent would silently never
  * fire.
  */
-function approveHere(contextRoot: string, manifest: AutomationManifest): void {
+function approveHere(contextRoot: string, manifest: AutomationManifest): boolean {
   const projectRoot = dirname(contextRoot);
   registerProject(projectRoot);
   // The agent an unsplit file also is gets the same stamp: one file, one approval (`approveMadeHere`).
   // Every caller is behind `refuseUnlessOwnerPage`: his save is his consent (super-rutin C2).
-  approveMadeHere(contextRoot, manifest, new Date(), undefined, 'owner-page');
+  // A condition the dialog never showed is not witnessed by the save: it waits for its card (C2).
+  return approveMadeHere(contextRoot, manifest, new Date(), undefined, 'owner-page');
 }
 
 /**
@@ -1199,8 +1208,7 @@ function approveUnlessUnseenSoul(contextRoot: string, before: AutomationManifest
   // card, which names the fields that moved. Everything else this save wrote is his: it stamps.
   const wasApproved = before !== null && checkApproval(dirname(contextRoot), before, undefined, 'run').approved;
   if (!wasApproved) return false;
-  approveHere(contextRoot, after);
-  return true;
+  return approveHere(contextRoot, after);
 }
 
 /** POST /api/automations — create an agent and approve it on this machine. */
@@ -1644,12 +1652,6 @@ export async function handleAutomationsPhotoUpload(
   }
 }
 
-/** A sniffed upload: the bytes and the extension their magic bytes earn. */
-export interface ReceivedPhoto {
-  buf: Buffer;
-  ext: string;
-}
-
 /**
  * Read a photo upload, capped per chunk, typed by MAGIC BYTES only. Null when a
  * refusal (413, 400 empty, 415 type) has already been sent.
@@ -1667,26 +1669,6 @@ export async function receivePhoto(req: IncomingMessage, res: ServerResponse): P
     return null;
   }
   return { buf, ext: EXT_BY_IMAGE_TYPE[type] };
-}
-
-/**
- * Write `<photos dir>/<slug><ext>` — every component constructed here, none of
- * it client-chosen — and return the contextRoot-relative path for the `photo`
- * key. An agent has exactly ONE photo file, so a new upload in a different
- * format takes the old one with it: otherwise `daily.png` lingers after
- * `daily.webp` replaces it, unreferenced and undeletable from the UI.
- */
-export function storeAgentPhoto(contextRoot: string, slug: string, photo: ReceivedPhoto): string {
-  if (!isSafeAutomationSlug(slug)) throw new AutomationError(`Invalid agent: ${slug}`);
-  const rel = photoRelPathFor(slug, photo.ext);
-  const dir = automationPhotosDir(contextRoot);
-  mkdirSync(dir, { recursive: true });
-  for (const otherExt of Object.values(EXT_BY_IMAGE_TYPE)) {
-    if (otherExt === photo.ext) continue;
-    try { unlinkSync(join(dir, `${slug}${otherExt}`)); } catch { /* never existed */ }
-  }
-  writeFileSync(join(dir, `${slug}${photo.ext}`), photo.buf);
-  return rel;
 }
 
 /**

@@ -47,6 +47,8 @@ export function remoteStageState(view: unknown): SuperStateView | null {
     team: (v.team ?? []).map((j) => ({ id: j.id, member: j.member, runId: j.runId, jobKind: 'run', queued: false, brief: '', startedAt: j.startedAt })),
     teamLive: Object.fromEntries((v.team ?? []).map((j) => [j.id, { status: j.status, lastLine: j.lastLine, ...(j.sessionId ? { sessionId: j.sessionId } : {}), ...(j.resumable ? { resumable: true } : {}) }])),
     pad: v.pad ?? [],
+    // The presentation queue: the same steps on every screen (AC7).
+    ...(v.presentQueue ? { presentQueue: v.presentQueue } : {}),
     ...(v.rotating ? { rotating: true } : {}),
   });
 }
@@ -64,7 +66,7 @@ export async function fetchRemoteStage(api: ApiClient, superId: SuperId = 'main'
 }
 
 /** The keys a remote screen may send (the server's allowlist, super-remote.ts). */
-const REMOTE_KEYS = new Set(['cards', 'presentLayout', 'chat', 'exit', 'agenda', 'view']);
+const REMOTE_KEYS = new Set(['cards', 'presentLayout', 'chat', 'exit', 'agenda', 'view', 'queue']);
 
 /**
  * The part of a stage gesture a remote screen may send, or null when nothing is left. Closing,

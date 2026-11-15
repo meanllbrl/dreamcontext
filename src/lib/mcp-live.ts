@@ -6,6 +6,7 @@ import { basename, join } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
 import { defHash, mcpFilesHome, readScope, type McpDefinition } from './mcp-store.js';
 import { maskTarget } from './mcp-project.js';
+import { recordConnectorUrls } from './mcp-connectors.js';
 import type { McpErrorKind, McpHome, McpLiveServer, McpLiveStatus } from './mcp-wire.js';
 
 /**
@@ -416,12 +417,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Ask until nothing is `pending`, or the deadline passes. */
 export async function pollUntilSettled(
-  control: McpControl, ctx: RedactContext, o: { deadlineMs?: number; everyMs?: number } = {},
+  control: McpControl, ctx: RedactContext, o: { deadlineMs?: number; everyMs?: number; onRaw?: (raw: unknown[]) => void } = {},
 ): Promise<McpLiveServer[] | null> {
   const deadline = Date.now() + (o.deadlineMs ?? 20_000);
   let last: McpLiveServer[] | null = null;
+  let raw: unknown[] | null = null;
   for (;;) {
-    try { last = redactStatus(await control.status(), ctx); } catch { /* not yet answering */ }
+    try { raw = await control.status(); last = redactStatus(raw, ctx); } catch { /* not yet answering */ }
+    if (last && raw && o.onRaw && !last.some((s) => s.status === 'pending')) { try { o.onRaw(raw); } catch { /* best effort */ } }
     if (last && !last.some((s) => s.status === 'pending')) return last;
     if (Date.now() >= deadline) return last;
     await sleep(o.everyMs ?? 2000);
@@ -454,7 +457,7 @@ async function runProbe(o: LiveChildOptions & { accountId: string; projectRoot: 
   try {
     if (!child) return null;
     const ctx = redactContextFor(o.projectRoot, o.home);
-    const servers = await pollUntilSettled(child.control, ctx);
+    const servers = await pollUntilSettled(child.control, ctx, { onRaw: (raw) => { recordConnectorUrls(o.accountId, raw, o.home); } });
     if (servers) {
       try { writeStatusCache(o.accountId, servers, ctx, o.home, Date.now(), { full: true }); } catch { /* a reading not kept is still shown */ }
     }

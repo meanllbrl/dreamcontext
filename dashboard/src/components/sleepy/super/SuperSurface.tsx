@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
@@ -10,10 +10,13 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
-import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls, StripMarks, stripStartFor } from './StageParts';
+import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, PresentFrame, SheetTabs, StageControls, StripMarks, stripStartFor, type PresentTab } from './StageParts';
+import { PresentQueue } from './PresentQueue';
+import { sendQueueJump } from './queueJump';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
-import { SuperAgenda } from './SuperAgenda';
+import { SuperAgenda, type AgendaSize } from './SuperAgenda';
+import type { AgendaDay } from './superApi';
 import { onOpenJobRow, publishSuperEventContext, useQueueHeight } from './superJobsStore';
 import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
@@ -21,7 +24,7 @@ import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type Remote
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
-import type { ContainerSize } from '../../../lib/superTypes';
+import type { ContainerSize, PadStatus } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
@@ -52,7 +55,6 @@ import { MemberAgendaTasks, MemberApprovalBand, MemberRefusalLine, MemberStageHe
 import { TaskStrip } from './TaskStrip';
 import './SuperSurface.css';
 import './superTone.css';
-import './superCentre.css';
 
 export { runFlights, prefersReducedMotion, type FlightRun } from './motionRunner';
 export { samePlan } from './StageMotion';
@@ -114,8 +116,14 @@ export interface SuperSurfaceProps {
   onEndChild: (child: string, whenDone: boolean) => void;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
   onKeepChild: (child: string) => void;
-  /** The owner moved an agenda note by hand (Done / Put back). */
-  onMoveNote?: (id: string, section: 'now' | 'done') => void;
+  /** His status change on an agenda line, Done included (`POST /api/super/pad`). Absent: read only. */
+  onPadStatus?: (id: string, status: PadStatus) => Promise<void>;
+  /** His own agenda line (`POST /api/super/pad/add`). Absent where no owner key exists: no add box. */
+  onPadAdd?: (text: string) => Promise<void>;
+  /** His own open line taken off (`POST /api/super/pad/remove`). */
+  onPadRemove?: (id: string) => Promise<void>;
+  /** One day of the agenda (`GET /api/super/agenda-day`). Absent: no day browsing. */
+  loadAgendaDay?: (date: string) => Promise<AgendaDay | null>;
   /** His "Gerek yok" on an unanswered agenda line. Absent: read only. */
   onDropOwed?: (id: string) => void;
   /** The owner opens a card himself (POST /api/super/open): the state is applied before it
@@ -226,6 +234,8 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
 const ADD_NOTE_MS = 4000;
 
 /** Leaving a group's presentation reopens its panel only if the stage answers within this long. */
+/** A queue step's answer must land this soon to scroll the chat (a late push is not his gesture). */
+const QUEUE_JUMP_MS = 5_000;
 const BACK_TO_GROUP_MS = 3000;
 
 /**
@@ -419,12 +429,19 @@ export function SuperSurface(props: SuperSurfaceProps) {
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!bandHead(state);
+  // The presentation queue (task super-sahnesinde-sunum-sirasi): its control steps while a queued
+  // presentation of 2+ is on screen, and says how many wait once he has left the queue (D2, D7).
+  const pq = state.presentQueue;
+  const qc = queueCounter(pq, view);
+  const pqHead = pq?.items[0];
+  const queueBand: 'step' | 'wait' | undefined = qc.showing && qc.of >= 2 ? 'step'
+    : !qc.showing && qc.waiting > 0 && view.mode !== 'present' ? 'wait' : undefined;
   // The bar's measured height (JobBar): the stage plans below its ACTUAL bottom (a wrapped card
   // row is taller than one line), so no card or agenda is ever drawn over it.
   const queueHeight = useQueueHeight(state.session);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
   );
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
@@ -737,10 +754,42 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const toggleBar = () => onLayout({ chat: { value: plan.chat === 'bar' ? null : 'bar', cards: presented } });
   // The group to reopen once the stage has left the presentation (the record answers first).
   const backTo = useRef<{ id: string; at: number } | null>(null);
+  // When the owner last stepped the queue: only his step scrolls the chat (AC3, D4).
+  const queueGestureAt = useRef(0);
   const exitPresentation = () => {
     backTo.current = shownGroup ? { id: shownGroup, at: Date.now() } : null;
+    // Closing a queued presentation opens the next (the server's rule): the chat follows it (AC3).
+    // The last one opens nothing, so no later push may take the mark (D4).
+    if (qc.showing && (pq?.items.length ?? 0) > 1) queueGestureAt.current = Date.now();
     onLayout(exitPatch());
   };
+  // ── The presentation queue's gestures (AC2, AC5): each names the item his window showed ──
+  const queueStep = (op: 'next' | 'leave' | 'resume') => {
+    if (!pq || !pqHead) return;
+    // Only a step that opens a presentation marks his gesture: "Finish" on the last opens none (D4).
+    if (op === 'resume' || (op === 'next' && pq.items.length > 1)) queueGestureAt.current = Date.now();
+    onLayout({ queue: { op, item: pqHead.id } });
+  };
+  // The item his gesture opened is shown: the Super chat scrolls to the answer that brought it
+  // (AC3). Only after his own step, never on a push (D4).
+  const shownItem = qc.showing ? pqHead : undefined;
+  useEffect(() => {
+    if (!shownItem || !state.session || Date.now() - queueGestureAt.current > QUEUE_JUMP_MS) return;
+    queueGestureAt.current = 0;
+    sendQueueJump(state.session, shownItem.cards);
+  }, [shownItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A presentation is named by its group when it shows one whole (field 2026-11-15: a group of four
+  // read as its first picture's title, so "now" and "next" carried the same name), else its card.
+  const itemName = (cards: readonly string[]) => {
+    const g = presentedGroup(cards, state.groups, state.containers);
+    if (g) return g.name;
+    const c = byId.get(cards[0] ?? '');
+    return c ? titleOf(c) : '';
+  };
+  // The frame's tabs (owner 2026-11-15, option C): the shown presentation, then the queue after it.
+  const presentTabs: PresentTab[] = qc.showing && pq && pqHead
+    ? pq.items.map((it, i) => ({ key: it.id, name: itemName(it.cards), count: it.cards.length, kind: i === 0 ? 'current' as const : i === 1 ? 'next' as const : 'later' as const }))
+    : [{ key: 'shown', name: itemName(presented), count: presented.length, kind: 'current' as const }];
   useEffect(() => {
     const b = backTo.current;
     if (!b || plan.mode === 'present') return;
@@ -835,8 +884,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [props.onOpenCard]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
-  /** Every card of a group at once, in the layout its cards pick (2 compare, 3-4 grid, 5-8
-   *  filmstrip, clips filmstrip). The cards stay in the group; a group in Others comes out. */
+  /** Every card of a group at once, in the layout its cards pick (2 compare, 3-8
+   *  filmstrip, pictures and clips filmstrip). The cards stay in the group; a group in Others comes out. */
   const presentGroup = (id: string) => {
     const g = groupsById.get(id);
     const cards = g ? groupPresentCards(g, state.containers) : [];
@@ -1110,12 +1159,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return () => ro.disconnect();
   }, [approvalsTop]);
   const { bus } = useVaultId();
-  const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
+  const renderAgenda = (size: AgendaSize) => (
     <SuperAgenda
       state={state}
       look={jobLook}
-      variant={variant}
-      wide={wide}
+      size={size}
       canShowChild={(sid) => state.containers.some((k) => k.kind === 'chat' && k.ref === sid)}
       onShowChild={showChild}
       onShowQuestion={showQuestion}
@@ -1128,9 +1176,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
       approvals={agendaApprovals}
       onShowApproval={showApproval}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
-      onMoveNote={props.onMoveNote}
+      onPadStatus={props.onPadStatus}
+      onPadAdd={props.onPadAdd}
+      onPadRemove={props.onPadRemove}
+      loadDay={props.loadAgendaDay}
       onDropOwed={props.onDropOwed}
-      extra={member && variant === 'full' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
+      extra={member && size !== 'small' && size !== 'medium' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
     />
   );
   const pillItem = (id: string): OthersItem => {
@@ -1343,7 +1394,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
         </button>
       )}
       {plan.controls && plan.layout && (
-        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} />
+        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout}
+          onExit={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation} leaveQueue={queueBand === 'step' && !shownGroup} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
+      )}
+      {plan.presentTabs && plan.layout && (
+        <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
+      )}
+      {plan.queueBand && pq && (
+        <PresentQueue rect={plan.queueBand.rect} short={plan.queueBand.short} waiting={pq.items.map((i) => itemName(i.cards))} onResume={() => queueStep('resume')} />
       )}
       {plan.strip && (
         <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />
@@ -1411,7 +1469,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {addMenu && <SuperAddMenu at={addMenu} stage={{ width: plan.width, height: plan.height }} toggleRef={noToggle} busy={addBusy} onOpen={openCard} onClose={closeAddMenu} />}
       {full && (
         <CardSelectionScope id={full.id} onComment={props.onCommentCardText} onCommented={() => setFull(null)}>
-          <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />
+          <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} agenda={() => renderAgenda('full')} />
         </CardSelectionScope>
       )}
     </div>

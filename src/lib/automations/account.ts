@@ -339,8 +339,18 @@ async function decide(deps: PickDeps): Promise<AutomationAccount> {
 // Owner-typed messages never pass through here: a person at the keyboard decides for themself.
 
 /** `noneOpen`: every account is kept for the owner's own chats, so nothing can start until one is
- *  opened to routines again (no reset will fix that, and the reason must say so). */
-export type ProtectedPick = { account: AutomationAccount } | { waitUntil: number; noneOpen?: true };
+ *  opened to routines again (no reset will fix that, and the reason must say so). `unknown`: no
+ *  reading says when one frees up (signed out, a login to renew), so `waitUntil` is only when to
+ *  look again, not a reset. */
+export type ProtectedPick = { account: AutomationAccount } | { waitUntil: number; noneOpen?: true; unknown?: true };
+
+/** Why unattended work waits: windows past the threshold until a known reset, every account kept
+ *  for the owner, or nothing that says when (see {@link ProtectedPick}). */
+export type AccountWaitKind = 'full' | 'none-open' | 'unknown';
+
+export function waitKindOf(pick: { noneOpen?: true; unknown?: true }): AccountWaitKind {
+  return pick.noneOpen ? 'none-open' : pick.unknown ? 'unknown' : 'full';
+}
 
 /** When nothing at all says when an account frees up (every one is "Only mine" or signed out). */
 const UNKNOWN_WAIT_MS = 30 * 60_000;
@@ -397,7 +407,7 @@ export async function protectedAutomationAccount(deps: PickDeps & { threshold?: 
       return { waitUntil: wakes.length > 0 ? Math.min(...wakes) : now + UNKNOWN_WAIT_MS, noneOpen: true };
     }
   }
-  return { waitUntil: wakes.length > 0 ? Math.min(...wakes) : now + UNKNOWN_WAIT_MS };
+  return wakes.length > 0 ? { waitUntil: Math.min(...wakes) } : { waitUntil: now + UNKNOWN_WAIT_MS, unknown: true };
 }
 
 /**
@@ -422,13 +432,23 @@ export function withoutOwnerOnly(account: AutomationAccount, deps: Pick<PickDeps
 //
 // `~/.dreamcontext/automations-account-wait.json`: when unattended work last found no account
 // to start on, and when the earliest one frees up. Machine-local (accounts are this machine's).
-// The tick skips every unattended start until `wakeAt`, so a full machine is not probed every
-// five minutes, and the fire stays owed (its watermark is never advanced) and runs on the first
-// tick after. Changing the threshold or an "Only mine" mark clears it.
+// Every unattended start defers on it without a probe until `wakeAt` (re-deciding at most every
+// `ACCOUNT_WAIT_RECHECK_MS`), so a full machine is not probed every five minutes; the fire stays
+// owed (its watermark is never advanced) and runs on the first tick after, inside its catch-up
+// window. Changing the threshold or an "Only mine" mark clears it.
 
 export function accountWaitPath(home: string = homedir()): string {
   return join(home, '.dreamcontext', 'automations-account-wait.json');
 }
+
+/**
+ * How long a recorded wait is trusted before the next start decides afresh (reads the caches,
+ * probes what is stale). A wait is computed from readings, and a reading can stop being true
+ * before its reset: a week reset early, a refusal that ended, a cache refreshed by a chat. On
+ * 2026-11-15 one wait held every routine for 32 hours on readings nobody looked at again.
+ * Half an hour keeps a full machine from being probed every five minutes.
+ */
+export const ACCOUNT_WAIT_RECHECK_MS = 30 * 60_000;
 
 /**
  * `wakeAt` (epoch ms) while it is still in the future, else null. Never throws.
@@ -436,18 +456,39 @@ export function accountWaitPath(home: string = homedir()): string {
  * A wait is a conclusion about the accounts AS THEY WERE: when the account register changed after
  * it was recorded (an account added, removed, reordered or signed in again, auto-switch, the
  * threshold or an "Only mine" mark), the wait no longer holds and reads as none, so the next
- * start decides afresh.
+ * start decides afresh. This is what the Settings page shows; what HOLDS a start is
+ * {@link accountWaitHolds}.
  */
 export function readAccountWait(home: string = homedir(), now: number = Date.now()): number | null {
+  return readWait(home, now, Number.POSITIVE_INFINITY)?.wakeAt ?? null;
+}
+
+/**
+ * The wait as a GATE on unattended starts: {@link readAccountWait}, but only for
+ * {@link ACCOUNT_WAIT_RECHECK_MS} after it was recorded. Past that the next due start decides
+ * afresh (and records a new wait if every account is still full).
+ */
+export function accountWaitHolds(home: string = homedir(), now: number = Date.now()): number | null {
+  return heldAccountWait(home, now)?.wakeAt ?? null;
+}
+
+/** {@link accountWaitHolds} with why it waits (a record from before `kind` existed reads `full`). */
+export function heldAccountWait(home: string = homedir(), now: number = Date.now()): { wakeAt: number; kind: AccountWaitKind } | null {
+  return readWait(home, now, ACCOUNT_WAIT_RECHECK_MS);
+}
+
+function readWait(home: string, now: number, trustMs: number): { wakeAt: number; kind: AccountWaitKind } | null {
   try {
     const path = accountWaitPath(home);
     if (!lstatSync(path).isFile()) return null;
-    const rec = JSON.parse(readFileSync(path, 'utf-8')) as { wakeAt?: unknown; at?: unknown };
+    const rec = JSON.parse(readFileSync(path, 'utf-8')) as { wakeAt?: unknown; at?: unknown; kind?: unknown };
     const v = rec.wakeAt;
     if (typeof v !== 'number' || !Number.isFinite(v) || v <= now) return null;
     const at = typeof rec.at === 'number' && Number.isFinite(rec.at) ? rec.at : 0;
+    if (now - at >= trustMs) return null;
     if (registerChangedSince(home, at)) return null;
-    return v;
+    const kind: AccountWaitKind = rec.kind === 'none-open' || rec.kind === 'unknown' ? rec.kind : 'full';
+    return { wakeAt: v, kind };
   } catch {
     return null;
   }
@@ -462,11 +503,11 @@ function registerChangedSince(home: string, at: number): boolean {
   }
 }
 
-export function recordAccountWait(wakeAt: number, home: string = homedir(), now: number = Date.now()): void {
+export function recordAccountWait(wakeAt: number, home: string = homedir(), now: number = Date.now(), kind: AccountWaitKind = 'full'): void {
   const path = accountWaitPath(home);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ wakeAt, at: now }) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  writeFileSync(tmp, JSON.stringify({ wakeAt, at: now, kind }) + '\n', { encoding: 'utf-8', mode: 0o600 });
   renameSync(tmp, path);
 }
 

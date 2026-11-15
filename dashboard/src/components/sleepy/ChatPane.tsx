@@ -84,16 +84,19 @@ import { memberSuperId } from './super/memberStageModel';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
 import type { SuperId, SuperQueueItem } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
-import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
+import { MemberWaitCard, SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { OwnerCardSlot } from './super/OwnerCardSlot';
-import { anchorOwnerCards, ownerCardItemsOf, placeOwnerCards, tailHolds } from './super/cardPlacement';
+import { anchorOwnerCards, NOTHING_TIMED, ownerCardItemsOf, placedByTime, placeOwnerCards, tailHolds } from './super/cardPlacement';
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
+import { RunLiveLine } from './super/RunLiveLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
-import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
-import { SuperNewButton } from './super/SuperNewButton';
+import { answerForCards, sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
+import { onQueueJump } from './super/queueJump';
+import { JumpToLatest } from './chat/JumpToLatest';
+import { isOwnSend } from './chat/ownSend';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
 import { answerRowAfter, followStep, ownAnchorIndex, shouldWrite } from './super/superScroll';
@@ -159,6 +162,8 @@ interface SuperAnchor { own: string | null; after: HTMLElement | null; afterId: 
 /** The anchor's row is gone: as a stop line above everything, `followStep` stops where it stands. */
 const ANCHOR_GONE = Number.NEGATIVE_INFINITY;
 
+/** A user message younger than this when it appears is his send, not a resumed history row. */
+const FRESH_SEND_MS = 60_000;
 /** How long a jumped-to sub-agent row stays flashed. */
 const FLASH_MS = 1600;
 /** How long a reply strip's smooth scroll takes before its target becomes the scroll hold. */
@@ -928,7 +933,7 @@ export function ChatPane({
   const restoreTopRef = useRef(0);
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
-  /** The Super chat: is the view at the bottom, MEASURED (its `pinned` means "follows", D2). */
+  /** Is the view at the bottom, MEASURED (`pinned` means "follows", D2): the ↓ button reads it. */
   const [atBottom, setAtBottom] = useState(true);
   /** Measured, for readers outside render (the unread line: "at the bottom" means what he sees). */
   const atBottomRef = useRef(true);
@@ -989,7 +994,7 @@ export function ChatPane({
   const setStick = useCallback((next: boolean) => {
     // The follow begins afresh (his arrival at the bottom): what is on screen now is read, so the
     // new answer is the row after today's newest.
-    if (next && !stickRef.current && superRef.current) takeAnchor(null);
+    if (next && !stickRef.current) takeAnchor(null);
     stickRef.current = next;
     setPinned((prev) => (prev === next ? prev : next));
     // Not every return to the bottom scrolls (a send at the bottom, a jump already there).
@@ -1008,6 +1013,10 @@ export function ChatPane({
       const own = rows.findIndex((r) => r.dataset.itemId === at.own);
       i = ownAnchorIndex(spans, own, el.clientHeight, RAIL_CLEARANCE);
     }
+    // An ordinary chat stops for HIS send only, as Claude Desktop does: there are no event turns
+    // there, and a resumed history arriving row by row is no new answer (else the opening landed
+    // at the top). No send to stop at: the follow goes to the end.
+    if (i < 0 && !superRef.current) return null;
     if (i < 0) {
       if (!at.taken) {
         if (el.clientHeight > 0 && !historyPendingRef.current) {
@@ -1057,33 +1066,20 @@ export function ChatPane({
     // A minimized pane's container is parked in the detached garage: it measures 0 and
     // cannot be scrolled. The observer below re-runs this the moment it is re-homed.
     if (!el || el.clientHeight === 0) return;
-    // The Super chat: the one owner decides (follow, capped at the new answer's start).
-    if (superRef.current) { superStep(el); return; }
-    el.scrollTop = el.scrollHeight;
-    prevTopRef.current = el.scrollTop;
-    restoreTopRef.current = el.scrollTop;
-    // Then RE-MEASURE next frame, because "scrollTop = scrollHeight" is only true at the
-    // instant it is written. The pane docks furniture BELOW the scroller — the
-    // background-shells tray, the auto-growing composer — and when one of those grows, the
-    // scroller shrinks under a view that was at its maximum: `scrollTop` stays valid, the
-    // maximum moves away from it, and NO scroll event is dispatched because nothing scrolled
-    // (measured: a tray growing by 186px silently left 174px of transcript below the fold).
-    // Nothing in the event path can notice that, which is why the transcript could sit a card
-    // and a half short of the bottom while still believing it was pinned — no Latest pill to
-    // get back with, and the only thing that ever fixed it was the next frame of content
-    // arriving (owner report 07-25: "it goes too far down, an update fixes it, then it slides
-    // down again"). One frame later every one of those layouts has settled, so a single
-    // re-measurement covers the whole class — including the window where the ResizeObserver
-    // below is mid-resubscription.
+    // ONE owner for every chat (owner 2026-11-15, "okunmamış kısımlarda claude gibi"): the follow
+    // goes to the bottom, capped at the new answer's start, as Claude Desktop does. Furniture
+    // growing below the scroller (the shells tray, the composer) shrinks the scroller, and the
+    // ResizeObserver on it runs this again, so a pinned view never rests short of the end.
+    superStep(el);
+    // Then once more next frame: furniture below the scroller that grows in the same frame (a
+    // tray, the composer) moves the maximum without a scroll event (owner report 07-25).
     if (typeof requestAnimationFrame !== 'function' || repinFrameRef.current) return;
     repinFrameRef.current = requestAnimationFrame(() => {
       repinFrameRef.current = 0;
       const now = scrollRef.current;
       if (!now || !stickRef.current || now.clientHeight === 0) return;
       if (isAtBottom({ scrollTop: now.scrollTop, scrollHeight: now.scrollHeight, clientHeight: now.clientHeight })) return;
-      now.scrollTop = now.scrollHeight;
-      prevTopRef.current = now.scrollTop;
-      restoreTopRef.current = now.scrollTop;
+      superStep(now);
     });
   }, [superStep]);
 
@@ -1109,13 +1105,13 @@ export function ChatPane({
   useEffect(() => {
     const was = wasBusyRef.current;
     wasBusyRef.current = busyNow;
-    if (!superView || !was || busyNow || !stickRef.current) return;
+    if (!was || busyNow || !stickRef.current) return;
     // Parked off-screen (garaged): nothing can be measured, so his own send keeps the anchor and
     // the view he comes back to still stops at that answer's start (r1).
     const el = scrollRef.current;
     if (!el || el.clientHeight === 0) return;
     takeAnchor(null);
-  }, [busyNow, superView, takeAnchor]);
+  }, [busyNow, takeAnchor]);
 
   useEffect(() => () => {
     if (repinFrameRef.current) cancelAnimationFrame(repinFrameRef.current);
@@ -1785,6 +1781,16 @@ export function ChatPane({
   useLayoutEffect(() => { if (superView) drawReplyLines(); });
   const replyJumpRef = useRef({ jumpToReplyTarget, jumpToReplied });
   replyJumpRef.current = { jumpToReplyTarget, jumpToReplied };
+  // The owner stepped the stage's presentation queue (AC3): the answer that brought the one now
+  // shown scrolls into view and flashes. Not in this transcript: nothing moves, nothing fails.
+  const queueJumpSession = superView ? session.claudeId ?? null : null;
+  useEffect(() => {
+    if (!queueJumpSession) return undefined;
+    return onQueueJump(queueJumpSession, (cards) => {
+      const id = answerForCards(turnCardsRef.current, cards);
+      if (id) replyJumpRef.current.jumpToReplyTarget(id);
+    });
+  }, [queueJumpSession]);
   /** Stable for the memoized rows. */
   /** A section head's click: the same jump as a strip's. Stable for the memoized rows. */
   const handleReplyTarget = useCallback((targetId: string, part?: number) => {
@@ -1944,7 +1950,7 @@ export function ChatPane({
       if (stickRef.current) scrollToBottom();
       else holdAnchorSteady();
       // Content growing below a resting view moves no offset and fires no scroll event.
-      if (superRef.current && el.clientHeight > 0) setAtBottom(isAtBottom(el));
+      if (el.clientHeight > 0) setAtBottom(isAtBottom(el));
       drawReplyLinesRef.current();
       // Content growing ABOVE an unpinned view moves the card without a scroll event of
       // its own — the rail would otherwise still be showing a card that is back in view.
@@ -2472,7 +2478,7 @@ export function ChatPane({
     }
     // The phone's mirror draws them too (its cards come from /api/agent/super-questions).
     if (superView) for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
-    if (superView && placedOwnerCards.length) drawnForCards.push(...drawn);
+    if (superView) drawnForCards.push(...drawn);
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
@@ -2565,11 +2571,20 @@ export function ChatPane({
     return ids.flatMap((id) => questionCards.get(id) ?? [])
       .map((c) => ({ ...c, live: c.live && latestAsk.get(c.item) === c.toolItemId }));
   };
-  // An owner card, under the last item drawn before it was posted (cardPlacement.ts).
+  // Everything the owner is asked that has no asking call drawn above, under the last item drawn
+  // before it was asked (cardPlacement.ts): an owner card, the Super's own open question whose
+  // call is folded into an event line or not in the transcript, a member's wait with no card.
+  // None of them goes to the chat's end while it has a place, so his later messages stay BELOW
+  // it (owner 2026-11-15: a question asked before his message was drawn under it).
+  const callAnchored = new Set<string>();
+  for (const cards of questionCards.values()) for (const c of cards) if (c.live && latestAsk.get(c.item) === c.toolItemId) callAnchored.add(c.item);
+  const { items: timedItems, questions: timedQuestions, members: timedMembers } = superView
+    ? placedByTime(superQuestionView, placedOwnerCards, callAnchored)
+    : NOTHING_TIMED;
   let ownerCardsAt: Map<string, SuperQueueItem[]> | null = null;
   const settledOf = (seg: RunSegment<ChatItem>): SuperQueueItem[] => {
-    if (!placedOwnerCards.length) return [];
-    ownerCardsAt ??= anchorOwnerCards(drawnForCards, placedOwnerCards);
+    if (!timedItems.length) return [];
+    ownerCardsAt ??= anchorOwnerCards(drawnForCards, timedItems);
     const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
     return ids.flatMap((id) => ownerCardsAt!.get(id) ?? []);
   };
@@ -2587,7 +2602,12 @@ export function ChatPane({
       return <SuperQuestionCard key={`question-${c.toolItemId}`} ask={c} session={session} />;
     }),
     ...settledOf(seg).map((q) => {
+      if (timedQuestions.has(q.id)) {
+        anchoredQuestions.add(q.id);
+        return <SuperQuestionCard key={`timed-question-${q.id}`} ask={{ item: q.id, kind: q.kind === 'ask' ? 'ask' : 'question', toolItemId: '', live: true }} session={session} />;
+      }
       placedCards.add(q.id);
+      if (timedMembers.has(q.id)) return <MemberWaitCard key={`member-${q.id}`} item={q} paused={!!superQuestionView?.pausedFor?.(q.sessionId)} />;
       return (
         <OwnerCardSlot
           key={`owner-card-${q.id}`}
@@ -2719,25 +2739,25 @@ export function ChatPane({
         );
       }
       if (marks.boundary) {
-        nodes.push(
-          <button
-            key={`fbound-${meta.sessionKey}`}
-            type="button"
-            className={`chat-history-divider chat-feed-boundary${meta.status === 'failed' ? ' chat-feed-boundary--failed' : ''}`}
-            data-feed-boundary={meta.sessionKey}
-            onClick={() => feed.onBoundary(meta)}
-          >
+        const open = feed.onBoundary;
+        const boundaryClass = `chat-history-divider chat-feed-boundary${open ? '' : ' chat-feed-boundary--still'}${meta.status === 'failed' ? ' chat-feed-boundary--failed' : ''}`;
+        nodes.push(open ? (
+          <button key={`fbound-${meta.sessionKey}`} type="button" className={boundaryClass} data-feed-boundary={meta.sessionKey} onClick={() => open(meta)}>
             {feed.labels.boundary(meta)}
             <span className="chat-feed-boundary-go" aria-hidden>›</span>
-          </button>,
-        );
+          </button>
+        ) : (
+          <div key={`fbound-${meta.sessionKey}`} className={boundaryClass} data-feed-boundary={meta.sessionKey}>
+            {feed.labels.boundary(meta)}
+          </div>
+        ));
         if (meta.missing) nodes.push(<div key={`fmiss-${meta.sessionKey}`} className="chat-feed-note" data-feed-missing>{feed.labels.missing}</div>);
         if (meta.truncated) {
-          nodes.push(
-            <button key={`ftrunc-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link" onClick={() => feed.onBoundary(meta)}>
+          nodes.push(open ? (
+            <button key={`ftrunc-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link" onClick={() => open(meta)}>
               {feed.labels.truncated}
-            </button>,
-          );
+            </button>
+          ) : <div key={`ftrunc-${meta.sessionKey}`} className="chat-feed-note">{feed.labels.truncated}</div>);
         }
       }
       if (!meta.empty) {
@@ -2749,9 +2769,14 @@ export function ChatPane({
         nodes.push(<Fragment key={`frun-${meta.sessionKey}`}>{feed.runFoot(meta, { openFile: handleOpenFile })}</Fragment>);
       }
       if (feedRunWorking(meta, marks)) {
+        // In the Super view a run in flight looks like a turn in flight: the same live steps line,
+        // never a Working pill (owner 2026-11-07) nor a pane of its own (owner 2026-11-14).
+        const startedAt = Date.parse(meta.startedAt) || undefined;
         nodes.push(
           <div key={`fwork-${meta.sessionKey}`} data-feed-working={meta.sessionKey}>
-            <WorkingIndicator label={feed.labels.working} startedAt={Date.parse(meta.startedAt) || undefined} />
+            {superView
+              ? <RunLiveLine claudeId={meta.claudeId} startedAt={startedAt} onOpenFile={handleOpenFile} />
+              : <WorkingIndicator label={feed.labels.working} startedAt={startedAt} />}
           </div>,
         );
       }
@@ -2975,8 +3000,7 @@ export function ChatPane({
   const goToLatest = () => {
     jumpHeldRef.current = false;
     stopGlideRef.current();
-    if (superView) placeAtBottom(null);
-    else { setStick(true); scrollToBottom(); }
+    placeAtBottom(null);
     refocusComposer();
   };
   /** A message he queued (⌥⏎, or ⏎ while a turn cannot take it) moves the Super view at his press;
@@ -2990,12 +3014,11 @@ export function ChatPane({
 
   // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
   const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia);
-  // Nor, for the pin, is an event turn: the live chip is a user item too, and re-arming on it
-  // dragged a reader down on every event. Retry keeps `lastUserItem`: a failed event turn is
-  // what it sends again.
-  const lastOwnItem = superView
-    ? [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia && !it.echo && !it.queued && !superEventOf(it.text))
-    : lastUserItem;
+  // Nor, for the view, is anything that is not HIS send from this pane, in any chat: an event
+  // turn (re-arming on its live chip dragged a reader down on every event), a server-submitted
+  // opening prompt (sleep, a delegate run), a message typed elsewhere, a queue drain. Retry keeps
+  // `lastUserItem`: a failed event turn is what it sends again.
+  const lastOwnItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && isOwnSend(it));
 
   // Sending is unambiguous intent to watch the answer, so it re-arms sticking: a reply that
   // streams in off-screen because you had scrolled up is a bug, not a feature. Keyed on the
@@ -3006,16 +3029,23 @@ export function ChatPane({
   const sentIdRef = useRef(lastUserItemId);
   useLayoutEffect(() => {
     if (!lastUserItemId) return;
-    const sent = sentIdRef.current !== lastUserItemId;
+    // A resumed history arriving changes the id too, but it is no send: in an ordinary chat a
+    // send is a message stamped just now (the Super's replay rules live in its own effect).
+    const sent = sentIdRef.current !== lastUserItemId
+      && (superView || Date.now() - (lastOwnItem?.ts ?? 0) < FRESH_SEND_MS);
     sentIdRef.current = lastUserItemId;
     // The Super chat moves for his send only (rule 1): the mount is no send, and an echo of a
     // message typed elsewhere never counts as one (lastOwnItem skips it).
-    if (superView && !sent) return;
+    // An ordinary chat opening lands at its end (the follow, uncapped: nothing new is taken yet).
+    if (!sent) {
+      if (!superView) { setStick(true); scrollToBottom(); }
+      return;
+    }
     jumpHeldRef.current = false;
     stopGlideRef.current();
-    if (superView) { placeAtBottom(lastUserItemId); return; }
-    setStick(true);
-    scrollToBottom();
+    // Every chat, as Claude Desktop does (owner 2026-11-15): his send goes to the end and the
+    // follow stops with the new answer's start in view; the rest waits behind ↓.
+    placeAtBottom(lastUserItemId);
   }, [lastUserItemId, superView, setStick, scrollToBottom, placeAtBottom]);
 
   // Stream-interrupted retry (state 12): resend the last user message. There is no
@@ -3063,14 +3093,14 @@ export function ChatPane({
               const stick = nextStickToBottom(stickRef.current, metrics);
               // The Super chat follows again only when HE brings the view to the bottom: the
               // follow's own stop near the end, a clamp or a hold never re-arms it (rule C).
-              setStick(superView && stick && !stickRef.current && !readerMoving ? false : stick);
+              setStick(stick && !stickRef.current && !readerMoving ? false : stick);
             }
             // In the Super chat the composer folds on his own scroll only, never on the follow's
             // hold (a report landing must not fold it under him on a phone, r1 E7).
-            setComposerFolded((prev) => (superView && !readerMoving && !stickRef.current ? prev : nextComposerFolded(prev, stickRef.current, metrics)));
+            setComposerFolded((prev) => (!readerMoving && !stickRef.current ? prev : nextComposerFolded(prev, stickRef.current, metrics)));
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
-            if (superView) setAtBottom(isAtBottom(metrics));
+            setAtBottom(isAtBottom(metrics));
             syncRail();
             // The hold moves with the reader: wherever they have just come to rest is the new
             // "don't move me from here". A pinned view needs no hold — the bottom is its own
@@ -3307,16 +3337,13 @@ export function ChatPane({
             onClose={closeFind}
           />
         )}
-        {superView && <SuperNewButton shown={!atBottom} below={superUnread.below} onClick={goToLatest} onGone={refocusComposer} />}
-        {!superView && !pinned && (
-          <button
-            type="button"
-            className="chat-jump"
-            onClick={goToLatest}
-          >
-            <span aria-hidden>↓</span> Latest
-          </button>
-        )}
+        <JumpToLatest
+          shown={!atBottom}
+          below={superView ? superUnread.below : 0}
+          testId={superView ? 'super-new' : 'chat-jump'}
+          onClick={goToLatest}
+          onGone={refocusComposer}
+        />
       </div>
       </SelectionScope>
       </BrowserHostProvider>

@@ -121,6 +121,33 @@ export function unreadUnits(
   return units.sort((a, b) => a.ts - b.ts);
 }
 
+/**
+ * What a Super's row counts outside its pane (owner 2026-11-15, main and member alike): the unread
+ * messages NEWER than the newest one he has read. A stage is read up to where he last read it, as
+ * Telegram counts a chat: an older message he never scrolled up to stays unread inside the pane
+ * (its "Okunmamış" line, the jump), but no longer holds the row's number. It did: the main pane
+ * stays mounted, it lands on the first unread once per mount, so a click on the row opened the
+ * stage at its bottom and an old count (a 7 from messages half an hour old) never went.
+ * Nothing read yet: every unread counts.
+ */
+export function unreadSinceRead(units: readonly UnreadUnit[], unread: readonly UnreadUnit[]): UnreadUnit[] {
+  const open = new Set(unread.map((u) => `${u.key}|${u.ts}`));
+  let newestRead = -1;
+  for (let i = units.length - 1; i >= 0; i--) {
+    if (!open.has(`${units[i].key}|${units[i].ts}`)) { newestRead = i; break; }
+  }
+  const after = new Set(units.slice(newestRead + 1).map((u) => `${u.key}|${u.ts}`));
+  return unread.filter((u) => after.has(`${u.key}|${u.ts}`));
+}
+
+/**
+ * A member's stage is read when its NEWEST message is (plan r4 D7): what tells the server `seen`.
+ * The same rule as the row's count above: read means nothing unread past the newest read message.
+ */
+export function newestRead(units: readonly UnreadUnit[], unread: readonly UnreadUnit[]): boolean {
+  return unreadSinceRead(units, unread).length === 0;
+}
+
 /** A mark covers its message at about its time: a replay dates a block by when it was written, the
  *  live stream by when it began. The same words further apart are another message; a position in
  *  the list could not say so, the replay keeps only the newest items. */

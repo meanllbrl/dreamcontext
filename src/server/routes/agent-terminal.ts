@@ -1,4 +1,5 @@
 import { appChatRefusal } from '../../lib/apps/chat-store.js';
+import { appRuntimePath } from '../../lib/app-cli-path.js';
 import { bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { sanitizeTool } from '../../lib/t3-bridge/registry.js';
@@ -16,6 +17,7 @@ import { createRequire } from 'node:module';
 import { basename, dirname, join, sep } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile, type Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
@@ -117,6 +119,21 @@ function ptyResolveBases(): string[] {
 }
 
 /**
+ * The node-pty the app ships beside its own `dist` (plan npmsiz-beta C1, L3): the app bundle runs
+ * `Contents/Resources/dist/index.js` with `Contents/Resources/native/node-pty`, and the app copy runs
+ * `~/.dreamcontext/bin/rt/<version>/dist/index.js` with `…/<version>/native/node-pty`. Same layout
+ * in both, so one rule: `<dist>/../native/node-pty`. Null when this CLI ships none (npm install, dev).
+ * A link is never followed (the copy and the bundle hold regular files only).
+ */
+export function bundledPtyRoot(distFile: string = fileURLToPath(import.meta.url)): string | null {
+  const root = join(dirname(dirname(distFile)), 'native', 'node-pty');
+  try {
+    if (lstatSync(root).isDirectory() && lstatSync(join(root, 'package.json')).isFile()) return root;
+  } catch { /* none here */ }
+  return null;
+}
+
+/**
  * node-pty 1.x ships prebuilt binaries, but npm's tarball extraction drops the
  * execute bit on macOS's `spawn-helper` — so LOADING node-pty succeeds yet
  * `pty.spawn` then dies with `posix_spawnp failed`. Restore +x on every shipped
@@ -129,6 +146,11 @@ function ptyResolveBases(): string[] {
  * run card and terminal died with `posix_spawnp failed` until the app restarted.
  */
 function ensurePtyHelperExecutable(): void {
+  const shipped = bundledPtyRoot();
+  if (shipped) {
+    restorePtyHelpers(shipped);
+    return;
+  }
   for (const base of ptyResolveBases()) {
     try {
       // …/node-pty/lib/index.js → …/node-pty
@@ -148,7 +170,11 @@ export function restorePtyHelpers(root: string): void {
   for (const p of candidates) {
     if (!existsSync(p)) continue;
     const mode = statSync(p).mode;
-    if ((mode & 0o111) !== 0o111) chmodSync(p, mode | 0o755);
+    // A read-only place (the signed bundle on a DMG mount) cannot be fixed and must not make
+    // node-pty count as unloadable: its helper ships executable (scripts/stage-bundled-pty.mjs).
+    if ((mode & 0o111) !== 0o111) {
+      try { chmodSync(p, mode | 0o755); } catch { /* read-only: leave it */ }
+    }
   }
 }
 
@@ -169,6 +195,15 @@ export function loadNodePty(): typeof import('node-pty') | null {
     // have rewritten since the module loaded.
     if (ptyModule) ensurePtyHelperExecutable();
     return ptyModule;
+  }
+  // The app's own node-pty first: it was built and signed for the node this app runs on.
+  const shipped = bundledPtyRoot();
+  if (shipped) {
+    try {
+      ptyModule = createRequire(import.meta.url)(shipped) as typeof import('node-pty');
+      ensurePtyHelperExecutable();
+      return ptyModule;
+    } catch { /* fall through to the other bases */ }
   }
   for (const base of ptyResolveBases()) {
     try {
@@ -1387,7 +1422,8 @@ export function startPtySession(
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
       // a `claude` the rc already resolves keeps winning.
-      env: { ...process.env, PATH: opts.codex ? codexAwarePath(claudeAwarePath()) : claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
+      // On the app's own Node the launcher folder rides too (hooks, and `dreamcontext` typed here).
+      env: { ...process.env, PATH: appRuntimePath(opts.codex ? codexAwarePath(claudeAwarePath()) : claudeAwarePath()), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the

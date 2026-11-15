@@ -199,9 +199,12 @@
   color: var(--color-text);
 }
 
-/* The project row's "+" and "⋯" (option A): over the row's end, shown on hover and on keyboard
-   focus inside the row; the end mark steps aside for them. A finger or a phone has no hover: they
-   stay, and the name makes room. */
+/* The project row's "+" and "⋯" (option A): over the row's end. The "+" (a new chat in this project)
+   is ALWAYS there, quiet (secondary ink), full ink on hover or focus (owner 2026-11-15: people must
+   find how to open a chat); the rest (eye, member chevron, "⋯") show on hover and on keyboard focus
+   inside the row, and the end mark steps aside for them. The "+" keeps the far right in both states
+   so nothing jumps, and the end mark keeps clear of it at rest. A finger or a phone has no hover:
+   everything stays, and the name makes room. */
 .ns-dr-acts {
   position: absolute;
   right: var(--space-1);
@@ -212,24 +215,28 @@
   gap: 2px;
   padding-left: var(--space-1);
   border-radius: var(--radius-md);
-  background: inherit;
-  opacity: 0;
+  background: transparent;
   pointer-events: none;
-  transition: opacity 0.15s;
 }
 .ns-dr-act .ns-dr-ico--fill { fill: currentColor; stroke: none; }
 .ns-dr-end { flex: none; display: inline-flex; align-items: center; }
+.ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0; }
+.ns-dr-acts .ns-dr-add { order: 1; opacity: 1; pointer-events: auto; }
+.ns-dr-proj .ns-dr-toggle { padding-right: calc(22px + var(--space-2)); }
 .ns-dr-proj:is(:hover, :focus-within) .ns-dr-acts {
-  opacity: 1;
+  background: inherit;
   pointer-events: auto;
 }
-.ns-dr-proj:is(:hover, :focus-within) .ns-dr-act { opacity: 0.85; }
+.ns-dr-proj:is(:hover, :focus-within) .ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0.85; }
+.ns-dr-proj:is(:hover, :focus-within) .ns-dr-add { color: var(--color-text); }
 .ns-dr-proj:is(:hover, :focus-within) .ns-dr-end { visibility: hidden; }
 
 @media (hover: none), (max-width: 600px) {
-  .ns-dr-acts { opacity: 1; pointer-events: auto; }
-  .ns-dr-act { opacity: 0.85; }
+  .ns-dr-acts { pointer-events: auto; }
+  .ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0.85; }
   .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * 22px + var(--space-2)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu) .ns-dr-toggle { padding-right: calc(3 * 22px + var(--space-2)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu):has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(4 * 22px + var(--space-2)); }
   .ns-dr-proj:is(:hover, :focus-within) .ns-dr-end { visibility: visible; }
 }
 
@@ -425,6 +432,8 @@
     height: var(--touch-target);
   }
   .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * var(--touch-target)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu) .ns-dr-toggle { padding-right: calc(3 * var(--touch-target)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu):has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(4 * var(--touch-target)); }
 }
 
 /* A chat row in the air, and the line where it lands. */
@@ -769,12 +778,6 @@
 }
 
 /* New window (the project row once named New Chat, owner 2026-11-05) with its chevron (r8-07): the row, and beside it the menu of Claude or a member. */
-.ns-dr-newchat-wrap {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-.ns-dr-newchat-wrap > .ns-dr-newchat { flex: 1; min-width: 0; }
 .ns-drawer-menu-item.ns-newchat-item {
   justify-content: flex-start;
   gap: var(--space-2);
@@ -784,4 +787,37 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ns-dr-newchat-wrap:is(:hover, :focus-within) .ns-dr-act { opacity: 0.85; }
+
+/* The Hidden group (owner 2026-11-14, option A): one quiet row under the list, its projects open
+   in place under it. Closed, the row's end mark is the sum of theirs. */
+.ns-dr-hidden {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+.ns-dr-hidden-row {
+  width: 100%;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+}
+.ns-dr-hidden-row .ns-dr-t { flex: 0 1 auto; color: var(--color-text-secondary); font-weight: var(--font-weight-normal); }
+.ns-dr-hidden-chev { width: 12px; height: 12px; }
+.ns-dr-hidden-n {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.ns-dr-hidden-row .ns-dr-end { margin-left: auto; }
+.ns-dr-hidden .ns-dr-project .ns-dr-proj .ns-dr-t { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
+.ns-dr-hidden .ns-dr-project .ns-dr-pic { opacity: 0.8; }
+@media (hover: none), (max-width: 600px) {
+  .ns-dr-proj:has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(3 * 22px + var(--space-2)); }
+}
+/* While the member menu from the header chevron is open, the project buttons stay shown (owner 2026-11-15). */
+.ns-dr-project[data-menu-open="true"] .ns-dr-acts { background: inherit; pointer-events: auto; }
+.ns-dr-project[data-menu-open="true"] .ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0.85; }
+.ns-dr-project[data-menu-open="true"] .ns-dr-end { visibility: hidden; }

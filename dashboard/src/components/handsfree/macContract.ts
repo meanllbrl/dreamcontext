@@ -163,5 +163,8 @@ export interface SuperRemoteView {
   names: Record<string, string>;
   team?: RemoteTeamJob[];
   head: { item: string; kind: string; text: string } | null;
+  presentQueue?: RemotePresentQueue;
   rotating?: true;
 }
+
+export interface RemotePresentQueue { items: Array<{ id: string; cards: string[]; ask?: string }>; seen: number; showing?: string }

@@ -16,7 +16,7 @@ export const AGENTS_MD_BODY = [
   '',
   '- Before answering a question about the project, look it up: `dreamcontext memory recall "<question>"`.',
   '- Log progress and decisions to the task you are working on: `dreamcontext tasks log <task> "<what changed and why>"`.',
-  '- He states a standing rule or corrects how agents work, "remember" said or not: run `dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"` in that turn (`me`: how to work with him, every project; `project`: this product; `member`: a member\'s own job). It has one already: `--same <id>` or `--replaces <id>`. Never stricter than his words. Repeat the receipt\'s second line verbatim, on every surface. Never write it into Codex\'s or Claude\'s own memory files.',
+  '- He states a rule that outlives this job (always, never, from now on, or a correction of a habit you repeat), "remember" said or not: run `dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"` in that turn. An instruction for the job at hand (you do it, use X here) is no rule: do it, never record it. Unsure: do not record. (`me`: how to work with him in general, every project; `project`: the rule of one product or project; `member`: a member\'s own job). It has one already: `--same <id>` or `--replaces <id>`. Never stricter than his words. Repeat the receipt\'s second line verbatim, on every surface. Never write it into Codex\'s or Claude\'s own memory files.',
   '- Never write `_dream_context/marketing/.env`; never hand-edit files under `_dream_context/` that the CLI manages (tasks, knowledge index, sleep state).',
 ].join('\n');
 

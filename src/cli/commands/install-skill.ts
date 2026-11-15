@@ -5,6 +5,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirS
 import { dirname, join } from 'node:path';
 import { relPosix } from '../../lib/paths.js';
 import { CODEX_GATE_SPEC, codexHookCommand } from '../../lib/t3-bridge/codex-user-gate.js';
+import { hookCommand, recognisedHookCommands } from '../../lib/hook-command.js';
 import chalk from 'chalk';
 import { checkbox, confirm } from '@inquirer/prompts';
 import { error, info, warn, miniBox, header } from '../../lib/format.js';
@@ -39,27 +40,9 @@ import { syncPatternShims } from '../../lib/patterns.js';
 
 // ─── Hook Constants (Claude) ───────────────────────────────────────────────
 
-/**
- * The command Claude Code runs for one hook event.
- *
- * A `dreamcontext` on PATH runs directly; only without one does the hook fall back to `npx`,
- * whose package resolution cost ~0.5 s and a second node process (~60 MB) on EVERY event, and
- * with ten agents at work that was the machine's second-largest load. No absolute path: the
- * settings file is committed and shared, so the command must work on any machine. `exec`
- * replaces the shell, so the hook's own exit code and stdout reach Claude Code unchanged.
- *
- * Mirrored in skill/SKILL.md's frontmatter `hooks:` (Claude Code dedupes identical commands, so
- * a skill copy that drifted would run every event twice); tests/unit/install-skill-hooks.test.ts
- * holds the two together.
- */
-export function hookCommand(event: string): string {
-  return `command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook ${event} || exec npx dreamcontext hook ${event}`;
-}
-
-/** The command every installer before {@link hookCommand} wrote; rewritten in place on update. */
-export function legacyHookCommand(event: string): string {
-  return `npx dreamcontext hook ${event}`;
-}
+// The Claude hook texts live in lib/hook-command.ts (written + recognised, C6′); re-exported for
+// the callers and tests that import them from here.
+export { hookCommand, legacyHookCommand } from '../../lib/hook-command.js';
 
 const SESSION_START_HOOK = hookCommand('session-start');
 const STOP_HOOK = hookCommand('stop');
@@ -84,8 +67,7 @@ export const MCP_TOOL_MATCHER = 'mcp__.*';
 export const RETIRED_READ_TASK_GUARD_FILE = 'read-task-guard.cjs';
 const RETIRED_HOOK_COMMANDS = new Set([
   `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${RETIRED_READ_TASK_GUARD_FILE}"`,
-  hookCommand('session-end'),
-  legacyHookCommand('session-end'),
+  ...recognisedHookCommands('session-end'),
 ]);
 
 // ─── Hook Types ─────────────────────────────────────────────────────────────
@@ -364,7 +346,9 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
     // e.g. UserPromptSubmit installed at 5s before the Haiku recall path (which
     // can take ~15s) made the larger 120s timeout necessary, so the hook keeps
     // timing out after upgrade. Re-running install now heals the drift.
-    const legacy = legacyHookCommand(spec.name);
+    // Every other text an installer wrote or will write for this hook (C6′ RECOGNISED): the legacy
+    // `npx` line and the app-launcher line a newer release writes. Each is rewritten in place.
+    const others = new Set(recognisedHookCommands(spec.name).filter((c) => c !== spec.command));
     let existingHandler: HookHandler | undefined;
     for (const group of settings.hooks[spec.event]) {
       if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;
@@ -379,7 +363,7 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
     if (!existingHandler) {
       for (const group of settings.hooks[spec.event]) {
         if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;
-        const handler = group.hooks?.find((h) => h.command === legacy);
+        const handler = group.hooks?.find((h) => others.has(h.command));
         if (handler) {
           handler.command = spec.command;
           existingHandler = handler;
@@ -394,7 +378,7 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
     for (const group of settings.hooks[spec.event]) {
       if ((group.matcher ?? '') !== (spec.matcher ?? '') || !Array.isArray(group.hooks)) continue;
       const before = group.hooks.length;
-      group.hooks = group.hooks.filter((h) => h === existingHandler || (h.command !== legacy && h.command !== spec.command));
+      group.hooks = group.hooks.filter((h) => h === existingHandler || (!others.has(h.command) && h.command !== spec.command));
       if (group.hooks.length !== before) pruned = true;
     }
     if (pruned) {

@@ -111,7 +111,8 @@ not from your last message. Every card must stand alone:
   second; the thing judged goes in an option's \`preview\`.
 
 Every pick can carry a typed note (you get \`notes:\`). "Unclear? Ask again" comes back as a
-denial asking you to re-ask — add context, never resend the same card.
+denial asking you to re-ask — add context, never resend the same card. Read his last messages
+before you ask; "Already answered" comes back as a denial: find his words, act, never re-ask.
 `;
 
 /** Everything that is true of the surface whichever channel is in use — media, boards,
@@ -184,7 +185,8 @@ Drawn with a ▶ that opens a real terminal for them; its exit code and output t
 to you. Never say "run this in your terminal", and never send an interactive command through
 Bash: it hangs with nobody at the keyboard. ONE line: a \`\\n\` in \`command\` drops the card; use
 \`&&\`. The bare command with any \`cd\` inside it, never an absolute \`cwd\`: it runs in your
-working folder. \`why\` says what makes it theirs.
+working folder. \`why\` says what makes it theirs. A later card of the same kind (run,
+secret, checklist, mcp) replaces your earlier open one: what you need now goes in ONE message.
 
 \`\`\`dream-view
 {"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}
@@ -276,7 +278,7 @@ No \`dreamcontext window\` (a card, the Assistant): answer a plan request in pro
  *  citation. In the app's chat the receipt is its card (the `learned` view reads the record). */
 const BRIEFING_LEARN = `## His rules: \`dreamcontext learn\`
 
-He states a standing rule or corrects how agents work, "remember" said or not: run \`dreamcontext learn "<the rule>" --scope me|project|member --quote "<his exact words>"\` in that turn. \`me\` is how to work with him (every project on this Mac), \`project\` this product's rule, \`member\` a member's own job. When it names a rule it already has, answer by id: \`--same <id>\`, \`--replaces <id>\` or \`--new\`. Never stricter than his words. Then paste its receipt card, the id from its LEARNED line; the card shows his words and his Undo:
+He states a rule that outlives this job (always, never, from now on, or a correction of a habit you repeat), "remember" said or not: run \`dreamcontext learn "<the rule>" --scope me|project|member --quote "<his exact words>"\` in that turn. An instruction for the job at hand ("you do it", "use X here") is no rule: do it, never record it. Unsure: do not record. \`me\` only for how to work with him in general (every project on this Mac); a word about one product or project is \`project\`; \`member\` a member's own job. When it names a rule it already has, answer by id: \`--same <id>\`, \`--replaces <id>\` or \`--new\`. Never stricter than his words. Then paste its receipt card, the id from its LEARNED line; the card shows his words and his Undo:
 
 \`\`\`dream-view
 {"type":"learned","id":"k7m2q6xw4b"}

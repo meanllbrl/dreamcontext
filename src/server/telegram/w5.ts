@@ -8,6 +8,7 @@ import type { MacStatus } from '../../lib/handsfree/mac/contract.js';
 import type { StartedVia } from '../../lib/telegram/contract.js';
 import { setRichAsks } from './asks.js';
 import { onAskButton, onLearnedButton, sendAnswerBlocks } from './blocks.js';
+import { onAutomationButton } from './automation-approvals.js';
 import { wireCommands, type CommandsDeps } from './commands.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { snapshotPage, type Snapshotter } from './pictures.js';
@@ -55,7 +56,7 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
     return { why: 'other' };
   };
 
-  const offPresenter = wirePresenter(hub, { snapshot, phoneLink, tunnelHost, settleMs: deps.settleMs, renderInsight: deps.renderInsight ?? insightRenderer(snapshot), isGitIgnored: deps.isGitIgnored });
+  const offPresenter = wirePresenter(hub, { snapshot, phoneLink, tunnelHost, settleMs: deps.settleMs, renderInsight: deps.renderInsight ?? insightRenderer(snapshot, { rootOf: (ab) => hub.rootOf(ab) }), isGitIgnored: deps.isGitIgnored });
   // ONE next-text capture per bot for Yaz and Not ekle (capture.ts).
   const capture = new NextTextCapture(() => hub.now());
   const offCommands = wireCommands(hub, { ...deps.commands, capture });
@@ -77,7 +78,8 @@ export function wireTelegramW5(hub: TelegramHub, deps: W5Deps = {}): () => void 
     const d = rec.data ?? {};
     if (rec.kind === 'confirm' && typeof d.rich === 'string') return rich.onButton(ab, d, idx, rec.messageId);
     if (rec.kind === 'confirm' && (d.action === 'ask-pick' || d.action === 'ask-confirm')) return onAskButton(hub, ab, d, idx);
-    if (rec.kind === 'confirm' && d.action === 'learned-undo') return onLearnedButton(ab, d);
+    if (rec.kind === 'confirm' && d.action === 'learned-undo') return onLearnedButton(hub, ab, d);
+    if (rec.kind === 'approval' && typeof d.automation === 'string') return onAutomationButton(hub, ab, d, idx);
     return prevButton ? prevButton(ab, rec, idx) : LINES.stale;
   };
 

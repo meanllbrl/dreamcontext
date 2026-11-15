@@ -72,7 +72,7 @@ export interface DrawerFacts {
   /** The member whose conversation the chat area shows. */
   member?: string;
   /** The Super Agent row's marks: its children at work, and a question for the owner. */
-  superMarks?: { working: number; asking: boolean };
+  superMarks?: { working: number; asking: boolean; waiting?: number };
   /** The owner's chat tabs, each in its window (`DrawerSurfaceState.chats`). */
   chats?: DrawerChatFact[];
   /** The tab on screen. */
@@ -93,7 +93,7 @@ export interface FanoutFacts {
   /** Each saved window's name and tab count (`?summary=1`'s `perWindow`); absent on an older server. */
   windows?: Array<{ id: string; name: string; tabs: number }>;
   /** The same marks, read from that project's record. */
-  superMarks?: { working: number; asking: boolean };
+  superMarks?: { working: number; asking: boolean; waiting?: number };
   /** The Ekip row's read, collapsed projects included. */
   members?: EkipSummary[];
   identities?: EkipIdentity[];
@@ -113,7 +113,7 @@ export interface DrawerProjectInput {
 }
 
 export type DrawerChild =
-  | { kind: 'super'; on: boolean; selected: boolean; working: number; asking: boolean }
+  | { kind: 'super'; on: boolean; selected: boolean; working: number; asking: boolean; waiting: number }
   /** ONE Ekip row (plan-r10 1d): the project's own members, in the list's order; one count. */
   | { kind: 'team'; vault: string; members: EkipMember[]; count: number; asking: boolean; selected: boolean; openSlug?: string }
   | {
@@ -453,7 +453,7 @@ function childrenOf(
   const marks = mine?.superMarks ?? far?.superMarks;
   const children: DrawerChild[] = [
     // Always there, even before anything is read: it is how a project with no chat starts one.
-    { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking },
+    { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking, waiting: marks?.waiting ?? 0 },
   ];
   // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen. It goes LAST (plan
   // r4 R5): it is the one block that grows (the list opens in place), so it pushes nothing down.
@@ -597,9 +597,38 @@ export function fanoutTargets(
   return { poll: far.slice(0, cap), once: far.slice(cap) };
 }
 
-/** The folded projects whose Super Agent marks are read, one summary each: not mounted, capped. */
-export function foldedTargets(folded: readonly string[], mounted: readonly string[], cap = DRAWER_POLL_CAP): string[] {
-  return folded.filter((v) => !mounted.includes(v)).slice(0, cap);
+/** The folded projects whose Super Agent marks are read, one summary each: not mounted, capped.
+ *  `hidden` ones are read on top of the cap: the Hidden group's badge is the only way their
+ *  question reaches the owner, so it must never go stale (owner 2026-11-14). */
+export function foldedTargets(folded: readonly string[], mounted: readonly string[], cap = DRAWER_POLL_CAP, hidden: readonly string[] = []): string[] {
+  const far = folded.filter((v) => !mounted.includes(v));
+  const shown = far.filter((v) => !hidden.includes(v)).slice(0, cap);
+  return [...shown, ...far.filter((v) => hidden.includes(v))];
+}
+
+/** The drawer's rows split for the Hidden group: `shown` in the list, `hidden` folded at the
+ *  bottom, each in the owner's order. A name in `hidden` that is no row is ignored. */
+export function splitHiddenRows<T extends { name: string }>(rows: readonly T[], hidden: readonly string[]): { shown: T[]; hidden: T[] } {
+  const set = new Set(hidden);
+  return { shown: rows.filter((r) => !set.has(r.name)), hidden: rows.filter((r) => set.has(r.name)) };
+}
+
+/** The Hidden group's ONE mark: the sum of what each hidden project would show folded (its
+ *  folded mark, or, open inside the group, its rows'), plus their Super Agents' unread replies. */
+export function hiddenGroupMark(rows: readonly DrawerProjectRow[], superUnread = 0): RowMark | undefined {
+  const m: Required<RowMark> = { asking: 0, questions: 0, approvals: 0, working: false, unread: superUnread };
+  for (const r of rows) {
+    const one = r.expanded ? foldedMark(r.children) : r.mark;
+    if (!one) continue;
+    m.asking += one.asking; m.questions += one.questions ?? 0; m.approvals += one.approvals ?? 0;
+    m.working ||= one.working; m.unread += one.unread;
+  }
+  return m.asking || m.working || m.unread ? m : undefined;
+}
+
+/** The project hidden while it was on screen stays in the list until the owner switches away. */
+export function effectiveHidden(hidden: readonly string[], deferred: string | null): string[] {
+  return deferred ? hidden.filter((n) => n !== deferred) : [...hidden];
 }
 
 /**
@@ -645,6 +674,18 @@ export function windowDropIsNoop(ids: readonly string[], id: string, before: str
 }
 
 /** Move `name` one step up (-1) or down (+1) in `order`; an end stays put. */
+/** ⌥↑/⌥↓ among the projects in the same part of the drawer (the list, or the Hidden group): it
+ *  hops over the other part's names, so a move is never a swap the owner cannot see. */
+export function moveAmong(order: readonly string[], hidden: readonly string[], name: string, delta: -1 | 1): string[] {
+  const inHidden = hidden.includes(name);
+  const peers = order.filter((n) => hidden.includes(n) === inHidden);
+  const target = peers[peers.indexOf(name) + delta];
+  if (!peers.includes(name) || target === undefined) return [...order];
+  const rest = order.filter((n) => n !== name);
+  const at = rest.indexOf(target) + (delta > 0 ? 1 : 0);
+  return [...rest.slice(0, at), name, ...rest.slice(at)];
+}
+
 export function moveInOrder(order: readonly string[], name: string, delta: -1 | 1): string[] {
   const i = order.indexOf(name);
   const j = i + delta;

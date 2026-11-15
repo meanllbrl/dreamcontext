@@ -139,6 +139,20 @@ export function answeredBy(text: string, open: readonly OwnerWait[]): OwnerWait[
   });
 }
 
+/**
+ * THE ONE SUPERSEDE RULE (bekleyen-kapanmaz, owner 2026-11-15: "bana bekleyen bir şey yok,
+ * bakıyorum o tarafta bekleyen çok"). A child that posts a new owner card of a kind in a LATER
+ * turn has replaced its earlier open card of that same kind: the new card is what it asks now.
+ * A child re-asks under a NEW id (`notary-profile` then `notary-profile-2`, `-3`; a checklist
+ * `apple-agreement-holder` then `apple-agreement-2`), so the old same-id rule left every earlier
+ * card standing in Waiting on you until the Super closed them by hand. Cards of the same turn
+ * never replace each other (two asks in one reply, even across a tool call, are two asks); a card whose run is live
+ * is never replaced (the caller checks). Card kinds only: a refusal or a stall is no card.
+ */
+export function supersedesCard(newer: { kind: string }, older: { kind: string }): boolean {
+  return isOwnerCardKind(older.kind) && older.kind === newer.kind;
+}
+
 /** The command a run card's receipt names (`[ran in chat]` then `$ <command>`), or ''. */
 export function runReceiptCommand(text: string): string {
   const lines = text.trimStart().slice(0, 4000).split(/\r?\n/);

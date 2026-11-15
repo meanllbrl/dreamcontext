@@ -116,7 +116,7 @@ export interface DrawerSurfaceState {
   /** The AI Team member whose conversation the chat area shows. */
   member?: string;
   /** The Super Agent row's marks (`superRowMarks`). */
-  superMarks?: { working: number; asking: boolean };
+  superMarks?: { working: number; asking: boolean; waiting?: number };
   /** The owner's chat tabs, each in its window (never a child of the Super). Absent until the
    *  roster is restored, like `windows`. */
   chats?: DrawerChatFact[];

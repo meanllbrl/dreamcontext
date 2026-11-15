@@ -36,7 +36,7 @@ import { closeOwnerItemForCard, dropOwnerReceipts, ownerCardLookup } from '../ow
 import { join } from 'node:path';
 import { getChat, onChatChange, onRequestAnswered, pendingRequest, type ChatEntry } from '../../lib/assistant/chat-registry.js';
 import { announces, noteTelegramSend, offerOwnerItemsToTelegram, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
-import { readSuperState, updateSuperState } from '../../lib/super/store.js';
+import { readSuperState, superIdOfMember, updateSuperState } from '../../lib/super/store.js';
 import { answerChildQuestion, answerOwnerItem, memberMirrorTarget, superAnswerText, shownKeyOf } from '../../lib/super/answer.js';
 import { answerMemberPick, pickLine, sizeLine } from './member-picks.js';
 import { memberTitle, itemCall } from '../../lib/super/inbox.js';
@@ -191,12 +191,32 @@ async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<strin
   }
 }
 
+/**
+ * A member's item from the owner's OWN conversation with that member (`ownerTalk` on its mirror,
+ * owner 2026-11-15): it goes on the member's own bot, under its name, when that bot is bound to
+ * this project; else on the Super bot as before. Its answer reads main's record through the
+ * binding's project root, so only a project-bound member bot carries it.
+ */
+export function ownerTalkBinding(hub: Pick<TelegramHub, 'bindingOfSuper'>, vault: string, item: SuperQueueItem): ActiveBinding | null {
+  if (item.kind !== 'member' || item.ownerTalk !== true || !item.member) return null;
+  const ab = hub.bindingOfSuper(vault, superIdOfMember(item.member));
+  return ab && !ab.disabled && ab.target !== 'super' && ab.contextRoot ? ab : null;
+}
+
 export function wireTelegramAsks(hub: TelegramHub): () => void {
   setOwnerQuestionSinks({
     // At the Mac (`hub.ownerAway()` false) the Mac card is the only one: `at_mac`, nothing taken,
     // so the turn-away flush below sends it once he is away.
     telegram: ({ vault, sessionId, item }) => {
-      const ab = hub.superBindingOfVault(vault);
+      // Owner 2026-11-15: a child's question never goes to Telegram by itself. The Super reads it
+      // (`event=question`), answers it, or asks in its own words (`super ask`, `queue ask`): only
+      // those reach here (`superAsked`).
+      if (item.kind === 'question' && item.superAsked !== true) return false;
+      // The same for a member Super's child question mirrored into main's queue (owner decision
+      // 2026-11-15), even inside his own talk with that member: the member's Super asks with its
+      // own `super ask`, which is a member `ask`.
+      if (item.kind === 'member' && item.of === 'question') return false;
+      const ab = ownerTalkBinding(hub, vault, item) ?? hub.superBindingOfVault(vault);
       if (!ab) return 'no_bot';
       if (!hub.ownerAway()) return 'at_mac';
       // One at a time: not taken now, offered again by the write his answer makes.
@@ -217,7 +237,8 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   // He turned away: every question still open on this Super goes (oldest first), each once; and
   // every child permission still open.
   const flush = async (ab: ActiveBinding): Promise<void> => {
-    if (!ab.contextRoot || !hub.ownerAway()) return;
+    // The main Super's queue, on the main Super's bot only (a member's bot never carries it, B2).
+    if (ab.target !== 'super' || !ab.contextRoot || !hub.ownerAway()) return;
     const s = await readSuperState(ab.contextRoot);
     if (!s.enabled || !s.session) return;
     offerOwnerItemsToTelegram(ab.projectName, s);
@@ -460,7 +481,10 @@ async function sendAllowCard(hub: TelegramHub, ab: ActiveBinding, item: SuperQue
     return { ok: true };
   }
   const sizes = o.offer ? o.offer.sizes : (['once'] as GrantSize[]);
-  const { rows, choices } = allowRows(sizes, o.who, 'not_needed');
+  // A built-in safety check no Allow can lift: the one choice that works, asking for a rewrite.
+  const { rows, choices } = o.offer?.rewrite
+    ? { rows: [['Yeniden yazsın', 'Gerek yok']], choices: ['rewrite', 'not_needed'] }
+    : allowRows(sizes, o.who, 'not_needed');
   const why = r.reason ? `\n${escapeHtml(redactSecrets(r.reason).slice(0, 300))}` : '';
   const html = `${head}${why}\n<pre>${escapeHtml(visibleCommand(r.input))}</pre>${ruleLine(o.offer, sizes, true)}`;
   const m = await buttons2(hub, ab, html, rows, { kind: 'permission', sessionId: item.sessionId, singleUse: true },
@@ -510,7 +534,7 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   // What the card showed (its key, kept when it was sent): an Allow lands only on that call.
   const shownKey = typeof d.shown === 'string' ? { shownKey: d.shown } : {};
   if (d.itemKind === 'member') {
-    if (rec.kind === 'permission' && d.refusal === true) return answerMemberPick(hub, ab, String(d.item), { kind: 'refusal', allow: !!size, ...(size ? { size } : {}), ...shownKey });
+    if (rec.kind === 'permission' && d.refusal === true) return answerMemberPick(hub, ab, String(d.item), { kind: 'refusal', allow: !!size, ...(size ? { size } : {}), ...(choice === 'rewrite' ? { rewrite: true as const } : {}), ...shownKey });
     if (rec.kind === 'permission') return answerMemberPick(hub, ab, String(d.item), { kind: 'permission', allow: !!size, ...(size ? { size } : {}), ...shownKey });
     const labels = Array.isArray(d.labels) ? (d.labels as string[]) : [];
     const label = labels[idx];
@@ -521,7 +545,7 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   }
   // A refused call of main's own crew (K2): Allow once / for this job, or not needed.
   if (rec.kind === 'permission' && d.itemKind === 'refusal') {
-    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: { kind: 'refusal', action: size ? 'allow' : 'not_needed', ...(size ? { size } : {}) }, ...shownKey });
+    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: choice === 'rewrite' ? { kind: 'refusal', action: 'rewrite' } : { kind: 'refusal', action: size ? 'allow' : 'not_needed', ...(size ? { size } : {}) }, ...shownKey });
     return pickLine(r, sizeLine(size ?? 'not_needed'));
   }
   if (rec.kind === 'permission') {

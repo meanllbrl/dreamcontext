@@ -20,7 +20,7 @@ const SKILL = read('skill/SKILL.md');
  * command must not eat the prose budget. Name, description and the rest of the frontmatter count.
  * The skill was 73,517 B before the slimming wave.
  */
-const SKILL_MAX_BYTES = 45_071; // 46,080 total at ff9bb0bd minus its 1,009-byte hooks: block
+const SKILL_MAX_BYTES = 45_400; // 45,300 → 45,400 with the 2026-11-16 local cut (judged-recall default line; measured 45,387); 45,071 → 45,300 with the 2026-11-15 local cut (kosullu-otomasyon condition row, learn-tetik trigger line; measured 45,292); was 46,080 total at ff9bb0bd minus its 1,009-byte hooks: block
 
 /**
  * SKILL.md with the frontmatter `hooks:` block taken out: from the `hooks:` line up to the next

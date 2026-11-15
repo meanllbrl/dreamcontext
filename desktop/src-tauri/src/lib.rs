@@ -27,6 +27,8 @@
 mod app_link;
 #[cfg(target_os = "macos")]
 mod app_manifest;
+#[cfg(target_os = "macos")]
+mod move_to_apps;
 mod applog;
 #[cfg(target_os = "macos")]
 mod assistant;
@@ -202,6 +204,17 @@ pub fn run() {
             #[cfg(windows)]
             if let Some(home) = node_runtime::home_dir() {
                 win::write_app_manifest(&home);
+            }
+            // macOS: opened from the DMG window, a translocated copy or Downloads, ask once to
+            // move to Applications; the moved copy is opened and this run ends before any server
+            // starts (src/move_to_apps.rs). A notch or Login Item launch never asks.
+            #[cfg(target_os = "macos")]
+            if !notch_only_launch() && !background_launch() && !app_background_launch() {
+                if let Some(home) = node_runtime::home_dir() {
+                    if move_to_apps::offer(&home) {
+                        std::process::exit(0);
+                    }
+                }
             }
             // macOS: the same record, so a DMG install can relaunch after a CLI upgrade
             // (src/app_manifest.rs).
@@ -655,19 +668,23 @@ fn find_global_cli() -> Option<String> {
     // answer is stable across launches (npm upgrades keep the same bin symlink). A
     // cached path that no longer exists (node version switch, uninstall) falls
     // through to the shell and is rewritten.
+    // The app's own launcher (~/.dreamcontext/bin/**) is never the global CLI: it is a shell
+    // script for this app's node, and `command -v` finds it once its folder is on the rc PATH.
+    let home = node_runtime::home_dir();
+    let not_launcher = |p: &str| home.as_ref().map_or(true, |h| !cli_choice::is_app_launcher(Path::new(p), h));
     if let Some(cached) = read_cli_path_cache() {
-        if Path::new(&cached).exists() {
+        if Path::new(&cached).exists() && not_launcher(&cached) {
             return Some(cached);
         }
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // Every match in PATH order (`which -a`, with the login shell's PATH), the first that is not
+    // the app's own launcher (cli_choice::pick_global_cli): `command -v` gives only the first.
     let found = Command::new(&shell)
-        .args(["-ilc", "command -v dreamcontext"])
+        .args(["-ilc", "/usr/bin/which -a dreamcontext 2>/dev/null || command -v dreamcontext"])
         .output()
         .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .filter(|path| !path.is_empty() && Path::new(path).exists());
+        .and_then(|out| cli_choice::pick_global_cli(&String::from_utf8_lossy(&out.stdout), home.as_deref()));
     if let Some(path) = found {
         write_cli_path_cache(&path);
         return Some(path);
@@ -819,7 +836,18 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     // No usable Node (none, or older than 22.16): the setup screen installs a private one and
     // boot continues on it. `fresh_install` marks that path for the longer first-boot wait
     // and the setup screen's own hand-over to the Launcher.
-    let (node, node_version, fresh_install) = match node_runtime::resolve_usable_node() {
+    let (cli, global_cli) = resolve_cli(&app)?;
+    // The Node this app ships runs ONLY the bundle's own CLI (plan npmsiz-beta C1): it is signed
+    // with the hardened runtime and library validation, so it loads only native code the bundle
+    // signed (its node-pty). A global or DREAMCONTEXT_CLI entry keeps today's Node resolution:
+    // its npm prebuilds are ad-hoc signed and the shipped node would refuse them. A fresh Mac
+    // (no global CLI) runs the bundle's CLI on the shipped node and never sees the setup screen.
+    let resources = app.path().resource_dir().ok();
+    let runs_bundled_cli = resources
+        .as_ref()
+        .is_some_and(|d| Path::new(&cli) == d.join("dist").join("index.js"));
+    let shipped = if runs_bundled_cli { resources.as_deref().and_then(node_runtime::bundled_node) } else { None };
+    let (node, node_version, fresh_install) = match shipped.map(Ok).unwrap_or_else(node_runtime::resolve_usable_node) {
         Ok(choice) => (choice.path, Some(choice.version), false),
         Err(problem) => {
             let path = node_setup::run_blocking(&app, problem)?;
@@ -827,7 +855,6 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
             (path, pinned, true)
         }
     };
-    let (cli, global_cli) = resolve_cli(&app)?;
     let port = pick_free_port()?;
 
     // Boot the server in LAUNCHER mode — vault-agnostic. Each window pins its
@@ -862,6 +889,9 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         // this shell's bundle id, stamped into every app bundle and desktop-server.json.
         .envs(app_runner_path().map(|p| ("DREAMCONTEXT_APP_RUNNER".to_string(), p)))
         .env("DREAMCONTEXT_APP_BUNDLE_ID", &app.config().identifier)
+        // The running app's own version: Settings → "Beta programı" says the build in place
+        // stays until stable passes it (src/server/routes/launcher.ts `updateChannelView`).
+        .env("DREAMCONTEXT_APP_VERSION", app.package_info().version.to_string())
         .stdin(Stdio::piped())
         // The global CLI install the server's self-update upgrades (src/lib/self-update.ts),
         // also when the bundled copy is the one running. Absent = no global CLI found.

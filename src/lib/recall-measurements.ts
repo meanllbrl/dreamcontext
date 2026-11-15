@@ -61,8 +61,10 @@ export const RECALL_MEASUREMENTS: RecallMeasurements = {
     {
       id: 'haiku',
       accuracyR5Pct: { tr: 52.2, en: 64, mixed: 62.5 },
-      // No quiet-machine run for Haiku: a model call per prompt, observed at 2-6 s.
-      overheadP90Ms: { min: 2000, max: 6000 },
+      // Judged recall (2026-11-16, 111 train turns): the local search plus one Haiku call, judge p50 ~6 s
+      // on a quiet machine, per-turn p90 ~18 s on a busy one; the hook waits at most 30 s. Accuracy below is
+      // still the 2026-10-11 held-out figure of the previous single-call picker (a different metric).
+      overheadP90Ms: { min: 6000, max: 18000 },
       overheadIsEstimate: true,
       cost: NO_COST,
       egress: 'anthropic-prompt-and-index',
@@ -107,7 +109,8 @@ export const RECALL_MEASUREMENTS: RecallMeasurements = {
       overheadP90Ms: { min: 1861, max: 1861 },
       overheadIsEstimate: false,
       cost: NO_COST,
-      egress: 'nothing',
+      // On Claude the prompt hook judges hybrid's candidates with Haiku too (judged recall, 2026-11-16).
+      egress: 'anthropic-prompt-and-index',
     },
   ],
 };

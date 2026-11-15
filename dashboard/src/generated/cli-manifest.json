@@ -56,13 +56,14 @@
     },
     {
       "path": "agents edit",
-      "desc": "Edit an agent's identity; what was approved directly here stays approved",
+      "desc": "Edit an agent's identity; what was approved directly here stays approved. From inside a member (its own Super chat, its run, its crew) only that member",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
         "--title",
         "--prompt",
+        "--quote",
         "--soul",
         "--soul-file",
         "--soul-template",
@@ -71,6 +72,7 @@
         "--whiteboard",
         "--reports-to",
         "--team",
+        "--photo",
         "--autonomy"
       ]
     },
@@ -148,6 +150,13 @@
       "desc": "Turn the desktop app's automatic updates on or off (remembered; the app's own updater honours it too)",
       "args": [
         "[state]"
+      ]
+    },
+    {
+      "path": "app channel",
+      "desc": "Choose the desktop app's update channel: stable (default) or beta (new features first). Leaving beta never downgrades.",
+      "args": [
+        "[channel]"
       ]
     },
     {
@@ -751,6 +760,13 @@
       ]
     },
     {
+      "path": "automations condition",
+      "desc": "Print the APPROVED condition script of a routine; --run executes it once and prints true / false / error and its output (no agent starts, nothing is recorded). Test a draft in your own shell",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "automations create",
       "desc": "Scaffold a new automation manifest. Approved on the spot: made on this Mac, by you, your Super Agent or a member. Only risky text an agent run wrote waits for the owner's yes (a card in the chat, or the AI Team page)",
       "args": [
@@ -774,6 +790,8 @@
         "--app-tools",
         "--agent",
         "--job",
+        "--condition",
+        "--wake-when",
         "--answer"
       ]
     },
@@ -786,12 +804,14 @@
     },
     {
       "path": "automations edit",
-      "desc": "Change what a job or a member may run through an app while nobody watches; the owner's approval card asks again",
+      "desc": "Change a routine's condition, or what a job or a member may run through an app while nobody watches; the owner's approval card asks again when an agent changes it",
       "args": [
         "<slug>"
       ],
       "valueFlags": [
-        "--app-tools"
+        "--app-tools",
+        "--condition",
+        "--wake-when"
       ]
     },
     {
@@ -2199,6 +2219,16 @@
       ]
     },
     {
+      "path": "hook when-lines-writer",
+      "desc": "",
+      "args": [
+        "<root>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
+    },
+    {
       "path": "init",
       "desc": "Initialize _dream_context/ in the current directory",
       "args": [],
@@ -3559,7 +3589,7 @@
     },
     {
       "path": "recall hybrid",
-      "desc": "EXPERIMENTAL: BM25 + local dense embeddings fused via RRF (no LLM call)",
+      "desc": "BM25 + dense embeddings on the vault tier; on Claude, Haiku then picks the files (no model call under Codex or Antigravity)",
       "args": []
     },
     {
@@ -4143,7 +4173,7 @@
     },
     {
       "path": "super note clear",
-      "desc": "Empty the agenda (or one section): a new day or a new piece of work starts",
+      "desc": "Empty the agenda (or one section) of your own lines: a new piece of work starts. The owner's own lines stay",
       "args": [
         "[section]"
       ]
@@ -4167,6 +4197,14 @@
       "desc": "A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h",
       "args": [
         "<id>"
+      ]
+    },
+    {
+      "path": "super note status",
+      "desc": "Set a line's status: not-started | in-progress | almost-done | waiting | done (the owner's own lines too, when it helps him)",
+      "args": [
+        "<id>",
+        "<status>"
       ]
     },
     {
@@ -4226,7 +4264,7 @@
     },
     {
       "path": "super present",
-      "desc": "Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2+, its strip scrolls), review (a page with its child's chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards",
+      "desc": "Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4, only when asked: side-by-side), filmstrip (2+, its strip scrolls; the default for 3+ cards and for 2+ pictures or clips), review (a page with its child's chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards",
       "args": [
         "[cards...]"
       ],
@@ -4239,6 +4277,16 @@
       "desc": "The one question queue",
       "args": [],
       "group": true
+    },
+    {
+      "path": "super queue allow",
+      "desc": "Pass ONE of the owner's own permissions (a permission, a refused call or a member's, waiting on him) on a message he wrote you whose whole text is a plain yes (or, with --deny, a plain no). The server checks the ref against what it can prove he wrote (his Telegram or phone; a line typed on the Mac is refused `mac_words`: he taps the card there), after the card was born, used once; when several of his wait, his message must name which (the member's name). Refused: `not_owner_message`, `ref_used`, `before_card`, `not_consent`, `several_pending` (ask him which), `outward` (a push, publish, deploy, network or MCP tool, or code the card does not show: only his tap)",
+      "args": [
+        "<item>"
+      ],
+      "valueFlags": [
+        "--owner-ref"
+      ]
     },
     {
       "path": "super queue ask",
@@ -4300,7 +4348,9 @@
         "--job",
         "--at",
         "--days",
-        "--reply"
+        "--reply",
+        "--condition",
+        "--wake-when"
       ]
     },
     {
@@ -4320,7 +4370,9 @@
         "--job",
         "--at",
         "--days",
-        "--reply"
+        "--reply",
+        "--condition",
+        "--wake-when"
       ]
     },
     {
@@ -4367,12 +4419,13 @@
     },
     {
       "path": "super team amend",
-      "desc": "Correct a member's instructions after a mistake: only its prompt, soul or a routine's job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
+      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
       "args": [
         "<member>"
       ],
       "valueFlags": [
         "--why",
+        "--quote",
         "--prompt-file",
         "--soul-file",
         "--routine",

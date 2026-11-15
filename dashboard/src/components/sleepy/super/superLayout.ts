@@ -23,7 +23,7 @@
  * that does not fit is DRAWN smaller (the plan's `size`), the record is never touched.
  */
 import {
-  CONTAINER_SIZES, MAX_CONTAINERS, MAX_FILMSTRIP, MAX_PRESENT, PRESENT_LAYOUTS, SIZE_UNITS, applyGroupOp, applyOwnerViewFields, dissolveGroups,
+  CONTAINER_SIZES, MAX_CONTAINERS, MAX_FILMSTRIP, PRESENT_LAYOUTS, SIZE_UNITS, applyGroupOp, applyOwnerViewFields, dissolveGroups,
   leaveGroups, normalizeGroups, presentRange, resolvePresent, viewWithout,
   type ContainerShape, type ContainerSize, type GroupOp, type OwnerViewFields, type PresentLayout, type SuperContainer, type SuperGroup, type SuperState, type SuperView,
 } from '../../../lib/superTypes';
@@ -113,12 +113,20 @@ export const STAGE = {
   PHONE_BAND_INSET: 8,
   /** A narrow sheet's tab row (2+ cards). */
   TAB_H: 36,
-  /** The top band's presentation controls at its right end: the exit, and one segment per layout
-   *  the switcher offers (none for a single choice). */
-  EXIT_W: 132,
-  /** An opened group's two text buttons (close group, minimize) take the exit's place. */
-  GROUP_EXIT_W: 232,
-  SWITCH_SEG_W: 96,
+  /** A presentation's frame (owner 2026-11-15, option C "Çerçeve"): a framed space whose tab strip
+   *  names what is shown and what comes next, with the actions as icons at the band's right end:
+   *  one icon per layout the switcher offers (none for a single choice), a 1 px separator, then
+   *  the exit (a group: ask, close group, minimize). Every icon is ICON_BTN square, ICON_GAP apart,
+   *  inside ICON_PAD of padding and border: the box is exactly its icons, never narrower. */
+  ICON_BTN: 32,
+  ICON_GAP: 4,
+  ICON_PAD: 5,
+  /** The frame's breathing room around the presented cards. */
+  FRAME_PAD: 12,
+  /** Off the queue (the stage floats with presentations waiting): "▶ N waiting · Continue" (D2). */
+  QUEUE_WAIT_W: 380,
+  QUEUE_WAIT_SHORT_W: 200,
+  QUEUE_NARROW_W: 1040,
   /** A card's own chrome around what it shows: the 1 px border on each side and the 36 px header
    *  (SuperSurface.css `.super-card-clip`, `.super-card-head`; drift-tested). A picture card in
    *  compare/grid is shrunk to its picture plus this (owner 2026-10-24). */
@@ -250,6 +258,14 @@ export interface StagePlan {
   strip?: StripPlan;
   /** While presenting: the top band's switcher and exit, at its right end. */
   controls?: Rect;
+  /** While presenting: the frame drawn around the presented cards (a narrow sheet's too), and
+   *  the tab strip left of `controls` naming what is shown and what comes next. */
+  presentFrame?: Rect;
+  presentTabs?: Rect;
+  /** The presentation queue's control in the top band (D7, D2): `step` left of `controls` while a
+   *  queued presentation is on screen, `wait` at the band's right end while presentations wait
+   *  off screen. `short`: the narrow band's form (D10). */
+  queueBand?: { rect: Rect; kind: 'step' | 'wait'; short: boolean };
   /** The live jobs with no room: beside a page or a presentation, the ones the one rail column
    *  cannot hold, in a temporary tile at its foot; on the floating stage, the ones its sides cannot
    *  hold at the chat's width, in a pill beside Others (owner 2026-11-06). Its cards are drawn
@@ -373,6 +389,9 @@ export interface PlanOptions {
   layoutChoices?: number;
   /** The presentation shows one group whole: its close and minimize buttons replace the exit. */
   groupExit?: boolean;
+  /** The presentation queue's control (superTypes `queueCounter`): `step` while a queued
+   *  presentation of 2+ is on screen, `wait` while presentations wait off screen. */
+  queueBand?: 'step' | 'wait';
   /** The queue pill is showing in the top band: the float centre keeps its place under it. */
   queueUp?: boolean;
   /** The bar's MEASURED height (JobBar publishes it, superJobsStore `useQueueHeight`). A card row
@@ -919,6 +938,46 @@ function phoneFrame(f: Frame, { queue, terminals }: { queue: boolean; terminals:
   return { ...f, content, free: content, bandTop, phone: true };
 }
 
+/** The queue control's rect (D2, D10): `wait` only, off a presentation; short under
+ *  STAGE.QUEUE_NARROW_W, and never wider than the band leaves. */
+function queueBandRect(f: Frame, kind: 'step' | 'wait' | undefined, mode: SuperView['mode']): StagePlan['queueBand'] | undefined {
+  // A queued presentation on screen is named by the frame's tabs (presentTabs), never a pill.
+  if (kind !== 'wait' || mode === 'present') return undefined;
+  const short = f.width < STAGE.QUEUE_NARROW_W;
+  const want = short ? STAGE.QUEUE_WAIT_SHORT_W : STAGE.QUEUE_WAIT_W;
+  const right = f.content.x + f.content.width;
+  const width = Math.max(0, Math.min(want, right - f.content.x));
+  return { rect: { x: right - width, y: f.bandTop, width, height: STAGE.BAND }, kind, short };
+}
+
+/** The icon box's exact width: its layout icons, a separator when there is a choice, its exits. */
+export function controlsWidth(choices: number, group: boolean): number {
+  const { ICON_BTN, ICON_GAP, ICON_PAD } = STAGE;
+  const icons = (choices > 1 ? choices : 0) + (group ? 3 : 1);
+  const sep = choices > 1 ? 1 + ICON_GAP : 0;
+  return 2 * ICON_PAD + icons * ICON_BTN + (icons - 1) * ICON_GAP + sep;
+}
+
+/** The frame around the presented cards and the tab strip from its left edge to the controls. */
+function presentFrameOf(f: Frame, controls: Rect, cards: Record<string, { rect: Rect; where: CardWhere }>, strip: StripPlan | undefined, sheetTabs: Rect | undefined): Pick<StagePlan, 'presentFrame' | 'presentTabs'> {
+  // Everything the presentation draws: its cards, a filmstrip's marked slot, a narrow sheet's tab row.
+  const shown = Object.values(cards).filter((c) => c.where === 'present' || c.where === 'thumb' || c.where === 'sheet').map((c) => c.rect);
+  if (strip?.current) shown.push(strip.current);
+  if (sheetTabs) shown.push(sheetTabs);
+  const P = STAGE.FRAME_PAD;
+  let frame: Rect | undefined;
+  if (!f.phone && shown.length) {
+    const left = Math.max(0, Math.min(...shown.map((r) => r.x)) - P);
+    const right = Math.min(f.width, Math.max(controls.x + controls.width, ...shown.map((r) => r.x + r.width)) + P);
+    const top = f.bandTop + STAGE.BAND;
+    const bottom = Math.min(f.height, Math.max(...shown.map((r) => r.y + r.height)) + P);
+    frame = { x: left, y: top, width: right - left, height: Math.max(0, bottom - top) };
+  }
+  const x = frame ? frame.x + P / 2 : f.content.x;
+  const tabs: Rect = { x, y: f.bandTop, width: Math.max(0, controls.x - STAGE.GAP / 2 - x), height: STAGE.BAND };
+  return { ...(frame ? { presentFrame: frame } : {}), presentTabs: tabs };
+}
+
 function centreAt(f: Frame, w: number): Rect {
   return { x: (f.width - w) / 2, y: f.content.y, width: w, height: f.content.height };
 }
@@ -1207,13 +1266,18 @@ function planWith(
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
     extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
+    // The waiting queue's control holds the band's right end off a presentation.
+    const qb = queueBandRect(f, opts.queueBand, mode);
+    const bandRight = qb ? qb.rect : extra.controls;
+    const framed = extra.controls && mode === 'present' ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
       width: f.width, height: f.height, narrow, phone, othersInHead: phone || inHead.others, agendaInHead: phone || inHead.agenda, mode, centre, cards, others,
-      othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
+      othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, bandRight), free: f.free,
       centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...(railPlan ? { rail: railPlan } : {}), ...extra,
+      ...(qb ? { queueBand: qb } : {}), ...framed,
     };
   };
   const place = (id: string, rect: Rect, where: CardWhere) => {
@@ -1331,7 +1395,7 @@ function planWith(
     const ordered = layout === 'filmstrip' ? [...shown.filter((id) => kindOf(id) !== 'agenda'), ...shown.filter((id) => kindOf(id) === 'agenda')] : shown;
     const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
-    const cw = (opts.groupExit ? STAGE.GROUP_EXIT_W : STAGE.EXIT_W) + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
+    const cw = controlsWidth(choices, !!opts.groupExit);
     const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
     const strip = (main: Rect): StripPlan => {
       // The big card over one row holding a slot for EVERY card, in their fixed order: the big
@@ -1492,7 +1556,8 @@ function planWith(
     // bottom band, and neither is a reason to give up the top.
     const docked = (list.length === 0 && !opts.agendaPill) || (opts.terminals ?? 0) > 0;
     inHead.others = inHead.agenda = !docked;
-    const top = opts.queueUp ? f.content.y : STAGE.MARGIN;
+    // The top band holds something (the job bar's pill, the waiting presentations): the centre starts under it.
+    const top = opts.queueUp || opts.queueBand === 'wait' ? f.content.y : STAGE.MARGIN;
     const bottom = docked ? f.content.y + f.content.height : f.height - STAGE.MARGIN;
     return finish({ ...f.content, y: top, height: Math.max(0, bottom - top) }, f.content.width, 'float');
   }
@@ -1570,7 +1635,7 @@ function planWith(
     const zx = Math.max(f.othersZone.x, sc.x + sc.width + (othersFit ? STAGE.GAP : 0));
     f.othersZone = { ...f.othersZone, x: zx, width: f.width - zx };
   }
-  const top = opts.queueUp ? sc.y : STAGE.MARGIN;
+  const top = opts.queueUp || opts.queueBand === 'wait' ? sc.y : STAGE.MARGIN;
   const bottom = tallBottom ? f.height - STAGE.MARGIN : sc.y + sc.height;
   const centre: Rect = { ...sc, y: top, height: Math.max(0, bottom - top) };
 
@@ -1747,7 +1812,7 @@ function drawnLayout(stored: PresentLayout | undefined, n: number): PresentLayou
     const r = presentRange(stored);
     if (n >= r.min && n <= r.max) return stored;
   }
-  return n <= 1 ? 'spotlight' : n === 2 ? 'compare' : n <= MAX_PRESENT ? 'grid' : 'filmstrip';
+  return n <= 1 ? 'spotlight' : n === 2 ? 'compare' : 'filmstrip';
 }
 
 /** Taller than wide by more than a hair: 'tall'. A floating tile is always square. */
@@ -1817,7 +1882,15 @@ export interface LayoutPatch extends OwnerViewFields {
    *  server makes it if the record has none, or brings it back from its pill, Others or a group.
    *  `min`: its close, which collapses it to the pill in the bottom-left corner (never removed). */
   agenda?: 'open' | 'min';
+  /** The owner's step through the presentation queue (task super-sahnesinde-sunum-sirasi): on
+   *  the item his window showed. The server answers with the next view; nothing is laid over the
+   *  push meanwhile (the window does not know the next item's layout). */
+  queue?: QueueStep;
 }
+
+/** A queue gesture: `next` passes the shown item and opens the next, `leave` passes it and floats
+ *  the stage with the rest waiting, `resume` opens the first waiting one. */
+export interface QueueStep { op: 'next' | 'leave' | 'resume'; item: string }
 
 /** How often the window reports the owner's look at an open group or a full-screen card, through
  *  `pollMs` and never slower than twice this (Light mode): inside the server's grace either way
@@ -1837,7 +1910,8 @@ type Staged = { containers: SuperContainer[]; groups?: SuperGroup[]; view: Super
 export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch): S {
   // A look changes nothing on the stage: the state stays as the server sent it (its view's
   // `auto` mark too, which a rebuilt view would drop for the length of a request).
-  if (Object.keys(patch).every((k) => k === 'touch')) return state;
+  // A queue step alone is the server's to answer: nothing to draw ahead of it.
+  if (Object.keys(patch).every((k) => k === 'touch' || k === 'queue')) return state;
   const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
   // Cards that leave what the view shows (the server's rule): to Others, resized, grouped, closed.
   const unshown = new Set<string>();

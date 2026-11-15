@@ -96,7 +96,12 @@ export function ChildTranscript({ claudeId, live = false, foot, prepare, parked 
   const empty = loaded && (shown?.length ?? 0) === 0;
   return (
     <div className="super-slot" data-testid="super-child-transcript" data-loaded={loaded ? 'true' : 'false'}>
-      {!loaded && <div className="run-view-note" data-transcript-loading>{t(history.isError ? 'aiteam.run.stepsFailed' : 'aiteam.history.loading')}</div>}
+      {!loaded && (
+        <div className="run-view-note" data-transcript-loading role={history.isError ? 'alert' : undefined}>
+          <span>{t(history.isError ? 'aiteam.run.stepsFailed' : 'aiteam.history.loading')}</span>
+          {history.isError && <button type="button" className="chat-feed-link" onClick={() => { void refetch(); }}>{t('aiteam.history.retry')}</button>}
+        </div>
+      )}
       {empty && <div className="run-view-note" data-transcript-empty>{t('aiteam.run.noSteps')}</div>}
       <div ref={hostRef} style={loaded && !empty ? { display: 'contents' } : { display: 'none' }}>
         {createPortal(pane, session.container)}

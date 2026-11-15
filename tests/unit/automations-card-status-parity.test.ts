@@ -99,3 +99,25 @@ describe('AgentMemberCard status-word parity with RunStatus', () => {
     expect(missing, `status(es) with no dedicated statusWord() case: ${missing.join(', ')}`).toEqual([]);
   });
 });
+
+/** kosullu-otomasyon C4: every history/status surface names a condition-false row in words
+ *  ("Koşul tutmadı" / "Condition not met"), never the raw enum. */
+describe('condition-false has a word on every status surface', () => {
+  const at = (p: string) => readFileSync(fileURLToPath(new URL(`../../dashboard/src/${p}`, import.meta.url)), 'utf8');
+  it('the backend declares it', () => {
+    expect(readBackendStatuses()).toContain('condition-false');
+  });
+  for (const [file, word] of [
+    ['components/automations/AutomationDetailPanel.tsx', /'condition-false': 'Condition not met/],
+    ['components/aiteam/TeamPanel.tsx', /'condition-false': 'aiteam\.history\.conditionFalse'/],
+    ['components/agents/AgentMemberCard.tsx', /case 'condition-false': return 'condition not met'/],
+    ['components/automations/AutomationCard.tsx', /case 'condition-false': return 'condition not met'/],
+  ] as const) {
+    it(file, () => expect(at(file)).toMatch(word));
+  }
+  it('Turkish says Koşul tutmadı', () => {
+    const src = at('context/I18nContext.tsx');
+    expect(src).toContain("'aiteam.history.conditionFalse': 'Koşul tutmadı'");
+    expect(src).toContain("'aiteam.history.conditionFalse': 'Condition not met'");
+  });
+});

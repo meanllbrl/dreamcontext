@@ -531,6 +531,8 @@
 .super-light:active:not(:disabled) .super-light-dot { filter: brightness(0.85); }
 /* A large card's head starts after the lights and stops before the ask button (both always shown there). */
 .super-card-frame:is([data-where='half'], [data-where='present'], [data-where='sheet']) :is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 44px; }
+/* A floating tile shows the lights over its head on hover: the title starts after them, so they never sit on it. */
+.super-card-frame[data-where='float'] :is(.super-card-head, .super-card-large-head) { padding-left: 88px; }
 /* A large card's trailing side holds only "ask about this": no pill around one button. */
 .super-card-frame:not([data-where='float']) .super-card-actions { top: 4px; padding: 0; border: 0; background: none; box-shadow: none; }
 /* "Ask about this" (owner 2026-11-08, the comment icon, clearer): bigger, in the accent colour. */
@@ -1633,9 +1635,11 @@
 .super-card-view--video > .doc-reader { display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .super-card-view--video video.viewer-media { width: 100%; height: 100%; max-height: 100%; margin: 0; object-fit: contain; }
 
-/* The agenda's list is live on a floating card (owner 2026-10-22: the agenda is a card): its
-   rows are buttons and it scrolls; the card around it is still the grab handle. */
-.super-card-frame[data-where='float'][data-kind='agenda'] .super-card-large .super-agenda { pointer-events: auto; }
+/* The agenda is live on a floating card at EVERY size (task ajanda-gunluk, learned rule
+   d5xlppqj5a): its body takes the pointer, small and medium included; the card head stays the
+   grab handle, so even the 160x160 card can be dragged by its head. */
+.super-card-frame[data-where='float'][data-kind='agenda'] .super-agenda { pointer-events: auto; user-select: text; }
+.super-card-agenda > .super-card-large-body { overflow: hidden; }
 /* A member's own card is live from medium up too (plan r4 G2; owner 2026-11-05: a routine row on
    the floating Rutinler card did nothing): its body below the head takes the pointer, the head
    stays the grab handle. A small tile keeps `data-inert` and stays one handle. */
@@ -1662,20 +1666,129 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-3);
 }
-.super-layout-switch {
+/* The presentation frame's icons (owner 2026-11-15, option C): one pill, exactly as wide as
+   superLayout's controlsWidth (ICON_PAD 4 + 1 border, ICON_BTN 32, ICON_GAP 4). */
+.super-icon-bar {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  height: var(--space-8);
-  padding: var(--space-1);
+  box-sizing: border-box;
+  /* The band's 40 px: 1 px border + 3 px padding around a 32 px icon (4 px at the ends). */
+  height: calc(var(--space-8) + var(--space-2));
+  padding: 3px var(--space-1);
   border-radius: var(--radius-full);
   border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
   background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
   box-shadow: var(--shadow-md);
 }
-.super-layout-seg,
+.super-layout-switch { display: contents; }
+.super-icon-sep { flex: none; width: 1px; height: var(--space-5); background: var(--color-border); }
+.super-icon-btn {
+  position: relative;
+  flex: none;
+  width: var(--space-8);
+  height: var(--space-8);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.super-icon-btn:hover:not(:disabled) { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.super-icon-btn[aria-pressed='true'] { color: var(--color-text); background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+.super-icon-btn:active:not(:disabled) { transform: scale(0.97); }
+.super-icon-btn:disabled { opacity: 0.5; cursor: default; }
+/* Every icon names itself under it on hover and on keyboard focus. */
+.super-icon-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.super-icon-btn:hover[data-tip]::after,
+.super-icon-btn:focus-visible[data-tip]::after { opacity: 1; transform: none; transition-delay: 250ms; }
+.super-stage-controls[data-asking] .super-icon-btn::after { display: none; }
+@media (prefers-reduced-motion: reduce) { .super-icon-btn, .super-icon-btn::after { transition: none; } }
+/* The frame around a presentation and its tab strip: the shown presentation is the open tab,
+   joined to the frame; the next one opens on a click; long names shrink like browser tabs. */
+.super-present-frame {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.super-present-tabs {
+  position: absolute;
+  z-index: var(--sz-queue);
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+}
+.super-present-tab {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  height: var(--space-8);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.super-present-tab[data-kind='current'] {
+  flex-shrink: 0.5;
+  height: calc(var(--space-8) + var(--space-2));
+  border-color: var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  cursor: default;
+}
+.super-present-tab[data-kind='next']:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.super-present-tab[data-kind='later'] { cursor: default; opacity: 0.7; }
+.super-present-tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.super-present-tab-dot { flex: none; width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--color-accent); }
+.super-present-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.super-present-tab-count { flex: none; font-weight: 400; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.super-present-tab-badge {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  line-height: var(--space-4);
+}
 .super-sheet-tab {
   height: 100%;
   padding: 0 var(--space-3);
@@ -1689,36 +1802,83 @@
   cursor: pointer;
   transition: background 120ms ease-out, color 120ms ease-out;
 }
-.super-layout-seg:hover,
 .super-sheet-tab:hover { color: var(--color-text); }
-.super-layout-seg[aria-pressed='true'],
 .super-sheet-tab[aria-selected='true'] {
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-text);
 }
-.super-layout-seg:focus-visible,
 .super-sheet-tab:focus-visible,
-.super-stage-exit:focus-visible,
+.super-icon-btn:focus-visible,
 .super-chat-fold:focus-visible,
 .super-card-frame[data-where='thumb']:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: var(--space-1);
 }
-.super-stage-exit {
+/* The presentation queue's control (task super-sahnesinde-sunum-sirasi, D2, D10): a pill at the top
+   band's right end while presentations wait off screen (on screen, the frame's tabs name them). */
+.super-pq {
+  position: absolute;
+  z-index: var(--sz-queue);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  pointer-events: none;
+}
+/* The pill hugs what it says (its slot is the widest it may grow), with its own backdrop so it
+   reads over the dotted stage like the layout switch. */
+.super-pq-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
   height: var(--space-8);
+  box-sizing: border-box;
+  pointer-events: auto;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  box-shadow: var(--shadow-md);
+}
+.super-pq-pill > * { flex: none; }
+.super-pq-text,
+.super-pq-play {
+  height: var(--space-8);
+  display: inline-flex;
+  align-items: center;
+}
+.super-pq-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.super-pq-count { font-weight: 700; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.super-pq-names { margin-left: var(--space-1); overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary); }
+.super-pq-play { font-size: var(--font-size-2xs); color: var(--color-text-secondary); }
+.super-pq-go {
+  height: calc(var(--space-8) - var(--space-1));
+  min-width: var(--space-8);
   padding: 0 var(--space-4);
   border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
+  border: none;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
   font-size: var(--font-size-xs);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
-  box-shadow: var(--shadow-md);
-  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.super-stage-exit:hover { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
+.super-pq[data-short] .super-pq-go { padding: 0 var(--space-3); }
+.super-pq-go:hover { filter: brightness(1.08); }
+.super-pq-go:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
 .super-sheet-tabs {
   position: absolute;
   z-index: var(--sz-sheet);
@@ -1921,6 +2081,8 @@
 /* A team job's card, large: its session, then the composer or the sentence that says why not. */
 .super-team-job { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
 .super-team-job-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* The previous run scrolls here, never clipped: prose (no session) has no scroller of its own; a pane fills it and scrolls itself. */
+.super-team-job-body--previous { overflow-y: auto; }
 .super-team-job-closed { margin: 0; padding: var(--space-2, 8px) var(--space-3, 12px); color: var(--color-text-secondary); font-size: 13px; }
 .super-team-job-reply { display: flex; align-items: flex-end; gap: var(--space-2, 8px); padding: var(--space-2, 8px) var(--space-3, 12px); }
 .super-team-job-reply textarea { flex: 1; min-width: 0; resize: none; font: inherit; color: inherit; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-md, 8px); padding: var(--space-2, 8px); }
@@ -2042,8 +2204,7 @@
 }
 .super-turn-card-closed-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
 
-/* An opened group's close and minimize sit in the presentation's toolbar; the ask opens under them. */
+/* An opened group's close question opens under the frame's icons. */
 .super-stage-group-ask { position: absolute; top: calc(100% + var(--space-1)); right: 0; left: auto; white-space: nowrap; z-index: var(--sz-queue); }
-.super-stage-exit--group:disabled { opacity: 0.5; cursor: default; }
 /* While its close question is open, the toolbar rises above a narrow stage's sheet and tabs. */
 .super-stage-controls[data-asking] { z-index: var(--sz-panel); }

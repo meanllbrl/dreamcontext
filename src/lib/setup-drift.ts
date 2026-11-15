@@ -133,7 +133,10 @@ export function buildDriftDirective(input: DriftInput): string | null {
       ].join('\n');
 
     case 'downgrade':
-      return `**Note:** The CLI version (v${cliVersion}) is older than the last setup version (v${setupVersion}). This is unusual — consider upgrading the CLI.\n`;
+      // Harmless by design (plan npmsiz-beta C12c): a stable teammate opening a brain a Beta
+      // build set up reads that nothing is wrong and nothing needs doing; `update` keeps the
+      // newer setupVersion (migrate-and-stamp.ts) and changes no file this CLI does not own.
+      return `**Note:** This project was last set up by a newer dreamcontext (v${setupVersion}); this one is v${cliVersion}. That is fine: nothing needs to be done, and the newer setup stays as it is. This copy catches up when it next updates.\n`;
 
     default:
       return null;
