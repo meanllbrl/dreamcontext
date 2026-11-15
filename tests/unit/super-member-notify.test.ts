@@ -176,6 +176,18 @@ describe('a member\'s own reply to the owner', () => {
     expect(summarizeMember('rota', s, facts, () => false, { since: 0, read: [], replies: [5, 30], seenAt: 31 }, () => false).unread).toBe(0);
   });
 
+  it('an open question keeps the member asking however it was read; it drops once answered (owner 2026-11-15)', () => {
+    const ask = (state: string) => ({
+      ...emptySuperState(), session: ROTA, enabled: true,
+      queue: [{ id: 'q-1', kind: 'question', direct: true, state, sessionId: 'aaaaaaaa-0000-4000-8000-0000000000q1', workOrigin: 'owner', createdAt: 5 }],
+    }) as unknown as SuperState;
+    const facts = { global: false, enabled: true, approval: false };
+    // Read past it: seenAt after every reply and after the question.
+    const readAll = { since: 0, read: [], replies: [3, 9], seenAt: 50 };
+    expect(summarizeMember('rota', ask('pending'), facts, () => false, readAll, () => false)).toMatchObject({ asking: true, unread: 0 });
+    expect(summarizeMember('rota', ask('done'), facts, () => false, readAll, () => false).asking).toBe(false);
+  });
+
   it('a member session still starting (spawned, no frame yet) is not working; its turn is', () => {
     const h = reg(ROTA);
     expect(ownerTurnRuns(ROTA)).toBe(false);

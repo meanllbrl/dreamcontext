@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { ApiClient } from '../../../api/client';
 import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
-  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, newestRead, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadUnits, withRead,
+  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadSinceRead, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
 import { dropSuperUnread, noteMemberSeen, publishSuperUnread } from './superUnreadStore';
@@ -160,7 +160,9 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   const unread = useMemo(() => (enabled && marks ? unreadOf(units, marks) : []), [enabled, marks, units]);
   const unreadRef = useRef(unread);
   unreadRef.current = unread;
-  const count = unread.length;
+  // The row's number (main's and a member's alike): only what is newer than the newest message he
+  // read. An older one stays unread in the pane, never on the row (unreadSinceRead).
+  const count = useMemo(() => unreadSinceRead(units, unread).length, [units, unread]);
 
   const paneToken = useRef({}).current;
   // Keyed by vault + superId (plan-r10 1): a member's count never lands on main's row.
@@ -174,11 +176,11 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   // counting on the Team row. Only once its marks are LOADED (before that nothing is known), only
   // while the window is seen, and again whenever the chat grows (every turn end is a new item), so
   // a reply that lands while he reads is cleared too. Never for main (the server refuses it).
-  // The newest, not every unit: an older unit he never scrolled up to used to hold `count` above 0
-  // for days, so `seen` never went and the row kept its number (owner 2026-11-15, a 12).
+  // The newest, not every unit: an older unit he never scrolled up to held `seen` back for days,
+  // so the row kept its number (owner 2026-11-15, a 12). `count` is already that rule.
   const seenSent = useRef<string>('');
   const lastItem = items.length ? `${items.length}:${items[items.length - 1].id}` : '0';
-  const newestIsRead = newestRead(units, unread);
+  const newestIsRead = count === 0;
   useEffect(() => {
     if (superId === 'main' || !enabled || !marks || !newestIsRead) return undefined;
     const send = () => {
@@ -250,7 +252,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   const started = useRef(new Map<string, number>());
   const missing = useRef(new Map<string, number>());
   const tickRef = useRef<() => void>(() => {});
-  const hasUnread = count > 0;
+  const hasUnread = unread.length > 0;
   // A line outlives the last unread until it leaves the screen, and only a look can see that.
   const watching = hasUnread || lineShown;
   useEffect(() => {
