@@ -2,7 +2,7 @@
    owns; every look of the feature is here.
 
    Nothing here takes layout room: a mark that pushed a row would move the text under the eyes.
-   The "↓ N yeni" button is a .chat-jump (ChatPane.css); its live region is below. */
+   The ↓ button (chat/JumpToLatest.tsx) is a .chat-jump (ChatPane.css); its live region is below. */
 
 /* The line, in the transcript's own gap above the row (.chat-scroll-inner: --space-4). */
 .chat-scroll-inner--reply [data-unread-first] { position: relative; }
@@ -31,14 +31,4 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-
-/* Under a finger the button is short (~26px): its hit area reaches a step above and below. It is
-   already absolutely positioned (.chat-jump), so the extension anchors to it. */
-@media (hover: none) {
-  .super-new::after {
-    content: "";
-    position: absolute;
-    inset: calc(-1 * var(--space-3)) 0;
-  }
 }

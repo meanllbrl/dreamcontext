@@ -47,8 +47,8 @@ const constant = (name: string, value: string, doc: string): string =>
   `/** ${doc} */\nexport const ${name} = ${literalOf(value)};\n`;
 
 /** The chat pane's reading size and rhythm (`ChatPane.css` `.chat-pane`), pinned at zoom 1:
- *  a dream-html picture is set as the chat pane sets it, never at the Super stage's 17 px. */
-export const CHAT_READING = { '--chat-text': '15px', '--chat-line-height': '1.75' } as const;
+ *  a dream-html picture is set as the chat pane sets it (Claude Desktop's size, owner 2026-11-15). */
+export const CHAT_READING = { '--chat-text': '14.5px', '--chat-line-height': '1.5' } as const;
 
 export function renderFont(): string {
   return HEADER('dashboard/src/lib/sandboxFont.ts') +

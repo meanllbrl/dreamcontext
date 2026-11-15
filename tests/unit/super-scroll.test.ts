@@ -4,6 +4,7 @@ import {
   INPUT_QUIET_MS, answerRowAfter, followStep, ownAnchorIndex, shouldWrite,
 } from '../../dashboard/src/components/sleepy/super/superScroll';
 import { landingFor } from '../../dashboard/src/components/sleepy/super/superUnread';
+import { isOwnSend } from '../../dashboard/src/components/sleepy/chat/ownSend';
 
 const CLEAR = 64;
 const VIEW = 600;
@@ -99,14 +100,30 @@ describe('the Super chat scrolls like Telegram (owner 2026-11-13, rule C)', () =
 
 describe('ONE scroll owner in the Super pane', () => {
   const pane = readFileSync('dashboard/src/components/sleepy/ChatPane.tsx', 'utf8');
-  it('every follow write in the Super view goes through superStep', () => {
-    expect(pane).toMatch(/if \(superRef\.current\) \{ superStep\(el\); return; \}/);
+  it('every follow write, in every chat, goes through superStep (owner 2026-11-15, Claude Desktop)', () => {
+    const body = pane.slice(pane.indexOf('const scrollToBottom = useCallback'), pane.indexOf('}, [superStep]);', pane.indexOf('const scrollToBottom = useCallback')));
+    expect(body).not.toMatch(/scrollTop = /);
+    expect(body.match(/superStep\((el|now)\)/g)).toHaveLength(2);
     expect(pane).not.toMatch(/holdAtUnread|useFollowUnread|followRowRef|SuperUnreadBar/);
   });
   it('only his own send moves the view: the mount and an echo do not', () => {
-    expect(pane).toMatch(/if \(superView && !sent\) return;/);
-    expect(pane).toMatch(/if \(superView\) \{ placeAtBottom\(lastUserItemId\); return; \}/);
-    expect(pane).toMatch(/!it\.echo && !it\.queued && !superEventOf\(it\.text\)/);
+    // An ordinary chat's resumed history is no send either: a send is stamped just now.
+    expect(pane).toMatch(/&& \(superView \|\| Date\.now\(\) - \(lastOwnItem\?\.ts \?\? 0\) < FRESH_SEND_MS\);/);
+    expect(pane).toMatch(/if \(!sent\) \{\n\s+if \(!superView\) \{ setStick\(true\); scrollToBottom\(\); \}\n\s+return;\n\s+\}/);
+    expect(pane).toMatch(/placeAtBottom\(lastUserItemId\);\n\s+\}, \[lastUserItemId/);
+    expect(pane).toMatch(/const lastOwnItem = \[\.\.\.conv\.items\]\.reverse\(\)\.find\(\(it\): it is ChatUserItem => it\.kind === 'user' && isOwnSend\(it\)\);/);
+  });
+  it('only HIS send stops the view, in every chat: a server prompt, an event, an echo or a drain never does', () => {
+    const base = { kind: 'user' as const, id: 'u1', text: 'bir hikaye anlat', ts: 1 };
+    expect(isOwnSend(base)).toBe(true);
+    expect(isOwnSend({ ...base, serverPrompt: true })).toBe(false);
+    expect(isOwnSend({ ...base, echo: true })).toBe(false);
+    expect(isOwnSend({ ...base, queued: true })).toBe(false);
+    expect(isOwnSend({ ...base, superEvent: 'child-done' })).toBe(false);
+    expect(isOwnSend({ ...base, text: '', stageMedia: [{ ref: 'a' }] })).toBe(false);
+    // The server's opening prompt (sleep, a delegate run) is marked where it lands.
+    const session = readFileSync('dashboard/src/components/sleepy/chatSession.ts', 'utf8');
+    expect(session).toMatch(/const echoed: ChatUserItem = \{ kind: 'user', id: nextItemId\(\), text: ev\.text, ts: Date\.now\(\), serverPrompt: true \};/);
   });
   it('a queued message moves the view at his press, never at the queue drain (r1)', () => {
     const session = readFileSync('dashboard/src/components/sleepy/chatSession.ts', 'utf8');
@@ -133,11 +150,13 @@ describe('ONE scroll owner in the Super pane', () => {
     expect(pane).toMatch(/const refocusComposer = \(\) => \{ if \(window\.matchMedia\('\(hover: hover\)'\)\.matches\) session\.focus\(\); \};/);
     expect(pane).toMatch(/onGone=\{refocusComposer\}/);
   });
-  it('the follow re-arms only on HIS scroll to the bottom', () => {
-    expect(pane).toMatch(/setStick\(superView && stick && !stickRef\.current && !readerMoving \? false : stick\);/);
+  it('the follow re-arms only on HIS scroll to the bottom, in every chat', () => {
+    expect(pane).toMatch(/setStick\(stick && !stickRef\.current && !readerMoving \? false : stick\);/);
   });
-  it('the button strip is reserved all the time in the Super view', () => {
+  it('the ↓ button floats over the text in every chat: no strip is reserved (owner 2026-11-15)', () => {
     const css = readFileSync('dashboard/src/components/sleepy/ChatPane.css', 'utf8');
-    expect(css).toMatch(/\.chat-transcript--super > \.chat-scroll \{ margin-bottom: var\(--chat-float-strip\); \}/);
+    expect(css).not.toMatch(/--chat-float-strip/);
+    expect(css).toMatch(/\.chat-jump \{\n\s+position: absolute;[\s\S]*?width: 32px;\n\s+height: 32px;[\s\S]*?border-radius: var\(--radius-full\);/);
+    expect(pane).toMatch(/<JumpToLatest\n\s+shown=\{!atBottom\}/);
   });
 });

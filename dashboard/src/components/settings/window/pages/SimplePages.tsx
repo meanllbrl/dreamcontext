@@ -3,6 +3,7 @@ import { useI18n } from '../../../../context/I18nContext';
 import { useTheme } from '../../../../context/ThemeContext';
 import { useVault } from '../../../../context/VaultContext';
 import { useChrome } from '../../../layout/WindowChrome';
+import { ZoomControl } from '../../../layout/newshell/ZoomMenu';
 import { SettingGroup, SettingRow, Toggle } from '../../SettingRow';
 import { SaveMark, useInstantSave } from '../../useInstantSave';
 import { NewLayoutSetting } from '../../NewLayoutSetting';
@@ -49,8 +50,6 @@ function useCfgRow(update: (p: Partial<AgentSettings>) => Promise<boolean>) {
   };
   return { state: save.state, write };
 }
-
-const ZOOMS = [0.85, 0.9, 1, 1.1, 1.2] as const;
 
 // ─── General ────────────────────────────────────────────────────────────────
 
@@ -110,8 +109,7 @@ export function GeneralPage({ searching }: PageProps) {
           title={t('shell.sw.general.zoom')}
           hint={t('shell.sw.general.zoom.h')}
           keywords="text size scale bigger smaller"
-          control={<Seg label={t('shell.sw.general.zoom')} value={String(zoom)} onChange={(v) => setZoom(Number(v))}
-            options={ZOOMS.map((z) => ({ value: String(z), label: `${Math.round(z * 100)}%` }))} />}
+          control={<ZoomControl zoom={zoom} onZoom={setZoom} />}
         />
       </SettingGroup>
       <SettingGroup title={t('shell.sw.general.launch')}>

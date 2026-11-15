@@ -12,7 +12,7 @@
  *  - the batch frame on the wire; the centre's larger font.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   OWNER_PROSE_MIN_CHARS, eventLine, groupSuperEventTurns, isOwnerProse, modelChip, plainJobName, rowOf, superNotepad, superBatchOf, superEventText, toneOfRow, toneOfStatus, type JobLook,
@@ -237,10 +237,9 @@ describe('the bar asks no question at all (owner 2026-11-13: "şu tip soru bile 
 });
 
 describe('geometry and font', () => {
-  it('the centre chat reads 17 px and its composer 15 px, times the zoom, in the centre only', () => {
-    const css = read(`${SUPER}/superCentre.css`).replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(css.trim()).toBe("[data-super-slot='centre'] .chat-pane {\n  --chat-text: calc(17px * var(--zoom, 1));\n  --font-size-md: calc(15px * var(--zoom, 1));\n}");
-    expect(read(`${SUPER}/SuperSurface.tsx`)).toMatch(/import '\.\/superCentre\.css';/);
+  it('the centre chat reads at the app\'s size, Claude Desktop\'s (owner 2026-11-15): no larger override', () => {
+    expect(existsSync(join(ROOT, SUPER, 'superCentre.css'))).toBe(false);
+    expect(read(`${SUPER}/SuperSurface.tsx`)).not.toMatch(/superCentre\.css/);
   });
 });
 
