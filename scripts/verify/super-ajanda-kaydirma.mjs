@@ -295,6 +295,7 @@ async function fab(p, name, size) {
   await p.keyboard.press('Enter');
   const input = card(p).getByTestId('super-agenda-add-input');
   check(`[${name}] S7 the + opens by keyboard into a small box, focused`, await until(p, async () => (await input.isVisible()) && (await input.evaluate((el) => el === document.activeElement)), 3000));
+  if (size !== 'small' && size !== 'medium') { const w = await card(p).locator('.agenda-fab-form').evaluate((el) => Math.round(el.getBoundingClientRect().width)); check(`[${name}] S7 the open add box is about 320 px wide (${w})`, w >= 300 && w <= 330); }
   await card(p).screenshot({ path: join(OUT, `${name}-8-fab-open.png`) });
   await p.keyboard.press('Escape');
   check(`[${name}] S7 Escape cancels: the + is back`, await until(p, async () => (await input.count()) === 0 && (await plus.count()) === 1, 3000));

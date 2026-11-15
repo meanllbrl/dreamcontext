@@ -33,7 +33,9 @@
 .super-agenda, .agenda-col, .agenda-main { position: relative; }
 /* The + floats OVER the lines and takes no height of its own (owner, 15 Nov). The scroll area
    ends with room for it, so the last line can be scrolled clear of the +; no strip sits there at rest. */
-.agenda-scroll { padding-bottom: 52px; }
+.agenda-scroll:has(~ .agenda-strip) { padding-bottom: 52px; }
+/* Open, the add box gets the strip's whole width (it caps itself at 320 px, flush right). */
+.agenda-strip:has(.agenda-fab[data-open='true']) { left: var(--space-2); }
 .agenda-groups {
   flex: none;
   display: flex;
@@ -314,7 +316,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-main > .agenda-scroll { gap: var(--space-1); }
 /* Medium is 160 px tall: a strip under the lines would leave them one line. Its + keeps a right
    gutter of its own instead; the lines end before it, so none ever sits under it. */
-.super-agenda[data-size='medium'] .agenda-main > .agenda-scroll { padding-bottom: 36px; }
+.super-agenda[data-size='medium'] .agenda-main > .agenda-scroll:has(~ .agenda-strip) { padding-bottom: 36px; }
 .super-agenda[data-size='medium'] .agenda-main > .agenda-strip { right: 0; bottom: 0; }
 .super-agenda[data-size='medium'] .agenda-main > .agenda-strip:has(.agenda-fab[data-open='true']) { left: 0; }
 .super-agenda[data-size='medium'] .agenda-fab-btn { width: 28px; height: 28px; }
