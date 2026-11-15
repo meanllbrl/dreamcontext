@@ -68,7 +68,7 @@
 .agenda-bar-done { background: var(--agenda-done); }
 .agenda-bar-run { background: var(--agenda-run); }
 
-/* Group heads: a small square in the group's colour, the name, the count. */
+/* Group heads: the name and the count, no marker; the rows carry the status icons. */
 .super-agenda-sec { display: flex; flex-direction: column; gap: 2px; }
 .super-agenda-sec + .super-agenda-sec { margin-top: var(--space-2); }
 .super-agenda-sec-h {
