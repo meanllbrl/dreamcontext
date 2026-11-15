@@ -2,10 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { ApiClient } from '../../../api/client';
 import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
-  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadUnits, withRead,
+  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, newestRead, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
-import { dropSuperUnread, publishSuperUnread } from './superUnreadStore';
+import { dropSuperUnread, noteMemberSeen, publishSuperUnread } from './superUnreadStore';
 import { forSuper } from './superApi';
 import type { SuperId } from '../../../lib/superTypes';
 
@@ -153,10 +153,11 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
     };
   }, [flush]);
 
-  const unread = useMemo(() => {
-    if (!enabled || !marks) return [];
-    return unreadOf(unreadUnits(items, { fold, ownerBatches, openQuestions, ...(mainBatches?.length ? { mainBatches } : {}) }), marks);
-  }, [enabled, marks, items, fold, ownerBatches, mainBatches, openQuestions]);
+  const units = useMemo(
+    () => (enabled ? unreadUnits(items, { fold, ownerBatches, openQuestions, ...(mainBatches?.length ? { mainBatches } : {}) }) : []),
+    [enabled, items, fold, ownerBatches, mainBatches, openQuestions],
+  );
+  const unread = useMemo(() => (enabled && marks ? unreadOf(units, marks) : []), [enabled, marks, units]);
   const unreadRef = useRef(unread);
   unreadRef.current = unread;
   const count = unread.length;
@@ -169,22 +170,27 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   }, [enabled, vault, count, paneToken, superId, asking]);
   useEffect(() => (enabled && vault ? () => dropSuperUnread(vault, paneToken, superId) : undefined), [enabled, vault, paneToken, superId]);
 
-  // A MEMBER's stage read to the end tells the server (plan r4 D7): its replies stop counting on
-  // the Team row. Only once its marks are LOADED (before that the count is a false 0), only while
-  // the window is seen, and again whenever the chat grows (every turn end is a new item), so a
-  // reply that lands while he reads is cleared too. Never for main (the server refuses it).
+  // A MEMBER's stage read to its NEWEST message tells the server (plan r4 D7): its replies stop
+  // counting on the Team row. Only once its marks are LOADED (before that nothing is known), only
+  // while the window is seen, and again whenever the chat grows (every turn end is a new item), so
+  // a reply that lands while he reads is cleared too. Never for main (the server refuses it).
+  // The newest, not every unit: an older unit he never scrolled up to used to hold `count` above 0
+  // for days, so `seen` never went and the row kept its number (owner 2026-11-15, a 12).
   const seenSent = useRef<string>('');
   const lastItem = items.length ? `${items.length}:${items[items.length - 1].id}` : '0';
+  const newestIsRead = newestRead(units, unread);
   useEffect(() => {
-    if (superId === 'main' || !enabled || !marks || count !== 0) return undefined;
+    if (superId === 'main' || !enabled || !marks || !newestIsRead) return undefined;
     const send = () => {
       if (!getWindowActivity().visible || seenSent.current === lastItem) return;
       seenSent.current = lastItem;
-      void apiRef.current.post<unknown>('/agent/super-read', { seen: true }).catch(() => { seenSent.current = ''; });
+      void apiRef.current.post<unknown>('/agent/super-read', { seen: true })
+        .then(() => { if (vault) noteMemberSeen(vault); })
+        .catch(() => { seenSent.current = ''; });
     };
     send();
     return onWindowActivity(() => send());
-  }, [superId, enabled, marks, count, lastItem]);
+  }, [superId, enabled, marks, newestIsRead, lastItem, vault]);
 
   const markRead = useCallback((seen: readonly UnreadUnit[]) => {
     if (!seen.length) return;

@@ -161,6 +161,21 @@ describe('a member\'s own reply to the owner', () => {
     expect(summarizeMember('rota', s, facts, () => false, { since: 0, read: [], replies: [5, 9], seenAt: 6 }, () => false).unread).toBe(1);
   });
 
+  it('a finished child is no unread of its own: only replies newer than seenAt count (owner 2026-11-15)', () => {
+    // The live case: 8 finished owner jobs nothing marked seen + 4 replies after seenAt read as 12.
+    const s = {
+      ...emptySuperState(), session: ROTA, enabled: true,
+      children: {
+        'aaaaaaaa-0000-4000-8000-000000000001': { workOrigin: 'owner', row: 'done', startedAt: 1, finishedAt: 2 },
+        'aaaaaaaa-0000-4000-8000-000000000002': { workOrigin: 'owner', row: 'gone', startedAt: 1, finishedAt: 20 },
+      },
+    } as unknown as SuperState;
+    const facts = { global: false, enabled: true, approval: false };
+    expect(summarizeMember('rota', s, facts, () => false, null, () => false).unread).toBe(0);
+    expect(summarizeMember('rota', s, facts, () => false, { since: 0, read: [], replies: [5, 30], seenAt: 10 }, () => false).unread).toBe(1);
+    expect(summarizeMember('rota', s, facts, () => false, { since: 0, read: [], replies: [5, 30], seenAt: 31 }, () => false).unread).toBe(0);
+  });
+
   it('a member session still starting (spawned, no frame yet) is not working; its turn is', () => {
     const h = reg(ROTA);
     expect(ownerTurnRuns(ROTA)).toBe(false);

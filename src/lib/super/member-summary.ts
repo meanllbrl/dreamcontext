@@ -35,7 +35,7 @@ export function ownerTurnRuns(sid: string): boolean {
 
 /**
  * One member's entry from its record (pure but for the registry's live status). `marks` = the
- * member's own read marks: its replies to the owner he has not seen count as unread (plan r4 D7),
+ * member's own read marks: its replies to the owner he has not seen are the unread (plan r4 D7),
  * and its own session's owner turn counts as working, beside its children's.
  */
 export function summarizeMember(
@@ -61,8 +61,12 @@ export function summarizeMember(
   const ownerOnly = (q: SuperState['queue'][number]) => q.kind === 'owner' && (q.wait?.kind === 'refusal' || q.wait?.kind === 'stalled');
   const asking = s.queue.some((q) => q.state !== 'done' && (ownerPermission(q) || ownerOnly(q) || (!isMain(q.workOrigin) && !isMain(childOrigin(q.sessionId))
     && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true)))));
-  const unread = ownerKids.filter(([, c]) => c.finishedAt !== undefined && !(c.seenAt !== undefined && c.seenAt >= c.finishedAt)).length
-    + unseenReplies(marks);
+  // Unread = the member's replies he has not seen, the one rule its stage clears (`seen`). A
+  // finished child is no message of its own: the member's turn that reports it is the reply. It
+  // used to count by its `seenAt`, which nothing has written since the window dropped the agenda's
+  // "Mark seen" (2026-10-22), so every finished job stayed unread for ever (owner 2026-11-15: a 12
+  // on a member he had just read).
+  const unread = unseenReplies(marks);
   const mainOpen = s.queue.some((q) => q.kind === 'request' && q.state !== 'done')
     || kids.some(([sid, c]) => isMain(c.workOrigin) && c.endedAt === undefined && live(sid));
   const times = [
