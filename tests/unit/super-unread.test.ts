@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
-  DWELL_MS, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, landingFor, readSide, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, leadIndex, mergeMarks, mostlyVisible, newestRead, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
+  DWELL_MS, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, landingFor, readSide, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, leadIndex, mergeMarks, mostlyVisible, newestRead, ownerCanRead, sideOf, unreadOf, unreadSinceRead, unreadUnits, wordsKey, withRead,
   type ReadMarks, type UnreadItem,
 } from '../../dashboard/src/components/sleepy/super/superUnread';
 
@@ -280,5 +282,46 @@ describe('a member stage is read at its newest message (owner 2026-11-15)', () =
   });
   it('no message at all: read', () => {
     expect(newestRead([], [])).toBe(true);
+  });
+});
+
+describe("a Super's row counts only what is newer than the newest message he read (owner 2026-11-15)", () => {
+  // The live case, main Super: seven messages from half an hour ago he never scrolled up to, the
+  // newest read at the bottom. The row said 7, and a click on it (the pane stays mounted, it lands
+  // on the first unread once per mount) opened the stage at its bottom: the 7 never went.
+  const MIN = 60_000;
+  const items = [
+    user('u1', 'bunu kur', 1 * MIN),
+    ...[1, 2, 3, 4, 5, 6, 7].map((i) => text(`old${i}`, `eski sonuç ${i}`, (10 + i * 4) * MIN)),
+    text('newest', 'en yeni cevap', 60 * MIN),
+  ];
+  it('the seven old ones do not count once the newest is read, and they stay unread in the pane', () => {
+    const all = units(items);
+    const unread = unreadOf(all, marks(0, [{ key: all[all.length - 1].key, ts: all[all.length - 1].ts }]));
+    expect(unread).toHaveLength(7);
+    expect(unreadSinceRead(all, unread)).toEqual([]);
+    expect(newestRead(all, unread)).toBe(true);
+  });
+  it('a message that lands after he read counts, alone', () => {
+    const all = units([...items, text('later', 'yeni bir sonuç', 90 * MIN)]);
+    const read = all.find((u) => u.itemId === 'newest')!;
+    const unread = unreadOf(all, marks(0, [{ key: read.key, ts: read.ts }]));
+    expect(unreadSinceRead(all, unread).map((u) => u.itemId)).toEqual(['later']);
+    expect(newestRead(all, unread)).toBe(false);
+  });
+  it('nothing read yet: every unread counts', () => {
+    const all = units(items);
+    expect(unreadSinceRead(all, unreadOf(all, marks(0)))).toHaveLength(8);
+  });
+  it('a message older than the record counts as read', () => {
+    const all = units([user('u', 'x', 1), text('a', 'eski', 5), text('b', 'yeni', 20)]);
+    const unread = unreadOf(all, marks(10));
+    expect(unreadSinceRead(all, unread).map((u) => u.itemId)).toEqual(['b']);
+  });
+  it('the pane publishes that number to the side menu, main and member alike (one rule)', () => {
+    const src = readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/super/useSuperUnread.ts'), 'utf-8');
+    expect(src).toMatch(/const count = useMemo\(\(\) => unreadSinceRead\(units, unread\)\.length/);
+    expect(src).toMatch(/publishSuperUnread\(vault, count, paneToken, superId, asking\)/);
+    expect(src).toMatch(/const newestIsRead = count === 0;/);
   });
 });
