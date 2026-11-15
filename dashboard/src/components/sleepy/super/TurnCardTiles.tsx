@@ -42,7 +42,10 @@ export function TurnCardTiles({ turn, superSid, onOpenFile }: {
   /** The full-screen subject of a card on a surface with no stage (a web page off this machine only). */
   const fullOf = (card: KnownCard): CardFullscreen | null => {
     const href = /^https:\/\//i.test(card.ref) ? card.ref : null;
-    return fullscreenOf(asContainer(card), cardName(card), href);
+    const c = asContainer(card);
+    // The agenda's full screen draws the stage's live agenda: none off the stage.
+    if (c.kind === 'agenda') return null;
+    return fullscreenOf(c, cardName(card), href);
   };
   const openFull = (card: KnownCard) => {
     const subject = fullOf(card);

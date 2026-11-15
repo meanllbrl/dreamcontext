@@ -176,7 +176,22 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   const [selected, setSelected] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const [filter, setFilter] = useState<AgendaFilter>('waiting');
-  const [addOpen, setAddOpen] = useState<HTMLElement | null>(null);
+  // List or board (owner 15 Nov: "büyük görünümdeyken board görünümü de opsiyon olarak kalsın"):
+  // his pick, kept on this Mac; the list is the default.
+  const [view, setView] = useState<'list' | 'board'>(() => {
+    try { return localStorage.getItem(VIEW_KEY) === 'board' ? 'board' : 'list'; } catch { return 'list'; }
+  });
+  const pickView = (v: 'list' | 'board') => {
+    setView(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ }
+    // Every agenda drawn now (the card and its full screen) follows the pick at once.
+    window.dispatchEvent(new CustomEvent(VIEW_EVENT, { detail: v }));
+  };
+  useEffect(() => {
+    const on = (e: Event) => { const v = (e as CustomEvent).detail; if (v === 'list' || v === 'board') setView(v); };
+    window.addEventListener(VIEW_EVENT, on);
+    return () => window.removeEventListener(VIEW_EVENT, on);
+  }, []);
   // A refused write (C8): its words and the line it belongs to (absent = the card's). Shown where
   // he is looking at every size: that line's detail when it is open, else the card's error line;
   // the add box shows its own (review r1, action-failure-shown-where-he-looks).
@@ -328,7 +343,6 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       <>
         {e.fromDay && <span className="super-agenda-chip" data-kind="day">{e.group === 'earlier' ? fmtDay(e.fromDay) : tr(t, 'super.agenda.detail.fromDay', 'from {day}', { day: fmtDay(e.fromDay) })}</span>}
         {r.auto && <span className="super-agenda-chip" data-kind="auto" data-testid="super-agenda-auto">{t('super.agenda.auto')}</span>}
-        {r.stale && <span className="super-agenda-chip" data-kind="stale" data-testid="super-agenda-stale" title={t('super.agenda.staleTitle')}>{t('super.agenda.stale')}</span>}
         {(size === 'full' || size === 'wide') && job?.mode && e.group !== 'done' && <span className="super-agenda-chip" data-kind="mode">{job.mode}</span>}
         {size === 'full' && r.author === 'owner' && r.status && r.section !== 'done' && <span className="super-agenda-chip" data-kind="status">{t(`super.agenda.status.${r.status}`)}</span>}
       </>
@@ -396,24 +410,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     </FloatLayer>
   );
 
-  // ── The add box (one box, no picker: a line he adds is his) ───────────────────
-  const addPopover = addOpen && onPadAdd && (
-    <FloatLayer
-      anchorOf={() => (addOpen.isConnected ? addOpen : null)}
-      place={(a, s) => ({ x: Math.max(8, Math.min(a.left, window.innerWidth - s.width - 8)), y: Math.min(a.bottom + 4, window.innerHeight - s.height - 8) })}
-      onClose={() => setAddOpen(null)}
-      className="agenda-pop"
-      testId="super-agenda-add-pop"
-    >
-      <AgendaAddBox onAdd={onPadAdd} explain={explain} autoFocus onDone={() => setAddOpen(null)} />
-    </FloatLayer>
-  );
-  const plusButton = onPadAdd && !readOnly && day === today && (
-    <button type="button" className="agenda-plus" data-testid="super-agenda-plus" aria-label={t('super.agenda.addTitle')} title={t('super.agenda.addTitle')} onClick={(e) => setAddOpen(e.currentTarget)}>
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
-    </button>
-  );
-
+  // ── The add button (one box, no picker: a line he adds is his) ──────────────────
+  // A round + floating at the card's bottom-right corner at every size (owner 15 Nov: "kartın sağ
+  // alt köşesine bir floating artı butonu"); it opens a small box in place.
+  const fab = onPadAdd && !readOnly && day === today && <AgendaFab onAdd={onPadAdd} explain={explain} onStart={() => setError(null)} />;
+  // Its own corner: a strip under the scrolling lines, so the visible list ends above the + and no
+  // line ever sits under it, at rest or scrolling (owner 15 Nov).
+  const strip = fab && <div className="agenda-strip" data-testid="super-agenda-strip">{fab}</div>;
   const pct = (n: number) => (progress.total ? Math.round((n / progress.total) * 100) : 0);
   const bar = (
     <div className="agenda-bar" aria-hidden>
@@ -428,6 +431,16 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // ── The lists ───────────────────────────────────────────────────────────────
   const [doneOpen, setDoneOpen] = useState(false);
+  // Lines no job keeps true and unchanged 2h+ are said ONCE, quietly, on their group's head
+  // (owner pick A, 15 Nov: a pill on every row crowded the list), never per row.
+  const staleNote = (g: string, rows: AgendaEntry[]) => {
+    const n = rows.filter((e) => e.row?.stale).length;
+    return n > 0 && (
+      <span className="super-agenda-stale-n" data-testid={`super-agenda-stale-${g}`} title={t('super.agenda.staleTitle')}>
+        {'· '}{tr(t, 'super.agenda.stale', '{n} unchanged 2h+', { n: String(n) })}
+      </span>
+    );
+  };
   const groupList = (cap: boolean) => {
     if (past) {
       const sections: DayGroup[] = ['dayDone', 'dayOpen'];
@@ -437,7 +450,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           {empty && <div className="super-agenda-empty">{t('super.agenda.nothingDay')}</div>}
           {sections.map((g) => past[g].length > 0 && (
             <section key={g} className="super-agenda-sec" data-section={g} data-testid={`super-agenda-section-${g}`}>
-              <h3 className="super-agenda-sec-h"><span>{groupName(g)}</span><span className="super-agenda-n">{past[g].length}</span></h3>
+              <h3 className="super-agenda-sec-h"><span>{groupName(g)}</span><span className="super-agenda-n">{past[g].length}</span>{staleNote(g, past[g])}</h3>
               {order(past[g]).map(rowOf)}
             </section>
           ))}
@@ -457,6 +470,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
             <h3 className="super-agenda-sec-h">
               <span>{groupName(g)}</span>
               <span className="super-agenda-n" data-testid={`super-agenda-count-${g}`}>{rows.length}</span>
+              {staleNote(g, rows)}
             </h3>
           );
           if (g === 'earlier') {
@@ -483,6 +497,41 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       </div>
     );
   };
+
+  // ── The board: the same lines in three columns, waiting on him, on it, done ───────
+  const board = () => {
+    const cols: Array<[string, string, AgendaEntry[]]> = [
+      ['waiting', groupName('waiting'), groups.waiting],
+      ['onit', t('super.agenda.filter.onit'), [...groups.earlier, ...groups.super, ...groups.mine]],
+      ['done', groupName('done'), groups.done],
+    ];
+    return (
+      <div className="agenda-board" data-testid="super-agenda-board" {...listHandlers}>
+        {cols.map(([k, name, rows]) => (
+          <section key={k} className="agenda-board-col super-agenda-sec" data-section={k === 'onit' ? 'super' : k} data-testid={`super-agenda-board-${k}`}>
+            <h3 className="super-agenda-sec-h"><span>{name}</span><span className="super-agenda-n">{rows.length}</span>{staleNote(k, rows)}</h3>
+            {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+            {order(rows).map(rowOf)}
+          </section>
+        ))}
+      </div>
+    );
+  };
+  const boardOn = view === 'board' && !past;
+  // The member's tasks (extra) stay under the board, never a fourth column.
+  const lines = (cap: boolean) => (boardOn ? <>{board()}{extra}</> : groupList(cap));
+  const viewSwitch = !past && (
+    <div className="agenda-viewswitch" role="group" aria-label={tr(t, 'super.agenda.view.label', 'View')}>
+      {(['list', 'board'] as const).map((v) => (
+        <button key={v} type="button" className="agenda-viewswitch-btn" data-testid={`super-agenda-view-${v}`} aria-pressed={view === v} data-on={view === v ? 'true' : undefined}
+          title={tr(t, `super.agenda.view.${v}`, v === 'list' ? 'List' : 'Board')} aria-label={tr(t, `super.agenda.view.${v}`, v === 'list' ? 'List' : 'Board')} onClick={() => pickView(v)}>
+          {v === 'list'
+            ? <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden><path d="M3 4h10M3 8h10M3 12h10" /></svg>
+            : <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden><rect x="2" y="3" width="3.5" height="10" rx="1" /><rect x="6.25" y="3" width="3.5" height="7" rx="1" /><rect x="10.5" y="3" width="3.5" height="5" rx="1" /></svg>}
+        </button>
+      ))}
+    </div>
+  );
 
   // Shown unless the open detail is the line it belongs to (that detail shows it).
   const inDetail = !!error?.note && selectedEntry?.row?.note === error.note && actionsOf(selectedEntry).detail !== 'none';
@@ -518,9 +567,9 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
               {tr(t, 'super.agenda.summaryWaiting', '{n} waiting on you', { n: String(progress.waiting) })}
             </span>
           ))}
-          {plusButton}
+          {fab}
         </div>
-        {statusMenu}{floatingDetail}{addPopover}
+        {statusMenu}{floatingDetail}
       </div>
     );
   }
@@ -544,17 +593,19 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         <div className="agenda-main">
           <div className="agenda-main-head">
             <span>{past ? tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) }) : groupName(filter === 'onit' ? 'super' : filter)}</span>
-            {plusButton}
           </div>
-          {errorLine}
-          {past ? groupList(false) : (
-            <div className="agenda-groups" {...listHandlers}>
-              {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
-              {order(rows).map(rowOf)}
-            </div>
-          )}
+          <div className="agenda-scroll">
+            {errorLine}
+            {past ? groupList(false) : (
+              <div className="agenda-groups" {...listHandlers}>
+                {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+                {order(rows).map(rowOf)}
+              </div>
+            )}
+          </div>
+          {strip}
         </div>
-        {statusMenu}{floatingDetail}{addPopover}
+        {statusMenu}{floatingDetail}
       </div>
     );
   }
@@ -563,19 +614,22 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     <div className="agenda-head">
       {nav(long)}
       {day === today && <span className="agenda-today">{t('super.agenda.today')}</span>}
-      <span className="agenda-count" data-testid="super-agenda-progress">{progressText}</span>
+      {/* Large is 344 px: the count in short (3/18), so the day, Today and the list/board switch fit. */}
+      <span className="agenda-count" data-testid="super-agenda-progress" title={progressText}>{size === 'large' ? `${progress.done}/${progress.total}` : progressText}</span>
+      {viewSwitch}
     </div>
   );
-  const addRow = onPadAdd && !readOnly && day === today && <AgendaAddBox onAdd={onPadAdd} explain={explain} onStart={() => setError(null)} />;
 
   if (size === 'large') {
     return (
       <div className="super-agenda" {...common}>
-        {header(true)}
-        {bar}
-        {addRow}
-        {errorLine}
-        {groupList(false)}
+        <div className="agenda-scroll">
+          {header(true)}
+          {bar}
+          {errorLine}
+          {lines(false)}
+        </div>
+        {strip}
         {statusMenu}{floatingDetail}
       </div>
     );
@@ -589,11 +643,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     return (
       <div className="super-agenda" {...common} data-detail={detailPane ? 'true' : undefined}>
         <div className="agenda-col">
-          {header(true)}
-          {bar}
-          {addRow}
-          {errorLine}
-          {groupList(false)}
+          <div className="agenda-scroll">
+            {header(true)}
+            {bar}
+            {errorLine}
+            {lines(false)}
+          </div>
+          {strip}
         </div>
         {detailPane}
         {statusMenu}
@@ -609,18 +665,21 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   return (
     <div className="super-agenda" {...common} data-detail={detailPane ? 'true' : undefined}>
       <div className="agenda-col">
+        <div className="agenda-scroll">
         {loadDay && <AgendaWeekStrip day={day} today={today} onDay={onDay} locale={locale} />}
         <div className="agenda-title-row">
           <h2 className="agenda-title">{new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(new Date(`${day}T12:00:00`))}</h2>
           {day === today && <span className="agenda-today">{t('super.agenda.today')}</span>}
+          {viewSwitch}
         </div>
         <div className="agenda-progress-row">
           {bar}
           <span className="agenda-count" data-testid="super-agenda-progress">{summary}</span>
         </div>
-        {addRow}
         {errorLine}
-        {groupList(true)}
+        {lines(true)}
+        </div>
+        {strip}
       </div>
       {detailPane}
       {statusMenu}
@@ -629,44 +688,69 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 }
 
 
-/** The add box (one box, no picker: a line he adds is his). Disabled while its request runs, so a
- *  double Enter writes one line (plan build notes). Its own component, so a pushed record never
- *  wipes what he is typing. */
-function AgendaAddBox({ onAdd, explain, onStart, onDone, autoFocus = false }: {
+const VIEW_KEY = 'dc-super-agenda-view';
+const VIEW_EVENT = 'dc-super-agenda-view';
+
+/** The floating + and the small box it opens (one box, no picker: a line he adds is his). Enter
+ *  adds, Escape or leaving the box cancels. Read-only while its request runs, so a double Enter
+ *  writes one line and the box keeps its focus. Its own component, so a pushed record never wipes
+ *  what he is typing. */
+function AgendaFab({ onAdd, explain, onStart }: {
   onAdd: (text: string) => Promise<void>;
-  /** A refusal's words; the box shows them under itself, where he is typing. */
+  /** A refusal's words; the box shows them over itself, where he is typing. */
   explain: (e: unknown) => string;
   onStart?: () => void;
-  onDone?: () => void;
-  autoFocus?: boolean;
 }) {
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState('');
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const close = (focusBack: boolean) => {
+    setOpen(false); setText(''); setRefused('');
+    if (focusBack) requestAnimationFrame(() => btnRef.current?.focus());
+  };
   const submit = async () => {
     const line = text.trim();
     if (!line || busy) return;
     setBusy(true);
     setRefused('');
     onStart?.();
-    try { await onAdd(line); setText(''); onDone?.(); } catch (e) { setRefused(explain(e)); } finally { setBusy(false); }
+    try { await onAdd(line); close(true); } catch (e) { setRefused(explain(e)); } finally { setBusy(false); }
   };
+  const label = t('super.agenda.addTitle');
   return (
-    <form className="agenda-add" data-testid="super-agenda-add" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-      <input
-        className="agenda-add-input"
-        data-testid="super-agenda-add-input"
-        value={text}
-        maxLength={160}
-        autoFocus={autoFocus}
-        disabled={busy}
-        placeholder={t('super.agenda.addPlaceholder')}
-        aria-label={t('super.agenda.addTitle')}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <button type="submit" className="agenda-btn" data-testid="super-agenda-add-submit" disabled={busy || !text.trim()}>{t('super.agenda.add')}</button>
-      {refused && <p className="agenda-error agenda-add-error" role="alert" data-testid="super-agenda-add-error">{refused}</p>}
-    </form>
+    <div className="agenda-fab" data-open={open ? 'true' : undefined}>
+      {open ? (
+        <form
+          className="agenda-fab-form"
+          data-testid="super-agenda-add"
+          onSubmit={(e) => { e.preventDefault(); void submit(); }}
+          onBlur={(e) => { if (!busy && !e.currentTarget.contains(e.relatedTarget as Node | null)) close(false); }}
+        >
+          {refused && <p className="agenda-error agenda-add-error" role="alert" data-testid="super-agenda-add-error">{refused}</p>}
+          <input
+            className="agenda-fab-input"
+            data-testid="super-agenda-add-input"
+            value={text}
+            maxLength={160}
+            autoFocus
+            readOnly={busy}
+            placeholder={t('super.agenda.addPlaceholder')}
+            aria-label={label}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); } }}
+          />
+          <button type="submit" className="agenda-fab-go" data-testid="super-agenda-add-submit" aria-label={t('super.agenda.add')} title={t('super.agenda.add')} disabled={busy || !text.trim()}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>
+          </button>
+        </form>
+      ) : (
+        <button ref={btnRef} type="button" className="agenda-fab-btn" data-testid="super-agenda-plus" aria-label={label} title={label} onClick={() => setOpen(true)}>
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+        </button>
+      )}
+    </div>
   );
 }
