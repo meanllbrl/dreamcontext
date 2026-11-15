@@ -815,3 +815,11 @@
 @media (hover: none), (max-width: 600px) {
   .ns-dr-proj:has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(3 * 22px + var(--space-2)); }
 }
+/* The project's New window row shows only while the pointer is over the project's block or focus is
+   inside it (owner 2026-11-15): it keeps its place, so nothing jumps. A finger has no hover: it stays. */
+.ns-dr-project .ns-dr-newchat-wrap { opacity: 0; transition: opacity var(--duration-fast, 120ms); }
+.ns-dr-project:is(:hover, :focus-within, [data-menu-open="true"]) .ns-dr-newchat-wrap,
+.ns-dr-project .ns-dr-newchat-wrap:has(:focus-visible) { opacity: 1; }
+@media (hover: none), (max-width: 600px) {
+  .ns-dr-project .ns-dr-newchat-wrap { opacity: 1; }
+}

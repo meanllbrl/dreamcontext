@@ -282,6 +282,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
   /** One project row with its children; `inGroup` = drawn inside the Hidden group (no drag). */
   const projectRow = (row: DrawerProjectRow, i: number, inGroup: boolean) => (
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
+            data-menu-open={menu?.kind === 'new-chat' && menu.name === row.name ? 'true' : undefined}
             data-hidden-project={inGroup ? row.name : undefined}
             data-drop-before={!inGroup && drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
             data-dragging={drag?.name === row.name ? 'true' : undefined}>
