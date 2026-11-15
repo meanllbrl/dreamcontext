@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, AGENT_SELF_ENV } from '../../src/lib/automations/types.js';
+import { AGENT_SELF_ENV } from '../../src/lib/automations/types.js';
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
 const SAFE_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
@@ -22,10 +22,13 @@ function makeTmpDir(prefix: string): string {
 
 interface RunResult { stdout: string; exitCode: number }
 
-/** A clean env: none of the self-approval or scope vars leak in from the shell running the suite. */
+/**
+ * A clean env: the owner's plain shell. Every agent marker the CLI reads (`agentDriven`: Claude Code's
+ * CLAUDE_CODE_SESSION_ID, Codex's CODEX_THREAD_ID, every DREAMCONTEXT_* run, crew and spawn marker)
+ * is dropped by prefix, so a suite run from inside a Claude or Codex session still sees the owner.
+ */
 function run(args: string[], cwd: string, home: string, extraEnv: Record<string, string> = {}): RunResult {
-  const inherited = { ...process.env };
-  for (const k of [AGENT_SELF_ENV, AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, 'CLAUDECODE', 'DREAMCONTEXT_AUTOMATION_RUN']) delete inherited[k];
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|CODEX_|DREAMCONTEXT_)/.test(k)));
   try {
     const stdout = execFileSync(process.execPath, [CLI, ...args], {
       cwd,
