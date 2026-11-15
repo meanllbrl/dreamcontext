@@ -70,7 +70,8 @@ describe('records', () => {
   });
 
   it('caps at 16 per chat, evicting closed records before open ones', () => {
-    noteAssistantCards(SID, 'acme', 'm0', run('keep-open', 'echo open'));
+    // Another kind than the run cards after it: a later run card would replace a run (supersedesCard).
+    noteAssistantCards(SID, 'acme', 'm0', secret('keep-open', 'Key'));
     for (let i = 1; i <= 16; i++) {
       noteAssistantCards(SID, 'acme', `m${i}`, run(`c${i}`, `echo ${i}`));
       const ref = listCards(SID).find((c) => c.id === `c${i}`)!.cardRef;
@@ -187,13 +188,14 @@ describe('rebuild after a restart', () => {
   });
 
   it('a live card noted BEFORE the transcript is read does not stop the older cards from coming back', () => {
-    noteAssistantCards(SID, 'acme', 'u1', run('old', 'ls'));
+    // A secret, then a run: another kind, so the newer card replaces nothing (supersedesCard).
+    noteAssistantCards(SID, 'acme', 'u1', secret('old', 'Key'));
     const old = listCards(SID)[0].cardRef;
     _resetCardsForTests();
     // The resumed chat posts a new card first...
     noteAssistantCards(SID, 'acme', 'u2', run('new', 'pwd'));
     // ...then something reads the transcript back.
-    rebuildCards(SID, 'acme', [row('assistant', 'u1', run('old', 'ls')), row('assistant', 'u2', run('new', 'pwd'))].join('\n'));
+    rebuildCards(SID, 'acme', [row('assistant', 'u1', secret('old', 'Key')), row('assistant', 'u2', run('new', 'pwd'))].join('\n'));
     const cards = listCards(SID);
     expect(cards.map((c) => c.id)).toEqual(['old', 'new']);
     expect(getCard(SID, old)?.state).toBe('open');
@@ -217,9 +219,9 @@ describe('rebuild after a restart', () => {
 
   it('a pre-tracking (legacy) card is closed by a later owner line, never by a Telegram owner block', () => {
     const jsonl = [
-      row('assistant', 'u1', run('a', 'ls')),
+      // Both in one message: two asks (a later message's run card would replace `a`).
+      row('assistant', 'u1', `${run('a', 'ls')}\n${run('b', 'pwd')}`),
       row('user', 'x1', `${TG_SENTINEL}abc123${TG_SENTINEL}tamam yaptım`),
-      row('assistant', 'u2', run('b', 'pwd')),
       row('user', 'x2', '[ran in chat]\n$ pwd\nexit 0 · 1s'),
     ].join('\n');
     rebuildCards(SID, 'acme', jsonl);

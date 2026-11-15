@@ -2761,6 +2761,20 @@ export function syncOwnerDraft(s: SuperState, sid: string, e: ChatEntry | null, 
     if (ownerWaitAnswered(sid, q.wait.kind, q.wait.id)) { closeOwnerAnswered(q); changed = true; continue; }
     orphans.push(q);
   }
+  // An orphan card a newer card of the same kind REPLACED (`supersedesCard`, bekleyen-kapanmaz: a
+  // restart lost the registry's copy) closes instead of being held again. Its card record says
+  // so: that record applies the turn rule, live and read back, so two asks of one turn are never
+  // taken for a replacement here. A record not read back yet decides nothing: the wait is held,
+  // and the child's next card of its kind in a later turn replaces it in the registry.
+  for (let i = orphans.length - 1; i >= 0; i--) {
+    const q = orphans[i];
+    if (!isCardItem(q) || q.delivery || !q.card) continue;
+    const r = getCard(q.card.postingSession, q.card.cardRef);
+    if (r?.state !== 'closed' || r.closedBy !== 'superseded') continue;
+    q.state = 'done';
+    changed = true;
+    orphans.splice(i, 1);
+  }
   // The record holds them, this process does not (a respawn, a restart): hold them again, as
   // one set, unless his answer already came in before the record was read.
   if (orphans.length) {

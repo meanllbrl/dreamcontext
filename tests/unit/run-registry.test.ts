@@ -88,8 +88,9 @@ describe('starting and attaching', () => {
   });
 
   it('a second card in the same chat is busy while the first runs', () => {
-    noteAssistantCards(SID, 'acme', 'm2', card('other', 'ls'));
+    // Posted while the first runs: a running card is never replaced by a later one (supersedesCard).
     startRun(SID, refOf('login'), 'mac');
+    noteAssistantCards(SID, 'acme', 'm2', card('other', 'ls'));
     expect(startRun(SID, refOf('other'), 'phone')).toEqual({ refused: 'busy' });
   });
 

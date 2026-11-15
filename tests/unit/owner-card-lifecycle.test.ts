@@ -236,13 +236,16 @@ describe('an owner card a crew child leaves is a record the server holds (K1, K2
     const { hs } = await boot([C1]);
     const told: string[] = [];
     registerCrewHandle(C1, { sendServerTurn: (t) => { told.push(t); return true; } });
-    say(hs[0], ['a', 'b', 'c', 'd'].map((id) => fence(runCard(id))).join('\n'), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    // Three kinds first; then two mcp cards in a later message: no kind is replaced
+    // (supersedesCard replaces only an earlier card of the SAME kind), and the fifth is over the cap.
+    const mcp = (id: string) => fence({ type: 'mcp', id, why: `connect ${id}`, servers: [id] });
+    say(hs[0], [fence(runCard('a')), fence({ type: 'secret', id: 'b', title: 'Key b', fields: [{ key: 'B_KEY' }] }), fence({ type: 'checklist', id: 'c', title: 'Steps c', items: [{ id: '1', text: 'one' }] })].join('\n'), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
     await drain();
-    say(hs[0], fence(runCard('e')), 'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+    say(hs[0], `${mcp('d')}\n${mcp('e')}`, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc');
     await drain();
     expect(getChat(C1)?.ownerWaits?.map((w) => w.id)).toEqual(['a', 'b', 'c', 'd']);
     expect((await openCards(C1)).map((q) => q.wait?.id).sort()).toEqual(['a', 'b', 'c', 'd']);
-    expect(told).toEqual([CARD_OVERFLOW_TEXT({ kind: 'run', id: 'e' })]);
+    expect(told).toEqual([CARD_OVERFLOW_TEXT({ kind: 'mcp', id: 'e' })]);
     expect(told[0]).toMatch(/already has 4 open cards/);
   });
 
@@ -343,12 +346,13 @@ describe('who closes a card (K4 attribution)', { timeout: 60_000 }, () => {
 
   it('a server-marked receipt closes its card BY ID (whatever its text), and only that card', () => {
     const h = posted();
-    say(h, fence(runCard('other')), 'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+    // Another kind: a later run card would replace the first one (supersedesCard).
+    say(h, fence({ type: 'secret', id: 'other', title: 'Other key', fields: [{ key: 'OTHER_KEY' }] }), 'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
     expect(waits()).toEqual(['gcloud-login', 'other']);
     // A mark naming no open card closes nothing.
     h.userSent('[ran in chat]\n$ echo nope', { server: true, ownerReceipt: { kind: 'run', id: 'nope' } });
     expect(waits()).toEqual(['gcloud-login', 'other']);
-    h.userSent('anything at all', { server: true, ownerReceipt: { kind: 'run', id: 'other' } });
+    h.userSent('anything at all', { server: true, ownerReceipt: { kind: 'secret', id: 'other' } });
     expect(waits()).toEqual(['gcloud-login']);
   });
 });

@@ -36,7 +36,7 @@
 
 import { outwardAction } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
-import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
+import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, supersedesCard, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
 import type { OpenRequest, RequestResponse } from '../super/request-answer.js';
@@ -324,6 +324,9 @@ export interface OwnerWaitOrigin { messageUuid: string; conversationId: string; 
 /** By `<session>\n<kind>:<id>`; bounded per chat by the waits it holds (dropped with them). */
 const waitOrigins = new Map<string, OwnerWaitOrigin>();
 const originKey = (sid: string, w: { kind: string; id: string }): string => `${sid}\n${waitKey(w)}`;
+/** The turn each open card wait was posted in (`ChatEntry.lastTurn.resultSeq` then), by the same
+ *  key: only a card of a LATER turn replaces it (bekleyen-kapanmaz). Pruned with the waits. */
+const waitTurns = new Map<string, number>();
 
 /** The frame the chat's open card wait `kind:id` was posted in, or null (an adopted wait, a
  *  restart: the item already carries its handle). Server-internal. */
@@ -333,6 +336,7 @@ export function ownerWaitOrigin(sessionId: string, kind: string, id: string): Ow
 function pruneOrigins(e: ChatEntry): void {
   const live = new Set((e.ownerWaits ?? []).map((w) => originKey(e.sessionId, w)));
   for (const k of [...waitOrigins.keys()]) if (k.startsWith(`${e.sessionId}\n`) && !live.has(k)) waitOrigins.delete(k);
+  for (const k of [...waitTurns.keys()]) if (k.startsWith(`${e.sessionId}\n`) && !live.has(k)) waitTurns.delete(k);
 }
 
 /** A receipt the SERVER delivered for an owner-proven card action (K4, K6): it closes the wait
@@ -844,15 +848,26 @@ export function registerChat(init: {
         if (text) {
           // The server's own run/secret card records (plan H1): keyed by this message's uuid.
           const uuid = typeof frame.uuid === 'string' ? frame.uuid : typeof (frame.message as { id?: unknown } | undefined)?.id === 'string' ? (frame.message as { id: string }).id : '';
-          if (uuid) noteAssistantCards(e.sessionId, e.vault, uuid, text);
+          // The turn this frame belongs to: the last turn end the chat saw. Every frame of one
+          // turn (text, a tool call, more text) shares it, so cards of ONE turn never replace
+          // each other (supersedesCard), whatever frame each came in.
+          const turn = e.lastTurn?.resultSeq ?? 0;
+          if (uuid) noteAssistantCards(e.sessionId, e.vault, uuid, text, `${e.sessionId}:${turn}`);
           // Read the whole text, before the cap: a card at the end of a long reply still counts.
           const cards = ownerCardsIn(text);
           if (cards.length) {
-            const keep = (e.ownerWaits ?? []).filter((w) => !cards.some((c) => c.kind === w.kind && c.id === w.id));
+            const held = (e.ownerWaits ?? []).filter((w) => !cards.some((c) => c.kind === w.kind && c.id === w.id));
+            // A card of the same kind under ANOTHER id, posted in a LATER turn, replaces the earlier
+            // one (`supersedesCard`, bekleyen-kapanmaz): the old wait is settled, so its item closes
+            // and never comes back. A wait with no turn noted (adopted after a restart) is older.
+            const replaced = held.filter((w) => waitTurns.get(originKey(e.sessionId, w)) !== turn && cards.some((c) => supersedesCard(c, w)));
+            const keep = held.filter((w) => !replaced.includes(w));
             // A card posted again is a new ask, even under an id he answered before.
             if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !cards.some((c) => waitKey(c) === k));
+            if (replaced.length) e.ownerAnswered = [...(e.ownerAnswered ?? []).filter((k) => !replaced.some((w) => waitKey(w) === k)), ...replaced.map(waitKey)].slice(-MAX_ANSWERED);
             // The frame each card came from (K1): the inbox makes the item's card handle from it.
             if (uuid) for (const c of cards) waitOrigins.set(originKey(e.sessionId, c), { messageUuid: uuid, conversationId: e.conversationId ?? '', text });
+            for (const c of cards) waitTurns.set(originKey(e.sessionId, c), turn);
             setOwnerWaits(e, [...keep, ...cards]);
           }
           // The whole text, marks included, to whoever routes answers (the Telegram hub, W2).
@@ -1053,6 +1068,7 @@ export function _resetChatRegistry(): void {
   ownerListeners.clear();
   unheard.clear();
   waitOrigins.clear();
+  waitTurns.clear();
   assistantListeners.clear();
   userSentListeners.clear();
   injectors.clear();

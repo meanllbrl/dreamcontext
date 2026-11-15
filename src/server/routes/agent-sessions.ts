@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { needsOwnerItem } from '../../lib/super/owner-needs.js';
 import { join, dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -840,8 +841,8 @@ export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>,
   const isSupers = (id: string) => id === superState.session || (!!superState.children?.[id] && !released.has(id)) || former.has(id) || memberSessions.has(id);
   const own = settled.sessions.filter((m) => !m.sessionId || !isSupers(m.sessionId));
   const perWindow = settled.windows.map((w) => ({ id: w.id, name: w.name, tabs: own.filter((m) => m.window === w.id).length }));
-  // Mirrors the window's `needsOwner` (pinned by the super-row-marks test).
-  const superAsking = (superState.queue ?? []).some((q) => q.state !== 'done' && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true && !q.team)));
+  // The window's `needsOwner`, the agenda's own rule (owner-needs.ts, pinned by its mirror test).
+  const superAsking = (superState.queue ?? []).some(needsOwnerItem);
   // Off, nothing works for the Super Agent (the window's `superRowMarks` says the same).
   const superWorking = !superState.enabled ? 0 : Object.entries(superState.children ?? {}).filter(([sid, c]) => c.endedAt === undefined && c.row === 'working' && runsNow(sid)).length;
   return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow, superWorking, superAsking };
