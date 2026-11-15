@@ -27,6 +27,8 @@
 mod app_link;
 #[cfg(target_os = "macos")]
 mod app_manifest;
+#[cfg(target_os = "macos")]
+mod move_to_apps;
 mod applog;
 #[cfg(target_os = "macos")]
 mod assistant;
@@ -205,6 +207,17 @@ pub fn run() {
             }
             // macOS: the same record, so a DMG install can relaunch after a CLI upgrade
             // (src/app_manifest.rs).
+            // macOS: opened from the DMG window, a translocated copy or Downloads, ask once to
+            // move to Applications; the moved copy is opened and this run ends before any server
+            // starts (src/move_to_apps.rs). A notch or Login Item launch never asks.
+            #[cfg(target_os = "macos")]
+            if !notch_only_launch() && !background_launch() && !app_background_launch() {
+                if let Some(home) = node_runtime::home_dir() {
+                    if move_to_apps::offer(&home) {
+                        std::process::exit(0);
+                    }
+                }
+            }
             #[cfg(target_os = "macos")]
             if let Some(home) = node_runtime::home_dir() {
                 app_manifest::record_launch(&home);
