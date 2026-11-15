@@ -6,7 +6,7 @@
  *   drawer        [data-testid="chat-drawer"] (data-home on a phone's first screen)
  *   project       [data-drawer-project="<vault>"], its toggle [data-testid="drawer-project-row"]
  *   chat rows     [data-testid="drawer-chat-row"] (data-chat-id, data-state asking|working|idle)
- *   New chat      [data-testid="drawer-new-chat"] (a project with no rows), the chat head's
+ *   New chat      [data-testid="drawer-project-add"] (the project header's +), the chat head's
  *                 [data-testid="chat-head-new"], the empty state's [data-testid="chat-empty-new"]
  *   History       [data-testid="drawer-history"], rows .chp-row
  *   foot          [data-testid="drawer-foot"] (push opt-in, connection log; tunnel only)
@@ -72,7 +72,7 @@ export async function back(p) {
  *  chat head's +. In `vault` when given. */
 export async function newChat(p, vault) {
   if (vault) await expand(p, vault);
-  const row = (vault ? projRow(p, vault) : p).locator('[data-testid="drawer-new-chat"]:visible').first();
+  const row = (vault ? projRow(p, vault) : p).locator('[data-testid="drawer-project-add"]:visible').first();
   if (await row.count()) { await row.click(); return; }
   // A project with rows offers New chat in its chat: show one of its chats, then the head's +.
   if (vault && (await projRow(p, vault).locator('[data-testid="drawer-chat-row"]').count())) {
@@ -114,7 +114,7 @@ export async function drawerShape(p, vault = 'proj') {
       const text = (r.textContent || '').replace(/\s+/g, ' ').trim();
       return { kind: /^Super Agent/.test(r.querySelector('.ns-dr-t')?.textContent ?? '') ? 'super' : 'chat', id: r.getAttribute('data-chat-id'), state: r.getAttribute('data-state'), text, h: Math.round(r.getBoundingClientRect().height) };
     });
-    return { super: rows.some((r) => r.kind === 'super'), rows, newChat: !!el?.querySelector('[data-testid="drawer-new-chat"]'), overflowX: document.documentElement.scrollWidth > window.innerWidth + 1 };
+    return { super: rows.some((r) => r.kind === 'super'), rows, newChat: !!el?.querySelector('[data-testid="drawer-project-add"]'), overflowX: document.documentElement.scrollWidth > window.innerWidth + 1 };
   }, vault);
 }
 

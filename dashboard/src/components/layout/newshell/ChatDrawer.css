@@ -230,6 +230,8 @@
   .ns-dr-acts { opacity: 1; pointer-events: auto; }
   .ns-dr-act { opacity: 0.85; }
   .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * 22px + var(--space-2)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu) .ns-dr-toggle { padding-right: calc(3 * 22px + var(--space-2)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu):has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(4 * 22px + var(--space-2)); }
   .ns-dr-proj:is(:hover, :focus-within) .ns-dr-end { visibility: visible; }
 }
 
@@ -425,6 +427,8 @@
     height: var(--touch-target);
   }
   .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * var(--touch-target)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu) .ns-dr-toggle { padding-right: calc(3 * var(--touch-target)); }
+  .ns-dr-proj:has(.ns-dr-newchat-menu):has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(4 * var(--touch-target)); }
 }
 
 /* A chat row in the air, and the line where it lands. */
@@ -769,12 +773,6 @@
 }
 
 /* New window (the project row once named New Chat, owner 2026-11-05) with its chevron (r8-07): the row, and beside it the menu of Claude or a member. */
-.ns-dr-newchat-wrap {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-.ns-dr-newchat-wrap > .ns-dr-newchat { flex: 1; min-width: 0; }
 .ns-drawer-menu-item.ns-newchat-item {
   justify-content: flex-start;
   gap: var(--space-2);
@@ -784,7 +782,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ns-dr-newchat-wrap:is(:hover, :focus-within) .ns-dr-act { opacity: 0.85; }
 
 /* The Hidden group (owner 2026-11-14, option A): one quiet row under the list, its projects open
    in place under it. Closed, the row's end mark is the sum of theirs. */
@@ -815,11 +812,7 @@
 @media (hover: none), (max-width: 600px) {
   .ns-dr-proj:has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(3 * 22px + var(--space-2)); }
 }
-/* The project's New window row shows only while the pointer is over the project's block or focus is
-   inside it (owner 2026-11-15): it keeps its place, so nothing jumps. A finger has no hover: it stays. */
-.ns-dr-project .ns-dr-newchat-wrap { opacity: 0; transition: opacity var(--duration-fast, 120ms); }
-.ns-dr-project:is(:hover, :focus-within, [data-menu-open="true"]) .ns-dr-newchat-wrap,
-.ns-dr-project .ns-dr-newchat-wrap:has(:focus-visible) { opacity: 1; }
-@media (hover: none), (max-width: 600px) {
-  .ns-dr-project .ns-dr-newchat-wrap { opacity: 1; }
-}
+/* While the member menu from the header chevron is open, the project buttons stay shown (owner 2026-11-15). */
+.ns-dr-project[data-menu-open="true"] .ns-dr-acts { opacity: 1; pointer-events: auto; }
+.ns-dr-project[data-menu-open="true"] .ns-dr-act { opacity: 0.85; }
+.ns-dr-project[data-menu-open="true"] .ns-dr-end { visibility: hidden; }

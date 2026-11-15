@@ -335,6 +335,14 @@ export function ChatDrawer(p: ChatDrawerProps) {
                   onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>
                   <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
                 </button>
+                {/* A member's window (r8-07): the chevron beside "+", where the New window row used to sit. */}
+                {row.children.some((c) => c.kind === 'new-chat') && newChatMembers(row).length > 0 && (
+                  <button type="button" className="ns-dr-act ns-dr-newchat-menu" data-testid="new-chat-menu" aria-haspopup="menu"
+                    aria-label={`${t('drawer.newChat.menu')}: ${row.name}`} title={t('drawer.newChat.menu')}
+                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
+                    <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
+                  </button>
+                )}
                 <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
                   data-testid="drawer-project-more" aria-haspopup="menu"
                   onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'project', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
@@ -424,24 +432,9 @@ export function ChatDrawer(p: ChatDrawerProps) {
       );
     }
     if (c.kind === 'new-chat') {
-      // r8-07: "Claude" (today's new chat) or a member's ONE conversation, behind the chevron.
-      const members = newChatMembers(row);
-      return (
-        <div key="new-chat" className="ns-dr-newchat-wrap">
-          <button type="button" className="ns-dr-row ns-dr-child ns-dr-newchat" data-testid="drawer-new-chat"
-            onClick={() => pick(row.name, { kind: 'new-window' })}>
-            <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
-            <span className="ns-dr-t">{t('shell.drawer.newChat')}</span>
-          </button>
-          {members.length > 0 && (
-            <button type="button" className="ns-dr-act ns-dr-newchat-menu" data-testid="new-chat-menu" aria-haspopup="menu"
-              aria-label={t('drawer.newChat.menu')}
-              onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
-              <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
-            </button>
-          )}
-        </div>
-      );
+      // No row of its own (owner 2026-11-15): it left a gap when hidden and pushed Team down when shown.
+      // The header's "+" and the chevron beside it do the job.
+      return null;
     }
     const label = c.name === STORED_DEFAULT_NAME ? t('shell.windows.defaultName') : c.name;
     if (renaming && renaming.vault === row.name && renaming.id === c.id) {

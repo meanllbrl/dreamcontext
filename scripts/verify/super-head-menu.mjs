@@ -289,8 +289,8 @@ async function sceneDrawer(browser) {
       if (await gotIt.isVisible().catch(() => false)) await gotIt.click();
       const row = page.locator('[data-drawer-project="acme-app"]');
       ok(`[${theme}] the drawer project is drawn`, await until(page, async () => row.isVisible(), 10000));
-      const label = (await row.getByTestId('drawer-new-chat').textContent().catch(() => '')) ?? '';
-      if (AFTER) ok(`[${theme}] the row reads New window`, /New window/.test(label), label);
+      const label = (await row.getByTestId('drawer-project-add').getAttribute('title').catch(() => '')) ?? '';
+      if (AFTER) ok(`[${theme}] the header + reads New window`, /New window/.test(label), label);
       await row.screenshot({ path: shotPath(`drawer-${theme}`) });
       ok(`[${theme}] no console errors (drawer)`, errors.length === 0, errors.slice(0, 5).join('\n'));
       await context.close();
