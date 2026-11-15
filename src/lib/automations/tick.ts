@@ -63,7 +63,7 @@ import { rotateLogIfLarge } from './launchd.js';
 import { cleanAllVaultTmps } from '../tmp-clean.js';
 import { defaultNotify, runAutomation, type RunOutcome } from './runner.js';
 import { announcePendingChanges } from '../agents/pending-change.js';
-import { readAccountWait } from './account.js';
+import { accountWaitHolds } from './account.js';
 import { scanOutsideAssignments } from '../agents/outside-assignments.js';
 import { reconcileTaskJobs, startDueTaskJobs, type TaskJobDeps } from '../agents/task-starter.js';
 import { currentLogin, foreignOwner } from '../agents/owner.js';
@@ -228,7 +228,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // unattended work is past its threshold, nothing starts and nothing is drained. Every fire
   // stays owed (queue entries untouched, watermarks not advanced) and runs on the first tick
   // after the earliest account frees up.
-  const accountWait = readAccountWait(opts.home, now.getTime());
+  const accountWait = accountWaitHolds(opts.home, now.getTime());
 
   // Hand edits arriving by sync raise owner rows here instead of starting anything (B1-5), and
   // ledger records of tasks that moved on die.
@@ -353,15 +353,19 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       verdicts.push({ slug: manifest.slug, verdict: due.reason });
       continue;
     }
-    // Re-read per slug: an earlier start this very pass may have found every account full.
-    const waitUntil = accountWait ?? readAccountWait(opts.home, now.getTime());
-    if (waitUntil !== null) {
+    // A due fire during a wait still goes to the runner: it defers there WITHOUT a probe (it reads
+    // the same wait), and is queued and told once, like the start that recorded the wait. Skipping
+    // it here left every routine but the first untold and unqueued (2026-11-15).
+    const waitUntil = accountWait ?? accountWaitHolds(opts.home, now.getTime());
+    // A Super automation is delivered to the Super's own chat before the runner's account step,
+    // so the tick keeps holding it here.
+    if (waitUntil !== null && manifest.target === 'super') {
       logFn(`[automations] ${manifest.slug} is due but waits for an account until ${new Date(waitUntil).toISOString()}`);
       verdicts.push({ slug: manifest.slug, verdict: 'waiting-for-account' });
       continue;
     }
-
-    logFn(`[automations] ${manifest.slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
+    if (waitUntil !== null) logFn(`[automations] ${manifest.slug} is due but waits for an account until ${new Date(waitUntil).toISOString()}`);
+    else logFn(`[automations] ${manifest.slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
     const outcome = await runImpl(contextRoot, manifest.slug, {
       onDeferredSend: collect,
       now: clock,
@@ -373,7 +377,8 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       scheduledFire: true,
     });
     ran.push(outcome);
-    verdicts.push({ slug: manifest.slug, verdict: verdictFor(outcome.status) });
+    const waited = outcome.status === 'deferred' && accountWaitHolds(opts.home, now.getTime()) !== null;
+    verdicts.push({ slug: manifest.slug, verdict: waited ? 'waiting-for-account' : verdictFor(outcome.status) });
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
   }
 

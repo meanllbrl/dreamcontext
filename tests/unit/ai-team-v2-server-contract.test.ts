@@ -406,7 +406,7 @@ describe('AC-A1-3 account protection', () => {
     expect(reg.accounts.find((a) => a.id === 'one')?.ownerOnly).toBe(true);
   });
 
-  it('a routine on an all-full machine skips until wakeAt and runs on the first tick after', async () => {
+  it('a routine on an all-full machine defers in the runner until wakeAt and runs on the first tick after', async () => {
     // Due an hour before NOW in this machine's own zone, so both ticks sit inside the catch-up window.
     const fire = new Date(T - 3_600_000);
     const at = `${String(fire.getHours()).padStart(2, '0')}:${String(fire.getMinutes()).padStart(2, '0')}`;
@@ -414,18 +414,19 @@ describe('AC-A1-3 account protection', () => {
     const wakeAt = T + 30 * 60_000;
     recordAccountWait(wakeAt, home, T);
     const calls: { unattended?: boolean }[] = [];
-    const runImpl = vi.fn(async (_c: string, slug: string, opts: { unattended?: boolean }) => {
+    // The runner defers while the wait holds (it reads the same wait), and runs after it.
+    const runImpl = vi.fn(async (_c: string, slug: string, opts: { unattended?: boolean; now?: () => Date }) => {
       calls.push(opts);
-      return { slug, status: 'ok' } as unknown as RunOutcome;
+      const held = readAccountWait(home, (opts.now?.() ?? new Date()).getTime()) !== null;
+      return { slug, status: held ? 'deferred' : 'ok' } as unknown as RunOutcome;
     });
     const during = await tickProject(projectRoot, { now: new Date(T + 10 * 60_000), home, runImpl: runImpl as never });
-    expect(runImpl).not.toHaveBeenCalled();
     expect(during.verdicts).toContainEqual({ slug: 'daily-brief', verdict: 'waiting-for-account' });
     expect(readAccountWait(home, T + 10 * 60_000)).toBe(wakeAt);
     const after = await tickProject(projectRoot, { now: new Date(wakeAt + 60_000), home, runImpl: runImpl as never });
     expect(after.verdicts, JSON.stringify(after.verdicts)).not.toContainEqual({ slug: 'daily-brief', verdict: 'waiting-for-account' });
-    expect(runImpl).toHaveBeenCalledTimes(1);
-    expect(calls[0].unattended).toBe(true);
+    expect(runImpl).toHaveBeenCalledTimes(2);
+    expect(calls.every((c) => c.unattended === true)).toBe(true);
   });
 });
 
