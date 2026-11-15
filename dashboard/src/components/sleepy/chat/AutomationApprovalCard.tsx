@@ -27,6 +27,14 @@ export interface ApprovalCardFacts {
   approvalReason: string | null;
   enabled: boolean;
   nextFireAt: string | null;
+  /** The condition script a scheduled fire runs before the agent wakes (null: none). */
+  condition: string | null;
+  /** true: the agent wakes when the script exits 0; false: when it exits 1. */
+  conditionWake: boolean;
+  /** Why the condition cannot run: no approve is offered then. */
+  conditionError: string | null;
+  /** The hash of what these facts show: Approve sends it back (a moved disk answers 409). */
+  manifestHash: string;
 }
 
 /**
@@ -95,7 +103,8 @@ export function AutomationApprovalCard({ spec, session, report }: {
     try {
       const res = await api.post<{ card: ApprovalCardFacts; told: boolean }>(
         `/automations/${encodeURIComponent(spec.slug)}/${decision === 'approved' ? 'approve' : 'reject'}`,
-        { enable: decision === 'approved', sessionId: session?.claudeId },
+        // `shownHash`: a condition is stamped only on what this card showed (kosullu-otomasyon C2).
+        { enable: decision === 'approved', sessionId: session?.claudeId, shownHash: f?.manifestHash },
       );
       queryClient.setQueryData(key, { card: res.card, owned: true });
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
@@ -130,7 +139,7 @@ export function AutomationApprovalCard({ spec, session, report }: {
   const next = f.approved && f.enabled ? fireTime(f.nextFireAt, locale) : '';
   // The chat's yes stays only for a routine that runs by itself (plan-r10 1e, mode sched = widening).
   const scheduled = f.mode === 'sched';
-  const canAct = owned && scheduled && (state !== 'approved' || !f.enabled);
+  const canAct = owned && scheduled && (state !== 'approved' || !f.enabled) && !f.conditionError;
   const approveLabel = t(f.enabled ? 'chat.autocard.approve' : 'chat.autocard.approveOn');
 
   return (
@@ -140,6 +149,17 @@ export function AutomationApprovalCard({ spec, session, report }: {
         {f.does && (<><dt>{t('chat.autocard.does')}</dt><dd>{f.does}</dd></>)}
         {f.agentTitle && (<><dt>{t('chat.autocard.as')}</dt><dd>{f.agentTitle}</dd></>)}
         <dt>{t('chat.autocard.often')}</dt><dd>{f.cadence}</dd>
+        {(f.condition || f.conditionError) && (
+          <>
+            <dt>{t('chat.autocard.condition')}</dt>
+            <dd data-autocard-condition>
+              {f.condition && <pre className="chat-autocard-script">{f.condition}</pre>}
+              {f.conditionError
+                ? <span className="chat-autocard-sub chat-autocard-script-error">{SLOT(t('chat.autocard.condition.error'), { why: f.conditionError })}</span>
+                : <span className="chat-autocard-sub">{t(f.conditionWake ? 'chat.autocard.condition.wakeTrue' : 'chat.autocard.condition.wakeFalse')} {t('chat.autocard.condition.shell')}</span>}
+            </dd>
+          </>
+        )}
         <dt>{t('chat.autocard.until')}</dt>
         <dd>{t(f.until === 'only-when-called' ? 'chat.autocard.until.call' : 'chat.autocard.until.off')}</dd>
         <dt>{t('chat.autocard.reach')}</dt>

@@ -166,13 +166,16 @@ describe('P5 lockstep: the review shows the soul', () => {
   it('APPROVAL_DIFF_FIELDS equals approvalFields keys in order and ends with soul, autonomy, readTools, tool, app, then boardOnly, then appTools, then target and reply', () => {
     const m = legacy({ soul: 'Be terse.' });
     expect([...APPROVAL_DIFF_FIELDS]).toEqual(Object.keys(approvalFields(m)));
-    expect(APPROVAL_DIFF_FIELDS.at(-1)).toBe('reply');
-    expect(APPROVAL_DIFF_FIELDS.at(-2)).toBe('target');
-    expect(APPROVAL_DIFF_FIELDS.at(-3)).toBe('appTools');
-    expect(APPROVAL_DIFF_FIELDS.at(-4)).toBe('boardOnly');
-    expect(APPROVAL_DIFF_FIELDS.at(-5)).toBe('app');
-    expect(APPROVAL_DIFF_FIELDS.at(-6)).toBe('tool');
-    expect(APPROVAL_DIFF_FIELDS.at(-7)).toBe('readTools');
+    // kosullu-otomasyon: the condition and its wake switch are appended after `reply`.
+    expect(APPROVAL_DIFF_FIELDS.at(-1)).toBe('conditionWake');
+    expect(APPROVAL_DIFF_FIELDS.at(-2)).toBe('condition');
+    expect(APPROVAL_DIFF_FIELDS.at(-3)).toBe('reply');
+    expect(APPROVAL_DIFF_FIELDS.at(-4)).toBe('target');
+    expect(APPROVAL_DIFF_FIELDS.at(-5)).toBe('appTools');
+    expect(APPROVAL_DIFF_FIELDS.at(-6)).toBe('boardOnly');
+    expect(APPROVAL_DIFF_FIELDS.at(-7)).toBe('app');
+    expect(APPROVAL_DIFF_FIELDS.at(-8)).toBe('tool');
+    expect(APPROVAL_DIFF_FIELDS.at(-9)).toBe('readTools');
     expect(APPROVAL_DIFF_FIELDS.at(-8)).toBe('autonomy');
     expect(APPROVAL_DIFF_FIELDS.at(-9)).toBe('soul');
   });

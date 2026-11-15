@@ -395,3 +395,41 @@ describe('the tick: only fires from while it was live are owed', () => {
     expect(readAutomationCache(contextRoot, 'sabah')?.liveFrom).toBe(at(10, 20).toISOString());
   });
 });
+
+describe('super schedule --condition (kosullu-otomasyon)', () => {
+  it('add --condition stays unapproved, keeps the file, and the echo says it waits', async () => {
+    const s = sink();
+    const r = await scheduleVerb(contextRoot, { op: 'add', job: 'Yeni sipariş varsa özetle', at: '09:00', condition: 'test -s orders/new.csv' }, deps(s));
+    expect(r.ok).toBe(true);
+    const res = (r as { result: { id: string; approval?: string; card?: string } }).result;
+    expect(res.approval).toBe('waits');
+    expect(res.card).toBe(res.id);
+    const m = getAutomation(contextRoot, res.id, home)!;
+    expect(m.condition).toBe('test -s orders/new.csv');
+    expect(checkApproval(projectRoot, m, home, 'run').approved).toBe(false);
+    expect(s.said[0]).toContain('önce betik bakar (doğruysa uyanır)');
+    expect(s.said[0]).toContain('sen onaylayana kadar bu iş çalışmaz');
+  });
+
+  it('change --condition on an approved job leaves it pending and paused', async () => {
+    const s = sink();
+    const r = await scheduleVerb(contextRoot, { op: 'add', job: 'Özetle', at: '09:00' }, deps(s));
+    const id = (r as { result: { id: string } }).result.id;
+    const c = await scheduleVerb(contextRoot, { op: 'change', id, condition: 'test -s inbox.json', wakeWhen: 'false' }, deps(s));
+    expect(c.ok).toBe(true);
+    expect((c as { result: { paused?: boolean; approval?: string } }).result).toMatchObject({ paused: true, approval: 'waits' });
+    expect(checkApproval(projectRoot, getAutomation(contextRoot, id, home)!, home, 'run').approved).toBe(false);
+    expect(s.said.at(-1)).toContain('doğru değilse uyanır');
+    // A fire of the pending job writes no item.
+    const out = await runAutomation(contextRoot, id, { now: () => FIRE, fireAt: FIRE, home, notify: () => {}, unattended: true, scheduledFire: true });
+    expect(out.status).toBe('blocked');
+    expect(listScheduleItems(scope, home)).toHaveLength(0);
+  });
+
+  it('a bad script is refused before anything is written', async () => {
+    const s = sink();
+    const r = await scheduleVerb(contextRoot, { op: 'add', job: 'x', at: '09:00', condition: '## no\nexit 0' }, deps(s));
+    expect(r.ok).toBe(false);
+    expect(s.said).toHaveLength(0);
+  });
+});

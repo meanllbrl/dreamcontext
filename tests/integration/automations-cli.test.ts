@@ -118,6 +118,9 @@ function run(args: string[], cwd: string, home: string, extraEnv: Record<string,
   // read the agent chat, Super crew and member crew markers. A suite started from a Super or
   // member session inherits them and every owner step is refused for a reason no test asked for.
   for (const k of [AGENT_CHAT_ENV, SUPER_CREW_ENV, MEMBER_SUPER_ENV, MEMBER_CREW_ENV]) delete inherited[k];
+  // Every other agent-session marker `agentDriven` reads (kosullu-otomasyon): a suite run from a
+  // Claude, Codex or brain-MCP shell is not the owner's terminal. A test that wants one passes it.
+  for (const k of ['CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID', 'DREAMCONTEXT_AGENT_TOOL', 'DREAMCONTEXT_VIA_BRAIN_MCP', 'DREAMCONTEXT_SPAWNED', 'DREAMCONTEXT_AUTO_SLEEP']) delete inherited[k];
   try {
     const stdout = execFileSync(process.execPath, [CLI, ...args], {
       cwd,
@@ -1325,5 +1328,93 @@ describe('automations CLI (integration)', () => {
       expect(out.exitCode).toBe(0);
       expect(existsSync(threadDir('other-agent'))).toBe(true);
     });
+  });
+});
+
+describe('conditions through the CLI (kosullu-otomasyon L3)', () => {
+  let home: string;
+  let base: string;
+  let projectDir: string;
+  const SCRIPT = 'test -s orders/new.csv && cat orders/new.csv';
+  const file = (slug: string) => join(projectDir, '_dream_context', 'automations', `${slug}.md`);
+  const create = (slug: string, env: Record<string, string> = {}, extra: string[] = []) =>
+    run(['automations', 'create', slug, '--title', 'Northwind orders', '--days', 'daily', '--at', '09:00', '--condition', SCRIPT, ...extra], projectDir, home, env);
+
+  beforeEach(() => {
+    home = makeTmpDir('dc-cond-cli-home');
+    base = makeTmpDir('dc-cond-cli-base');
+    projectDir = makeProjectDir(base, 'northwind');
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('the owner\'s terminal creates it approved; show prints the script; condition prints the approved one', () => {
+    const out = create('nw-orders');
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('approved on this machine');
+    expect(readFileSync(file('nw-orders'), 'utf-8')).toContain('## Condition');
+    const show = run(['automations', 'show', 'nw-orders'], projectDir, home);
+    expect(show.stdout).toContain('orders/new.csv');
+    const cond = run(['automations', 'condition', 'nw-orders'], projectDir, home);
+    expect(cond.exitCode).toBe(0);
+    expect(cond.stdout).toContain('wakes when true');
+    expect(run(['automations', 'list'], projectDir, home).stdout).toContain('⧖ condition');
+  });
+
+  for (const env of [
+    { CLAUDECODE: '1' }, { CODEX_THREAD_ID: 't-1' }, { DREAMCONTEXT_AGENT_TOOL: 'antigravity' },
+    { DREAMCONTEXT_AGENT_TOOL: 'codex' }, { DREAMCONTEXT_VIA_BRAIN_MCP: '1' },
+  ]) {
+    it(`an agent's create waits for the owner's card (${Object.entries(env)[0]!.join('=')})`, () => {
+      const out = create('nw-orders', env);
+      expect(out.exitCode).toBe(0);
+      expect(out.stdout).not.toContain('approved on this machine');
+      expect(out.stdout).toMatch(/waits for the owner/);
+      expect(out.stdout).toContain('"type":"automation"');
+      const approve = run(['automations', 'approve', 'nw-orders', '--yes'], projectDir, home, env);
+      expect(approve.stdout).not.toMatch(/"nw-orders" approved\./);
+    });
+  }
+
+  it('a ## line or a fence line is refused with its reason, and nothing is written', () => {
+    const bad = run(['automations', 'create', 'nw-bad', '--title', 'x', '--days', 'daily', '--at', '09:00', '--condition', '## done\nexit 0'], projectDir, home);
+    expect(bad.exitCode).not.toBe(0);
+    expect(bad.stdout).toMatch(/Invalid condition/);
+    expect(existsSync(file('nw-bad'))).toBe(false);
+  });
+
+  it('approve in his terminal stamps the printed manifest', () => {
+    create('nw-orders', { CODEX_THREAD_ID: 't-1' });
+    const out = run(['automations', 'approve', 'nw-orders', '--yes'], projectDir, home);
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toContain('orders/new.csv');
+    expect(out.stdout).toMatch(/"nw-orders" approved\./);
+  });
+
+  it('condition --run prints the verdict, records nothing, and runs nothing never approved', () => {
+    create('nw-orders');
+    mkdirSync(join(projectDir, 'orders'), { recursive: true });
+    writeFileSync(join(projectDir, 'orders', 'new.csv'), 'rye,3\n');
+    const yes = run(['automations', 'condition', 'nw-orders', '--run'], projectDir, home);
+    expect(yes.exitCode).toBe(0);
+    expect(yes.stdout).toContain('true — the agent would wake');
+    expect(yes.stdout).toContain('rye,3');
+    expect(existsSync(join(projectDir, '_dream_context', 'automations', 'cache', 'nw-orders.json'))).toBe(false);
+    create('nw-waiting', { CLAUDECODE: '1' });
+    const never = run(['automations', 'condition', 'nw-waiting', '--run'], projectDir, home);
+    expect(never.exitCode).not.toBe(0);
+    expect(never.stdout).toMatch(/no approved condition/);
+  });
+
+  it('edit --no-condition removes it; --wake-when false flips it', () => {
+    create('nw-orders');
+    const flip = run(['automations', 'edit', 'nw-orders', '--wake-when', 'false'], projectDir, home);
+    expect(flip.exitCode).toBe(0);
+    expect(readFileSync(file('nw-orders'), 'utf-8')).toContain('condition_wake: false');
+    const off = run(['automations', 'edit', 'nw-orders', '--no-condition'], projectDir, home);
+    expect(off.exitCode).toBe(0);
+    expect(readFileSync(file('nw-orders'), 'utf-8')).not.toContain('## Condition');
   });
 });

@@ -108,6 +108,7 @@ function statusWord(status: RunStatus | null): string {
     case 'deferred': return 'deferred';
     case 'orphaned': return 'orphaned';
     case 'awaiting-review': return 'awaiting verdict';
+    case 'condition-false': return 'condition not met';
     default: return status;
   }
 }

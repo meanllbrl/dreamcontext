@@ -82,10 +82,10 @@ describe('skill-draw/references/whiteboards.md: the agent card', () => {
 });
 
 describe('skill/references/automations.md: the whiteboard field and its approval', () => {
-  it('counts the approval-hashed fields as twenty, matching APPROVAL_DIFF_FIELDS', () => {
-    expect(APPROVAL_DIFF_FIELDS).toHaveLength(20);
-    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('reply');
-    expect(AUTOMATIONS_MD).toContain('across all twenty of those fields');
+  it('counts the approval-hashed fields as twenty-two, matching APPROVAL_DIFF_FIELDS', () => {
+    expect(APPROVAL_DIFF_FIELDS).toHaveLength(22);
+    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('conditionWake');
+    expect(AUTOMATIONS_MD).toContain('across all twenty-two of those fields');
     expect(AUTOMATIONS_MD).not.toMatch(/all (nine|ten|eleven|twelve|thirteen|fourteen|sixteen|seventeen|eighteen)\b|those (nine|ten|eleven|twelve|thirteen|fourteen|sixteen|seventeen|eighteen) fields/);
   });
 

@@ -2342,6 +2342,12 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     if (opts.unattended && view.manifest.mode === 'call' && manifest.mode !== 'call') {
       return shortCircuit('blocked', 'its schedule is part of a change that waits for your approval; until you approve it, it runs only when called');
     }
+    // A changed condition (added, edited, flipped or removed) pauses the schedule until the owner
+    // reads it on its card (kosullu-otomasyon D5): what decides whether the agent wakes is the
+    // change itself, so the old check must not keep deciding in its name. A person's run goes on.
+    if (opts.scheduledFire && manifestConditionSha(manifest) !== manifestConditionSha(view.manifest)) {
+      return shortCircuit('blocked', 'its condition changed and waits for you: approve it on its card in the chat or on the AI Team page; until then its schedule does not fire');
+    }
     manifest = view.manifest;
   }
   const approval = view.verdict;
@@ -2383,6 +2389,9 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   if (needsApprovalQuestion && conditionNeedsWitness(manifest, priorApproval)) {
     return shortCircuit('blocked', 'not approved (manifest-changed) — its condition script waits for you: approve it on its card in the chat or on the AI Team page');
   }
+  /** Only a scheduled fire of a target with a condition is gated. Everything else never awaits
+   *  the gate, so its spawn happens in the same tick it always did. */
+  const gatesHere = opts.scheduledFire === true && (!!manifest.condition || !!manifest.conditionError);
   /** Kill a live condition child on this run's way out (a signal, or the server stopping it). */
   let untrackCondition = (): void => {};
   const trackCondition = (holdsLock: boolean) => (child: import('node:child_process').ChildProcess | null): void => {
@@ -2422,11 +2431,11 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     }
     const at = nowFn();
     // The condition, before the Super hears anything (C5): false writes no item.
-    const gate = await conditionGate(
+    const gate = gatesHere ? await conditionGate(
       manifest, approval.approved ? approval.entry : null,
-      { ...(opts.scheduledFire ? { scheduledFire: true } : {}), ...(opts.conditionImpl ? { conditionImpl: opts.conditionImpl } : {}), onChild: trackCondition(false) },
+      { scheduledFire: true, ...(opts.conditionImpl ? { conditionImpl: opts.conditionImpl } : {}), onChild: trackCondition(false) },
       null, { cwd: projectRoot, fireAt, now: nowFn },
-    );
+    ) : null;
     untrackCondition();
     if (gate && gate.kind !== 'wake') return await conditionOutcome(gate, at);
     try {
@@ -2831,11 +2840,11 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     // THE CONDITION GATE (C5): after every refusal above and before any prompt exists, one point
     // for Claude, Codex and Antigravity alike. False or an error records and stops: no model turn.
     const gateAt = nowFn();
-    const gate = await conditionGate(
+    const gate = gatesHere ? await conditionGate(
       manifest, approval.approved ? approval.entry : null,
-      { ...(opts.scheduledFire ? { scheduledFire: true } : {}), ...(opts.conditionImpl ? { conditionImpl: opts.conditionImpl } : {}), onChild: trackCondition(true) },
+      { scheduledFire: true, ...(opts.conditionImpl ? { conditionImpl: opts.conditionImpl } : {}), onChild: trackCondition(true) },
       scope, { cwd: projectRoot, fireAt, slot: fireSlotEnv(manifest, fireAt) || undefined, now: nowFn },
-    );
+    ) : null;
     untrackCondition();
     if (gate && gate.kind !== 'wake') return await conditionOutcome(gate, gateAt);
     const scopeArgs = scope && scopePaths ? boardScopeArgs(scope, scopePaths) : null;

@@ -116,7 +116,7 @@ import {
   readDispatcherHeartbeat,
   type ConditionWitness,
 } from '../../lib/automations/registry.js';
-import { conditionEnv, runCondition, visibleScript, conditionWakes } from '../../lib/automations/condition.js';
+import { CONDITION_HELP, conditionEnv, runCondition, visibleScript, conditionWakes } from '../../lib/automations/condition.js';
 import { withConditionValidity } from '../../lib/agents/compose.js';
 import { agentDriven } from '../../lib/agent-filing-guard.js';
 import { placement } from '../../lib/agents/active.js';
@@ -644,10 +644,6 @@ function printRunOutcome(outcome: RunOutcome): void {
   if (outcome.denials > 0) warn(`  ${outcome.denials} permission denial(s) during this run.`);
 }
 
-/** The condition sentence every help text and the skill carry (kosullu-otomasyon C7). */
-export const CONDITION_HELP = 'For "check every N, act only if X", a condition script is the better default: '
-  + 'it runs first with no model, and the agent wakes only on its answer (exit 0 = true, exit 1 = false, anything else = a loud error). '
-  + 'A source only an MCP connector reaches (claude.ai Gmail, Slack) cannot be checked by a script.';
 
 /** `--condition` / `--no-condition` / `--wake-when` as store input. */
 function conditionFlags(o: { condition?: string | false; wakeWhen?: string }): { condition?: string | null; conditionWake?: boolean } {

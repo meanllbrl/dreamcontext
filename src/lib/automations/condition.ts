@@ -17,11 +17,15 @@ import { redactSecrets } from '../telegram/format.js';
  * Nothing here parses stdout: truth is the exit code alone.
  */
 
-/** The condition sentence of `super schedule add --help` (the one rule text, kosullu-otomasyon C7). */
-export const SUPER_CONDITION_HELP = 'For "check every N, act only if X", a condition script is the better default: '
-  + 'the agent wakes only on its answer (exit 0 = true, exit 1 = false, anything else = a loud error), so a check that finds nothing costs no tokens. '
-  + 'Combine checks inside the script (&&, ||, !). A source only an MCP connector reaches (claude.ai Gmail, Slack) cannot be checked by a script. '
-  + 'The owner approves the script on its card: until he does, the job waits.';
+/** THE rule text (kosullu-otomasyon C7): every help text, the skill and the Super briefing carry
+ *  these three sentences word for word (`automations-conditions-docs.test.ts`). */
+export const CONDITION_RECIPE = 'For "check every N, act only if X", a condition script is the better default: it runs first with no model, so a check that finds nothing costs no tokens.';
+export const CONDITION_EXIT_RULE = 'Exit 0 = true, exit 1 = false, anything else = a loud error.';
+export const CONDITION_MCP_LIMIT = 'A source only an MCP connector reaches (claude.ai Gmail, Slack) cannot be checked by a script.';
+/** The three sentences, as `automations create|edit --help` say them. */
+export const CONDITION_HELP = `${CONDITION_RECIPE} ${CONDITION_EXIT_RULE} ${CONDITION_MCP_LIMIT}`;
+/** The condition text of `super schedule add --help`. */
+export const SUPER_CONDITION_HELP = `${CONDITION_HELP} Combine checks inside the script (&&, ||, !). The owner approves the script on its card: until he does, the job waits.`;
 
 /** The fixed timeout of one check. */
 export const CONDITION_TIMEOUT_MS = 60_000;

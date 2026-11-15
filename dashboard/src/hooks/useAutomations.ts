@@ -39,7 +39,10 @@ export type RunStatus =
    *  fell through `statusWord`'s `default` and printed the raw enum
    *  `awaiting-approval` at a human. `automations-card-status-parity.test.ts`
    *  now reads the BACKEND list as its source of truth so this cannot recur. */
-  | 'awaiting-approval';
+  | 'awaiting-approval'
+  /** A scheduled fire whose condition script did not hold (kosullu-otomasyon): no agent woke.
+   *  Quiet, never a fault, and never the card's face (the last real run stays its status). */
+  | 'condition-false';
 export type Weekday = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 
 /** Every slot the agent fires on (union) — the backend's own type, imported
@@ -303,6 +306,11 @@ export interface AutomationManifestDetail {
   target?: string;
   /** Hashed when `telegram`/`auto`, LAST: where the result goes; `''` = the Mac only. */
   reply?: string;
+  /** Hashed when set, LAST (kosullu-otomasyon): the script a scheduled fire runs before the agent
+   *  wakes; null = none. `conditionWake` false = wake when it is NOT true. */
+  condition?: string | null;
+  conditionWake?: boolean;
+  conditionError?: string | null;
   tool?: 'claude' | 'codex' | 'antigravity';
   /** Hashed when true, LAST: `scope: board`, the agent is limited to its home board.
    *  Absent on an older backend, which means not limited. */
@@ -360,6 +368,8 @@ export interface AutomationDetail {
   /** Every hashed field as the CLI's approve prints it (`field: value` lines): what Approve
    *  grants. Absent on an older backend. */
   review?: string;
+  /** The hash of the manifest this payload rendered: Approve sends it back as `shownHash`. */
+  manifestHash?: string;
   cache: AutomationCache | null;
 }
 
@@ -711,12 +721,17 @@ export function useApproveAutomation() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (slug: string) =>
-      api.post<{ slug: string; approval: { manifestSha256: string; approvedAt: string; payloadVersion: string } }>(
+    // `shownHash`: the `manifestHash` of the detail the owner read. A condition is stamped only
+    // when the disk still holds it (kosullu-otomasyon C2); a moved disk answers 409.
+    mutationFn: (arg: string | { slug: string; shownHash?: string }) => {
+      const { slug, shownHash } = typeof arg === 'string' ? { slug: arg, shownHash: undefined } : arg;
+      return api.post<{ slug: string; approval: { manifestSha256: string; approvedAt: string; payloadVersion: string } }>(
         `/automations/${slug}/approve`,
-        {},
-      ),
-    onSuccess: (_data, slug) => {
+        shownHash ? { shownHash } : {},
+      );
+    },
+    onSuccess: (_data, arg) => {
+      const slug = typeof arg === 'string' ? arg : arg.slug;
       queryClient.invalidateQueries({ queryKey: ['automations'] });
       queryClient.invalidateQueries({ queryKey: ['automations', slug] });
     },

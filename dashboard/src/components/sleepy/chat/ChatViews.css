@@ -486,6 +486,21 @@
   padding: 0 var(--space-4);
 }
 .chat-autocard-foot .chat-autocard-note { padding: 0; flex: 1; min-width: 0; }
+/* The condition script, whole and as it runs (kosullu-otomasyon): every line, never clipped. */
+.chat-autocard-script {
+  margin: 0 0 var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+}
+.chat-autocard-script-error { color: var(--color-error-ink); }
 
 /* ── learned-rule card ─────────────────────────────────────────────────────────────────────
    The receipt of a rule he taught: the rule, where it holds, his own words, and his Undo.

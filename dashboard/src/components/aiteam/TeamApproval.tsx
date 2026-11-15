@@ -139,7 +139,8 @@ function ApprovalRow({
       onError: (err: unknown) => setError((err as Error).message),
     };
     if (item.kind === 'agent') approveAgent.mutate(item.slug, done);
-    else approveRoutine.mutate(item.slug, done);
+    // The hash of the review this row showed: a condition is stamped only on what he read.
+    else approveRoutine.mutate({ slug: item.slug, shownHash: routineDetail.data?.manifestHash }, done);
   };
 
   return (
