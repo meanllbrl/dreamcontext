@@ -154,16 +154,19 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
 const NONE_PLACED: ReadonlySet<string> = new Set();
 
 /**
- * Every OPEN question whose asking call is not drawn above (folded into an event line, behind
- * "Show earlier messages", compacted away, or asked in a way the transcript cannot read): at the
- * chat's end, so the question is always in the chat.
+ * Every OPEN question, owner card or member wait with NO place on screen: neither its asking call
+ * nor any drawn item from before it was asked is in the transcript (behind "Show earlier
+ * messages", or before any message at all). At the chat's end, so a wait is never lost. One that
+ * has a place is drawn there by time (cardPlacement.ts), never here: the tail sits under his
+ * later messages, and a question asked before them must stay above them (owner 2026-11-15).
  */
 export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED }: {
   session: ChatSession;
-  /** The item ids that already have a live card in the rendered transcript. */
+  /** The question ids that already have a live card in the rendered transcript (at their call or
+   *  by time). */
   anchored: ReadonlySet<string>;
-  /** The owner-card items drawn in their place in the transcript (cardPlacement.ts); none = every
-   *  waiting one has no place on screen. */
+  /** The owner-card and member-wait items drawn in their place in the transcript
+   *  (cardPlacement.ts); none = every waiting one has no place on screen. */
   placedCards?: ReadonlySet<string>;
 }) {
   const view = useSuperQuestions(session.claudeId);
@@ -173,7 +176,7 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
   // transcript (cardPlacement.ts). Here only one that still waits on the owner and has no place on
   // screen (posted behind "Show earlier messages"), so the wait is never lost.
   const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.filter((q) => !placedCards.has(q.id)).map((q) => q.id));
-  const members = (view.members ?? []).filter((q) => !q.card || waiting.has(q.id));
+  const members = (view.members ?? []).filter((q) => (q.card ? waiting.has(q.id) : !placedCards.has(q.id)));
   const cards = (view.cards ?? []).filter((q) => waiting.has(q.id));
   if (!rest.length && !members.length && !cards.length) return null;
   return (
@@ -207,7 +210,7 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
  * member's page draws) is one Open button that brings the member's page, as before.
  * Leaves the chat when the member's item closes, wherever it was answered (Telegram, its page).
  */
-function MemberWaitCard({ item, paused = false }: { item: SuperQueueItem; paused?: boolean }) {
+export function MemberWaitCard({ item, paused = false }: { item: SuperQueueItem; paused?: boolean }) {
   const slug = item.member ?? '';
   const agent = useAgent(slug || null).data?.agent;
   const name = agent?.title || slug;
