@@ -39,6 +39,9 @@ for (const key of [
   'CLAUDECODE', 'CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID', 'DREAMCONTEXT_VIA_BRAIN_MCP', 'DREAMCONTEXT_AGENT_TOOL',
   AGENT_SELF_ENV, AGENT_CHAT_ENV, AGENT_BOARD_ENV, AGENT_SCRATCH_ENV, MEMBER_CREW_ENV, SUPER_CREW_ENV,
 ]) delete process.env[key];
+// 2d. A Chat or terminal spawn hands its MCP config down as DREAMCONTEXT_MCP_CFG_<n>. A suite run from
+//     inside one inherits them, and every spawn test that expects a clean env goes red. CI has none.
+for (const key of Object.keys(process.env)) if (key.startsWith('DREAMCONTEXT_MCP_CFG_')) delete process.env[key];
 
 // 3. `super delegate` holds a job when THIS machine is short of room (orchestration plan r5 D11).
 //    The suite must not pass or fail by the developer's swap: every test sees a roomy machine
