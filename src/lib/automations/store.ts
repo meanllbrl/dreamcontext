@@ -20,7 +20,7 @@ import {
 } from '../agents/slot.js';
 import { assertOwned, currentLogin, parseOwner } from '../agents/owner.js';
 import { agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from '../agents/agent-sync.js';
-import { composeRun, legacyPair } from '../agents/compose.js';
+import { composeRun, legacyPair, withConditionValidity } from '../agents/compose.js';
 import { nextFreeFace } from '../agents/faces.js';
 import { globalAgentExists, globalProjectDir, isGlobalAgentHere, memberSidePath } from '../agents/scope.js';
 import {
@@ -33,7 +33,8 @@ import {
   adoptIfSyncing,
   updateAgent,
 } from '../agents/store.js';
-import { approveAutomation, approvePair, type ApprovalConsent } from './registry.js';
+import { approveAutomation, approvePair, checkApproval, ConditionNeedsWitness, type ApprovalConsent, type ConditionWitness } from './registry.js';
+import { CONDITION_HEADING, conditionInvalidReason, normalizeCondition } from './condition.js';
 import {
   AutomationError,
   AUTOMATIONS_GITIGNORE_ENTRIES,
@@ -699,12 +700,38 @@ export function readManifestParts(filePath: string): ManifestParts {
       flow: legacy.flow,
       ...(legacy.app ? { app: legacy.app } : {}),
       ...(legacy.appTools?.length ? { appTools: legacy.appTools } : {}),
+      ...conditionFieldsOf(content, data),
       owner: parseOwner(data.owner),
       updated: typeof data.updated === 'string' && data.updated.trim() ? data.updated.trim() : null,
       path: legacy.path,
       body: legacy.body,
     },
   };
+}
+
+/**
+ * The `## Condition` section as manifest fields (kosullu-otomasyon C1): the first fenced block's
+ * script, its wake switch (`condition_wake: false`), and why it cannot run when it cannot. A
+ * file without the heading reads field for field as before, so its hash is unchanged.
+ */
+export function conditionFieldsOf(content: string, data: Record<string, unknown>): Pick<AutomationManifest, 'condition' | 'conditionWake' | 'conditionError'> {
+  const marker = `## ${CONDITION_HEADING}`;
+  if (!content.split('\n').some((l) => l.trim() === marker)) return {};
+  const lines = extractSection(content, CONDITION_HEADING).split('\n');
+  const open = lines.findIndex((l) => l.trim().startsWith('```'));
+  const close = open === -1 ? -1 : lines.findIndex((l, i) => i > open && l.trim().startsWith('```'));
+  const wake = data.condition_wake === false ? { conditionWake: false as const } : {};
+  if (open === -1 || close === -1) {
+    return { conditionError: `the ## ${CONDITION_HEADING} section needs one fenced sh block (\`\`\`sh ... \`\`\`)` };
+  }
+  const script = normalizeCondition(lines.slice(open + 1, close).join('\n'));
+  const reason = conditionInvalidReason(script);
+  return { ...(script ? { condition: script } : {}), ...(script ? wake : {}), ...(reason ? { conditionError: reason } : {}) };
+}
+
+/** The `## Condition` body a write puts in a file: one fenced `sh` block. */
+export function conditionSectionBody(script: string): string {
+  return ['```sh', normalizeCondition(script), '```'].join('\n');
 }
 
 /** The `## Job` heading of a split automation. */
@@ -732,6 +759,10 @@ export function readAutomationFile(filePath: string): AutomationManifest {
 }
 
 function legacyManifestFrom(filePath: string, data: Record<string, unknown>, content: string): AutomationManifest {
+  return withConditionValidity(legacyManifestFields(filePath, data, content));
+}
+
+function legacyManifestFields(filePath: string, data: Record<string, unknown>, content: string): AutomationManifest {
   const slug = basename(filePath, '.md');
   const title = typeof data.title === 'string' && data.title.trim() ? data.title : slug;
   const output = asRecord(data.output);
@@ -813,6 +844,8 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     // Only when set, for the same hash reason (super-rutin plan). Anything else reads as absent.
     ...(data.target === 'super' ? { target: 'super' as const } : {}),
     ...((AUTOMATION_REPLIES as readonly unknown[]).includes(data.reply) ? { reply: data.reply as AutomationReply } : {}),
+    // Only when the file has a `## Condition`, for the same hash reason (kosullu-otomasyon C1).
+    ...conditionFieldsOf(content, data),
     // Every file read here is an AUTOMATION run target, exactly as before the
     // agent split; a legacy manifest is its own agent and has no `## Job`. Only
     // the store composes an agent's call target (with real bindings and a
@@ -1228,7 +1261,12 @@ function recordRunUnlocked(
   const existing = readAutomationCache(contextRoot, slug);
   const advance = opts?.advanceWatermark !== false;
   const prior = existing?.history ?? [];
-  const history = isRepeatOf(e, prior[0], opts?.coalesceRepeat === true)
+  const quiet = e.status === 'condition-false';
+  // Consecutive quiet checks fold into ONE row (kosullu-otomasyon D7): the first check's start,
+  // the newest fire and finish, the last check's own duration (never the span).
+  const history = quiet && prior[0]?.status === 'condition-false'
+    ? [{ ...e, startedAt: prior[0].startedAt }, ...prior.slice(1)]
+    : isRepeatOf(e, prior[0], opts?.coalesceRepeat === true)
     // The row spans FIRST hit → LAST hit. Taking the incoming event wholesale
     // would move `startedAt` forward on every tick, so a gate nobody has cleared
     // for three days would read as if it were first hit a minute ago — and an
@@ -1236,16 +1274,20 @@ function recordRunUnlocked(
     // automation has actually been stuck.
     ? [{ ...e, startedAt: prior[0].startedAt }, ...prior.slice(1)]
     : [e, ...prior].slice(0, HISTORY_LIMIT);
+  // A quiet check is never the cache's face: "what happened most recently" stays the last real run.
+  const face = quiet
+    ? { lastRunAt: existing?.lastRunAt ?? null, status: existing?.status ?? null, durationMs: existing?.durationMs ?? null, outputPath: existing?.outputPath ?? null, error: existing?.error ?? null, exitCode: existing?.exitCode ?? null }
+    : { lastRunAt: e.startedAt, status: e.status, durationMs: e.durationMs, outputPath: e.outputPath, error: e.error, exitCode: e.exitCode };
   const cache: AutomationCache = {
     slug,
-    lastRunAt: e.startedAt,
+    lastRunAt: face.lastRunAt,
     // Never backwards: a parallel turn fired earlier can end after a later fire's record.
     lastFireAt: advance && (!existing?.lastFireAt || e.firedAt >= existing.lastFireAt) ? e.firedAt : (existing?.lastFireAt ?? null),
-    status: e.status,
-    durationMs: e.durationMs,
-    outputPath: e.outputPath,
-    error: e.error,
-    exitCode: e.exitCode,
+    status: face.status,
+    durationMs: face.durationMs,
+    outputPath: face.outputPath,
+    error: face.error,
+    exitCode: face.exitCode,
     history,
     ...(existing?.pausedAt ? { pausedAt: existing.pausedAt } : {}),
     ...(existing?.liveFrom ? { liveFrom: existing.liveFrom } : {}),
@@ -1481,6 +1523,19 @@ export interface CreateAutomationInput {
   target?: AutomationTarget;
   /** Where the result goes. Approved only with the owner's or his Super's consent. */
   reply?: AutomationReply;
+  /** The condition script a scheduled fire runs before any model (kosullu-otomasyon C1). Set by the
+   *  CLI's `--condition` and the `super schedule` verb, never by a page. */
+  condition?: string;
+  /** `false`: wake when the script is NOT true. Needs `condition`. */
+  conditionWake?: boolean;
+}
+
+/** Refuse a condition that could not be stored whole or could not run (throws before any write). */
+export function assertConditionWritable(script: string, target: { mode?: AutomationMode; boardOnly?: boolean }): void {
+  const reason = conditionInvalidReason(script);
+  if (reason) throw new AutomationError(`Invalid condition: ${reason}.`);
+  if (target.mode === 'call') throw new AutomationError('Invalid condition: an agent you only call has no scheduled fire, so it cannot have a condition.');
+  if (target.boardOnly) throw new AutomationError('Invalid condition: a board-limited agent cannot have a condition (it would run outside its board).');
 }
 
 /**
@@ -1510,6 +1565,8 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
     for (const t of i.appTools) if (!APP_TOOL_REF_RE.test(t)) throw new AutomationError(`Invalid app tool "${t}": write it as <app>/<tool>, e.g. yuk-izleme/notify-test.`);
     if (i.appTools.length > 20) throw new AutomationError('At most 20 app tools per automation.');
   }
+  if (i.condition !== undefined) assertConditionWritable(i.condition, { mode, boardOnly: !!(i.whiteboard && i.boardOnly) });
+  if (i.conditionWake === false && i.condition === undefined) throw new AutomationError('--wake-when needs a condition.');
   if (i.reply !== undefined && !(AUTOMATION_REPLIES as readonly string[]).includes(i.reply)) {
     throw new AutomationError(`Invalid reply "${String(i.reply)}": must be one of ${AUTOMATION_REPLIES.join(', ')}.`);
   }
@@ -1675,7 +1732,7 @@ export interface CreateAutomationOptions {
    *  consenting). For a same-slug pair this goes through `approvePair`, so a
    *  (b)-approved agent keeps its run approval. Omitted ⇒ no approval write;
    *  the caller approves, as every caller did before the agent split. */
-  approve?: { now: Date; home?: string };
+  approve?: { now: Date; home?: string; witness?: ConditionWitness };
 }
 
 export function createAutomation(
@@ -1700,8 +1757,11 @@ export function createAutomation(
   if (opts.approve) {
     const projectRoot = dirname(contextRoot);
     const agentTarget = created.agent === slug && i.agent !== undefined ? getRunTarget(contextRoot, slug, 'agent') : null;
-    if (agentTarget) approvePair(projectRoot, created, agentTarget, opts.approve.now, opts.approve.home);
-    else approveMadeHere(contextRoot, created, opts.approve.now, opts.approve.home);
+    if (agentTarget) {
+      // A condition without a witness leaves the routine waiting for the owner's card (C2).
+      try { approvePair(projectRoot, created, agentTarget, opts.approve.now, opts.approve.home, opts.approve.witness); }
+      catch (err) { if (!(err instanceof ConditionNeedsWitness)) throw err; }
+    } else approveMadeHere(contextRoot, created, opts.approve.now, opts.approve.home, undefined, opts.approve.witness);
   }
   return created;
 }
@@ -1714,11 +1774,24 @@ export function createAutomation(
  * record, which the automation's own approval then writes back. A same-slug pair (a separate agent
  * file) is `approvePair`'s; any other agent is untouched.
  */
-export function approveMadeHere(contextRoot: string, m: AutomationManifest, now: Date, home?: string, consent?: ApprovalConsent): void {
+export function approveMadeHere(contextRoot: string, m: AutomationManifest, now: Date, home?: string, consent?: ApprovalConsent, witness?: ConditionWitness): boolean {
   const projectRoot = dirname(contextRoot);
   const call = m.runKind === 'agent' ? null : getRunTarget(contextRoot, m.slug, 'agent');
   if (call && call.path === m.path) approveAutomation(projectRoot, call, now, home, consent);
-  approveAutomation(projectRoot, m, now, home, consent);
+  try {
+    approveAutomation(projectRoot, m, now, home, consent, witness);
+    return true;
+  } catch (err) {
+    // A condition nobody here witnessed (or one that cannot run) waits for the owner's card: the
+    // caller says "waits", truthfully, from this return value (kosullu-otomasyon C2).
+    if (err instanceof ConditionNeedsWitness) return false;
+    throw err;
+  }
+}
+
+/** Was `m` stamped as it stands right now? (What a write verb tells the owner.) */
+export function approvedAsItStands(contextRoot: string, m: AutomationManifest, home?: string): boolean {
+  return checkApproval(dirname(contextRoot), m, home, 'run').approved;
 }
 
 /** The body every new manifest's `## Output instructions` starts with. */
@@ -1766,6 +1839,7 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     review: i.review ?? 'off',
     ...(i.app ? { app: i.app } : {}),
     ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
+    ...(i.condition !== undefined && i.conditionWake === false ? { condition_wake: false } : {}),
   };
   const job = i.job?.trim();
   const body = [
@@ -1774,6 +1848,7 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     '',
     i.outputInstructions?.trim() || OUTPUT_INSTRUCTIONS_PLACEHOLDER,
     '',
+    ...(i.condition !== undefined ? [`## ${CONDITION_HEADING}`, '', conditionSectionBody(i.condition), ''] : []),
   ].join('\n');
 
   mkdirSync(automationsDir(contextRoot), { recursive: true });
@@ -1834,6 +1909,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     ...(i.appTools?.length ? { app_tools: i.appTools } : {}),
     ...(i.target === 'super' ? { target: 'super' } : {}),
     ...(storedReply(i) ? { reply: storedReply(i) } : {}),
+    ...(i.condition !== undefined && i.conditionWake === false ? { condition_wake: false } : {}),
   };
 
   const body = [
@@ -1845,6 +1921,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     '',
     i.outputInstructions?.trim() || OUTPUT_INSTRUCTIONS_PLACEHOLDER,
     '',
+    ...(i.condition !== undefined ? [`## ${CONDITION_HEADING}`, '', conditionSectionBody(i.condition), ''] : []),
   ].join('\n');
 
   mkdirSync(automationsDir(contextRoot), { recursive: true });
@@ -1896,6 +1973,32 @@ export interface UpdateAutomationInput {
   /** Where the result goes (`reply:`), an unsplit automation only; `mac` clears it. Consent-gated
    *  at the stamp (`ApprovalEntry.consent`): an edit here never approves it by itself. */
   reply?: AutomationReply;
+  /** Replaces the `## Condition` script (kosullu-otomasyon C1); `null` removes it (and its wake
+   *  switch). A routine's own file only: an agent you only call has no scheduled fire. */
+  condition?: string | null;
+  /** `false`: wake when the script is NOT true; `true`: the default (removes the key). */
+  conditionWake?: boolean;
+}
+
+/** Refuse a condition patch before anything is written (`current`: the condition on disk). */
+function checkConditionPatch(patch: UpdateAutomationInput, target: { mode?: AutomationMode; boardOnly?: boolean; condition?: string }): void {
+  if (typeof patch.condition === 'string') assertConditionWritable(patch.condition, target);
+  if (patch.conditionWake !== undefined && (patch.condition === null || (patch.condition === undefined && !target.condition))) {
+    throw new AutomationError('--wake-when needs a condition.');
+  }
+}
+
+/** Write a condition patch into `path`, byte-surgically (`upsertSection` / `removeSection`). */
+function writeConditionPatch(path: string, patch: UpdateAutomationInput): void {
+  if (patch.condition === null) {
+    patchManifestFrontmatter(path, { condition_wake: null });
+    rewriteManifestText(path, removeSection(readFileSync(path, 'utf-8'), CONDITION_HEADING));
+    return;
+  }
+  if (patch.conditionWake !== undefined) patchManifestFrontmatter(path, { condition_wake: patch.conditionWake === false ? false : null });
+  if (typeof patch.condition === 'string') {
+    rewriteManifestText(path, upsertSection(readFileSync(path, 'utf-8'), CONDITION_HEADING, conditionSectionBody(patch.condition)));
+  }
 }
 
 /** A review mode an edit may write, or a refusal: a typo'd mode would read as `off`. */
@@ -2037,6 +2140,7 @@ function updateLegacyManifest(
     catchupHours: patch.catchupHours,
     photo: patch.photo === undefined ? manifest.photo : patch.photo,
   });
+  checkConditionPatch(patch, { mode, boardOnly: manifest.boardOnly, condition: manifest.condition });
 
   const fields: Record<string, unknown> = { title, mode };
   if (nextSchedule !== undefined) fields.schedule = serializeSchedule(nextSchedule);
@@ -2065,6 +2169,7 @@ function updateLegacyManifest(
     if (!prompt) throw new AutomationError('The prompt cannot be empty — it is what the run actually does.');
     rewriteManifestText(manifest.path, upsertSection(readFileSync(manifest.path, 'utf-8'), 'Prompt', prompt));
   }
+  writeConditionPatch(manifest.path, patch);
   return readAutomationFile(manifest.path);
 }
 
@@ -2108,6 +2213,7 @@ function updateBoundAutomation(
     timeoutMinutes: patch.timeoutMinutes,
     catchupHours: patch.catchupHours,
   });
+  checkConditionPatch(patch, { mode: 'sched', boardOnly: getAgent(contextRoot, job.agent)?.boardOnly === true, condition: job.condition });
 
   const identity: AgentIdentityPatchInput = {};
   if (patch.model !== undefined) identity.model = patch.model;
@@ -2133,6 +2239,7 @@ function updateBoundAutomation(
     const raw = readFileSync(job.path, 'utf-8');
     rewriteManifestText(job.path, text ? upsertSection(raw, JOB_HEADING, text) : removeSection(raw, JOB_HEADING));
   }
+  writeConditionPatch(job.path, patch);
   return readAutomationFile(job.path);
 }
 
@@ -2149,7 +2256,9 @@ function updateAgentOnlyTarget(contextRoot: string, slug: string, patch: UpdateA
     patch.timeoutMinutes !== undefined ||
     patch.catchupHours !== undefined ||
     patch.enabled !== undefined ||
-    patch.review !== undefined;
+    patch.review !== undefined ||
+    patch.condition !== undefined ||
+    patch.conditionWake !== undefined;
   if (schedulish) {
     throw new AutomationError(`"${slug}" is an agent you only call: give it an automation to put it on a schedule.`);
   }

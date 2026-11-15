@@ -21,7 +21,7 @@ import { getAutomation, getRunTarget } from '../automations/store.js';
 import { approvalCardFacts, schedulerInstalled } from '../automations/approval-card.js';
 import { checkApproval } from '../automations/registry.js';
 import { formatLocalFire } from '../automations/schedule.js';
-import { SCHEDULE_LINE, fireClock, quotedJob, scheduleJob } from './schedule-job.js';
+import { SCHEDULE_LINE, fireClock, quotedJob, scheduleDataLines, scheduleJob } from './schedule-job.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
@@ -1869,7 +1869,7 @@ function scheduleItemLines(root: string, item: SuperQueueItem): string[] {
   const head = `- item=${item.id} event=schedule automation=${slug}${item.fire ? ` at=${fireClock(item.fire)}` : ''}`;
   const job = slug ? scheduleJob(rootOf(root), slug) : null;
   if (!job || !job.ok) return [`${head} state=${job ? job.reason : 'gone'}`];
-  return [head, `  job: ${quotedJob(job.job)}`];
+  return [head, `  job: ${quotedJob(job.job)}`, ...scheduleDataLines(item.conditionData).map((l) => `    ${l}`)];
 }
 
 /** A member decision (`member=`), its live state read at delivery: approved here, on or off. */

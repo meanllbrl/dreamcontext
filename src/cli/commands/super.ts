@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { SUPER_CONDITION_HELP } from '../../lib/automations/condition.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -444,7 +445,9 @@ export function registerSuperCommand(program: Command): void {
     .option('--days <daily|mon,wed|mon-fri>', 'Which days (default daily)')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes: auto = wherever he is (Telegram while he is away, else the Mac; your turns only), telegram, or mac')
     .option('--headless', 'A plain automation that runs without you (its result reaches Telegram with --reply telegram)')
-    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}) }));
+    .option('--condition <script>', `A shell script that runs first at that time, with no model. ${SUPER_CONDITION_HELP}`)
+    .option('--wake-when <true|false>', 'With --condition: wake when the script is true (exit 0, default) or when it is NOT true (exit 1)')
+    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean; condition?: string; wakeWhen?: string }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}), ...(o.condition !== undefined ? { condition: o.condition } : {}), ...(o.wakeWhen !== undefined ? { wakeWhen: o.wakeWhen } : {}) }));
   sc.command('list')
     .description('Every scheduled job: id, when, where the answer goes, next run, last result')
     .action(() => run('schedule', { op: 'list' }));
@@ -454,7 +457,10 @@ export function registerSuperCommand(program: Command): void {
     .option('--at <HH:MM>', 'New time')
     .option('--days <daily|mon,wed|mon-fri>', 'New days')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes now ("send it to the Mac/Telegram")')
-    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string }) => run('schedule', { op: 'change', id, ...o }));
+    .option('--condition <script>', 'A new condition script (it pauses the job until the owner approves it on its card)')
+    .option('--no-condition', 'Remove the condition')
+    .option('--wake-when <true|false>', 'Wake when the condition is true or when it is NOT true')
+    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string; condition?: string | false; wakeWhen?: string }) => run('schedule', { op: 'change', id, ...o }));
   sc.command('cancel <id>')
     .description('Remove a scheduled job')
     .action((id: string) => run('schedule', { op: 'cancel', id }));

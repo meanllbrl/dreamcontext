@@ -768,6 +768,8 @@ export interface SuperQueueItem {
   /** A `schedule` item's fire (ISO): the Super automation's turn the owner scheduled (`automation`
    *  names it). The job text is read from the approved manifest at delivery, never stored here. */
   fire?: string;
+  /** A `schedule` item's condition output (kosullu-otomasyon C6): data the turn fences. */
+  conditionData?: string;
   /** A `member` item: the kind of the member's item it mirrors (`answers` names that item). */
   of?: MemberItemOf;
   /** An OWN item (K1): its `sessionId` is the record's own session. Only on `question`,

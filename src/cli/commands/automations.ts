@@ -106,10 +106,20 @@ import {
   checkApproval,
   approveAutomation,
   approvalFields,
+  approvedTarget,
+  conditionNeedsWitness,
+  getApproval,
+  manifestConditionSha,
+  manifestHash,
   registerProject,
   revokeApproval,
   readDispatcherHeartbeat,
+  type ConditionWitness,
 } from '../../lib/automations/registry.js';
+import { conditionEnv, runCondition, visibleScript, conditionWakes } from '../../lib/automations/condition.js';
+import { withConditionValidity } from '../../lib/agents/compose.js';
+import { agentDriven } from '../../lib/agent-filing-guard.js';
+import { placement } from '../../lib/agents/active.js';
 import { runAutomation, killRunGroup, type RunOutcome, type KillRunResult } from '../../lib/automations/runner.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import { tickProject, tickAll, type TickProjectResult, type TickAllResult } from '../../lib/automations/tick.js';
@@ -301,7 +311,8 @@ function createBoundFromFlags(
   /** The owner consented to this write: his terminal, or his yes on a `propose --routine`. */
   stamp: boolean,
   opts: { title: string; slot: string[]; days?: string; at?: string; mode?: string; timeout?: string; catchup?: string;
-    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string; app?: string; appTools?: string },
+    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string; app?: string; appTools?: string;
+    condition?: string | false; wakeWhen?: string },
 ): AutomationManifest | null {
   try {
     const agentSlug = (opts.agent ?? '').trim();
@@ -344,8 +355,11 @@ function createBoundFromFlags(
       review: opts.review as ReviewMode | undefined,
       ...appOption(root, opts.app),
       ...appToolsOption(opts.appTools),
-    }, approveNow ? { approve: { now: new Date() } } : {});
-    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${approveNow ? ' (approved on this machine)' : ''}.`);
+      ...createConditionInput(opts),
+    }, approveNow ? { approve: { now: new Date(), witness: terminalWitness() } } : {});
+    // What really happened: a condition nobody here witnessed waits (C2).
+    const stampedNow = approveNow && checkApproval(projectRoot, manifest, undefined, 'run').approved;
+    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stampedNow ? ' (approved on this machine)' : ''}.`);
     // Made by an agent, the crew or a session: traced like `agents create`, whether it stamped or
     // waits, with what it widened (it runs on a schedule), so the owner reads it on the member's page.
     if (!stamp) {
@@ -354,12 +368,51 @@ function createBoundFromFlags(
       });
     }
     if (!approveNow) printOwnerApprovalCard(manifest.slug, risks);
+    else if (!stampedNow) printConditionState(root, manifest);
     if (opts.shared) printPublishedPaths(manifest.slug, shareWithAgent(root, manifest.slug, agentSlug));
     return manifest;
   } catch (err) {
     handleAutomationsError(err);
     return null;
   }
+}
+
+/**
+ * `edit --condition|--no-condition|--wake-when`: write it, then re-stamp only a target that was
+ * approved before, only when nothing but this patch moved (the re-read hash is the pre-image plus
+ * the patch), and only with the owner's own terminal as the condition's witness. Otherwise the
+ * change waits for his card, and the routine keeps running its last approved condition.
+ */
+function editCondition(root: string, slug: string, cond: { condition?: string | null; conditionWake?: boolean }): void {
+  const projectRoot = projectRootFor(root);
+  const before = getAutomation(root, slug);
+  if (!before) throw new AutomationError(`No such automation: ${slug}`);
+  if (before.runKind === 'agent' || before.mode === 'call') {
+    throw new AutomationError(`"${slug}" is an agent you only call: a condition belongs to a routine with a schedule.`);
+  }
+  const wasApproved = checkApproval(projectRoot, before, undefined, 'run').approved;
+  const nextCondition = cond.condition === undefined ? before.condition : cond.condition ?? undefined;
+  const wake = cond.condition === null ? true : cond.conditionWake ?? before.conditionWake !== false;
+  const expected = { ...before, condition: nextCondition, conditionWake: nextCondition && !wake ? (false as const) : undefined, conditionError: undefined };
+  const after = updateAutomation(root, slug, cond);
+  const restamp = wasApproved && manifestHash(withConditionValidity(expected as AutomationManifest)) === manifestHash(after);
+  const stamped = restamp && approveMadeHere(root, after, new Date(), undefined, undefined, terminalWitness());
+  success(after.condition
+    ? `"${slug}" checks its condition first (${after.conditionWake === false ? 'wakes when NOT true' : 'wakes when true'})${stamped ? ' (approved on this machine)' : ''}.`
+    : `"${slug}" has no condition now: every scheduled fire wakes its agent${stamped ? ' (approved on this machine)' : ''}.`);
+  if (!stamped && !checkApproval(projectRoot, after, undefined, 'run').approved) {
+    warn('  The change waits for the owner: he approves it on its card. Until then it runs its last approved version.');
+    console.log(approvalCardBlock(slug));
+  }
+}
+
+/** A create's condition flags (`--no-condition` means nothing on a create). */
+function createConditionInput(o: { condition?: string | false; wakeWhen?: string }): { condition?: string; conditionWake?: boolean } {
+  const f = conditionFlags(o);
+  return {
+    ...(typeof f.condition === 'string' ? { condition: f.condition } : {}),
+    ...(f.conditionWake !== undefined ? { conditionWake: f.conditionWake } : {}),
+  };
 }
 
 /** `--app`: only an app registered to THIS project, so a job cannot name a brief that is not there. */
@@ -578,6 +631,9 @@ function printRunOutcome(outcome: RunOutcome): void {
   if (outcome.status === 'ok') {
     success(label);
     if (outcome.outputPath) console.log(chalk.dim(`  output: ${outcome.outputPath}`));
+  } else if (outcome.status === 'condition-false') {
+    // Its condition answered this fire: nothing ran, and that is no failure.
+    console.log(`${outcome.slug}: condition not met — no agent ran`);
   } else if (outcome.status === 'blocked' || outcome.status === 'deferred' || outcome.status === 'orphaned') {
     warn(`${label}${suffix}`);
     process.exitCode = 1;
@@ -586,6 +642,37 @@ function printRunOutcome(outcome: RunOutcome): void {
     process.exitCode = 1;
   }
   if (outcome.denials > 0) warn(`  ${outcome.denials} permission denial(s) during this run.`);
+}
+
+/** The condition sentence every help text and the skill carry (kosullu-otomasyon C7). */
+export const CONDITION_HELP = 'For "check every N, act only if X", a condition script is the better default: '
+  + 'it runs first with no model, and the agent wakes only on its answer (exit 0 = true, exit 1 = false, anything else = a loud error). '
+  + 'A source only an MCP connector reaches (claude.ai Gmail, Slack) cannot be checked by a script.';
+
+/** `--condition` / `--no-condition` / `--wake-when` as store input. */
+function conditionFlags(o: { condition?: string | false; wakeWhen?: string }): { condition?: string | null; conditionWake?: boolean } {
+  const out: { condition?: string | null; conditionWake?: boolean } = {};
+  if (o.condition === false) out.condition = null;
+  else if (typeof o.condition === 'string') out.condition = o.condition;
+  if (o.wakeWhen !== undefined) {
+    const w = o.wakeWhen.trim().toLowerCase();
+    if (w !== 'true' && w !== 'false') throw new AutomationError('--wake-when takes true (wake when the script is true) or false (wake when it is not).');
+    out.conditionWake = w === 'true';
+  }
+  return out;
+}
+
+/** The witness the owner's own terminal gives a condition: none while an agent drives this process. */
+function terminalWitness(): ConditionWitness | undefined {
+  return agentDriven(process.env) ? undefined : { kind: 'owner-terminal' };
+}
+
+/** What a write says about a condition: approved here, or waiting for the owner's card. */
+function printConditionState(root: string, m: AutomationManifest): void {
+  if (!m.condition) return;
+  if (checkApproval(projectRootFor(root), m, undefined, 'run').approved) return;
+  warn(`  Its condition script waits for the owner: he approves it on its card, where he reads the script.`);
+  console.log(approvalCardBlock(m.slug));
 }
 
 /**
@@ -609,7 +696,8 @@ function shareWithAgent(root: string, slug: string, agent: string): ShareResult 
  *  session or an agent run, the shells `refuseSelfApproval` refuses. Only decides
  *  what a listing PRINTS; the refusal itself stays `refuseSelfApproval`. */
 function isSelfApprovalShell(env: NodeJS.ProcessEnv): boolean {
-  return ['CLAUDECODE', AGENT_SELF_ENV, 'DREAMCONTEXT_AUTOMATION_RUN'].some((k) => env[k] !== undefined);
+  // Any agent-driven shell, Codex and brain-MCP included (kosullu-otomasyon), is pointed at the page.
+  return agentDriven(env) || [AGENT_SELF_ENV].some((k) => env[k] !== undefined);
 }
 
 /**
@@ -680,6 +768,12 @@ async function answerApprovalQuestion(root: string, question: AutomationQuestion
   // Claude session or an agent run, like `automations approve` and `agents approve`.
   // Rejecting stays open — it grants nothing.
   if (APPROVAL_DECISIONS[decision] && refuseSelfApproval(process.env)) return;
+  // A condition is approved only where the owner reads the script (C2): never through a question.
+  if (APPROVAL_DECISIONS[decision] && manifest && conditionNeedsWitness(manifest, getApproval(projectRootFor(root), manifest.slug, undefined, manifest.runKind === 'agent' ? 'agent' : 'automation'))) {
+    error(`"${question.slug}" has a condition script: approve it on its card in the chat or on the AI Team page, where you read the script.`);
+    process.exitCode = 1;
+    return;
+  }
 
   const claim = claimQuestion(root, question, answerText, 'cli');
   if (!claim.claimed) {
@@ -948,6 +1042,8 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--app-tools <refs>', 'App tools this job may run to CHANGE something while nobody watches, comma-separated <app>/<tool> (approved with the job)')
     .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
     .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
+    .option('--condition <script>', `A shell script each scheduled fire runs first, with no model. ${CONDITION_HELP} Combine checks inside the script (&&, ||, !). Its stdout reaches the agent as data. Approved by the owner on its card when an agent writes it`)
+    .option('--wake-when <true|false>', 'With --condition: wake the agent when the script is true (exit 0, the default) or when it is NOT true (exit 1)')
     .option(
       '--answer <question-id>',
       'Inside a run: the routine proposal (`propose --routine`) the owner answered with its first choice',
@@ -957,6 +1053,7 @@ export function registerAutomationsCommand(program: Command): void {
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
       learning?: boolean; review?: string; whiteboard?: string; boardOnly?: boolean; agent?: string; job?: string; answer?: string; app?: string; appTools?: string;
+      condition?: string | false; wakeWhen?: string;
     }) => {
       const root = ensureContextRoot();
       // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
@@ -1043,6 +1140,7 @@ export function registerAutomationsCommand(program: Command): void {
           ...(opts.boardOnly ? { boardOnly: true } : {}),
           ...appOption(root, opts.app),
           ...appToolsOption(opts.appTools),
+          ...createConditionInput(opts),
         });
 
         // Every fresh automation gets a `## Flow` block that actually
@@ -1062,11 +1160,13 @@ export function registerAutomationsCommand(program: Command): void {
         // An agent's create goes through the same door as `agents create`: made on this Mac, so it
         // stamps, unless a background process wrote risky text (`judgeAgentCreate`).
         const judged = stamp || !createNeedsOwner() ? null : judgeAgentCreate(projectRoot, manifest);
-        const stamped = stamp || (judged?.ok ?? false);
-        if (stamped) approveMadeHere(root, manifest, new Date());
+        const wantsStamp = stamp || (judged?.ok ?? false);
+        // A condition stamps only with the owner's own terminal as its witness (C2); else it waits.
+        const stamped = wantsStamp && approveMadeHere(root, manifest, new Date(), undefined, undefined, terminalWitness());
 
         success(`Automation created: automations/${manifest.slug}.md${stamped ? ' (approved on this machine)' : ''}.`);
-        if (!stamped) printOwnerApprovalCard(manifest.slug, judged?.risks ?? []);
+        if (!wantsStamp) printOwnerApprovalCard(manifest.slug, judged?.risks ?? []);
+        else if (!stamped) printConditionState(root, manifest);
         if (manifest.whiteboard) {
           console.log(chalk.dim(`  Home board: ${manifest.whiteboard}. Every run is scoped to that board.`));
         }
@@ -1142,7 +1242,8 @@ export function registerAutomationsCommand(program: Command): void {
         // deliberate choice as a malformed manifest.
         const next = nextFireLabel(m, now, projectRoot);
         const cadence = m.scheduleError && m.mode !== 'call' ? chalk.red(cadenceLabel(m)) : cadenceLabel(m);
-        console.log(`  ${chalk.magentaBright(m.slug)} — ${m.title} · ${cadence}${next ? ` · next ${next}` : ''}${enabledBadge}${statusBit}${approvalBadge} · ${badge}`);
+        const conditionBadge = m.condition || m.conditionError ? (m.conditionError ? chalk.red(' ⧖ condition (invalid)') : ' ⧖ condition') : '';
+        console.log(`  ${chalk.magentaBright(m.slug)} — ${m.title} · ${cadence}${next ? ` · next ${next}` : ''}${conditionBadge}${enabledBadge}${statusBit}${approvalBadge} · ${badge}`);
         if (warning) warn(`    ${warning}`);
       }
     });
@@ -1199,6 +1300,11 @@ export function registerAutomationsCommand(program: Command): void {
         if (next) console.log(`  next fire: ${next}`);
       }
       console.log(`  enabled: ${manifest.enabled}`);
+      if (manifest.condition || manifest.conditionError) {
+        console.log(`  condition: ${manifest.conditionWake === false ? 'wakes the agent when the script is NOT true (exit 1)' : 'wakes the agent when the script is true (exit 0)'}`);
+        if (manifest.condition) console.log(visibleScript(manifest.condition, '    '));
+        if (manifest.conditionError) console.log(chalk.red(`    invalid, it never fires: ${manifest.conditionError}`));
+      }
       // Only when set: an ordinary agent has no board, and a "(none)" line on
       // every agent would read as something missing. A board that has gone
       // away (deleted, or not synced here yet) is called out: the spawn refuses it.
@@ -1900,7 +2006,10 @@ export function registerAutomationsCommand(program: Command): void {
           }
           fireAt = due.fireAt ?? now;
         }
-        const outcome = await runAutomation(root, slug, { force: opts.force, fireAt, now: () => now, host: 'cli' });
+        // Only the due-check branch is a scheduled fire (its condition runs first); --force and a
+        // call are a human asking, which always gets the agent.
+        const scheduled = !opts.force && manifest.mode !== 'call';
+        const outcome = await runAutomation(root, slug, { force: opts.force, fireAt, now: () => now, host: 'cli', ...(scheduled ? { scheduledFire: true as const } : {}) });
         printRunOutcome(outcome);
       } catch (err) {
         handleAutomationsError(err);
@@ -1970,7 +2079,7 @@ export function registerAutomationsCommand(program: Command): void {
 
           const logFn = opts.json ? undefined : (l: string) => console.log(chalk.dim(`  ${l}`));
           logFn?.(`[automations] ${slug} is due (fire ${due.fireAt?.toISOString() ?? 'unknown'}) — running`);
-          const outcome = await runAutomation(root, slug, { fireAt: due.fireAt ?? now, now: () => now, host: 'cli', log: logFn });
+          const outcome = await runAutomation(root, slug, { fireAt: due.fireAt ?? now, now: () => now, host: 'cli', log: logFn, scheduledFire: true });
           logFn?.(`[automations] ${slug} finished: ${outcome.status}`);
           if (opts.json) { console.log(JSON.stringify(outcome, null, 2)); return; }
           printRunOutcome(outcome);
@@ -2095,16 +2204,77 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('edit')
     .argument('<slug>', 'Automation or AI Team member slug')
-    .description("Change what a job or a member may run through an app while nobody watches; the owner's approval card asks again")
-    .requiredOption('--app-tools <refs>', 'The full list, comma-separated <app>/<tool> ("" clears it). A member keeps it in its call settings (what dc.team.ask and super team ask may run)')
-    .action((slug: string, opts: { appTools: string }) => {
+    .description("Change a routine's condition, or what a job or a member may run through an app while nobody watches; the owner's approval card asks again when an agent changes it")
+    .option('--app-tools <refs>', 'The full list, comma-separated <app>/<tool> ("" clears it). A member keeps it in its call settings (what dc.team.ask and super team ask may run)')
+    .option('--condition <script>', `Set the routine's condition script. ${CONDITION_HELP}`)
+    .option('--no-condition', 'Remove the condition: every scheduled fire wakes the agent again')
+    .option('--wake-when <true|false>', 'Wake the agent when the condition is true (exit 0, the default) or when it is NOT true (exit 1)')
+    .action((slug: string, opts: { appTools?: string; condition?: string | false; wakeWhen?: string }) => {
       const root = ensureContextRoot();
       try {
-        const list = String(opts.appTools ?? '').split(',').map((x) => x.trim()).filter(Boolean);
-        const out = setAppTools(root, slug, list);
-        const what = out.kind === 'member' ? `member "${slug}"` : `"${slug}"`;
-        success(list.length ? `${what} may run: ${out.appTools.join(', ')}.` : `${what} runs no changing app tool unattended now.`);
-        info('A tool removed stops at once. A tool added runs only after the owner approves the change on its card (AI Team page, or the Automations page).');
+        const cond = conditionFlags(opts);
+        if (opts.appTools === undefined && cond.condition === undefined && cond.conditionWake === undefined) {
+          throw new AutomationError('Nothing to change: pass --app-tools, --condition, --no-condition or --wake-when.');
+        }
+        if (opts.appTools !== undefined) {
+          const list = String(opts.appTools ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+          const out = setAppTools(root, slug, list);
+          const what = out.kind === 'member' ? `member "${slug}"` : `"${slug}"`;
+          success(list.length ? `${what} may run: ${out.appTools.join(', ')}.` : `${what} runs no changing app tool unattended now.`);
+          info('A tool removed stops at once. A tool added runs only after the owner approves the change on its card (AI Team page, or the Automations page).');
+        }
+        if (cond.condition !== undefined || cond.conditionWake !== undefined) editCondition(root, slug, cond);
+      } catch (err) {
+        handleAutomationsError(err);
+      }
+    });
+
+  automations
+    .command('condition')
+    .argument('<slug>', 'Automation slug')
+    .description('Print the APPROVED condition script of a routine; --run executes it once and prints true / false / error and its output (no agent starts, nothing is recorded). Test a draft in your own shell')
+    .option('--run', 'Execute the approved condition once')
+    .action(async (slug: string, opts: { run?: boolean }) => {
+      const root = ensureContextRoot();
+      const projectRoot = projectRootFor(root);
+      const manifest = requireAutomation(root, slug);
+      if (!manifest) return;
+      try {
+        const view = approvedTarget(projectRoot, manifest, undefined, 'run');
+        if (!view.verdict.approved) {
+          error(view.verdict.reason === 'not_owner'
+            ? `"${slug}" belongs to ${view.verdict.owner}: only its owner runs its condition.`
+            : `"${slug}" has no approved condition here: the owner approves it on its card in the chat or on the AI Team page.`);
+          process.exitCode = 1;
+          return;
+        }
+        const m = view.manifest;
+        if (!m.condition) {
+          info(`"${slug}" has no approved condition: every scheduled fire wakes its agent.`);
+          return;
+        }
+        console.log(`condition (${m.conditionWake === false ? 'wakes when NOT true' : 'wakes when true'}):`);
+        console.log(visibleScript(m.condition, '  '));
+        if (view.pending) warn('  A newer condition waits for the owner\'s approval; this is the one that runs until then.');
+        if (!opts.run) return;
+        const placed = placement(root, m.agent || slug, m.owner ?? null);
+        if (!placed.here) {
+          error(`"${slug}" runs on ${placed.name}: bring it here on the AI Team page to run its condition on this machine.`);
+          process.exitCode = 1;
+          return;
+        }
+        const sha = manifestConditionSha(m);
+        if (!sha || view.verdict.entry.conditionWitnessed !== sha) {
+          error(`"${slug}"'s condition is not approved by you: approve it on its card, where you read the script.`);
+          process.exitCode = 1;
+          return;
+        }
+        const result = await runCondition(m.condition, { cwd: projectRoot, env: conditionEnv({ slug, fireAt: new Date() }) });
+        const wakes = result.verdict !== 'error' && conditionWakes(result.verdict, m.conditionWake !== false);
+        console.log(`${result.verdict}${result.verdict === 'error' ? `: ${result.reason ?? ''}` : wakes ? ' — the agent would wake' : ' — the agent would not wake'}`);
+        if (result.data) console.log(result.data);
+        if (result.stderrTail.trim()) console.log(chalk.dim(result.stderrTail.trim()));
+        if (result.verdict === 'error') process.exitCode = 1;
       } catch (err) {
         handleAutomationsError(err);
       }
@@ -2239,11 +2409,18 @@ export function registerAutomationsCommand(program: Command): void {
         // change hiding behind "the prompt looks the same") — showing every
         // field in full cannot miss a change in any of them.
         const fields = approvalFields(manifest);
+        const shownHash = manifestHash(manifest);
         for (const key of APPROVAL_DIFF_FIELDS) {
           const value = fields[key];
           console.log(chalk.dim(`  ${key}:`));
           // An object field (the `## Flow` graph) is printed as JSON: `String()` gave the
           // reviewer "[object Object]" for a field the hash covers, i.e. nothing to review.
+          if (key === 'condition' && typeof value === 'string' && value) {
+            // The script runs as a plain shell command on this Mac: every line, hidden characters shown.
+            console.log(visibleScript(value, '    '));
+            console.log(chalk.dim('    (runs as a plain shell command on this Mac, with your permissions and the internet, outside the agent\'s limits)'));
+            continue;
+          }
           const shown = value === null || value === ''
             ? chalk.dim('(none)')
             : typeof value === 'object' ? JSON.stringify(value, null, 2).replace(/\n/g, '\n    ') : String(value);
@@ -2279,7 +2456,8 @@ export function registerAutomationsCommand(program: Command): void {
           }
         }
 
-        approveAutomation(projectRoot, manifest, new Date());
+        // The manifest printed above is what was shown: its hash is the condition's witness (C2).
+        approveAutomation(projectRoot, manifest, new Date(), undefined, undefined, agentDriven(process.env) ? undefined : { kind: 'shown', hash: shownHash });
         settleApprovalQuestions(root, slug);
         success(`"${slug}" approved.`);
       } catch (err) {

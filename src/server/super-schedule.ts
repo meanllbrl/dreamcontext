@@ -35,6 +35,7 @@ import {
   claimScheduleFire, listScheduleItems, markTold, releaseScheduleFire, removeScheduleItem, toldKey, type ScheduleItem, type ToldWhat,
 } from '../lib/super/schedule-queue.js';
 import { fireClock, scheduleJob, scheduleTurnText } from '../lib/super/schedule-job.js';
+import { isConditionData } from '../lib/automations/condition.js';
 import { openInBackground, telegramHub, type TelegramHub } from './telegram/hub.js';
 import { addPadNote } from './routes/super.js';
 
@@ -61,7 +62,7 @@ export interface ScheduleDeps {
   /** The Super's on/off and session (tests inject one). */
   superState?: (contextRoot: string) => Promise<{ enabled: boolean; session: string | null }>;
   /** Puts the `schedule` item into the Super inbox and pumps it (tests inject one). */
-  enqueue?: (contextRoot: string, slug: string, fireIso: string) => Promise<boolean>;
+  enqueue?: (contextRoot: string, slug: string, fireIso: string, data?: string) => Promise<boolean>;
 }
 
 /** Tells the owner one line about a Super automation: through the Super bot when bound, else a
@@ -165,22 +166,22 @@ async function deliver(contextRoot: string, scope: string, item: ScheduleItem, r
   // A rotating Super (between /clear and its first turn) takes nothing on the owner path: the
   // inbox holds it until the fresh session has read its handoff.
   if (wantsTelegram && bound && !isRotating(session)) {
-    const ref = await hub!.injectText(ab!, hub!.syntheticUpdateId(), scheduleTurnText(item.slug, item.fireIso, job), session, { kind: 'schedule' });
+    const ref = await hub!.injectText(ab!, hub!.syntheticUpdateId(), scheduleTurnText(item.slug, item.fireIso, job, item.data), session, { kind: 'schedule' });
     if (ref) { removeScheduleItem(scope, item, home); return; }
   }
-  const queued = await (deps.enqueue ?? ((root, slug, fireIso) => enqueueSchedule(root, slug, fireIso, session, deps)))(contextRoot, item.slug, item.fireIso);
+  const queued = await (deps.enqueue ?? ((root, slug, fireIso, data) => enqueueSchedule(root, slug, fireIso, session, deps, data)))(contextRoot, item.slug, item.fireIso, item.data);
   // The Super went off between the check and the queue: the item stays and waits for it.
   if (!queued) { releaseScheduleFire(scope, item.slug, item.fireIso, home); return; }
   removeScheduleItem(scope, item, home);
 }
 
 /** The Mac door: a `schedule` item in the Super inbox, delivered when the Super is idle. */
-async function enqueueSchedule(contextRoot: string, slug: string, fireIso: string, session: string, deps: ScheduleDeps): Promise<boolean> {
+async function enqueueSchedule(contextRoot: string, slug: string, fireIso: string, session: string, deps: ScheduleDeps, data?: string): Promise<boolean> {
   let queued = false;
   await writeSuper(contextRoot, (s) => {
     if (!s.enabled || !s.session) return;
     queued = true;
-    s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'schedule', state: 'pending', createdAt: (deps.now ?? Date.now)(), automation: slug, fire: fireIso });
+    s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'schedule', state: 'pending', createdAt: (deps.now ?? Date.now)(), automation: slug, fire: fireIso, ...(isConditionData(data) && data ? { conditionData: data } : {}) });
     countEvent(s);
   });
   if (!queued) return false;
@@ -241,9 +242,26 @@ function replyOf(m: Pick<AutomationManifest, 'target' | 'reply'>): AutomationRep
   return effectiveReply(m);
 }
 
+/** The plain pause sentence a condition the owner has not approved yet carries (kosullu-otomasyon D10). */
+export const CONDITION_WAITS_LINE = 'Koşul onayını bekliyor; sen onaylayana kadar bu iş çalışmaz.';
+
 /** The verbatim confirmation the owner gets on every add and change (Decision 4). */
-export function scheduleEcho(verb: 'Kuruldu' | 'Değişti', m: AutomationManifest): string {
-  return `⏰ ${verb}: ${scheduleWhen(m)} · cevap: ${TR_REPLY[replyOf(m)]}${m.target === 'super' ? '' : ' · Super kapalıyken de çalışır'} · «${m.prompt}»`;
+export function scheduleEcho(verb: 'Kuruldu' | 'Değişti', m: AutomationManifest, waits = false): string {
+  const condition = m.condition ? ` · önce betik bakar (${m.conditionWake === false ? 'doğru değilse uyanır' : 'doğruysa uyanır'})` : '';
+  return `⏰ ${verb}: ${scheduleWhen(m)} · cevap: ${TR_REPLY[replyOf(m)]}${m.target === 'super' ? '' : ' · Super kapalıyken de çalışır'}${condition} · «${m.prompt}»${waits ? `\n${CONDITION_WAITS_LINE}` : ''}`;
+}
+
+/** `--condition` / `--no-condition` / `--wake-when` from the verb's body, or an error message. */
+function conditionPatch(b: Record<string, unknown>): { condition?: string | null; conditionWake?: boolean } | string {
+  const out: { condition?: string | null; conditionWake?: boolean } = {};
+  if (b.condition === false || b.noCondition === true) out.condition = null;
+  else if (typeof b.condition === 'string') out.condition = b.condition;
+  else if (b.condition !== undefined) return '--condition is a shell script';
+  if (b.wakeWhen !== undefined) {
+    if (b.wakeWhen !== 'true' && b.wakeWhen !== 'false') return '--wake-when is true or false';
+    out.conditionWake = b.wakeWhen === 'true';
+  }
+  return out;
 }
 
 function parseDays(v: unknown): 'daily' | Weekday[] | null {
@@ -269,6 +287,7 @@ function row(root: string, m: AutomationManifest, now: Date): Record<string, unk
   return {
     id: m.slug, when: scheduleWhen(m), reply: replyOf(m), kind: m.target === 'super' ? 'super' : 'headless',
     enabled: m.enabled, job: m.prompt, next: next ? formatLocalFire(next) : null,
+    ...(m.condition ? { condition: m.condition, wakeWhen: m.conditionWake === false ? 'false' : 'true' } : {}),
     last: cache?.history?.[0] ? { at: cache.history[0].firedAt, status: cache.history[0].status } : null,
   };
 }
@@ -293,6 +312,8 @@ export async function scheduleVerb(contextRoot: string, b: Record<string, unknow
     const reply = parseReply(b.reply);
     if (reply === null) return bad('invalid_args', `--reply is one of ${AUTOMATION_REPLIES.join(' | ')}`);
     if (headless && reply === 'auto') return bad('invalid_args', 'a --headless job has no Super to follow him: --reply telegram or mac');
+    const cond = conditionPatch(b);
+    if (typeof cond === 'string') return bad('invalid_args', cond);
     const slug = `${SCHEDULE_SLUG_PREFIX}${at.replace(':', '')}-${randomBytes(3).toString('hex')}`;
     let m: AutomationManifest;
     try {
@@ -301,20 +322,24 @@ export async function scheduleVerb(contextRoot: string, b: Record<string, unknow
         slug, title: job.length > 60 ? `${job.slice(0, 59)}…` : job, mode: 'sched', days, at, prompt: job,
         enabled: true, shared: false, notify: true,
         ...(headless ? (reply === 'telegram' ? { reply: 'telegram' as const } : {}) : { target: 'super' as const, reply: reply ?? 'auto' }),
+        ...(typeof cond.condition === 'string' ? { condition: cond.condition } : {}),
+        ...(cond.conditionWake !== undefined ? { conditionWake: cond.conditionWake } : {}),
       });
     } catch (err) {
       return bad('not_created', (err as Error).message, 409);
     }
+    let stamped: boolean;
     try {
       // His own Super set it on his own message: approved here with that consent (C2), no card.
-      approveMadeHere(contextRoot, m, now, deps.home, 'super-verb');
+      // A condition is never stamped by the Super: it waits for his card, where he reads it.
+      stamped = approveMadeHere(contextRoot, m, now, deps.home, 'super-verb');
     } catch (err) {
       // Never left behind unapproved: the owner asked for a schedule, not a card.
       try { removeAutomation(contextRoot, m.slug); } catch { /* the card shows it */ }
       return bad('not_created', (err as Error).message, 409);
     }
-    await sayToOwner(contextRoot, scheduleEcho('Kuruldu', m), deps);
-    return { ok: true, result: { ...row(contextRoot, m, now), echoed: true } };
+    await sayToOwner(contextRoot, scheduleEcho('Kuruldu', m, !stamped), deps);
+    return { ok: true, result: { ...row(contextRoot, m, now), echoed: true, ...(stamped ? {} : { approval: 'waits', card: m.slug, note: CONDITION_WAITS_LINE }) } };
   }
   if (op === 'change') {
     const m = ours(contextRoot, b.id);
@@ -341,16 +366,20 @@ export async function scheduleVerb(contextRoot: string, b: Record<string, unknow
       if (m.target !== 'super' && r === 'auto') return bad('invalid_args', 'a headless job takes --reply telegram or mac');
       patch.reply = r;
     }
-    if (!Object.keys(patch).length) return bad('invalid_args', 'say what changes: --job, --days, --at or --reply');
+    const cond = conditionPatch(b);
+    if (typeof cond === 'string') return bad('invalid_args', cond);
+    Object.assign(patch, cond);
+    if (!Object.keys(patch).length) return bad('invalid_args', 'say what changes: --job, --days, --at, --reply, --condition, --no-condition or --wake-when');
     let after: AutomationManifest;
+    let stamped: boolean;
     try {
       after = updateAutomation(contextRoot, m.slug, patch);
-      approveMadeHere(contextRoot, after, now, deps.home, 'super-verb');
+      stamped = approveMadeHere(contextRoot, after, now, deps.home, 'super-verb');
     } catch (err) {
       return bad('not_changed', (err as Error).message, 409);
     }
-    await sayToOwner(contextRoot, scheduleEcho('Değişti', after), deps);
-    return { ok: true, result: { ...row(contextRoot, after, now), echoed: true } };
+    await sayToOwner(contextRoot, scheduleEcho('Değişti', after, !stamped), deps);
+    return { ok: true, result: { ...row(contextRoot, after, now), echoed: true, ...(stamped ? {} : { approval: 'waits', paused: true, card: after.slug, note: CONDITION_WAITS_LINE }) } };
   }
   if (op === 'cancel') {
     const m = ours(contextRoot, b.id);

@@ -21,6 +21,8 @@ import { assertOwned, currentLogin, foreignOwner } from '../agents/owner.js';
 import { GLOBAL_REGISTRY_KEY } from '../agents/scope.js';
 import { overlayApprovedText, pruneApprovedTexts, readApprovedText, saveApprovedText } from './approved-text.js';
 import { realPath } from '../real-path.js';
+import { conditionSha } from './condition.js';
+import { showHiddenChars } from '../hidden-chars.js';
 
 /**
  * Automations registry — the machine-local approval tripwire + project
@@ -96,6 +98,33 @@ export interface ApprovalEntry {
    * re-stamp of the SAME hash. Outside the hashed payload.
    */
   consent?: ApprovalConsent;
+  /**
+   * The witness mark of a condition script (kosullu-otomasyon C2): the `conditionSha` of the
+   * condition (and its wake switch) a HUMAN saw or wrote when this entry was stamped. A condition
+   * runs only under an entry whose mark equals its sha. Written only by {@link approvalEntryFor},
+   * only from a witness (the owner's own terminal, a card whose shown hash is the disk's) or
+   * carried over unchanged from the entry it replaces. Outside the hashed payload.
+   */
+  conditionWitnessed?: string;
+}
+
+/**
+ * Who saw a condition being approved. `owner-terminal`: the owner wrote it at his own terminal
+ * (`create`/`edit` with no agent marker, `agentDriven` false). `shown`: a surface showed him the
+ * manifest whose hash is `hash` (the CLI's `approve`, the Sleepy card, the AI Team approve). The
+ * shown hash proves the view was fresh, not who sent it: the owner-page origin check stays the
+ * boundary on the server.
+ */
+export type ConditionWitness = { kind: 'owner-terminal' } | { kind: 'shown'; hash: string };
+
+/** Thrown when a manifest's condition would be stamped without a human witness, or the manifest
+ *  cannot run at all (`conditionError`). Nothing is written. Callers leave the routine waiting
+ *  for the owner's card. */
+export class ConditionNeedsWitness extends AutomationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConditionNeedsWitness';
+  }
 }
 
 /** See {@link ApprovalEntry.consent}. */
@@ -176,7 +205,8 @@ function isValidApprovalEntry(v: unknown): v is ApprovalEntry {
     (e.boardScope === undefined || (typeof e.boardScope === 'string' && BOARD_SCOPE_MARKERS.has(e.boardScope))) &&
     // Display data only: a malformed map drops the entry like any other bad field (fail closed).
     (e.fieldHashes === undefined || isFieldHashMap(e.fieldHashes)) &&
-    (e.consent === undefined || (typeof e.consent === 'string' && APPROVAL_CONSENTS.has(e.consent)))
+    (e.consent === undefined || (typeof e.consent === 'string' && APPROVAL_CONSENTS.has(e.consent))) &&
+    (e.conditionWitnessed === undefined || (typeof e.conditionWitnessed === 'string' && /^[0-9a-f]{64}$/.test(e.conditionWitnessed)))
   );
 }
 
@@ -519,6 +549,11 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // Super session and whether its result leaves the Mac through Telegram.
     ...(m.target === 'super' ? { target: 'super' } : {}),
     ...(storedReply(m) ? { reply: storedReply(m) } : {}),
+    // OMITTED when absent, and LAST (kosullu-otomasyon C2; pattern: a new field in a consent hash
+    // must not re-block everyone): no routine has a condition today, so every hash stays what it
+    // was. Present, it decides whether the agent wakes at all, and runs as a shell command here.
+    ...(m.condition ? { condition: normalizeText(m.condition) } : {}),
+    ...(m.condition && m.conditionWake === false ? { conditionWake: false } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -593,6 +628,9 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     // Always present ('' at the default): the reviewer sees a Super turn or a Telegram outflow appear.
     target: m.target === 'super' ? 'super' : '',
     reply: storedReply(m) ?? '',
+    // Always present ('' when none): the reviewer reads the script that runs before any agent.
+    condition: m.condition ?? '',
+    conditionWake: m.condition ? (m.conditionWake === false ? 'false' : 'true') : '',
   };
 }
 
@@ -639,7 +677,9 @@ function renderApprovalValue(value: ApprovalPayloadFields[keyof ApprovalPayloadF
  */
 export function renderApprovalReview(fields: ApprovalPayloadFields): string {
   return APPROVAL_DIFF_FIELDS.map((field) => {
-    const value = renderApprovalValue(fields[field]);
+    const raw = renderApprovalValue(fields[field]);
+    // The condition runs as a shell command: every hidden character is drawn as a visible escape.
+    const value = field === 'condition' ? showHiddenChars(raw) : raw;
     return value.includes('\n') ? `${field}:\n  ${value.replace(/\n/g, '\n  ')}` : `${field}: ${value}`;
   }).join('\n');
 }
@@ -840,10 +880,43 @@ function boardScopeMarkFor(m: AutomationManifest, prev?: ApprovalEntry | null, a
   return boardHoldIn(prev) || boardHoldIn(agentEntry) ? 'held' : 'open';
 }
 
+/** The witness sha of `m`'s condition, or null when it has none. */
+export function manifestConditionSha(m: AutomationManifest): string | null {
+  return m.condition ? conditionSha(m.condition, m.conditionWake !== false) : null;
+}
+
+/** True when `m` has a condition that `entry`'s witness mark does not cover: such a target must
+ *  never get a model-written approval question, and its answers stay unclaimed (C2). */
+export function conditionNeedsWitness(m: AutomationManifest, entry: ApprovalEntry | null | undefined): boolean {
+  const sha = manifestConditionSha(m);
+  return sha !== null && entry?.conditionWitnessed !== sha;
+}
+
+/**
+ * The mark a new entry for `m` carries, or a throw. THE ONE place a condition's witness mark is
+ * written: a manifest whose condition is not covered by a witness (or by `prev`'s own mark for the
+ * same sha) is refused before anything is written.
+ */
+function conditionMarkFor(m: AutomationManifest, hash: string, prev?: ApprovalEntry | null, witness?: ConditionWitness): string | undefined {
+  if (m.conditionError) {
+    throw new ConditionNeedsWitness(`Not approved: its condition cannot run (${m.conditionError}).`);
+  }
+  const sha = manifestConditionSha(m);
+  if (sha === null) return undefined;
+  if (witness?.kind === 'owner-terminal') return sha;
+  if (witness?.kind === 'shown') {
+    if (witness.hash === hash) return sha;
+    throw new ConditionNeedsWitness('Not approved: it changed since you looked. Reload it and approve what you see.');
+  }
+  if (prev?.conditionWitnessed === sha) return sha;
+  throw new ConditionNeedsWitness('Not approved: its condition script waits for you. Approve it on its card, where you read the script.');
+}
+
 /** A fresh approval entry for `m` as it stands right now. */
-function approvalEntryFor(m: AutomationManifest, now: Date, prev?: ApprovalEntry | null, agentEntry?: ApprovalEntry | null, consentGiven?: ApprovalConsent): ApprovalEntry {
+function approvalEntryFor(m: AutomationManifest, now: Date, prev?: ApprovalEntry | null, agentEntry?: ApprovalEntry | null, consentGiven?: ApprovalConsent, witness?: ConditionWitness): ApprovalEntry {
   const boardScope = boardScopeMarkFor(m, prev, agentEntry);
   const hash = manifestHash(m);
+  const conditionWitnessed = conditionMarkFor(m, hash, prev, witness);
   // Consent belongs to a hash: a new one names its giver; a re-stamp of the same hash keeps it.
   const consent = needsOwnerConsent(m) ? (consentGiven ?? (prev?.manifestSha256 === hash ? prev.consent : undefined)) : undefined;
   return {
@@ -855,6 +928,7 @@ function approvalEntryFor(m: AutomationManifest, now: Date, prev?: ApprovalEntry
     fieldHashes: approvalFieldHashes(m),
     ...(boardScope ? { boardScope } : {}),
     ...(consent ? { consent } : {}),
+    ...(conditionWitnessed ? { conditionWitnessed } : {}),
   };
 }
 
@@ -928,21 +1002,23 @@ function mutateProject<T>(projectRoot: string, home: string | undefined, mutate:
  * on, because `agentApprovals[slug]` exists). A pair's automation record (slot
  * `'automation'`) is never touched.
  */
-export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string, consent?: ApprovalConsent): ApprovalEntry {
+export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string, consent?: ApprovalConsent, witness?: ConditionWitness): ApprovalEntry {
   // Someone else's member is read-only here: approving it would be running it by another door.
   assertOwned(m, m.agentTitle || m.title || m.slug);
-  // Kept BEFORE the registry write, whose prune keeps only what an approval names.
-  saveApprovedText(manifestHash(m), m, home);
+  // The approved text is kept only AFTER the entry is built (a refused condition writes neither)
+  // and BEFORE the registry write, whose prune keeps only what an approval names.
   if (m.agentScope === 'global') {
     return mutateProject(GLOBAL_REGISTRY_KEY, home, (project) => {
-      const entry = approvalEntryFor(m, now, project.agentApprovals?.[m.slug], undefined, consent);
+      const entry = approvalEntryFor(m, now, project.agentApprovals?.[m.slug], undefined, consent, witness);
+      saveApprovedText(entry.manifestSha256, m, home);
       project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };
       return entry;
     });
   }
   return mutateProject(projectRoot, home, (project) => {
     const prev = m.runKind === 'agent' ? agentEntryIn(project, m.slug) : project.approvals[m.slug];
-    const entry = approvalEntryFor(m, now, prev, agentEntryIn(project, m.agent || m.slug), consent);
+    const entry = approvalEntryFor(m, now, prev, agentEntryIn(project, m.agent || m.slug), consent, witness);
+    saveApprovedText(entry.manifestSha256, m, home);
     if (m.runKind === 'agent') {
       project.agentApprovals = { ...(project.agentApprovals ?? {}), [m.slug]: entry };
       if (AGENT_OWNED_SLOTS.has(classifyAutomationSlot(contextRootOf(projectRoot), m.slug))) {
@@ -972,6 +1048,7 @@ export function approvePair(
   agentTarget: AutomationManifest,
   now: Date,
   home?: string,
+  witness?: ConditionWitness,
 ): ApprovalEntry {
   assertOwned(automation, automation.title || automation.slug);
   assertOwned(agentTarget, agentTarget.agentTitle || agentTarget.slug);
@@ -984,10 +1061,10 @@ export function approvePair(
     throw new AutomationError('approvePair needs an automation and the call target of the same-slug agent it runs as');
   }
   const agentHash = manifestHash(agentTarget);
-  saveApprovedText(manifestHash(automation), automation, home);
   return mutateProject(projectRoot, home, (project) => {
     const slug = automation.slug;
-    const entry = approvalEntryFor(automation, now, project.approvals[slug], agentEntryIn(project, agentTarget.slug));
+    const entry = approvalEntryFor(automation, now, project.approvals[slug], agentEntryIn(project, agentTarget.slug), undefined, witness);
+    saveApprovedText(entry.manifestSha256, automation, home);
     const legacy = project.approvals[slug];
     if (
       !project.agentApprovals?.[slug] &&
