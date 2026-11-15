@@ -17,6 +17,8 @@ import { createHash } from 'node:crypto';
 import chalk from 'chalk';
 import { compareVersions } from '../../lib/version-check.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
+import { verifyMinisign } from '../../lib/minisign-pubkey.js';
+import { isUpdateChannel, readUpdateChannel, setUpdateChannel, updateChannelPath } from '../../lib/update-channel.js';
 import {
   clearAppUpdateAvailable, downloadStagingRoot, downloadWindowsSetup, isWindowsAppRunning, pendingAppUpdate, readWindowsInstall,
   recordAppUpdateAvailable, runWindowsSetup, WIN_SETUP_ASSET,
@@ -620,15 +622,19 @@ function sha256File(file: string): string {
 }
 
 /**
- * Resolve + download the latest release artifact for this platform into a temp
- * file, verifying its checksum if a matching `<asset>.sha256` asset is present.
- * Returns { archivePath, version } or null if no suitable release exists.
+ * Resolve + download the latest release artifact for this platform into a temp file and verify
+ * it: its `<asset>.sha256` (integrity) and its `<asset>.sig`, a minisign signature by the updater
+ * key every installed app trusts (authenticity, lib/minisign-pubkey.ts, plan npmsiz-beta C10).
+ * Either missing or wrong = refused, nothing installed. Returns { archivePath, version } or null
+ * if no suitable release exists.
  */
 export async function downloadLatestArtifact(
   repo: string = APP_RELEASE_REPO,
   fetchImpl: typeof fetch = fetch,
+  /** Tests only: the key to check the `.sig` with, and the platform to resolve for. */
+  opts: { pubkey?: string; platform?: Platform } = {},
 ): Promise<{ archivePath: string; version: string } | null> {
-  const plat = detectPlatform();
+  const plat = opts.platform ?? detectPlatform();
   if (plat.os !== 'darwin') return null;
   const release = await fetchLatestRelease(repo, fetchImpl);
   if (!release) return null;
@@ -647,6 +653,10 @@ export async function downloadLatestArtifact(
       `Release ${release.tag_name} is missing ${assetName}.sha256 — refusing to install an unverified binary.`,
     );
   }
+  const sigAsset = release.assets.find((a) => a.name === `${assetName}.sig`);
+  if (!sigAsset) {
+    throw new Error(`Release ${release.tag_name} is missing ${assetName}.sig — refusing to install an unsigned binary.`);
+  }
 
   const workDir = mkdtempSync(join(tmpdir(), 'dc-app-dl-'));
   try {
@@ -659,6 +669,11 @@ export async function downloadLatestArtifact(
     const actual = sha256File(archivePath).toLowerCase();
     if (!expected || expected !== actual) {
       throw new Error(`Checksum mismatch for ${assetName}: expected ${expected || '(empty)'}, got ${actual}`);
+    }
+    const sigFile = join(workDir, `${assetName}.sig`);
+    await downloadTo(sigAsset.browser_download_url, sigFile, fetchImpl);
+    if (!verifyMinisign(readFileSync(archivePath), readFileSync(sigFile, 'utf-8'), opts.pubkey)) {
+      throw new Error(`${assetName} is not signed by the dreamcontext updater key. Nothing was installed.`);
     }
 
     return { archivePath, version: versionFromTag(release.tag_name) };
@@ -1064,6 +1079,11 @@ async function windowsInstallLocked(
 
   const after = readInstall();
   if (!after?.exePath) return fail('The installer finished, but the installed app could not be found.');
+  // The signed installer said which version it is (the release tag); an uninstall entry that
+  // names another one means the install did not take, whatever the exit code said.
+  if (version && after.version && after.version !== version) {
+    return fail(`The installer finished, but the app reports ${after.version}, not ${version}. Nothing else was changed; try again.`);
+  }
   const installedVersion = after.version ?? version ?? 'unknown';
   writeAppManifest({ version: installedVersion, path: after.exePath, installedAt: Date.now(), source }, home);
   clearAppUpdateAvailable(home);
@@ -1129,6 +1149,27 @@ export function registerAppCommand(program: Command): void {
     .description('Show the installed desktop app version and state')
     .action(() => {
       doStatus();
+    });
+
+  app
+    .command('channel')
+    .description('Choose the desktop app\'s update channel: stable (default) or beta (new features first). Leaving beta never downgrades.')
+    .argument('[channel]', 'stable | beta (omit to show the current channel)')
+    .action((channel?: string) => {
+      if (channel !== undefined && !isUpdateChannel(channel)) {
+        console.log(chalk.red('Use `dreamcontext app channel stable` or `dreamcontext app channel beta`.'));
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const now = channel === undefined ? readUpdateChannel() : setUpdateChannel(channel);
+        console.log(`Update channel: ${now === 'beta' ? chalk.yellow('beta') : chalk.green('stable')}`);
+        if (channel === 'stable') console.log(chalk.dim('The version you have stays until a stable release passes it; nothing is downgraded.'));
+        if (channel !== undefined) console.log(chalk.dim(`Saved in ${updateChannelPath()}. The app reads it at its next update check.`));
+      } catch (e) {
+        console.log(chalk.red((e as Error).message));
+        process.exitCode = 1;
+      }
     });
 
   app

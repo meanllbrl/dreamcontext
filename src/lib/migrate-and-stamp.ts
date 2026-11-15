@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { readSleepState, writeSleepState } from '../cli/commands/sleep.js';
 import { info, warn } from './format.js';
 import { dreamcontextVersion } from './manifest.js';
+import { compareVersions } from './version-check.js';
 import { runMigrations } from './migration-runner.js';
 import { readSetupConfig, updateSetupConfig, type SetupConfig } from './setup-config.js';
 
@@ -57,14 +58,26 @@ export function migrateThenStampSetupVersion(
   // (from, to] range.
   const fromVersion = readSetupConfig(projectRoot)?.setupVersion ?? '0.0.0';
 
+  // setupVersion is NEVER lowered (plan npmsiz-beta C12b). A Beta teammate's newer CLI may have
+  // migrated this brain; a stable CLI that opens it afterwards must not stamp its own, older
+  // version, or the next newer CLI would re-run (from, to] over steps that already ran. The
+  // older CLI's range (from, to] is empty then, so it migrates nothing either.
+  const newerBrain = compareVersions(toVersion, fromVersion) < 0;
+  const stampVersion = newerBrain ? fromVersion : toVersion;
+  /** The config write: on a newer brain only the caller's own keys, and nothing at all without them. */
+  const stamp = (patch: Partial<SetupConfig>): void => {
+    if (!newerBrain) updateSetupConfig(projectRoot, patch);
+    else if (Object.keys(extraConfig).length > 0) updateSetupConfig(projectRoot, extraConfig);
+  };
+
   const ctxRoot = join(projectRoot, '_dream_context');
 
   // No vault yet (install-skill run ahead of init): there is nothing to migrate,
   // and running the registry against a missing root would be meaningless. Stamp
   // and return — init will scaffold at the current version anyway.
   if (!existsSync(ctxRoot)) {
-    updateSetupConfig(projectRoot, { ...extraConfig, setupVersion: toVersion });
-    return { fromVersion, stamped: toVersion, failedSteps: 0, appliedCodeSteps: [] };
+    stamp({ ...extraConfig, setupVersion: stampVersion });
+    return { fromVersion, stamped: stampVersion, failedSteps: 0, appliedCodeSteps: [] };
   }
 
   const migResult = runMigrations(ctxRoot, fromVersion, toVersion);
@@ -93,10 +106,10 @@ export function migrateThenStampSetupVersion(
   // tradeoff: a nag is strictly safer than silently orphaning migrated-away
   // sources.
   if (migResult.failedSteps === 0) {
-    updateSetupConfig(projectRoot, { ...extraConfig, setupVersion: toVersion });
+    stamp({ ...extraConfig, setupVersion: stampVersion });
     return {
       fromVersion,
-      stamped: toVersion,
+      stamped: stampVersion,
       failedSteps: 0,
       appliedCodeSteps: codeApplied.map((e) => `${e.version}/${e.step}`),
     };

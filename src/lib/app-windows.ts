@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, win32 } from 'node:path';
+import { verifyMinisign } from './minisign-pubkey.js';
 import { win32System32 } from './proc.js';
 import { compareVersions } from './version-check.js';
 
@@ -81,16 +82,17 @@ async function downloadTo(url: string, dest: string, fetchImpl: typeof fetch): P
 }
 
 /**
- * Download the release's installer and its `.sha256` into a fresh folder under
- * {@link downloadStagingRoot} and verify it. Null when the release carries no Windows installer.
- * Throws (and leaves nothing behind) when the checksum asset is missing or does not match. The
- * checksum is INTEGRITY only (a corrupt or truncated download, a swapped file): it comes from the
- * same release, so authenticity rests on the GitHub release itself, as on macOS, until the
- * installer is code-signed. The caller removes `workDir`.
+ * Download the release's installer, its `.sha256` and its `.sig` into a fresh folder under
+ * {@link downloadStagingRoot} and verify both. Null when the release carries no Windows installer.
+ * Throws (and leaves nothing behind) when either asset is missing or does not match. The checksum
+ * is INTEGRITY only (it comes from the same release); AUTHENTICITY is the `.sig`, a minisign
+ * signature by the updater key every installed app trusts (lib/minisign-pubkey.ts, plan
+ * npmsiz-beta C10): a release whose installer that key did not sign is never run, whoever could
+ * upload it. The caller removes `workDir`.
  */
 export async function downloadWindowsSetup(
   release: ReleaseLike,
-  opts: { repo: string; fetchImpl?: typeof fetch; tmpRoot?: string },
+  opts: { repo: string; fetchImpl?: typeof fetch; tmpRoot?: string; /** Tests only: the key to check the `.sig` with. */ pubkey?: string },
 ): Promise<{ setupPath: string; version: string; workDir: string } | null> {
   const setup = release.assets.find((a) => a.name === WIN_SETUP_ASSET);
   if (!setup) return null;
@@ -98,7 +100,11 @@ export async function downloadWindowsSetup(
   if (!sum) {
     throw new Error(`Release ${release.tag_name} is missing ${WIN_SETUP_ASSET}.sha256 — refusing to install an unverified installer.`);
   }
-  for (const asset of [setup, sum]) {
+  const sig = release.assets.find((a) => a.name === `${WIN_SETUP_ASSET}.sig`);
+  if (!sig) {
+    throw new Error(`Release ${release.tag_name} is missing ${WIN_SETUP_ASSET}.sig — refusing to install an unsigned installer.`);
+  }
+  for (const asset of [setup, sum, sig]) {
     if (!isReleaseDownloadUrl(asset.browser_download_url, opts.repo)) {
       throw new Error(`Release asset ${asset.name} does not come from github.com/${opts.repo} — refusing to download it.`);
     }
@@ -116,6 +122,11 @@ export async function downloadWindowsSetup(
     const actual = sha256File(setupPath);
     if (!expected || expected !== actual) {
       throw new Error(`Checksum mismatch for ${WIN_SETUP_ASSET}: expected ${expected ?? '(none)'}, got ${actual}. Nothing was installed.`);
+    }
+    const sigPath = join(workDir, `${WIN_SETUP_ASSET}.sig`);
+    await downloadTo(sig.browser_download_url, sigPath, fetchImpl);
+    if (!verifyMinisign(readFileSync(setupPath), readFileSync(sigPath, 'utf-8'), opts.pubkey)) {
+      throw new Error(`${WIN_SETUP_ASSET} is not signed by the dreamcontext updater key. Nothing was installed.`);
     }
     return { setupPath, version: release.tag_name.replace(/^v/, ''), workDir };
   } catch (e) {

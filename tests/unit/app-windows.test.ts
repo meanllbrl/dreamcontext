@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -18,18 +18,25 @@ import { doWindowsInstall, maybeTriggerAppUpdate, readAppManifest } from '../../
 
 const REPO = 'meanllbrl/dreamcontext';
 const URL_BASE = `https://github.com/${REPO}/releases/download/v0.35.0/`;
-const BYTES = Buffer.from('MZ fake installer bytes');
+// A payload `tauri signer sign` signed with a throwaway key (tests/fixtures/release-updater-sig):
+// the real .sig format, checked against that key; the app's own key must refuse it (foreign).
+const FIX = join(__dirname, '..', 'fixtures', 'release-updater-sig');
+const BYTES = readFileSync(join(FIX, 'example-setup.exe'));
+const SIG = readFileSync(join(FIX, 'example-setup.exe.sig'), 'utf-8');
+const PUB = readFileSync(join(FIX, 'throwaway.key.pub'), 'utf-8');
 const SHA = createHash('sha256').update(BYTES).digest('hex');
 
-function release(over: { sum?: string | null; setupUrl?: string } = {}) {
+function release(over: { sum?: string | null; sig?: string | null; setupUrl?: string } = {}) {
   const assets = [{ name: WIN_SETUP_ASSET, browser_download_url: over.setupUrl ?? `${URL_BASE}${WIN_SETUP_ASSET}` }];
   if (over.sum !== null) assets.push({ name: `${WIN_SETUP_ASSET}.sha256`, browser_download_url: `${URL_BASE}${WIN_SETUP_ASSET}.sha256` });
-  return { tag_name: 'v0.35.0', assets, sumText: over.sum ?? `${SHA}  ${WIN_SETUP_ASSET}\n` };
+  if (over.sig !== null) assets.push({ name: `${WIN_SETUP_ASSET}.sig`, browser_download_url: `${URL_BASE}${WIN_SETUP_ASSET}.sig` });
+  return { tag_name: 'v0.35.0', assets, sumText: over.sum ?? `${SHA}  ${WIN_SETUP_ASSET}\n`, sigText: over.sig ?? SIG };
 }
 
-function fakeFetch(sumText: string): typeof fetch {
+function fakeFetch(sumText: string, sigText: string = SIG): typeof fetch {
   return (async (url: string) => {
-    const body = String(url).endsWith('.sha256') ? Buffer.from(sumText) : BYTES;
+    const u = String(url);
+    const body = u.endsWith('.sha256') ? Buffer.from(sumText) : u.endsWith('.sig') ? Buffer.from(sigText) : BYTES;
     return { ok: true, status: 200, arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) };
   }) as unknown as typeof fetch;
 }
@@ -39,12 +46,39 @@ beforeEach(() => { scratch = mkdtempSync(join(tmpdir(), 'dc-app-win-')); });
 afterEach(() => { rmSync(scratch, { recursive: true, force: true }); process.exitCode = undefined; });
 
 describe('downloadWindowsSetup — never an unverified installer', () => {
-  it('downloads the installer and its .sha256 and verifies them', async () => {
+  it('downloads the installer, its .sha256 and its .sig and verifies them', async () => {
     const r = release();
-    const dl = await downloadWindowsSetup(r, { repo: REPO, fetchImpl: fakeFetch(r.sumText), tmpRoot: scratch });
+    const dl = await downloadWindowsSetup(r, { repo: REPO, fetchImpl: fakeFetch(r.sumText), tmpRoot: scratch, pubkey: PUB });
     expect(dl?.version).toBe('0.35.0');
     expect(dl?.setupPath.endsWith(WIN_SETUP_ASSET)).toBe(true);
     expect(existsSync(dl!.setupPath)).toBe(true);
+  });
+
+  it('REFUSES an installer whose .sha256 matches but whose .sig another key made (C10), and leaves nothing behind', async () => {
+    const r = release();
+    // The app's own key: the throwaway key's signature is foreign to it.
+    await expect(downloadWindowsSetup(r, { repo: REPO, fetchImpl: fakeFetch(r.sumText), tmpRoot: scratch }))
+      .rejects.toThrow(/not signed by the dreamcontext updater key.*Nothing was installed/);
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  it('REFUSES a .sig that does not cover these bytes (a valid signature of something else)', async () => {
+    const r = release();
+    const other = Buffer.concat([BYTES, Buffer.from('x')]);
+    const f = (async (url: string) => {
+      const u = String(url);
+      const body = u.endsWith('.sha256') ? Buffer.from(`${createHash('sha256').update(other).digest('hex')}  x`) : u.endsWith('.sig') ? Buffer.from(SIG) : other;
+      return { ok: true, status: 200, arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) };
+    }) as unknown as typeof fetch;
+    await expect(downloadWindowsSetup(r, { repo: REPO, fetchImpl: f, tmpRoot: scratch, pubkey: PUB })).rejects.toThrow(/not signed/);
+  });
+
+  it('REFUSES a release without the .sig asset, before downloading anything', async () => {
+    let fetched = 0;
+    const r = release({ sig: null });
+    const f = (async () => { fetched += 1; throw new Error('never'); }) as unknown as typeof fetch;
+    await expect(downloadWindowsSetup(r, { repo: REPO, fetchImpl: f, tmpRoot: scratch, pubkey: PUB })).rejects.toThrow(/missing .*\.sig/);
+    expect(fetched).toBe(0);
   });
 
   it('REFUSES a checksum mismatch and leaves nothing behind', async () => {

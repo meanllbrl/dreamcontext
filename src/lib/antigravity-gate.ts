@@ -59,9 +59,13 @@ function lower(p: string): string { return p.replace(/\\/g, '/').toLowerCase().r
 const GATE_CHAIN = /\/\.dreamcontext(?:\/t3(?:\/state(?:\/providers(?:\/antigravity)?)?)?)?$/;
 /** Any brain's token folder or file, by name. */
 const TOKEN_CHAIN = /\/_dream_context\/marketing(?:\/\.env)?$/;
-/** A spelling names a protected place (the gate's folders, a token folder or file), in any
- *  separator and case. Exported for the unit test, which pins it on Windows spellings. */
-export const guardedByName = (p: string): boolean => GATE_CHAIN.test(lower(p)) || TOKEN_CHAIN.test(lower(p));
+/** The one guarded root (plan npmsiz-beta C7′): everything a runner outside the app executes or
+ *  loads as code lives in `~/.dreamcontext/bin/` (launcher, run copy, tools) or is one of its
+ *  records. Fixed by name, never read from a record. `dreamc~1` is the Windows short name. */
+const BIN_CHAIN = /\/(?:\.dreamcontext|dreamc~\d)\/(?:bin(?:\/.*)?|app-cli\.json|update-channel\.json|agents\.json)$/;
+/** A spelling names a protected place (the gate's folders, a token folder or file, the guarded
+ *  root), in any separator and case. Exported for the unit test, which pins it on Windows spellings. */
+export const guardedByName = (p: string): boolean => GATE_CHAIN.test(lower(p)) || TOKEN_CHAIN.test(lower(p)) || BIN_CHAIN.test(lower(p));
 const aboveOrSelf = (dir: string, file: string): boolean => dir === '/' || file === dir || file.startsWith(`${dir}/`);
 
 /**
@@ -79,7 +83,15 @@ function holdsGuarded(abs: string, cwd: string): boolean {
   return spelled.some((p) => aboveOrSelf(p, token));
 }
 
-const MOVERS = new Set(['mv', 'rm', 'rmdir', 'unlink', 'cp', 'ln', 'rsync']);
+const MOVERS = new Set(['mv', 'rm', 'rmdir', 'unlink', 'cp', 'ln', 'rsync', 'ditto']);
+// Archive unpackers (tar, unzip, 7z, cpio …) are NOT judged here: reading every spelling of where
+// they land, and their absolute-path modes, did not close in three review rounds, so the owner
+// moved it to its own follow-up (2026-11-15). A path in a variable passes the same way.
+/** A folder that is `~/.dreamcontext`, or above it: a tree landing there can reach the guarded root. */
+const aboveRoot = (dir: string, home: string): boolean => {
+  const d = lower(nearestReal(resolve(dir)));
+  return [lower(join(home, '.dreamcontext')), lower(join(nearestReal(home), '.dreamcontext'))].some((r) => aboveOrSelf(d, r));
+};
 const LEADERS = new Set(['sudo', 'command', 'exec', 'env', 'time', 'nohup', 'nice', 'timeout']);
 const isDir = (p: string): boolean => { try { return lstatSync(nearestReal(p)).isDirectory(); } catch { return false; } };
 
@@ -104,7 +116,9 @@ function shellMovesGuarded(command: string, cwd: string, home: string): boolean 
     if (sources.some(guarded)) return true;
     // Into a folder a copy lands at folder/name, or on the folder itself for `src/` and `src/.`.
     return places(dest).some((d) => (!isDir(d) ? holdsGuarded(d, cwd) : sources.some((src) => {
-      const contents = /\/\.?$/.test(src) || src === '.';
+      // `ditto src dst` always copies the contents, like `cp -R src/. dst`.
+      const contents = verb === 'ditto' || /\/\.?$/.test(src) || src === '.';
+      if (contents && aboveRoot(d, home)) return true;
       return holdsGuarded(contents ? d : join(d, basename(src.replace(/\/+$/, ''))), cwd);
     })));
   }));
@@ -137,12 +151,24 @@ export function movesGuardedPlace(tool: string, input: Record<string, unknown>, 
     const abs = at(s);
     if (!holdsGuarded(abs, cwd)) return false;
     const p = lower(nearestReal(resolve(abs)));
-    return GATE_CHAIN.test(p) || TOKEN_CHAIN.test(p) || isAntigravityGateFile(abs) || !aboveOrSelf(p, here);
+    return GATE_CHAIN.test(p) || TOKEN_CHAIN.test(p) || BIN_CHAIN.test(p) || isAntigravityGateFile(abs) || !aboveOrSelf(p, here);
   });
 }
 
 const READ_VERBS = new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'rg', 'wc', 'ls', 'stat', 'file', 'diff', 'cd', 'echo', 'pwd', 'true']);
-const GUARDED_WORDS = /\/providers\/antigravity\/|\bconfig\/+hooks\.json\b|marketing\b[\s\S]*\.env\b/i;
+const GUARDED_WORDS = new RegExp([
+  /\/providers\/antigravity\//.source,
+  /\bconfig\/+hooks\.json\b/.source,
+  /marketing\b[\s\S]*\.env\b/.source,
+  // C7′: the guarded root and its records in any separator (`$HOME`, `~`, `$env:USERPROFILE`,
+  // `%USERPROFILE%`, `\\?\\` all end in this), the Windows short name, and the commands that write it.
+  /(?:\.dreamcontext|dreamc~\d)[\\/]+(?:bin\b|app-cli\.json|update-channel\.json|agents\.json)/.source,
+  /\bapp-cli\.json\b|\bupdate-channel\.json\b/.source,
+  /\binstall-launcher\b|\buninstall-cleanup\b|\bapp\s+channel\b/.source,
+].join('|'), 'i');
+/** PowerShell and Windows tree copies into the home folder itself, where they can land in the
+ *  guarded root without naming it (archive unpackers are the follow-up's, see MOVERS). */
+const PS_TREE_INTO_HOME = /(?:^|[;|&\n(]|\$\()\s*(?:copy-item|cpi|robocopy|xcopy)\b[^;|&\n]*?(?:\$home|\$env:userprofile|\$env:homepath|%userprofile%|~)(?:[\\/]+(?:\.dreamcontext)?)?[\\/]*["']?(?=\s|$|;|\|)/i;
 
 /**
  * This agent has no sandbox, so for the token file and its own gate the shell is judged by what it
@@ -150,6 +176,7 @@ const GUARDED_WORDS = /\/providers\/antigravity\/|\bconfig\/+hooks\.json\b|marke
  * member-file reading, which must not refuse a sentence; a path in a variable still passes.
  */
 export function shellTouchesGuarded(command: string): boolean {
+  if (PS_TREE_INTO_HOME.test(command)) return true;
   if (!GUARDED_WORDS.test(command)) return false;
   if (/>/.test(command)) return true;
   return command.split(/&&|\|\||[;|\n]/).some((part) => !READ_VERBS.has((part.trim().split(/\s+/)[0] ?? '').split('/').pop() ?? ''));

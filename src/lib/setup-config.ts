@@ -672,9 +672,25 @@ export function writeSetupConfig(projectRoot: string, config: SetupConfig): void
   writeFileSync(path, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 }
 
+/** The raw object in `.config.json`, or {} when it is absent or not a JSON object. */
+function readRawSetupConfig(projectRoot: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(readFileSync(configPath(projectRoot), 'utf-8')) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Merge new values into existing config (or create new). Returns final config.
  * `undefined` fields are left untouched.
+ *
+ * Every top-level key this CLI does not model is written back exactly as it was
+ * (plan npmsiz-beta C12): the file is shared, and a newer CLI (a Beta teammate's) may have
+ * added keys this older one does not know. A rewrite here must not drop them. A key this CLI
+ * DOES model but reads as malformed is dropped, never copied back raw: its sanitiser is the
+ * guard (a rejected linkedRepos entry may carry a local path the shared file must not hold).
  */
 export function updateSetupConfig(
   projectRoot: string,
@@ -709,7 +725,12 @@ export function updateSetupConfig(
     // Never written false: once on, a rewrite keeps it on.
     agentSync: patch.agentSync ?? existing.agentSync,
   };
-  writeSetupConfig(projectRoot, next);
+  // Keys this CLI models come from `next` only: one it read as malformed is dropped, never
+  // copied back raw (a rejected linkedRepos entry may carry a local path the shared file must not).
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(readRawSetupConfig(projectRoot))) if (!(k in next)) out[k] = v;
+  for (const [k, v] of Object.entries(next)) if (v !== undefined) out[k] = v;
+  writeSetupConfig(projectRoot, out as unknown as SetupConfig);
   return next;
 }
 

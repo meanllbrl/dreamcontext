@@ -37,6 +37,7 @@ import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, approvedTarget, conditionNeedsWitness, getApproval, manifestConditionSha, manifestHash, renderApprovalReview, type ApprovalEntry } from './registry.js';
 import { boundConditionData, CONDITION_ERROR_PREFIX, conditionEnv, conditionWakes, killCondition, runCondition } from './condition.js';
+import { agentNotPickedMessage, jobAgentPicked, pickedAgents } from '../agent-pick.js';
 import { claimPendingNotice } from '../agents/pending-change.js';
 import { buildRoutineForward, mintRunPostKey, routineReachesPhone, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
 import { TELEGRAM_WRITING_RULE } from '../telegram/writing.js';
@@ -2535,6 +2536,19 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
           `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it on the AI Team page`
         : `a question is waiting for your answer ("${openQuestion.question.slice(0, 120)}") — answer it in the app, or run \`dreamcontext automations questions ${slug}\``,
     );
+  }
+
+  // Step 4.55 — THE AGENT PICK (plan npmsiz-beta C17). A job whose agent (its stored tool, absent =
+  // Claude) is not in this Mac's pick does not start: refused here, before account protection
+  // (an unattended absent-tool fire would otherwise wait on a Claude account and re-queue) and
+  // before the approval question (which would spawn `claude`). Deny-only: the pick never chooses,
+  // changes or widens the tool; no valid pick record never refuses. The fire stays owed, so the
+  // run happens once the owner picks that agent. `blocked`, like every other owed refusal above:
+  // the job never started, so a still-due fire writes no thread entry and sends no Telegram
+  // message on every tick; the sentence stays the run's error.
+  if (!jobAgentPicked(manifest.tool ?? null, pickedAgents(accountsHome))) {
+    const tool = manifest.tool === 'codex' || manifest.tool === 'antigravity' ? manifest.tool : 'claude';
+    return shortCircuit('blocked', agentNotPickedMessage(tool));
   }
 
   // Step 4.6 — ACCOUNT PROTECTION, for an unattended start only (owner, 2026-10-24): the first

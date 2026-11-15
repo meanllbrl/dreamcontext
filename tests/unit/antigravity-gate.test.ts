@@ -333,3 +333,72 @@ describe('a shell that would run in a skills folder instead of the project', () 
     expect(out.reason).toContain(`Cwd set to ${project}`);
   });
 });
+
+// Plan npmsiz-beta C7′, criterion 13: the one guarded root, ~/.dreamcontext/bin/** and its records.
+describe('the guarded root: the launcher, the run copy, the tools and their records', () => {
+  let dir: string;
+  let home: string;
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'dc-agy-root-')));
+    home = join(dir, 'home');
+    for (const d of ['proj', 'home/.dreamcontext/bin/cli', 'home/.dreamcontext/bin/rt/0.42.0/dist', 'home/.dreamcontext/bin/tools/git/cmd', 'home/.dreamcontext/cache']) mkdirSync(join(dir, d), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'bin', 'cli', 'dreamcontext'), '#!/bin/sh\n');
+    for (const f of ['app-cli.json', 'update-channel.json', 'agents.json']) writeFileSync(join(home, '.dreamcontext', f), '{}\n');
+  });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  const cwd = () => join(dir, 'proj');
+  const sh = (command: string) => movesGuardedPlace('Bash', { command }, cwd(), home);
+  const B = () => join(home, '.dreamcontext', 'bin');
+
+  it('refuses a file write, mv, rm, cp over and ln on any of them', () => {
+    for (const p of [join(B(), 'cli', 'dreamcontext'), join(B(), 'rt', '0.42.0', 'dist', 'index.js'), join(B(), 'tools', 'git', 'cmd', 'git.exe'), join(home, '.dreamcontext', 'app-cli.json'), join(home, '.dreamcontext', 'update-channel.json'), join(home, '.dreamcontext', 'agents.json')]) {
+      expect([p, movesGuardedPlace('Write', { file_path: p, content: 'x' }, cwd(), home)]).toEqual([p, true]);
+      expect([p, movesGuardedPlace('write_to_file', { TargetFile: p, CodeContent: 'x' }, cwd(), home)]).toEqual([p, true]);
+    }
+    for (const c of [
+      'rm -rf ~/.dreamcontext/bin', 'rm ~/.dreamcontext/bin/cli/dreamcontext', 'mv ~/.dreamcontext/bin/rt /tmp/rt',
+      'cp /tmp/evil ~/.dreamcontext/bin/cli/dreamcontext', 'ln -sf /tmp/evil ~/.dreamcontext/bin/cli/dreamcontext',
+      'cp /tmp/x ~/.dreamcontext/app-cli.json', 'rm ~/.dreamcontext/agents.json', 'mv /tmp/c ~/.dreamcontext/update-channel.json',
+      'cp -R /tmp/evil/. ~/.dreamcontext/bin/rt/0.42.0', 'rsync -a /tmp/x/ ~/.dreamcontext/bin/tools/git',
+    ]) expect([c, sh(c)]).toEqual([c, true]);
+  });
+
+  it('refuses a contents copy that lands in ~/.dreamcontext or above it', () => {
+    for (const c of ['cp -R /tmp/x/. ~', 'cp -R /tmp/x/ ~/', 'rsync -a /tmp/x/ ~/', 'ditto /tmp/x ~', 'ditto /tmp/x ~/.dreamcontext']) expect([c, sh(c)]).toEqual([c, true]);
+    for (const c of ['cp -R /tmp/x ~/projects', 'ditto /tmp/x /tmp/y']) expect([c, sh(c)]).toEqual([c, false]);
+  });
+
+  it('a shell that names them passes only as plain reads, in POSIX and PowerShell spellings', () => {
+    for (const c of [
+      'cat > ~/.dreamcontext/bin/cli/dreamcontext', 'echo x >> $HOME/.dreamcontext/app-cli.json', 'printf x > ~/.dreamcontext/update-channel.json',
+      'Remove-Item -Recurse $env:USERPROFILE\\.dreamcontext\\bin', 'Move-Item C:\\Users\\robin\\.dreamcontext\\bin\\cli C:\\t',
+      'Set-Content -Path %USERPROFILE%\\.dreamcontext\\bin\\cli\\launcher.json -Value x', 'del C:\\Users\\robin\\DREAMC~1\\bin\\cli\\dreamcontext.exe',
+      'Remove-Item \\\\?\\C:\\Users\\robin\\.dreamcontext\\agents.json', 'Set-Content $env:HOMEPATH\\.dreamcontext\\bin\\rt\\x -Value y',
+      'dreamcontext internal install-launcher', 'dreamcontext internal uninstall-cleanup', 'dreamcontext app channel beta',
+      'Copy-Item -Recurse C:\\t\\x\\* $HOME', 'robocopy C:\\t\\x $env:USERPROFILE /E', 'Copy-Item -Recurse x $env:USERPROFILE\\.dreamcontext',
+      'Copy-Item -Recurse x $HOME\\.dreamcontext\\', 'Copy-Item -Recurse x $HOME\\', 'cd C:\\t; Copy-Item -Recurse x ~/.dreamcontext/',
+    ]) expect([c, shellTouchesGuarded(c)]).toEqual([c, true]);
+    expect(shellTouchesGuarded('grep -r "Copy-Item" ~')).toBe(false);
+    for (const c of ['ls ~/.dreamcontext/bin/cli', 'cat ~/.dreamcontext/app-cli.json', 'grep version ~/.dreamcontext/app-cli.json', 'dreamcontext app status', 'Copy-Item x $HOME\\projects\\y', 'npm test']) {
+      expect([c, shellTouchesGuarded(c)]).toEqual([c, false]);
+    }
+  });
+
+  it('as Windows spells the root', () => {
+    for (const p of ['C:\\Users\\robin\\.dreamcontext\\bin', 'C:\\Users\\robin\\.DreamContext\\BIN\\cli\\dreamcontext.exe', 'C:\\Users\\robin\\DREAMC~1\\bin\\rt\\0.42.0', 'C:\\Users\\robin\\.dreamcontext\\agents.json']) {
+      expect([p, guardedByName(p)]).toEqual([p, true]);
+    }
+    for (const p of ['C:\\Users\\robin\\.dreamcontext\\cache', 'C:\\Users\\robin\\proj\\bin', 'C:\\Users\\robin\\proj\\agents.json']) expect([p, guardedByName(p)]).toEqual([p, false]);
+  });
+
+  it('leaves the rest of ~/.dreamcontext and ordinary work alone', () => {
+    for (const c of ['rm -rf ~/.dreamcontext/cache/x', 'cp notes.md ~/.dreamcontext/cache/', 'cp -R src dist', `ls ${B()}`]) expect([c, sh(c)]).toEqual([c, false]);
+    expect(movesGuardedPlace('Write', { file_path: join(cwd(), 'agents.json'), content: '{}' }, cwd(), home)).toBe(false);
+  });
+
+  it('the unattended layer asks the owner for a call naming them', () => {
+    expect(bypassNeedsOwner('Bash', { command: 'rm -rf ~/.dreamcontext/bin' }, cwd())).toBe(true);
+    expect(bypassNeedsOwner('Write', { file_path: '~/.dreamcontext/agents.json', content: '{}' }, cwd())).toBe(true);
+    expect(bypassNeedsOwner('Bash', { command: 'Remove-Item C:\\Users\\robin\\.dreamcontext\\bin\\cli' }, cwd())).toBe(true);
+  });
+});

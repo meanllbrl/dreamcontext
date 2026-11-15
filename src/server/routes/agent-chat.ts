@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { appRuntimePath } from '../../lib/app-cli-path.js';
 import { bindTake, voiceTakeBlock, type TakeRecord } from '../../lib/voice/voiceLog.js';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -3037,6 +3038,8 @@ export function startChatSession(
   const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, [MEMBER_SUPER_ENV]: memberSuperEnv, [MEMBER_CREW_ENV]: memberCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}) } as Record<string, string | undefined>;
   // An app chat's hook and listed verbs call `dreamcontext` with no login-shell PATH behind them.
   if (app) childEnv.PATH = cliAwarePath(childEnv.PATH ?? '');
+  // On the app's own Node the CLI lives only in its launcher folder: every chat's hooks need it.
+  else childEnv.PATH = appRuntimePath(childEnv.PATH ?? '');
   // Held from the spawn to the child's exit; nothing async ran since `appChatHasRoom`.
   const releaseAppSlot = app ? reserveAppChat(app.hash, appSeat) : () => { /* not an app chat */ };
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).

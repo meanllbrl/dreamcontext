@@ -1,4 +1,5 @@
 import { handleAgentTools } from './routes/agent-tools.js';
+import { ensureAppCliOnShellPath, writeAppCliRecord } from '../lib/app-cli-path.js';
 import { handleAgentToolHandoff } from './routes/agent-tool-handoff.js';
 import {
   handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
@@ -77,6 +78,8 @@ import {
   handleLauncherUpgrade,
   handleLauncherUpgradeStatus,
   handleLauncherSelfUpdateGet,
+  handleLauncherUpdateChannelGet,
+  handleLauncherUpdateChannelPost,
   handleLauncherSelfUpdatePost,
   handleLauncherRelaunch,
   handleLauncherFederationGraph,
@@ -721,6 +724,8 @@ export function buildRouter(): Router {
   router.get('/api/launcher/upgrade/status', handleLauncherUpgradeStatus);
   router.get('/api/launcher/self-update', handleLauncherSelfUpdateGet);
   router.post('/api/launcher/self-update', handleLauncherSelfUpdatePost);
+  router.get('/api/launcher/update-channel', handleLauncherUpdateChannelGet);
+  router.post('/api/launcher/update-channel', handleLauncherUpdateChannelPost);
   router.post('/api/launcher/relaunch', handleLauncherRelaunch);
   router.get('/api/launcher/federation-graph', handleLauncherFederationGraph);
   router.post('/api/launcher/connection', handleLauncherConnectionCreate);
@@ -1562,6 +1567,13 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   // nested-claude walk runs past the server and reads a human pane as nested when the server
   // itself was started from inside a Claude Code session.
   prepareDashboardEnv(process.env, process.pid);
+  // On the app's own Node (a Mac with no npm): `dreamcontext` on the Terminal's PATH with no click.
+  const appCli = ensureAppCliOnShellPath();
+  // The record the last npm release (the bridge) reads to hand `dreamcontext` over to this app.
+  writeAppCliRecord();
+  if (appCli?.refused || (appCli && !appCli.wrote.length && !appCli.alreadyConfigured.length)) {
+    console.warn(`[setup] dreamcontext could not be put on the Terminal's PATH; add by hand: ${appCli.line || appCli.dir}`);
+  }
   const { port, contextRoot, open, host = '127.0.0.1' } = options;
   const router = buildRouter();
   const dashboardDir = getDashboardDir();
