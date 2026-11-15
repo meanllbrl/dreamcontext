@@ -1,21 +1,22 @@
 #!/usr/bin/env node
 /**
- * verify:super-sunum-cubugu — the presentation bar never overlaps itself, and `super open` refuses a
- * file that is not there. The REAL dashboard (this worktree's `dist/`) in Chromium, a stand-in
- * `claude` and a scratch HOME.
+ * verify:super-sunum-cubugu — the presentation frame (owner 2026-11-15, option C "Çerçeve") and the
+ * refusal of a missing file. The REAL dashboard (this worktree's `dist/`) in Chromium, a stand-in
+ * `claude` and a scratch HOME; four real app screenshots as the pictures.
  *
  *   dreamcontext builder heavy -- node scripts/verify/super-sunum-cubugu.mjs
  *
- *  B1  a group of 4 pictures presented, a second presentation queued: at 1024, 1440, 1650 and 2000 px no
- *      two controls of the top bar (queue pill, layout switch, ask, close group, minimize, "…") intersect;
- *  B2  a long title truncates with an ellipsis inside the pill, never over a neighbour;
- *  B3  `super open image` over paths that do not exist is refused with the path: no card, no presentation;
- *  zero page errors and console errors.
+ *  B1  a group of 4 pictures presented, a second presentation queued: at 1024, 1440, 1650 and 2000 px
+ *      the frame is drawn, the tab strip (shown + next) and every icon sit inside the viewport and no
+ *      two of them intersect; the current tab is the group's name, the next tab the page's;
+ *  B2  an icon names itself on hover; the next tab opens the next presentation; Esc still leaves;
+ *  B3  `super open image` over paths that do not exist is refused with the path: no card;
+ *  B4  390 px draws the phone layout with no band; zero page errors and console errors.
  *
  * Output: tmp/super-sunum-cubugu/<pid>/.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -60,8 +61,8 @@ const bash = (...args) => {
 const report = (o) => appendFileSync(${JSON.stringify(REPORTS)}, JSON.stringify(o) + '\\n');
 function superTurn(text) {
   if (text.includes('[super handover]')) {
-    const r = bash('super', 'open', 'image', 'tmp/a.png', 'tmp/b.png', 'tmp/c.png', 'tmp/d.png', '--group', 'Koyu: normal ve çok uzun bir grup adı ki kırpılsın', '--present');
-    const q = bash('super', 'open', 'web', 'site/odeme.html', '--title', 'Sonraki sunum da bir hayli uzun bir başlık taşıyor');
+    const r = bash('super', 'open', 'image', 'tmp/a.png', 'tmp/b.png', 'tmp/c.png', 'tmp/d.png', '--group', 'Koyu ve açık tema, üstüne gelince ve normal hâlleri yan yana', '--titles', 'Koyu: normal|Koyu: üstüne gelince|Açık: normal|Açık: üstüne gelince', '--present');
+    const q = bash('super', 'open', 'web', 'site/odeme.html', '--title', 'Ödeme ekranı');
     let id = '';
     try { id = JSON.parse(q.out.slice(q.out.indexOf('{'))).container.id; } catch {}
     const p = bash('super', 'present', id);
@@ -117,7 +118,10 @@ rmSync(SCRATCH, { recursive: true, force: true });
 for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(PROJ, '_dream_context', 'state'), join(PROJ, 'site'), join(PROJ, 'tmp'), SHOTS]) mkdirSync(d, { recursive: true });
 spawnSync('git', ['init', '-q'], { cwd: PROJ });
 writeFileSync(join(HOME, '.local', 'bin', 'claude'), STANDIN, { mode: 0o755 });
-for (const n of ['a', 'b', 'c', 'd']) writeFileSync(join(PROJ, 'tmp', `${n}.png`), PNG);
+// SUNUM_PICS=<dir of .png>: real pictures for the screenshots (its first four), else 1x1 ones.
+const PICS_DIR = process.env.SUNUM_PICS ?? '';
+const REAL = PICS_DIR && existsSync(PICS_DIR) ? readdirSync(PICS_DIR).filter((f) => f.endsWith('.png')).sort().slice(0, 4).map((f) => join(PICS_DIR, f)) : [];
+['a', 'b', 'c', 'd'].forEach((n, i) => writeFileSync(join(PROJ, 'tmp', `${n}.png`), REAL[i] ? readFileSync(REAL[i]) : PNG));
 const hues = ['#c7d2e6', '#ffb88c', '#7fe0c0'];
 PAGES.forEach(([slug, title], i) => writeFileSync(join(PROJ, 'site', `${slug}.html`), `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body style="margin:0;font:600 40px system-ui;display:grid;place-items:center;height:100vh;background:${hues[i]}">${title}</body></html>`));
 writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({ enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom', chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off', superAgent: true }, null, 2)}\n`);
@@ -171,26 +175,22 @@ const send = async (page, text) => {
 
 try {
   browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', deviceScaleFactor: 2 });
   const page = await context.newPage();
   watch(page, 'bar');
   ok('the stage shows', await openStage(page));
   ok('the handover opened the group and queued a second', await until(async () => reports().some((r) => r.kind === 'handover'), 60000), JSON.stringify(reports()));
   ok('the group is presented', await until(async () => (await page.locator('[data-testid="super-stage-controls"]').count()) > 0, 20000));
-  ok('the band counts 1/2', await until(async () => (await count(page)) === '1/2', 20000), await count(page));
+  const tab = (kind) => page.locator(kind === 'next' ? '[data-testid="super-pq-next"]' : `[data-testid="super-present-tab-${kind}"]`);
+  ok('the frame names the group as the shown tab', await until(async () => /Koyu ve açık tema/.test(await tab('current').innerText().catch(() => '')), 20000), await tab('current').innerText().catch(() => ''));
+  ok('…and the page as the next tab', /Ödeme ekranı/.test(await tab('next').innerText().catch(() => '')), await tab('next').innerText().catch(() => ''));
 
   const rects = () => page.evaluate(() => {
-    const pick = (sel) => [...document.querySelectorAll(sel)].filter((e) => e.getClientRects().length).map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, t: (e.textContent || '').trim().slice(0, 24) }; });
+    const pick = (sel) => [...document.querySelectorAll(sel)].filter((e) => e.getClientRects().length).map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, t: (e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 28) }; });
     return {
-      pill: pick('[data-testid="super-pq"] .super-pq-pill'),
-      parts: [
-        ...pick('[data-testid="super-pq"] .super-pq-pill'),
-        ...pick('[data-testid="super-layout-switch"]'),
-        ...pick('.super-stage-controls > .super-stage-exit'),
-        ...pick('.super-stage-controls .super-stage-more'),
-      ],
-      ctl: pick('[data-testid="super-stage-controls"]'),
-      names: pick('.super-pq-names').concat(pick('[data-testid="super-pq-next"]')),
+      parts: [...pick('.super-present-tab'), ...pick('.super-icon-btn')],
+      bar: pick('.super-icon-bar')[0], box: pick('[data-testid="super-stage-controls"]')[0], frame: pick('[data-testid="super-present-frame"]')[0],
+      names: [...document.querySelectorAll('.super-present-tab-name')].map((e) => ({ clipped: e.scrollWidth > e.clientWidth + 1, ellipsis: getComputedStyle(e).textOverflow })),
     };
   });
   const clash = (a, b) => a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5;
@@ -199,26 +199,32 @@ try {
     await page.setViewportSize({ width, height: 900 });
     await page.waitForTimeout(900);
     const r = await rects();
-    let overlaps = [];
+    const overlaps = [];
     for (let i = 0; i < r.parts.length; i++) for (let j = i + 1; j < r.parts.length; j++) if (clash(r.parts[i], r.parts[j])) overlaps.push([r.parts[i].t, r.parts[j].t]);
-    ok(`${width}: no two controls intersect (${r.parts.length} measured)`, r.parts.length >= 3 && overlaps.length === 0, JSON.stringify({ overlaps, parts: r.parts }));
-    const ctl = r.ctl[0];
-    ok(`${width}: the controls stay inside the viewport`, !!ctl && ctl.x >= 0 && ctl.x + ctl.w <= width + 1, JSON.stringify(ctl));
-    ok(`${width}: the switch is whole (Grid reads Grid)`, (await page.locator('[data-testid="super-layout-grid"]').innerText().catch(() => 'Grid')).trim().length >= 3);
+    ok(`${width}: no two tabs or icons intersect (${r.parts.length} measured)`, r.parts.length >= 7 && overlaps.length === 0, JSON.stringify({ overlaps, parts: r.parts }));
+    ok(`${width}: everything inside the viewport`, r.parts.every((p) => p.x >= 0 && p.x + p.w <= width + 0.5), JSON.stringify(r.parts));
+    ok(`${width}: the icon pill fits its planned box`, !!r.bar && !!r.box && r.bar.w <= r.box.w + 0.5 && r.bar.h <= r.box.h + 0.5, JSON.stringify({ bar: r.bar, box: r.box }));
+    ok(`${width}: the frame is drawn`, !!r.frame && r.frame.w > 200, JSON.stringify(r.frame));
+    ok(`${width}: a long tab name truncates with an ellipsis, never wraps`, r.names.every((n) => n.ellipsis === 'ellipsis'), JSON.stringify(r.names));
     await shot(page, `b1-${width}`);
   }
-  await page.setViewportSize({ width: 1024, height: 900 });
+
+  console.log('\n── B2 tooltip, next tab, Esc');
+  await page.setViewportSize({ width: 1650, height: 1000 });
   await page.waitForTimeout(700);
-  const more = page.locator('[data-testid="super-stage-group-more"]');
-  if (await more.count()) {
-    console.log('\n── B2 folded bar at 1024');
-    await more.click();
-    ok('the "…" menu lists ask and close group', (await page.locator('[data-testid="super-stage-group-more-menu"] button').count()) === 2);
-    await shot(page, 'b2-menu-1024');
-    await page.keyboard.press('Escape');
-  } else console.log('  (1024 is wide enough for all three buttons: no fold)');
-  const pillNow = (await rects()).pill[0];
-  ok('the pill keeps a readable width', !!pillNow && pillNow.w >= 100, JSON.stringify(pillNow));
+  await page.locator('[data-testid="super-stage-group-ask"]').hover();
+  await page.waitForTimeout(600);
+  const tip = await page.locator('[data-testid="super-stage-group-ask"]').evaluate((e) => { const s = getComputedStyle(e, '::after'); return { text: s.content, opacity: s.opacity }; });
+  ok('hovering an icon shows its name', /Ask about this|Bunu sor/.test(tip.text) && Number(tip.opacity) > 0.9, JSON.stringify(tip));
+  await shot(page, 'b2-tooltip-1650');
+  await tab('next').click();
+  ok('the next tab opens the next presentation', await until(async () => /Ödeme ekranı/.test(await tab('current').innerText().catch(() => '')), 10000), await tab('current').innerText().catch(() => ''));
+  ok('…which is the last: no next tab left', (await tab('next').count()) === 0);
+  await shot(page, 'b2-sonraki-1650');
+  // Focus off any card (a web card's iframe owns its keys), then Esc.
+  await tab('current').focus();
+  await page.keyboard.press('Escape');
+  ok('Esc leaves the presentation', await until(async () => (await page.locator('[data-testid="super-stage-controls"]').count()) === 0, 8000));
 
   console.log('\n── B3 a missing file');
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -228,6 +234,14 @@ try {
   ok('refused, naming the path', !!miss && miss.status !== 0 && /yok1\.png/.test(miss.out), JSON.stringify(miss));
   await page.waitForTimeout(800);
   ok('no "isn\'t there any more" card', (await page.getByText(/isn.t there any more|artık yok|burada değil/i).count()) === 0);
+  console.log('\n── B4 390 px');
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark' });
+  const pp = await phone.newPage();
+  watch(pp, '390');
+  ok('the phone draws the chat', await openStage(pp) || (await pp.locator('textarea').count()) > 0);
+  ok('…with no presentation band', (await pp.locator('[data-testid="super-present-tabs"]').count()) === 0);
+  await shot(pp, 'b4-telefon-390');
+  await phone.close();
   ok('no page or console errors', errors.length === 0, errors.slice(0, 6).join('\n'));
   await context.close();
 } catch (e) {

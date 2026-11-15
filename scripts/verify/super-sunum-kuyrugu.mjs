@@ -6,9 +6,9 @@
  *
  *   dreamcontext builder heavy -- node scripts/verify/super-sunum-kuyrugu.mjs
  *
- *  Q1  the Super presents page 1, then pages 2 and 3 in later turns: page 1 stays on screen, the
- *      band says 1/3 with "Next: <page 2>" left of the exit, which reads "Leave the queue" (AC1, AC2);
- *  Q2  a narrow window (1000 px): the control shortens to "1/3 ›", the exit stays (D10);
+ *  Q1  the Super presents page 1, then pages 2 and 3 in later turns: page 1 stays on screen as the
+ *      frame's open tab, "<page 2> next" beside it, left of the exit, which reads "Leave the queue" (AC1, AC2);
+ *  Q2  a narrow window (1000 px): the tabs stay left of the icons (D10);
  *  Q3  Next opens page 2 (2/3) and the chat scrolls to the answer that queued it, flashing it (AC3);
  *  Q4  Leave the queue floats the stage: "1 presentation waiting · Continue", the side menu's
  *      Super row says one waits (AC5); Continue opens page 3 (3/3, "Finish");
@@ -166,7 +166,9 @@ const openStage = async (page) => {
   return until(async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0, 30000);
 };
 const pq = (page) => page.locator('[data-testid="super-pq"]');
-const count = async (page) => (await page.locator('[data-testid="super-pq-count"]').innerText().catch(() => '')).trim();
+// The frame's open tab names the shown presentation (owner 2026-11-15, option C): its name is the count now.
+const count = async (page) => (await page.locator('[data-testid="super-present-tab-current"]').innerText().catch(() => '')).trim();
+const at = (n) => [/Odeme|Ödeme/, /Fiyat/, /Logo/][n - 1];
 const send = async (page, text) => {
   const box = page.locator('[data-testid="super-surface"] textarea').first();
   await box.click();
@@ -190,20 +192,20 @@ try {
   await page.waitForTimeout(1500);
   await send(page, 'GO-PRESENT 3');
   ok('page 3 was queued', await until(async () => reports().some((r) => r.kind === 'present' && r.n === 3 && /queue/i.test(r.out)), 30000), JSON.stringify(reports().slice(-1)));
-  ok('the band counts 1/3', await until(async () => (await count(page)) === '1/3', 15000), await count(page));
-  const step = await pq(page).boundingBox();
+  ok('the open tab is page 1, two more tabs wait', await until(async () => at(1).test(await count(page)) && (await page.locator('.super-present-tab').count()) === 3, 15000), await count(page));
+  const step = await page.locator('[data-testid="super-present-tabs"]').boundingBox();
   const controls = await page.locator('[data-testid="super-stage-controls"]').boundingBox();
-  ok('the queue control sits left of the controls, same row', !!step && !!controls && step.x + step.width <= controls.x + 1 && Math.abs(step.y - controls.y) < 2, JSON.stringify({ step, controls }));
+  ok('the tab strip sits left of the controls, same row', !!step && !!controls && step.x + step.width <= controls.x + 1 && Math.abs(step.y - controls.y) < 2, JSON.stringify({ step, controls }));
   const nextText = await page.locator('[data-testid="super-pq-next"]').innerText();
   ok('Next names page 2', /Fiyat/.test(nextText), nextText);
-  const exitText = await page.locator('[data-testid="super-stage-exit"]').innerText();
+  const exitText = (await page.locator('[data-testid="super-stage-exit"]').getAttribute('aria-label')) ?? '';
   ok('the exit leaves the queue', /Sıradan çık|Leave the queue/.test(exitText), exitText);
-  ok('page 1 is still the one on screen', /Odeme/.test(await pq(page).innerText()), await pq(page).innerText());
+  ok('page 1 is still the one on screen', at(1).test(await count(page)), await count(page));
   await shot(page, '1-uc-sunum-1440');
 
   console.log('\n── Q2 narrow band');
   await page.setViewportSize({ width: 1000, height: 800 });
-  ok('the control shortens', await until(async () => (await pq(page).getAttribute('data-short')) === 'true', 5000));
+  ok('the tabs stay, left of the icons', await until(async () => { const a = await page.locator('[data-testid="super-present-tabs"]').boundingBox(); const b = await page.locator('[data-testid="super-stage-controls"]').boundingBox(); return !!a && !!b && a.x + a.width <= b.x + 1; }, 5000));
   ok('the exit is still there', await page.locator('[data-testid="super-stage-exit"]:visible').count() === 1);
   await shot(page, '2-dar-1000');
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -211,7 +213,7 @@ try {
 
   console.log('\n── Q3 Next, and the chat follows');
   await page.locator('[data-testid="super-pq-next"]').click();
-  ok('2/3 after Next', await until(async () => (await count(page)) === '2/3', 10000), await count(page));
+  ok('page 2 after Next', await until(async () => at(2).test(await count(page)), 10000), await count(page));
   ok('the answer that queued page 2 flashes', await until(async () => (await page.locator('[data-reply-flash]', { hasText: 'Sunum 2' }).count()) > 0, 5000));
   await page.waitForTimeout(300);
   await shot(page, '3-sonraki-1440');
@@ -225,9 +227,8 @@ try {
   ok('the side menu\'s Super row says one waits', /1 (sunum bekliyor|presentations waiting)/.test(rowLabel) || (await row.count()) === 0, rowLabel);
   await shot(page, '4-siradan-cikildi-1440');
   await page.locator('[data-testid="super-pq-resume"]').click();
-  ok('Continue opens page 3 at 3/3', await until(async () => (await count(page)) === '3/3', 10000), await count(page));
-  const finish = await page.locator('[data-testid="super-pq-next"]').innerText();
-  ok('the last one says Finish', /Bitir|Finish/.test(finish), finish);
+  ok('Continue opens page 3', await until(async () => at(3).test(await count(page)), 10000), await count(page));
+  ok('the last one has no next tab', (await page.locator('[data-testid="super-pq-next"]').count()) === 0);
   await shot(page, '5-son-sunum-1440');
 
   console.log('\n── Q5 390 px');
@@ -239,8 +240,8 @@ try {
   ok('390 draws the chat with no band and nothing broken', await until(async () => (await pp.locator('textarea').count()) > 0, 15000) && (await pq(pp).count()) === 0);
   await shot(pp, '6-telefon-390');
   await phone.close();
-  await page.locator('[data-testid="super-pq-next"]').click();
-  ok('Finish empties the queue: no band', await until(async () => (await pq(page).count()) === 0, 10000));
+  await page.locator('[data-testid="super-stage-exit"]').click();
+  ok('leaving the last one empties the queue: no band', await until(async () => (await pq(page).count()) === 0, 10000));
   await shot(page, '7-bitti-1440');
   ok('no page or console errors', errors.length === 0, errors.slice(0, 6).join('\n'));
   await context.close();

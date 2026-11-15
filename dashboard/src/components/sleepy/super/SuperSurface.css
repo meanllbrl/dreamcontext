@@ -1664,20 +1664,129 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-3);
 }
-.super-layout-switch {
+/* The presentation frame's icons (owner 2026-11-15, option C): one pill, exactly as wide as
+   superLayout's controlsWidth (ICON_PAD 4 + 1 border, ICON_BTN 32, ICON_GAP 4). */
+.super-icon-bar {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  height: var(--space-8);
-  padding: var(--space-1);
+  box-sizing: border-box;
+  /* The band's 40 px: 1 px border + 3 px padding around a 32 px icon (4 px at the ends). */
+  height: calc(var(--space-8) + var(--space-2));
+  padding: 3px var(--space-1);
   border-radius: var(--radius-full);
   border: 1px solid color-mix(in srgb, var(--color-text) 10%, transparent);
   background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
   box-shadow: var(--shadow-md);
 }
-.super-layout-seg,
+.super-layout-switch { display: contents; }
+.super-icon-sep { flex: none; width: 1px; height: var(--space-5); background: var(--color-border); }
+.super-icon-btn {
+  position: relative;
+  flex: none;
+  width: var(--space-8);
+  height: var(--space-8);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.super-icon-btn:hover:not(:disabled) { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.super-icon-btn[aria-pressed='true'] { color: var(--color-text); background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+.super-icon-btn:active:not(:disabled) { transform: scale(0.97); }
+.super-icon-btn:disabled { opacity: 0.5; cursor: default; }
+/* Every icon names itself under it on hover and on keyboard focus. */
+.super-icon-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.super-icon-btn:hover[data-tip]::after,
+.super-icon-btn:focus-visible[data-tip]::after { opacity: 1; transform: none; transition-delay: 250ms; }
+.super-stage-controls[data-asking] .super-icon-btn::after { display: none; }
+@media (prefers-reduced-motion: reduce) { .super-icon-btn, .super-icon-btn::after { transition: none; } }
+/* The frame around a presentation and its tab strip: the shown presentation is the open tab,
+   joined to the frame; the next one opens on a click; long names shrink like browser tabs. */
+.super-present-frame {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.super-present-tabs {
+  position: absolute;
+  z-index: var(--sz-queue);
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+}
+.super-present-tab {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  height: var(--space-8);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.super-present-tab[data-kind='current'] {
+  flex-shrink: 0.5;
+  height: calc(var(--space-8) + var(--space-2));
+  border-color: var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  cursor: default;
+}
+.super-present-tab[data-kind='next']:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 6%, transparent); }
+.super-present-tab[data-kind='later'] { cursor: default; opacity: 0.7; }
+.super-present-tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.super-present-tab-dot { flex: none; width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--color-accent); }
+.super-present-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.super-present-tab-count { flex: none; font-weight: 400; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.super-present-tab-badge {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  line-height: var(--space-4);
+}
 .super-sheet-tab {
   height: 100%;
   padding: 0 var(--space-3);
@@ -1691,36 +1800,18 @@
   cursor: pointer;
   transition: background 120ms ease-out, color 120ms ease-out;
 }
-.super-layout-seg:hover,
 .super-sheet-tab:hover { color: var(--color-text); }
-.super-layout-seg[aria-pressed='true'],
 .super-sheet-tab[aria-selected='true'] {
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-text);
 }
-.super-layout-seg:focus-visible,
 .super-sheet-tab:focus-visible,
-.super-stage-exit:focus-visible,
+.super-icon-btn:focus-visible,
 .super-chat-fold:focus-visible,
 .super-card-frame[data-where='thumb']:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: var(--space-1);
 }
-.super-stage-exit {
-  height: var(--space-8);
-  padding: 0 var(--space-4);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  box-shadow: var(--shadow-md);
-  flex: none;
-}
-.super-stage-exit:hover { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
 /* The presentation queue's control (task super-sahnesinde-sunum-sirasi, D2, D7, D10): a pill in the
    top band, left of the layout buttons while presenting, at the band's right end while waiting. */
 .super-pq {
@@ -1750,24 +1841,12 @@
   box-shadow: var(--shadow-md);
 }
 .super-pq-pill > * { flex: none; }
-.super-pq-dots,
 .super-pq-text,
 .super-pq-play {
   height: var(--space-8);
   display: inline-flex;
   align-items: center;
 }
-.super-pq-dots { gap: var(--space-1); }
-.super-pq-dot {
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--color-text) 18%, transparent);
-  transition: width 160ms ease-out, background 160ms ease-out;
-}
-.super-pq-dot[data-past] { background: color-mix(in srgb, var(--color-accent) 40%, transparent); }
-.super-pq-dot[data-on] { width: var(--space-5); background: var(--color-accent); }
-@media (prefers-reduced-motion: reduce) { .super-pq-dot { transition: none; } }
 .super-pq-text {
   flex: 0 1 auto;
   min-width: 0;
@@ -2123,40 +2202,7 @@
 }
 .super-turn-card-closed-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-secondary); }
 
-/* An opened group's close and minimize sit in the presentation's toolbar; the ask opens under them. */
+/* An opened group's close question opens under the frame's icons. */
 .super-stage-group-ask { position: absolute; top: calc(100% + var(--space-1)); right: 0; left: auto; white-space: nowrap; z-index: var(--sz-queue); }
-.super-stage-exit--group:disabled { opacity: 0.5; cursor: default; }
-/* Folded group bar: "…" holds ask and close group; its menu opens under the bar. */
-.super-stage-more { position: relative; flex: none; }
-.super-stage-exit--more { padding: 0 var(--space-3); min-width: var(--space-8); }
-.super-stage-more-menu {
-  position: absolute;
-  top: calc(100% + var(--space-1));
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  min-width: 160px;
-  padding: var(--space-1);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  box-shadow: var(--shadow-md);
-  z-index: var(--sz-queue);
-}
-.super-stage-more-item {
-  height: var(--space-8);
-  padding: 0 var(--space-3);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.super-stage-more-item:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
-.super-stage-more-item:disabled { opacity: 0.5; cursor: default; }
 /* While its close question is open, the toolbar rises above a narrow stage's sheet and tabs. */
 .super-stage-controls[data-asking] { z-index: var(--sz-panel); }
