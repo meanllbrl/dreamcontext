@@ -67,7 +67,7 @@ export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--e
  * A presentation's controls at the top band's right end (plan-r2 D11, D12): the layouts these
  * cards can take (only when there is a choice), then the way back to the floating stage.
  */
-export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false, closable = 0, onCloseGroup, onAsk, leaveQueue = false }: {
+export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false, closable = 0, onCloseGroup, onAsk, leaveQueue = false, folded = false }: {
   rect: Rect; layouts: readonly PresentLayout[]; current: PresentLayout; onPick: (l: PresentLayout) => void; onExit: () => void;
   /** The presentation shows one group whole: "Minimize" goes back to that group's panel, "Close group" closes its cards. */
   toGroup?: boolean;
@@ -78,9 +78,12 @@ export function StageControls({ rect, layouts, current, onPick, onExit, toGroup 
   onAsk?: () => void;
   /** A queued presentation of 2+ is shown: the exit leaves the queue (the rest keep waiting). */
   leaveQueue?: boolean;
+  /** A band too narrow for all three group buttons: ask and close group go into a "…" menu. */
+  folded?: boolean;
 }) {
   const { t } = useI18n();
   const [ask, setAsk] = useState(false);
+  const [menu, setMenu] = useState(false);
   return (
     <div className="super-stage-controls" data-testid="super-stage-controls" data-asking={ask && toGroup ? "true" : undefined} style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
       {layouts.length > 1 && (
@@ -95,9 +98,25 @@ export function StageControls({ rect, layouts, current, onPick, onExit, toGroup 
       )}
       {toGroup ? (
         <>
-          {onAsk && <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-ask" onClick={onAsk}>{t('super.card.askAbout')}</button>}
-          <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-close" disabled={closable < 1 || !onCloseGroup}
-            aria-expanded={ask} onClick={() => setAsk((v) => !v)}>{t('super.stage.closeGroup')}</button>
+          {folded ? (
+            <div className="super-stage-more">
+              <button type="button" className="super-stage-exit super-stage-exit--group super-stage-exit--more" data-testid="super-stage-group-more" aria-haspopup="menu" aria-expanded={menu}
+                aria-label={t('super.stage.more')} title={t('super.stage.more')} onClick={() => setMenu((v) => !v)}>…</button>
+              {menu && (
+                <div className="super-stage-more-menu" role="menu" data-testid="super-stage-group-more-menu">
+                  {onAsk && <button type="button" role="menuitem" className="super-stage-more-item" data-testid="super-stage-group-ask" onClick={() => { setMenu(false); onAsk(); }}>{t('super.card.askAbout')}</button>}
+                  <button type="button" role="menuitem" className="super-stage-more-item" data-testid="super-stage-group-close" disabled={closable < 1 || !onCloseGroup}
+                    onClick={() => { setMenu(false); setAsk(true); }}>{t('super.stage.closeGroup')}</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {onAsk && <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-ask" onClick={onAsk}>{t('super.card.askAbout')}</button>}
+              <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-close" disabled={closable < 1 || !onCloseGroup}
+                aria-expanded={ask} onClick={() => setAsk((v) => !v)}>{t('super.stage.closeGroup')}</button>
+            </>
+          )}
           <button type="button" className="super-stage-exit super-stage-exit--group" data-testid="super-stage-group-minimize" onClick={onExit} title="Esc">{t('super.card.minimize')}</button>
           {ask && closable > 0 && (
             <div className="super-close-choice super-stage-group-ask" role="group" aria-label={t('super.group.closeAsk')} data-testid="super-stage-group-close-choice">

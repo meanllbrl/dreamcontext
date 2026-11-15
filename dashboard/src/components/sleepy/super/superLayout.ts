@@ -116,8 +116,14 @@ export const STAGE = {
   /** The top band's presentation controls at its right end: the exit, and one segment per layout
    *  the switcher offers (none for a single choice). */
   EXIT_W: 132,
-  /** An opened group's two text buttons (close group, minimize) take the exit's place. */
-  GROUP_EXIT_W: 232,
+  /** An opened group's three text buttons (ask about this, close group, minimize) take the exit's
+   *  place; slack for the longer Turkish labels, so the box is never narrower than its buttons. */
+  GROUP_EXIT_W: 372,
+  /** The same bar folded: "…" (ask, close group) and minimize. */
+  GROUP_EXIT_FOLDED_W: 160,
+  /** The queue's pill keeps at least this much of the band (its names truncate past it); a group's
+   *  bar folds into "…" before it would take it. */
+  QUEUE_MIN_W: 220,
   SWITCH_SEG_W: 96,
   /** The presentation queue's control (task super-sahnesinde-sunum-sirasi, D7/D10): left of the
    *  layout buttons while presenting; under QUEUE_NARROW_W it drops the names ("i/N ›" stays). */
@@ -258,6 +264,8 @@ export interface StagePlan {
   strip?: StripPlan;
   /** While presenting: the top band's switcher and exit, at its right end. */
   controls?: Rect;
+  /** The group's bar is folded: ask and close group sit in a "…" menu (the band is too narrow for all three). */
+  controlsFolded?: boolean;
   /** The presentation queue's control in the top band (D7, D2): `step` left of `controls` while a
    *  queued presentation is on screen, `wait` at the band's right end while presentations wait
    *  off screen. `short`: the narrow band's form (D10). */
@@ -1232,7 +1240,7 @@ function planWith(
     others.push(c.id);
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
-    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
+    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls' | 'controlsFolded'>> = {}): StagePlan => {
     // The queue's control holds the band's right end (left of a presentation's controls).
     const qb = queueBandRect(f, opts.queueBand, mode, extra.controls);
     const bandRight = qb ? qb.rect : extra.controls;
@@ -1361,7 +1369,10 @@ function planWith(
     const ordered = layout === 'filmstrip' ? [...shown.filter((id) => kindOf(id) !== 'agenda'), ...shown.filter((id) => kindOf(id) === 'agenda')] : shown;
     const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
-    const cw = (opts.groupExit ? STAGE.GROUP_EXIT_W : STAGE.EXIT_W) + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
+    const switchW = choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0;
+    // A group's bar folds into "…" before it would leave the queue's pill less than QUEUE_MIN_W.
+    const controlsFolded = !!opts.groupExit && f.content.width - (STAGE.GROUP_EXIT_W + switchW) - STAGE.GAP < STAGE.QUEUE_MIN_W;
+    const cw = (opts.groupExit ? (controlsFolded ? STAGE.GROUP_EXIT_FOLDED_W : STAGE.GROUP_EXIT_W) : STAGE.EXIT_W) + switchW;
     const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
     const strip = (main: Rect): StripPlan => {
       // The big card over one row holding a slot for EVERY card, in their fixed order: the big
@@ -1401,7 +1412,7 @@ function planWith(
       const barH = opts.asking ? Math.min(STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height), f.content.height / 2) : STAGE.CHAT_BAR_H;
       const bar: Rect = { x: f.content.x, y: f.content.y + f.content.height - barH, width: f.content.width, height: barH };
       const sheet: Rect = { x: f.content.x + i, y: f.content.y + i, width: f.content.width - 2 * i, height: Math.max(0, f.content.height - barH - STAGE.GAP - i) };
-      const extra = { layout, chat: opts.asking ? 'mini' as const : 'bar' as const, controls };
+      const extra = { layout, chat: opts.asking ? 'mini' as const : 'bar' as const, controls, controlsFolded };
       if (layout === 'filmstrip') {
         const st = strip(sheet);
         for (const c of list) if (!cards[c.id]) toOthers(c);
@@ -1444,7 +1455,7 @@ function planWith(
       const { rects } = fitArrange(regionAt(chatW), items);
       ordered.forEach((id, k) => place(id, rects[k], 'present'));
       for (const c of list) if (!cards[c.id]) toOthers(c);
-      return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat: 'column', controls });
+      return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat: 'column', controls, controlsFolded });
     }
 
     // Spotlight, filmstrip, review: the agent is a mini square bottom-left (or its composer bar,
@@ -1490,7 +1501,7 @@ function planWith(
     const main: Rect = chat === 'bar'
       ? { x: c.x, y: c.y, width: c.width, height: Math.max(0, c.height - STAGE.CHAT_BAR_H - STAGE.GAP) }
       : { x: c.x + miniW + STAGE.GAP, y: c.y, width: Math.max(0, c.width - miniW - STAGE.GAP), height: c.height };
-    const extra = { layout, chat, controls };
+    const extra = { layout, chat, controls, controlsFolded };
     if (layout === 'filmstrip') {
       const st = strip(main);
       for (const k of list) if (!cards[k.id]) toOthers(k);

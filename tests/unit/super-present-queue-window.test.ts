@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
-import { STAGE, applyLayoutPatch, patchEchoed, planStage } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { STAGE, applyLayoutPatch, patchEchoed, planStage, type Rect } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { remoteLayoutPatch, remoteStageState } from '../../dashboard/src/components/sleepy/super/remoteStage.js';
 import { PRESENT_REPLY_KEYS as CLIENT_PRESENT_KEYS, answerForCards, turnCardsByAnswer, type TurnItem } from '../../dashboard/src/lib/turnCards.js';
 import { PRESENT_REPLY_KEYS } from '../../src/server/routes/super.js';
@@ -186,5 +186,32 @@ describe('the side menu says how many wait (AC5)', () => {
     const sum = rosterSummary({ sessions: [], windows: [] }, { enabled: true, session: 's1', presentQueue: q as server.PresentQueue });
     expect(sum.superWaiting).toBe(2);
     expect(rosterSummary({ sessions: [], windows: [] }, { enabled: true, session: 's1' }).superWaiting).toBe(0);
+  });
+});
+
+describe('the top band never overlaps itself (field 2026-11-15: the Next pill over "Grid")', () => {
+  const items = [card('a'), card('b'), card('c'), card('d')];
+  const present: client.SuperView = { mode: 'present', cards: ['a', 'b', 'c', 'd'] };
+  const clash = (p: Rect, q: Rect) => p.x < q.x + q.width && q.x < p.x + p.width;
+
+  it.each([700, 820, 1024, 1280, 1440, 1650, 2000])('a group bar at a stage %i px wide: queue pill and controls never intersect', (width) => {
+    for (const layoutChoices of [1, 2, 3]) {
+      const p = planStage(items, present, { width, height: 800 }, { layoutChoices, queueBand: 'step', groupExit: true });
+      const c = p.controls!;
+      expect(clash(p.queueBand!.rect, c), `${width}/${layoutChoices}`).toBe(false);
+      expect(c.x).toBeGreaterThanOrEqual(0);
+      expect(c.x + c.width).toBeLessThanOrEqual(width);
+      // The box is never narrower than the buttons it holds: full (3 buttons) or folded (… and minimize).
+      const need = (p.controlsFolded ? STAGE.GROUP_EXIT_FOLDED_W : STAGE.GROUP_EXIT_W) + (layoutChoices > 1 ? STAGE.GAP / 2 + layoutChoices * STAGE.SWITCH_SEG_W : 0);
+      expect(c.width).toBe(need);
+    }
+  });
+
+  it('wide stages keep all three buttons; narrow ones fold ask and close group into "…"', () => {
+    const wide = planStage(items, present, { width: 2000, height: 800 }, { layoutChoices: 2, queueBand: 'step', groupExit: true });
+    const tight = planStage(items, present, { width: 820, height: 800 }, { layoutChoices: 2, queueBand: 'step', groupExit: true });
+    expect(wide.controlsFolded).toBe(false);
+    expect(tight.controlsFolded).toBe(true);
+    expect(tight.queueBand!.rect.width).toBeGreaterThan(0);
   });
 });

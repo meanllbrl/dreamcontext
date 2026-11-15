@@ -1383,7 +1383,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         </button>
       )}
       {plan.controls && plan.layout && (
-        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout}
+        <StageControls rect={plan.controls} folded={!!plan.controlsFolded} layouts={layoutChoices} current={plan.layout} onPick={pickLayout}
           onExit={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation} leaveQueue={queueBand === 'step' && !shownGroup} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
       )}
       {plan.queueBand && pq && (

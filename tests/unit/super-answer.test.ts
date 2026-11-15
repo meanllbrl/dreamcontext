@@ -87,7 +87,19 @@ function res(): ServerResponse & { status: number; json: Record<string, unknown>
   (out as unknown as { end: (b?: string) => void }).end = (b?: string) => { out.json = b ? JSON.parse(b) : {}; };
   return out;
 }
+// The server refuses a picture, PDF or clip that is not a file in the project: these tests open
+// made-up names, so the files exist first (the refusal itself: super-open-missing-file.test.ts).
+function touchMedia(body: Record<string, unknown>): void {
+  const refs = Array.isArray(body.refs) ? body.refs : [body.ref];
+  for (const r of refs) {
+    if (typeof r !== 'string' || !/\.(png|jpe?g|gif|webp|svg|pdf|mp4|m4v|mov|webm)$/i.test(r) || r.includes('..') || r.startsWith('/')) continue;
+    const at = join(dirname(root), r);
+    mkdirSync(dirname(at), { recursive: true });
+    writeFileSync(at, 'x', { flag: 'a' });
+  }
+}
 async function verb(name: string, body: Record<string, unknown>) {
+  if (name === 'open' && ['image', 'pdf', 'video'].includes(String(body.kind))) touchMedia(body);
   const r = res();
   await handleSuperVerb(req(body, { 'x-dreamcontext-window-token': token }), r, { verb: name });
   return r;
