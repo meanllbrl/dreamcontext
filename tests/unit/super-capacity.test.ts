@@ -154,7 +154,8 @@ describe('super delegate', () => {
     })]);
     const deadline = (commands[0].args as { deadline: number }).deadline;
     expect(deadline).toBeGreaterThan(Date.now());
-    expect(deadline).toBeLessThanOrEqual(Date.now() + 30_000);
+    // The window may still open it through the late wait (5 min past the 30 s answer).
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 30_000 + 5 * 60_000);
     const s = await readSuperState(root);
     expect(s.children['new-child']).toMatchObject({ adopted: false, brief: 'users migration' });
     expect(s.containers.find((c) => c.kind === 'chat' && c.ref === 'new-child')).toBeTruthy();

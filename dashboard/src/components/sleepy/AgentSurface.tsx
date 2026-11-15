@@ -4529,6 +4529,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const st = frameSuper === activeSuperId ? superStateRef.current : readSuperRecord(vault, frameSuper);
     if (!st?.enabled) return { ok: false, error: 'not_handed_over' };
     if (verb === 'delegate') {
+      // When the frame reached this window and whether it was hidden: the server logs both, so a
+      // slow open shows where the time went (window-open.log, field 2026-11-15).
+      const got = Date.now();
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
       // Past the server's deadline: open NO child (the server would never record it).
       if (delegateExpired(args)) return { ok: false, error: 'expired' };
       const d = delegateArgs(args);
@@ -4558,7 +4562,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // A NON-active tab of the active pane (D5): take-back shows the owner's layout + it. With
       // no pane at all it gets one (the "keep activePaneId real" effect then points at it).
       setPanes((prev) => placeDelegatedChild(prev, activePaneId, s.id, nextPaneId).panes);
-      return { ok: true, result: { sessionId: s.claudeId } };
+      return { ok: true, result: { sessionId: s.claudeId, got, hidden } };
     }
     if (verb === 'answer') {
       // Past its deadline the server answered the card itself (no window answered in time,

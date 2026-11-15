@@ -27,6 +27,7 @@
  * Super (`ensureMemberSuper`, born on its first message), the Super's bot to the project's main
  * Super (`superOf`). The manager goes through `manager.ts`.
  */
+import { appendOpenLog } from '../../lib/window-open-log.js';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
@@ -1026,9 +1027,26 @@ export class TelegramHub implements TelegramHubApi {
     const root = this.rootOf(ab);
     const link = root ? appLinkForContextRoot(root, { kind: 'session', claudeId: sessionId } as never, this.home) : null;
     if (!link) return null;
+    const asked = this.now();
+    appendOpenLog('telegram_open', { session: sessionId.slice(0, 8) }, this.home);
     return new Promise<ReturnType<typeof chatInjector>>((resolve) => {
       let done = false;
-      const finish = (v: ReturnType<typeof chatInjector>) => { if (done) return; done = true; clearTimeout(timer); off(); resolve(v); };
+      const finish = (v: ReturnType<typeof chatInjector>) => {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        appendOpenLog(v ? 'telegram_opened' : 'telegram_open_timeout', { session: sessionId.slice(0, 8), ms: this.now() - asked }, this.home);
+        // Timed out: keep listening a while, so the log says whether (and when) it opened after all.
+        if (!v) {
+          const lateOff = onChatInjector((sid) => {
+            if (sid !== sessionId) return;
+            lateOff(); clearTimeout(lateTimer);
+            appendOpenLog('telegram_opened_late', { session: sessionId.slice(0, 8), ms: this.now() - asked }, this.home);
+          });
+          const lateTimer = setTimeout(() => lateOff(), 5 * 60_000);
+          lateTimer.unref?.();
+        }
+        off(); resolve(v);
+      };
       const off = onChatInjector((sid) => { if (sid === sessionId) finish(chatInjector(sid)); });
       const timer = setTimeout(() => finish(null), this.deps.injectorWaitMs ?? INJECTOR_WAIT_MS);
       timer.unref?.();
