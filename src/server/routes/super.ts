@@ -2453,6 +2453,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const q = s.queue.find((x) => x.id === id);
       if (q && q.kind === 'question' && q.state !== 'done') {
         q.state = 'escalated';
+        q.superAsked = true;
         q.ownerText = text;
         if (batch) { q.batch = batch; noteOwnerBatch(s, batch); }
         shown = applyAskShow(s, q.id, prep, c.who.contextRoot, now, s.children[child] ? child : undefined);
