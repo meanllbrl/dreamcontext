@@ -42,6 +42,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/layout/newshell/ChatDrawer.css::.ns-dr-win[data-drop-before="true"]::after, .ns-dr-win[data-drop-after="true"]::after': 'drop line',
   'components/roadmap/Priority.css::.pc-bar > span': 'bar',
   'components/roadmap/Priority.css::.pc-dot': 'dot',
+  'components/sleepy/super/SuperSurface.css::.super-pq-dot[data-on]': 'queue position dot',
   'components/roadmap/Priority.css::.pv-map-dot.is-suggested': 'dot',
   'components/sleepy/chat/model-picker/model-picker.css::.mp-tool.is-on::after': 'rail marker',
   'components/sleepy/super/PhoneAgenda.css::.phone-jobs-row[data-state="working"] .phone-jobs-dot': 'dot',

@@ -255,8 +255,10 @@ describe('the Super is told where his approvals are, and never to give one', () 
 
   it('the card posts the super\'s session to the owner-only routes, and the agenda lists the rows', () => {
     const band = readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperApprovalBand.tsx', import.meta.url), 'utf-8');
-    expect(band).toContain('`/automations/${slug}/${decision === \'approved\' ? \'approve\' : \'reject\'}`, { sessionId }');
-    expect(band).toContain('`/agents/${slug}/approve`, { sessionId }');
+    // Approve is THE approve every door uses (shown hash, a moved script re-read); decline posts the reject / off route.
+    expect(band).toContain('approveRoutine.mutateAsync({ slug: item.slug, shownHash, sessionId })');
+    expect(band).toContain('approveAgent.mutateAsync({ slug: item.slug, shownHash, sessionId })');
+    expect(band).toContain('`/automations/${slug}/reject`, { sessionId }');
     expect(band).toContain('`/agents/${slug}/enabled`, { enabled: false, sessionId }');
     const surface = readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperSurface.tsx', import.meta.url), 'utf-8');
     expect(surface).toContain('approvals={agendaApprovals}');

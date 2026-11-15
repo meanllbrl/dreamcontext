@@ -66,9 +66,9 @@ describe('the recall key and the egress minting', () => {
     expect(holders(/\.openRouterKey/)).toEqual(['src/lib/recall-cloud-config.ts', 'src/lib/voice/config.ts', AGENT_VOICE, ...JEV].sort());
   });
 
-  it('calls voiceApiKey( only inside voice, its route, and the explicit copy in the config module', () => {
+  it('calls voiceApiKey( only inside voice, its route, the spoken-summary speaker, and the explicit copy in the config module', () => {
     const outside = holders(/voiceApiKey\(/).filter((f) => !f.startsWith('src/lib/voice/'));
-    expect(outside).toEqual(['src/lib/recall-cloud-config.ts', AGENT_VOICE].sort());
+    expect(outside).toEqual(['src/lib/recall-cloud-config.ts', AGENT_VOICE, 'src/server/voice-speak.ts'].sort());
   });
 });
 

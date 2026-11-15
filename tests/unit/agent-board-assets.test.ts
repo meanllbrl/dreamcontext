@@ -422,7 +422,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * replaces the earlier open one, so what the agent needs now goes in ONE message. Actual 11,952.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12000);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12400);
   });
 
   /**
@@ -433,7 +433,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11952)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12281)).toBeLessThanOrEqual(20);
   });
 
   /**

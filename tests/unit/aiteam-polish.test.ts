@@ -159,6 +159,6 @@ describe('the surfaces wire it (source scan; the behaviour is proven in the brow
     // The card names the fields a synced or waiting change moved.
     expect(strip).toMatch(/data-approval-fields/);
     expect(strip).toMatch(/invalidateQueries\(\{ queryKey: item\.kind === 'agent' \? \['agents', item\.slug\] : \['automations', item\.slug\], exact: true \}\)/);
-    expect(strip).toMatch(/const ready = !!review && !detail\.isFetching && detail\.isFetchedAfterMount;/);
+    expect(strip).toMatch(/const ready = !!review && !detail\.isFetching && detail\.isFetchedAfterMount && !condition\.conditionError;/);
   });
 });

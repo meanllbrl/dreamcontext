@@ -1786,7 +1786,7 @@
   border-radius: var(--radius-full);
   border: none;
   background: var(--color-accent-strong);
-  color: var(--color-text-on-brand);
+  color: var(--color-accent-text);
   font-size: var(--font-size-xs);
   font-weight: 600;
   white-space: nowrap;
