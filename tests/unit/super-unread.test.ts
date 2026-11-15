@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { superRowMarks } from '../../dashboard/src/components/sleepy/super/sessionHome';
+import type { SuperQueueItem } from '../../dashboard/src/lib/superTypes';
 import {
   DWELL_MS, GLIDE_REACH, PROSE_LANDING, SAME_MESSAGE_MS, START_SLACK, SUPER_QUESTION_EVENT, advanceDwell, landingFor, readSide, startInView, startSeen, startSide, chooseLine, firstMountedRow, glideEase, glideFrom, leadIndex, mergeMarks, mostlyVisible, newestRead, ownerCanRead, sideOf, unreadOf, unreadSinceRead, unreadUnits, wordsKey, withRead,
   type ReadMarks, type UnreadItem,
@@ -323,5 +325,29 @@ describe("a Super's row counts only what is newer than the newest message he rea
     expect(src).toMatch(/const count = useMemo\(\(\) => unreadSinceRead\(units, unread\)\.length/);
     expect(src).toMatch(/publishSuperUnread\(vault, count, paneToken, superId, asking\)/);
     expect(src).toMatch(/const newestIsRead = count === 0;/);
+  });
+});
+
+describe('an open question keeps the row asking until it is answered, read or not (owner 2026-11-15)', () => {
+  // The Super's own question from half an hour ago, older than the newest message he read: it
+  // leaves the row's number (read rule), never its question mark (answer rule).
+  const MIN = 60_000;
+  // Main's own question as `super ask` files it (routes/super.ts: kind 'ask', escalated to him),
+  // and a child's question that is his from birth (inbox.ts: kind 'question', direct).
+  const question = (open: boolean) => ({ id: 'q-old', kind: 'ask', state: open ? 'escalated' : 'done', createdAt: 15 * MIN, ownerText: 'Hangisi?' }) as unknown as SuperQueueItem;
+  const childQuestion = (open: boolean) => ({ id: 'q-kid', kind: 'question', direct: true, state: open ? 'pending' : 'done', sessionId: 'aaaaaaaa-0000-4000-8000-0000000000c1', createdAt: 16 * MIN }) as unknown as SuperQueueItem;
+  const items = [user('u1', 'bunu kur', 1 * MIN), text('newest', 'en yeni cevap', 60 * MIN)];
+  it('older than the newest read: out of the number, the row still asks', () => {
+    const all = units(items, [{ id: 'q-old', createdAt: 15 * MIN }]);
+    const newest = all.find((u) => u.itemId === 'newest')!;
+    const unread = unreadOf(all, marks(0, [{ key: newest.key, ts: newest.ts }]));
+    expect(unread.map((u) => u.question)).toEqual(['q-old']);
+    expect(unreadSinceRead(all, unread)).toEqual([]);
+    expect(superRowMarks({ children: {}, queue: [question(true)] }).asking).toBe(true);
+    expect(superRowMarks({ children: {}, queue: [childQuestion(true)] }).asking).toBe(true);
+  });
+  it('answered or closed: the row stops asking', () => {
+    expect(superRowMarks({ children: {}, queue: [question(false), childQuestion(false)] }).asking).toBe(false);
+    expect(superRowMarks({ children: {}, queue: [] }).asking).toBe(false);
   });
 });
