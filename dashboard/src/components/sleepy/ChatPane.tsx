@@ -90,6 +90,7 @@ import { anchorOwnerCards, ownerCardItemsOf, placeOwnerCards, tailHolds } from '
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
+import { RunLiveLine } from './super/RunLiveLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
@@ -2719,25 +2720,25 @@ export function ChatPane({
         );
       }
       if (marks.boundary) {
-        nodes.push(
-          <button
-            key={`fbound-${meta.sessionKey}`}
-            type="button"
-            className={`chat-history-divider chat-feed-boundary${meta.status === 'failed' ? ' chat-feed-boundary--failed' : ''}`}
-            data-feed-boundary={meta.sessionKey}
-            onClick={() => feed.onBoundary(meta)}
-          >
+        const open = feed.onBoundary;
+        const boundaryClass = `chat-history-divider chat-feed-boundary${open ? '' : ' chat-feed-boundary--still'}${meta.status === 'failed' ? ' chat-feed-boundary--failed' : ''}`;
+        nodes.push(open ? (
+          <button key={`fbound-${meta.sessionKey}`} type="button" className={boundaryClass} data-feed-boundary={meta.sessionKey} onClick={() => open(meta)}>
             {feed.labels.boundary(meta)}
             <span className="chat-feed-boundary-go" aria-hidden>›</span>
-          </button>,
-        );
+          </button>
+        ) : (
+          <div key={`fbound-${meta.sessionKey}`} className={boundaryClass} data-feed-boundary={meta.sessionKey}>
+            {feed.labels.boundary(meta)}
+          </div>
+        ));
         if (meta.missing) nodes.push(<div key={`fmiss-${meta.sessionKey}`} className="chat-feed-note" data-feed-missing>{feed.labels.missing}</div>);
         if (meta.truncated) {
-          nodes.push(
-            <button key={`ftrunc-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link" onClick={() => feed.onBoundary(meta)}>
+          nodes.push(open ? (
+            <button key={`ftrunc-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link" onClick={() => open(meta)}>
               {feed.labels.truncated}
-            </button>,
-          );
+            </button>
+          ) : <div key={`ftrunc-${meta.sessionKey}`} className="chat-feed-note">{feed.labels.truncated}</div>);
         }
       }
       if (!meta.empty) {
@@ -2749,9 +2750,14 @@ export function ChatPane({
         nodes.push(<Fragment key={`frun-${meta.sessionKey}`}>{feed.runFoot(meta, { openFile: handleOpenFile })}</Fragment>);
       }
       if (feedRunWorking(meta, marks)) {
+        // In the Super view a run in flight looks like a turn in flight: the same live steps line,
+        // never a Working pill (owner 2026-11-07) nor a pane of its own (owner 2026-11-14).
+        const startedAt = Date.parse(meta.startedAt) || undefined;
         nodes.push(
           <div key={`fwork-${meta.sessionKey}`} data-feed-working={meta.sessionKey}>
-            <WorkingIndicator label={feed.labels.working} startedAt={Date.parse(meta.startedAt) || undefined} />
+            {superView
+              ? <RunLiveLine claudeId={meta.claudeId} startedAt={startedAt} onOpenFile={handleOpenFile} />
+              : <WorkingIndicator label={feed.labels.working} startedAt={startedAt} />}
           </div>,
         );
       }

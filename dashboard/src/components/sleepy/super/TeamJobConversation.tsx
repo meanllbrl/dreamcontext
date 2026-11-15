@@ -2,7 +2,8 @@ import { useCallback, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { useReplyDelivery, useReplyToAgentThread } from '../../../hooks/useAutomations';
-import { RunReport, RunView } from '../../aiteam/RunView';
+import { RunReport } from '../../aiteam/RunView';
+import { runViewItems } from '../../aiteam/agentHistory';
 import { RunDocumentTileFor } from '../../aiteam/RunDocumentTile';
 import { chatFilePath } from '../chat/chatFeed';
 import { teamStatusOf, type TeamCard } from './TeamTile';
@@ -66,6 +67,10 @@ export function useMemberSuperRecord(vault: string, member: string, enabled: boo
  * both his words and the answer (a follow-up job, `recordTeamFollowUp`). After a rotation (20
  * turns, or a conversation that could not be continued) a first line "önceki konuşma" opens the
  * previous run's transcript.
+ *
+ * Every route draws its transcript the same way: the chat pane itself, filling the card, never a
+ * fixed-height bordered box inside it (owner 2026-11-14, learned rule h7tjatns3j: a member's chat
+ * looks like a normal chat). A run route leaves out the prompt the runner composed.
  */
 /** The record's copy of main's request, shown at the END of the flow only until the member's
  *  transcript holds a request turn with the same item id (plan r4 E1'). Never two copies. */
@@ -166,13 +171,13 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
       {prev && previous && (
         <div className="super-team-job-body super-team-job-body--previous" data-testid="team-job-previous-body">
           {prev.sessionId
-            ? <RunView key={prev.sessionId} claudeId={prev.sessionId} live={false} />
+            ? <ChildTranscript key={prev.sessionId} claudeId={prev.sessionId} foot="own" prepare={runViewItems} />
             : <RunReport slug={card.job.member} runId={prev.runId} />}
         </div>
       )}
       <div className="super-team-job-body">
         {card.sessionId
-          ? <RunView key={card.sessionId} claudeId={card.sessionId} live={running} endSlot={running ? undefined : docTile} />
+          ? <ChildTranscript key={card.sessionId} claudeId={card.sessionId} live={running} foot="own" prepare={runViewItems} endSlot={running ? undefined : docTile} />
           : <p className="aiteam-stage-note">{running ? t('super.team.reply.starting') : card.lastLine}</p>}
       </div>
       {closed

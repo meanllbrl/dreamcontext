@@ -152,7 +152,7 @@ export async function toMainStage(page) {
  * (a child's member, from DREAMCONTEXT_MEMBER_CREW), `cli(...args)`, `report(o)` and `sleep(ms)`
  * in scope. A body returns the line to answer, or `null` to HOLD the turn (the chat stays working,
  * the way a long child job does). `headless` is the body for a `claude -p` run (prompt in `prompt`):
- * it returns the result line.
+ * it returns the result line, and may set `globalThis.__sid` to the session it wrote a transcript for.
  */
 export function superStandin({ reports, cli, main = "return 'ok';", member = "return 'ok';", child = "return 'ok';", headless = "return 'ok';" }) {
   return `#!${process.execPath}
@@ -176,7 +176,7 @@ if (!argv.includes('stream-json')) {
     report({ kind: 'headless-run', prompt: prompt.slice(0, 2000) });
     let said = 'ok';
     try { said = await (async () => { ${headless} })(); } catch (e) { said = 'error ' + e; }
-    out({ type: 'result', subtype: 'success', is_error: false, result: said, session_id: at('--resume') || randomUUID(), num_turns: 1, total_cost_usd: 0, duration_ms: 5 });
+    out({ type: 'result', subtype: 'success', is_error: false, result: said, session_id: globalThis.__sid || at('--resume') || randomUUID(), num_turns: 1, total_cost_usd: 0, duration_ms: 5 });
   } else out({});
   process.exit(0);
 }
