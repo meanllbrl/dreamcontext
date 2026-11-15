@@ -283,7 +283,7 @@ describe('observed run fixes (super-members.mjs)', () => {
   it('a member made or deleted re-reads the Team summary at once (no deleted row for up to 15 s)', () => {
     const bridge = src('dashboard/src/components/layout/newshell/DrawerFactsBridge.tsx');
     expect(bridge).toMatch(/const agentSet = useMemo\(\(\) => \(agentsQ\.data \?\? \[\]\)\.map\(\(a\) => a\.slug\)\.sort\(\)\.join\('\\n'\), \[agentsQ\.data\]\);/);
-    expect(bridge).toMatch(/\}, \[api, drawerVisible, agentSet\]\);/);
+    expect(bridge).toMatch(/\}, \[api, drawerVisible, agentSet, vault\]\);/);
   });
 
   it('deleting a routine never re-reads its own detail (no 404 for the gone one, even with its row open)', () => {
