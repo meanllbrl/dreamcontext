@@ -30,6 +30,8 @@ import { resetCapacityForTests } from '../../src/lib/super/capacity.js';
 import { handleSuperVerb, _setDelegateWaitsForTests } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl, sendSuperCommand } from '../../src/lib/window-control.js';
 import { _setOpenLogHomeForTests } from '../../src/lib/window-open-log.js';
+import { consumeCrewTicket, membersDelegating, mintCrewTicket, noteDelegating } from '../../src/lib/super/delegating.js';
+import { superKey } from '../../src/lib/super/store.js';
 
 const CHILD = 'late-child';
 const until = async (cond: () => Promise<boolean> | boolean, ms = 3_000) => {
@@ -155,6 +157,33 @@ describe('super delegate answered late', () => {
     deliverSuperResult(token, commands()[0].id, { ok: false, error: 'tabs_full' });
     await until(() => /delegate_late_lost/.test(log()));
     expect((await readSuperState(root)).pool).toEqual([]);
+  });
+
+  it('a pending start no longer counts as a delegate in flight (that count marks other spawns as crew)', async () => {
+    await delegate({ prompt: 'Quiet job.', brief: 'quiet' });
+    expect(noteDelegating(superKey(root), 0)).toBe(0);
+    expect(membersDelegating(root)).toEqual([]);
+  });
+
+  it('a hand-over gets no late wait: a timeout is unconfirmed as before, and the window may not open it later', async () => {
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
+      ...emptySuperState(), session: 'sup-1', enabled: true,
+      children: { 'old-child': { sessionId: 'old-child', brief: 'old', adopted: false, startedAt: 1 } },
+    }));
+    resetSuperIndex();
+    const r = await delegate({ prompt: 'Take over the job.', brief: 'heir', succeeds: 'old-child' });
+    expect(r.status).toBe(409);
+    expect(r.json.error).toBe('delegate_unconfirmed');
+    expect((commands()[0].args as { deadline: number }).deadline).toBeLessThan(Date.now() + 100);
+    expect(deliverSuperResult(token, commands()[0].id, { ok: true, result: { sessionId: CHILD } })).toBe(false);
+  });
+
+  it('a crew ticket minted for a late wait still ties the child after the old 40 s', () => {
+    const now = 1_000_000;
+    const t = mintCrewTicket(root, 'm:rota', 'job-1', now, 6 * 60_000);
+    expect(consumeCrewTicket(t, root, now + 120_000)).toBe('rota');
+    const short = mintCrewTicket(root, 'm:rota', 'job-2', now);
+    expect(consumeCrewTicket(short, root, now + 41_000)).toBeNull();
   });
 
   it('a pool job pending a late answer is refused `starting` on --from, and leaves the pool once it lands', async () => {
