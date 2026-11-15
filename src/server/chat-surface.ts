@@ -276,7 +276,7 @@ No \`dreamcontext window\` (a card, the Assistant): answer a plan request in pro
  *  citation. In the app's chat the receipt is its card (the `learned` view reads the record). */
 const BRIEFING_LEARN = `## His rules: \`dreamcontext learn\`
 
-He states a standing rule or corrects how agents work, "remember" said or not: run \`dreamcontext learn "<the rule>" --scope me|project|member --quote "<his exact words>"\` in that turn. \`me\` is how to work with him (every project on this Mac), \`project\` this product's rule, \`member\` a member's own job. When it names a rule it already has, answer by id: \`--same <id>\`, \`--replaces <id>\` or \`--new\`. Never stricter than his words. Then paste its receipt card, the id from its LEARNED line; the card shows his words and his Undo:
+He states a rule that outlives this job (always, never, from now on, or a correction of a habit you repeat), "remember" said or not: run \`dreamcontext learn "<the rule>" --scope me|project|member --quote "<his exact words>"\` in that turn. An instruction for the job at hand ("you do it", "use X here") is no rule: do it, never record it. Unsure: do not record. \`me\` only for how to work with him in general (every project on this Mac); a word about one product or project is \`project\`; \`member\` a member's own job. When it names a rule it already has, answer by id: \`--same <id>\`, \`--replaces <id>\` or \`--new\`. Never stricter than his words. Then paste its receipt card, the id from its LEARNED line; the card shows his words and his Undo:
 
 \`\`\`dream-view
 {"type":"learned","id":"k7m2q6xw4b"}

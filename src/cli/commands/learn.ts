@@ -761,7 +761,7 @@ export function registerLearnCommand(program: Command): void {
     .command('learn')
     .argument('[text]', 'The rule, one line, never stricter than his words')
     .description('Store a rule he stated (his preference, this project\'s rule, or a member\'s lesson) and print the line to repeat to him')
-    .option('--scope <scope>', 'me (how to work with him, every project) | project | member')
+    .option('--scope <scope>', 'me (how to work with him in general, every project) | project (one product or project) | member')
     .option('--quote <words>', 'His words the rule comes from, copied verbatim (repeatable)', collect, [])
     .option('--headline <text>', 'The rule itself in at most 60 characters')
     .option('--says <phrases>', 'Other ways he says it, in his languages, split by |')

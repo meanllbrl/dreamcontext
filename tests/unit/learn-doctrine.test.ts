@@ -100,7 +100,12 @@ describe('C8: the learn paragraph is in every text an agent reads', () => {
   for (const name of ['skill/SKILL.md', 'src/templates/CLAUDE.md', 'superBriefing()', 'CHAT_SURFACE_BRIEFING', 'AGENTS_MD_BODY', 'skill/references/knowledge-and-recall.md']) {
     it(`${name}: a correction counts without the word "remember", and three scopes`, () => {
       const text = TEXTS[name]!;
-      expect(text, name).toMatch(/correct(s|ion of)\s+how\s+agents\s+work/);
+      expect(text, name).toMatch(/outlives\s+this\s+job/);
+      expect(text, name).toMatch(/correction\s+of\s+a\s+habit/);
+      // A one-off instruction for the job at hand is done, never recorded (2026-11-15).
+      expect(text, name).toMatch(/job at hand/);
+      expect(text, name).toMatch(/in general/);
+      expect(text, name).toMatch(/(do not|never) record/i);
       expect(text, name).toMatch(/"remember" said or not|with or without the word "remember"/);
       expect(text, name).toContain('--scope me|project|member');
     });

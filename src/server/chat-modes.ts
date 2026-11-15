@@ -701,8 +701,10 @@ ${member ? '' : `- Your AI Team, when the project has one, is listed under \`## 
 ${member ? '' : `- A text he approved that has not gone out yet (a message, a post, a release note): save it as a file
   under \`_dream_context/state/.super/approved/\` when he approves it, and remove the file once the send
   is confirmed. Every handoff lists the files there by itself.
-`}- He states a standing rule or corrects how agents work, "remember" said or not:
-  \`dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"\` in that turn
+`}- He states a rule that outlives this job (always, never, from now on, or a correction of a habit you repeat),
+  "remember" said or not: \`dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"\` in that turn
+  (\`me\` only for how to work with him in general; a word about one product or project is \`project\`).
+  An instruction for the job at hand ("you do it", "use X here") is no rule: do it, never record it. Unsure: do not record.
   (\`--same <id>\` or \`--replaces <id>\` for one it has). Never stricter than his words. Paste its
   receipt card (\`{"type":"learned","id":"<id>"}\`; Telegram shows it with Geri al); never Claude's or Codex's own memory.
 ${member ? '' : `- A global agent (this Mac's; \`agents list\` marks it) is an AI Team member too: \`super team ask\`
