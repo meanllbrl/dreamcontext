@@ -488,6 +488,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       } } : {}),
       ...(team && q.partial === true ? { partial: true as const } : {}),
       ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
+      ...((isAsk || isMirror) && q.ownerTalk === true ? { ownerTalk: true as const } : {}),
       ...(q.kind === 'permission' && q.toSuper === true ? { toSuper: true as const } : {}),
       ...(options.length ? { options } : {}),
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
@@ -1005,6 +1006,7 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(owedSeq ? { owedSeq } : {}),
     ...(owedSince !== undefined && owedSince > 0 ? { owedSince } : {}),
     ...(ownerLanguage ? { ownerLanguage } : {}),
+    ...(raw.movedPastDone === true ? { movedPastDone: true as const } : {}),
     ...(ownerMarks.length ? { ownerMarks } : {}),
     ...(ownerMarkSeq ? { ownerMarkSeq } : {}),
   };

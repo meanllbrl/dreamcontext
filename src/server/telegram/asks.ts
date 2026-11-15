@@ -36,7 +36,7 @@ import { closeOwnerItemForCard, dropOwnerReceipts, ownerCardLookup } from '../ow
 import { join } from 'node:path';
 import { getChat, onChatChange, onRequestAnswered, pendingRequest, type ChatEntry } from '../../lib/assistant/chat-registry.js';
 import { announces, noteTelegramSend, offerOwnerItemsToTelegram, setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
-import { readSuperState, updateSuperState } from '../../lib/super/store.js';
+import { readSuperState, superIdOfMember, updateSuperState } from '../../lib/super/store.js';
 import { answerChildQuestion, answerOwnerItem, memberMirrorTarget, superAnswerText, shownKeyOf } from '../../lib/super/answer.js';
 import { answerMemberPick, pickLine, sizeLine } from './member-picks.js';
 import { memberTitle, itemCall } from '../../lib/super/inbox.js';
@@ -191,12 +191,24 @@ async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<strin
   }
 }
 
+/**
+ * A member's item from the owner's OWN conversation with that member (`ownerTalk` on its mirror,
+ * owner 2026-11-15): it goes on the member's own bot, under its name, when that bot is bound to
+ * this project; else on the Super bot as before. Its answer reads main's record through the
+ * binding's project root, so only a project-bound member bot carries it.
+ */
+export function ownerTalkBinding(hub: Pick<TelegramHub, 'bindingOfSuper'>, vault: string, item: SuperQueueItem): ActiveBinding | null {
+  if (item.kind !== 'member' || item.ownerTalk !== true || !item.member) return null;
+  const ab = hub.bindingOfSuper(vault, superIdOfMember(item.member));
+  return ab && !ab.disabled && ab.target !== 'super' && ab.contextRoot ? ab : null;
+}
+
 export function wireTelegramAsks(hub: TelegramHub): () => void {
   setOwnerQuestionSinks({
     // At the Mac (`hub.ownerAway()` false) the Mac card is the only one: `at_mac`, nothing taken,
     // so the turn-away flush below sends it once he is away.
     telegram: ({ vault, sessionId, item }) => {
-      const ab = hub.superBindingOfVault(vault);
+      const ab = ownerTalkBinding(hub, vault, item) ?? hub.superBindingOfVault(vault);
       if (!ab) return 'no_bot';
       if (!hub.ownerAway()) return 'at_mac';
       // One at a time: not taken now, offered again by the write his answer makes.

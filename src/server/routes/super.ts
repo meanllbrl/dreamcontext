@@ -50,7 +50,7 @@ import { answerOwnerItem } from '../../lib/super/answer.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
-import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
@@ -2648,6 +2648,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // overrides): the owner, or main Super for a request it gave. One open ask per audience.
     const audience = c.superId === 'main' ? 'owner' : (askFor.origin ?? superTurnOrigin(session));
     const toMain = isMainWork(audience);
+    // A member's question asked in HIS own conversation with it (the turn is his message's, not
+    // work the Super Agent gave): his alone, never routed through the Super Agent (owner 2026-11-15).
+    const ownerTalk = c.superId !== 'main' && !toMain && memberTurnOrigin(session) === 'owner';
     const openAsk = c.state.queue.find((q) => q.kind === 'ask' && q.state !== 'done' && isMainWork(q.workOrigin) === toMain);
     if (openAsk) {
       // Owner 2026-11-11: only a tap or a message about the card closes it; name it, and how to
@@ -2694,6 +2697,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         id, sessionId: session, kind: 'ask', state: 'escalated', ownerText: raw, createdAt: now,
         ...(options.length ? { options } : {}), ...(batch ? { batch } : {}), ask: spec,
         ...(askFor.origin ? { workOrigin: askFor.origin } : {}),
+        ...(ownerTalk ? { ownerTalk: true as const } : {}),
       });
       pushed = true;
       noteOwnerBatch(s, batch ?? undefined);

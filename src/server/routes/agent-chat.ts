@@ -4021,18 +4021,21 @@ export function startChatSession(
     // "write about this", a Telegram reply to its card) or is a tapped option's answer: any other
     // message of his, a reply ↩ to some message included, leaves it open (owner 2026-11-11).
     const abouts = isSuper ? ownerAbouts(text, aboutHeads(text)) : [];
-    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts) : null;
+    // His own words (never a server continue, a server-written turn, a receipt or a Telegram run
+    // report/schedule): only they answer a member's open card in its own chat (inbox.ts).
+    const ownWords = !text.startsWith('/') && !serverContinue && !serverWritten && !receipt
+      && (tgSource === undefined || tgSource === 'telegram-text');
+    const held = isSuper && !text.startsWith('/') ? superAnswerDigest(chatRegistryId, Date.now(), abouts, ownWords) : null;
     if (held) content.push({ type: 'text', text: held.text });
     // His open question left open by this message: the super is told, so it never blocks unseen.
-    const stillOpen = isSuper && !text.startsWith('/') ? superAskStillOpen(chatRegistryId, abouts) : null;
+    const stillOpen = isSuper && !text.startsWith('/') ? superAskStillOpen(chatRegistryId, abouts, ownWords) : null;
     if (stillOpen) content.push({ type: 'text', text: stillOpen });
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
     const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text, tgRef) : null;
     if (owedBlock) content.push({ type: 'text', text: owedBlock });
     // What he did by hand since his last message (owner-marks.ts): his own words only, never a
     // slash command, a server-written turn, a server continue, or a Telegram run report/schedule.
-    const handMarks = isSuper && !text.startsWith('/') && !serverContinue && !serverWritten && !receipt
-      && (tgSource === undefined || tgSource === 'telegram-text') ? superOwnerMarksBlock(chatRegistryId) : null;
+    const handMarks = isSuper && ownWords ? superOwnerMarksBlock(chatRegistryId) : null;
     if (handMarks) content.push({ type: 'text', text: handMarks.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
@@ -4042,7 +4045,7 @@ export function startChatSession(
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
-    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
     if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);

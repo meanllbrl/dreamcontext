@@ -980,6 +980,13 @@ export interface SuperQueueItem {
    *  event turn and may answer it first. Whoever answers, the child leaves `asking` and the item
    *  closes for both. It never holds the single-question rule. Never on a team item. */
   direct?: true;
+  /** The owner is talking to this member himself (owner 2026-11-15, "Ben Conor ile konuşuyorum
+   *  neden sana geliyor bildirimler?"): on a member Super's own `ask`, it was asked in a turn of
+   *  HIS conversation with the member (`memberTurnOrigin` = owner), not in work the project's
+   *  Super Agent gave it; on its `member` mirror in main's queue, the mirror is his alone
+   *  (`memberItemForOwnerOnly`): born on his list, never an event for the Super Agent, never held
+   *  for its turn, and on Telegram through the member's own bot when it has one. */
+  ownerTalk?: true;
   /** A Super `ask`'s report cards: the `--show` cards the owner READS to answer it (a page, a
    *  task, knowledge, a board; `isReadKind`), so his question card points at them ("To read:
    *  <card> →", owner 2026-10-30). Server-written by `super ask`; at most MAX_ASK_READS. */
@@ -1549,6 +1556,9 @@ export interface SuperState {
   /** The language the owner writes to this Super in, decided by the server from his messages
    *  (owner-language.ts) and named in every turn. Absent: not known yet. */
   ownerLanguage?: OwnerLanguage;
+  /** A member record's one-time close of questions an older version left open after his message
+   *  (`movedPastAsks`, 2026-11-15) ran: never again (a later debt may be a Telegram run report). */
+  movedPastDone?: true;
   /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS (the presented one never dropped). Absent = none. */
   askShows?: AskShow[];
   /** The stage's presentation queue (`PresentQueue`). Absent = never used. */
