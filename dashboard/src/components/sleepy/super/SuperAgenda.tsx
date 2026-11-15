@@ -328,7 +328,6 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       <>
         {e.fromDay && <span className="super-agenda-chip" data-kind="day">{e.group === 'earlier' ? fmtDay(e.fromDay) : tr(t, 'super.agenda.detail.fromDay', 'from {day}', { day: fmtDay(e.fromDay) })}</span>}
         {r.auto && <span className="super-agenda-chip" data-kind="auto" data-testid="super-agenda-auto">{t('super.agenda.auto')}</span>}
-        {r.stale && <span className="super-agenda-chip" data-kind="stale" data-testid="super-agenda-stale" title={t('super.agenda.staleTitle')}>{t('super.agenda.stale')}</span>}
         {(size === 'full' || size === 'wide') && job?.mode && e.group !== 'done' && <span className="super-agenda-chip" data-kind="mode">{job.mode}</span>}
         {size === 'full' && r.author === 'owner' && r.status && r.section !== 'done' && <span className="super-agenda-chip" data-kind="status">{t(`super.agenda.status.${r.status}`)}</span>}
       </>
@@ -428,6 +427,16 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // ── The lists ───────────────────────────────────────────────────────────────
   const [doneOpen, setDoneOpen] = useState(false);
+  // Lines no job keeps true and unchanged 2h+ are said ONCE, quietly, on their group's head
+  // (owner pick A, 15 Nov: a pill on every row crowded the list), never per row.
+  const staleNote = (g: string, rows: AgendaEntry[]) => {
+    const n = rows.filter((e) => e.row?.stale).length;
+    return n > 0 && (
+      <span className="super-agenda-stale-n" data-testid={`super-agenda-stale-${g}`} title={t('super.agenda.staleTitle')}>
+        {'· '}{tr(t, 'super.agenda.stale', '{n} unchanged 2h+', { n: String(n) })}
+      </span>
+    );
+  };
   const groupList = (cap: boolean) => {
     if (past) {
       const sections: DayGroup[] = ['dayDone', 'dayOpen'];
@@ -437,7 +446,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           {empty && <div className="super-agenda-empty">{t('super.agenda.nothingDay')}</div>}
           {sections.map((g) => past[g].length > 0 && (
             <section key={g} className="super-agenda-sec" data-section={g} data-testid={`super-agenda-section-${g}`}>
-              <h3 className="super-agenda-sec-h"><span>{groupName(g)}</span><span className="super-agenda-n">{past[g].length}</span></h3>
+              <h3 className="super-agenda-sec-h"><span>{groupName(g)}</span><span className="super-agenda-n">{past[g].length}</span>{staleNote(g, past[g])}</h3>
               {order(past[g]).map(rowOf)}
             </section>
           ))}
@@ -457,6 +466,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
             <h3 className="super-agenda-sec-h">
               <span>{groupName(g)}</span>
               <span className="super-agenda-n" data-testid={`super-agenda-count-${g}`}>{rows.length}</span>
+              {staleNote(g, rows)}
             </h3>
           );
           if (g === 'earlier') {
