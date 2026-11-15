@@ -46,6 +46,31 @@ export const REASON_COPY: Readonly<Record<ReasonCode, string>> = {
   'needs-node': 'Needs a newer Node.js on this computer.',
 };
 
+/** How a fix ended when it did not work (plan npmsiz-beta C11). */
+export const FIX_FAILURES = ['offline', 'canceled', 'timeout', 'refused', 'permission', 'checksum', 'failed'] as const;
+export type FixFailure = typeof FIX_FAILURES[number];
+
+/**
+ * One sentence per way a fix can fail, shown with a retry button. Process output only ever
+ * goes inside the collapsed details; no sentence names a command to type.
+ */
+export const FIX_FAILURE_COPY: Readonly<Record<FixFailure, string>> = {
+  offline: 'You\'re offline. Connect to the internet and try again.',
+  canceled: 'Stopped before it finished. You can start it again.',
+  timeout: 'This took too long and was stopped. Try again.',
+  refused: 'It was turned down, so nothing changed. Try again.',
+  permission: 'This computer didn\'t allow the change. Try again.',
+  checksum: 'The download did not match what we expected, so nothing was installed. Try again.',
+  failed: 'That didn\'t work this time. Try again.',
+};
+
+export const FIX_RETRY = 'Try again';
+
+/** Any reason a fix returns, mapped to its sentence; an unknown one reads as `failed`. */
+export function fixFailureSentence(reason: string | null | undefined): string {
+  return (FIX_FAILURES as readonly string[]).includes(reason ?? '') ? FIX_FAILURE_COPY[reason as FixFailure] : FIX_FAILURE_COPY.failed;
+}
+
 export interface FixCopy {
   action: string;
   working: string;

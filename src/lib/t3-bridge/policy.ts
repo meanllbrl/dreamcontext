@@ -90,7 +90,7 @@ export function bypassNeedsOwner(tool: string, input: unknown, cwd: string): boo
 }
 
 /** The grant store or the approval registry, named anywhere in a call's input. */
-const OWNER_STORE_NAMED = /\.dreamcontext[\\/]+(?:grants\b|automations\.json)/i;
+const OWNER_STORE_NAMED = /(?:\.dreamcontext|dreamc~\d)[\\/]+(?:grants\b|automations\.json|bin\b|app-cli\.json|update-channel\.json|agents\.json)/i;
 
 /**
  * The agent-writable roots a grant's script form is judged against (grants `EligibleCtx.roots`):

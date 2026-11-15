@@ -3203,7 +3203,7 @@ export function registerHookCommand(program: Command): void {
         const call = input.toolCall as { name: string; args?: unknown };
         const raw = (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, unknown>;
         if (movesGuardedPlace(command ? 'Bash' : call.name, command ? toolInput : raw, agy.cwd)) {
-          deny('Blocked: this moves, removes or copies over a place that holds dreamcontext\'s write gate or the Meta token file. Agents never do that; leave it and say so.');
+          deny('Blocked: this moves, removes or copies over a place that holds dreamcontext\'s write gate, its own program files or the Meta token file. Agents never do that; leave it and say so.');
           return;
         }
         if ((path && isAntigravityGateFile(path)) || (command && shellWriteTarget(command, agy.cwd, isAntigravityGateFile))) {
@@ -3214,7 +3214,7 @@ export function registerHookCommand(program: Command): void {
         // tools. Any brain's token file counts: the hook may run in another project.
         const tokenFile = (p: string): boolean => isMarketingEnvPath(p, agy.cwd) || /\/_dream_context\/marketing\/\.env$/i.test(p);
         if ((path && tokenFile(path)) || (command && (shellWriteTarget(command, agy.cwd, tokenFile) || shellTouchesGuarded(command)))) {
-          deny('Blocked: this file holds Meta access tokens, or this command touches dreamcontext\'s gate. Agents never write them: setup is `mk init`, and rotation is the owner\'s. To verify config, run `dreamcontext mk config check`.');
+          deny('Blocked: this file holds Meta access tokens, or this command touches dreamcontext\'s gate or its own program files. Agents never write them: setup is `mk init`, and rotation is the owner\'s. To verify config, run `dreamcontext mk config check`.');
           return;
         }
       }
