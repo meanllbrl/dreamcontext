@@ -415,16 +415,22 @@ describe('a child waiting on the owner is never done', { timeout: 60_000 }, () =
     expect(delivered.map((d) => d.text).join('\n')).not.toMatch(/event=gone/);
   });
 
-  it('a child that really exits (no park) says `gone`, and its card item stays open', async () => {
+  // Owner 15 Nov (kart-alta-yapisma-2): a gone child's ▶ Run stood live in Waiting on you after
+  // the work was done in another session. A REAL exit leaves nobody to take the result: the card
+  // is withdrawn (its record closes `dropped`) and nothing counts it; only a park keeps it (K2).
+  it('a child that really exits (no park) says `gone`, and its card is withdrawn: nothing waits on the owner', async () => {
     const { hs, delivered } = await boot(['c1']);
     say(hs[0], fence(RUN));
     hs[0].observe({ type: 'result' });
     await drain();
+    expect((await ofKind('owner', 'c1')).filter((q) => q.state !== 'done')).toHaveLength(1);
     hs[0].exited();
     await advance(60_000);
-    expect((await ofKind('owner', 'c1')).filter((q) => q.state !== 'done')).toHaveLength(1);
+    expect((await ofKind('owner', 'c1')).filter((q) => q.state !== 'done')).toHaveLength(0);
+    expect(ownerQueueCount(await state())).toBe(0);
     expect(await ofKind('gone', 'c1')).toHaveLength(1);
-    expect((await state()).children.c1.row).toBe('waiting');
+    expect((await state()).children.c1.row).toBe('gone');
+    expect(getChat('c1')?.ownerWaits ?? []).toHaveLength(0);
     expect(delivered.map((d) => d.text).join('\n')).toMatch(/child=c1 event=gone/);
   });
 

@@ -36,7 +36,7 @@ import {
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState, type OwnerWakeOutcome, type SuperQueueItem } from '../../src/lib/super/types.js';
 import {
-  OWNER_RESULT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, deliverHeldOwnerReceipts, startSuperInbox, writeSuper,
+  OWNER_RESULT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, deliverHeldOwnerReceipts, noteChildParking, startSuperInbox, writeSuper,
   type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends } from '../../src/lib/super/owner-wait.js';
@@ -211,6 +211,7 @@ describe('the owner\'s card result reaches the child that asked (K6)', { timeout
   it('a parked child is woken; `held:cap` keeps it, tells the Super once, and a child of the project ending delivers it', async () => {
     const { hs } = await boot([C1, C2]);
     const item = await postCard(hs[0]);
+    noteChildParking(C1); // parked: a real exit withdraws the card (kart-alta-yapisma-2)
     hs[0].exited();
     await advance(60_000);
     wakeOutcome = 'held:cap';
@@ -242,6 +243,7 @@ describe('the owner\'s card result reaches the child that asked (K6)', { timeout
   it('`held:no_window` keeps it until the owning Super\'s window socket comes up', async () => {
     const { hs, delivered } = await boot([C1]);
     const item = await postCard(hs[0]);
+    noteChildParking(C1); // parked: a real exit withdraws the card (kart-alta-yapisma-2)
     hs[0].exited();
     await advance(60_000);
     wakeOutcome = 'held:no_window';

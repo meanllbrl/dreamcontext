@@ -8,7 +8,7 @@ import { sessionCheckout } from '../session-cwd.js';
 import { cwdInRoots } from '../grants/binding.js';
 import { listGrants, pruneRecordGrants, removeGrant } from '../grants/store.js';
 import { readRoutineFacts, routineNeeds, type RoutineFacts, type RoutineNeed } from '../automations/needs.js';
-import { isOwnerCardKind, sameShellCommand, stalledWait, type OwnerWait } from './owner-wait.js';
+import { isOwnerCardKind, sameShellCommand, stalledWait, type OwnerWait, type OwnerWaitKind } from './owner-wait.js';
 import { cardHandleOf, getCard } from '../cards/records.js';
 import { redactSecrets } from '../telegram/format.js';
 import {
@@ -2387,7 +2387,8 @@ function closeOwnerItems(s: SuperState, sid: string, opts: { keepCards?: boolean
 // ─── Owner cards a child leaves, done where the owner is (sahip-karti-yerinde K1, K2, K6) ──────
 //
 // A crew child's owner CARD is a record the server holds, not only a message in a chat: its item
-// carries the card handle, the wait survives park, exit, restart and resume, and the owner's
+// carries the card handle, the wait survives park, restart and resume (a real exit withdraws it:
+// kart-alta-yapisma-2, `addGone`), and the owner's
 // result is held (src/server/owner-receipts.ts) until the child that asked has taken it.
 
 /** An `owner` item whose wait is a card (run, secret, checklist, mcp). */
@@ -2429,8 +2430,14 @@ export function noteChildParking(sessionId: string): void {
   parkingNoted.set(sessionId, Date.now());
   while (parkingNoted.size > MAX_PARKING_NOTED) parkingNoted.delete(parkingNoted.keys().next().value as string);
 }
+/** The server is stopping (its shutdown kills every child): each exit from now on is a park. */
+let serverStopping = false;
+export function noteServerStopping(): void { serverStopping = true; }
+/** THE one door for "nobody chose this end" (kart-alta-yapisma-2): a park the window or the Super
+ *  asked for, a drain the server caused (agent-chat `serverDrain`), or the server's own stop. Only
+ *  an exit that passes none of them withdraws a child's cards (`addGone`). */
 function wasParked(sid: string): boolean {
-  if (parkingNoted.has(sid)) return true;
+  if (serverStopping || parkingNoted.has(sid)) return true;
   try { return parkedProbe?.(sid) ?? false; } catch { return false; }
 }
 
@@ -2788,6 +2795,7 @@ export function moveCardReceipts(childRecordId: string, from: string, to: string
 
 /** Tests only. */
 export function _resetOwnerCardInbox(): void {
+  serverStopping = false;
   delivering.clear();
   parkingNoted.clear();
   resultTold.clear();
@@ -2830,7 +2838,19 @@ export function syncOwnerDraft(s: SuperState, sid: string, e: ChatEntry | null, 
     if (w) {
       if (q.ownerText !== w.line) { q.ownerText = w.line; changed = true; }
       // An item born before its handle could be made (K1): it gets one from the frame now.
-      if (!q.card && isCardItem(q)) { const h = cardHandleFor(s, sid, e, w); if (h) { q.card = h; changed = true; } }
+      if (isCardItem(q)) {
+        const h = cardHandleFor(s, sid, e, w);
+        if (!q.card) { if (h) { q.card = h; changed = true; } }
+        else if (h && !q.delivery && q.card.postingSession === sid && h.cardRef !== q.card.cardRef) {
+          // The child posted the SAME card again (same kind and id, a new message: kart-alta-yapisma-2).
+          // Its record closed the old copy as superseded; the wait stayed one key. The item that
+          // still pointed at the old copy drew "Replaced" with only Not needed, under the chat's
+          // last message, and the new copy never reached the Super chat. A re-post is a new ask:
+          // the old item settles in its place, and a new item for the new copy is made below.
+          q.state = 'done';
+          changed = true;
+        }
+      }
       continue;
     }
     if (ownerWaitAnswered(sid, q.wait.kind, q.wait.id)) { closeOwnerAnswered(q); changed = true; continue; }
@@ -4512,16 +4532,30 @@ async function onMoved(root: string, sid: string, status: 'working' | 'starting'
 
 /** Queue one gone event for a child (one open item per child); its row is `gone` in the same
  *  write, so the row never says gone before the debounce believed it. */
-async function addGone(root: string, sid: string): Promise<void> {
+async function addGone(root: string, sid: string, seenExit = false): Promise<void> {
   let added = false;
   const parked = wasParked(sid);
+  let dropped: Array<{ kind: OwnerWaitKind; id: string; postingSession?: string }> = [];
   await writeSuper(root, (s) => {
+    dropped = [];
     const ch = s.children[sid];
     if (!s.enabled || !ch || ch.startError) return;
-    // An open CARD waits on the owner (sahip-karti-yerinde K2): the wait outlives the process.
-    // The row stays `waiting`, the item stays open; a park says `parked` ONCE (never `gone`: the
-    // Super must not resume it for this), a real exit still says `gone`.
-    const cards = openCardItems(s, sid);
+    // A PARKED child's open card waits on the owner (sahip-karti-yerinde K2): the wait outlives
+    // the process, the row stays `waiting`, the item stays open, and `parked` is said ONCE (the
+    // Super must not resume it for this). A REAL exit takes its cards with it (owner 15 Nov,
+    // kart-alta-yapisma-2: a gone child's ▶ Run stood live in Waiting on you after the work was
+    // done in another session): nobody is left to take the result, so each card is withdrawn
+    // (its record closes `dropped`, "the agent no longer needs this") and nothing counts it.
+    // Only an exit this process SAW that was not a park withdraws (a server reap notes a park, a
+    // relaunch's grace saw no exit); a card he already acted on (`delivery`: its result is held
+    // or on its way) keeps K2's rule either way.
+    const open = openCardItems(s, sid);
+    const cards = parked || !seenExit ? open : open.filter((q) => !!q.delivery);
+    for (const q of open) {
+      if (cards.includes(q)) continue;
+      q.state = 'done';
+      dropped.push({ kind: q.wait!.kind, id: q.wait!.id, ...(q.card?.postingSession ? { postingSession: q.card.postingSession } : {}) });
+    }
     if (cards.length) {
       resolveAnswered(s, sid, null);
       closeOwnerItems(s, sid, { keepCards: true });
@@ -4549,6 +4583,8 @@ async function addGone(root: string, sid: string): Promise<void> {
     countEvent(s);
     added = true;
   });
+  // After the write (never inside the mutator): the records close, the registry forgets the waits.
+  for (const d of dropped) dropOwnerWait(sid, d.kind, d.id, d.postingSession ? { postingSession: d.postingSession } : {});
   if (added) void pumpSuper(root);
 }
 
@@ -4667,7 +4703,10 @@ export function noteChildBrowserCall(sid: string): void {
   clearTimer(browserTimers, sid);
 }
 
-function armGone(root: string, sid: string, ms: number, map: Map<string, ReturnType<typeof setTimeout>>): void {
+/** `seenExit`: this process saw the child's process end (the registry's `gone`), so a real exit
+ *  may withdraw its cards; a child that only did not come back (a relaunch's grace, a child that
+ *  never started) keeps them (K2). */
+function armGone(root: string, sid: string, ms: number, map: Map<string, ReturnType<typeof setTimeout>>, seenExit = false): void {
   clearTimer(map, sid);
   const t = setTimeout(() => {
     map.delete(sid);
@@ -4675,7 +4714,7 @@ function armGone(root: string, sid: string, ms: number, map: Map<string, ReturnT
     const idx = superEntry(root);
     if (!idx.enabled || !idx.children.has(sid)) return;
     clearTimer(browserTimers, sid);
-    void track(addGone(root, sid));
+    void track(addGone(root, sid, seenExit));
     // Really ended (re-checked above): its cards settle (S3). A mode switch or a server restart
     // re-registers the same id first, so it never reaches here.
     void track(settleSuperChild(root, sid, 'gone'));
@@ -4780,7 +4819,7 @@ function onChange({ entry, from }: ChatChange): void {
     case 'gone':
       // An old child's teardown after its replacement already registered under this id.
       if (isLive(getChat(sid))) return;
-      armGone(root, sid, GONE_DEBOUNCE_MS, goneTimers);
+      armGone(root, sid, GONE_DEBOUNCE_MS, goneTimers, true);
       // A process of this project ended or was parked: a seat is free for a result held at the
       // live-children cap (K6 `held:cap`).
       void track(retryHeldOwnerCards('held:cap', { root }));

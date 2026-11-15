@@ -33,7 +33,7 @@ import { setOwnerQuestionSinks } from '../lib/super/owner-question.js';
 import { notifyViaBundle } from '../lib/automations/notifier.js';
 import { notchCovers } from '../lib/notch-state.js';
 import { recordNotification } from '../lib/notification-log.js';
-import { startSuperInbox } from '../lib/super/inbox.js';
+import { noteServerStopping, startSuperInbox } from '../lib/super/inbox.js';
 import { startSuperSchedule } from './super-schedule.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
@@ -1676,6 +1676,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       const shutdown = () => {
         if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
         shuttingDown = true;
+        // Every child this stop ends is a park, never a real exit: their cards for the owner stay
+        // open across the relaunch (K2, kart-alta-yapisma-2).
+        noteServerStopping();
         console.log('\n  Shutting down...');
         unpublishDesktopServer();
         stopAppsSweeper();

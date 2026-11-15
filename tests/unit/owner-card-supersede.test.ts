@@ -23,7 +23,7 @@ vi.hoisted(() => {
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetChatRegistry, getChat, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
+import { _resetChatRegistry, getChat, onOwnerWaitChange, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { emptySuperState, type SuperQueueItem, type SuperState } from '../../src/lib/super/types.js';
 import { syncOwnerDraft } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, noteSuperSend, supersedesCard } from '../../src/lib/super/owner-wait.js';
@@ -150,6 +150,50 @@ describe('the field case: re-asked under a new id, the old card leaves Waiting o
       syncOwnerDraft(s, sid, getChat(sid), 20);
       expect(open(s)).toEqual(['fb', 'gc', 'agreement-2']);
       expect(s.queue).toHaveLength(4);
+    } finally {
+      setCardsHomeForTests(null);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('the SAME card posted again (same id, a later message): the item follows the new copy, the old one settles (kart-alta-yapisma-2)', () => {
+    // Field case, 15 Nov: the child re-posted `run:dreamcontext-super-delegate-task-askida`. Its
+    // record closed the old copy as superseded, but the Super's item kept the OLD handle: under the
+    // chat's last message stood "needs you" around a card that said "Replaced", with only Not
+    // needed, and the new copy never reached the Super chat.
+    const home = mkdtempSync(join(tmpdir(), 'cards-home-'));
+    setCardsHomeForTests(home);
+    _resetCardsForTests();
+    try {
+      const sid = '33333333-4444-4555-8666-777777777777';
+      const h = reg(sid);
+      h.userSent('go');
+      const s = record(sid);
+      // The inbox syncs only when the registry says the child's waits changed (inbox.ts
+      // onOwnerWaitChange): the test drives it the same way, never by calling it by hand.
+      let now = 1_000;
+      const off = onOwnerWaitChange((e) => { if (e.sessionId === sid) syncOwnerDraft(s, sid, e, now); });
+      const card = run('dreamcontext-super-delegate-task-askida', 'xcrun notarytool store-credentials dreamcontext-notary');
+      say(h, `Apple needs your password.\n\n${fence(card)}`, 'm1');
+      const first = s.queue.find((q) => q.kind === 'owner')!;
+      expect(first.card?.cardRef).toBeTruthy();
+      h.observe({ type: 'result' });
+      now = 2_000;
+      say(h, `Still waiting on this one.\n\n${fence(card)}`, 'm2');
+      off();
+      const live = s.queue.filter((q) => q.kind === 'owner' && q.state !== 'done');
+      // One item waits, and it is the NEW copy, placed at its own time.
+      expect(live).toHaveLength(1);
+      expect(live[0].id).not.toBe(first.id);
+      expect(live[0].card?.cardRef).not.toBe(first.card?.cardRef);
+      expect(live[0].createdAt).toBe(2_000);
+      // The old item settled: nothing he owes, it never holds the chat's bottom.
+      expect(first.state).toBe('done');
+      expect(listCards(sid).find((c) => c.cardRef === first.card!.cardRef)?.closedBy).toBe('superseded');
+      expect(agendaWaitingCount(s, look)).toBe(1);
+      // A later frame of the same message (same copy) changes nothing.
+      syncOwnerDraft(s, sid, getChat(sid), 3_000);
+      expect(s.queue.filter((q) => q.kind === 'owner')).toHaveLength(2);
     } finally {
       setCardsHomeForTests(null);
       rmSync(home, { recursive: true, force: true });
