@@ -135,6 +135,16 @@ describe('desktop-release.yml and the CLI agree on the Windows asset', () => {
     expect(win).toContain("DREAMCONTEXT_UPDATER: '1'");
     expect(win).toContain('createUpdaterArtifacts');
   });
+
+  it('Windows builds only when the dispatch asks (default off: an Apple Silicon Mac release), and a skip is not a warning', () => {
+    expect(wf).toMatch(/\n      windows:\n        description: [^\n]+\n        type: boolean\n        default: false\n/);
+    const win = wf.slice(wf.indexOf('\n  build-windows:'), wf.indexOf('\n  assemble:'));
+    expect(win).toContain('if: ${{ !inputs.promote && inputs.windows }}');
+    const assemble = wf.slice(wf.indexOf('\n  assemble:'), wf.indexOf('\n  publish:'));
+    expect(assemble).toContain("if: ${{ !cancelled() && needs.build-macos.result == 'success' }}");
+    expect(assemble).toContain('WINDOWS_ASKED: ${{ inputs.windows == true }}');
+    expect(assemble).toMatch(/elif \[ "\$WINDOWS_RESULT" = skipped \] && \[ "\$WINDOWS_ASKED" != true \]; then\n\s+echo "windows=false"/);
+  });
 });
 
 // ─── The beta channel (plan npmsiz-beta C10, criterion 2) ─────────────────────
@@ -394,8 +404,9 @@ describe('desktop-release.yml: the two channels', () => {
     expect(verify).toBeLessThan(flip);
     expect(step('promote', /verify every asset/).run).toContain('node scripts/release-latest-json.mjs verify "$TAG" dist-release');
     expect(step('promote', /Mark it stable/).run).toContain('gh release edit "$TAG" -R "$R" --prerelease=false --latest');
-    // Builds and publish never run on a promote.
-    for (const job of ['build-macos', 'build-windows']) expect(doc.jobs[job].if).toBe('${{ !inputs.promote }}');
+    // Builds and publish never run on a promote (Windows also only when the dispatch asks for it).
+    expect(doc.jobs['build-macos'].if).toBe('${{ !inputs.promote }}');
+    expect(doc.jobs['build-windows'].if).toBe('${{ !inputs.promote && inputs.windows }}');
   });
 
   it('only publish and promote hold a write token', () => {

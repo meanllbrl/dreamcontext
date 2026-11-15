@@ -87,6 +87,10 @@ on:
         description: 'Promote the existing beta release `tag` to stable (same signed bytes): no build'
         type: boolean
         default: false
+      windows:
+        description: 'Also build and publish the Windows installer. Off: an Apple Silicon Mac release only (owner, 15 Nov: the npm-free app ships for Apple Silicon first; Windows keeps its last installer and npm)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read # only `publish` gets a write token
@@ -416,8 +420,9 @@ jobs:
     # certificate yet: SmartScreen warns on first run), but its update payload IS signed with
     # the updater's minisign key, so this job takes the `release` environment for that one
     # secret. It reads no Apple secret, has no write token, and hands the installer to
-    # `assemble` as an artifact. Builds in parallel with build-macos.
-    if: ${{ !inputs.promote }}
+    # `assemble` as an artifact. Builds in parallel with build-macos. Runs only when the dispatch
+    # asks for it (`windows`): the npm-free release is Apple Silicon only for now.
+    if: ${{ !inputs.promote && inputs.windows }}
     runs-on: windows-latest
     environment: ${{ !inputs.dry_run && 'release' || '' }}
     permissions:
@@ -602,6 +607,7 @@ jobs:
           VERSION: ${{ needs.build-macos.outputs.version }}
           CHANNEL: ${{ needs.build-macos.outputs.channel }}
           WINDOWS_RESULT: ${{ needs.build-windows.result }}
+          WINDOWS_ASKED: ${{ inputs.windows == true }}
           DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
           cd dist-release
@@ -612,6 +618,9 @@ jobs:
           node ../scripts/release-latest-json.mjs fetch-feed "https://github.com/${GITHUB_REPOSITORY}/releases/download/channel-beta/beta.json" current-beta.json
           if [ "$WINDOWS_RESULT" = success ]; then
             echo "windows=true" >> "$GITHUB_OUTPUT"
+          elif [ "$WINDOWS_RESULT" = skipped ] && [ "$WINDOWS_ASKED" != true ]; then
+            echo "windows=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::An Apple Silicon Mac release: Windows was not asked for, latest.json carries the Mac entry only."
           else
             echo "windows=false" >> "$GITHUB_OUTPUT"
             echo "::warning::build-windows did not succeed ($WINDOWS_RESULT): latest.json carries the Mac entry only. Re-run the failed jobs to add Windows to this release."
