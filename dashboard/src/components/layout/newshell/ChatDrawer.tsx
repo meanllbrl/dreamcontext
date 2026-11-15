@@ -463,6 +463,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
         {searching && shownRows.length === 0 && <div className="ns-dr-empty" data-testid="drawer-project-nomatch">{t('shell.drawer.noProjectMatch')}</div>}
         {shownRows.map((row, i) => (
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
+            data-menu-open={menu?.kind === 'new-chat' && menu.name === row.name ? 'true' : undefined}
             data-drop-before={drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
             data-dragging={drag?.name === row.name ? 'true' : undefined}>
             {/* Sibling buttons, never one inside the other: the row's own toggle (name, notes, mark),
