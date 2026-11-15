@@ -119,7 +119,7 @@ export interface TickOptions {
  *  mapping. */
 export interface SlugVerdict {
   slug: string;
-  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review' | 'awaiting-approval' | 'waiting-for-account' | 'read-only' | 'runs-elsewhere';
+  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review' | 'awaiting-approval' | 'waiting-for-account' | 'read-only' | 'runs-elsewhere' | 'condition-false';
 }
 
 export interface TickProjectResult {
@@ -174,7 +174,9 @@ function verdictFor(status: RunOutcome['status']): SlugVerdict['verdict'] {
     status === 'blocked' ||
     status === 'orphaned' ||
     status === 'awaiting-review' ||
-    status === 'awaiting-approval'
+    status === 'awaiting-approval' ||
+    // The fire was due and answered by its condition: nothing ran.
+    status === 'condition-false'
   ) {
     return status;
   }
@@ -299,6 +301,8 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       home: opts.home,
       log: logFn,
       unattended: true,
+      // A scheduled fire: the routine's condition runs first (kosullu-otomasyon D5).
+      scheduledFire: true,
     });
     ran.push(outcome);
     verdicts.push({ slug: fire.slug, verdict: verdictFor(outcome.status) });
@@ -365,6 +369,8 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       home: opts.home,
       log: logFn,
       unattended: true,
+      // A scheduled fire: the routine's condition runs first (kosullu-otomasyon D5).
+      scheduledFire: true,
     });
     ran.push(outcome);
     verdicts.push({ slug: manifest.slug, verdict: verdictFor(outcome.status) });

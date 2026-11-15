@@ -19,6 +19,7 @@ function statusWord(status: RunStatus | null): string {
     case 'orphaned': return 'orphaned';
     case 'awaiting-review': return 'waiting on you';
     case 'awaiting-approval': return 'needs approval';
+    case 'condition-false': return 'condition not met';
     default: return status;
   }
 }

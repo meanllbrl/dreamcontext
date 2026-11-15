@@ -1,4 +1,5 @@
 import { promises as fsp } from 'node:fs';
+import { isConditionData } from '../automations/condition.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
@@ -406,7 +407,9 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     if (q.kind === 'automation' && ((!automation && !member) || !decision)) continue;
     // A scheduled job names its Super automation and the fire it answers for (super-rutin C3).
     const scheduled = q.kind === 'schedule' && typeof q.automation === 'string' && okMember(q.automation)
-      && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire)) ? { automation: q.automation, fire: new Date(Date.parse(q.fire)).toISOString() } : undefined;
+      && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire))
+      ? { automation: q.automation, fire: new Date(Date.parse(q.fire)).toISOString(), ...(isConditionData(q.conditionData) && q.conditionData ? { conditionData: q.conditionData } : {}) }
+      : undefined;
     if (q.kind === 'schedule' && !scheduled) continue;
     // An owner item exists only for its wait (which card of the child he must act on).
     // Its mirror keeps the wait too (refusal fact included): without it the bar cannot tell a

@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { conditionFacts, sendIfConditionUnseen, shownWitness } from './condition-witness.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { approvalCardFacts, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
@@ -54,6 +55,9 @@ import {
   approvedTarget, checkApproval, getApproval,
   renderApprovalReview,
   approveAutomation,
+  ConditionNeedsWitness,
+  conditionNeedsWitness,
+  manifestHash,
   listRegisteredProjects,
   registerProject,
   revokeApproval,
@@ -501,6 +505,11 @@ export async function handleAutomationsShow(
         // Hashed when set, LAST (super-rutin): a turn of the Super itself, and where the result goes.
         target: manifest.target ?? '',
         reply: manifest.reply ?? '',
+        // Hashed when set, LAST (kosullu-otomasyon): the script a scheduled fire runs before any
+        // agent wakes, and which verdict wakes it. The reviewer reads the whole script here.
+        condition: manifest.condition ?? null,
+        conditionWake: manifest.conditionWake !== false,
+        conditionError: manifest.conditionError ?? null,
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -520,6 +529,9 @@ export async function handleAutomationsShow(
       // Every hashed field as the `field: value` lines the CLI's approve prints (the same
       // renderer the agent profile's review uses): what Approve grants, in one readable block.
       review: renderApprovalReview(approvalFields(manifest)),
+      // The hash of exactly what this payload rendered: Approve sends it back as `shownHash`, so a
+      // condition is stamped only when the disk still holds what the owner read (C2).
+      manifestHash: manifestHash(manifest),
       // The fields the one approval card names (plan-r10 1e); null when nothing waits.
       changedFields: changedApprovalFields(dirname(contextRoot), manifest),
       cache: isPhoneSocket(req) ? phoneCache(readAutomationCache(contextRoot, manifest.slug)) : readAutomationCache(contextRoot, manifest.slug),
@@ -657,8 +669,19 @@ export async function handleAutomationsApprove(
     const body = (await parseJsonBody(req)) ?? {};
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
+    // A condition is stamped only on the hash the owner was shown (kosullu-otomasyon C2): the card
+    // sends `shownHash`, and a disk that moved since he looked refuses with 409, stamping nothing.
+    // It proves the hash is fresh, not who sent it: the owner-page check above is the boundary.
+    const witness = shownWitness(res, manifest, body);
+    if (witness === null) return;
     // The owner's page: his consent covers a Super turn or a Telegram reply too (super-rutin C2).
-    const entry = approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-page');
+    let entry;
+    try {
+      entry = approveAutomation(projectRoot, manifest, new Date(), undefined, 'owner-page', witness);
+    } catch (err) {
+      if (sendIfConditionUnseen(res, err)) return;
+      throw err;
+    }
     settleApprovalQuestions(contextRoot, manifest.slug);
     const after = body.enable === true && !manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, true) : manifest;
     const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'approved');
@@ -914,6 +937,12 @@ export async function handleAutomationsQuestionAnswer(
         sendError(res, 404, 'not_found', question.target === 'agent'
           ? `The agent "${question.slug}" no longer exists, so there is nothing to approve. Reject the question to close it.`
           : `Automation not found: ${question.slug}`);
+        return;
+      }
+      // A condition is approved only where the owner reads the script (C2): never through a
+      // question. Refused before the claim, so the question stays open for a reject.
+      if (APPROVAL_DECISIONS[decision] && manifest && conditionNeedsWitness(manifest, getApproval(dirname(contextRoot), manifest.slug, undefined, manifest.runKind === 'agent' ? 'agent' : 'automation'))) {
+        sendError(res, 409, 'condition_unseen', `"${question.slug}" has a condition script: approve it on its card in the chat or on the AI Team page, where you read the script.`);
         return;
       }
       const claim = claimQuestion(contextRoot, question, answer, 'dashboard');
@@ -1175,12 +1204,13 @@ function slugifyTitle(title: string): string {
  * tick and never look here, and the owner's first agent would silently never
  * fire.
  */
-function approveHere(contextRoot: string, manifest: AutomationManifest): void {
+function approveHere(contextRoot: string, manifest: AutomationManifest): boolean {
   const projectRoot = dirname(contextRoot);
   registerProject(projectRoot);
   // The agent an unsplit file also is gets the same stamp: one file, one approval (`approveMadeHere`).
   // Every caller is behind `refuseUnlessOwnerPage`: his save is his consent (super-rutin C2).
-  approveMadeHere(contextRoot, manifest, new Date(), undefined, 'owner-page');
+  // A condition the dialog never showed is not witnessed by the save: it waits for its card (C2).
+  return approveMadeHere(contextRoot, manifest, new Date(), undefined, 'owner-page');
 }
 
 /**
@@ -1199,8 +1229,7 @@ function approveUnlessUnseenSoul(contextRoot: string, before: AutomationManifest
   // card, which names the fields that moved. Everything else this save wrote is his: it stamps.
   const wasApproved = before !== null && checkApproval(dirname(contextRoot), before, undefined, 'run').approved;
   if (!wasApproved) return false;
-  approveHere(contextRoot, after);
-  return true;
+  return approveHere(contextRoot, after);
 }
 
 /** POST /api/automations — create an agent and approve it on this machine. */

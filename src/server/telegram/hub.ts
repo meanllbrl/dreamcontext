@@ -60,6 +60,7 @@ import { onOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
 import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '../../lib/telegram/auth.js';
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
+import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
 import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
 import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
@@ -1505,22 +1506,16 @@ export class TelegramHub implements TelegramHubApi {
 
 /** The most of a command a Telegram message shows: more would be consent to text he never saw. */
 export const TG_COMMAND_MAX = 1500;
-/** Control, hidden and direction-changing characters (built from a string so the file holds only
- *  escapes, never the raw characters). */
-const HIDDEN_CHARS = '\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f\\u061c\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2060-\\u2069\\ufeff';
-const HIDDEN_ONE = new RegExp(`[${HIDDEN_CHARS}]`);
-const HIDDEN_ALL = new RegExp(`[${HIDDEN_CHARS}]`, 'g');
-
 /** Does a message show this command whole and as it is: it fits, the redactor changes nothing, and
  *  no hidden or direction-changing character is in it? Only then may a card offer any Allow. */
 export function shownWhole(command: string): boolean {
-  return command.length <= TG_COMMAND_MAX && redactSecrets(command) === command && !HIDDEN_ONE.test(command);
+  return command.length <= TG_COMMAND_MAX && redactSecrets(command) === command && !hasHiddenChars(command);
 }
 
 /** A command as a Telegram card draws it: secrets redacted, every hidden or direction-changing
  *  character drawn as a visible escape (as the profile's rules are), cut at the message's size. */
 export function visibleCommand(command: string): string {
-  return redactSecrets(command).replace(HIDDEN_ALL, (c) => `\\u{${c.codePointAt(0)!.toString(16).padStart(4, '0')}}`).slice(0, TG_COMMAND_MAX);
+  return showHiddenChars(redactSecrets(command)).slice(0, TG_COMMAND_MAX);
 }
 
 /** The line a card says when it cannot show the command whole: no Allow there, the Mac has it. */

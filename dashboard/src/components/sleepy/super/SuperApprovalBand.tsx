@@ -4,7 +4,9 @@ import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { RequestError } from '../../../api/client';
 import { useAgent } from '../../../hooks/useAgents';
-import { useAutomation } from '../../../hooks/useAutomations';
+import { isConditionUnseen, useApproveAutomation, useAutomation } from '../../../hooks/useAutomations';
+import { useApproveAgent } from '../../../hooks/useAgents';
+import { ConditionScript, conditionView } from '../../automations/ConditionScript';
 import { TeamIcon } from '../../aiteam/TeamIcons';
 import { superApprovalSentence, type SuperApproval } from './superApprovals';
 import { AppRequestCard } from '../chat/AppRequestCard';
@@ -96,8 +98,14 @@ function ApprovalRow({ item, superId, open, onOpen, onDone }: {
   const routineDetail = useAutomation(open && item.kind === 'routine' ? item.slug : null, { fresh: true });
   const detail = item.kind === 'agent' ? agentDetail : routineDetail;
   const review = item.kind === 'agent' ? agentDetail.data?.review : routineDetail.data?.review;
+  // The condition (kosullu-otomasyon C6), drawn whole above the review; one that cannot run is
+  // never offered an approve. Approve sends the hash of what this opening drew.
+  const condition = conditionView(item.kind === 'agent' ? agentDetail.data : routineDetail.data?.automation);
+  const shownHash = item.kind === 'agent' ? agentDetail.data?.manifestHash : routineDetail.data?.manifestHash;
+  const approveRoutine = useApproveAutomation();
+  const approveAgent = useApproveAgent();
   // Proof of looking: Approve only once this opening's own read has landed.
-  const ready = !!review && !detail.isFetching && detail.isFetchedAfterMount;
+  const ready = !!review && !detail.isFetching && detail.isFetchedAfterMount && !condition.conditionError;
   // Which decision is in flight: each button says its own.
   const [busy, setBusy] = useState<null | 'approved' | 'rejected'>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,10 +125,12 @@ function ApprovalRow({ item, superId, open, onOpen, onDone }: {
     const slug = encodeURIComponent(item.slug);
     const sessionId = superId ?? undefined;
     try {
-      if (item.kind === 'routine') {
-        await api.post(`/automations/${slug}/${decision === 'approved' ? 'approve' : 'reject'}`, { sessionId });
-      } else if (decision === 'approved') {
-        await api.post(`/agents/${slug}/approve`, { sessionId });
+      if (decision === 'approved') {
+        // THE approve every door uses: it sends the shown hash and re-reads a moved script.
+        if (item.kind === 'routine') await approveRoutine.mutateAsync({ slug: item.slug, shownHash, sessionId });
+        else await approveAgent.mutateAsync({ slug: item.slug, shownHash, sessionId });
+      } else if (item.kind === 'routine') {
+        await api.post(`/automations/${slug}/reject`, { sessionId });
       } else {
         await api.post(`/agents/${slug}/enabled`, { enabled: false, sessionId });
       }
@@ -132,7 +142,8 @@ function ApprovalRow({ item, superId, open, onOpen, onDone }: {
         queryClient.invalidateQueries({ queryKey: ['automations'] }),
       ]);
     } catch (err) {
-      setError(t(err instanceof RequestError && err.code === 'owner_page_only' ? 'super.approvals.refused' : 'super.approvals.failed'));
+      setError(t(err instanceof RequestError && err.code === 'owner_page_only' ? 'super.approvals.refused'
+        : isConditionUnseen(err) ? 'chat.autocard.condition.unseen' : 'super.approvals.failed'));
     } finally {
       setBusy(null);
     }
@@ -163,6 +174,7 @@ function ApprovalRow({ item, superId, open, onOpen, onDone }: {
       {open && (
         <div className="aiteam-approval-review" data-approval-review>
           <p className="aiteam-approval-lead">{t('agents.approval.reviewLead')}</p>
+          {review && <ConditionScript view={condition} label />}
           <pre className="aiteam-approval-pre">
             {review ?? (detail.isError ? t('agents.page.loadFailed') : t('agents.page.loading'))}
           </pre>

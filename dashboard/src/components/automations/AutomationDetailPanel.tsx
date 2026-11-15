@@ -72,6 +72,7 @@ const HISTORY_WORD: Record<string, string> = {
   orphaned: 'Orphaned — a process was still alive',
   'awaiting-review': 'Stopped to ask you',
   'awaiting-approval': 'Stopped to ask about a manifest change',
+  'condition-false': 'Condition not met — the agent did not wake',
 };
 
 /**
@@ -701,6 +702,21 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                         <div className="adp-review-row" data-review-reply>
                           <span className="adp-review-label">result goes to</span>
                           <span>{automation.reply === 'telegram' ? 'Telegram' : automation.reply === 'auto' ? 'Telegram while away, else the Mac' : 'the Mac'}</span>
+                        </div>
+                      )}
+                      {/* Hashed when set, LAST (kosullu-otomasyon): the script a scheduled fire runs
+                          first, whole, and which answer wakes the agent (`conditionWake`). */}
+                      {(automation.condition || automation.conditionError) && (
+                        <div className="adp-review-row adp-review-row--block" data-review-condition>
+                          <span className="adp-review-label">checks first</span>
+                          {automation.condition && <pre className="adp-review-block">{automation.condition}</pre>}
+                          <span>
+                            {automation.conditionError
+                              ? `cannot run: ${automation.conditionError}`
+                              : automation.conditionWake === false
+                                ? 'the agent wakes only when this script does NOT end with 0'
+                                : 'the agent wakes only when this script ends with 0'}
+                          </span>
                         </div>
                       )}
                       {automation.soul && (

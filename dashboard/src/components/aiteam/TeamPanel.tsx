@@ -142,6 +142,7 @@ const HISTORY_WORD: Record<string, string> = {
   failed: 'aiteam.history.failed',
   timeout: 'aiteam.history.failed',
   'awaiting-review': 'aiteam.history.asked',
+  'condition-false': 'aiteam.history.conditionFalse',
 };
 
 /**
