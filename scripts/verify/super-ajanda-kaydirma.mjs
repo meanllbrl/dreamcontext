@@ -266,6 +266,29 @@ async function fab(p, name, size) {
   check(`[${name}] S7 the + sits in the bottom-right corner (${geo.right}px, ${geo.bottom}px from the edges)`, geo.right >= 0 && geo.right <= 24 && geo.bottom >= 0 && geo.bottom <= 24, JSON.stringify(geo));
   if (size !== 'small') check(`[${name}] S7 scrolled to the end, the + does not cover the last line`, geo.lastBottom !== null && geo.lastBottom <= geo.plusTop, JSON.stringify(geo));
   await card(p).screenshot({ path: join(OUT, `${name}-7-fab.png`) });
+  if (size === 'large') {
+    // Mid-list scroll: the + steps aside while it scrolls (the bottom row's time shows), back on stop.
+    const mid = async () => p.evaluate(() => {
+      const root = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]');
+      root.scrollTop = Math.round(root.scrollHeight / 3);
+    });
+    await mid();
+    await wait(p, 200);
+    await mid();
+    await p.evaluate(() => { const r = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); r.scrollTop += 20; });
+    await wait(p, 200);
+    const during = await p.evaluate(() => {
+      const b = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda-plus"]');
+      const r = b.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return { opacity: Number(getComputedStyle(b).opacity), coveredByFab: !!hit && b.contains(hit) };
+    });
+    await card(p).screenshot({ path: join(OUT, `${name}-7b-fab-scrolling.png`) });
+    check(`[${name}] S7 scrolling mid-list, the + steps aside (what is under it shows and takes the pointer)`, during.opacity < 0.2 && !during.coveredByFab, JSON.stringify(during));
+    await wait(p, 900);
+    const after = await plus.evaluate((b) => Number(getComputedStyle(b).opacity));
+    check(`[${name}] S7 the + comes back when the scroll stops`, after > 0.95, String(after));
+  }
   await plus.focus();
   await p.keyboard.press('Enter');
   const input = card(p).getByTestId('super-agenda-add-input');

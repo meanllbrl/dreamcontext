@@ -696,6 +696,19 @@ function AgendaFab({ onAdd, explain, onStart }: {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState('');
   const btnRef = useRef<HTMLButtonElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  // While the list scrolls the + steps aside (fades and shrinks), so it never sits over a moving
+  // row's time or its Done / Ask; it comes back once the scroll stops.
+  const [scrolling, setScrolling] = useState(false);
+  useEffect(() => {
+    let el: HTMLElement | null = wrapRef.current?.parentElement ?? null;
+    while (el && !/(auto|scroll)/.test(getComputedStyle(el).overflowY)) el = el.parentElement;
+    if (!el) return;
+    let timer = 0;
+    const on = () => { setScrolling(true); window.clearTimeout(timer); timer = window.setTimeout(() => setScrolling(false), 450); };
+    el.addEventListener('scroll', on, { passive: true });
+    return () => { el?.removeEventListener('scroll', on); window.clearTimeout(timer); };
+  }, []);
   const close = (focusBack: boolean) => {
     setOpen(false); setText(''); setRefused('');
     if (focusBack) requestAnimationFrame(() => btnRef.current?.focus());
@@ -710,7 +723,7 @@ function AgendaFab({ onAdd, explain, onStart }: {
   };
   const label = t('super.agenda.addTitle');
   return (
-    <div className="agenda-fab" data-open={open ? 'true' : undefined}>
+    <div ref={wrapRef} className="agenda-fab" data-open={open ? 'true' : undefined} data-scrolling={scrolling && !open ? 'true' : undefined}>
       {open ? (
         <form
           className="agenda-fab-form"
