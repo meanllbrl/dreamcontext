@@ -24,6 +24,34 @@ pub(crate) fn cli_version(entry: &Path) -> Option<String> {
     v.get("version")?.as_str().map(str::to_string)
 }
 
+/// Is `path` one of the app's own launchers (`~/.dreamcontext/bin/**`, e.g. the CLI launcher
+/// `bin/cli/dreamcontext` the server writes on its own Node)? Those are `#!/bin/sh` files that
+/// exec THIS app's node: never a global npm CLI. Once one is on the rc PATH, `command -v
+/// dreamcontext` answers it, and taking it for the global CLI would run a shell script as a Node
+/// entry on the next launch (fresh-Mac gap, 2026-11-15). Compared on the path as found and on
+/// its realpath, so a symlink into the folder counts too.
+pub(crate) fn is_app_launcher(path: &Path, home: &Path) -> bool {
+    let root = home.join(".dreamcontext").join("bin");
+    let real_root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    path.starts_with(&root) || real.starts_with(&root) || real.starts_with(&real_root)
+}
+
+/// The global CLI out of a login shell's `which -a dreamcontext`: every line that is an absolute
+/// path to an existing file, in PATH order, the first that is not one of the app's launchers.
+/// Every match, not `command -v`'s first: once the launcher folder leads the rc PATH, the first
+/// answer is always the launcher and would hide a real npm install behind it (review r2). Lines
+/// an interactive rc prints are skipped, not mistaken for the answer.
+pub(crate) fn pick_global_cli(which_output: &str, home: Option<&Path>) -> Option<String> {
+    which_output
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('/'))
+        .filter(|l| Path::new(l).is_file())
+        .find(|l| home.map_or(true, |h| !is_app_launcher(Path::new(l), h)))
+        .map(str::to_string)
+}
+
 fn strictly_newer(a: &str, b: &str) -> bool {
     crate::node_runtime::version_at_least(a, b) && !crate::node_runtime::version_at_least(b, a)
 }
@@ -191,6 +219,37 @@ mod tests {
             n += 1;
         }
         assert!(n >= 20, "the vector file lost rows: {n}");
+    }
+
+    #[test]
+    fn the_apps_own_launcher_is_never_the_global_cli() {
+        let home = std::env::temp_dir().join(format!("dc-launcher-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let cli = home.join(".dreamcontext").join("bin").join("cli");
+        std::fs::create_dir_all(&cli).unwrap();
+        let launcher = cli.join("dreamcontext");
+        std::fs::write(&launcher, "#!/bin/sh\n").unwrap();
+        assert!(is_app_launcher(&launcher, &home));
+        // The private Node's npm global is a real npm install: not a launcher.
+        assert!(!is_app_launcher(&home.join(".dreamcontext").join("npm-global").join("bin").join("dreamcontext"), &home));
+        assert!(!is_app_launcher(Path::new("/opt/homebrew/bin/dreamcontext"), &home));
+        // `which -a` with the launcher first: the real install behind it is the one picked; rc
+        // noise and a missing path are skipped; only the launcher = no global CLI.
+        let npm = home.join("npm-bin");
+        std::fs::create_dir_all(&npm).unwrap();
+        let real = npm.join("dreamcontext");
+        std::fs::write(&real, "#!/usr/bin/env node\n").unwrap();
+        let out = format!("Welcome back!\n{}\n/nope/dreamcontext\n{}\n", launcher.display(), real.display());
+        assert_eq!(pick_global_cli(&out, Some(&home)), Some(real.to_string_lossy().into_owned()));
+        assert_eq!(pick_global_cli(&format!("{}\n", launcher.display()), Some(&home)), None);
+        assert_eq!(pick_global_cli("", Some(&home)), None);
+        #[cfg(unix)]
+        {
+            let link = home.join("dc-link");
+            std::os::unix::fs::symlink(&launcher, &link).unwrap();
+            assert!(is_app_launcher(&link, &home));
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

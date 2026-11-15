@@ -1,4 +1,5 @@
 import { handleAgentTools } from './routes/agent-tools.js';
+import { ensureAppCliOnShellPath } from '../lib/app-cli-path.js';
 import { handleAgentToolHandoff } from './routes/agent-tool-handoff.js';
 import {
   handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
@@ -1563,6 +1564,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
   // nested-claude walk runs past the server and reads a human pane as nested when the server
   // itself was started from inside a Claude Code session.
   prepareDashboardEnv(process.env, process.pid);
+  // On the app's own Node (a Mac with no npm): `dreamcontext` on the Terminal's PATH with no click.
+  const appCli = ensureAppCliOnShellPath();
+  if (appCli?.refused || (appCli && !appCli.wrote.length && !appCli.alreadyConfigured.length)) {
+    console.warn(`[setup] dreamcontext could not be put on the Terminal's PATH; add by hand: ${appCli.line || appCli.dir}`);
+  }
   const { port, contextRoot, open, host = '127.0.0.1' } = options;
   const router = buildRouter();
   const dashboardDir = getDashboardDir();

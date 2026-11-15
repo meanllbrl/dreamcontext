@@ -1,4 +1,5 @@
 import { appChatRefusal } from '../../lib/apps/chat-store.js';
+import { appRuntimePath } from '../../lib/app-cli-path.js';
 import { bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { sanitizeTool } from '../../lib/t3-bridge/registry.js';
@@ -1421,7 +1422,8 @@ export function startPtySession(
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
       // a `claude` the rc already resolves keeps winning.
-      env: { ...process.env, PATH: opts.codex ? codexAwarePath(claudeAwarePath()) : claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
+      // On the app's own Node the launcher folder rides too (hooks, and `dreamcontext` typed here).
+      env: { ...process.env, PATH: appRuntimePath(opts.codex ? codexAwarePath(claudeAwarePath()) : claudeAwarePath()), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the

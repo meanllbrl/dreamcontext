@@ -655,19 +655,23 @@ fn find_global_cli() -> Option<String> {
     // answer is stable across launches (npm upgrades keep the same bin symlink). A
     // cached path that no longer exists (node version switch, uninstall) falls
     // through to the shell and is rewritten.
+    // The app's own launcher (~/.dreamcontext/bin/**) is never the global CLI: it is a shell
+    // script for this app's node, and `command -v` finds it once its folder is on the rc PATH.
+    let home = node_runtime::home_dir();
+    let not_launcher = |p: &str| home.as_ref().map_or(true, |h| !cli_choice::is_app_launcher(Path::new(p), h));
     if let Some(cached) = read_cli_path_cache() {
-        if Path::new(&cached).exists() {
+        if Path::new(&cached).exists() && not_launcher(&cached) {
             return Some(cached);
         }
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // Every match in PATH order (`which -a`, with the login shell's PATH), the first that is not
+    // the app's own launcher (cli_choice::pick_global_cli): `command -v` gives only the first.
     let found = Command::new(&shell)
-        .args(["-ilc", "command -v dreamcontext"])
+        .args(["-ilc", "/usr/bin/which -a dreamcontext 2>/dev/null || command -v dreamcontext"])
         .output()
         .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .filter(|path| !path.is_empty() && Path::new(path).exists());
+        .and_then(|out| cli_choice::pick_global_cli(&String::from_utf8_lossy(&out.stdout), home.as_deref()));
     if let Some(path) = found {
         write_cli_path_cache(&path);
         return Some(path);
