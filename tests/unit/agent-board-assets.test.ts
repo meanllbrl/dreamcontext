@@ -416,6 +416,8 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * 2026-11-13 (0.41.21 cut, app-kurulum-claude-2): the `app-request` card an app action that waits
    * for the owner's yes is pasted as (and the dream-view heading counts eleven). Ceiling -> 12000;
    * actual 11,807.
+   * 2026-11-14 (zaten-cevapladim): +117 for the Already-answered line (read his last messages before
+   * asking; the denial sends you back to his words). Ceiling stays 12000; actual ~11,924.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12000);
@@ -429,7 +431,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11807)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 11924)).toBeLessThanOrEqual(20);
   });
 
   /**

@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useState } from 'react';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingQuestion } from '../chatSession';
+import { ALREADY_ANSWERED_MESSAGE } from '../chat/surveyAnswers';
 import { SurveyCard, SurveyReceipt, type SurveyHost, type SurveyRead } from '../chat/SurveyCard';
 import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { OwnerCardSlot } from './OwnerCardSlot';
@@ -18,7 +19,7 @@ import {
   MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText,
 } from './ownerAnswer';
 import {
-  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
+  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText, superAlreadyText,
   type AskRef,
 } from './superQuestions';
 
@@ -145,7 +146,7 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
   // Handed off either way: a refused send re-mounts the card (`attempt`), its own failure path.
   const host: SurveyHost = {
     answerQuestion: (_requestId, questions, picked, notes) => { send(superAnswerText(item, questions, picked, notes)); return true; },
-    answer: (_requestId, opts) => { send(superUnclearText(item, opts.message ?? '')); return true; },
+    answer: (_requestId, opts) => { send(opts.message === ALREADY_ANSWERED_MESSAGE ? superAlreadyText(item) : superUnclearText(item, opts.message ?? '')); return true; },
   };
   return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} />);
 }
@@ -323,7 +324,7 @@ export function SuperAnswerReceipt({ text, itemId }: { text: string; itemId?: st
   if (!answer) return null;
   return (
     <div data-testid="super-answer-receipt" data-item={answer.item} data-item-id={itemId}>
-      <SurveyReceipt unclear={answer.unclear} values={answer.values} />
+      <SurveyReceipt unclear={answer.unclear} already={answer.already} values={answer.values} />
     </div>
   );
 }

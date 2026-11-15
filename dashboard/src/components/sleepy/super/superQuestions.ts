@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { QuestionSpec } from '../../../lib/chatProtocol';
 import type { ChatItem, ChatSession, ChatToolItem, PendingQuestion } from '../chatSession';
+import { ALREADY_ANSWERED_MESSAGE } from '../chat/surveyAnswers';
 import { splitShellSegments, tokenizeShell } from '../chat/dreamCommand';
 import { toolResultText } from '../chat/chatEntities';
 import { OPEN_LATCH, latchClick, latchSeen, type AnswerLatch } from './superHandover';
@@ -355,17 +356,22 @@ export function superUnclearText(item: Pick<SuperQueueItem, 'id'>, message: stri
   return `${SUPER_ANSWER_PREFIX} item=${item.id} unclear\n${body}`;
 }
 
+/** "Already answered": his own words are in the chat, so the asker is sent back to them. */
+export function superAlreadyText(item: Pick<SuperQueueItem, 'id'>): string {
+  return `${SUPER_ANSWER_PREFIX} item=${item.id} already\n${ALREADY_ANSWERED_MESSAGE}`;
+}
+
 /** An answer message read back for the transcript: the card's receipt in place of a bubble. */
-export function parseSuperAnswer(text: string): { item: string; unclear: boolean; values: string[] } | null {
+export function parseSuperAnswer(text: string): { item: string; unclear: boolean; already: boolean; values: string[] } | null {
   if (typeof text !== 'string') return null;
-  const m = /^\[super answer\] item=(\S+)( unclear)?\s*(?:\n|$)/.exec(text.trimStart());
+  const m = /^\[super answer\] item=(\S+)( unclear| already)?\s*(?:\n|$)/.exec(text.trimStart());
   if (!m) return null;
   const values: string[] = [];
   const pair = /"((?:[^"\\]|\\.)*)"="((?:[^"\\]|\\.)*)"/g;
   for (let p = pair.exec(text); p; p = pair.exec(text)) {
     try { values.push(JSON.parse(`"${p[2]}"`) as string); } catch { /* not ours: skip */ }
   }
-  return { item: m[1], unclear: !!m[2], values };
+  return { item: m[1], unclear: m[2] === ' unclear', already: m[2] === ' already', values };
 }
 
 /** Into the super chat: a running turn steers (never waits), an idle one gets a turn. False =

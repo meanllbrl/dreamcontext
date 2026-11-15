@@ -111,7 +111,8 @@ not from your last message. Every card must stand alone:
   second; the thing judged goes in an option's \`preview\`.
 
 Every pick can carry a typed note (you get \`notes:\`). "Unclear? Ask again" comes back as a
-denial asking you to re-ask — add context, never resend the same card.
+denial asking you to re-ask — add context, never resend the same card. Read his last messages
+before you ask; "Already answered" comes back as a denial: find his words, act, never re-ask.
 `;
 
 /** Everything that is true of the surface whichever channel is in use — media, boards,

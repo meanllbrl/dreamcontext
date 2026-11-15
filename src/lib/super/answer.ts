@@ -82,6 +82,14 @@ export function unclearMessage(typed: readonly string[]): string {
     + ' option a `preview`.';
 }
 
+/** What "Already answered" sends (mirror of the window's `ALREADY_ANSWERED_MESSAGE`, `surveyAnswers.ts`). */
+export const ALREADY_ANSWERED_MESSAGE = 'The owner says he already answered this question in the conversation. Find his answer in his recent messages and act on it; do not ask it again. If you truly cannot find it, ask once more with the context he would need: a `title` naming the work in progress, the question in plain words, and what changes with the answer.';
+
+/** The Super's own ask, answered "already answered": the transcript reads it as his choice. */
+export function superAlreadyText(item: Pick<SuperQueueItem, 'id'>): string {
+  return `${SUPER_ANSWER_PREFIX} item=${item.id} already\n${ALREADY_ANSWERED_MESSAGE}`;
+}
+
 export function superUnclearText(item: Pick<SuperQueueItem, 'id'>, message: string): string {
   const body = message.replace(
     /Ask again with AskUserQuestion,/,

@@ -1525,7 +1525,7 @@ export interface AgendaAbout { kind: 'note' | 'item' | 'owed' | 'reply' | 'card'
  */
 export function ownerAbouts(text: string, heads: readonly { kind: AgendaAbout['kind']; id: string }[]): AgendaAbout[] {
   const out: AgendaAbout[] = heads.map(({ kind, id }) => ({ kind, id }));
-  const m = /^\[super answer\] item=([A-Za-z0-9_-]{1,64})(?: unclear)?(?:\n|$)/.exec(typeof text === 'string' ? text : '');
+  const m = /^\[super answer\] item=([A-Za-z0-9_-]{1,64})(?: unclear| already)?(?:\n|$)/.exec(typeof text === 'string' ? text : '');
   if (m) out.push({ kind: 'item', id: m[1] });
   return out;
 }

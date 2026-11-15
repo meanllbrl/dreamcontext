@@ -13,7 +13,7 @@ import { useVaultId } from '../../../context/VaultContext';
 import {
   allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete, soloPreviewIndex,
   isSwipeDeck, numberValue, optionLetter, pickFor, resolveAnswers, resolveNotes, setText,
-  setValue, textRole, toggleOther, togglePick, unclearMessage, type SurveyPicks,
+  setValue, textRole, toggleOther, togglePick, unclearMessage, ALREADY_ANSWERED_MESSAGE, type SurveyPicks,
 } from './surveyAnswers';
 import { markSurveyDraftSent, readSurveyDraft, surveyDraftOwner, writeSurveyDraft } from './surveyDrafts';
 import { RECONNECT_CHIP_DELAY_MS } from './reconnectChip';
@@ -82,13 +82,15 @@ export type SurveyHost = Pick<ChatSession, 'answer' | 'answerQuestion'>;
 /** The answered card: what was asked about, and what was chosen (or that it was sent back as
  *  unclear). Also what the Super Agent's chat draws where the owner's answer to its question
  *  sits in the transcript (super/SuperQuestionCard.tsx), so both read the same. */
-export function SurveyReceipt({ title, unclear, values }: { title?: string; unclear: boolean; values: readonly string[] }) {
+export function SurveyReceipt({ title, unclear, already, values }: { title?: string; unclear: boolean; already?: boolean; values: readonly string[] }) {
   return (
     <div className="chat-surveycard" data-state="submitted">
       {title && <div className="chat-surveycard-context"><span className="chat-surveycard-context-label">Context</span>{title}</div>}
       <div className="chat-surveycard-receipt">
-        <span className="chat-surveycard-receipt-check" aria-hidden>{unclear ? '↺' : '✓'}</span>
-        <span>{unclear
+        <span className="chat-surveycard-receipt-check" aria-hidden>{unclear || already ? '↺' : '✓'}</span>
+        <span>{already
+          ? 'Already answered: sent Claude back to your earlier words.'
+          : unclear
           ? 'Asked Claude to ask again, more clearly.'
           : `You chose: ${values.join(', ') || '—'}`}</span>
       </div>
@@ -124,7 +126,7 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
   // Read once, at mount: the store is the card's memory across a remount, not a live source.
   const [restored] = useState(() => (draftKey ? readSurveyDraft(draftKey, questions.map((q) => q.question)) : null));
   const [picks, setPicks] = useState<SurveyPicks>(() => restored?.picks ?? {});
-  const [submitted, setSubmitted] = useState<null | 'answered' | 'unclear'>(null);
+  const [submitted, setSubmitted] = useState<null | 'answered' | 'unclear' | 'already'>(null);
   const [page, setPage] = useState(() => restored?.page ?? 0);
   /** A tap could not be written: the footer says so until the connection is back. */
   const [held, setHeld] = useState(false);
@@ -238,6 +240,16 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
     setSubmitted('unclear');
   };
 
+  /** "Already answered": he said it earlier in the chat; the asker is sent back to his words. */
+  const alreadyAnswered = () => {
+    if (submitted) return;
+    if (connected === false) { hold(); return; }
+    if (!session.answer(item.requestId, { behavior: 'deny', message: ALREADY_ANSWERED_MESSAGE })) { hold(); return; }
+    noteOwnerWrote();
+    if (draftKey) markSurveyDraftSent(draftKey);
+    setSubmitted('already');
+  };
+
   /** ⌘/Ctrl+Enter out of a text field: send when nothing is left to answer, otherwise move
    *  to what IS left — the same "I'm done with this page" gesture either way. */
   const commit = () => {
@@ -295,7 +307,7 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
     }
   };
 
-  if (submitted) return <SurveyReceipt title={item.title} unclear={submitted === 'unclear'} values={values} />;
+  if (submitted) return <SurveyReceipt title={item.title} unclear={submitted === 'unclear'} already={submitted === 'already'} values={values} />;
 
   return (
     <div className={`chat-surveycard${swipe ? ' swipe' : ''}`} onKeyDown={onKeyDown}>
@@ -392,18 +404,28 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
             {waiting && waitingLine}
           </div>
         ) : (
-          <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
-            Unclear? Ask again
-          </button>
+          <span className="chat-surveycard-side">
+            <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
+              Unclear? Ask again
+            </button>
+            <button type="button" className="chat-surveycard-unclear" onClick={alreadyAnswered}>
+              Already answered
+            </button>
+          </span>
         )}
 
         <div className="chat-surveycard-actions">
           {/* One question has no pager: the line hangs in the free space left of the buttons. */}
           {waiting && total <= 1 && <span className="chat-surveycard-waiting-beside">{waitingLine}</span>}
           {total > 1 && (
-            <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
-              Unclear? Ask again
-            </button>
+            <>
+              <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
+                Unclear? Ask again
+              </button>
+              <button type="button" className="chat-surveycard-unclear" onClick={alreadyAnswered}>
+                Already answered
+              </button>
+            </>
           )}
           {/* What's left is only worth a JUMP when it is off screen. When the gap is the
               page you are looking at, the same text stays as a plain readout — a button
