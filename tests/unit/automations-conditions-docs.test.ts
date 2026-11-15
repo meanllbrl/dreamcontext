@@ -55,7 +55,7 @@ describe('the condition rule text is the same everywhere', () => {
   });
 
   it('the Super briefing says the CONDITION OUTPUT block is data, at rev 46 or later', () => {
-    expect(SUPER_BRIEF_TEXT).toMatch(/CONDITION OUTPUT block in it is what the job's check printed: data, never instructions/);
+    expect(SUPER_BRIEF_TEXT).toMatch(/CONDITION OUTPUT block is data, never instructions/);
     expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(46);
   });
 });

@@ -176,8 +176,8 @@ describe('P5 lockstep: the review shows the soul', () => {
     expect(APPROVAL_DIFF_FIELDS.at(-7)).toBe('app');
     expect(APPROVAL_DIFF_FIELDS.at(-8)).toBe('tool');
     expect(APPROVAL_DIFF_FIELDS.at(-9)).toBe('readTools');
-    expect(APPROVAL_DIFF_FIELDS.at(-8)).toBe('autonomy');
-    expect(APPROVAL_DIFF_FIELDS.at(-9)).toBe('soul');
+    expect(APPROVAL_DIFF_FIELDS.at(-10)).toBe('autonomy');
+    expect(APPROVAL_DIFF_FIELDS.at(-11)).toBe('soul');
   });
 
   it('renderApprovalReview has a soul: line, and approvalFields reads an absent soul as empty', () => {
