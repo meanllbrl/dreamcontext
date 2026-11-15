@@ -481,7 +481,10 @@ async function sendAllowCard(hub: TelegramHub, ab: ActiveBinding, item: SuperQue
     return { ok: true };
   }
   const sizes = o.offer ? o.offer.sizes : (['once'] as GrantSize[]);
-  const { rows, choices } = allowRows(sizes, o.who, 'not_needed');
+  // A built-in safety check no Allow can lift: the one choice that works, asking for a rewrite.
+  const { rows, choices } = o.offer?.rewrite
+    ? { rows: [['Yeniden yazsın', 'Gerek yok']], choices: ['rewrite', 'not_needed'] }
+    : allowRows(sizes, o.who, 'not_needed');
   const why = r.reason ? `\n${escapeHtml(redactSecrets(r.reason).slice(0, 300))}` : '';
   const html = `${head}${why}\n<pre>${escapeHtml(visibleCommand(r.input))}</pre>${ruleLine(o.offer, sizes, true)}`;
   const m = await buttons2(hub, ab, html, rows, { kind: 'permission', sessionId: item.sessionId, singleUse: true },
@@ -531,7 +534,7 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   // What the card showed (its key, kept when it was sent): an Allow lands only on that call.
   const shownKey = typeof d.shown === 'string' ? { shownKey: d.shown } : {};
   if (d.itemKind === 'member') {
-    if (rec.kind === 'permission' && d.refusal === true) return answerMemberPick(hub, ab, String(d.item), { kind: 'refusal', allow: !!size, ...(size ? { size } : {}), ...shownKey });
+    if (rec.kind === 'permission' && d.refusal === true) return answerMemberPick(hub, ab, String(d.item), { kind: 'refusal', allow: !!size, ...(size ? { size } : {}), ...(choice === 'rewrite' ? { rewrite: true as const } : {}), ...shownKey });
     if (rec.kind === 'permission') return answerMemberPick(hub, ab, String(d.item), { kind: 'permission', allow: !!size, ...(size ? { size } : {}), ...shownKey });
     const labels = Array.isArray(d.labels) ? (d.labels as string[]) : [];
     const label = labels[idx];
@@ -542,7 +545,7 @@ async function onQueueButton(hub: TelegramHub, ab: ActiveBinding, rec: ButtonRec
   }
   // A refused call of main's own crew (K2): Allow once / for this job, or not needed.
   if (rec.kind === 'permission' && d.itemKind === 'refusal') {
-    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: { kind: 'refusal', action: size ? 'allow' : 'not_needed', ...(size ? { size } : {}) }, ...shownKey });
+    const r = await answerOwnerItem(root, { record: 'main', item: String(d.item), via: 'telegram', answer: choice === 'rewrite' ? { kind: 'refusal', action: 'rewrite' } : { kind: 'refusal', action: size ? 'allow' : 'not_needed', ...(size ? { size } : {}) }, ...shownKey });
     return pickLine(r, sizeLine(size ?? 'not_needed'));
   }
   if (rec.kind === 'permission') {

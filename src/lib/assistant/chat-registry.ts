@@ -37,7 +37,7 @@
 import { outwardAction } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
 import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, supersedesCard, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
-import { imagesInPreviews, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
+import { imagesInPreviews, SAFETY_CHECK_RE, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
 import type { OpenRequest, RequestResponse } from '../super/request-answer.js';
 import {
@@ -1185,6 +1185,10 @@ export function refusalSource(
   if (source === 'hook' || (!source && reasonType === 'hook')) return null;
   if (reasonType === 'mode' && (mode === 'plan' || mode === 'dontAsk')) return null;
   if (/^user/.test(source) || reasonType === 'user_reject' || kind === 'interrupted') return null;
+  // A built-in safety check (an `rm` it cannot resolve): only a person at Claude Code's own prompt
+  // may pass it, so no grant ever can. Told apart before `rule`: it reads `source: config` too.
+  if (reasonType === 'safetyCheck' || str(pd?.reasonType) === 'safetyCheck' || !!str(pd?.circuit_breaker) || !!str(pd?.circuitBreaker)
+    || SAFETY_CHECK_RE.test(str(deniedEvent?.message))) return 'safety';
   if (reasonType === 'classifier' || kind === 'automode-blocked') return 'classifier';
   if (reasonType === 'bridge' || source === 'bridge') return 'bridge';
   if (reasonType === 'rule' || (source === 'config' && !reasonType)) return 'rule';
@@ -1288,8 +1292,10 @@ function settleTurnRefusals(e: ChatEntry, t: TurnRefusals, result: Record<string
     for (const id of ids) {
       const rej = t.rejected.get(id);
       const ev = t.denied.get(id)?.frame ?? null;
-      const source = refusalSource(rej?.meta ?? null, ev, e.permissionMode);
-      if (!source) continue;
+      const read = refusalSource(rej?.meta ?? null, ev, e.permissionMode);
+      if (!read) continue;
+      // The tool_result's own words name a built-in safety check even when its meta does not.
+      const source = read !== 'safety' && SAFETY_CHECK_RE.test(rej?.text ?? '') ? 'safety' : read;
       const fromEvent = ev && typeof ev.tool_name === 'string' ? { tool: ev.tool_name, input: ev.tool_input } : null;
       const call = t.calls.get(id) ?? fromEvent ?? backstop.get(id) ?? null;
       // The input from the call itself; an event or the result's list only when the call frame

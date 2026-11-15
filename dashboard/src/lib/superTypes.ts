@@ -523,7 +523,7 @@ export interface CardTicketMintResponse { ticket: string; expiresAt: number }
 
 /** A refused tool call (MIRROR of src/lib/super/types.ts `RefusalFact`): `whole` false = the
  *  input was cut, and no grant may be offered for it. */
-export const REFUSAL_SOURCES = ['classifier', 'rule', 'mode', 'bridge', 'unknown'] as const;
+export const REFUSAL_SOURCES = ['classifier', 'rule', 'mode', 'bridge', 'safety', 'unknown'] as const;
 export type RefusalSource = typeof REFUSAL_SOURCES[number];
 export interface RefusalFact {
   tool: string;
@@ -536,6 +536,13 @@ export interface RefusalFact {
   interpreter?: { name: string; path: string };
   cwd?: string;
 }
+/** MIRROR of src/lib/super/types.ts `SAFETY_CHECK_RE`, `isSafetyRefusal`, `SAFETY_REWRITE_REASON`:
+ *  a refusal by a built-in Claude Code safety check, which no Allow can lift. */
+export const SAFETY_CHECK_RE = /built-in Claude Code safety check/i;
+export function isSafetyRefusal(r: Pick<RefusalFact, 'source' | 'reason'> | null | undefined): boolean {
+  return !!r && (r.source === 'safety' || (typeof r.reason === 'string' && SAFETY_CHECK_RE.test(r.reason)));
+}
+export const SAFETY_REWRITE_REASON = "Claude Code's own safety check stopped it, and no Allow can lift that check. Ask the agent to rewrite it safely.";
 
 /** Owner answers and grants on the wire (MIRROR of src/lib/super/types.ts, uye-bildirim K3-K5). */
 export const GRANT_SIZES = ['once', 'job', 'member'] as const;
@@ -543,7 +550,7 @@ export type GrantSize = typeof GRANT_SIZES[number];
 export type OwnerAnswer =
   | { kind: 'question'; answers: Record<string, string> }
   | { kind: 'permission'; behavior: 'allow' | 'deny'; size?: GrantSize }
-  | { kind: 'refusal'; action: 'allow' | 'not_needed'; size?: GrantSize }
+  | { kind: 'refusal'; action: 'allow' | 'not_needed' | 'rewrite'; size?: GrantSize }
   | { kind: 'ask'; text: string }
   | { kind: 'dismiss' };
 export const OWNER_ANSWER_VIAS = ['bar', 'chat', 'member-chat', 'phone', 'telegram'] as const;
@@ -558,9 +565,14 @@ export interface OwnerAnswerRequest {
   shownKey?: string;
 }
 export type OwnerAnswerResult =
-  | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'dismissed' }
+  | { ok: true; outcome: 'answered' | 'allowed' | 'allowed_waiting' | 'rewrite_asked' | 'dismissed' }
   | { ok: false; error: 'already_answered' | 'not_found' | 'owner_page_only' | 'not_offered' | 'no_window' | 'invalid' | 'changed'; message: string };
-export interface GrantOffer { sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string }
+export interface GrantOffer {
+  sizes: GrantSize[]; onceOnlyReason?: string; notChecked?: string; rule?: string;
+  /** A built-in Claude Code safety check refused it (source `safety`): no grant can lift it, so no
+   *  Allow is offered; the card offers "Ask it to rewrite" (refusal action `rewrite`) instead. */
+  rewrite?: true;
+}
 export interface PermissionRuleView { id: string; member: string; form: 'script'; rule: string; createdAt: number }
 
 /** Which super a record, a token or a window verb belongs to (plan-r10 1): the project's own

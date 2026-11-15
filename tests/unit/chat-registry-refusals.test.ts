@@ -234,6 +234,10 @@ describe('refusalSource — the mapping, total', () => {
     ['bridge event only', null, { decision_reason_type: 'bridge' }, 'auto', 'bridge'],
     ['event only, unknown', null, { decision_reason_type: 'novel' }, 'auto', 'unknown'],
     ['unknown', pd({ source: 'mystery' }), null, 'auto', 'unknown'],
+    // Claude Code 2.1.325's built-in rm check reads `source: config` like a rule: told apart first.
+    ['built-in safety check', pd({ source: 'config', reason_type: 'safetyCheck', circuit_breaker: 'dangerousRemoval' }), null, 'bypassPermissions', 'safety'],
+    ['safety check, camelCase meta', pd({ source: 'config', reasonType: 'safetyCheck' }), null, 'auto', 'safety'],
+    ['safety check, event words only', null, { decision_reason_type: 'novel', message: 'Permission for this command was denied by a built-in Claude Code safety check, not by the user.' }, 'auto', 'safety'],
   ];
   it.each(rows)('%s', (_name, meta, ev, mode, want) => {
     expect(refusalSource(meta, ev, mode)).toBe(want);

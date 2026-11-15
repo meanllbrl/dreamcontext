@@ -16,16 +16,16 @@ import { crewHandle, dropOwnerWait, getChat, pendingRequest, type PendingQuestio
 import { sendHubCommand, sendSuperCommand, superTokenOfSession, tokenOfSession } from '../window-control.js';
 import { isReservedId, okMember, readSuperState, superIdOfMember, superKey } from './store.js';
 import {
-  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, grantCtx, itemCall, type CallBirth, mootSuperCall, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
+  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, sendRewriteTurn, grantCtx, itemCall, type CallBirth, mootSuperCall, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
 } from './inbox.js';
 import { addToOutbox } from './outbox.js';
 import { sameShellCommand } from './owner-wait.js';
 import { eligible } from '../grants/eligible.js';
 import { canonicalInput } from '../grants/canonical.js';
-import { listGrants, newGrantId, writeGrant } from '../grants/store.js';
+import { listGrants, newGrantId, removeGrant, writeGrant } from '../grants/store.js';
 import { GRANT_MAX_MS, MEMBER_NO_EXPIRY, type Grant, type GrantScope } from '../grants/types.js';
 import {
-  GRANT_SIZES, MAX_REFUSAL_INPUT, MAX_REQUEST_TEXT, OWNER_ANSWER_VIAS, QUEUE_ID_RE,
+  GRANT_SIZES, MAX_REFUSAL_INPUT, MAX_REQUEST_TEXT, OWNER_ANSWER_VIAS, QUEUE_ID_RE, isSafetyRefusal,
   type GrantSize, type OwnerAnswer, type OwnerAnswerRequest, type OwnerAnswerResult, type SuperId, type SuperQueueItem, type SuperState,
 } from './types.js';
 
@@ -269,6 +269,7 @@ const MSG = {
   phoneRefusal: 'Allow it on Telegram or the Mac.',
   changed: 'The request changed after it was shown: look at it again before you allow it.',
   moot: 'Nothing to run: the question this call answers was already answered, so it was closed.',
+  safety: 'Claude Code\'s own safety check stopped this call and no Allow can lift it: ask the agent to rewrite it.',
 } as const;
 
 /** The key of a call as a surface showed it (sha256 of tool and input): what Telegram keeps on
@@ -311,7 +312,7 @@ function answerValid(a: unknown): a is OwnerAnswer {
     case 'question': return !!x.answers && typeof x.answers === 'object' && !Array.isArray(x.answers)
       && Object.entries(x.answers as Record<string, unknown>).every(([k, v]) => typeof k === 'string' && typeof v === 'string' && v.length <= MAX_ANSWER);
     case 'permission': return (x.behavior === 'allow' || x.behavior === 'deny') && size;
-    case 'refusal': return (x.action === 'allow' || x.action === 'not_needed') && size;
+    case 'refusal': return (x.action === 'allow' || x.action === 'not_needed' || x.action === 'rewrite') && size;
     case 'ask': return typeof x.text === 'string' && !!x.text.trim() && x.text.length <= MAX_ANSWER;
     case 'dismiss': return true;
     default: return false;
@@ -416,6 +417,8 @@ async function allowRefusal(root: string, superId: SuperId, state: SuperState, i
   const r = item.wait?.refusal;
   // A cut input, or a call a settings rule forbids (the rule wins anyway): nothing to allow.
   if (!r || !r.whole || r.source === 'rule') return fail('not_offered', MSG.notOffered);
+  // A built-in safety check no grant passes: never a grant (the caller asks for a rewrite instead).
+  if (isSafetyRefusal(r)) return fail('not_offered', MSG.safety);
   // A call that can no longer matter (the child is not asking what it answers): closed with a
   // short note, never a turn into the session (field 2026-11-13).
   if (mootSuperCall(r.tool, r.input)) {
@@ -447,6 +450,24 @@ async function allowRefusal(root: string, superId: SuperId, state: SuperState, i
   try { await addToOutbox(superKey(root, superId), item.sessionId, text, Date.now(), { server: true }); } catch { /* the grant stands; he can run it from the chat */ }
   try { await mark(true); } catch { /* the line is a courtesy; the outbox holds the turn */ }
   return { ok: true, outcome: 'allowed_waiting' };
+}
+
+/**
+ * "Ask it to rewrite" on a call a built-in safety check refused (field 2026-11-15): the session
+ * is told at once, in plain words, that the check cannot be lifted and how to write the call
+ * safely (kept for its first idle when it is not running), and the item closes, so his card
+ * settles instead of waiting on an Allow that can never run.
+ */
+async function rewriteRefusal(root: string, superId: SuperId, state: SuperState, item: SuperQueueItem): Promise<OwnerAnswerResult> {
+  const r = item.wait?.refusal;
+  if (!r) return fail('not_offered', MSG.notOffered);
+  try { await sendRewriteTurn(superKey(root, superId), item.sessionId, r.tool, r.input); } catch { return fail('no_window', MSG.noWindow); }
+  // An Allow given before (it can never pass the check) leaves no grant behind.
+  for (const g of listGrants(projectOfRoot(root))) if (g.item === item.id) removeGrant(g.id);
+  if (item.wait) dropOwnerWait(item.sessionId, item.wait.kind, item.wait.id);
+  await closeItem(root, superId, item.id);
+  await settleRunCardsOfRefusal(root, superId, state, item, 'not_needed');
+  return { ok: true, outcome: 'rewrite_asked' };
 }
 
 /** An always-rule for a permission he allows now (the prompt itself is answered by the CLI's own Allow). */
@@ -503,7 +524,10 @@ async function answerLocked(root: string, superId: SuperId, req: OwnerAnswerRequ
   if (!openForOwner(state, item)) return fail('already_answered', MSG.answered);
   // First answer wins on every path: an item a grant already names (an Allow of any size, its call
   // not run yet, its turn perhaps waiting in the outbox) takes no second Allow and no "Not needed".
-  if (item.kind !== 'member' && (item.allowed !== undefined || allowedAlready(root, item.id))) return fail('already_answered', MSG.answered);
+  // Except a call a built-in safety check refused: an Allow there could never run (allowed before
+  // that check was told apart), so "Ask it to rewrite" still settles it.
+  const safetyStuck = item.kind === 'owner' && isSafetyRefusal(item.wait?.refusal);
+  if (item.kind !== 'member' && !safetyStuck && (item.allowed !== undefined || allowedAlready(root, item.id))) return fail('already_answered', MSG.answered);
   const a = req.answer;
   const phone = req.via === 'phone';
   // Consent matches display (G2), checked here once for every Allow of every surface that draws the
@@ -576,6 +600,10 @@ async function answerLocked(root: string, superId: SuperId, req: OwnerAnswerRequ
         return { ok: true, outcome: 'dismissed' };
       }
       if (kind !== 'refusal' || a.kind !== 'refusal') return fail('not_offered', MSG.notOffered);
+      // A built-in safety check no Allow can lift: his Allow (an older surface still drawing one) or
+      // his "Ask it to rewrite" both become the one thing that works, never a press with nothing after.
+      if (isSafetyRefusal(item.wait?.refusal)) return rewriteRefusal(root, superId, state, item);
+      if (a.action === 'rewrite') return fail('not_offered', MSG.notOffered);
       const size = a.size ?? 'once';
       if (!offered(item).includes(size)) return fail('not_offered', MSG.notOffered);
       const allowed = await allowRefusal(root, superId, state, item, size);

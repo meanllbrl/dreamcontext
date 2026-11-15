@@ -16,7 +16,7 @@ import { CardHeader } from '../chat/molecules';
 import { GrantDecision } from '../chat/RefusalCard';
 import '../chat/AgentThreadCard.css';
 import {
-  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, oneChoiceQuestion, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText,
+  MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, oneChoiceQuestion, rewriteAnswer, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText,
 } from './ownerAnswer';
 import {
   askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText, superAlreadyText,
@@ -255,6 +255,7 @@ function MemberWaitBody({ item, name, slug, hasPhoto }: { item: SuperQueueItem; 
           busy={answer.busy}
           onAllow={(size) => answer.submit(allowAnswer(row === 'refusal' ? 'refusal' : 'permission', size))}
           onDecline={() => answer.submit(declineAnswer(row))}
+          onRewrite={() => answer.submit(rewriteAnswer())}
           onOpen={open}
         />
       ) : questions.length
