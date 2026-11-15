@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
-import { STAGE, applyLayoutPatch, patchEchoed, planStage } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { STAGE, applyLayoutPatch, controlsWidth, patchEchoed, planStage, type Rect } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { remoteLayoutPatch, remoteStageState } from '../../dashboard/src/components/sleepy/super/remoteStage.js';
 import { PRESENT_REPLY_KEYS as CLIENT_PRESENT_KEYS, answerForCards, turnCardsByAnswer, type TurnItem } from '../../dashboard/src/lib/turnCards.js';
 import { PRESENT_REPLY_KEYS } from '../../src/server/routes/super.js';
@@ -46,23 +46,23 @@ describe('the top band (D7, D10)', () => {
   const items = [card('a'), card('b'), card('c')];
   const present: client.SuperView = { mode: 'present', cards: ['a', 'b'] };
 
-  it('step: left of the layout buttons, which keep their place', () => {
+  it('step: a presentation is framed, its tab strip left of the icons, which keep their place', () => {
     const before = planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3 });
     const p = planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3, queueBand: 'step' });
     expect(p.controls).toEqual(before.controls);
-    expect(p.queueBand?.kind).toBe('step');
-    expect(p.queueBand?.short).toBe(false);
-    expect(p.queueBand!.rect.width).toBe(STAGE.QUEUE_STEP_W);
-    expect(p.queueBand!.rect.x + p.queueBand!.rect.width).toBeLessThanOrEqual(p.controls!.x);
-    expect(p.queueBand!.rect.y).toBe(p.controls!.y);
+    // A queued presentation on screen is named by the frame's tabs, never a pill.
+    expect(p.queueBand).toBeUndefined();
+    expect(p.presentTabs!.x + p.presentTabs!.width).toBeLessThanOrEqual(p.controls!.x);
+    expect(p.presentTabs!.y).toBe(p.controls!.y);
+    expect(p.presentFrame!.x).toBeLessThanOrEqual(p.presentTabs!.x);
+    expect(p.presentFrame!.y).toBe(p.presentTabs!.y + p.presentTabs!.height);
   });
 
-  it('a narrow band shortens the queue control, never the layout buttons or the exit', () => {
-    const before = planStage(items, present, { width: 1000, height: 700 }, { layoutChoices: 3 });
-    const p = planStage(items, present, { width: 1000, height: 700 }, { layoutChoices: 3, queueBand: 'step' });
-    expect(p.controls).toEqual(before.controls);
-    expect(p.queueBand?.short).toBe(true);
-    expect(p.queueBand!.rect.width).toBe(STAGE.QUEUE_STEP_SHORT_W);
+  it('the icon box is exactly its icons', () => {
+    expect(controlsWidth(1, false)).toBe(2 * STAGE.ICON_PAD + STAGE.ICON_BTN);
+    expect(controlsWidth(2, true)).toBe(2 * STAGE.ICON_PAD + 5 * STAGE.ICON_BTN + 4 * STAGE.ICON_GAP + 1 + STAGE.ICON_GAP);
+    const p = planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3, groupExit: true });
+    expect(p.controls!.width).toBe(controlsWidth(3, true));
   });
 
   it('wait: at the band\'s right end off a presentation; step needs a presentation, wait refuses one', () => {
@@ -186,5 +186,23 @@ describe('the side menu says how many wait (AC5)', () => {
     const sum = rosterSummary({ sessions: [], windows: [] }, { enabled: true, session: 's1', presentQueue: q as server.PresentQueue });
     expect(sum.superWaiting).toBe(2);
     expect(rosterSummary({ sessions: [], windows: [] }, { enabled: true, session: 's1' }).superWaiting).toBe(0);
+  });
+});
+
+describe('the top band never overlaps itself (field 2026-11-15: the Next pill over "Grid")', () => {
+  const items = [card('a'), card('b'), card('c'), card('d')];
+  const present: client.SuperView = { mode: 'present', cards: ['a', 'b', 'c', 'd'] };
+  const clash = (p: Rect, q: Rect) => p.x < q.x + q.width && q.x < p.x + p.width;
+
+  it.each([700, 820, 1024, 1280, 1440, 1650, 2000])('a stage %i px wide: the tab strip and the icons never intersect, both inside the stage', (width) => {
+    for (const layoutChoices of [1, 2, 3]) for (const groupExit of [false, true]) {
+      const p = planStage(items, present, { width, height: 800 }, { layoutChoices, queueBand: 'step', groupExit });
+      const c = p.controls!;
+      expect(clash(p.presentTabs!, c), `${width}/${layoutChoices}/${groupExit}`).toBe(false);
+      expect(c.x).toBeGreaterThanOrEqual(0);
+      expect(c.x + c.width).toBeLessThanOrEqual(width);
+      expect(c.width).toBe(controlsWidth(layoutChoices, groupExit));
+      if (p.presentFrame) expect(p.presentFrame.x + p.presentFrame.width).toBeLessThanOrEqual(width);
+    }
   });
 });

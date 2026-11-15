@@ -113,16 +113,16 @@ export const STAGE = {
   PHONE_BAND_INSET: 8,
   /** A narrow sheet's tab row (2+ cards). */
   TAB_H: 36,
-  /** The top band's presentation controls at its right end: the exit, and one segment per layout
-   *  the switcher offers (none for a single choice). */
-  EXIT_W: 132,
-  /** An opened group's two text buttons (close group, minimize) take the exit's place. */
-  GROUP_EXIT_W: 232,
-  SWITCH_SEG_W: 96,
-  /** The presentation queue's control (task super-sahnesinde-sunum-sirasi, D7/D10): left of the
-   *  layout buttons while presenting; under QUEUE_NARROW_W it drops the names ("i/N ›" stays). */
-  QUEUE_STEP_W: 360,
-  QUEUE_STEP_SHORT_W: 104,
+  /** A presentation's frame (owner 2026-11-15, option C "Çerçeve"): a framed space whose tab strip
+   *  names what is shown and what comes next, with the actions as icons at the band's right end:
+   *  one icon per layout the switcher offers (none for a single choice), a 1 px separator, then
+   *  the exit (a group: ask, close group, minimize). Every icon is ICON_BTN square, ICON_GAP apart,
+   *  inside ICON_PAD of padding and border: the box is exactly its icons, never narrower. */
+  ICON_BTN: 32,
+  ICON_GAP: 4,
+  ICON_PAD: 5,
+  /** The frame's breathing room around the presented cards. */
+  FRAME_PAD: 12,
   /** Off the queue (the stage floats with presentations waiting): "▶ N waiting · Continue" (D2). */
   QUEUE_WAIT_W: 380,
   QUEUE_WAIT_SHORT_W: 200,
@@ -258,6 +258,10 @@ export interface StagePlan {
   strip?: StripPlan;
   /** While presenting: the top band's switcher and exit, at its right end. */
   controls?: Rect;
+  /** While presenting: the frame drawn around the presented cards (a narrow sheet's too), and
+   *  the tab strip left of `controls` naming what is shown and what comes next. */
+  presentFrame?: Rect;
+  presentTabs?: Rect;
   /** The presentation queue's control in the top band (D7, D2): `step` left of `controls` while a
    *  queued presentation is on screen, `wait` at the band's right end while presentations wait
    *  off screen. `short`: the narrow band's form (D10). */
@@ -934,15 +938,44 @@ function phoneFrame(f: Frame, { queue, terminals }: { queue: boolean; terminals:
   return { ...f, content, free: content, bandTop, phone: true };
 }
 
-/** The queue control's rect (D7, D10): `step` only beside a presentation's controls, `wait` only
- *  off a presentation; short under STAGE.QUEUE_NARROW_W, and never wider than the band leaves. */
-function queueBandRect(f: Frame, kind: 'step' | 'wait' | undefined, mode: SuperView['mode'], controls: Rect | undefined): StagePlan['queueBand'] | undefined {
-  if (!kind || (kind === 'step') !== (mode === 'present' && !!controls)) return undefined;
+/** The queue control's rect (D2, D10): `wait` only, off a presentation; short under
+ *  STAGE.QUEUE_NARROW_W, and never wider than the band leaves. */
+function queueBandRect(f: Frame, kind: 'step' | 'wait' | undefined, mode: SuperView['mode']): StagePlan['queueBand'] | undefined {
+  // A queued presentation on screen is named by the frame's tabs (presentTabs), never a pill.
+  if (kind !== 'wait' || mode === 'present') return undefined;
   const short = f.width < STAGE.QUEUE_NARROW_W;
-  const want = kind === 'step' ? (short ? STAGE.QUEUE_STEP_SHORT_W : STAGE.QUEUE_STEP_W) : (short ? STAGE.QUEUE_WAIT_SHORT_W : STAGE.QUEUE_WAIT_W);
-  const right = controls ? controls.x - STAGE.GAP / 2 : f.content.x + f.content.width;
+  const want = short ? STAGE.QUEUE_WAIT_SHORT_W : STAGE.QUEUE_WAIT_W;
+  const right = f.content.x + f.content.width;
   const width = Math.max(0, Math.min(want, right - f.content.x));
   return { rect: { x: right - width, y: f.bandTop, width, height: STAGE.BAND }, kind, short };
+}
+
+/** The icon box's exact width: its layout icons, a separator when there is a choice, its exits. */
+export function controlsWidth(choices: number, group: boolean): number {
+  const { ICON_BTN, ICON_GAP, ICON_PAD } = STAGE;
+  const icons = (choices > 1 ? choices : 0) + (group ? 3 : 1);
+  const sep = choices > 1 ? 1 + ICON_GAP : 0;
+  return 2 * ICON_PAD + icons * ICON_BTN + (icons - 1) * ICON_GAP + sep;
+}
+
+/** The frame around the presented cards and the tab strip from its left edge to the controls. */
+function presentFrameOf(f: Frame, controls: Rect, cards: Record<string, { rect: Rect; where: CardWhere }>, strip: StripPlan | undefined, sheetTabs: Rect | undefined): Pick<StagePlan, 'presentFrame' | 'presentTabs'> {
+  // Everything the presentation draws: its cards, a filmstrip's marked slot, a narrow sheet's tab row.
+  const shown = Object.values(cards).filter((c) => c.where === 'present' || c.where === 'thumb' || c.where === 'sheet').map((c) => c.rect);
+  if (strip?.current) shown.push(strip.current);
+  if (sheetTabs) shown.push(sheetTabs);
+  const P = STAGE.FRAME_PAD;
+  let frame: Rect | undefined;
+  if (!f.phone && shown.length) {
+    const left = Math.max(0, Math.min(...shown.map((r) => r.x)) - P);
+    const right = Math.min(f.width, Math.max(controls.x + controls.width, ...shown.map((r) => r.x + r.width)) + P);
+    const top = f.bandTop + STAGE.BAND;
+    const bottom = Math.min(f.height, Math.max(...shown.map((r) => r.y + r.height)) + P);
+    frame = { x: left, y: top, width: right - left, height: Math.max(0, bottom - top) };
+  }
+  const x = frame ? frame.x + P / 2 : f.content.x;
+  const tabs: Rect = { x, y: f.bandTop, width: Math.max(0, controls.x - STAGE.GAP / 2 - x), height: STAGE.BAND };
+  return { ...(frame ? { presentFrame: frame } : {}), presentTabs: tabs };
 }
 
 function centreAt(f: Frame, w: number): Rect {
@@ -1233,9 +1266,10 @@ function planWith(
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
     extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
-    // The queue's control holds the band's right end (left of a presentation's controls).
-    const qb = queueBandRect(f, opts.queueBand, mode, extra.controls);
+    // The waiting queue's control holds the band's right end off a presentation.
+    const qb = queueBandRect(f, opts.queueBand, mode);
     const bandRight = qb ? qb.rect : extra.controls;
+    const framed = extra.controls && mode === 'present' ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
@@ -1243,7 +1277,7 @@ function planWith(
       width: f.width, height: f.height, narrow, phone, othersInHead: phone || inHead.others, agendaInHead: phone || inHead.agenda, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, bandRight), free: f.free,
       centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...(railPlan ? { rail: railPlan } : {}), ...extra,
-      ...(qb ? { queueBand: qb } : {}),
+      ...(qb ? { queueBand: qb } : {}), ...framed,
     };
   };
   const place = (id: string, rect: Rect, where: CardWhere) => {
@@ -1361,7 +1395,7 @@ function planWith(
     const ordered = layout === 'filmstrip' ? [...shown.filter((id) => kindOf(id) !== 'agenda'), ...shown.filter((id) => kindOf(id) === 'agenda')] : shown;
     const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
-    const cw = (opts.groupExit ? STAGE.GROUP_EXIT_W : STAGE.EXIT_W) + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
+    const cw = controlsWidth(choices, !!opts.groupExit);
     const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
     const strip = (main: Rect): StripPlan => {
       // The big card over one row holding a slot for EVERY card, in their fixed order: the big

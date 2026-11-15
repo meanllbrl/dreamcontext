@@ -10,7 +10,7 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
-import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls, StripMarks, stripStartFor } from './StageParts';
+import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, PresentFrame, SheetTabs, StageControls, StripMarks, stripStartFor, type PresentTab } from './StageParts';
 import { PresentQueue } from './PresentQueue';
 import { sendQueueJump } from './queueJump';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
@@ -778,7 +778,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
     queueGestureAt.current = 0;
     sendQueueJump(state.session, shownItem.cards);
   }, [shownItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const itemName = (cards: readonly string[]) => { const c = byId.get(cards[0] ?? ''); return c ? titleOf(c) : ''; };
+  // A presentation is named by its group when it shows one whole (field 2026-11-15: a group of four
+  // read as its first picture's title, so "now" and "next" carried the same name), else its card.
+  const itemName = (cards: readonly string[]) => {
+    const g = presentedGroup(cards, state.groups, state.containers);
+    if (g) return g.name;
+    const c = byId.get(cards[0] ?? '');
+    return c ? titleOf(c) : '';
+  };
+  // The frame's tabs (owner 2026-11-15, option C): the shown presentation, then the queue after it.
+  const presentTabs: PresentTab[] = qc.showing && pq && pqHead
+    ? pq.items.map((it, i) => ({ key: it.id, name: itemName(it.cards), count: it.cards.length, kind: i === 0 ? 'current' as const : i === 1 ? 'next' as const : 'later' as const }))
+    : [{ key: 'shown', name: itemName(presented), count: presented.length, kind: 'current' as const }];
   useEffect(() => {
     const b = backTo.current;
     if (!b || plan.mode === 'present') return;
@@ -1386,10 +1397,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
         <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout}
           onExit={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation} leaveQueue={queueBand === 'step' && !shownGroup} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
       )}
+      {plan.presentTabs && plan.layout && (
+        <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
+      )}
       {plan.queueBand && pq && (
-        <PresentQueue rect={plan.queueBand.rect} kind={plan.queueBand.kind} short={plan.queueBand.short} at={qc.at} of={qc.of}
-          current={pqHead ? itemName(pqHead.cards) : ''} next={pq.items[1] ? itemName(pq.items[1].cards) : null}
-          waiting={pq.items.map((i) => itemName(i.cards))} onNext={() => queueStep('next')} onResume={() => queueStep('resume')} />
+        <PresentQueue rect={plan.queueBand.rect} short={plan.queueBand.short} waiting={pq.items.map((i) => itemName(i.cards))} onResume={() => queueStep('resume')} />
       )}
       {plan.strip && (
         <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />

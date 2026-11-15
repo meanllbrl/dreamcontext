@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { scheduleVerb } from '../super-schedule.js';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
@@ -526,6 +526,30 @@ function insightExists(contextRoot: string, slug: string): boolean {
 /** A regular file under the project root (what `/agent/file` serves a board card from). */
 function projectFileExists(projectRoot: string, rel: string): boolean {
   try { return statSync(join(projectRoot, rel)).isFile(); } catch { return false; }
+}
+
+/**
+ * A picture, PDF or clip card draws a file that must be there (field 2026-11-15: four `--present`
+ * cards over paths that lived only in a child's worktree, each reading "isn't there any more").
+ * Null when the project holds it as a real file inside its root (a symlink must resolve inside,
+ * as `/agent/file` serves); else the refusal text, which names the path and, when a live child's
+ * worktree has the same relative path, says where it is.
+ */
+function missingMediaMessage(c: Pick<SuperCaller, 'state'>, projectRoot: string, rel: string): string | null {
+  const real = (p: string): string | null => { try { return realpathSync(p); } catch { return null; } };
+  const root = real(projectRoot);
+  const target = real(join(projectRoot, rel));
+  if (root && target && (target === root || target.startsWith(root + sep))) {
+    try { if (statSync(target).isFile()) return null; } catch { /* falls to the message */ }
+  }
+  const within = !!target && !!root && target.startsWith(root + sep);
+  if (target && !within) return `${rel} resolves outside this project (a symlink): copy the file under _dream_context/tmp/ and open that copy`;
+  const isFile = (p: string): boolean => { try { return statSync(p).isFile(); } catch { return false; } };
+  const found = Object.values(c.state.children ?? {}).filter((ch) => ch.worktree && isFile(join(ch.worktree, rel)));
+  const where = found.length
+    ? `; found in ${found.map((ch) => `${ch.brief ? `${ch.brief} (${ch.sessionId})` : ch.sessionId}'s worktree`).join(' and ')}: copy it under _dream_context/tmp/ first, then open the copy`
+    : '';
+  return `no file ${rel} in this project: a picture, PDF or video card draws an existing file, project-relative${where}`;
 }
 
 /** A whiteboard the vault really has: its card reads `whiteboards/<slug>/<slug>.excalidraw.md`,
@@ -1331,6 +1355,11 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
     if (kind === 'board' && !projectFileExists(dirname(c.who.contextRoot), r.ref)) {
       refuse(res, 404, 'unknown_board', `no file ${r.ref} in this project: a board card draws an existing .excalidraw.md file, project-relative (a dreamcontext whiteboard opens with \`super open whiteboard <slug>\`)`);
       return;
+    }
+    // A media file that is not there would draw an empty "isn't there any more" card (and present it).
+    if (kind === 'image' || kind === 'pdf' || kind === 'video') {
+      const gone = missingMediaMessage(c, dirname(c.who.contextRoot), r.ref);
+      if (gone) { refuse(res, 404, 'unknown_file', gone); return; }
     }
     if (!refs.includes(r.ref)) refs.push(r.ref);
     const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();

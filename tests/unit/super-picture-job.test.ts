@@ -31,7 +31,7 @@ vi.hoisted(() => {
 
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat } from '../../src/lib/assistant/chat-registry.js';
@@ -87,7 +87,19 @@ function res(): ServerResponse & { status: number; json: Record<string, unknown>
 }
 /** The clock the routes and the tidy read, set to a moment of the replay. */
 const at = (iso: string): number => { const t = Date.parse(iso); vi.spyOn(Date, 'now').mockReturnValue(t); return t; };
+// The server refuses a picture, PDF or clip that is not a file in the project: these tests open
+// made-up names, so the files exist first (the refusal itself: super-open-missing-file.test.ts).
+function touchMedia(body: Record<string, unknown>): void {
+  const refs = Array.isArray(body.refs) ? body.refs : [body.ref];
+  for (const r of refs) {
+    if (typeof r !== 'string' || !/\.(png|jpe?g|gif|webp|svg|pdf|mp4|m4v|mov|webm)$/i.test(r) || r.includes('..') || r.startsWith('/')) continue;
+    const at = join(dirname(root), r);
+    mkdirSync(dirname(at), { recursive: true });
+    writeFileSync(at, 'x', { flag: 'a' });
+  }
+}
 async function verb(name: string, body: Record<string, unknown>) {
+  if (name === 'open' && ['image', 'pdf', 'video'].includes(String(body.kind))) touchMedia(body);
   const r = res();
   await handleSuperVerb(req(body, { 'x-dreamcontext-window-token': token }), r, { verb: name });
   return r;
