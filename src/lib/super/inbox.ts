@@ -1654,11 +1654,27 @@ export function superAskStillOpen(sessionId: string, abouts: readonly AgendaAbou
 // ─── The owed ledger: what opens and closes it from outside the pump ─────────────
 
 /** His message, without its reference headers and page block: what a `msg` debt's gist says. */
-export function ownerGist(text: string): string {
+/** A card's "Unclear? Ask again" / "Already answered" reply (`superUnclearText` / `superAlreadyText`):
+ *  no answer, a note to the Super. Its reply is a new card or acting on what he said: it is owed none. */
+const CARD_NOTE_RE = /^\[super answer\] item=[A-Za-z0-9_-]{1,64} (unclear|already)(?:\n|$)/;
+export function ownerCardNote(text: string): 'unclear' | 'already' | null {
+  const m = CARD_NOTE_RE.exec(typeof text === 'string' ? text : '');
+  return m ? m[1] as 'unclear' | 'already' : null;
+}
+const CARD_NOTE_GIST: Record<OwnerLanguage, Record<'unclear' | 'already', string>> = {
+  Turkish: { unclear: 'Soruyu yeniden sor', already: 'Zaten cevapladım' },
+  English: { unclear: 'Ask the question again', already: 'Already answered' },
+};
+
+export function ownerGist(text: string, lang: OwnerLanguage | null = null): string {
+  // His card button, not an answer: a plain label of what he pressed, never an empty pick.
+  const note = ownerCardNote(text);
+  if (note) return CARD_NOTE_GIST[lang ?? 'Turkish'][note];
   // A tapped card answer is `[super answer] item=<id>` plus a line of instructions to the Super:
   // internal text the owner never reads. Its gist is what HE picked or wrote, nothing else.
   if (/^\[super answer\] item=/.test(text)) {
     const picks: string[] = [];
+    const asked: string[] = [];
     // The question stays beside its pick: the gist also feeds the push/deploy grant's "his words"
     // and the Super's owed blocks, where a bare "Evet" would answer nothing.
     for (const m of text.matchAll(/("(?:[^"\\]|\\.)*")=("(?:[^"\\]|\\.)*")(?: notes: ("(?:[^"\\]|\\.)*"))?/g)) {
@@ -1666,13 +1682,15 @@ export function ownerGist(text: string): string {
         const q = String(JSON.parse(m[1])).trim();
         const pick = String(JSON.parse(m[2])).trim();
         const note = m[3] ? String(JSON.parse(m[3])).trim() : '';
+        if (q && q !== 'answer') asked.push(q);
         if (pick && pick !== '(no answer)') {
           const a = note ? `${pick} (${note})` : pick;
           picks.push(q && q !== 'answer' ? `${q} → ${a}` : a);
         }
       } catch { /* unreadable pick: skipped */ }
     }
-    return cutGist(picks.join('; ') || '…', MAX_OWED_MSG_GIST);
+    // Nothing picked (every question left blank): the questions he sent back, never a bare "…".
+    return cutGist(picks.join('; ') || asked.join('; ') || CARD_NOTE_GIST[lang ?? 'Turkish'].already, MAX_OWED_MSG_GIST);
   }
   const { text: body } = splitPageContext(text);
   let out = '';
@@ -1689,6 +1707,9 @@ export function ownerGist(text: string): string {
 export function superOwnerOwes(sessionId: string, text: string, now = Date.now(), tgRef?: string | null): Promise<void> {
   const root = superKeyOfSession(sessionId);
   if (!root || typeof text !== 'string' || !text.trim() || text.startsWith('/')) return Promise.resolve();
+  // "Unclear? Ask again" / "Already answered": the Super answers it with a new card or by acting,
+  // never a section under its ref, so a debt for it could only be orphaned (agenda "…", 2026-11-15).
+  if (ownerCardNote(text)) return Promise.resolve();
   return track(writeSuper(root, (s) => {
     if (!s.enabled || s.session !== sessionId) return;
     // The same words again while their debt is still fresh (a message the bridge resubmits after
@@ -1696,7 +1717,7 @@ export function superOwnerOwes(sessionId: string, text: string, now = Date.now()
     const ref = tgRef && MSG_REF_RE.test(tgRef) ? tgRef : msgRefOf(text);
     if (openDebts(s).some((d) => d.kind === 'msg' && d.ref === ref && (d.nudges === 0 || d.parked === 'limit'))) return;
     const d = openMessageDebt(s, text, now, ref);
-    d.gist = ownerGist(text);
+    d.gist = ownerGist(text, languageOfKey(keyOf(root)));
   }));
 }
 

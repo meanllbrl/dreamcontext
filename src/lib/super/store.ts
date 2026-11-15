@@ -898,6 +898,9 @@ function sanitizeOwed(raw: unknown): SuperOwed[] {
       const by = d.closed.by;
       if (cat !== undefined && (by === 'mark' || by === 'owner' || by === 'takeback')) out.closed = { at: cat, by };
     }
+    // A debt an "Unclear? Ask again" / "Already answered" tap opened before 2026-11-15: its gist is
+    // a bare "…", nothing the Super can answer under its ref. Healed on read: closed by his hand.
+    if (!out.closed && out.kind === 'msg' && out.gist.trim() === '…') out.closed = { at: out.at, by: 'owner' };
     const parkedAt = finite(d.parkedAt);
     if (!out.closed && (d.parked === 'stop' || d.parked === 'limit') && parkedAt !== undefined) { out.parked = d.parked; out.parkedAt = parkedAt; }
     ids.add(d.id);
