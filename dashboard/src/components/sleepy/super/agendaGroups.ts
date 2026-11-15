@@ -11,7 +11,7 @@ import { agendaUpdatedAt, padStatusOf, type AgendaRow } from './superHandover';
 
 /** The groups of today's view, in the order he reads them (decision: by who acts next). */
 export type AgendaGroup = 'earlier' | 'waiting' | 'super' | 'mine' | 'done';
-export const TODAY_GROUPS: readonly AgendaGroup[] = ['earlier', 'waiting', 'super', 'mine', 'done'];
+export const TODAY_GROUPS: readonly AgendaGroup[] = ['waiting', 'earlier', 'super', 'mine', 'done'];
 /** A past day's two lists (C4). */
 export type DayGroup = 'dayDone' | 'dayOpen';
 
@@ -125,7 +125,7 @@ const inboxAt = (r: OwnerInboxRow): number | null => {
  * showed (questions, permissions, refusals, routines, members, unanswered, the Super's waiting
  * lines, approvals, task, recall and sync rows). Super is on it: the Super's open lines. Added by
  * you: his open lines. Done: today's finished lines. From earlier days: open lines opened before
- * today, above the groups.
+ * today, right under Waiting on you (owner 15 Nov: what waits on him comes first).
  */
 export function todayGroups(input: TodayInput): Record<AgendaGroup, AgendaEntry[]> {
   const today = localDay(input.now);

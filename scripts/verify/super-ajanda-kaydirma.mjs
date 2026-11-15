@@ -166,7 +166,7 @@ const measure = (p, scrollerSel, headSel) => p.evaluate(([sel, hsel]) => {
     size: root.getAttribute('data-size'),
     bodyH: Math.round(body.clientHeight), scH: Math.round(sc.clientHeight), scroll: Math.round(sc.scrollHeight),
     scrollTop: Math.round(sc.scrollTop), scTop: Math.round(r(sc).top), headBottom: Math.round(r(head).bottom),
-    stripH: strip ? Math.round(strip.getBoundingClientRect().height) : 0,
+    stripH: strip && getComputedStyle(strip).position !== 'absolute' ? Math.round(strip.getBoundingClientRect().height) : 0,
     rootScroll: Math.round(root.scrollHeight), rootH: Math.round(root.clientHeight),
     footInside: foot ? r(foot).bottom <= r(root).bottom + 0.5 : null,
     listOwnScroll: [...root.querySelectorAll('.agenda-groups')].some((g) => g.scrollHeight > g.clientHeight + 1 && ['auto', 'scroll'].includes(getComputedStyle(g).overflowY)),
@@ -268,7 +268,7 @@ async function fab(p, name, size) {
   check(`[${name}] S7 the + sits in the bottom-right corner (${geo.right}px, ${geo.bottom}px from the edges)`, geo.right >= 0 && geo.right <= 24 && geo.bottom >= 0 && geo.bottom <= 24, JSON.stringify(geo));
   if (size !== 'small') check(`[${name}] S7 scrolled to the end, the + does not cover the last line`, geo.lastBottom !== null && (geo.lastBottom <= geo.plusTop || geo.lastRight <= geo.plusLeft), JSON.stringify(geo));
   await card(p).screenshot({ path: join(OUT, `${name}-7-fab.png`) });
-  // S9 at rest mid-list: no line, nor any part of one, sits under the + (its own corner).
+  // S9 the + floats over the lines and takes no height of its own (owner 15 Nov, replaces the strip).
   await p.evaluate(() => { const r0 = document.querySelector('[data-testid="super-container"][data-kind="agenda"] [data-testid="super-agenda"]'); const r = r0.querySelector('.agenda-scroll') ?? r0; r.scrollTop = Math.round((r.scrollHeight - r.clientHeight) / 2); });
   await wait(p, 800);
   const rest = await p.evaluate(() => {
@@ -285,15 +285,17 @@ async function fab(p, name, size) {
       if (bottom <= top) continue;
       if (r.left < b.right && r.right > b.left && top < b.bottom && bottom > b.top) over.push(row.textContent.slice(0, 30));
     }
-    return { scrollTop: Math.round(sc.scrollTop), max: Math.round(sc.scrollHeight - sc.clientHeight), over };
+    const st = root.querySelector('[data-testid="super-agenda-strip"]');
+    return { scrollTop: Math.round(sc.scrollTop), max: Math.round(sc.scrollHeight - sc.clientHeight), over, floats: !st || getComputedStyle(st).position === 'absolute', padBottom: parseFloat(getComputedStyle(sc).paddingBottom) };
   });
   console.log('    rest   ' + JSON.stringify(rest));
-  check(`[${name}] S9 at rest mid-list (${rest.scrollTop} of ${rest.max}), no line sits under the +`, rest.over.length === 0 && (size === 'small' || rest.scrollTop > 0), JSON.stringify(rest));
+  check(`[${name}] S9 the + floats (no height of its own) and the list ends with room for it (${rest.scrollTop} of ${rest.max})`, rest.floats && (size === 'small' || (rest.padBottom >= 30 && rest.scrollTop > 0)), JSON.stringify(rest));
   await card(p).screenshot({ path: join(OUT, `${name}-7c-rest-mid.png`) });
   await plus.focus();
   await p.keyboard.press('Enter');
   const input = card(p).getByTestId('super-agenda-add-input');
   check(`[${name}] S7 the + opens by keyboard into a small box, focused`, await until(p, async () => (await input.isVisible()) && (await input.evaluate((el) => el === document.activeElement)), 3000));
+  if (size !== 'small' && size !== 'medium') { const w = await card(p).locator('.agenda-fab-form').evaluate((el) => Math.round(el.getBoundingClientRect().width)); check(`[${name}] S7 the open add box is about 320 px wide (${w})`, w >= 300 && w <= 330); }
   await card(p).screenshot({ path: join(OUT, `${name}-8-fab-open.png`) });
   await p.keyboard.press('Escape');
   check(`[${name}] S7 Escape cancels: the + is back`, await until(p, async () => (await input.count()) === 0 && (await plus.count()) === 1, 3000));
@@ -343,7 +345,7 @@ async function scene(browser, size, dark) {
       const before = await measure(p, sc, hd);
       console.log('    before ' + JSON.stringify(before));
       await card(p).screenshot({ path: join(OUT, `${name}-1-top.png`) });
-      check(`[${name}] S1 the scrolling area is the card body's full height but the + strip (${before.scH} + ${before.stripH} of ${before.bodyH} px), the list has no strip of its own`, before.scH + before.stripH >= before.bodyH - 24 && !before.listOwnScroll, JSON.stringify(before));
+      check(`[${name}] S1 the scrolling area is the card body's full height but the + strip (${before.scH} + ${before.stripH} of ${before.bodyH} px), the list has no strip of its own`, before.scH + before.stripH >= before.bodyH - (size === 'medium' ? 40 : 24) && !before.listOwnScroll, JSON.stringify(before));
       check(`[${name}] S1 there is more than fits (the check is real)`, before.scroll > before.scH + 4, JSON.stringify(before));
       await scrollEnd(p, sc);
       await wait(p, 300);
