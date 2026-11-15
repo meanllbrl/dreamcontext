@@ -64,6 +64,9 @@ import { escapeHtml, redactSecrets, splitReplySections, stripReplyMarks, toTeleg
 import { SILENT, noticeHtml, permissionHtml, statusLineHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
+import { voiceAnswer } from '../../lib/telegram/voice-block.js';
+import { sendVoiceSummary } from './voice-reply.js';
+import type { SpeakSummaryResult } from '../voice-speak.js';
 import { cleanOwnerText, inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
@@ -166,6 +169,8 @@ export interface HubDeps {
   ensureDispatcher?: () => void;
   /** A non-JPG member photo → JPG for `setMyProfilePhoto` (default: macOS `sips`; tests inject). */
   toJpeg?: JpegConverter;
+  /** A `dream-voice` block → OGG/Opus (voice-speak.ts; tests inject). */
+  speakSummary?: (text: string) => Promise<SpeakSummaryResult>;
 }
 
 export type BindingKey = string; // `${scope}/${target}`
@@ -888,6 +893,49 @@ export class TelegramHub implements TelegramHubApi {
     return this.replies.get(`${ab.key}:${messageId}`) ?? null;
   }
 
+  /** The owner's own message under `ref` in this binding's chat (the newest), or null: what a
+   *  spoken summary replies to. Read from this binding's entries only. */
+  ownerMessageOf(ab: ActiveBinding, refs: readonly (string | null | undefined)[]): number | null {
+    const head = `${ab.key}:`;
+    // In order: the first ref that names one of his messages wins (a part ref never does: it falls
+    // through to the turn's own ref).
+    for (const ref of refs) {
+      if (!ref) continue;
+      let found: number | null = null;
+      for (const [k, e] of this.replies) {
+        if (e.from !== 'owner' || e.ref !== ref || !k.startsWith(head)) continue;
+        const mid = Number(k.slice(head.length));
+        if (Number.isSafeInteger(mid) && (found === null || mid > found)) found = mid;
+      }
+      if (found !== null) return found;
+    }
+    return null;
+  }
+
+  /**
+   * One owner-facing answer to Telegram: its text as before, then its `dream-voice` block spoken as
+   * a voice bubble (plan telegram-sesli-ozet, C4a; one block per text, `voiceAnswer`). True when
+   * anything landed.
+   * A failed text send throws, as `sendMarkdown` does; the voice never throws.
+   */
+  async sendAnswer(ab: ActiveBinding, md: string, sessionId: string | null, reply: { ref: string; quote?: string; answers?: string } | undefined, blocks: 'hub' | 'mac', replyRefs: readonly (string | null | undefined)[] = []): Promise<boolean> {
+    const { text, voice } = voiceAnswer(md);
+    let landed = false;
+    if (text.trim()) {
+      await this.sendMarkdown(ab, text, reply ? { ...reply, quote: reply.quote === md ? text : reply.quote } : undefined, blocks);
+      landed = true;
+    }
+    if (text.trim()) await this.answerExtras?.(ab, text, sessionId ?? '').catch(() => {});
+    if (voice) {
+      const spoke = await sendVoiceSummary(this, ab, voice, {
+        replyTo: this.ownerMessageOf(ab, replyRefs),
+        sessionId,
+      });
+      landed = spoke || landed;
+    }
+    return landed;
+  }
+
   /** W5 seams, set by `wireTelegramW5`: commands (/dur /durum /gundem), the header a turn opens
    *  with, and what an answer's blocks become (pictures, buttons). */
   commandHook: ((ab: ActiveBinding, update: Obj) => Promise<boolean>) | null = null;
@@ -1241,9 +1289,8 @@ export class TelegramHub implements TelegramHubApi {
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
       if (!all.trim()) return false;
-      await this.sendMarkdown(ab, all, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode());
-      await this.answerExtras?.(ab, all, sessionId).catch(() => {});
-      return true;
+      const refs = splitReplySections(text).flatMap((s) => s.refs);
+      return this.sendAnswer(ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
     }
     const sections = splitReplySections(text);
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
@@ -1256,17 +1303,13 @@ export class TelegramHub implements TelegramHubApi {
       if ((!hit && !wide) || !s.text.trim()) continue;
       tried = true;
       // One section that does not land does not stop the next.
-      try { await this.sendMarkdown(ab, s.text, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode()); } catch { continue; }
-      sent = true;
-      await this.answerExtras?.(ab, s.text, sessionId).catch(() => {});
+      try { if (await this.sendAnswer(ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     if (!turns.length || inputs?.mac || !text.trim()) return false;
-    await this.sendMarkdown(ab, text, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode());
-    await this.answerExtras?.(ab, text, sessionId).catch(() => {});
-    return true;
+    return this.sendAnswer(ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
   }
 
   // ── Buttons (plan "Button integrity") ──
