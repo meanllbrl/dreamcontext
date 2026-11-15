@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bridgePlan, runBridge, noticeStampPath, MOVE_NOTICE, type BridgeFacts } from '../../src/cli/bridge.js';
@@ -15,7 +15,7 @@ let npmEntry: string;
 let app: string;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'dc-bridge-'));
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'dc-bridge-')));
   home = join(root, 'home');
   mkdirSync(join(home, '.dreamcontext'), { recursive: true });
   // An npm global install: <prefix>/lib/node_modules/dreamcontext/dist/index.js
@@ -25,7 +25,7 @@ beforeEach(() => {
   npmEntry = join(pkg, 'dist', 'index.js');
   writeFileSync(npmEntry, '');
   // A lasting app bundle.
-  app = join(root, 'Applications', 'dreamcontext-beta.app');
+  app = join(home, 'Applications', 'dreamcontext-beta.app');
   mkdirSync(join(app, 'Contents', 'Resources', 'runtime', 'bin'), { recursive: true });
   mkdirSync(join(app, 'Contents', 'Resources', 'dist'), { recursive: true });
   writeFileSync(join(app, 'Contents', 'Resources', 'runtime', 'bin', 'node'), '');

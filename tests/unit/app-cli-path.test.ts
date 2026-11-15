@@ -19,7 +19,7 @@ let home: string;
 const saved = { HOME: process.env.HOME, SHELL: process.env.SHELL };
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'app-cli-path-'));
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'app-cli-path-')));
   process.env.HOME = home;
   process.env.SHELL = '/bin/zsh';
 });

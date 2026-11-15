@@ -133,7 +133,7 @@ fn is_semver(v: &str) -> bool {
 
 /// A record is valid when its version is plain X.Y.Z and both paths sit in `bin/rt/<version>/`,
 /// or (Mac) both name ONE lasting `.app` bundle (`<A>.app/Contents/Resources/runtime/bin/node` +
-/// `<A>.app/Contents/Resources/dist/index.js`), absolute, never on a DMG or translocated copy.
+/// `<A>.app/Contents/Resources/dist/index.js`), `<A>.app` right in /Applications or ~/Applications.
 #[allow(dead_code)]
 pub(crate) fn record_valid(rec: &AppCliRecord, home: &str, windows: bool) -> bool {
     if !is_semver(rec.version) { return false; }
@@ -142,9 +142,10 @@ pub(crate) fn record_valid(rec: &AppCliRecord, home: &str, windows: bool) -> boo
     if dotted(rec.node) || dotted(rec.entry) { return false; }
     if !windows {
         if let Some(app) = rec.node.strip_suffix("/Contents/Resources/runtime/bin/node") {
-            return app.starts_with('/') && app.ends_with(".app") && !app.contains('\\')
+            let parent = app.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+            return app.ends_with(".app") && !app.contains('\\')
                 && rec.entry == format!("{app}/Contents/Resources/dist/index.js")
-                && !app.starts_with("/Volumes/") && !app.contains("/AppTranslocation/");
+                && (parent == "/Applications" || parent == format!("{}/Applications", norm(home, false)));
         }
     }
     let dir = format!("{}/.dreamcontext/bin/rt/{}/", norm(home, windows), if windows { rec.version.to_lowercase() } else { rec.version.to_string() });

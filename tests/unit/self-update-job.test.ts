@@ -165,6 +165,13 @@ describe('readyVersionOnDisk', () => {
     expect(readyVersionOnDisk(env, bundle, own, () => '0.35.0')).toBe('0.36.0');
     expect(readyVersionOnDisk(env, bundle, own, () => null)).toBe('0.36.0');
   });
+
+  it("on the app's own runtime a newer npm copy is never a relaunch (the shell keeps its bundle: it would loop)", () => {
+    const env = { DREAMCONTEXT_GLOBAL_CLI: '/p/bin/dreamcontext' };
+    const bundle = '/Applications/dreamcontext-beta.app/Contents/Resources/dist/index.js';
+    const appNode = '/Applications/dreamcontext-beta.app/Contents/Resources/runtime/bin/node';
+    expect(readyVersionOnDisk(env, bundle, own, () => '0.37.0', appNode)).toBe('0.36.0');
+  });
 });
 
 describe('selfUpdateView (what Settings shows)', () => {

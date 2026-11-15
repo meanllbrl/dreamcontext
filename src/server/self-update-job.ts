@@ -59,15 +59,18 @@ const real = (p: string): string => { try { return realPath(p); } catch { return
  * (DREAMCONTEXT_GLOBAL_CLI is not the running entry) — the global install's version when that is
  * strictly newer. Without it an app running the bundle never relaunched onto the global CLI its
  * own self-update had just upgraded. The relaunch then picks the global (it is newer), so this
- * cannot loop.
+ * cannot loop. On the app's own runtime the shell keeps its bundle over any npm global (npm exit,
+ * plan npmsiz-beta C3′), so a newer npm copy is never a reason to relaunch: it would loop.
  */
 export function readyVersionOnDisk(
   env: NodeJS.ProcessEnv = process.env,
   argv1: string | undefined = process.argv[1],
   own: () => string = readDreamcontextVersionFromDisk,
   globalVersion: (entry: string) => string | null = (e) => cliPackageVersion(e),
+  execPath: string = process.execPath,
 ): string {
   const mine = own();
+  if (isAppRuntimeNode(execPath)) return mine;
   const global = env.DREAMCONTEXT_GLOBAL_CLI;
   if (!global || !argv1 || real(global) === real(argv1)) return mine;
   const g = globalVersion(global);

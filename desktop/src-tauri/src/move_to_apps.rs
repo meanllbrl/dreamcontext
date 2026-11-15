@@ -135,11 +135,13 @@ pub(crate) fn offer(home: &Path) -> bool {
     match install_copy(&app, &dir, home) {
         Ok(dst) => {
             crate::applog::log(&format!("[move] {from:?}: copied {} to {}", app.display(), dst.display()));
-            if from == Origin::Downloads {
+            let opened = Command::new("/usr/bin/open").arg("-n").arg(&dst).status().map(|s| s.success()).unwrap_or(false);
+            // Only once the copy runs: until then this run still needs its own bundle.
+            if opened && from == Origin::Downloads {
                 let slot = trash_slot(home, &app.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
                 let _ = std::fs::rename(&app, slot);
             }
-            Command::new("/usr/bin/open").arg("-n").arg(&dst).status().map(|s| s.success()).unwrap_or(false)
+            opened
         }
         Err(e) => {
             crate::applog::log(&format!("[move] {from:?}: failed: {e}"));

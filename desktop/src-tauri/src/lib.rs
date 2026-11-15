@@ -205,8 +205,6 @@ pub fn run() {
             if let Some(home) = node_runtime::home_dir() {
                 win::write_app_manifest(&home);
             }
-            // macOS: the same record, so a DMG install can relaunch after a CLI upgrade
-            // (src/app_manifest.rs).
             // macOS: opened from the DMG window, a translocated copy or Downloads, ask once to
             // move to Applications; the moved copy is opened and this run ends before any server
             // starts (src/move_to_apps.rs). A notch or Login Item launch never asks.
@@ -218,6 +216,8 @@ pub fn run() {
                     }
                 }
             }
+            // macOS: the same record, so a DMG install can relaunch after a CLI upgrade
+            // (src/app_manifest.rs).
             #[cfg(target_os = "macos")]
             if let Some(home) = node_runtime::home_dir() {
                 app_manifest::record_launch(&home);
@@ -786,6 +786,9 @@ fn resolve_cli(app: &AppHandle) -> Result<(String, Option<String>), String> {
         if let Some(b) = bundled.as_ref().filter(|_| cli_choice::bundle_outranks_global(has_runtime, kind)) {
             applog::log(&format!("[cli] this app carries its own runtime: running its CLI over the global {kind:?} at {g}"));
             return Ok((b.to_string_lossy().into_owned(), global.clone()));
+        }
+        if kind == cli_choice::CliKind::LinkedCheckout {
+            return Ok((g.clone(), global.clone()));
         }
         if let Some(b) = bundled.as_ref().filter(|_| cli_choice::bundled_beats_global(global_version.as_deref(), bundled_version)) {
             applog::log(&format!(
