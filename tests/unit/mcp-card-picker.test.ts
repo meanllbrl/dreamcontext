@@ -117,7 +117,7 @@ describe('a named server the chat does not hold (kitUP 2026-11-09: posthog set u
 
   it('set up and needing a sign-in on this chat\'s account: says so and offers the sign-in, never "add it"', () => {
     const r = missingRow('posthog', ov({ 'posthog|abc': { ouro: { status: 'needs-auth' }, gmail: { status: 'connected' } } }), 'ouro');
-    expect(r).toEqual({ text: 'on this computer · needs your sign-in', signIn: true });
+    expect(r).toEqual({ text: 'on this computer · needs your sign-in', signIn: true, home: 'computer' });
     expect(r.text).not.toMatch(/add it/);
   });
 
@@ -128,12 +128,13 @@ describe('a named server the chat does not hold (kitUP 2026-11-09: posthog set u
 
   it('set up and fine, but this chat started without it (a Super child gets only its --mcp names)', () => {
     expect(missingRow('posthog', ov({ 'posthog|abc': { ouro: { status: 'connected' } } }), 'ouro'))
-      .toEqual({ text: 'on this computer · this chat was started without it', signIn: false });
+      .toEqual({ text: 'on this computer · this chat was started without it', signIn: false, home: 'computer' });
   });
 
   it('a claude.ai connector seen in a probe is matched too', () => {
     expect(missingRow('gmail', ov({ 'Gmail|claudeai': { ouro: { status: 'needs-auth' } } }), 'ouro'))
-      .toEqual({ text: 'claude.ai connector · needs your sign-in', signIn: true });
+      // A connector signs in on claude.ai (its row's button), never in Settings → MCP.
+      .toEqual({ text: 'claude.ai connector · needs your sign-in on claude.ai', signIn: false, home: 'claudeai' });
   });
 
   it('set up nowhere: add it; the overview not read yet: only that it is missing here', () => {

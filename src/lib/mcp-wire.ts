@@ -182,3 +182,18 @@ const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 export function isUsableServerName(name: unknown): name is string {
   return typeof name === 'string' && !!name && name.length <= 200 && !name.startsWith('-') && !CONTROL_CHARS.test(name);
 }
+
+/** The prefix Claude Code gives every claude.ai connector's name (`claude.ai Notion`). */
+const CONNECTOR_PREFIX = /^claude\.ai\s+/i;
+
+/**
+ * The short name a Super Agent gives `delegate --mcp` and an `mcp` card for a claude.ai
+ * connector: `claude.ai Notion` -> `notion`, `claude.ai Google Calendar` -> `google-calendar`.
+ * Lowercase a-z/0-9 runs joined by `-`, at most 40 characters; '' for a name that is not a
+ * connector's or leaves nothing. A clash with a local server or another connector is settled
+ * where the list is built (`lean-mcp.ts` `knownConnectors`), never here.
+ */
+export function connectorAlias(name: string): string {
+  if (!CONNECTOR_PREFIX.test(name)) return '';
+  return name.replace(CONNECTOR_PREFIX, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+}

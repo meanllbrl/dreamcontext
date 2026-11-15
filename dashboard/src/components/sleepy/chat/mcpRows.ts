@@ -1,4 +1,4 @@
-import type { McpConnectState, McpHome, McpLiveServer, McpOverview } from '../../../lib/mcpWire';
+import { connectorAlias, type McpConnectState, type McpHome, type McpLiveServer, type McpOverview } from '../../../lib/mcpWire';
 
 /**
  * Pure helpers the `/mcp` popover and the `mcp` chat card share (task mcp-management): what a
@@ -83,10 +83,24 @@ export function connectLabel(state: McpConnectState | undefined, host?: string):
   }
 }
 
-/** A name the card wrote, matched to a live row: exactly, else ignoring case. */
+/** Does a card's name stand for this claude.ai connector? Its short name (`notion` for
+ *  `claude.ai Notion`, the one `super state` lists and `delegate --mcp` takes), or that name as
+ *  a clash with a local server left it (`claudeai-notion`). */
+export function isConnectorAlias(name: string, server: Pick<McpLiveServer, 'name' | 'home'>): boolean {
+  if (server.home !== 'claudeai') return false;
+  const alias = connectorAlias(server.name);
+  if (!alias) return false;
+  const n = name.toLowerCase();
+  // `<alias>-2` (two connectors with one short name) is not read here: it cannot say which one.
+  return n === alias || n === `claudeai-${alias}`.slice(0, 40).replace(/-+$/, '');
+}
+
+/** A name the card wrote, matched to a live row: exactly, else ignoring case, else a claude.ai
+ *  connector's short name (owner 2026-11-14: a child asked for `notion`, its row is `claude.ai Notion`). */
 export function findServer(name: string, servers: readonly McpLiveServer[]): McpLiveServer | null {
   return servers.find((s) => s.name === name)
     ?? servers.find((s) => s.name.toLowerCase() === name.toLowerCase())
+    ?? servers.find((s) => isConnectorAlias(name, s))
     ?? null;
 }
 
@@ -105,19 +119,28 @@ export function missingRow(
   name: string,
   overview: Pick<McpOverview, 'servers' | 'live' | 'cells'> | null,
   accountId?: string,
-): { text: string; signIn: boolean } {
+): { text: string; signIn: boolean; home?: McpHome } {
   if (!overview) return { text: 'not in this chat: see Settings → MCP', signIn: false };
   const lower = name.toLowerCase();
   const def = overview.servers.find((s) => s.name === name) ?? overview.servers.find((s) => s.name.toLowerCase() === lower);
-  const conn = def ? null : overview.live.find((l) => l.name.toLowerCase() === lower);
+  const conn = def ? null : overview.live.find((l) => l.name.toLowerCase() === lower) ?? overview.live.find((l) => isConnectorAlias(name, l));
   if (!def && !conn) return { text: 'not set up yet: add it in Settings → MCP', signIn: false };
   const home = def?.home ?? conn!.home;
   const cells = overview.cells[def ? def.key : `${conn!.name}|${conn!.home}`] ?? {};
   const mine = accountId ? cells[accountId]?.status : undefined;
   const any = Object.values(cells).map((c) => c.status);
   const needsSignIn = mine ? mine === 'needs-auth' : any.includes('needs-auth') && !any.includes('connected');
-  if (needsSignIn) return { text: `${homeLabel(home)} · needs your sign-in`, signIn: true };
-  return { text: `${homeLabel(home)} · this chat was started without it`, signIn: false };
+  const claudeai = home === 'claudeai';
+  // A connector signs in on claude.ai, never in Settings → MCP.
+  if (needsSignIn) return { text: `${homeLabel(home)} · needs your sign-in${claudeai ? ' on claude.ai' : ''}`, signIn: !claudeai, home };
+  // What THIS chat's account last read, each in its own words: only a server it has (or nothing
+  // known about it) means this chat was started without it (multi-account: a connector is the
+  // account's, and another account may not have it).
+  // `absent` is account-tied for a connector only (a team server marked absent is not the account's).
+  if (mine === 'absent' && claudeai) return { text: `${homeLabel(home)} · not on this chat's account: connect it on claude.ai`, signIn: false, home };
+  if (mine === 'failed') return { text: `${homeLabel(home)} · failed on this chat's account`, signIn: false, home };
+  if (mine === 'unchecked') return { text: `${homeLabel(home)} · not checked on this chat's account yet`, signIn: false, home };
+  return { text: `${homeLabel(home)} · this chat was started without it`, signIn: false, home };
 }
 
 /** Every named server is live and connected. */
