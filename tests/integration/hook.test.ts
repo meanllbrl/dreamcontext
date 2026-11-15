@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync, spawnSync } from 'node:child_process';
@@ -1383,6 +1383,39 @@ describe('hook user-prompt-submit (integration)', () => {
     expect(note).not.toMatch(/Before (you act|acting)/);
     runWithStdin('hook session-start', JSON.stringify({ session_id: 'once-1', source: 'compact' }), tmpDir, env);
     expect(ask('the project identity once more please')).toContain(DISPATCH_PREAMBLE_MARKER);
+  });
+
+  it('the judged default delivers the picks once per context, and again after a compaction', () => {
+    writeSleep(ctx, { debt: 2, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+    writeFileSync(join(ctx, 'knowledge', 'invoice-export.md'), '---\nname: invoice-export\ndescription: how the invoice export works\ntags: []\n---\nThe invoice export writes one csv per month.\n');
+    // A stub judge: reads the prompt, picks every candidate as a must, reports a cost.
+    const bin = join(fakeHome, 'judge.sh');
+    const picks = JSON.stringify(Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`c${i}`, 2])));
+    writeFileSync(bin, `#!/bin/sh\ncat > /dev/null\nprintf '%s' '${JSON.stringify({ result: `c0: needed\n${picks}`, total_cost_usd: 0.006, is_error: false })}'\n`);
+    chmodSync(bin, 0o755);
+    const env = { ...process.env, DREAMCONTEXT_SKILLS_HOOK: '0', DREAMCONTEXT_RECALL_MODE: 'haiku', DREAMCONTEXT_RECALL_JUDGE: 'on', DREAMCONTEXT_RECALL_JUDGE_BIN: bin };
+    const ask = (prompt: string) => runWithStdin('hook user-prompt-submit', JSON.stringify({ session_id: 'judged-1', prompt }), tmpDir, env);
+    const first = ask('how does the invoice export work');
+    expect(first).toContain('— Memory recall (Haiku · keyword search');
+    expect(first).toContain('[knowledge · must] knowledge/invoice-export.md');
+    // Still in context: not delivered again (and no judge call: every candidate is already there).
+    expect(ask('the invoice export once more')).not.toContain('knowledge/invoice-export.md');
+    runWithStdin('hook session-start', JSON.stringify({ session_id: 'judged-1', source: 'compact' }), tmpDir, env);
+    expect(ask('the invoice export after the summary')).toContain('knowledge/invoice-export.md');
+  });
+
+  it('a judge that cannot run at all (signed out) leaves the model-free rule, not silence', () => {
+    writeSleep(ctx, { debt: 2, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+    writeFileSync(join(ctx, 'knowledge', 'invoice-export.md'), '---\nname: invoice-export\ndescription: how the invoice export works\ntags: []\n---\nThe invoice export writes one csv per month.\n');
+    const bin = join(fakeHome, 'judge-out.sh');
+    writeFileSync(bin, '#!/bin/sh\ncat > /dev/null\necho "Not logged in. Please run /login" >&2\nexit 1\n');
+    chmodSync(bin, 0o755);
+    const env = { ...process.env, DREAMCONTEXT_SKILLS_HOOK: '0', DREAMCONTEXT_RECALL_MODE: 'haiku', DREAMCONTEXT_RECALL_JUDGE: 'on', DREAMCONTEXT_RECALL_JUDGE_BIN: bin };
+    const out = runWithStdin('hook user-prompt-submit', JSON.stringify({ session_id: 'judged-2', prompt: 'how does the invoice export work' }), tmpDir, env);
+    expect(out).toContain('— Memory recall (BM25');
+    expect(out).toContain('knowledge/invoice-export.md');
   });
 
   it('silent when debt < 4 (no output)', () => {

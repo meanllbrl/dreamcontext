@@ -2218,6 +2218,16 @@
       ]
     },
     {
+      "path": "hook when-lines-writer",
+      "desc": "",
+      "args": [
+        "<root>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
+    },
+    {
       "path": "init",
       "desc": "Initialize _dream_context/ in the current directory",
       "args": [],
@@ -3578,7 +3588,7 @@
     },
     {
       "path": "recall hybrid",
-      "desc": "EXPERIMENTAL: BM25 + local dense embeddings fused via RRF (no LLM call)",
+      "desc": "BM25 + dense embeddings on the vault tier; on Claude, Haiku then picks the files (no model call under Codex or Antigravity)",
       "args": []
     },
     {

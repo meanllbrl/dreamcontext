@@ -150,19 +150,11 @@ describe('hit selection by mode', () => {
     expect(fake.calls).toHaveLength(0);
   });
 
-  it('Haiku mode stays at 3, and its BM25 fallback stays at 3', async () => {
-    const corpus = writeVault(env.root);
-    const picked = corpus.slice(0, 3).map((d) => hitFor(d, 0, 'reason'));
-    const ok = await selectPromptRecall(PROMPT, env.root, 'haiku', { env: {}, home: env.home, haiku: () => picked });
-    expect(ok).toMatchObject({ label: 'Haiku', haiku: true });
-    expect(ok.hits).toHaveLength(3);
-
-    const failed = await selectPromptRecall(PROMPT, env.root, 'haiku', { env: {}, home: env.home, haiku: () => null });
-    expect(failed.label).toBe('BM25');
-    expect(failed.hits).toHaveLength(3);
-
-    const skipped = await selectPromptRecall(PROMPT, env.root, 'haiku', { env: {}, home: env.home, haiku: () => 'skip' });
-    expect(skipped.hits).toEqual([]);
+  it("Haiku mode's model-free side (the judge's fallback) is BM25 top 3", async () => {
+    writeVault(env.root);
+    const r = await selectPromptRecall(PROMPT, env.root, 'haiku', { env: {}, home: env.home });
+    expect(r).toMatchObject({ label: 'BM25', haiku: false });
+    expect(r.hits).toHaveLength(3);
   });
 });
 

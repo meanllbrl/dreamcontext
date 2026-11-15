@@ -79,6 +79,8 @@ describe('RECALL_MEASUREMENTS', () => {
     expect(measurementFor('haiku').egress).toBe('anthropic-prompt-and-index');
     expect(measurementFor('cloud').egress).toBe('chunks-once-and-each-prompt');
     expect(measurementFor('cloud-index').egress).toBe('chunks-once-then-local');
-    for (const none of ['raw', 'hybrid', 'off'] as const) expect(measurementFor(none).egress).toBe('nothing');
+    // Judged recall: on Claude, hybrid's candidates go to Haiku as the default mode's do.
+    expect(measurementFor('hybrid').egress).toBe('anthropic-prompt-and-index');
+    for (const none of ['raw', 'off'] as const) expect(measurementFor(none).egress).toBe('nothing');
   });
 });

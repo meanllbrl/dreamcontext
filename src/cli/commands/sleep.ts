@@ -44,6 +44,9 @@ import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import { embeddingCacheUsable } from '../../lib/embeddings/store.js';
 import { recallCloudStatus } from '../../lib/recall-cloud-config.js';
 import { spawnCloudIndexRefresh } from '../../lib/recall-cloud-index-spawn.js';
+import { findClaudeBin } from '../../lib/claude-path.js';
+import { envTextTool } from '../../lib/tool-text.js';
+import { agentSessionOf } from '../../lib/agent-filing-guard.js';
 import { registerRecallCloudCommands } from './recall-cloud.js';
 import { loadProjectVocabulary, auditCorpus, ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { runTaxonomyFix, isFixExcluded } from './taxonomy.js';
@@ -1604,6 +1607,22 @@ export function registerSleepCommand(program: Command): void {
         warn(`Cloud index refresh: skipped — ${(err as Error).message ?? err}`);
       }
 
+      // The recall judge's "needed when" lines for new or changed files: one detached Haiku writer,
+      // only where the judge runs (a judged mode, Claude, never under Codex or Antigravity).
+      try {
+        const mode = resolveRecallMode(root);
+        const judged = (mode === 'haiku' || mode === 'hybrid') && process.env.DREAMCONTEXT_RECALL_JUDGE !== 'off'
+          && envTextTool() === null && agentSessionOf(process.env) !== 'codex' && agentSessionOf(process.env) !== 'brain-mcp'
+          && findClaudeBin() !== null;
+        if (judged) {
+          const { writeWhenLines } = await import('../../lib/when-lines.js');
+          const w = await writeWhenLines(root);
+          if (w.started) info(chalk.dim(`Recall "needed when" lines: ${w.files} file(s) queued in the background (~$${w.estimateUsd.toFixed(2)}).`));
+        }
+      } catch (err) {
+        warn(`Recall "needed when" lines: skipped — ${(err as Error).message ?? err}`);
+      }
+
       // AC5 — post-sleep durability, LAST so it's the final thing the user
       // sees. When brain sync is OFF, warn LOUDLY about uncommitted
       // `_dream_context/**` output with a ready-to-run command — user decision
@@ -1943,9 +1962,9 @@ export function registerRecallCommand(program: Command): void {
       const state = readSleepState(root);
       const mode = state.recall_mode ?? 'haiku';
       const labels: Record<RecallMode, string> = {
-        haiku: `${chalk.green('haiku')} — Haiku LLM picks relevant docs per prompt`,
+        haiku: `${chalk.green('haiku')} — a free local search, then Haiku picks the files each prompt needs`,
         raw: `${chalk.yellow('raw')} — BM25 keyword search only (no LLM call)`,
-        hybrid: `${chalk.cyan('hybrid')} — EXPERIMENTAL: BM25 + local dense embeddings via RRF (no LLM call)`,
+        hybrid: `${chalk.cyan('hybrid')} — BM25 + dense embeddings (the vault's tier); on Claude, Haiku then picks the files each prompt needs (Codex and Antigravity: no model call)`,
         off: `${chalk.red('off')} — memory recall disabled`,
       };
       console.log(header('Memory Recall'));
@@ -1966,7 +1985,7 @@ export function registerRecallCommand(program: Command): void {
       const state = readSleepState(root);
       state.recall_mode = 'haiku';
       writeSleepState(root, state);
-      success('Recall mode set to haiku — Haiku LLM picks relevant docs per prompt');
+      success('Recall mode set to haiku — a free local search, then Haiku picks the files each prompt needs');
     });
 
   recall
@@ -1993,7 +2012,7 @@ export function registerRecallCommand(program: Command): void {
 
   recall
     .command('hybrid')
-    .description('EXPERIMENTAL: BM25 + local dense embeddings fused via RRF (no LLM call)')
+    .description('BM25 + dense embeddings on the vault tier; on Claude, Haiku then picks the files (no model call under Codex or Antigravity)')
     .action(() => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
