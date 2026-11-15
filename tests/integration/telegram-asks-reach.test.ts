@@ -275,6 +275,15 @@ describe('answered elsewhere', () => {
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
   });
 
+  it('a member Super\'s child question mirrored to main goes nowhere on Telegram (owner 2026-11-15)', async () => {
+    childAsks();
+    const mirror = { id: 'm-1', kind: 'member', of: 'question', member: 'conor', answers: 'q-inner', sessionId: CHILD, requestId: 'req-q', state: 'escalated', createdAt: 5, ownerText: OWNER_TEXT };
+    await writeState({ queue: [mirror] });
+    await afterWrite();
+    await quiet();
+    expect(tg.calls.filter((c) => c.method === 'sendMessage')).toHaveLength(0);
+  });
+
   it('the Super\'s ask closed with no answer known: its message says the card closed, never Cevaplandı, buttons gone', async () => {
     await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
     await afterWrite();

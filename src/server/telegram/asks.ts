@@ -212,6 +212,9 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
       // (`event=question`), answers it, or asks in its own words (`super ask`, `queue ask`): only
       // those reach here (`superAsked`).
       if (item.kind === 'question' && item.superAsked !== true) return false;
+      // The same for a member Super's child question mirrored into main's queue (owner decision
+      // 2026-11-15): that member's Super says it in its own words. His own talk with a member is his.
+      if (item.kind === 'member' && item.of === 'question' && item.ownerTalk !== true) return false;
       const ab = ownerTalkBinding(hub, vault, item) ?? hub.superBindingOfVault(vault);
       if (!ab) return 'no_bot';
       if (!hub.ownerAway()) return 'at_mac';
