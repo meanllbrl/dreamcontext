@@ -111,6 +111,20 @@ export function managedNpmGlobal(home: string = homedir()): string {
  * pin moves on; anything written to disk (a CLI shim, a PATH line) must name the
  * `current` link instead. Paths outside the managed root are returned unchanged.
  */
+/**
+ * Is `execPath` the Node the desktop app ships? The app bundle's
+ * `<X>.app/Contents/Resources/runtime/bin/node` (Mac) or `…\runtime\node.exe` (Windows), or the
+ * app's copy under `~/.dreamcontext/bin/rt/`. A path test only: it grants nothing, it decides
+ * which setup rows a machine still needs (plan npmsiz-beta C1).
+ */
+export function isAppRuntimeNode(execPath: string, home: string = homedir()): boolean {
+  const p = execPath.split('\\').join('/');
+  if (/\.app\/Contents\/Resources\/runtime\/bin\/node$/.test(p)) return true;
+  if (/\/runtime\/node\.exe$/i.test(p) && !/\/node_modules\//.test(p)) return true;
+  const rt = join(home, '.dreamcontext', 'bin', 'rt').split('\\').join('/') + '/';
+  return p.startsWith(rt);
+}
+
 export function stableNodeExecPath(execPath: string, home: string = homedir()): string {
   const root = managedNodeRoot(home);
   if (!execPath.startsWith(root + sep)) return execPath;

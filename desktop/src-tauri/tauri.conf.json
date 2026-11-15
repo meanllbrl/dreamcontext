@@ -48,7 +48,7 @@
     },
     "macOS": {
       "entitlements": "entitlements.plist",
-      "minimumSystemVersion": "12.0",
+      "minimumSystemVersion": "13.5",
       "dmg": {
         "windowSize": {
           "width": 660,

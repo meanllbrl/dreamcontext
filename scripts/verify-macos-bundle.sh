@@ -100,6 +100,11 @@ if [ ! -f "$RUNTIME_NODE" ]; then
 elif [ "$runtime_checked" = 0 ]; then
   defect "Contents/Resources/runtime/bin/node" "not a checked Mach-O binary"
 fi
+# node-pty's spawn-helper must ship executable: the bundle is read-only on a DMG mount or a
+# translocated copy, so nothing can chmod it there (stage-bundled-pty.mjs sets 0755).
+while IFS= read -r -d '' h; do
+  [ -x "$h" ] || defect "${h#"$APP"/}" "spawn-helper is not executable"
+done < <(find "$APP/Contents/Resources/native" -type f -name spawn-helper -print0 2>/dev/null)
 if [ "$fail" = 0 ]; then
   echo "✓ $checked Mach-O files: signed by ${TEAM}, hardened runtime, timestamped, no get-task-allow; runtime node holds only its two entitlements"
 fi

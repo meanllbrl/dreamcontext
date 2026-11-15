@@ -819,7 +819,18 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     // No usable Node (none, or older than 22.16): the setup screen installs a private one and
     // boot continues on it. `fresh_install` marks that path for the longer first-boot wait
     // and the setup screen's own hand-over to the Launcher.
-    let (node, node_version, fresh_install) = match node_runtime::resolve_usable_node() {
+    let (cli, global_cli) = resolve_cli(&app)?;
+    // The Node this app ships runs ONLY the bundle's own CLI (plan npmsiz-beta C1): it is signed
+    // with the hardened runtime and library validation, so it loads only native code the bundle
+    // signed (its node-pty). A global or DREAMCONTEXT_CLI entry keeps today's Node resolution:
+    // its npm prebuilds are ad-hoc signed and the shipped node would refuse them. A fresh Mac
+    // (no global CLI) runs the bundle's CLI on the shipped node and never sees the setup screen.
+    let resources = app.path().resource_dir().ok();
+    let runs_bundled_cli = resources
+        .as_ref()
+        .is_some_and(|d| Path::new(&cli) == d.join("dist").join("index.js"));
+    let shipped = if runs_bundled_cli { resources.as_deref().and_then(node_runtime::bundled_node) } else { None };
+    let (node, node_version, fresh_install) = match shipped.map(Ok).unwrap_or_else(node_runtime::resolve_usable_node) {
         Ok(choice) => (choice.path, Some(choice.version), false),
         Err(problem) => {
             let path = node_setup::run_blocking(&app, problem)?;
@@ -827,7 +838,6 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
             (path, pinned, true)
         }
     };
-    let (cli, global_cli) = resolve_cli(&app)?;
     let port = pick_free_port()?;
 
     // Boot the server in LAUNCHER mode — vault-agnostic. Each window pins its

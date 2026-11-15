@@ -7,6 +7,8 @@ import {
   readGlobalGitHubLogin, readGlobalGitHubNeedsReconnect, readGlobalGitHubToken,
 } from '../git-sync/auth-store.js';
 import { evaluateChecks } from './checks.js';
+import { isAppRuntimeNode } from './platform.js';
+import { cliShimDir } from '../automations/cli-path.js';
 import { codexChildEnv, codexHealth, codexTooOld, compareVersions, managedCodexVersion, refreshCodexHealth } from '../codex-bin.js';
 import { CODEX_PIN } from '../codex-pin.js';
 import { bridgeNode } from '../t3-bridge/node-floor.js';
@@ -110,13 +112,19 @@ export async function probeReadiness(
   ]);
 
   const nodeDir = dirname(ctx.execPath);
+  const appRuntime = isAppRuntimeNode(ctx.execPath, ctx.home);
   const extra: ExtraFacts = {
     online,
     runningNodeVersion: process.versions.node,
     npmBesideExec: deps.exists(join(nodeDir, 'npm')),
+    ...(appRuntime ? { appRuntime } : {}),
     claudeBin,
-    cliBinOffPath: [join(managedNpmGlobal(ctx.home), 'bin', 'dreamcontext'), join(nodeDir, 'dreamcontext')]
-      .find((p) => deps.exists(p)) ?? null,
+    // On the app's own runtime the CLI reaches the terminal through its launcher folder, which
+    // the cli-shell-path fix fills and puts on PATH; it never needs an npm install.
+    cliBinOffPath: appRuntime
+      ? join(cliShimDir(ctx.home), 'dreamcontext')
+      : [join(managedNpmGlobal(ctx.home), 'bin', 'dreamcontext'), join(nodeDir, 'dreamcontext')]
+        .find((p) => deps.exists(p)) ?? null,
     claudeAuth,
     ...(codex ? { codex } : {}),
     ghAuthed,

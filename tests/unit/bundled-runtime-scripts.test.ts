@@ -213,6 +213,21 @@ describe.runIf(process.platform === 'darwin')('verify-macos-bundle.sh (criterion
       expect(r.out).toMatch(why);
     } finally { rmSync(b.dir, { recursive: true, force: true }); }
   });
+  it('a node-pty spawn-helper without the execute bit fails (the bundle is read-only on a DMG)', () => {
+    const b = bundle();
+    try {
+      const helper = join(b.app, 'Contents/Resources/native/node-pty/prebuilds/darwin-arm64/spawn-helper');
+      mkdirSync(join(helper, '..'), { recursive: true });
+      copyFileSync('/usr/bin/true', helper);
+      execFileSync('codesign', ['-f', '-s', '-', '--options', 'runtime', helper], { stdio: 'pipe' });
+      chmodSync(helper, 0o644);
+      const r = run(b.app, '--test-adhoc');
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(/spawn-helper is not executable/);
+      chmodSync(helper, 0o755);
+      expect(run(b.app, '--test-adhoc').code).toBe(0);
+    } finally { rmSync(b.dir, { recursive: true, force: true }); }
+  });
   it('a runtime node that is not Mach-O fails (it would otherwise skip every check)', () => {
     const b = bundle();
     try {

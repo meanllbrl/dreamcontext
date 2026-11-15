@@ -350,6 +350,29 @@ pub(crate) fn resolve_from(
     Err(too_old.unwrap_or(NodeProblem::Missing))
 }
 
+/// The Node this app ships (plan npmsiz-beta C1): `<resources>/runtime/bin/node` on Mac,
+/// `<resources>/runtime/node.exe` on Windows. A regular file only (a link is never followed), and
+/// it must answer `--version` at or above [`MIN_NODE`]; anything else is `None` and the old
+/// resolution runs (a dev build, or a bundle built without the runtime).
+pub(crate) fn bundled_node(resource_dir: &Path) -> Option<NodeChoice> {
+    let bin = bundled_node_path(resource_dir);
+    let meta = std::fs::symlink_metadata(&bin).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let path = bin.to_string_lossy().into_owned();
+    let version = probe_version(&path)?;
+    (version >= MIN_NODE).then_some(NodeChoice { path, version, managed: false })
+}
+
+pub(crate) fn bundled_node_path(resource_dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        resource_dir.join("runtime").join("node.exe")
+    } else {
+        resource_dir.join("runtime").join("bin").join("node")
+    }
+}
+
 /// The Node the dashboard server runs on, or why there is none.
 /// `DREAMCONTEXT_FORCE_NODE_SETUP=1` treats every candidate as unusable (manual testing of the
 /// first-run path on a machine that has Node).
@@ -755,6 +778,20 @@ pub(crate) fn install_managed(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bundled_node_needs_a_regular_file() {
+        let dir = std::env::temp_dir().join(format!("dc-bundled-node-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(bundled_node(&dir).is_none(), "no runtime folder: none");
+        #[cfg(unix)]
+        {
+            std::fs::create_dir_all(dir.join("runtime/bin")).unwrap();
+            std::os::unix::fs::symlink("/bin/sh", bundled_node_path(&dir)).unwrap();
+            assert!(bundled_node(&dir).is_none(), "a linked node is never followed");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;

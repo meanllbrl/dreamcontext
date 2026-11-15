@@ -224,6 +224,14 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Fetch the bundled Node + stage node-pty (plan npmsiz-beta C1)
+        # The app ships its own runtime: the pinned nodejs.org binary (size + sha256 checked
+        # before unpacking) and the lockfile-pinned node-pty prebuild. Both are gitignored
+        # build inputs under desktop/src-tauri/resources/.
+        run: |
+          node scripts/fetch-bundled-node.mjs darwin-arm64
+          node scripts/stage-bundled-pty.mjs darwin-arm64
+
       - name: Import the Developer ID certificate into a temporary keychain
         if: ${{ !inputs.dry_run }}
         # One keychain for the whole job: tauri signs the .app from it, and the DMG is signed
@@ -254,6 +262,14 @@ jobs:
           security find-identity -v -p codesigning "$KC" | grep -q "$APPLE_SIGNING_IDENTITY" \
             || { echo "::error::$APPLE_SIGNING_IDENTITY is not a valid identity in the imported .p12"; exit 1; }
 
+      - name: Pre-sign the bundled runtime (C1)
+        if: ${{ !inputs.dry_run }}
+        # Before tauri build: node gets exactly entitlements-node.plist, node-pty none. Tauri
+        # seals them as resources and does not re-sign them (Mac spike, 2026-11-15).
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+        run: bash scripts/sign-bundled-runtime.sh "$APPLE_SIGNING_IDENTITY"
+
       - name: Build, sign, notarize and staple the Tauri .app (+ updater payload + DMG)
         if: ${{ !inputs.dry_run }}
         # tauri signs with --options runtime and entitlements.plist, submits the .app to
@@ -274,7 +290,7 @@ jobs:
           for v in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY; do
             if [ -z "${!v}" ]; then echo "::error::$v is missing"; exit 1; fi
           done
-          npm run tauri build -- --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          npm run tauri build -- --bundles app,dmg --config src-tauri/tauri.bundled-runtime.conf.json --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
       - name: Dry run — build the .app + DMG unsigned, updater payload signed with a throwaway key
         if: ${{ inputs.dry_run }}
@@ -287,7 +303,7 @@ jobs:
           npm run tauri signer generate -- --ci -f -w "$RUNNER_TEMP/dry-run-updater.key"
           TAURI_SIGNING_PRIVATE_KEY="$(cat "$RUNNER_TEMP/dry-run-updater.key")"
           export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-          npm run tauri build -- --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          npm run tauri build -- --bundles app,dmg --config src-tauri/tauri.bundled-runtime.conf.json --config '{"bundle":{"createUpdaterArtifacts":true}}'
           echo "dmg=$(ls "$PWD"/src-tauri/target/release/bundle/dmg/*.dmg | head -1)" >> "$GITHUB_ENV"
           echo "dry_run_pubkey=$(cat "$RUNNER_TEMP/dry-run-updater.key.pub")" >> "$GITHUB_ENV"
 
@@ -313,6 +329,9 @@ jobs:
           codesign --verify --strict --verbose=2 "$RUNNER"
           codesign -d --verbose=2 "$RUNNER" 2>&1 | grep -q 'flags=0x10000(runtime)'
           echo "✓ Developer ID, hardened runtime, notarized, stapled"
+          # C1 gate: every Mach-O (the bundled node and node-pty included) is ours, runtime,
+          # timestamped, no get-task-allow; node holds only its two entitlements.
+          bash scripts/verify-macos-bundle.sh "$APP" "$APPLE_TEAM_ID"
 
       - name: Sign, notarize and staple the DMG
         if: ${{ !inputs.dry_run }}

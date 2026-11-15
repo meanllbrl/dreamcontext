@@ -16,7 +16,7 @@ import { codexChildEnv, codexHealth, codexTooOld, findCodexBin, forgetCodexHealt
 import { ensureCliInstalled, type EnsureCliResult } from '../ensure-cli.js';
 import { findBridgeNode, resetBridgeNodeCache } from '../t3-bridge/node-floor.js';
 import { installManagedCodex, installPinnedNode, withCodexInstallLock, type NodePins } from './codex-install.js';
-import { cliAwarePath } from '../automations/cli-path.js';
+import { cliAwarePath, cliShimDir } from '../automations/cli-path.js';
 import { killPortable } from '../proc.js';
 import { spawnSpec } from '../win-cmd.js';
 import { withNodeDirOnPath } from '../git-sync/credentials.js';
@@ -24,7 +24,7 @@ import { commandLineToolsInstalled, gitAvailable } from '../git-sync/git.js';
 import { DownloadError, downloadVerified } from './download.js';
 import { CODEX_PIN } from '../codex-pin.js';
 import { defaultGithubDeps, runGhSignin, runGithubSignin, type GhExec, type GithubDeps } from './github.js';
-import { managedNodeRoot, managedNpmGlobal } from './platform.js';
+import { isAppRuntimeNode, managedNodeRoot, managedNpmGlobal } from './platform.js';
 import { SHELL_FACTS_SCRIPT, parseShellFacts, resolveTestSeamUrl } from './runner.js';
 import type { FixId, ProbeContext, ShellFacts, ShellResult } from './types.js';
 
@@ -413,7 +413,12 @@ function nodeShellPath({ ctx, deps }: RecipeEnv): FixOutcome {
 
 /** Put the folder holding an installed-but-unseen `dreamcontext` on the shell PATH. */
 function cliShellPath({ ctx, deps }: RecipeEnv): FixOutcome {
-  const dir = [join(managedNpmGlobal(ctx.home), 'bin'), dirname(ctx.execPath)]
+  // On the app's own runtime (plan npmsiz-beta C1) the launcher folder is the CLI's home on PATH:
+  // write its launcher now (it names this very node and entry) and put that folder on PATH.
+  if (isAppRuntimeNode(ctx.execPath, ctx.home)) {
+    cliAwarePath('', { execPath: ctx.execPath, home: ctx.home });
+  }
+  const dir = [join(managedNpmGlobal(ctx.home), 'bin'), dirname(ctx.execPath), cliShimDir(ctx.home)]
     .find((d) => existsSync(join(d, 'dreamcontext')));
   if (!dir) return fail('failed', 'dreamcontext was not found in a known folder.');
   return shellPathOutcome([deps.addToShellPath(dir, CLI_RC_MARKER)]);
