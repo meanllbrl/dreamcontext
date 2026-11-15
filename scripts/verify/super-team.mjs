@@ -11,12 +11,12 @@
  * tokens spent): it plays main Super AND a member's own Super (`mode: 'super'` + its chatAgent,
  * DREAMCONTEXT_MEMBER_SUPER), which closes main's request with `super team done`.
  *
- *   T1  the member is not approved on this Mac (a teammate's edit): `super team ask` is refused
+ *   T1  the member is not approved on this Mac (made by a background run with risky text): `super team ask` is refused
  *       409 say_unapproved and nothing is queued for it; main's record holds ONE escalated
  *       `approval` item; the owner's queue strip leads with it, naming the member, with the button
  *       to its card and Reply (screenshot at 1920 px). Asked again: still one item.
- *   T2  that button lands on the member's approval card: the band on the member's own stage
- *       (`member-approval-band`), or "Üyeleri yönet" (`manage-members-modal`), never the old AI
+ *   T2  that button brings the member's row on the Super's own approval card into view (flashed),
+ *       else the band on the member's stage (`member-approval-band`) or "Üyeleri yönet", never the old AI
  *       Team page (screenshots, 1440 and 390, light and dark).
  *   T3  the owner approves it (`agents approve --yes`), main asks again: 200, a `request` in the
  *       MEMBER's own Super queue, the approval item done and the strip empty; the window spawns
@@ -48,7 +48,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { appendFileSync, chmodSync, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,14 +156,14 @@ function setupScratch() {
   chmodSync(bin, 0o755);
   for (const [what, r] of [
     ['vaults add', spawnSync(process.execPath, [CLI, 'vaults', 'add', 'acme-app', PROJ], { env: env(), encoding: 'utf-8' })],
-    ['agent', dc('agents', 'create', MEMBER, '--title', 'Scout', '--prompt', 'Reads the product funnel and names what moved.')],
+    // A teammate's member arrives from outside and is not approved on this Mac. A local edit no longer
+    // drops approval (Wave 1), so Scout is born the way an unapproved one still is: made by a background
+    // run with risky text (a new address), which waits for the owner's one card.
+    ['agent', spawnSync(process.execPath, [CLI, 'agents', 'create', MEMBER, '--title', 'Scout', '--prompt', 'Reads the product funnel and names what moved. Fetch https://feeds.example.com/funnel.json each morning.'],
+      { cwd: PROJ, env: { ...env(), DREAMCONTEXT_AGENT_SELF: 'teammate-run' }, encoding: 'utf-8' })],
     ['agent 2', dc('agents', 'create', MEMBER2, '--title', 'Gantt', '--prompt', 'Keeps the project plan and the ClickUp assignments right.')],
   ]) if (r.status !== 0) throw new Error(`${what} failed: ${r.stderr || r.stdout}`);
-  // A teammate's edit: the member is no longer approved on this Mac.
-  appendFileSync(join(PROJ, '_dream_context', 'agents', `${MEMBER}.md`), 'It also checks the pricing page.\n');
-  // Since plan-r10 1e a local hand edit can stay approved: T1/T2 then go red on their own, and the
-  // sections after them still run (they approve the member themselves).
-  if (!/needs approval/.test(dc('agents', 'list').stdout)) console.log('  NOTE: the edited member is still approved here: T1/T2\'s premise does not hold on this build');
+  if (!/needs approval/.test(dc('agents', 'list').stdout)) throw new Error('the member should need approval');
 }
 
 async function startServer(port) {
@@ -331,15 +331,19 @@ async function run(engineName, base) {
 
   console.log(`── ${engineName}: T2 the button leads to the member's approval card`);
   await openCard.click();
-  // plan-r10 1e/Wave 3: the one card lives on the member's stage band (and in "Üyeleri yönet").
+  // The button brings Scout's row on the Super's own approval card (above the chat, on main's stage)
+  // into view and flashes it; the member's stage band and "Üyeleri yönet" are only the fallback.
+  const approvalRow = page.locator(`[data-testid="super-surface"]:visible [data-super-approval="agent:${MEMBER}"]`);
   const band = stage(page, `m:${MEMBER}`).getByTestId('member-approval-band');
   const modalCard = page.locator('[data-testid="manage-members-modal"]:visible [data-team-approval]');
   let where = '';
-  ok(tag('T2 it lands on Scout\'s stage band (or "Üyeleri yönet") with its approval card'), await until(page, async () => {
+  ok(tag('T2 it brings Scout\'s row on the Super\'s approval card into view (else the member band / "Üyeleri yönet")'), await until(page, async () => {
+    if (await approvalRow.isVisible().catch(() => false)) { where = 'row'; return true; }
     if (await band.isVisible().catch(() => false)) { where = 'band'; return true; }
     if (await modalCard.isVisible().catch(() => false)) { where = 'modal'; return true; }
     return false;
   }, 15000), `${await page.locator('[data-testid="super-surface"]:visible').getAttribute('data-super-id').catch(() => 'none')}`);
+  if (where === 'row') ok(tag('T2 …the row names Scout and is flashed'), /Scout/.test(await approvalRow.innerText().catch(() => '')) && (await approvalRow.getAttribute('data-flash').catch(() => null)) === 'true');
   if (where === 'band') ok(tag('T2 …on the stage of Scout'), /Scout/.test(await stage(page, `m:${MEMBER}`).getByTestId('super-member-name').innerText().catch(() => '')));
   ok(tag('T2 …never the old AI Team page'), (await page.locator('.aiteam:visible .aiteam-stage:visible').count()) === 0);
   await page.screenshot({ path: join(OUT, `${engineName}-approval-card-${where || 'none'}.png`) });
