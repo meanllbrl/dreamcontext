@@ -53,7 +53,11 @@ const input = (extra: Partial<Parameters<typeof G.todayGroups>[0]> = {}) => {
 const keys = (es: { key: string }[]) => es.map((e) => e.key);
 
 describe('groups by who acts next (criterion 3)', () => {
-  it('every row lands in its group; his open line in Added by you; an earlier day above them', () => {
+  it('Waiting on you comes before the lines left from earlier days, then the rest as before (owner 15 Nov)', () => {
+    expect([...G.TODAY_GROUPS]).toEqual(['waiting', 'earlier', 'super', 'mine', 'done']);
+  });
+
+  it('every row lands in its group; his open line in Added by you; an earlier day sits under Waiting on you', () => {
     const g = G.todayGroups(input({
       approvals: [{ key: 'agent:turing', kind: 'agent', slug: 'turing', title: 'Turing', memberTitle: 'Turing', member: 'turing', changed: false }] as never,
       taskRows: [{ id: 't1', kind: 'task-review', ref: 'task-a', agent: null, title: 'Review task a', actions: [], createdAt: new Date(at(7)).toISOString() }] as never,

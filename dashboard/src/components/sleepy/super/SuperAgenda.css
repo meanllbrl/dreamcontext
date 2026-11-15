@@ -27,8 +27,13 @@
    stay. Its children keep their natural height (no squeezing into a strip). */
 .agenda-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: var(--space-2); }
 .agenda-scroll > * { flex-shrink: 0; }
-/* The +'s own corner: a strip under the scrolling lines; the list's visible bottom ends above it. */
-.agenda-strip { flex: none; display: flex; justify-content: flex-end; }
+/* The +: a floating corner layer, not a row. */
+.agenda-strip { position: absolute; right: var(--space-2); bottom: var(--space-2); z-index: 2; display: flex; justify-content: flex-end; pointer-events: none; }
+.agenda-strip > * { pointer-events: auto; }
+.super-agenda, .agenda-col, .agenda-main { position: relative; }
+/* The + floats OVER the lines and takes no height of its own (owner, 15 Nov). The scroll area
+   ends with room for it, so the last line can be scrolled clear of the +; no strip sits there at rest. */
+.agenda-scroll { padding-bottom: 52px; }
 .agenda-groups {
   flex: none;
   display: flex;
@@ -309,9 +314,8 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-main > .agenda-scroll { gap: var(--space-1); }
 /* Medium is 160 px tall: a strip under the lines would leave them one line. Its + keeps a right
    gutter of its own instead; the lines end before it, so none ever sits under it. */
-.super-agenda[data-size='medium'] .agenda-main { position: relative; }
-.super-agenda[data-size='medium'] .agenda-main > .agenda-scroll { padding-right: 36px; }
-.super-agenda[data-size='medium'] .agenda-main > .agenda-strip { position: absolute; right: 0; bottom: 0; }
+.super-agenda[data-size='medium'] .agenda-main > .agenda-scroll { padding-bottom: 36px; }
+.super-agenda[data-size='medium'] .agenda-main > .agenda-strip { right: 0; bottom: 0; }
 .super-agenda[data-size='medium'] .agenda-main > .agenda-strip:has(.agenda-fab[data-open='true']) { left: 0; }
 .super-agenda[data-size='medium'] .agenda-fab-btn { width: 28px; height: 28px; }
 .super-agenda[data-size='medium'] .agenda-fab-btn svg { width: 14px; height: 14px; }
@@ -435,10 +439,11 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 
 /* The agenda full screen (CardFullscreenView): over the whole window, the agenda at its fullest. */
 .agenda-fullscreen { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: var(--color-bg); color: var(--color-text); }
-.agenda-fullscreen-head { flex: none; display: flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0 var(--space-3) 0 var(--space-5); border-bottom: 1px solid var(--color-border); }
+.agenda-fullscreen-head { flex: none; display: flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0 var(--space-3) 0 88px; border-bottom: 1px solid var(--color-border); }
 .agenda-fullscreen-title { flex: 1 1 auto; min-width: 0; font-weight: var(--font-weight-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agenda-fullscreen-x { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-md); background: none; color: var(--color-text-secondary); cursor: pointer; }
-.agenda-fullscreen-x:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+.agenda-fullscreen-x { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-secondary); color: var(--color-text); cursor: pointer; }
+.agenda-fullscreen-x svg { width: 18px; height: 18px; }
+.agenda-fullscreen-x:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .agenda-fullscreen-x:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
 /* A menu or detail the agenda opens in full screen is drawn inside the overlay, above its lines. */
 .agenda-fullscreen > :is(.agenda-menu, .agenda-detail--float, .agenda-pop) { z-index: 10; }
