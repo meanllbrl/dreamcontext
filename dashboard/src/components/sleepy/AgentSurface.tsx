@@ -86,7 +86,7 @@ import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig, useAgentCapabilities, useAgentTools } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
-import { pickFiles, pickFolders, confirmAction, spendChecklistNonce } from '../../lib/desktop';
+import { pickFiles, pickFolders, confirmAction, spendChecklistNonce, isDesktop } from '../../lib/desktop';
 import { listenForChecklistSubmits, relayChecklistSubmit, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
 import { useAssistantDoorbell } from '../assistant/useAssistantDoorbell';
 import { pastDeadline, runWindowVerb, type WindowVerbDeps } from './windowVerbs';
@@ -101,7 +101,7 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { MAX_FILMSTRIP, groupPresentCards, readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { MAX_FILMSTRIP, groupPresentCards, readSuperStateView, type MemberCardRef, type PadStatus, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
 import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberSummaries } from './super/useMemberSummaries';
@@ -198,7 +198,7 @@ import {
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, postSuperOwedDrop, postSuperPad, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, fetchAgendaDay, postSuperOwedDrop, postSuperPadAdd, postSuperPadRemove, postSuperPadStatus, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
@@ -4740,12 +4740,24 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     void postSuperOwedDrop(forSuper(scopedApi, activeSuperIdRef.current), id)
       .catch((err: unknown) => { console.warn('[super] the unanswered line was not dropped:', err); });
   }, [scopedApi]);
-  const moveAgendaNote = useCallback((id: string, section: 'now' | 'done') => {
+  // His hand on the agenda (task ajanda-gunluk): a status, his own line, its removal. Each answer
+  // is the state after the write; a refusal throws to the card, which says it where he looks.
+  const applySuperAnswer = useCallback((sid: SuperId, st: SuperStateView | null) => {
+    if (st) setSuperRecordFor(sid, sid === activeSuperIdRef.current ? withPendingEdits(st) : st);
+  }, [setSuperRecordFor]);
+  const setAgendaStatus = useCallback(async (id: string, status: PadStatus) => {
     const sid = activeSuperIdRef.current;
-    void postSuperPad(forSuper(scopedApi, sid), id, section).then((st) => {
-      if (st) setSuperRecordFor(sid, sid === activeSuperIdRef.current ? withPendingEdits(st) : st);
-    }).catch((err: unknown) => { console.warn('[super] the agenda line was not moved:', err); });
-  }, [scopedApi, setSuperRecordFor]);
+    applySuperAnswer(sid, await postSuperPadStatus(scopedApi, id, status, sid));
+  }, [scopedApi, applySuperAnswer]);
+  const addAgendaLine = useCallback(async (text: string) => {
+    const sid = activeSuperIdRef.current;
+    applySuperAnswer(sid, await postSuperPadAdd(scopedApi, text, sid));
+  }, [scopedApi, applySuperAnswer]);
+  const removeAgendaLine = useCallback(async (id: string) => {
+    const sid = activeSuperIdRef.current;
+    applySuperAnswer(sid, await postSuperPadRemove(scopedApi, id, sid));
+  }, [scopedApi, applySuperAnswer]);
+  const loadAgendaDay = useCallback((date: string) => fetchAgendaDay(scopedApi, date, activeSuperIdRef.current), [scopedApi]);
   const endChildFromCard = useCallback((child: string, whenDone: boolean) => {
     const s = chatByClaudeId(child);
     if (whenDone && s?.hasLiveWork()) {
@@ -7265,7 +7277,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onWriteAbout={writeAboutRow}
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
-            onMoveNote={isMacPhoneSurface() ? undefined : moveAgendaNote}
+            onPadStatus={isMacPhoneSurface() ? undefined : setAgendaStatus}
+            // His own lines need the shell's key: a browser dashboard has none, so no add box there.
+            onPadAdd={isMacPhoneSurface() || !isDesktop() ? undefined : addAgendaLine}
+            onPadRemove={isMacPhoneSurface() || !isDesktop() ? undefined : removeAgendaLine}
+            loadAgendaDay={isMacPhoneSurface() ? undefined : loadAgendaDay}
             onDropOwed={isMacPhoneSurface() ? undefined : dropOwedLine}
             onOpenCard={isMacPhoneSurface() ? undefined : openCardOnStage}
             endPending={endPending}

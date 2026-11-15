@@ -18,10 +18,10 @@ import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
-  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
+  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
@@ -55,7 +55,10 @@ import { ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
-import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/super/pad.js';
+import { ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
+import { tryOwnerMark } from '../../lib/super/owner-marks.js';
+import { agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
+import { hasOwnerKey } from '../owner-key.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
@@ -1012,6 +1015,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       if (heir) s.pad = s.pad?.map((p) => (p.for === heir ? { ...p, for: sid } : p));
       // Its agenda line, in the same write: Now, and it follows this child from here on.
       if (noteText) noted = putPadNote(s, 'now', noteText, sid);
+    }, {
+      // A failing day archive on a full pad takes this line out again (store.ts): `noteRefused`.
+      onPadRefused: (ids) => { if (noted && noted !== 'full' && ids.includes(noted.id)) noted = 'full'; },
     });
     // A member's child is tracked by its own super's inbox (Wave 2 step A2), never main's.
     if (startError) void pumpSuper(root, c.superId); else if (c.superId === 'main') expectChild(root, sid);
@@ -1205,7 +1211,8 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
     pad.splice(oldest, 1);
   }
   const next = nextPadId(pad, s.padSeq);
-  const note: SuperPadItem = { id: next.id, section, text, at: Date.now(), ...(forChild ? { for: forChild } : {}) };
+  const now = Date.now();
+  const note: SuperPadItem = { id: next.id, section, text, at: now, bornAt: now, ...(forChild ? { for: forChild } : {}) };
   s.pad = [...(forChild ? withoutTwins(pad, text) : pad), note];
   s.padSeq = next.seq;
   return note;
@@ -1213,8 +1220,28 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
 
 export async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main'): Promise<SuperPadItem | 'full'> {
   let out: SuperPadItem | 'full' = 'full';
-  await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); });
+  await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); }, {
+    onPadRefused: (ids) => { if (out !== 'full' && ids.includes(out.id)) out = 'full'; },
+  });
   return out;
+}
+
+/** The owner writes his own line (`POST /api/super/pad/add`): ALWAYS a new line (never the
+ *  same-text match, so his add never takes over a Super line), Not started, `author: 'owner'`
+ *  (and `by: 'owner'`, so an older server after a rollback still keeps its hands off). A full pad
+ *  gives up its oldest finished line first (archived in its day); with none, nothing is written. */
+function putOwnerLine(s: SuperState, text: string, now: number): SuperPadItem | 'full' {
+  const pad = [...(s.pad ?? [])];
+  if (pad.length >= MAX_PAD) {
+    const oldest = pad.findIndex((p) => p.section === 'done');
+    if (oldest < 0) return 'full';
+    pad.splice(oldest, 1);
+  }
+  const next = nextPadId(pad, s.padSeq);
+  const note: SuperPadItem = { id: next.id, section: 'now', stage: 'todo', text, at: now, bornAt: now, author: 'owner', by: 'owner' };
+  s.pad = [...pad, note];
+  s.padSeq = next.seq;
+  return note;
 }
 
 /**
@@ -1767,7 +1794,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const warnings = [...ownershipWarnings(settled, running), ...noCardWarnings(settled, running)];
     // `teamLive` is the owner window's (member text, unfenced): the agent reads each team job's
     // status and last line from `team` below, fenced (D10).
-    const { teamLive: _ownerOnly, ...view } = superStateView(root, settled);
+    // His hand marks are heard only in the fenced block on his next message (owner-marks.ts).
+    const { teamLive: _ownerOnly, ownerMarks: _marks, ownerMarkSeq: _markSeq, ...view } = superStateView(root, settled) as ReturnType<typeof superStateView> & Pick<SuperState, 'ownerMarks' | 'ownerMarkSeq'>;
     // A line no job keeps true, unchanged for PAD_STALE_MS (pad.ts): keep it or close it. An
     // earlier day's Done line is gone even before the next write drops it.
     const pad = (view.pad ?? []).filter((p) => !padRolledOff(p, now)).map((p) => (padStale(p, now) ? { ...p, stale: true, staleMin: Math.floor((now - p.at) / 60_000) } : p));
@@ -2508,13 +2536,33 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     ok(res, { dropped: id });
   },
 
+  'note-status': async (c, b, res) => {
+    // One of the five statuses (pad.ts padStatus): `section` + `stage` stay the stored truth.
+    const id = str(b.id);
+    const status = str(b.status);
+    if (!status || !(PAD_STATUSES as readonly string[]).includes(status)) { refuse(res, 400, 'invalid_args', `status must be one of ${PAD_STATUSES.join(' | ')}`); return; }
+    if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    let note: SuperPadItem | null = null;
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+      const have = (s.pad ?? []).find((p) => p.id === id);
+      if (!have) return;
+      // The super set it itself: no longer the server's move. His own line keeps `by: 'owner'`.
+      const { why: _w, toldAt: _t, by, ...mine } = have;
+      note = { ...withPadStatus(mine, status as PadStatus, Date.now()), ...(ownerLine(have) && by ? { by } : {}) };
+      s.pad = [...(s.pad ?? []).filter((p) => p.id !== id), note];
+    });
+    if (!note) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    ok(res, { note });
+  },
+
   'note-clear': async (c, b, res) => {
     const section = str(b.section);
     if (section && !(PAD_SECTIONS as readonly string[]).includes(section)) { refuse(res, 400, 'invalid_args', `section must be one of ${PAD_SECTIONS.join(' | ')}`); return; }
     let cleared = 0;
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const pad = s.pad ?? [];
-      const keep = section ? pad.filter((p) => p.section !== section) : [];
+      // His own lines stay: `note clear` is the Super's sweep of its own lines (pad.ts ownerLine).
+      const keep = pad.filter((p) => ownerLine(p) || (section ? p.section !== section : false));
       cleared = pad.length - keep.length;
       s.pad = keep;
     });
@@ -3851,7 +3899,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'open' | 'member' | 'owed';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'pad-add' | 'pad-remove' | 'open' | 'member' | 'owed';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>, superId: SuperId) => Promise<void>;
 
 /** The kinds the owner names himself; a file comes as `{ path }`, a chat or a job is the agent's. */
@@ -3985,16 +4033,53 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     noteSeenClick(contextRoot, marks.marks.map((m) => m.id));
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
-  pad: async (_req, res, contextRoot, body, superId) => {
-    // The owner moved an agenda line by hand (the card's Done / Put back): `by: 'owner'`, so the
-    // server never moves it again (pad.ts; pattern: the agent must not undo what the owner did).
+  pad: async (req, res, contextRoot, body, superId) => {
+    // The owner set an agenda line's status by hand (the card's circle, Done, Put back):
+    // `by: 'owner'`, so the server never moves it again (pad.ts; pattern: the agent must not undo
+    // what the owner did). `{ id, status }` (five values) or the older `{ id, section: now|done }`.
+    // A mark for his next message only when the request is proven his (owner-marks.ts).
     const id = typeof body.id === 'string' ? body.id : '';
-    const section = body.section === 'now' || body.section === 'done' ? body.section : null;
-    if (!PAD_ID_RE.test(id) || !section) { sendError(res, 400, 'invalid_body', 'give { id: <note id>, section: now | done }'); return; }
+    const status = (PAD_STATUSES as readonly unknown[]).includes(body.status) ? body.status as PadStatus
+      : body.section === 'done' ? 'done' : body.section === 'now' ? 'in-progress' : null;
+    if (!PAD_ID_RE.test(id) || !status) { sendError(res, 400, 'invalid_body', `give { id: <note id>, status: ${PAD_STATUSES.join(' | ')} }`); return; }
     // The same move Telegram's /gundem Bitti makes (pad-move.ts).
-    const { found, state } = await padMove(contextRoot, id, section, superId);
-    if (!found || !state) { sendError(res, 404, 'unknown_note', 'no such agenda line'); return; }
+    const { found, state } = await padMove(contextRoot, id, status, superId, { mark: !!req?.headers && hasOwnerKey(req) });
+    if (!found || !state) { sendError(res, 404, 'unknown_note', 'This line is closed and saved in its day.'); return; }
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
+  },
+  'pad-add': async (req, res, contextRoot, body, superId) => {
+    // His own line (C6): only from the app's own page with the shell's key.
+    if (!fromOwnerPage(req)) { sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can add a line.') }); return; }
+    const text = cleanPadText(body.text);
+    if (!text) { sendError(res, 400, 'invalid_body', 'a line is one line of text'); return; }
+    let note: SuperPadItem | 'full' = 'full';
+    const now = Date.now();
+    const state = await writeSuper(contextRoot, superId, (s) => {
+      note = putOwnerLine(s, text, now);
+      if (note !== 'full') tryOwnerMark(s, { key: `pad:${note.id}`, kind: 'pad-add', text, to: 'not-started', at: now });
+    }, { onPadRefused: (ids) => { if (note !== 'full' && ids.includes(note.id)) note = 'full'; } });
+    if (note === 'full') { sendJson(res, 409, { ok: false, error: 'pad_full', message: 'Agenda is full: close a line first.' }); return; }
+    sendJson(res, 200, { note, state: superStateView(contextRoot, state) });
+  },
+  'pad-remove': async (req, res, contextRoot, body, superId) => {
+    // His own OPEN line only: a Done line is history and goes to its day; a Super line closes with Done.
+    if (!fromOwnerPage(req)) { sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can remove a line.') }); return; }
+    const id = typeof body.id === 'string' ? body.id : '';
+    if (!PAD_ID_RE.test(id)) { sendError(res, 400, 'invalid_body', 'give { id: <note id> }'); return; }
+    let why: 'unknown_note' | 'not_owner' | 'not_open' | null = 'unknown_note';
+    const state = await writeSuper(contextRoot, superId, (s) => {
+      const have = (s.pad ?? []).find((p) => p.id === id);
+      if (!have) return;
+      if (!ownerLine(have)) { why = 'not_owner'; return; }
+      if (have.section === 'done') { why = 'not_open'; return; }
+      why = null;
+      s.pad = (s.pad ?? []).filter((p) => p.id !== id);
+      tryOwnerMark(s, { key: `pad:${id}`, kind: 'pad-remove', text: have.text, from: padStatus(have), at: Date.now() });
+    });
+    if (why === 'unknown_note') { sendError(res, 404, 'unknown_note', 'This line is closed and saved in its day.'); return; }
+    if (why === 'not_owner') { sendError(res, 409, 'not_owner', 'Only a line you added can be removed; close this one with Done.'); return; }
+    if (why === 'not_open') { sendError(res, 409, 'not_open', 'A finished line stays in its day.'); return; }
+    sendJson(res, 200, { removed: id, state: superStateView(contextRoot, state) });
   },
   recap: async (_req, res, contextRoot, _body, superId) => {
     const current = await readSuperState(contextRoot, superId, superSanitizeOpts());
@@ -4066,7 +4151,8 @@ export function ownerSuperId(req: IncomingMessage, res: ServerResponse, contextR
  */
 export async function stopMemberSuper(contextRoot: string, slug: string): Promise<SuperState> {
   const id = superIdOfMember(slug);
-  const state = await writeSuper(contextRoot, id, (s) => { s.enabled = false; });
+  // Its owner's hand marks go with it (owner-marks.ts), as main's in `disableSuper`.
+  const state = await writeSuper(contextRoot, id, (s) => { s.enabled = false; delete s.ownerMarks; });
   await noteMemberOff(contextRoot, slug, state);
   const live = [...(state.session ? [state.session] : []), ...Object.keys(state.children).filter((sid) => state.children[sid].endedAt === undefined)];
   for (const sid of live) {
@@ -4138,6 +4224,28 @@ export const handleSuperEnd = ownerRoute('end');
 export const handleSuperFresh = ownerRoute('fresh');
 export const handleSuperSeen = ownerRoute('seen');
 export const handleSuperPad = ownerRoute('pad');
+export const handleSuperPadAdd = ownerRoute('pad-add');
+export const handleSuperPadRemove = ownerRoute('pad-remove');
+
+/**
+ * GET /api/super/agenda-day?date=YYYY-MM-DD (C4): one day of the agenda. "Done that day" is the
+ * one read rule (pad-archive.ts `agendaDoneOn`); "Started that day, still open" is the live pad's
+ * open lines born that day. The Super is resolved as the pad routes resolve it.
+ */
+export async function handleSuperAgendaDay(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireSuperOwner(req, res)) return;
+  const superId = ownerSuperId(req, res, contextRoot);
+  if (!superId) return;
+  const date = new URL(req.url ?? '/', 'http://x').searchParams.get('date');
+  if (!okDay(date)) { sendError(res, 400, 'invalid_date', 'date is a day, YYYY-MM-DD'); return; }
+  try {
+    const state = await readSuperState(contextRoot, superId, superSanitizeOpts());
+    const pad = state.pad ?? [];
+    const done = await agendaDoneOn(contextRoot, superId, date, pad);
+    const open = pad.filter((p) => p.section !== 'done' && localDay(p.bornAt ?? p.at) === date);
+    sendJson(res, 200, { date, done, open });
+  } catch (err) { storeRefusal(res, err); }
+}
 export const handleSuperOpen = ownerRoute('open');
 export const handleSuperMember = ownerRoute('member');
 export const handleSuperOwedDrop = ownerRoute('owed');

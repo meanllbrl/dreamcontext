@@ -210,7 +210,8 @@ export function wireCommands(hub: TelegramHub, deps: CommandsDeps = {}): () => v
       if (!row) return LINES.stale;
       if (idx === 2) return (await showList(ab, rec.messageId)) ? null : LINES.stale;
       if (idx === 0) {
-        const r = await padMove(ab.contextRoot, row.id, 'done');
+        // The Telegram owner (owner-checked by the hub): his Done rides his next message (owner-marks.ts).
+        const r = await padMove(ab.contextRoot, row.id, 'done', 'main', { mark: true });
         if (!r.found) return LINES.stale;
         return (await showList(ab, rec.messageId, row.text)) ? CMD_LINES.doneBtn : `${CMD_LINES.doneBtn} (Mac'te de görünür)`;
       }

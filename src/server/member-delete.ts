@@ -6,7 +6,7 @@ import { globalAgentHome, isGlobalAgentHere } from '../lib/agents/scope.js';
 import { automationPath, getAutomation, removeAutomation, resolveAutomationPhoto } from '../lib/automations/store.js';
 import { listRegisteredProjects, revokeApproval } from '../lib/automations/registry.js';
 import { listVaults } from '../lib/vaults.js';
-import { readSuperState, superIdOfMember, superReadMarksPath, superRecordPath } from '../lib/super/store.js';
+import { readSuperState, superAgendaDaysDir, superIdOfMember, superReadMarksPath, superRecordPath } from '../lib/super/store.js';
 import { activityOf, getChat } from '../lib/assistant/chat-registry.js';
 import { agentActivity } from './automation-job.js';
 
@@ -156,19 +156,30 @@ export async function deleteMember(
     const sid = superIdOfMember(slug);
     keep(superRecordPath(p.root, sid), join('super', p.name, `${slug}.json`));
     keep(superReadMarksPath(p.root, sid), join('super', p.name, `${slug}.read-marks.json`));
+    keep(superAgendaDaysDir(p.root, sid), join('super', p.name, `${slug}.agenda-days`));
   }
 
   const left: string[] = [];
   // 2. Its Super stops in every project (main is told), then its record and marks go.
   for (const p of projects) {
     if (left.length) break;
-    if (!existsSync(superRecordPath(p.root, superIdOfMember(slug)))) continue;
+    const days = superAgendaDaysDir(p.root, superIdOfMember(slug));
+    const hasRecord = existsSync(superRecordPath(p.root, superIdOfMember(slug)));
+    // A days folder left without its record still goes (task ajanda-gunluk C4).
+    if (!hasRecord && !existsSync(days)) continue;
     try {
-      await deps.stopSuper(p.root, slug);
-      deps.retireSuper(p.root, slug);
+      if (hasRecord) {
+        await deps.stopSuper(p.root, slug);
+        deps.retireSuper(p.root, slug);
+      }
       for (const f of [superRecordPath(p.root, superIdOfMember(slug)), superReadMarksPath(p.root, superIdOfMember(slug))]) {
         try { if (existsSync(f) && !lstatSync(f).isSymbolicLink()) rmSync(f, { force: true }); } catch { left.push(`${p.name}: ${basename(f)}`); }
       }
+      try {
+        const st = lstatSync(days, { throwIfNoEntry: false });
+        if (st && !st.isSymbolicLink() && st.isDirectory()) rmSync(days, { recursive: true, force: true });
+        else if (st?.isSymbolicLink()) rmSync(days, { force: true });
+      } catch { left.push(`${p.name}: ${basename(days)}`); }
     } catch { left.push(`${p.name}: stage`); }
   }
   // 3. Every routine (remove + revoke, one helper with the routine route). Not after a failure

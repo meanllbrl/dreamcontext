@@ -142,7 +142,7 @@ import { ownerLanguageBlock, withOwnerLanguage } from '../../lib/super/owner-lan
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
   childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
@@ -4026,6 +4026,11 @@ export function startChatSession(
     // What it still owes him from before rides every message of his (owed.ts), a block the replay drops.
     const owedBlock = isSuper && !text.startsWith('/') ? superOwedBlock(chatRegistryId, text, tgRef) : null;
     if (owedBlock) content.push({ type: 'text', text: owedBlock });
+    // What he did by hand since his last message (owner-marks.ts): his own words only, never a
+    // slash command, a server-written turn, a server continue, or a Telegram run report/schedule.
+    const handMarks = isSuper && !text.startsWith('/') && !serverContinue && !serverWritten && !receipt
+      && (tgSource === undefined || tgSource === 'telegram-text') ? superOwnerMarksBlock(chatRegistryId) : null;
+    if (handMarks) content.push({ type: 'text', text: handMarks.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
@@ -4038,6 +4043,10 @@ export function startChatSession(
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
     if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
+    if (handMarks) {
+      if (wrote) void superOwnerMarksCarried(handMarks.carry);
+      else superOwnerMarksReturned(handMarks.carry);
+    }
     if (note && wrote) {
       void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

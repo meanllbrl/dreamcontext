@@ -12,6 +12,7 @@ import type { OwnerCardKind, OwnerWaitKind } from './owner-wait.js';
 import type { CardSpec } from '../cards/public.js';
 import { parseViewBlock } from '../chat-view-spec.js';
 import type { OwnerLanguage } from './owner-language.js';
+import { MAX_TASK_SLUG_LENGTH } from '../task-slug.js';
 import type { OutwardGrant } from './outward.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
@@ -1564,6 +1565,11 @@ export interface SuperState {
   /** When this record started keeping debts (the first write after the upgrade): an item older
    *  than this is never owed. Absent = now. */
   owedSince?: number;
+  /** What the owner did by hand since his last message (owner-marks.ts). Never in the Super's
+   *  own `super state` view: it hears them only in the fenced block. Absent = none. */
+  ownerMarks?: OwnerMark[];
+  /** The last owner mark number handed out. */
+  ownerMarkSeq?: number;
 }
 
 /**
@@ -1645,7 +1651,43 @@ export interface SuperPadItem {
   why?: PadAutoWhy;
   /** When an event batch last told the super about this line (its auto move or its stale flag). */
   toldAt?: number;
+  /** When it was first written (ms): its day. Absent = `at` (stamped once by the store). */
+  bornAt?: number;
+  /** A Now line's stage (the five statuses, `padStatus`): `todo` = Not started, `almost` =
+   *  Almost done, absent = In progress. Only in `now`. */
+  stage?: PadStage;
+  /** `owner` = the owner wrote it himself (`POST /api/super/pad/add`): the server's automatic
+   *  rules never act on it (pad.ts `ownerLine`). Absent = the Super's. */
+  author?: 'owner';
 }
+export const PAD_STAGES = ['todo', 'almost'] as const;
+export type PadStage = typeof PAD_STAGES[number];
+/** The five statuses a line shows; `section` (+ `stage`) stays the stored truth (pad.ts). */
+export const PAD_STATUSES = ['not-started', 'in-progress', 'almost-done', 'waiting', 'done'] as const;
+export type PadStatus = typeof PAD_STATUSES[number];
+
+/** One thing the owner did by hand since his last message (owner-marks.ts): carried once, in a
+ *  `<super-owner-marks>` block on his next message to the Super, then cleared. */
+export interface OwnerMark {
+  /** `pad:<id>` or `task:<slug>`: one entry per thing, newer marks coalesce into it. */
+  key: string;
+  kind: OwnerMarkKind;
+  /** What it is about, one line (a pad line's text, a task's title). */
+  text: string;
+  from?: string;
+  to?: string;
+  at: number;
+  /** Monotonic per record: the carry clears by it, never by time alone. */
+  seq?: number;
+}
+export const OWNER_MARK_KINDS = ['pad-status', 'pad-add', 'pad-remove', 'task-created', 'task-status'] as const;
+export type OwnerMarkKind = typeof OWNER_MARK_KINDS[number];
+/** `task:` takes every slug a task file can have (task-slug.ts, MAX_TASK_SLUG_LENGTH): a shorter
+ *  cap dropped a long task's marks silently (edge-cases review, round 1). Keeps `.` and `_`:
+ *  a hand-named task file (fix_bug.md) is a task too. */
+export const OWNER_MARK_KEY_RE = new RegExp(`^(pad:n[1-9][0-9]{0,5}|task:[a-z0-9][a-z0-9._-]{0,${MAX_TASK_SLUG_LENGTH - 1}})$`);
+/** Stored marks are bounded by bytes, not count: past this the oldest are dropped. */
+export const MAX_OWNER_MARKS_BYTES = 64 * 1024;
 export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;
 export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
 /** A Now line with no job behind it that has not changed for this long is stale: `super state`
@@ -2245,7 +2287,7 @@ export const SUPER_VERBS = [
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
-  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
+  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',
   // The owner's scheduled jobs (super-rutin plan C4): main Super only.

@@ -27,6 +27,7 @@ import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { armTeamJobWatches, awaitedTeamItem, setMemberWaitSource, setRequestSource, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
 import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
+import { MAX_OWNER_MARKS_BLOCK, OWNER_MARKS_RULE, dropCarriedMarks, markHead } from './owner-marks.js';
 import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
 import { makeRoom } from './room.js';
@@ -888,7 +889,11 @@ export function noteHeld(s: SuperState): boolean {
  *  picture questions' cards (`settleAskShows`), and floats every live child's card (live.ts: a live job is never in Others or a group unless the
  *  owner put it there himself). */
 export type SuperWriteFn = (draft: SuperState) => SuperState | void;
-export interface SuperWriteOpts { onDemoted?: (ids: string[]) => void }
+export interface SuperWriteOpts {
+  onDemoted?: (ids: string[]) => void;
+  /** Lines added in this write that a failing day archive took out again (store.ts). */
+  onPadRefused?: (ids: string[]) => void;
+}
 
 /**
  * `writeSuper(root, fn)` writes main's record, as before Wave 2; `writeSuper(root, id, fn)` writes
@@ -934,7 +939,7 @@ export async function writeSuper(
     settlePad(out);
     return out;
   };
-  const sanitize = { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) };
+  const sanitize = { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}), ...(opts.onPadRefused ? { onPadRefused: opts.onPadRefused } : {}) };
   const next = await updateSuperState(key, draftRules, sanitize);
   afterSuperWrite(key, next);
   return next;
@@ -1736,6 +1741,76 @@ export function superOwedBlock(sessionId: string, text: string, tgRef?: string |
     'Still owed to him from before. Answer his new message first; then each of these in its own section opening `<!-- re:<ref> -->` (a result: tell it; a send: say what went out), unless a section of yours already answered it.',
     '</super-owed>',
   ].join('\n');
+}
+
+/** Marks a block has carried whose clear has not landed yet, per super key (`key` + seq): a second
+ *  turn written in the same breath (a held replay's loop) never carries them again. */
+const carryingMarks = new Map<string, Set<string>>();
+const markId = (m: { key: string; seq?: number; at: number }) => `${m.key}\u0000${m.seq ?? `@${m.at}`}`;
+
+export interface OwnerMarksCarry { root: string; carried: Array<{ key: string; at: number; seq?: number }> }
+
+/**
+ * The block his next message to the Super carries (owner-marks.ts): what he did by hand since his
+ * last message, newest first, each text fenced; bounded by its own bytes (older marks fold into
+ * one plain line that is never stored). Starts with `<`: his replay never shows it. Null: none.
+ * The carried marks leave memory here; `superOwnerMarksCarried` clears them on disk after the
+ * write, `superOwnerMarksReturned` gives them back when nothing was written.
+ */
+export function superOwnerMarksBlock(sessionId: string): { text: string; carry: OwnerMarksCarry } | null {
+  const root = superKeyOfSession(sessionId);
+  if (!root) return null;
+  const key = keyOf(root);
+  const s = lastStates.get(key);
+  if (!s || !s.enabled || s.session !== sessionId || !s.ownerMarks?.length) return null;
+  const busy = carryingMarks.get(key);
+  const marks = s.ownerMarks.filter((m) => !busy?.has(markId(m))).sort((a, b) => b.at - a.at);
+  if (!marks.length) return null;
+  const vault = superVaultName(root);
+  const open = `<super-owner-marks items=${marks.length}>`;
+  const close = [OWNER_MARKS_RULE, '</super-owner-marks>'];
+  const lines: string[] = [];
+  let bytes = Buffer.byteLength([open, ...close].join('\n'), 'utf-8') + 64;
+  let folded = 0;
+  for (const m of marks) {
+    const one = [markHead(m, owedClock), wrapUntrusted(vault, `Line: ${m.text}`)];
+    const size = Buffer.byteLength(one.join('\n'), 'utf-8') + 2;
+    if (folded || bytes + size > MAX_OWNER_MARKS_BLOCK) { folded += 1; continue; }
+    lines.push(...one);
+    bytes += size;
+  }
+  if (folded) lines.push(`+${folded} earlier hand changes`);
+  const taken = carryingMarks.get(key) ?? new Set<string>();
+  for (const m of marks) taken.add(markId(m));
+  carryingMarks.set(key, taken);
+  return {
+    text: [open, ...lines, ...close].join('\n'),
+    carry: { root, carried: marks.map((m) => ({ key: m.key, at: m.at, ...(m.seq !== undefined ? { seq: m.seq } : {}) })) },
+  };
+}
+
+/** The message carrying them was written: only the carried marks leave the record (a mark made
+ *  in between stays for the next message). A failed write keeps them for the next one. */
+export function superOwnerMarksCarried(carry: OwnerMarksCarry): Promise<void> {
+  const key = keyOf(carry.root);
+  const release = () => {
+    const set = carryingMarks.get(key);
+    if (!set) return;
+    for (const c of carry.carried) set.delete(markId(c));
+    if (!set.size) carryingMarks.delete(key);
+  };
+  return track(writeSuper(carry.root, (s) => { dropCarriedMarks(s, carry.carried); }))
+    .then(() => undefined, (err) => { console.warn(`[super] carried hand marks were not cleared: ${(err as Error).message}`); })
+    .finally(release);
+}
+
+/** Nothing was written: the marks ride the next message. */
+export function superOwnerMarksReturned(carry: OwnerMarksCarry): void {
+  const key = keyOf(carry.root);
+  const set = carryingMarks.get(key);
+  if (!set) return;
+  for (const c of carry.carried) set.delete(markId(c));
+  if (!set.size) carryingMarks.delete(key);
 }
 
 /** His "Gerek yok" on one debt (the owner's own door). False: no such open debt. */

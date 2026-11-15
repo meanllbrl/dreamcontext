@@ -30,6 +30,7 @@ import { ZoomPane } from './ZoomPane';
 import { useWebDevice } from '../../../lib/webDevice';
 import { WebFrameControl } from '../../../lib/webFrameControl';
 import type { WebPick } from '../../../lib/webPick';
+import type { AgendaSize } from './AgendaRow';
 
 /** What a card opens full screen (owner 2026-10-22): a picture, a project web page, a page on the
  *  web or this computer (only once its frame is allowed), a board, a PDF (the chat's full-window
@@ -204,8 +205,9 @@ export interface SuperContainerProps extends SuperCardActions {
   canFit?: (size: ContainerSize) => boolean;
   /** The corner handle pressed (useStageDrag). */
   onPressResize?: (e: PointerEvent<HTMLElement>, id: string) => void;
-  /** `agenda`: the super's agenda as this card draws it (SuperAgenda), the counts tile or the list. */
-  agenda?: (variant: 'tile' | 'full', wide: boolean) => ReactNode;
+  /** `agenda`: the super's agenda as this card draws it (SuperAgenda), at the drawn size: small,
+   *  medium, large, wide on the floating card, `full` side by side. Live at every size. */
+  agenda?: (size: AgendaSize) => ReactNode;
   /** `member`: a member stage's own card body (plan r4 K2: Rutinler, Talimatlar, Üye), a render
    *  prop from the Chat surface; a small card is its summary tile, medium and up the live body. */
   member?: (ref: MemberCardRef, variant: 'tile' | 'full') => ReactNode;
@@ -295,16 +297,17 @@ export function SuperContainer(props: SuperContainerProps) {
   // A floating card's one action, for a click and for Enter/Space alike: it shows side by side (a
   // team card with its member's conversation, on the stage like a child's chat).
   const openCard = () => {
-    // The agenda's list is live on its card (its rows are the buttons): a click between them is
-    // no "show side by side". Its counts tile opens like any card.
-    if (c.kind === 'agenda' && !small && drawnSize !== 'medium') return;
+    // The agenda is live at every size (task ajanda-gunluk, learned rule d5xlppqj5a): a click in
+    // its body is its own, never "show side by side". The green window light opens it, and so
+    // do Enter/Space on the focused frame (onKeyDown).
+    if (c.kind === 'agenda') return;
     // A member card's body is live from medium up (plan r4 G2): a click in it is its own.
     if (c.kind === 'member' && !small) return;
     props.onSideBySide(c.id);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || !(floating || thumb)) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (thumb) props.onSelectThumb?.(c.id); else openCard(); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (thumb) props.onSelectThumb?.(c.id); else if (c.kind === 'agenda') props.onSideBySide(c.id); else openCard(); }
   };
   return (
     <div
@@ -622,17 +625,18 @@ function FloatBody(p: BodyProps): ReactNode {
       </div>
     );
   }
-  if (c.kind === 'agenda' && SIZE_UNITS[size].h === 1) {
+  if (c.kind === 'agenda') {
+    // Live at every size: the head stays the grab handle, the body takes the pointer.
     return (
-      <div className="super-card-body" data-inert="true">
+      <div className="super-card-body super-card-agenda" data-agenda-size={size}>
         <CardHead kind={c.kind} title={p.title} />
-        {p.agenda?.('tile', size === 'medium')}
+        <div className="super-card-large-body">{p.agenda?.(size)}</div>
       </div>
     );
   }
   if (SIZE_UNITS[size].h > 1 && c.kind !== 'chat') {
     return (
-      <div className="super-card-body super-card-large" data-inert={c.kind === 'agenda' ? undefined : 'true'}>
+      <div className="super-card-body super-card-large" data-inert="true">
         <CardHead kind={c.kind} title={p.title} container={c} />
         <div className="super-card-large-body">{viewFor(p)}</div>
       </div>
@@ -851,7 +855,7 @@ export function isLivePage(c: Container): boolean {
 function viewFor(p: BodyProps): ReactNode {
   const c = p.container;
   // The agenda reads the pushed record only (no fetch, no layout of its own): it draws at once.
-  if (c.kind === 'agenda') return p.agenda?.('full', false) ?? null;
+  if (c.kind === 'agenda') return p.agenda?.(p.plan.where === 'float' ? (p.plan.size ?? 'large') : 'full') ?? null;
   if (c.kind === 'member') return p.member?.(c.ref as MemberCardRef, 'full') ?? null;
   if (!p.viewReady) return null;
   const size = widgetSize(p.plan);
