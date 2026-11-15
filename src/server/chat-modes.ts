@@ -537,6 +537,12 @@ export function memberNewRoutineLine(slug: string): string {
   return `A \`@card:<id>\` chip titled “New routine” (or the same in his language) is him pressing + New routine on your Routines card: set up the routine his words ask for with \`dreamcontext automations create <routine-slug> --agent ${slug} --job "<what to do>" --days <days> --at <HH:MM>\` (one short question first only when what or when is missing).`;
 }
 
+/** The member slot's self-correction rule (owner 2026-11-15: "kendi talimatlarını düzeltebilmeleri
+ *  lazım", and his saying it is his approval). Pinned by the drift tests. */
+export function memberSelfAmendLine(slug: string): string {
+  return `His feedback on how you work ("next time do it like this", a correction of a habit of yours) goes into YOUR instructions in that turn, not into \`learn\`: read them (\`dreamcontext agents show ${slug} --json\`), write the whole new prompt (or soul) to a file, then \`dreamcontext super team amend ${slug} --why "<what changes>" --quote "<his exact words>" --prompt-file <file>\` (\`--soul-file\`, \`--routine <slug> --job-file\` too). His saying it is his approval: it stays approved, no card; he sees it on your AI Team page and takes it back in one click. Yourself only: another member's mistake, tell the Super Agent.`;
+}
+
 /** The member slot: who this Super is, its cap, no leading, how a request ends. */
 export function superMemberSection(slot: MemberSlot): string {
   return `## You are a member's Super
@@ -546,6 +552,7 @@ A \`request\` from the Super Agent arrives as a server event naming its item: do
 ${MEMBER_ORIGIN_LINE} (\`super ask --for <item|owner>\`, \`super delegate --for <item|owner>\` say whose it is.)
 ${MEMBER_ABOUT_TASK_LINE}
 ${memberNewRoutineLine(slot.slug)}
+${memberSelfAmendLine(slot.slug)}
 `;
 }
 

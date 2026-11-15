@@ -396,18 +396,20 @@ export function registerSuperCommand(program: Command): void {
     .action((item: string, text: string) => run('team-answer', { item, text }));
 
   team.command('amend <member>')
-    .description('Correct a member\'s instructions after a mistake: only its prompt, soul or a routine\'s job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`')
+    .description('Correct a member\'s instructions after a mistake or the owner\'s feedback: only its prompt, soul or a routine\'s job. The project\'s Super Agent corrects any member; a member\'s own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`')
     .requiredOption('--why <line>', 'The mistake this fixes, in a line the owner reads')
+    .option('--quote <words>', 'The owner\'s exact words this carries out ("next time do it like this"): shown with the change')
     .option('--prompt-file <path>', 'A file with its whole new prompt')
     .option('--soul-file <path>', 'A file with its whole new soul (empty removes it)')
     .option('--routine <slug>', 'The routine whose job changes')
     .option('--job-file <path>', 'A file with the routine\'s whole new job (needs --routine; empty removes it)')
-    .action((member: string, o: { why: string; promptFile?: string; soulFile?: string; routine?: string; jobFile?: string }) => {
+    .action((member: string, o: { why: string; quote?: string; promptFile?: string; soulFile?: string; routine?: string; jobFile?: string }) => {
       if (!o.promptFile && !o.soulFile && !o.jobFile) return usage('name what changes: --prompt-file, --soul-file or --job-file');
       let body: Record<string, unknown>;
       try {
         body = {
           member, why: o.why,
+          ...(o.quote ? { quote: o.quote } : {}),
           ...(o.promptFile ? { prompt: readFileSync(o.promptFile, 'utf-8') } : {}),
           ...(o.soulFile ? { soul: readFileSync(o.soulFile, 'utf-8') } : {}),
           ...(o.jobFile ? { job: readFileSync(o.jobFile, 'utf-8') } : {}),
