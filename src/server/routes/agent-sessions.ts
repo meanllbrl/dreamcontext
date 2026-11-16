@@ -543,6 +543,12 @@ function readSurface(contextRoot: string, phone = false): StoredSurface {
   return parseSurface(text);
 }
 
+/** The project's chat permission mode as the window saved it: what the window spawns main's Super
+ *  under, so a server-started Super (headless-super.ts) runs under the same one. */
+export function rosterPermissionMode(contextRoot: string): ChatPermissionMode {
+  return readSurface(contextRoot).chatPermissionMode;
+}
+
 /** The persisted file: the surface plus its generation (written only when non-zero, so a
  *  roster that was never bumped stays byte-identical to the legacy shape). */
 function serializeSurface(surface: SavedSurface, generation: number): string {

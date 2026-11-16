@@ -25,7 +25,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import {
   POLL_RING_SIZE, TELEGRAM_MANAGER_DIR, TELEGRAM_SCOPE_RE, TELEGRAM_TARGET_RE, TELEGRAM_TOKEN_RE,
-  type BotBinding, type ForwardFile, type JournalEntry, type ManagedHistoryFile, type ManagedHistoryRow,
+  type BotBinding, type ForwardFile, type JournalEntry, JOURNAL_MSG_MAX_CHARS, type ManagedHistoryFile, type ManagedHistoryRow,
   type PollState, type TelegramScope, type TelegramTarget, type TurnsFile,
 } from './contract.js';
 import { keyPath, realPath } from '../real-path.js';
@@ -281,6 +281,12 @@ export function listBindings(home: string = homedir()): { scope: TelegramScope; 
 
 const ring = (v: unknown): number[] => (Array.isArray(v) ? v.filter((n) => Number.isSafeInteger(n)).slice(-POLL_RING_SIZE) : []);
 
+/** A kept message: a plain object, small enough (`JOURNAL_MSG_MAX_CHARS` as JSON). */
+function journalMsgOk(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  try { return JSON.stringify(v).length <= JOURNAL_MSG_MAX_CHARS; } catch { return false; }
+}
+
 function journalOf(v: unknown): JournalEntry[] {
   if (!Array.isArray(v)) return [];
   const kinds = new Set(['text', 'media', 'callback', 'command']);
@@ -296,6 +302,7 @@ function journalOf(v: unknown): JournalEntry[] {
       at: j.at as number,
       ...(typeof j.ref === 'string' && /^[0-9a-z]{6}$/.test(j.ref) ? { ref: j.ref } : {}),
       ...(typeof j.chatRegistryId === 'string' && j.chatRegistryId.length <= 200 ? { chatRegistryId: j.chatRegistryId } : {}),
+      ...(journalMsgOk(j.msg) ? { msg: j.msg as Record<string, unknown> } : {}),
     });
   }
   return out.slice(-POLL_RING_SIZE);

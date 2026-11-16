@@ -76,6 +76,16 @@ describe('ensureSuperSession(session, superId)', () => {
     expect(member).toMatch(/mode: 'super', agent: member/);
     expect(member).not.toMatch(/setPanes/);
   });
+  it('a tab holding the Super\'s conversation that is no Super pane (a plain tab a link opened, parked or dormant) goes, and the Super pane opens: never a blank stage (owner 2026-11-16, Ege)', () => {
+    expect(ensure).toMatch(/if \(open\.mode === 'super' && live && live\.kind === 'chat'\) return live as ChatSession;/);
+    const heal = ensure.slice(ensure.indexOf("if (open.mode === 'super'"), ensure.indexOf('const member = memberOf(superId);'));
+    expect(heal).toMatch(/dropStrayTabOfSuper\(open\.id\);/);
+    // Falls through to the spawn below: the old "return null" for a non-live tab is gone.
+    expect(heal).not.toMatch(/return live && live\.kind === 'chat' \? live as ChatSession : null;/);
+    const drop = surface.slice(surface.indexOf('const dropStrayTabOfSuper'), surface.indexOf('const ensureSuperSession'));
+    expect(drop).toMatch(/setSessionList\(\(prev\) => prev\.filter\(\(m\) => m\.id !== sid\)\);/);
+    expect(drop).not.toMatch(/clearPins|closeSessionById/);
+  });
   it('main\'s spawn is byte-for-byte as before', () => {
     expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super', '', '', superPaneReattach\(fresh, isMacPhoneSurface\(\)\)\)/);
     expect(ensure).toMatch(/const ensureSuperSession = useCallback\(\(session: string, superId: SuperId = MAIN_SUPER\)/);
