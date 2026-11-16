@@ -265,6 +265,10 @@ interface TgTurn {
 
 // ─── The hub ────────────────────────────────────────────────────────────────
 
+/** One Super turn as Telegram saw it: when it began, and the newest message the bot had posted in
+ *  its chat by then (-1 until read, in line with the sends before it). */
+export interface SuperTurnSpan { startedAt: number; before: number }
+
 export class TelegramHub implements TelegramHubApi {
   readonly home: string;
   readonly now: () => number;
@@ -1106,6 +1110,11 @@ export class TelegramHub implements TelegramHubApi {
   /** The owner just turned away (`flushAway`): the Super-side senders (asks.ts) send what is still
    *  open, each once (their own sent guards). */
   readonly awayFlushers = new Set<(ab: ActiveBinding) => Promise<void>>();
+  /** A Super turn ended and every message it sent is out (in line with its sends). asks.ts brings
+   *  a question card this turn buried back to the bottom. */
+  readonly turnEnders = new Set<(ab: ActiveBinding, sessionId: string, turn: SuperTurnSpan) => Promise<void>>();
+  /** Super session → its running turn (memory only; gone at idle and at gone). */
+  private turnSpans = new Map<string, SuperTurnSpan>();
 
   /** The answer paths leave the blocks to `answerExtras` only when it is wired. */
   private extrasMode(): 'hub' | 'mac' { return this.answerExtras ? 'hub' : 'mac'; }
@@ -1347,9 +1356,27 @@ export class TelegramHub implements TelegramHubApi {
     if (!key) return;
     const ab = this.active.get(key);
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
-    if (entry.status === 'gone') for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
+    if (entry.status === 'gone') {
+      this.turnSpans.delete(entry.sessionId);
+      for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
+    }
+    if (entry.status !== 'idle' && entry.status !== 'gone' && !this.turnSpans.has(entry.sessionId) && ab) {
+      // What the bot had posted when this turn began, read in line with the sends before it.
+      const span: SuperTurnSpan = { startedAt: this.now(), before: -1 };
+      this.turnSpans.set(entry.sessionId, span);
+      this.queueSend(entry.sessionId, async () => { span.before = ab.transport.lastSentMessageId(ab.binding.chatId); return false; });
+    }
     if (entry.status === 'idle' && from !== 'idle') {
       this.turnInputs.delete(entry.sessionId);
+      // After everything this turn sent (in line with its sends): a card it buried comes back.
+      const span = this.turnSpans.get(entry.sessionId);
+      this.turnSpans.delete(entry.sessionId);
+      if (span && ab && !ab.disabled && this.turnEnders.size) {
+        this.queueSend(entry.sessionId, async () => {
+          for (const f of [...this.turnEnders]) await f(ab, entry.sessionId, span).catch(() => {});
+          return false;
+        });
+      }
       // Every text of this turn was emitted before its `result`: the ones still sending are here.
       const sending = this.textChains.get(entry.sessionId);
       for (const t of [...this.turns.values()]) {
@@ -1534,6 +1561,12 @@ export class TelegramHub implements TelegramHubApi {
       textHash: sha256(typeof sent.text === 'string' ? sent.text : ''), options: idx, ...(data ? { data } : {}),
     });
     return id;
+  }
+
+  /** Does this message still carry live buttons of the hub (none used, none closed)? */
+  buttonsLive(ab: ActiveBinding, messageId: number): boolean {
+    for (const b of this.buttons.values()) if (b.key === ab.key && b.messageId === messageId) return true;
+    return false;
   }
 
   /** The message a button record was sent on (`sendButtons`' id), or null. */
