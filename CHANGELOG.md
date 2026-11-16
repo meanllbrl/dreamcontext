@@ -4,6 +4,14 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.22] - 2026-11-16
+
+Patch on 0.41.21. Local build; not published.
+
+- **Telegram.** A Super that is asleep or whose window is closed now wakes when you write to it from Telegram.
+- **Telegram voice summary.** When you ask for a voice summary and the answer has no audio, a clear line now appears instead of silence.
+- **Memory.** The memory hint on each message now finds the running Mac app's recall server, so it answers faster.
+
 ## [0.41.19] - 2026-11-12
 
 Patch on 0.41.18, local build; not published.
