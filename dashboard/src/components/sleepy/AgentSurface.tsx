@@ -5797,8 +5797,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (document.querySelector('.chat-cmp-ref-pop')) return;
       // "Üyeleri yönet" (its scrim) and the Ekip list's popover own Esc as well: they portal to
       // <body> and close themselves on it; the member's stage under them stays (end review M6).
-      // So does an agent's Edit dialog (the autonomy label's, a member card's): Esc closes it alone.
-      if (document.querySelector('.mm-scrim, .ns-team-list, .aid-scrim')) return;
+      // So does an agent's Edit dialog (the autonomy label's, a member card's): Esc closes it alone,
+      // and a waiting app card's pop-up (AppRequestPopup): Esc closes it and decides nothing.
+      if (document.querySelector('.mm-scrim, .ns-team-list, .aid-scrim, .app-popup-scrim')) return;
       // An open group (or Others) on the Super Agent's stage owns Esc: it closes the panel and
       // gives focus back to its tile (GroupPanel). Same presence test, same registration order.
       if (document.querySelector('.super-group-panel')) return;

@@ -27,6 +27,11 @@ const WARN_KEY: Record<string, string> = {
   'Bu davet tanımadığın bir GitHub hesabından geliyor.': 'appreq.warn.unknownInviter',
 };
 
+/** The card's title in the UI's language: "<action> · <app>" (the band's row says it too). */
+export function appRequestTitle(card: Pick<AppCard, 'title' | 'appName'>, t: (key: string) => string): string {
+  return `${TITLE_KEY[card.title] ? t(TITLE_KEY[card.title]!) : card.title} · ${card.appName}`;
+}
+
 /** The publish card's "Geçirilecek" rows (`<kind>: <file>[:line] "<term>"`), folded by kind and value:
  *  display only, every finding is still listed under the one toggle and the approval covers all of them. */
 const WAIVE_LABEL = 'Geçirilecek';
@@ -68,11 +73,26 @@ const MOVING: ReadonlySet<RequestState> = new Set(['pending', 'approved', 'runni
  * On mount it tells the server the card is DRAWN here (`shown`), which is the only thing that lets
  * the agent say where the card is.
  */
-export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
+/** Tells the server, once while it waits, that this card is DRAWN at `where` (`shown`): the only
+ *  thing that lets the agent say where the card is. The Super screen's one-line row counts too. */
+export function useTellShown(id: string, pending: boolean, where: 'chat' | 'super'): void {
+  const api = useApi();
+  const told = useRef(false);
+  useEffect(() => {
+    if (!pending || told.current) return;
+    told.current = true;
+    void api.post(`/apps/requests/card/${encodeURIComponent(id)}/shown`, { where }).catch(() => { told.current = false; });
+  }, [api, pending, id, where]);
+}
+
+export function AppRequestCard({ spec, report, where = 'chat', armMs = 0, onDecided }: {
   spec: AppRequestViewSpec;
   report?: (text: string) => void;
   /** Where it is drawn, for the server's `shown`: a chat, or the Super Agent's screen (its band). */
   where?: 'chat' | 'super';
+  /** Reddet and Onayla ignore a press for this long after they appear (a pop-up that opened by
+   *  itself: a click meant for something else lands on nothing). */
+  armMs?: number;
   /** The owner's press landed (the band says it once the card leaves the waiting list). */
   onDecided?: (action: 'approve' | 'reject', appName: string) => void;
 }) {
@@ -93,15 +113,17 @@ export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
   });
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<DecideOutcome | null>(null);
-  const told = useRef(false);
   const claimed = useRef(false);
   const pending = q.data?.state === 'pending';
+  useTellShown(spec.id, pending, where);
 
+  // Armed once the buttons have been on screen for `armMs` (none = at once).
+  const [armed, setArmed] = useState(armMs <= 0);
   useEffect(() => {
-    if (!pending || told.current) return;
-    told.current = true;
-    void api.post(`/apps/requests/card/${encodeURIComponent(spec.id)}/shown`, { where }).catch(() => { told.current = false; });
-  }, [api, pending, spec.id, where]);
+    if (armed || !pending) return undefined;
+    const id = window.setTimeout(() => setArmed(true), armMs);
+    return () => window.clearTimeout(id);
+  }, [armed, pending, armMs]);
 
   // K4: the yes did not reach the asking chat: this card posts the receipt, once (the server's
   // claim is atomic; a second card gets 409 and posts nothing).
@@ -114,7 +136,7 @@ export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
 
   const act = async (action: 'approve' | 'reject') => {
     const card = q.data?.card;
-    if (!card || busy) return;
+    if (!card || busy || !armed) return;
     setBusy(true);
     setFailure(null);
     const outcome = await decide(spec.id, action, undefined, card.hash);
@@ -202,13 +224,12 @@ export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
   );
   const main = shownLines.filter((l) => !l.detail);
   const details = card.lines.filter((l) => l.detail);
-  const title = TITLE_KEY[card.title] ? t(TITLE_KEY[card.title]!) : card.title;
   const warn = card.warn ? (WARN_KEY[card.warn] ? t(WARN_KEY[card.warn]!) : card.warn) : null;
   return (
     <div className="chat-viewcard chat-autocard" data-view-kind="app-request" data-state={state}>
       <CardHeader
         glyph="✋"
-        title={`${title} · ${card.appName}`}
+        title={appRequestTitle(card, t)}
         aside={state === 'pending' ? <span className="chat-autocard-state" data-state={tone}>{card.renewal ? t('appreq.expiredChip') : t('appreq.pending')}</span> : undefined}
       />
       {image && <img className="chat-appreq-image" src={image} alt={card.appName} />}
@@ -225,9 +246,9 @@ export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
       {state === 'pending' && (
         <div className="chat-autocard-foot">
           <p className="chat-autocard-note">{t('appreq.once')}</p>
-          <button type="button" className="chat-btn pill" disabled={busy} onClick={() => { void act('reject'); }}>{t('appreq.reject')}</button>
+          <button type="button" className="chat-btn pill" disabled={busy || !armed} onClick={() => { void act('reject'); }}>{t('appreq.reject')}</button>
           {failure !== 'refused' && (
-            <button type="button" className="chat-btn pill primary" disabled={busy} onClick={() => { void act('approve'); }}>{t('appreq.approve')}</button>
+            <button type="button" className="chat-btn pill primary" disabled={busy || !armed} onClick={() => { void act('approve'); }}>{t('appreq.approve')}</button>
           )}
         </div>
       )}
