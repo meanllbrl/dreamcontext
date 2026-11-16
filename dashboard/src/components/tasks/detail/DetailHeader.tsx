@@ -7,6 +7,8 @@ import { GiveToAgentMenu } from './GiveToAgentMenu';
 import { OpenInMainApp, useEmbed } from '../../embed/embedMode';
 import { ObjectionDialog } from './ObjectionDialog';
 import './ObjectionDialog.css';
+import { CopySlugButton } from '../CopySlugButton';
+import '../TaskDeleteDialog.css';
 
 /**
  * Why the task was opened (approved draft 1): who opened it, when, and on what basis, with
@@ -139,13 +141,72 @@ function ObjectionBox({ task }: { task: Task }) {
 }
 
 /**
+ * The header's ⋯ menu. Delete lives here, red, away from the primary buttons (owner,
+ * 2026-11-16); the item only opens the confirmation dialog, it never deletes by itself.
+ */
+function MoreMenu({ onDelete }: { onDelete: () => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setOpen(false);
+      btnRef.current?.focus();
+    };
+    ref.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    document.addEventListener('pointerdown', down, true);
+    window.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true); };
+  }, [open]);
+  return (
+    <span className="detail-more" ref={ref}>
+      <button
+        ref={btnRef}
+        type="button"
+        className="detail-icon-btn"
+        data-testid="task-more"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t('tasks.approve.more')}
+        title={t('tasks.approve.more')}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden><circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" /></svg>
+      </button>
+      {open && (
+        <span className="detail-more-menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            className="detail-more-item detail-more-item--danger"
+            data-testid="task-more-delete"
+            onClick={() => { setOpen(false); onDelete(); }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+            {t('tasks.delete.menu')}
+          </button>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
  * The drawer's header: a crumb (the feature, or for a subtask "↑ parent · n/m", which opens the
  * parent), the title (editable in place: Enter or blur saves, Esc reverts), why the task was
  * opened with "Object to this task", the objection box, "Give to agent", fullscreen and close.
  */
 export function DetailHeader({
-  task, allTasks, featureName, parent, parentProgress, fullScreen, onToggleFullScreen, onClose, onOpenTask, onRename, onError,
+  task, allTasks, featureName, parent, parentProgress, fullScreen, onToggleFullScreen, onClose, onOpenTask, onRename, onError, onDelete,
 }: {
+  /** Opens the delete confirmation (the ⋯ menu's red item). */
+  onDelete?: () => void;
   task: Task;
   /** The board's task list: the objection dialog picks its target from it. */
   allTasks: readonly TaskListItem[];
@@ -179,6 +240,7 @@ export function DetailHeader({
           <span className="detail-crumb-sep" aria-hidden>›</span>
           <span>{parent ? 'Subtask' : 'Task'}</span>
         </div>
+        <div className="detail-title-row">
         <h2
           className="detail-title"
           contentEditable={!embed}
@@ -199,9 +261,12 @@ export function DetailHeader({
         >
           {task.name}
         </h2>
+        <CopySlugButton slug={task.slug} />
+        </div>
       </div>
       <div className="detail-header-actions">
         {!embed && <GiveToAgentMenu task={task} onError={onError} />}
+        {onDelete && <MoreMenu onDelete={onDelete} />}
         <button
           type="button"
           className="detail-icon-btn"
