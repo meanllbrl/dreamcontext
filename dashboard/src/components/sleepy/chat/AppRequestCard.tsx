@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { useOwnerCardT } from '../../../context/I18nContext';
@@ -26,6 +26,27 @@ const WARN_KEY: Record<string, string> = {
   'Bu güncelleme app\'in yapabileceklerini değiştiriyor.': 'appreq.warn.permissions',
   'Bu davet tanımadığın bir GitHub hesabından geliyor.': 'appreq.warn.unknownInviter',
 };
+
+/** The publish card's "Geçirilecek" rows (`<kind>: <file>[:line] "<term>"`), folded by kind and value:
+ *  display only, every finding is still listed under the one toggle and the approval covers all of them. */
+const WAIVE_LABEL = 'Geçirilecek';
+const WAIVE_RE = /^(.+?): (.+?)(?::(\d+))? "(.*)"$/;
+interface WaivedGroup { kind: string; term: string; where: string[] }
+function groupWaived(lines: readonly Line[]): { groups: WaivedGroup[]; rest: Line[] } {
+  const groups: WaivedGroup[] = [];
+  const rest: Line[] = [];
+  let slot = -1;
+  for (const l of lines) {
+    const m = l.label === WAIVE_LABEL && !l.key ? WAIVE_RE.exec(l.value) : null;
+    if (!m) { rest.push(l); continue; }
+    const [, kind, file, no, term] = m as unknown as [string, string, string, string | undefined, string];
+    if (slot < 0) slot = rest.length;
+    let g = groups.find((x) => x.kind === kind && x.term === term);
+    if (!g) { g = { kind, term, where: [] }; groups.push(g); }
+    g.where.push(no ? `${file}:${no}` : file);
+  }
+  return { groups, rest: slot < 0 ? rest : [...rest.slice(0, slot), { label: '\u0000waived', value: '' }, ...rest.slice(slot)] };
+}
 
 /** Polls while the work is still moving: waiting, handed over, or running. */
 const MOVING: ReadonlySet<RequestState> = new Set(['pending', 'approved', 'running']);
@@ -157,7 +178,29 @@ export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
       <dd>{value(l)}</dd>
     </div>
   );
-  const main = card.lines.filter((l) => !l.detail);
+  const { groups: waived, rest: shownLines } = groupWaived(card.lines);
+  const waivedRows = (at: number) => (
+    <Fragment key={`waived-${at}`}>
+      {waived.map((g, i) => (
+        <div key={i} className="chat-appreq-line" data-tone="warn">
+          <dt>{WAIVE_LABEL}</dt>
+          <dd>{g.kind} &quot;{g.term}&quot; · {say('appreq.waived.count', { n: String(g.where.length) })}</dd>
+        </div>
+      ))}
+      <div className="chat-appreq-line chat-appreq-waived">
+        <dt />
+        <dd>
+          <details className="chat-appreq-details">
+            <summary>{t('appreq.waived.show')}</summary>
+            <ul className="chat-appreq-waivedlist">
+              {waived.flatMap((g, i) => g.where.map((w, j) => <li key={`${i}-${j}`}>{w} <span>&quot;{g.term}&quot;</span></li>))}
+            </ul>
+          </details>
+        </dd>
+      </div>
+    </Fragment>
+  );
+  const main = shownLines.filter((l) => !l.detail);
   const details = card.lines.filter((l) => l.detail);
   const title = TITLE_KEY[card.title] ? t(TITLE_KEY[card.title]!) : card.title;
   const warn = card.warn ? (WARN_KEY[card.warn] ? t(WARN_KEY[card.warn]!) : card.warn) : null;
@@ -169,7 +212,7 @@ export function AppRequestCard({ spec, report, where = 'chat', onDecided }: {
         aside={state === 'pending' ? <span className="chat-autocard-state" data-state={tone}>{card.renewal ? t('appreq.expiredChip') : t('appreq.pending')}</span> : undefined}
       />
       {image && <img className="chat-appreq-image" src={image} alt={card.appName} />}
-      <dl className="chat-autocard-facts">{main.map(row)}</dl>
+      <dl className="chat-autocard-facts">{main.map((l, i) => (l.label === '\u0000waived' ? waivedRows(i) : row(l, i)))}</dl>
       {details.length > 0 && (
         <details className="chat-appreq-details">
           <summary>{t('appreq.details')}</summary>
