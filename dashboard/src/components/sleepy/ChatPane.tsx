@@ -1,3 +1,4 @@
+import { appendActionText } from './chat/appendActionText';
 import { useEmbed } from '../embed/embedMode';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
@@ -2181,8 +2182,14 @@ export function ChatPane({
         void revealPath(api, action.path!).then((err) => { if (err) handleOpenFile(action.path!); });
         break;
       case 'ask':
-        session.sendText(action.text!);
-        session.focus();
+        {
+          // A numbered line per button, never glued on (appendActionText). Only the new tail is
+          // appended: sendText adds to the draft, so a repeated button adds nothing.
+          const cur = session.getModel().draft;
+          const next = appendActionText(cur, action.text!);
+          if (next.startsWith(cur) && next.length > cur.length) session.sendText(next.slice(cur.length));
+          session.focus();
+        }
         break;
       case 'url':
         void openExternalUrl(action.url!);

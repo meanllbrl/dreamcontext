@@ -800,7 +800,12 @@ export function Composer({
       // any history walk in progress is over — its stash describes a draft that no longer
       // exists, and ↓ restoring it would throw the new text away.
       setNavBoth(NO_HISTORY_NAV);
-      taRef.current?.focus();
+      const ta = taRef.current;
+      if (ta) {
+        ta.focus();
+        // The caret follows an external append to the end of the text.
+        requestAnimationFrame(() => { try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch { /* detached */ } });
+      }
     }
   }, [session, draftEpoch]);
 
