@@ -554,6 +554,10 @@
 .chat-autocard-facts .chat-appreq-line[data-tone='warn'] dd { color: var(--color-warning-ink); }
 .chat-autocard-facts .chat-appreq-line[data-tone='bad'] dd { color: var(--color-error-ink); font-weight: var(--font-weight-semibold); }
 
+/* The folded "Geçirilecek" findings: one toggle, a compact list inside. */
+.chat-appreq-waivedlist { margin: var(--space-1) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); font-family: var(--font-mono, monospace); color: var(--color-warning-ink); overflow-wrap: anywhere; }
+.chat-appreq-waivedlist li span { color: var(--color-text-tertiary); }
+
 /* app-ux-genel K5/K9: an approval card's and a key card's technical lines, folded. */
 .chat-appreq-details,
 .chat-secretcard-details { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
