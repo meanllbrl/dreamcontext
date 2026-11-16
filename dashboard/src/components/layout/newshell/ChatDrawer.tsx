@@ -315,36 +315,11 @@ export function ChatDrawer(p: ChatDrawerProps) {
               {/* Over the row's end on hover or keyboard focus (always on a finger): "+" opens a new Claude
                   window at once (a member's window: the chevron on New chat, or the Team rows), "⋯" the project's menu. */}
               <span className="ns-dr-acts">
-                {/* The eye beside "+" (owner 2026-11-14): one click hides the project, or, in the
-                    Hidden group, shows it again. */}
-                {!p.device && (hiddenSet.has(row.name) ? p.onShowProject : p.onHideProject) && (
-                  hiddenSet.has(row.name) ? (
-                    <button type="button" className="ns-dr-act ns-dr-hide" aria-label={`${t('shell.drawer.showProject')}: ${row.name}`} title={t('shell.drawer.showProject')}
-                      data-testid="drawer-project-show" onClick={(e) => { e.stopPropagation(); p.onShowProject?.(row.name); }}>
-                      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /></svg>
-                    </button>
-                  ) : (
-                    <button type="button" className="ns-dr-act ns-dr-hide" aria-label={`${t('shell.drawer.hideProject')}: ${row.name}`} title={t('shell.drawer.hideProject')}
-                      data-testid="drawer-project-hide" onClick={(e) => { e.stopPropagation(); p.onHideProject?.(row.name); }}>
-                      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /><path d="M2.8 13.2L13.2 2.8" /></svg>
-                    </button>
-                  )
-                )}
                 <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`} title={t('shell.drawer.newWindow')}
                   data-testid="drawer-project-add"
                   onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>
                   <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
                 </button>
-                {/* A member's window (r8-07): the chevron beside "+", where the New window row used to sit.
-                    Gated on the members only: the model's `new-chat` child exists just while a project has no
-                    chat, and the picker must stay reachable once it has one. */}
-                {newChatMembers(row).length > 0 && (
-                  <button type="button" className="ns-dr-act ns-dr-newchat-menu" data-testid="new-chat-menu" aria-haspopup="menu"
-                    aria-label={`${t('drawer.newChat.menu')}: ${row.name}`} title={t('drawer.newChat.menu')}
-                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
-                    <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
-                  </button>
-                )}
                 <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
                   data-testid="drawer-project-more" aria-haspopup="menu"
                   onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'project', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
@@ -655,6 +630,16 @@ export function ChatDrawer(p: ChatDrawerProps) {
               <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onMove(menu.name!, 1); }}>
                 {t('shell.drawer.moveDown')}<kbd>⌥↓</kbd>
               </button>
+              {/* The member picker (it was the chevron beside "+", owner 2026-11-16): one item, same list. */}
+              {(() => {
+                const r = p.rows.find((x) => x.name === menu.name);
+                return r && newChatMembers(r).length > 0 ? (
+                  <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-newchat-item" aria-haspopup="menu"
+                    onClick={() => { setMenu({ kind: 'new-chat', name: menu.name, x: menu.x, y: menu.y }); }}>
+                    {t('drawer.newChat.menu')}
+                  </button>
+                ) : null;
+              })()}
               {!p.device && (
               <>
               <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-edit"
