@@ -159,14 +159,17 @@ try {
   process.stdout.write(`\n== claude processes started ==\n${starts.map((l) => {
     const a = l.split(' ');
     const at = (f) => { const i = a.indexOf(f); return i >= 0 ? a[i + 1] : '-'; };
-    return `  resume=${at('--resume').slice(0, 8)} session-id=${at('--session-id').slice(0, 8)} permission=${at('--permission-mode')} model=${at('--model')}`;
+    return `  resume=${at('--resume').slice(0, 8)} session-id=${at('--session-id').slice(0, 8)} permission=${at('--permission-mode')} model=${at('--model')} ${a[a.length - 1]}`;
   }).join('\n') || '  (none)'}\n`);
   process.stdout.write(`\n== turns the stand-in claude took ==\n${read(join(V, 'claude-turns.log')) || '  (none)'}\n`);
   process.stdout.write(`\n== ~/.dreamcontext/logs/window-open.log ==\n${read(join(home, '.dreamcontext', 'logs', 'window-open.log')) || '  (empty)'}\n`);
   const dup = ['Uyandım: Alo', 'Uyandım: Selam', 'Uyandım: hey', 'Uyandım: Ege orada mısın?'].filter((w) => [...texts('111111'), ...texts('222222')].filter((t) => t.includes(w)).length > 1);
   process.stdout.write(`\nRESULT: ${ok ? `answered on Telegram in ${tookS}s` : `NOT answered within ${WAIT_S}s`}${dup.length ? `; DUPLICATES: ${dup.join(', ')}` : ''}\n`);
   stop();
-  const pass = EXPECT === 'answered' ? ok && dup.length === 0 && plainTab.startsWith('refused') : !ok;
+  // A Super the server started must still reach its window verbs (super delegate, answers).
+  const verbs = starts.every((l) => l.endsWith('window-verbs=yes'));
+  if (EXPECT === 'answered') process.stdout.write(`window verbs in every started Super: ${verbs ? 'yes' : 'NO'}\n`);
+  const pass = EXPECT === 'answered' ? ok && dup.length === 0 && plainTab.startsWith('refused') && verbs : !ok;
   process.stdout.write(`${pass ? 'PASS' : 'FAIL'} (expected ${EXPECT})\n`);
   // The server may still be flushing a file as it goes: the scratch is removed best-effort.
   if (pass) { await sleep(1500); try { rmSync(scratch, { recursive: true, force: true }); } catch { /* left in tmp */ } }

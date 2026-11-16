@@ -39,6 +39,7 @@ import { startSuperSchedule } from './super-schedule.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
+import { setWindowControlBase } from '../lib/window-control.js';
 import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
@@ -1631,7 +1632,13 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // The dashboard's own port: no web card may load it (T1). Released when it closes.
       {
         const a = server.address();
-        if (a && typeof a === 'object') server.once('close', claimOwnedPort(a.port));
+        if (a && typeof a === 'object') {
+          server.once('close', claimOwnedPort(a.port));
+          // Where a chat's CLI calls the window verbs: known from the listen on, not only from a
+          // window's first socket, so a Super the server starts with no window (headless-super.ts:
+          // Telegram while the app's window is hidden) gets its window token like any other.
+          setWindowControlBase(`http://127.0.0.1:${a.port}`);
+        }
       }
       const shownHost = host === '127.0.0.1' ? 'localhost' : host;
       const url = `http://${shownHost}:${port}`;

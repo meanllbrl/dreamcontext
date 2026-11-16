@@ -10,7 +10,7 @@ import path from 'node:path';
 
 const V = path.join(process.env.HOME || '', '.verify');
 const argv = process.argv.slice(2);
-try { fs.mkdirSync(V, { recursive: true }); fs.appendFileSync(path.join(V, 'claude.log'), `${new Date().toISOString()} ${argv.join(' ')}\n`); } catch { /* best-effort */ }
+try { fs.mkdirSync(V, { recursive: true }); fs.appendFileSync(path.join(V, 'claude.log'), `${new Date().toISOString()} ${argv.join(' ')} window-verbs=${process.env.DREAMCONTEXT_WINDOW_URL && process.env.DREAMCONTEXT_WINDOW_TOKEN ? 'yes' : 'no'}\n`); } catch { /* best-effort */ }
 if (argv[0] === '--version' || argv[0] === '-v') { process.stdout.write('2.1.300 (Claude Code)\n'); process.exit(0); }
 if (argv[0] === 'auth') { process.stdout.write(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty' })); process.exit(0); }
 if (!argv.includes('--input-format')) process.exit(0);

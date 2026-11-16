@@ -16,7 +16,7 @@ import { TelegramHub, keyOf } from '../../src/server/telegram/hub.js';
 import * as reg from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { bindingDir, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
+import { bindingDir, readBinding, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { _openEventTurnForTests, markSuperEventTurn, superTurnEnded } from '../../src/lib/super/inbox.js';
 import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
@@ -558,6 +558,21 @@ describe('the Super target', () => {
       expect(after.every((e) => e.msg === undefined)).toBe(true);
       await new Promise((r) => setTimeout(r, 100));
       expect(sent).toHaveLength(2);
+    });
+
+    it('a re-pair (or token refresh) of the same bot while his message waits: the new binding delivers it, the old wait does not, once in all', async () => {
+      Object.assign(deps(), { injectorRetryMs: 50 });
+      tg.push(TOKEN, textUpdate(OWNER, 'tekrar'));
+      await vi.waitFor(() => expect(tg.texts()).toContain(HOLDING), { timeout: 5000 });
+      const { wake, sent } = headless();
+      Object.assign(deps(), { wakeHeadless: wake });
+      const r = readBinding(scopeOfContextRoot(root), 'super', home);
+      if (!r.ok) throw new Error('no binding');
+      hub.activate(scopeOfContextRoot(root), 'super', r.binding);
+      await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+      expect(parseTelegramPrefix(sent[0]).body).toBe('tekrar');
+      await new Promise((res) => setTimeout(res, 400));
+      expect(sent).toHaveLength(1);
     });
 
     it('a message already handed to a Super that then died is not replayed (it could arrive twice): told, as before', async () => {

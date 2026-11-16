@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -114,6 +114,35 @@ describe('wakeSuperHeadless', () => {
     // Off: the record holds no live Super for the hub to wake (the hub says "Super kapalı" before).
     expect(await wakeSuperHeadless({ contextRoot: root, sessionId: randomUUID(), member: null, waitMs: 200 })).toBe('refused');
     expect(spawned).toHaveLength(0);
+  });
+
+  it("main's Super turned off (its session still recorded) is never started, and the owner's own chat on that old conversation is left alone", async () => {
+    await superOn(SID, false);
+    const cut = vi.fn(async () => { unregisterLiveChat(mine); });
+    const mine = { conversationId: SID, projectRoot: project, busy: false, turnStartedAt: null, lastTurnEndedAt: null, adopt: () => false, supersede: () => () => {}, cut };
+    registerLiveChat(mine);
+    try {
+      expect(await wakeSuperHeadless({ contextRoot: root, sessionId: SID, member: null, waitMs: 200 })).toBe('refused');
+      expect(cut).not.toHaveBeenCalled();
+      expect(spawned).toHaveLength(0);
+    } finally { unregisterLiveChat(mine); }
+  });
+
+  it('a plain chat holding the conversation in the middle of a turn is left to finish (refused now, tried again later)', async () => {
+    const cut = vi.fn(async () => { unregisterLiveChat(busy); });
+    const busy = { conversationId: SID, projectRoot: project, busy: true, turnStartedAt: Date.now(), lastTurnEndedAt: null, adopt: () => false, supersede: () => () => {}, cut };
+    registerLiveChat(busy);
+    try {
+      expect(await wakeSuperHeadless({ contextRoot: root, sessionId: SID, member: null, waitMs: 200 })).toBe('refused');
+      expect(cut).not.toHaveBeenCalled();
+      expect(spawned).toHaveLength(0);
+    } finally { unregisterLiveChat(busy); }
+  });
+
+  it("the server knows the window-verb base from its listen on, so a Super it starts before any window connects still gets its window token", () => {
+    const index = readFileSync(new URL('../../src/server/index.ts', import.meta.url), 'utf-8');
+    const listening = index.slice(index.indexOf('const onListening = () => {'), index.indexOf('startTelegramHub()'));
+    expect(listening).toMatch(/setWindowControlBase\(`http:\/\/127\.0\.0\.1:\$\{a\.port\}`\);/);
   });
 
   it("a member whose Super is off or unapproved is refused (the window's own gate)", async () => {

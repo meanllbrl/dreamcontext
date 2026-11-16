@@ -19,6 +19,7 @@ import { EventEmitter } from 'node:events';
 import { basename, dirname, resolve } from 'node:path';
 import { chatInjector, onChatInjector } from '../lib/assistant/chat-registry.js';
 import { getAgent } from '../lib/agents/store.js';
+import { superEntry } from '../lib/super/store.js';
 import { appendOpenLog } from '../lib/window-open-log.js';
 import { claudeConversationExists } from './routes/agent-spawn-shared.js';
 import { findLiveChat, stopLiveChat } from './routes/agent-chat-live.js';
@@ -125,10 +126,15 @@ async function startOnce(o: HeadlessSuperOpts): Promise<HeadlessWake> {
   const { superUpgradeRefusal, startChatSession } = await import('./routes/agent-chat.js');
   const refused = (gateOverride ?? superUpgradeRefusal)({ mode: 'super', phone: false, contextRoot, resumeId: o.sessionId, sessionId: '', chatAgent: o.member, home: o.home });
   if (refused) { appendOpenLog('telegram_headless_refused', { session: short, status: refused }, o.home); return 'refused'; }
+  // Main's Super turned off keeps its session recorded (the window just never opens it while off):
+  // the server never starts it then either, and its old conversation is the owner's again.
+  if (!o.member && !superEntry(contextRoot, 'main').enabled) { appendOpenLog('telegram_headless_refused', { session: short, status: 'off' }, o.home); return 'refused'; }
   const holder = findLiveChat(o.sessionId);
   if (holder) {
     // A Super process without its injector is mid-respawn or leaving: the caller waits for it.
     if (holder.mirror) return chatInjector(o.sessionId) ? 'live' : 'refused';
+    // A plain chat in the middle of a turn is left to finish it: the caller tries again later.
+    if (holder.busy) { appendOpenLog('telegram_headless_refused', { session: short, status: 'plain_busy' }, o.home); return 'refused'; }
     appendOpenLog('telegram_headless_plain_holder', { session: short }, o.home);
     const gone = await stopLiveChat(o.sessionId, { graceMs: 2_000 }).catch(() => false);
     if (!gone) { appendOpenLog('telegram_headless_refused', { session: short, status: 'held' }, o.home); return 'refused'; }

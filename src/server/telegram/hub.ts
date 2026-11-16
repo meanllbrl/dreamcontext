@@ -1202,7 +1202,9 @@ export class TelegramHub implements TelegramHubApi {
       inj = await this.registeredWithin(sessionId, Math.min(retryMs, Math.max(0, spell.deadline - this.now())));
       if (!inj && this.serving(ab) && this.now() < spell.deadline) inj = await this.waitInjector(ab, sessionId);
     }
-    if (inj) { this.holding.delete(ab.key); return inj; }
+    // Served only while this binding is still the live one: a re-pair or token refresh meanwhile
+    // replays the message on the new binding (recoverJournal), so this chain must not write it too.
+    if (inj && this.serving(ab)) { this.holding.delete(ab.key); return inj; }
     if (!this.serving(ab)) { if (this.holding.get(ab.key) === spell) this.holding.delete(ab.key); return 'stopped'; }
     if (spell && !spell.reported) { spell.reported = true; await this.notice(ab, 'warn', LINES.heldExpired, true); }
     return 'expired';
