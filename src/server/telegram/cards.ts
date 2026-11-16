@@ -149,10 +149,11 @@ function fileMedia(file: UploadFile, ext: string, title: string): MediaItem | nu
 export async function reportPdf(ctx: CardContext, ref: string, title: string): Promise<MediaItem | null> {
   const f = readProjectFile(ctx, ref);
   if (!f.ok || (f.ext !== '.html' && f.ext !== '.htm')) return null;
-  const pdf = await (ctx.renderPdf ?? renderPagePdf)(pageWithOwnAssets(ctx, f.file.data.toString('utf8'), f.rel));
+  const page = pageWithOwnAssets(ctx, f.file.data.toString('utf8'), f.rel);
+  const pdf = await (ctx.renderPdf ?? renderPagePdf)(page);
   if (!pdf) return null;
   const name = `${title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').trim().slice(0, 80) || 'sayfa'}.pdf`;
-  return { kind: 'document', file: { name, data: pdf, contentType: 'application/pdf' }, title };
+  return { kind: 'document', file: { name, data: pdf, contentType: 'application/pdf' }, title, source: page };
 }
 
 function whiteboardLine(ctx: CardContext, c: SuperContainer, title: string): string {
