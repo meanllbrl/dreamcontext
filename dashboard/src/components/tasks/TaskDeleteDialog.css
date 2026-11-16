@@ -1,0 +1,117 @@
+/* The task delete dialog and the slug copy button (owner, 2026-11-16). The modal shell,
+   fields and the ghost button are the shared ones in TaskCreateModal.css. */
+
+.task-delete-dialog { max-width: 480px; }
+.task-delete-body { display: flex; flex-direction: column; gap: var(--space-3); }
+.task-delete-scope { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.task-delete-subtasks {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-6);
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-text-secondary);
+}
+.task-delete-remote {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-ink);
+  font-size: var(--font-size-sm);
+}
+.task-delete-undo { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.task-delete-muted { font-weight: var(--font-weight-normal); color: var(--color-text-tertiary); }
+.task-delete-error { margin: 0; }
+
+/* The confirm: error ink on the error tint, AA in both themes (6.1:1 light, 5.1:1 dark),
+   scoped to this dialog so no other button changes. */
+.task-delete-confirm {
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink);
+  border: 1px solid var(--color-error-ink);
+  font-weight: var(--font-weight-semibold);
+}
+/* Hover keeps the resting fill (ink on tint stays 6.1:1 light, 5.1:1 dark) and thickens the edge. */
+.task-delete-confirm:hover:not(:disabled) { box-shadow: 0 0 0 1px var(--color-error-ink); }
+.task-delete-confirm:disabled { opacity: 0.6; cursor: default; }
+
+/* The copy icon: quiet until hovered, a green check with "Copied" for 1.5 s after a click. */
+.task-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  height: 24px;
+  min-width: 24px;
+  padding: 0 var(--space-1);
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+}
+.task-copy-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.task-copy-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.task-copy-btn--done, .task-copy-btn--done:hover { color: var(--color-success-ink, var(--color-accent)); }
+.task-copy-btn-text { font-weight: var(--font-weight-semibold); white-space: nowrap; }
+
+/* On a board card and a subtask row the icon shows on hover (or while it says Copied). */
+.task-copy-btn--hover { opacity: 0; transition: opacity .12s; }
+.bd-card:hover > div > .task-copy-btn--hover,
+.bd-sub-line:hover .task-copy-btn--hover,
+.dsub-line:hover .task-copy-btn--hover,
+.task-copy-btn--hover:focus-visible,
+.task-copy-btn--hover.task-copy-btn--done { opacity: 1; }
+@media (hover: none) { .task-copy-btn--hover { opacity: 1; } }
+.bd-sub-line, .dsub-line { display: flex; align-items: center; gap: 2px; }
+.bd-sub-line > .bd-sub-row, .dsub-line > .dsub-row { flex: 1; min-width: 0; }
+
+/* The header's title row: the copy icon sits right after the title. */
+.detail-title-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.detail-title-row .detail-title { min-width: 0; }
+
+/* The header's ⋯ menu (Delete lives here, never beside the primary buttons). */
+.detail-more { position: relative; display: inline-flex; }
+.detail-more-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+.detail-more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+.detail-more-item:hover, .detail-more-item:focus-visible { background: var(--color-bg-secondary); outline: none; }
+.detail-more-item--danger { color: var(--color-error-ink); }
+.detail-more-item--danger:hover, .detail-more-item--danger:focus-visible { background: var(--color-error-subtle); }
+
+.task-copy-btn--failed, .task-copy-btn--failed:hover { color: var(--color-error-ink); }
+.task-copy-btn--hover.task-copy-btn--failed { opacity: 1; }
+/* The live region stays mounted; empty, it takes no room. */
+.task-copy-btn-text:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

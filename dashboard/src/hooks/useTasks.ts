@@ -72,6 +72,8 @@ export interface Task {
   agent_job?: AgentJob | AgentJobDetail | null;
   /** Who moved its status, newest first. Single-task read only. */
   status_history?: StatusHistoryRow[];
+  /** The remote a delete reaches: null on the local backend; `linked` = this task is on it. Single-task read only. */
+  remote?: { backend: string; linked: boolean } | null;
 }
 
 /** Mirrors `AgentTaskState` (`src/lib/agents/task-jobs.ts`). */
@@ -516,9 +518,17 @@ export function useDeleteTask() {
   const queryClient = useQueryClient();
   const api = useApi();
   return useMutation({
-    mutationFn: (slug: string) => api.del<{ success: boolean }>(`/tasks/${slug}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    // A parent goes with its subtasks: `children` is the list the owner was SHOWN, and the server
+    // deletes exactly that set or answers 409 with the live one. `reason` lands on every tombstone.
+    mutationFn: ({ slug, reason, children }: { slug: string; reason?: string; children: string[] }) =>
+      api.del<{ success: boolean; deleted: string[]; remote: string | null }>(`/tasks/${encodeURIComponent(slug)}`, { children, ...(reason ? { reason } : {}) }),
+    // On a failure too: a partial delete removed some subtasks, and a 409 means the list moved.
+    onSettled: (data) => {
+      // The deleted tasks' own reads are dropped, never refetched: the open drawer and dialog are
+      // still mounted at this point and would ask for a task that is gone (a 404).
+      const gone = new Set(data?.deleted ?? []);
+      queryClient.removeQueries({ queryKey: ['tasks'], predicate: (q) => q.queryKey.length === 2 && gone.has(String(q.queryKey[1])) });
+      queryClient.invalidateQueries({ queryKey: ['tasks'], predicate: (q) => !(q.queryKey.length === 2 && gone.has(String(q.queryKey[1]))) });
       // A deleted task drops out of any objective's rollup — refresh the roadmap.
       queryClient.invalidateQueries({ queryKey: ['roadmap'] });
     },
