@@ -111,9 +111,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
   // A menu takes focus on its first item, so the keyboard can use it (⌘N is often pressed from
   // the composer); ↑ ↓ Home End move between items.
   const menuOpen = !!menu;
+  const menuKind = menu?.kind;
   useEffect(() => {
     if (menuOpen) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
-  }, [menuOpen]);
+  }, [menuOpen, menuKind]); // the kind too: the project menu swaps to the member list in place
   const onMenuKey = (e: ReactKeyboardEvent) => {
     const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []);
     if (!items.length) return;
