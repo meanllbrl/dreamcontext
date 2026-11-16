@@ -135,56 +135,6 @@ export class Raster {
     }
   }
 
-  /**
-   * Paint a picture into the pixel box `box` (clipped to the canvas): for each canvas pixel,
-   * `toSource` gives the point of `bmp` it shows (or null outside the picture), sampled
-   * bilinearly and blended by the picture's own alpha times `alpha`.
-   */
-  drawBitmap(
-    bmp: { width: number; height: number; data: Uint8Array },
-    box: { x0: number; y0: number; x1: number; y1: number },
-    toSource: (px: number, py: number) => Pt | null,
-    alpha = 1,
-  ): void {
-    if (alpha <= 0) return;
-    const x0 = Math.max(0, Math.floor(box.x0));
-    const y0 = Math.max(0, Math.floor(box.y0));
-    const x1 = Math.min(this.width, Math.ceil(box.x1));
-    const y1 = Math.min(this.height, Math.ceil(box.y1));
-    const { width: bw, height: bh, data: src } = bmp;
-    for (let py = y0; py < y1; py++) {
-      for (let px = x0; px < x1; px++) {
-        const s = toSource(px + 0.5, py + 0.5);
-        if (!s) continue;
-        const sx = s[0] - 0.5;
-        const sy = s[1] - 0.5;
-        if (sx < -0.5 || sy < -0.5 || sx > bw - 0.5 || sy > bh - 0.5) continue;
-        const ix = Math.max(0, Math.min(bw - 1, Math.floor(sx)));
-        const iy = Math.max(0, Math.min(bh - 1, Math.floor(sy)));
-        const jx = Math.min(bw - 1, ix + 1);
-        const jy = Math.min(bh - 1, iy + 1);
-        const fx = Math.max(0, Math.min(1, sx - ix));
-        const fy = Math.max(0, Math.min(1, sy - iy));
-        const a00 = (iy * bw + ix) * 4;
-        const a10 = (iy * bw + jx) * 4;
-        const a01 = (jy * bw + ix) * 4;
-        const a11 = (jy * bw + jx) * 4;
-        const w00 = (1 - fx) * (1 - fy) * src[a00 + 3];
-        const w10 = fx * (1 - fy) * src[a10 + 3];
-        const w01 = (1 - fx) * fy * src[a01 + 3];
-        const w11 = fx * fy * src[a11 + 3];
-        const wsum = w00 + w10 + w01 + w11;
-        if (wsum <= 0) continue;
-        const a = (wsum / 255) * alpha;
-        const i = (py * this.width + px) * 3;
-        for (let c = 0; c < 3; c++) {
-          const v = (src[a00 + c] * w00 + src[a10 + c] * w10 + src[a01 + c] * w01 + src[a11 + c] * w11) / wsum;
-          this.data[i + c] = Math.round(this.data[i + c] * (1 - a) + v * a);
-        }
-      }
-    }
-  }
-
   /** The canvas as a PNG file (8-bit RGB, no interlace); `text` becomes tEXt chunks. */
   toPng(text: Readonly<Record<string, string>> = {}): Buffer {
     const stride = this.width * 3;
@@ -231,6 +181,18 @@ function chunk(type: string, body: Buffer): Buffer {
   const crc = Buffer.alloc(4);
   crc.writeUInt32BE(crc32(typed), 0);
   return Buffer.concat([len, typed, crc]);
+}
+
+/**
+ * `png` with `text` added as tEXt chunks right after its IHDR (a PNG any encoder wrote, e.g. a
+ * browser screenshot). Not a PNG: returned unchanged.
+ */
+export function withPngText(png: Buffer, text: Readonly<Record<string, string>>): Buffer {
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (png.length < 33 || sig.some((b, i) => png[i] !== b) || png.toString('latin1', 12, 16) !== 'IHDR') return png;
+  const end = 8 + 12 + png.readUInt32BE(8);
+  const chunks = Object.entries(text).map(([k, v]) => chunk('tEXt', Buffer.concat([Buffer.from(k, 'latin1'), Buffer.from([0]), Buffer.from(v, 'latin1')])));
+  return Buffer.concat([png.subarray(0, end), ...chunks, png.subarray(end)]);
 }
 
 // ─── shapes as polygons ───────────────────────────────────────────────────

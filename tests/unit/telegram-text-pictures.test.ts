@@ -18,6 +18,8 @@ import { cardOut, type CardContext } from '../../src/server/telegram/cards.js';
 import { superMediaRoots } from '../../src/server/telegram/media-roots.js';
 import type { SuperContainer } from '../../src/lib/super/types.js';
 import { renderScene } from '../../src/lib/whiteboards/render.js';
+import { withPngText } from '../../src/lib/whiteboards/raster.js';
+import { RENDER_KIND_KEY } from '../../src/lib/whiteboards/render-mark.js';
 import { uploadTiming } from '../../src/server/telegram/pictures.js';
 
 /** A real PNG header (signature + IHDR) of the given size. */
@@ -317,7 +319,8 @@ describe('a whiteboard exported section by section (owner 2026-11-17)', () => {
     try {
       const board = [{ id: 'r', type: 'rectangle', x: 0, y: 0, width: 40, height: 40, version: 1, isDeleted: false, opacity: 100, index: 'a0' }] as never;
       const layout = put(join(shots, 'pano.png'), renderScene(board, { region: { x: 0, y: 0, w: 50, h: 50 }, scale: 1 }).png);
-      const real = put(join(shots, 'pano-export.png'), renderScene(board, { region: { x: 0, y: 0, w: 50, h: 50 }, scale: 1, pictures: () => null }).png);
+      // An export is a browser shot marked `export` (board-shots.ts).
+      const real = put(join(shots, 'pano-export.png'), withPngText(png(), { [RENDER_KIND_KEY]: 'export' }));
       await sendAnswerBlocks(hub, ab, `![pano](${layout})\n![bölüm 1](${real})`, 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [shots] });
       expect(bot.hits.map((h) => h.method)).toEqual(['sendMediaGroup']);
       expect(bot.hits[0].body).toContain('1 · Yerleşim taslağı, panonun görüntüsü değil · pano');

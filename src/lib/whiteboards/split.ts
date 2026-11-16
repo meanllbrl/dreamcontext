@@ -221,7 +221,7 @@ const pad = (b: BBox, p = PAD): BBox => ({ x: b.x - p, y: b.y - p, w: b.w + 2 * 
 const within = (b: BBox, r: BBox) => b.x >= r.x && b.y >= r.y && b.x + b.w <= r.x + r.w && b.y + b.h <= r.y + r.h;
 
 /** The board's sections, in reading order, each one readable picture. */
-export function splitBoard(elements: readonly WhiteboardElement[], mode: SplitMode): Section[] {
+export function splitBoard(elements: readonly WhiteboardElement[], mode: SplitMode, opts: { wholeGroups?: boolean } = {}): Section[] {
   const live = liveElements(elements);
   const tile = tileSize(live);
   const boxes = live.map(elementBBox);
@@ -260,7 +260,11 @@ export function splitBoard(elements: readonly WhiteboardElement[], mode: SplitMo
     // (no tag) inside the group is drawn in one of them, never dropped with an empty cell.
     const own = [...g.boxes];
     for (const l of loose) if (within(l.box, g.box)) { ids.add(l.id); claimed.add(l.id); own.push(l.box); }
-    const tiles = g.raw.w <= tile.w * GROUP_SLACK && g.raw.h <= tile.h * GROUP_SLACK ? [g.box] : tileRegion(g.box, own, tile);
+    // `wholeGroups` (export): a section is one picture with its title, text, pictures and
+    // widgets together, trimmed to what it holds (owner, 2026-11-17: a section's picture went to
+    // another image and left a blank band); {@link exportShots} sizes it for the phone.
+    const whole = opts.wholeGroups || (g.raw.w <= tile.w * GROUP_SLACK && g.raw.h <= tile.h * GROUP_SLACK);
+    const tiles = whole ? [pad(unionBBox(own)!, PAD / 2)] : tileRegion(g.box, own, tile);
     tiles.forEach((t, i) => sections.push({ label: tiles.length > 1 ? `${g.label} (${i + 1}/${tiles.length})` : g.label, region: t, ids, ...(g.tag ? { tag: g.tag } : {}) }));
   }
   // What no group holds, in bands after the groups.
@@ -271,4 +275,62 @@ export function splitBoard(elements: readonly WhiteboardElement[], mode: SplitMo
     tileRegion(pad(restBox), rest.map((l) => l.box), tile).forEach((t, i) => sections.push({ label: `other ${i + 1}`, region: t, ids }));
   }
   return sections;
+}
+
+// ─── export sizing ──────────────────────────────────────────────────────────────────────
+
+/** Pixels across an exported picture: what a phone (1170px wide screen) shows 1:1. */
+export const EXPORT_WIDTH = 1170;
+/** Body text under this many pixels at {@link EXPORT_WIDTH} widens the picture (up to {@link EXPORT_MAX_WIDTH})
+ *  so a pinch reads it: ~7pt on a 3x phone at full width. */
+export const EXPORT_MIN_BODY_PX = 22;
+export const EXPORT_MAX_WIDTH = 2340;
+/** A small section is drawn at most this much larger than the board (pictures would blur). */
+export const EXPORT_MAX_UPSCALE = 3;
+/** Telegram sends a photo only when width + height stays under this; a taller section is
+ *  paged at the gaps between its elements. */
+export const PHOTO_MAX_SIDES = 10_000;
+/** The smallest output scale: the canvas draws at scale / 2 (2x shots), and Excalidraw's own
+ *  floor is a zoom of 0.1. */
+export const EXPORT_MIN_SCALE = 0.2;
+
+export interface ExportShot extends Section {
+  /** Output pixels across. */
+  width: number;
+  /** Output pixels down. */
+  height: number;
+}
+
+/**
+ * Each section as one picture: {@link EXPORT_WIDTH} across (wider only when its body text would be
+ * too small, never past {@link EXPORT_MAX_WIDTH}; a small one is not blown up past
+ * {@link EXPORT_MAX_UPSCALE}). A section too tall for one photo is paged down at its gaps; with
+ * `fit` it is shrunk into one instead (the whole board as one overview picture).
+ */
+export function exportShots(elements: readonly WhiteboardElement[], sections: readonly Section[], opts: { fit?: boolean } = {}): ExportShot[] {
+  const live = liveElements(elements);
+  const body = bodyFontSize(live);
+  const out: ExportShot[] = [];
+  for (const s of sections) {
+    const w = Math.max(1, s.region.w);
+    let scale = EXPORT_WIDTH / w;
+    if (body * scale < EXPORT_MIN_BODY_PX) scale = Math.min(EXPORT_MIN_BODY_PX / body, EXPORT_MAX_WIDTH / w);
+    scale = Math.min(scale, EXPORT_MAX_UPSCALE);
+    // `fit` (one overview picture of the whole board): shrunk to one photo, down to the
+    // smallest zoom the canvas draws at ({@link EXPORT_MIN_SCALE}); past that it is paged.
+    if (opts.fit) scale = Math.max(EXPORT_MIN_SCALE, Math.min(scale, (PHOTO_MAX_SIDES * 0.98) / (w + Math.max(1, s.region.h))));
+    const width = Math.max(1, Math.round(w * scale));
+    const height = Math.max(1, Math.round(s.region.h * scale));
+    if (width + height <= PHOTO_MAX_SIDES) { out.push({ ...s, width, height }); continue; }
+    const maxH = ((PHOTO_MAX_SIDES - width) * 0.98) / scale;
+    const mine = live.filter((el) => !s.ids || s.ids.has(String(el.id))).map((el) => thick(elementBBox(el)));
+    const spans = inside(mine, s.region).map((b) => [b.y, b.y + b.h] as Span);
+    const cuts = cutAxis(s.region.y, s.region.y + s.region.h, maxH, spans);
+    const n = cuts.length - 1;
+    for (let i = 0; i < n; i++) {
+      const region = { x: s.region.x, y: cuts[i], w: s.region.w, h: cuts[i + 1] - cuts[i] };
+      out.push({ ...s, label: `${s.label} (${i + 1}/${n})`, region, width, height: Math.max(1, Math.round(region.h * scale)) });
+    }
+  }
+  return out;
 }

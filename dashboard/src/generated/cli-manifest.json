@@ -5408,7 +5408,7 @@
     },
     {
       "path": "whiteboard export",
-      "desc": "The board as it looks, for the owner: its own pictures drawn in, widgets with their last cached content (note text, to-do items, an insight's value). --split cuts a long board into pictures a phone can read, one per tagged group, named frame or band",
+      "desc": "The board as it looks, for the owner: drawn by the app's own renderer in a headless browser (its fonts, its pictures, every widget with its content). --split cuts a long board into phone pictures, one per tagged group or named frame, each section whole",
       "args": [
         "<slug>"
       ],

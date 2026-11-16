@@ -48,8 +48,8 @@ buried labels, long lines or walls of text, and redraw.
 
 `render` is a LAYOUT CHECK for your own eyes (pictures are empty crossed boxes, widgets only
 titles), never the board as it looks. To show the owner a board (Telegram, a card, a report),
-`dreamcontext whiteboard export <board> --split tags --out <folder>` draws its own pictures and
-widgets and cuts a long board into phone-readable pictures; send those.
+`dreamcontext whiteboard export <board> --split tags --out <folder>` draws it with the app's own
+renderer (fonts, pictures, widgets) in a headless browser, one whole picture per section; send those.
 
 ## 5. Where the builder is
 

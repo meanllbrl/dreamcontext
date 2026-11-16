@@ -2,10 +2,8 @@ import { sortElements } from './format.js';
 import { boxesOverlap } from './layout.js';
 import { elementBBox, liveElements, unionBBox, type BBox } from './ops.js';
 import { FONT_ADVANCE, FONT_ROWS, lineRuns } from './pixel-font.js';
-import type { Bitmap } from './png-decode.js';
 import { Raster, ellipsePoly, roundRectPoly, strokePolys, type Pt, type RGB } from './raster.js';
-import { RENDER_KIND_KEY, type RenderKind } from './render-mark.js';
-import type { WidgetFace } from './widget-face.js';
+import { RENDER_KIND_KEY } from './render-mark.js';
 import { widgetPayloadOf, type WhiteboardElement } from './widgets.js';
 
 /**
@@ -18,10 +16,9 @@ import { widgetPayloadOf, type WhiteboardElement } from './widgets.js';
  * their live content; a picture is a placeholder box. Hachure fills are drawn as a light
  * solid fill. It is a layout proof: where things are, what covers what, what fits.
  *
- * `whiteboard export` draws through the same engine with `pictures` and `faces`: each picture
- * from the board's own file, each widget with its last cached content. The PNG records which
- * of the two it is ({@link RENDER_KIND_KEY}), so a layout check is never mistaken for the
- * board's real look further down the line.
+ * The PNG says so in its bytes ({@link RENDER_KIND_KEY} = `layout`), so a layout check is never
+ * mistaken for the board's real look further down the line; `whiteboard export` (board-shots.ts)
+ * draws the real look in the app's own renderer.
  */
 
 export interface RenderOptions {
@@ -31,10 +28,6 @@ export interface RenderOptions {
   scale: number;
   /** A group to outline in red with a label, e.g. the tag just drawn. */
   outline?: { box: BBox; label: string };
-  /** Decoded pictures by file id (export); absent or null: the placeholder box. */
-  pictures?: (fileId: string) => Bitmap | null;
-  /** What a widget shows (export); absent or null: the titled card. */
-  faces?: (el: WhiteboardElement) => WidgetFace | null;
 }
 
 export interface RenderResult {
@@ -114,8 +107,6 @@ interface Ctx {
   r: Raster;
   scale: number;
   region: BBox;
-  pictures?: RenderOptions['pictures'];
-  faces?: RenderOptions['faces'];
 }
 
 /** Board → pixel, rotating around `center` by `angle` first. */
@@ -280,71 +271,6 @@ function drawLinear(ctx: Ctx, el: WhiteboardElement, alpha: number, map: Map2): 
   }
 }
 
-/** Lines wrapped on words to `width` board units at `fontSize` in the pixel font. */
-export function wrapLines(lines: readonly string[], width: number, fontSize: number): string[] {
-  const u = fontSize / 10;
-  const max = Math.max(1, Math.floor((width / u + 1) / FONT_ADVANCE));
-  const out: string[] = [];
-  for (const line of lines) {
-    if (!line.trim()) { out.push(''); continue; }
-    const indent = /^\s*/.exec(line)![0];
-    let cur = '';
-    for (const word of line.trim().split(/\s+/)) {
-      let w = word;
-      while ([...w].length > max) {
-        if (cur) { out.push(cur); cur = ''; }
-        out.push([...w].slice(0, max).join(''));
-        w = [...w].slice(max).join('');
-      }
-      if (!w) continue;
-      const next = cur ? `${cur} ${w}` : `${indent}${w}`;
-      if ([...next].length > max && cur) { out.push(cur); cur = `${indent}${w}`; } else cur = next;
-    }
-    if (cur) out.push(cur);
-  }
-  return out;
-}
-
-/** A widget as the dashboard shows it: title, its grey line, then a value, sparkline or body. */
-function drawFace(ctx: Ctx, face: WidgetFace, box: BBox, alpha: number, map: Map2): void {
-  const pad = 14;
-  const inner = { x: box.x + pad, w: Math.max(1, box.w - 2 * pad) };
-  const bottom = box.y + box.h - pad;
-  let y = box.y + 12;
-  if (face.title) {
-    drawText(ctx, [face.title], { ...inner, y, h: 20 }, { fontSize: 16, color: INK, alpha, fit: 'clip', map });
-    y += 24;
-  }
-  if (face.sub) {
-    drawText(ctx, [face.sub], { ...inner, y, h: 16 }, { fontSize: 12, color: MUTED, alpha, fit: 'clip', map });
-    y += 22;
-  }
-  if (face.value) {
-    const fs = Math.max(16, Math.min(44, (bottom - y) * 0.45));
-    drawText(ctx, [face.value], { ...inner, y, h: fs * 1.25 }, { fontSize: fs, color: INK, alpha, fit: 'squeeze', map });
-    y += fs * 1.35;
-  }
-  if (face.spark && face.spark.length >= 2 && bottom - y >= 24) {
-    const vals = face.spark;
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (const v of vals) { if (v < lo) lo = v; if (v > hi) hi = v; }
-    const span = hi - lo || 1;
-    const h = Math.min(80, bottom - y);
-    const pts: Pt[] = vals.map((v, i) => map([inner.x + (i / (vals.length - 1)) * inner.w, y + h - ((v - lo) / span) * h]));
-    ctx.r.fill(strokePolys(pts, Math.max(1, 2 * ctx.scale)), [25, 113, 194], alpha);
-    y += h + 8;
-  }
-  if (face.lines.length && bottom - y >= 14) {
-    const fs = 13;
-    const lh = fs * 1.35;
-    const room = Math.max(1, Math.floor((bottom - y) / lh));
-    let shown = wrapLines(face.lines, inner.w, fs);
-    if (shown.length > room) shown = [...shown.slice(0, room - 1), '…'];
-    drawText(ctx, shown, { ...inner, y, h: shown.length * lh }, { fontSize: fs, lineHeight: 1.35, color: INK, alpha, fit: 'clip', map });
-  }
-}
-
 /** A widget (or any embed) as a card: its surface, its title, and what it is. */
 function drawCard(ctx: Ctx, el: WhiteboardElement, box: BBox, alpha: number, map: Map2): void {
   const dc = widgetPayloadOf(el);
@@ -352,11 +278,6 @@ function drawCard(ctx: Ctx, el: WhiteboardElement, box: BBox, alpha: number, map
   const poly = roundRectPoly(box.x, box.y, box.w, box.h, Math.min(12, box.w / 4, box.h / 4)).map(map);
   ctx.r.fill([poly], surface, alpha);
   ctx.r.fill(strokePolys(poly, Math.max(1, 1.5 * ctx.scale), { closed: true }), border, alpha);
-  const face = ctx.faces?.(el);
-  if (face) {
-    drawFace(ctx, face, box, alpha, map);
-    return;
-  }
   const firstLine = (md: unknown) => (typeof md === 'string' ? md.split('\n').map((l) => l.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean) : undefined);
   const kind = dc?.kind ?? (el.type === 'image' ? 'image' : 'embed');
   const title = dc?.title || (dc?.kind === 'note' ? firstLine(dc.markdown) : undefined) || (dc?.ref ?? kind);
@@ -366,41 +287,6 @@ function drawCard(ctx: Ctx, el: WhiteboardElement, box: BBox, alpha: number, map
   const inner = { x: box.x + pad, w: Math.max(1, box.w - 2 * pad) };
   drawText(ctx, [title], { ...inner, y: box.y + 10, h: 20 }, { fontSize: 16, color: INK, alpha, fit: 'clip', map });
   if (sub && box.h >= 56) drawText(ctx, [sub], { ...inner, y: box.y + 34, h: 16 }, { fontSize: 12, color: MUTED, alpha, fit: 'clip', map });
-}
-
-/** A picture's own pixels in its box: rotation, flips (`scale`) and Excalidraw's `crop`. */
-function drawPicture(ctx: Ctx, el: WhiteboardElement, bmp: Bitmap, b: BBox, angle: number, alpha: number, poly: Pt[]): void {
-  if (b.w <= 0 || b.h <= 0) return;
-  const cx = b.x + b.w / 2;
-  const cy = b.y + b.h / 2;
-  const cos = Math.cos(-angle);
-  const sin = Math.sin(-angle);
-  const flip = Array.isArray(el.scale) ? (el.scale as unknown[]) : [1, 1];
-  const fx = num(flip[0], 1) < 0;
-  const fy = num(flip[1], 1) < 0;
-  const crop = el.crop as { x?: number; y?: number; width?: number; height?: number; naturalWidth?: number; naturalHeight?: number } | null | undefined;
-  const nw = num(crop?.naturalWidth, 0);
-  const nh = num(crop?.naturalHeight, 0);
-  const useCrop = !!crop && nw > 0 && nh > 0 && num(crop.width) > 0 && num(crop.height) > 0;
-  const kx = useCrop ? bmp.width / nw : 1;
-  const ky = useCrop ? bmp.height / nh : 1;
-  const { region, scale } = ctx;
-  const xs = poly.map((p) => p[0]);
-  const ys = poly.map((p) => p[1]);
-  ctx.r.drawBitmap(bmp, { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) }, (px, py) => {
-    // Pixel → board, then un-rotate around the picture's centre.
-    const bx = px / scale + region.x - cx;
-    const by = py / scale + region.y - cy;
-    const ux = cx + bx * cos - by * sin;
-    const uy = cy + bx * sin + by * cos;
-    let u = (ux - b.x) / b.w;
-    let v = (uy - b.y) / b.h;
-    if (u < 0 || u > 1 || v < 0 || v > 1) return null;
-    if (fx) u = 1 - u;
-    if (fy) v = 1 - v;
-    if (useCrop) return [(num(crop!.x) + u * num(crop!.width)) * kx, (num(crop!.y) + v * num(crop!.height)) * ky];
-    return [u * bmp.width, v * bmp.height];
-  }, alpha);
 }
 
 function drawElement(ctx: Ctx, el: WhiteboardElement): void {
@@ -454,11 +340,6 @@ function drawElement(ctx: Ctx, el: WhiteboardElement): void {
     }
     case 'image': {
       const poly = ([[x, y], [x + w, y], [x + w, y + h], [x, y + h]] as Pt[]).map(map);
-      const bmp = typeof el.fileId === 'string' ? ctx.pictures?.(el.fileId) : null;
-      if (bmp) {
-        drawPicture(ctx, el, bmp, { x, y, w, h }, angle, alpha, poly);
-        return;
-      }
       ctx.r.fill([poly], [241, 243, 245], alpha);
       ctx.r.fill([...strokePolys(poly, 1, { closed: true }), ...strokePolys([poly[0], poly[2]], 1), ...strokePolys([poly[1], poly[3]], 1)], LINE, alpha);
       drawText(ctx, ['image'], { x, y, w, h }, { fontSize: 14, align: 'center', valign: 'middle', color: MUTED, alpha, fit: 'clip', map });
@@ -488,8 +369,7 @@ export function renderScene(elements: readonly WhiteboardElement[], opts: Render
   const { region, scale } = opts;
   const width = Math.min(MAX_SIDE, Math.max(1, Math.ceil(region.w * scale)));
   const height = Math.min(MAX_SIDE, Math.max(1, Math.ceil(region.h * scale)));
-  const ctx: Ctx = { r: new Raster(width, height), scale, region, pictures: opts.pictures, faces: opts.faces };
-  const kind: RenderKind = opts.pictures || opts.faces ? 'export' : 'layout';
+  const ctx: Ctx = { r: new Raster(width, height), scale, region };
   const reach = { x: region.x - 40, y: region.y - 40, w: region.w + 80, h: region.h + 80 };
   let drawn = 0;
   for (const el of sortElements(liveElements(elements))) {
@@ -508,7 +388,9 @@ export function renderScene(elements: readonly WhiteboardElement[], opts: Render
     const fs = 14 / scale;
     drawText(ctx, [opts.outline.label], { x: o.x - pad, y: o.y - pad - fs * 1.5, w: Math.max(o.w, fs * 20), h: fs * 1.25 }, { fontSize: fs, color: HIGHLIGHT, map });
   }
-  const text: Record<string, string> = { [RENDER_KIND_KEY]: kind };
-  if (kind === 'layout') text.Description = 'Layout check: pictures are placeholders, widgets are titled cards. Use whiteboard export for the real look.';
+  const text = {
+    [RENDER_KIND_KEY]: 'layout',
+    Description: 'Layout check: pictures are placeholders, widgets are titled cards. Use whiteboard export for the real look.',
+  };
   return { png: ctx.r.toPng(text), width, height, drawn };
 }
