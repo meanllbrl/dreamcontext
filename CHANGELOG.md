@@ -15,6 +15,14 @@ Patch on 0.41.21. Local build; not published.
 - **Publish approval.** The approval card folds the waived findings under one toggle, so the card stays short.
 - **Sidebar.** A project row keeps only its menu and the plus button; the eye and the arrow now live in the menu.
 - **Page viewer.** The bar now sits in a band under the page instead of covering it.
+- **Chat buttons.** Pressing several answer buttons adds numbered lines to the message box instead of gluing the text together.
+- **Floating cards.** A wide floating card slides its title out of the way of the hover lights, a narrow one fades it; both respect reduced motion.
+- **Agent photo.** A global agent can now have a profile photo. It shows in every project: team rows, the member card, the feed, the inbox and its Telegram bot.
+- **Tasks.** A task page can copy its slug and delete the task, with a clear confirmation.
+- **App approvals.** A waiting app install, publish, update or logo opens by itself as a pop-up with the same Approve and Reject buttons. Closing it decides nothing.
+- **Publish approval.** Lines the owner's own words trigger no longer stop a publish request: they are grouped by word on the card and one Approve passes exactly those.
+- **Telegram cards.** A question card buried under later messages comes back to the bottom of the chat. `super ask` no longer says it reached you when Telegram did not carry it while you are away.
+- **Telegram files.** The same card file reaches the chat once per turn, not twice.
 
 ## [0.41.19] - 2026-11-12
 
