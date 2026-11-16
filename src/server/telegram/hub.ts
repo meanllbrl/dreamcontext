@@ -66,7 +66,7 @@ import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripRep
 import { SILENT, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
-import { voiceAnswer } from '../../lib/telegram/voice-block.js';
+import { asksForVoice, voiceAnswer } from '../../lib/telegram/voice-block.js';
 import { sendVoiceSummary } from './voice-reply.js';
 import type { SpeakSummaryResult } from '../voice-speak.js';
 import { cleanOwnerText, inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
@@ -137,6 +137,7 @@ export const LINES = {
   conflict: "Bu bot başka yerde de dinleniyor, bağlantı durdu; BotFather'da token'ı yenile.",
   tamper: "Bu botun Mac'teki kaydı değişti; güvenlik için bağlantı durdu.",
   endedSilent: "Bu tur cevap yazmadan bitti; tekrar yaz ya da Mac'e bak.",
+  voiceMissing: "Sesli özet istedin ama cevapta ses kaydı yoktu, ses gönderilmedi. Tekrar «sesli özetle» yazabilirsin.",
   memberUnknownCommand: 'Bu komut yok. Bu botun komutları: /dur /durum',
   superOnlyCommand: (cmd: string) => `/${cmd} yalnız Super'in botunda var. Bu botun komutları: /dur /durum`,
   memberNotFound: "Bu üyeyi Mac'te bulamadım; üyenin Mac'te kayıtlı olduğundan emin ol.",
@@ -256,6 +257,10 @@ interface TgTurn {
   startedAt: number;
   typing: ReturnType<typeof setInterval> | null;
   answered: boolean;
+  /** His message asked for a spoken summary (`asksForVoice`), and whether a `dream-voice` block
+   *  of this turn reached the voice reply (spoken or its text fallback). */
+  wantsVoice: boolean;
+  voiced: boolean;
 }
 
 // ─── The hub ────────────────────────────────────────────────────────────────
@@ -1076,6 +1081,15 @@ export class TelegramHub implements TelegramHubApi {
     return landed;
   }
 
+  /** `sendAnswer` for a Super text of these turns: once it returns, a text carrying a `dream-voice`
+   *  block marks them voiced (the voice reply lands its voice or its line + text; a text send that
+   *  throws never reached it), read at turn end. */
+  private async answerFor(turns: readonly TgTurn[], ...args: Parameters<TelegramHub['sendAnswer']>): Promise<boolean> {
+    const landed = await this.sendAnswer(...args);
+    if (voiceAnswer(args[1]).voice) for (const t of turns) t.voiced = true;
+    return landed;
+  }
+
   /** W5 seams, set by `wireTelegramW5`: commands (/dur /durum /gundem), the header a turn opens
    *  with, and what an answer's blocks become (pictures, buttons). */
   commandHook: ((ab: ActiveBinding, update: Obj) => Promise<boolean>) | null = null;
@@ -1129,7 +1143,7 @@ export class TelegramHub implements TelegramHubApi {
     const rec: TurnRecord = { ref, updateId, chatId: ab.binding.chatId, sessionId, firstAt: this.now() };
     writeTurns(dir, { v: 1, turns: [...fresh, rec].slice(-500) }, this.home);
     this.superSessions.set(sessionId, ab.key);
-    this.beginTurn(ab, ref, sessionId);
+    this.beginTurn(ab, ref, sessionId, !as && asksForVoice(own)); // his own words only, never a card's question
     // `own` only for a message he wrote (`deliver`); a card tap, a run report or a schedule has none.
     const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? as.kind : 'telegram-text', ...(!as && own.trim() ? { own } : {}) });
     if (!r.ok) {
@@ -1293,8 +1307,8 @@ export class TelegramHub implements TelegramHubApi {
 
   // ── Turn status: typing and the final line ──
 
-  private beginTurn(ab: ActiveBinding, ref: string, sessionId: string): void {
-    const turn: TgTurn = { ref, key: ab.key, chatId: ab.binding.chatId, sessionId, startedAt: this.now(), typing: null, answered: false };
+  private beginTurn(ab: ActiveBinding, ref: string, sessionId: string, wantsVoice = false): void {
+    const turn: TgTurn = { ref, key: ab.key, chatId: ab.binding.chatId, sessionId, startedAt: this.now(), typing: null, answered: false, wantsVoice, voiced: false };
     this.turns.set(ref, turn);
     const tick = () => {
       // Never forever: a chat that died mid-turn, or a turn past its cap, stops typing.
@@ -1347,6 +1361,9 @@ export class TelegramHub implements TelegramHubApi {
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
           // for the owner says one plain line (it failed or stopped while he waits).
           if (!t.answered) await this.notice(ab, 'warn', LINES.endedSilent, true);
+          // He asked for a voice and the answer carried no block (owner 2026-11-16: a member said
+          // "sesli mesaj gidiyor" with none): say so, never let a claim stand for the voice.
+          else if (t.wantsVoice && !t.voiced) await this.notice(ab, 'warn', LINES.voiceMissing, true);
         })();
       }
     }
@@ -1481,7 +1498,7 @@ export class TelegramHub implements TelegramHubApi {
       const all = stripReplyMarks(text);
       if (!all.trim()) return false;
       const refs = splitReplySections(text).flatMap((s) => s.refs);
-      return this.sendAnswer(ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
+      return this.answerFor(turns, ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
     }
     const sections = splitReplySections(text);
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
@@ -1494,13 +1511,13 @@ export class TelegramHub implements TelegramHubApi {
       if ((!hit && !wide) || !s.text.trim()) continue;
       tried = true;
       // One section that does not land does not stop the next.
-      try { if (await this.sendAnswer(ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
+      try { if (await this.answerFor(turns, ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     if (!turns.length || inputs?.mac || !text.trim()) return false;
-    return this.sendAnswer(ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
+    return this.answerFor(turns, ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
   }
 
   // ── Buttons (plan "Button integrity") ──
