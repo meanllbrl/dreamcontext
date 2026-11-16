@@ -41,7 +41,7 @@ import {
   type AgentPlacementPatch,
 } from '../../lib/agents/types.js';
 import { isSafeAutomationSlug, readManifestFrontmatter } from '../../lib/agents/slot.js';
-import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto, runChildAlive } from '../../lib/automations/store.js';
+import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveMemberPhoto, runChildAlive } from '../../lib/automations/store.js';
 import { readThread } from '../../lib/automations/threads.js';
 import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
 import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
@@ -221,7 +221,7 @@ export function summarizeAgent(
   return {
     slug: target.slug,
     title: target.agentTitle || target.title,
-    hasPhoto: resolveAutomationPhoto(contextRoot, target.photo) !== null,
+    hasPhoto: resolveMemberPhoto(contextRoot, target.slug, target.photo, home) !== null,
     description: target.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     soulExcerpt: soulExcerpt(target.soul ?? ''),
     roleLine: roleLineOf(target.prompt),
@@ -917,7 +917,7 @@ export async function handleAgentsAmendmentRevert(
   }
 }
 
-/** GET /api/agents/:slug/photo — through `resolveAutomationPhoto`, or 404. */
+/** GET /api/agents/:slug/photo — through `resolveMemberPhoto` (a global agent's from its home), or 404. */
 export async function handleAgentsPhotoGet(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -926,7 +926,7 @@ export async function handleAgentsPhotoGet(
 ): Promise<void> {
   try {
     const agent = isSafeAutomationSlug(params.slug) ? getAgent(contextRoot, params.slug) : null;
-    sendPhotoFile(res, agent ? resolveAutomationPhoto(contextRoot, agent.photo) : null);
+    sendPhotoFile(res, agent ? resolveMemberPhoto(contextRoot, agent.slug, agent.photo) : null);
   } catch {
     sendError(res, 404, 'no_photo', 'This agent has no photo.');
   }

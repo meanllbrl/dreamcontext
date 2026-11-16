@@ -22,7 +22,8 @@ import { assertOwned, currentLogin, parseOwner } from '../agents/owner.js';
 import { agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from '../agents/agent-sync.js';
 import { composeRun, legacyPair, withConditionValidity } from '../agents/compose.js';
 import { nextFreeFace } from '../agents/faces.js';
-import { globalAgentExists, globalProjectDir, isGlobalAgentHere, memberSidePath } from '../agents/scope.js';
+import { globalAgentExists, globalAgentHome, globalAgentsDir, globalProjectDir, isGlobalAgentHere, memberSidePath } from '../agents/scope.js';
+import { safeWriteTarget } from '../vault-read.js';
 import {
   agentCallTarget,
   agentPath,
@@ -602,6 +603,45 @@ export function resolveAutomationPhoto(contextRoot: string, raw: string | null):
     // fifo would hang the request thread.
     if (!statSync(real).isFile()) return null;
     return real;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The root a member's `photo` string is relative to: the project's brain, or, for the global agent
+ * of that name here, its home on this machine (`~/.dreamcontext/agents/<slug>/`). A global agent
+ * is listed in every project, so its photo cannot live in any one of them: it lives beside it, and
+ * the same `automations/photos/<slug><ext>` string resolves under that home in every project.
+ */
+export function memberPhotoRoot(contextRoot: string, agentSlug: string, home?: string): string {
+  return isGlobalAgentHere(contextRoot, agentSlug, home) ? globalAgentHome(agentSlug, home) : contextRoot;
+}
+
+/**
+ * {@link resolveAutomationPhoto} for member `agentSlug` (a routine passes the agent it runs as),
+ * wherever its photo lives. TOTAL: never throws. A global agent's photo is read only when no part
+ * of its path below the global agents folder is a link (lstat on every segment), on top of the
+ * realpath containment `resolveAutomationPhoto` already applies.
+ */
+export function resolveMemberPhoto(contextRoot: string, agentSlug: string, raw: string | null, home?: string): string | null {
+  try {
+    return isGlobalAgentHere(contextRoot, agentSlug, home)
+      ? resolveGlobalAgentPhoto(agentSlug, raw, home)
+      : resolveAutomationPhoto(contextRoot, raw);
+  } catch {
+    return null;
+  }
+}
+
+/** A global agent's photo from its home, with no project needed (its Telegram bot). TOTAL. */
+export function resolveGlobalAgentPhoto(slug: string, raw: string | null, home?: string): string | null {
+  try {
+    if (raw === null) return null;
+    const root = globalAgentHome(slug, home);
+    const real = resolveAutomationPhoto(root, raw);
+    if (!real) return null;
+    return safeWriteTarget(globalAgentsDir(home), resolve(root, normalize(raw.trim()))) ? real : null;
   } catch {
     return null;
   }

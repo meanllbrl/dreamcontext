@@ -2,7 +2,7 @@ import { ownerAskedRun } from '../notch-importance.js';
 import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { basename, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
-import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
+import { listAutomations, readAutomationCache, resolveMemberPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
 import { ownerQuietReader, superJobReader } from './super-quiet.js';
 import { allPendingQuestions } from './hitl.js';
@@ -674,7 +674,7 @@ export function buildFeed(
   const questionByRun = openQuestionsByRun(contextRoot);
 
   for (const manifest of manifests) {
-    const hasPhoto = resolveAutomationPhoto(contextRoot, manifest.photo) !== null;
+    const hasPhoto = resolveMemberPhoto(contextRoot, manifest.agent || manifest.slug, manifest.photo) !== null;
     agents.push({ slug: manifest.slug, title: manifest.title, ...agentOf(manifest), hasPhoto });
 
     // ONE bounded read per agent, and everything else is derived from it.
