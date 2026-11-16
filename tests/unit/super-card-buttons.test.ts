@@ -73,6 +73,10 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
   it('a large card head starts after the lights and stops before the ask button', () => {
     expect(CSS).toContain(":is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 44px; }");
   });
+  it('a floating card keeps its title at the left; the title gives way only while the lights show', () => {
+    expect(CSS).not.toMatch(/\[data-where='float'\] :is\(\.super-card-head, \.super-card-large-head\) \{ padding-left: 88px/);
+    expect(CSS).toMatch(/\[data-where='float'\]:is\(:hover, :focus-within\):not\(\[data-lifted\]\) :is\(\.super-card-head, \.super-card-large-head\) > :not\(\.super-card-actions\) \{ opacity: 0; \}/);
+  });
   it('the group tile wears the same lights: red closes its cards, green opens them all', () => {
     expect(GROUP).toContain('<CardLights');
     expect(GROUP).toContain("testId: 'super-group-close'");

@@ -531,8 +531,11 @@
 .super-light:active:not(:disabled) .super-light-dot { filter: brightness(0.85); }
 /* A large card's head starts after the lights and stops before the ask button (both always shown there). */
 .super-card-frame:is([data-where='half'], [data-where='present'], [data-where='sheet']) :is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 44px; }
-/* A floating tile shows the lights over its head on hover: the title starts after them, so they never sit on it. */
-.super-card-frame[data-where='float'] :is(.super-card-head, .super-card-large-head) { padding-left: 88px; }
+/* A floating tile shows the lights over its head on hover only. The title keeps the left edge (a
+   small card has no 88px to give: reserving it pushed the title to the right edge, truncated) and
+   gives way while the lights are shown, so they never sit on it. */
+.super-card-frame[data-where='float'] :is(.super-card-head, .super-card-large-head) > :not(.super-card-actions) { transition: opacity 120ms ease-out; }
+.super-card-frame[data-where='float']:is(:hover, :focus-within):not([data-lifted]) :is(.super-card-head, .super-card-large-head) > :not(.super-card-actions) { opacity: 0; }
 /* A large card's trailing side holds only "ask about this": no pill around one button. */
 .super-card-frame:not([data-where='float']) .super-card-actions { top: 4px; padding: 0; border: 0; background: none; box-shadow: none; }
 /* "Ask about this" (owner 2026-11-08, the comment icon, clearer): bigger, in the accent colour. */
