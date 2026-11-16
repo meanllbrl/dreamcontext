@@ -49,11 +49,25 @@ function ownApp(rec: AppRecord): boolean {
   return !(rec.origin === 'installed' && (rec.source || !rec.provenance));
 }
 
+/** The approvable findings by word (label + term, case-blind), first-seen order kept. */
+export function waivedGroups(findings: ReadonlyArray<{ label: string; term?: string; file: string; line?: number }>): Array<{ label: string; term: string; where: string[] }> {
+  const groups = new Map<string, { label: string; term: string; where: string[] }>();
+  for (const a of findings) {
+    const term = a.term ?? '';
+    const k = `${a.label}\0${term.toLowerCase()}`;
+    let g = groups.get(k);
+    if (!g) { g = { label: a.label, term, where: [] }; groups.set(k, g); }
+    g.where.push(a.line ? `${a.file}:${a.line}` : a.file);
+  }
+  return [...groups.values()];
+}
+
 // ─── Publish ────────────────────────────────────────────────────────────────────────
 
 export interface PublishInput {
   public?: boolean;
   invite?: string[];
+  /** Ignored since 2026-11-16: the card lists every approvable line and his Onayla passes them. */
   approve?: string[];
   note?: string;
   catalog?: boolean;
@@ -64,21 +78,28 @@ export async function buildPublishPlan(ctx: PlanContext & { host: AppHost }, rec
   const login = (await ctx.host.me()).login;
   const prev = rec.publish?.lastSha ? rec.publish : undefined;
   const visibility = prev?.public || input.public ? 'public' : 'private';
-  const approvals = [...new Set((input.approve ?? []).filter((x) => typeof x === 'string' && x.length <= 200))].slice(0, 50);
   const invite = visibility === 'private' ? [...new Set((input.invite ?? []).flatMap((x) => String(x).split(/[\s,]+/)).map((x) => x.trim().replace(/^@/, '')).filter((x) => LOGIN_RE.test(x) && x !== login))].slice(0, 20) : [];
   const date = publishDate();
   const last = prev ? lastPublishedFiles(ctx.home, rec) : null;
 
   // First the tree as it is, no note: what is new since the last publish, and the README's draft.
-  const bare = buildPublishTree(ctx.home, rec, { visibility, login, approvals, date });
+  const bare = buildPublishTree(ctx.home, rec, { visibility, login, date });
   if (last && changedSincePublish(bare.files, last).length === 0) throw new AppRequestError('not_ready', 'Nothing changed since the last publish: there is no new version to ask for.');
   const agentNote = typeof input.note === 'string' ? v(input.note, 300) : '';
   const fallback = !agentNote && prev ? defaultPublishNote(rec, bare.sourceReadme, last) : null;
   // A draft the README already holds is shown, never written twice (D12).
   const note = agentNote || (fallback && !fallback.draft ? fallback.text : '') || null;
   const shownNote = agentNote || fallback?.text || '';
-  const pv = note ? buildPublishTree(ctx.home, rec, { visibility, login, approvals, note, date }) : bare;
-  if (!pv.report.ok) throw new PublishError('gate_blocked', pv.report.blocks.length ? `${pv.report.blocks.length} problem(s) must be fixed before publishing.` : `${pv.report.unapproved.length} line(s) wait for the owner's approval: name each with --approve, the card lists them.`, pv.report);
+  const seen = note ? buildPublishTree(ctx.home, rec, { visibility, login, note, date }) : bare;
+  // A hard finding (a key, an e-mail, a name, a home path) stops the ask: nobody passes it.
+  if (seen.report.blocks.length) throw new PublishError('gate_blocked', `${seen.report.blocks.length} problem(s) must be fixed before publishing.`, seen.report);
+  // Every approvable line (a generic word of the owner's own: a Lab insight's name, a member's
+  // name, a long number) goes on the card, grouped by word, and his one Onayla lets exactly
+  // these go (owner 2026-11-16): the ids are bound in the plan, so a line found after the card
+  // is not in them and the spend's gate stops it. An agent's `--approve` adds nothing here.
+  const approvals = seen.report.approvable.map((a) => a.id);
+  const pv = approvals.length ? buildPublishTree(ctx.home, rec, { visibility, login, approvals, note: note ?? undefined, date }) : seen;
+  if (!pv.report.ok) throw new PublishError('gate_blocked', 'The publish changed while it was read; ask again.', pv.report);
 
   const catalog = input.catalog === false ? false : input.catalog === true ? true : prev ? readCatalog(ctx.contextRoot).some((e) => e.slug === rec.slug) : true;
   const target = pv.fullName ?? `${login}/${pv.repoName}`;
@@ -99,8 +120,7 @@ export async function buildPublishPlan(ctx: PlanContext & { host: AppHost }, rec
   }
   if (shownNote) lines.push({ label: 'Ne değişti', value: v(shownNote, 300) });
   if (invite.length) lines.push({ label: 'Davet', value: listValue(invite) });
-  const waived = pv.report.approvable.filter((a) => approvals.includes(a.id));
-  for (const a of waived) lines.push({ label: 'Geçirilecek', value: `${v(a.label, 80)}: ${v(a.file, 120)}${a.line ? `:${a.line}` : ''} "${v(a.term ?? '', 60)}"`, tone: 'warn' });
+  for (const g of waivedGroups(pv.report.approvable)) lines.push({ label: 'Geçirilecek', value: `${v(g.label, 80)} "${v(g.term, 60)}" · ${g.where.length} satır: ${listValue(g.where)}`, tone: 'warn' });
   lines.push({ label: 'Beyin listesi', value: catalog ? 'Listelenir' : 'Listelenmez' });
 
   const plan: ActionPlan = {
