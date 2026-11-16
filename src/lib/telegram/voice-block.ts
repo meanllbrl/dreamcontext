@@ -36,6 +36,15 @@ export function splitVoiceBlocks(md: string): { rest: string; voices: VoiceBlock
   return { rest: rest.replace(/\n{3,}/g, '\n\n').trim(), voices };
 }
 
+/** His Telegram message asks for a spoken summary (any wording the briefing names: "sesli özetle",
+ *  "sesli olarak bana anlat", "okuyamıyorum", "voice summary"). Read only to say so when the turn
+ *  ends with no voice (hub `onChatChange`): a miss costs one line, never a send. */
+const VOICE_ASK_RE = /\bsesli\s+(?:olarak\s+)?(?:bana\s+)?(?:özet|anlat|söyl|oku|cevap|yanıt|gönder|yolla|at\b|mesaj)|\bsesle\s+(?:özet|anlat|söyl)|\bseslendir|okuyamıyorum|okuyamam\b|\b(?:voice|spoken|audio)\s+(?:summary|message|note|reply)|\bby\s+voice\b|\bread\s+(?:it\s+)?(?:to\s+me|aloud|out\s+loud)/iu;
+
+export function asksForVoice(text: string): boolean {
+  return !!text && VOICE_ASK_RE.test(text.normalize('NFC').toLocaleLowerCase('tr'));
+}
+
 /** What one text sent to Telegram (an answer section, a member post) carries: its text, and the
  *  ONE block it speaks. Only the first block is spoken; any further block stays in the text. */
 export function voiceAnswer(md: string): { text: string; voice: VoiceBlock | null } {
