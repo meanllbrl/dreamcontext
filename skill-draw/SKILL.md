@@ -46,6 +46,11 @@ Look at what you drew with `dreamcontext whiteboard render <board> --out look.pn
 Never open a browser to check a drawing. Fix the spec when the build audit reports overlaps,
 buried labels, long lines or walls of text, and redraw.
 
+`render` is a LAYOUT CHECK for your own eyes (pictures are empty crossed boxes, widgets only
+titles), never the board as it looks. To show the owner a board (Telegram, a card, a report),
+`dreamcontext whiteboard export <board> --split tags --out <folder>` draws its own pictures and
+widgets and cuts a long board into phone-readable pictures; send those.
+
 ## 5. Where the builder is
 
 `scripts/build_excalidraw.js` in this skill's folder: in a Claude project

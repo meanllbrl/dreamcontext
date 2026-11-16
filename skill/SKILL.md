@@ -81,7 +81,7 @@ dreamcontext is **more than memory files**. Each capability below ships; its ref
 | **Memory recall** | Hybrid (BM25 + embeddings), 3 tiers: local default; cloud-index/cloud via `recall cloud enable` (user only, agents never); auto-injected | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory: reminders that fire when context matches | this file |
-| **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser | [whiteboards.md](../draw/references/whiteboards.md) |
+| **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser; show the owner `whiteboard export --split tags` (render is a layout check) | [whiteboards.md](../draw/references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, `## Flow` graph. A run may ask a **question**; replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved; private until shared. "Only if X": a `--condition` script checks first | [automations.md](references/automations.md) |
 | **Apps** | Own-window apps, own icon, not our logo (`/apps`) | [apps.md](references/apps.md) |
 | **Agents** | Who does the work (`agents/<slug>.md`), **AI Team**: automations pick one, tasks go to one, Chat and boards talk to one. Routines: `propose --routine` then `create --answer <qid>`. A mistake: `super team amend` | [automations.md](references/automations.md#ai-team-the-dashboard-page) |

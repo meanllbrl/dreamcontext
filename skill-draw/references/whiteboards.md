@@ -176,6 +176,17 @@ dreamcontext whiteboard render --file /tmp/flow.excalidraw.md --out /tmp/f.png #
 
 Then read the PNG. `render` needs no browser and no network: it draws shapes, arrows, frames, z-order and text where they are (text in a plain pixel font at each element's size and line breaks), widgets as cards with their title and kind (no live content), pictures as placeholder boxes. It shows **where things are and what covers what**, not typography. `--tag` also reports elements of other groups inside the tag's box (`overlaps` in `--json`). The longest side stays within 2000px unless `--scale <n>` says otherwise; on a tall board, walk it in `--band` strips. `--out` must be a `.png` (a board agent may write it only into `$DREAMCONTEXT_AGENT_SCRATCH` or its output folder). `draw` and `add` print the matching `render` line after they write.
 
+**`render` is a layout check, never the board's look.** Its PNG says so in its own bytes; sent to Telegram it is captioned a draft, and `super open image` on it warns. To show the owner a board, export it:
+
+```bash
+dreamcontext whiteboard export <slug> --split tags --out /tmp/board/    # one picture per tagged group (or named frame), the rest in bands
+dreamcontext whiteboard export <slug> --split bands --out /tmp/board/   # the board in reading order, tile by tile
+dreamcontext whiteboard export <slug> --tag winback --out /tmp/board/   # one group (cut further when a phone could not read it whole)
+dreamcontext whiteboard export <slug> --out /tmp/board.png              # the whole board in one picture (small text on a long board)
+```
+
+`export` draws the board's own pictures (from its `files/` folder only, never through a symlink; JPEG, GIF and WebP are converted with macOS `sips`, and a picture it cannot draw is named in the output, never a silent empty box) and every widget with its last cached content: a note's text, a to-do's items, an insight's cached value with "as of" and a sparkline, a task's status, an HTML block's text. It never fetches or syncs. With `--split`, each picture is up to 1280px wide and sized from the board's own body text (about 40 characters of it across), so a phone reads it without zooming; a group up to 1.15 of that stays whole, a larger one is cut in the empty space between elements. A `.png` `--out` is one picture, anything else a folder (made when missing); an export that needs several pictures into a `.png` is refused and says how many. A picture it cannot place or draw is named in the output. How many pictures come out follows from the board, never a fixed number. Show them with one `![label](path)` per picture: Telegram gets them as albums of ten, in order, numbered on, waiting out its flood limit between them.
+
 ## The wiki card
 
 A `wiki` widget is a card holding its **own list of pages**: ordered sections, each holding ordered pages. A board may hold several wiki cards; each keeps its list in its own payload (`customData.dc.sections`), so the list moves, merges (per element, the higher version wins) and syncs with its card. In the dashboard a small card (S/M) is the list and a page opens in the side panel; a large card (L/XL) shows the list with the page read inside the card. A page ref is the same as a page widget's: a knowledge slug or a project-relative `.md` / `.pdf` / `.html` path.

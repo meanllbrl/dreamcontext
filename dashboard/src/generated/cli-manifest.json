@@ -5407,6 +5407,18 @@
       ]
     },
     {
+      "path": "whiteboard export",
+      "desc": "The board as it looks, for the owner: its own pictures drawn in, widgets with their last cached content (note text, to-do items, an insight's value). --split cuts a long board into pictures a phone can read, one per tagged group, named frame or band",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--out",
+        "--split",
+        "--tag"
+      ]
+    },
+    {
       "path": "whiteboard group",
       "desc": "The folders boards sit in (frontmatter `group`), two levels deep: \"Folder\" or \"Folder/Sub-folder\". `folder` is the same command. A board the owner placed is refused without --force.",
       "args": [],
@@ -5565,7 +5577,7 @@
     },
     {
       "path": "whiteboard render",
-      "desc": "Draw a board, a tagged group or a region as a PNG, without a browser: shapes, arrows and text as laid out, widgets as titled cards, pictures as placeholders",
+      "desc": "LAYOUT CHECK, for your own eyes: a board, a tagged group or a region as a PNG, shapes, arrows and text as laid out, widgets as titled cards, pictures as empty crossed boxes. Never show it to the owner as the board: `whiteboard export` draws the real look",
       "args": [
         "[slug]"
       ],
