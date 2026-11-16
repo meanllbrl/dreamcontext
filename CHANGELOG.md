@@ -11,6 +11,10 @@ Patch on 0.41.21. Local build; not published.
 - **Telegram.** A Super that is asleep or whose window is closed now wakes when you write to it from Telegram.
 - **Telegram voice summary.** When you ask for a voice summary and the answer has no audio, a clear line now appears instead of silence.
 - **Memory.** The memory hint on each message now finds the running Mac app's recall server, so it answers faster.
+- **Agenda.** Every day in the agenda strip and both arrows can be clicked, including days still ahead.
+- **Publish approval.** The approval card folds the waived findings under one toggle, so the card stays short.
+- **Sidebar.** A project row keeps only its menu and the plus button; the eye and the arrow now live in the menu.
+- **Page viewer.** The bar now sits in a band under the page instead of covering it.
 
 ## [0.41.19] - 2026-11-12
 
