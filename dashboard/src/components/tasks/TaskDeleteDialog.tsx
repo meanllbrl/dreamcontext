@@ -75,6 +75,7 @@ export function TaskDeleteView({
               {fill(t, remote === 'clickup' ? 'tasks.delete.remoteClickup' : remote === 'github' ? 'tasks.delete.remoteGithub' : 'tasks.delete.remote', { remote: remoteLabel(remote) })}
             </p>
           )}
+          {!ready && <p className="task-delete-undo" data-testid="task-delete-checking" role="status">{t('tasks.delete.checking')}</p>}
           <p className="task-delete-undo">{t('tasks.delete.noUndo')}</p>
           <label className="field">
             <span className="field-label">{t('tasks.delete.reasonLabel')} <span className="task-delete-muted">{t('tasks.delete.reasonHint')}</span></span>
@@ -126,7 +127,12 @@ export function TaskDeleteDialog({ task, allTasks, onClose, onDeleted }: {
   const remote = detail?.remote?.linked ? detail.remote.backend : null;
   const pending = del.isPending;
 
-  useEffect(() => { reasonRef.current?.focus(); }, []);
+  // Whatever opened the dialog (the ⋯ button) gets focus back when it closes.
+  const [opener] = useState(() => (typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null));
+  useEffect(() => {
+    reasonRef.current?.focus();
+    return () => { if (opener?.isConnected) opener.focus(); };
+  }, [opener]);
 
   // Esc and Tab belong to the dialog (capture phase, before the drawer's own Esc).
   useEffect(() => {

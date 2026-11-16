@@ -36,7 +36,8 @@
   border: 1px solid var(--color-error-ink);
   font-weight: var(--font-weight-semibold);
 }
-.task-delete-confirm:hover:not(:disabled) { background: color-mix(in srgb, var(--color-error-ink) 16%, var(--color-error-subtle)); }
+/* Hover keeps the resting fill (ink on tint stays 6.1:1 light, 5.1:1 dark) and thickens the edge. */
+.task-delete-confirm:hover:not(:disabled) { box-shadow: 0 0 0 1px var(--color-error-ink); }
 .task-delete-confirm:disabled { opacity: 0.6; cursor: default; }
 
 /* The copy icon: quiet until hovered, a green check with "Copied" for 1.5 s after a click. */

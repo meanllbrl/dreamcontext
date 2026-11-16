@@ -92,6 +92,9 @@ describe('the delete dialog', () => {
   it('Delete is held until the task read lands (its ClickUp warning depends on it)', () => {
     expect(render({ ready: false })).toMatch(/data-testid="task-delete-confirm"[^>]*disabled=""|disabled=""[^>]*data-testid="task-delete-confirm"/);
     expect(render({ ready: true })).not.toMatch(/disabled=""[^>]*data-testid="task-delete-confirm"/);
+    // ...and says why while it waits.
+    expect(render({ ready: false })).toContain('Checking whether this task is on the connected task app');
+    expect(render({ ready: true })).not.toContain('task-delete-checking');
   });
 
   it('a subtask says its parent stays; an error is shown in place', () => {
