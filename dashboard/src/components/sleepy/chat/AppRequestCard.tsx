@@ -32,22 +32,38 @@ export function appRequestTitle(card: Pick<AppCard, 'title' | 'appName'>, t: (ke
   return `${TITLE_KEY[card.title] ? t(TITLE_KEY[card.title]!) : card.title} · ${card.appName}`;
 }
 
-/** The publish card's "Geçirilecek" rows (`<kind>: <file>[:line] "<term>"`), folded by kind and value:
- *  display only, every finding is still listed under the one toggle and the approval covers all of them. */
+/** The publish card's "Geçirilecek" rows, folded by kind and value: display only, every place is
+ *  still listed under the one toggle and the approval covers all of them. Two shapes: the grouped
+ *  row the server writes since 2026-11-16 (`<kind> "<term>" · <n> satır: <file:line, …[ +N daha]>`)
+ *  and the older one row per line (`<kind>: <file>[:line] "<term>"`, a card asked before it). */
 const WAIVE_LABEL = 'Geçirilecek';
 const WAIVE_RE = /^(.+?): (.+?)(?::(\d+))? "(.*)"$/;
-interface WaivedGroup { kind: string; term: string; where: string[] }
+const WAIVE_GROUP_RE = /^(.+?) "(.*)" · (\d+) satır: (.*)$/;
+interface WaivedGroup { kind: string; term: string; where: string[]; n: number }
 function groupWaived(lines: readonly Line[]): { groups: WaivedGroup[]; rest: Line[] } {
   const groups: WaivedGroup[] = [];
   const rest: Line[] = [];
   let slot = -1;
-  for (const l of lines) {
-    const m = l.label === WAIVE_LABEL && !l.key ? WAIVE_RE.exec(l.value) : null;
-    if (!m) { rest.push(l); continue; }
-    const [, kind, file, no, term] = m as unknown as [string, string, string, string | undefined, string];
-    if (slot < 0) slot = rest.length;
+  const groupOf = (kind: string, term: string) => {
     let g = groups.find((x) => x.kind === kind && x.term === term);
-    if (!g) { g = { kind, term, where: [] }; groups.push(g); }
+    if (!g) { g = { kind, term, where: [], n: 0 }; groups.push(g); }
+    return g;
+  };
+  for (const l of lines) {
+    const grouped = l.label === WAIVE_LABEL && !l.key ? WAIVE_GROUP_RE.exec(l.value) : null;
+    const m = grouped ? null : l.label === WAIVE_LABEL && !l.key ? WAIVE_RE.exec(l.value) : null;
+    if (!grouped && !m) { rest.push(l); continue; }
+    if (slot < 0) slot = rest.length;
+    if (grouped) {
+      const [, kind, term, n, where] = grouped as unknown as [string, string, string, string, string];
+      const g = groupOf(kind, term);
+      g.n += Number(n);
+      g.where.push(...where.split(', ').filter(Boolean));
+      continue;
+    }
+    const [, kind, file, no, term] = m as unknown as [string, string, string, string | undefined, string];
+    const g = groupOf(kind, term);
+    g.n += 1;
     g.where.push(no ? `${file}:${no}` : file);
   }
   return { groups, rest: slot < 0 ? rest : [...rest.slice(0, slot), { label: '\u0000waived', value: '' }, ...rest.slice(slot)] };
@@ -206,7 +222,7 @@ export function AppRequestCard({ spec, report, where = 'chat', armMs = 0, onDeci
       {waived.map((g, i) => (
         <div key={i} className="chat-appreq-line" data-tone="warn">
           <dt>{WAIVE_LABEL}</dt>
-          <dd>{g.kind} &quot;{g.term}&quot; · {say('appreq.waived.count', { n: String(g.where.length) })}</dd>
+          <dd>{g.kind} &quot;{g.term}&quot; · {say('appreq.waived.count', { n: String(g.n) })}</dd>
         </div>
       ))}
       <div className="chat-appreq-line chat-appreq-waived">
