@@ -61,7 +61,7 @@ export function OrbitPath({ plan }: { plan: StagePlan }) {
 /** Open overlays that own Esc and the arrows over a presentation. A PDF card draws the chat's
  *  PdfViewer embedded (`.pdf-viewer--embedded`): that is a card, not a window over the stage, so a
  *  presentation showing a PDF still leaves on Esc (owner 2026-10-28, "every kind of group"). */
-export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--embedded), .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu';
+export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--embedded), .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu, .app-popup-scrim';
 
 /** The presentation frame's icons (outline, 16 px on a 32 px button; owner 2026-11-15, option C). */
 const PATHS: Record<string, string> = {

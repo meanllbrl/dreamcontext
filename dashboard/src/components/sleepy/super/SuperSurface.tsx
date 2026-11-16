@@ -37,8 +37,9 @@ import { useAutomations } from '../../../hooks/useAutomations';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { superApprovals, showApprovalRow, agendaApprovals as agendaApprovalRows, showMemberApproval } from './superApprovals';
 import { SuperApprovalBand } from './SuperApprovalBand';
-import { useWaitingAppCards } from './superAppCards';
-import { emitInstance, useVaultId } from '../../../context/VaultContext';
+import { useAppPopup, useWaitingAppCards } from './superAppCards';
+import { AppRequestPopup } from './AppRequestPopup';
+import { emitInstance, useVault, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
 import { bandCount, bandHead, freshPending, hasOwnKey, needsOwner, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
@@ -1124,6 +1125,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // Every app card waiting in this project, whoever asked (owner 2026-11-13): drawn here because
   // the request exists, never only when an agent pasted its block.
   const appCards = useWaitingAppCards(!member && !remote);
+  // ...and each one opens by itself as a pop-up, one at a time (owner 2026-11-16).
+  // Only over the Super screen he is looking at: never a folded stage or a project in the background.
+  const { isActive: projectOnScreen } = useVault();
+  const appPopup = useAppPopup(appCards, !member && !remote && props.visible && projectOnScreen);
   // A member `super team ask` was refused for already has its own Waiting row (the queue's).
   const agendaApprovals = agendaApprovalRows(approvals, state.queue);
   // Its row on the card; when the card is not on screen (a presentation's folded chat, a folded
@@ -1257,8 +1262,19 @@ export function SuperSurface(props: SuperSurfaceProps) {
             />
             {approvalsTop && (
               <div className="super-member-top" ref={memberTopRef} data-testid="super-approvals-top">
-                <SuperApprovalBand items={approvals} appCards={appCards} superId={superId} toast={approvalNote} onToast={setApprovalNote} />
+                <SuperApprovalBand items={approvals} appCards={appCards} onOpenApp={appPopup.reopen} superId={superId} toast={approvalNote} onToast={setApprovalNote} />
               </div>
+            )}
+            {appPopup.shown && (
+              <AppRequestPopup
+                id={appPopup.shown}
+                onLater={appPopup.later}
+                onDecided={(action, name) => {
+                  // Decided: it closes now (the waiting list catches up on its next read).
+                  appPopup.later();
+                  setApprovalNote(t(action === 'approve' ? 'super.approvals.appApproved' : 'super.approvals.appDeclined').replace('{name}', name));
+                }}
+              />
             )}
             {member && (
               <div className="super-member-top" ref={memberTopRef} data-testid="super-member-top">
