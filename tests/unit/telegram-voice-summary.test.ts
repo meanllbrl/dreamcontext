@@ -189,7 +189,7 @@ describe('he asked for a voice and the answer carried no block (owner 2026-11-16
   it.each([
     ['Sesli olarak bana özetle', true], ['sesli özetle', true], ['SESLİ ANLAT', true], ['bunu seslendir', true],
     ['okuyamıyorum, sesle anlat', true], ['send me a voice summary', true], ['read it to me', true],
-    ['sesli mesaj at', true],
+    ['sesli mesaj at', true], ['SESLİ ÖZETLE', true], ['VOICE SUMMARY please', true], ['READ IT TO ME', true],
     ['Bunu da çöz', false], ['sesli not özelliği bozuk mu', false], ['voice özelliği nasıl çalışıyor', false], ['', false],
   ] as const)('asksForVoice(%j) = %s', async (text, want) => {
     expect(asksForVoice(text)).toBe(want);

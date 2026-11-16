@@ -1081,11 +1081,13 @@ export class TelegramHub implements TelegramHubApi {
     return landed;
   }
 
-  /** `sendAnswer` for a Super text of these turns: a text carrying a `dream-voice` block marks
-   *  them voiced (the voice reply always lands its voice or its line + text), read at turn end. */
-  private answerFor(turns: readonly TgTurn[], ...args: Parameters<TelegramHub['sendAnswer']>): Promise<boolean> {
+  /** `sendAnswer` for a Super text of these turns: once it returns, a text carrying a `dream-voice`
+   *  block marks them voiced (the voice reply lands its voice or its line + text; a text send that
+   *  throws never reached it), read at turn end. */
+  private async answerFor(turns: readonly TgTurn[], ...args: Parameters<TelegramHub['sendAnswer']>): Promise<boolean> {
+    const landed = await this.sendAnswer(...args);
     if (voiceAnswer(args[1]).voice) for (const t of turns) t.voiced = true;
-    return this.sendAnswer(...args);
+    return landed;
   }
 
   /** W5 seams, set by `wireTelegramW5`: commands (/dur /durum /gundem), the header a turn opens
@@ -1141,7 +1143,7 @@ export class TelegramHub implements TelegramHubApi {
     const rec: TurnRecord = { ref, updateId, chatId: ab.binding.chatId, sessionId, firstAt: this.now() };
     writeTurns(dir, { v: 1, turns: [...fresh, rec].slice(-500) }, this.home);
     this.superSessions.set(sessionId, ab.key);
-    this.beginTurn(ab, ref, sessionId, !as && asksForVoice(own.trim() ? own : text));
+    this.beginTurn(ab, ref, sessionId, !as && asksForVoice(own)); // his own words only, never a card's question
     // `own` only for a message he wrote (`deliver`); a card tap, a run report or a schedule has none.
     const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? as.kind : 'telegram-text', ...(!as && own.trim() ? { own } : {}) });
     if (!r.ok) {

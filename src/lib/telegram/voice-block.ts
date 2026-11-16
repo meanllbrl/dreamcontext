@@ -42,7 +42,7 @@ export function splitVoiceBlocks(md: string): { rest: string; voices: VoiceBlock
 const VOICE_ASK_RE = /\bsesli\s+(?:olarak\s+)?(?:bana\s+)?(?:özet|anlat|söyl|oku|cevap|yanıt|gönder|yolla|at\b|mesaj)|\bsesle\s+(?:özet|anlat|söyl)|\bseslendir|okuyamıyorum|okuyamam\b|\b(?:voice|spoken|audio)\s+(?:summary|message|note|reply)|\bby\s+voice\b|\bread\s+(?:it\s+)?(?:to\s+me|aloud|out\s+loud)/iu;
 
 export function asksForVoice(text: string): boolean {
-  return !!text && VOICE_ASK_RE.test(text.normalize('NFC').toLocaleLowerCase('tr'));
+  return !!text && VOICE_ASK_RE.test(text.normalize('NFC').replace(/İ/g, 'i'));
 }
 
 /** What one text sent to Telegram (an answer section, a member post) carries: its text, and the
