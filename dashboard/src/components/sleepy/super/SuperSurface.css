@@ -534,8 +534,20 @@
 /* A floating tile shows the lights over its head on hover only. The title keeps the left edge (a
    small card has no 88px to give: reserving it pushed the title to the right edge, truncated) and
    gives way while the lights are shown, so they never sit on it. */
+.super-card-frame[data-where='float'] > .super-card-clip { container-type: inline-size; container-name: super-card; }
+.super-card-frame[data-where='float'] :is(.super-card-head, .super-card-large-head) { transition: padding-left 120ms ease-out; }
 .super-card-frame[data-where='float'] :is(.super-card-head, .super-card-large-head) > :not(.super-card-actions) { transition: opacity 120ms ease-out; }
-.super-card-frame[data-where='float']:is(:hover, :focus-within):not([data-lifted]) :is(.super-card-head, .super-card-large-head) > :not(.super-card-actions) { opacity: 0; }
+/* Room for the lights beside the title (88px + 130px of title): the title slides right. Narrower: it fades. */
+@container super-card (min-width: 220px) {
+  .super-card-frame[data-where='float']:is(:hover, :focus-within):not([data-lifted]) :is(.super-card-head, .super-card-large-head) { padding-left: 88px; }
+}
+@container super-card (max-width: 219.98px) {
+  .super-card-frame[data-where='float']:is(:hover, :focus-within):not([data-lifted]) :is(.super-card-head, .super-card-large-head) > :not(.super-card-actions) { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .super-card-frame[data-where='float'] :is(.super-card-head, .super-card-large-head),
+  .super-card-frame[data-where='float'] :is(.super-card-head, .super-card-large-head) > * { transition: none; }
+}
 /* A large card's trailing side holds only "ask about this": no pill around one button. */
 .super-card-frame:not([data-where='float']) .super-card-actions { top: 4px; padding: 0; border: 0; background: none; box-shadow: none; }
 /* "Ask about this" (owner 2026-11-08, the comment icon, clearer): bigger, in the accent colour. */
