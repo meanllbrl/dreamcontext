@@ -49,10 +49,45 @@
 
 .frame-viewer-level { cursor: default; min-width: 56px; }
 
+/* Owner 2026-11-16: the floating bar sat over the page's own bottom (a funnel's CTA) and took
+   its clicks and scroll. The page viewer's foot is now a solid band UNDER the page, like the
+   picture viewer's toolbar: the stage is the column above it, so the page, fitted or zoomed,
+   ends at the band's top edge and nothing draws over it. Pure layout (a flex column), so the
+   stage's measured size is right from the first frame and the fit needs no second pass. */
+.frame-viewer {
+  display: flex;
+  flex-direction: column;
+}
+.frame-viewer > .frame-viewer-stage {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.frame-viewer .image-viewer-foot {
+  position: relative;
+  bottom: auto;
+  flex: none;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  background: rgb(14, 14, 20);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  /* Nothing in the band is click-through any more: it covers no page. */
+  pointer-events: auto;
+}
+.frame-viewer .image-viewer-foot .image-viewer-caption { background: transparent; padding: 0 2px; min-width: 0; max-width: 32ch; }
+.frame-viewer .image-viewer-foot .image-viewer-bar { box-shadow: none; backdrop-filter: none; }
+.frame-viewer .image-viewer-foot .image-viewer-hint { margin: 0; background: transparent; padding: 0; }
+
 .frame-viewer-note {
   position: absolute;
   left: 50%;
-  bottom: 104px;
+  /* Just above the band, over the page's edge: a status line, shown only when the page was cut. */
+  bottom: calc(100% + 8px);
   transform: translateX(-50%);
   margin: 0;
   padding: 4px 12px;
