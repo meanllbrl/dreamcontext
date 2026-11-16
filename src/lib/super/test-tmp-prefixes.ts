@@ -808,6 +808,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'gold-v2-src-',
   'grants-',
   'grants-other-',
+  'headless-super-',
+  'headless-super-log-',
   'hf-auth-',
   'hf-land-',
   'hf-lock-cut-',
