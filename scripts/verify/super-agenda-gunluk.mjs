@@ -352,6 +352,11 @@ async function main() {
     await shot(page, '05-yesterday-light.png');
     await agendaCard(page).getByTestId('super-agenda-day-next').click();
     ok('› comes back to today', await until(page, async () => (await agendaCard(page).getByTestId('super-agenda-day').innerText()) === dayBefore, 5000));
+    await agendaCard(page).getByTestId('super-agenda-day-next').click();
+    ok('› goes on to tomorrow (not greyed) and shows its empty state', await until(page, async () => (await agendaCard(page).getByTestId('super-agenda-day').innerText()) !== dayBefore
+      && (await agendaCard(page).getByTestId('super-agenda-day-next').isEnabled()), 5000));
+    await agendaCard(page).getByTestId('super-agenda-day-prev').click();
+    ok('‹ comes back to today from tomorrow', await until(page, async () => (await agendaCard(page).getByTestId('super-agenda-day').innerText()) === dayBefore, 5000));
 
     // ── every size, both themes
     for (const theme of ['light', 'dark']) {
@@ -430,6 +435,13 @@ async function main() {
       const id = (record().containers ?? []).find((c) => c.kind === 'agenda')?.id;
       await owner(page, { view: { mode: 'half', card: id } });
       ok(`${theme} full: the 7-day strip`, await until(page, async () => (await page.getByTestId('super-agenda-week-day').count()) === 7, 8000));
+      ok(`${theme} full: every day of the strip is clickable and the week arrows are on`, (await page.locator('[data-testid="super-agenda-week-day"]:disabled').count()) === 0
+        && await page.getByTestId('super-agenda-week-next').isEnabled() && await page.getByTestId('super-agenda-week-prev').isEnabled());
+      await page.locator('[data-testid="super-agenda-week-day"]:not([data-on="true"])').last().click();
+      ok(`${theme} full: a click on another day shows that day`, await until(page, async () => (await page.locator('[data-testid="super-agenda-week-day"][data-on="true"]').count()) === 1
+        && (await page.locator('[data-testid="super-agenda-week-day"][data-today="true"][data-on="true"]').count()) === 0, 5000));
+      await shot(page, `13b-full-${theme}-other-day.png`);
+      await page.locator('[data-testid="super-agenda-week-day"][data-today="true"]').click();
       await settle(page);
       await page.mouse.move(5, 5);
       await shot(page, `14-full-${theme}.png`);

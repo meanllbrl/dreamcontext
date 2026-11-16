@@ -134,8 +134,10 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // The day shown. It follows today across midnight unless he browsed away.
   const [picked, setPicked] = useState<string | null>(null);
-  const day = picked && picked < today ? picked : today;
-  const onDay = (d: string) => { setPicked(d >= today ? null : d); setSelected(null); setMenu(null); };
+  const day = picked && picked !== today ? picked : today;
+  // A browsed day that has become today stops being browsed, so the card follows today again.
+  useEffect(() => { if (picked === today) setPicked(null); }, [picked, today]);
+  const onDay = (d: string) => { setPicked(d === today ? null : d); setSelected(null); setMenu(null); };
 
   // A day's Done lines from its file (C4). Today's is merged into the pushed pad; a past day is
   // the route's answer. Fetched on open, on a day change and after a pushed pad change.
@@ -155,7 +157,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     notepad, unanswered, pad, routeDone: dayData[today]?.done ?? null,
     approvals, taskRows, recallRows, syncRows, children: state.children, now,
   });
-  const past = day < today ? dayGroups(day, pad, dayData[day]?.done ?? null) : null;
+  const past = day !== today ? dayGroups(day, pad, dayData[day]?.done ?? null) : null;
   // Every count and the bar describe the day on screen (review r1): a past day's from its lines.
   const progress = past
     ? { done: past.dayDone.length, total: past.dayDone.length + past.dayOpen.length, working: 0, waiting: 0 }
@@ -425,7 +427,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     </div>
   );
   const nav = (long: boolean) => (loadDay
-    ? <AgendaDayNav day={day} today={today} onDay={onDay} locale={locale} long={long} />
+    ? <AgendaDayNav day={day} onDay={onDay} locale={locale} long={long} />
     : <span className="agenda-day" data-testid="super-agenda-day" data-day={day}>{new Intl.DateTimeFormat(locale, { day: 'numeric', month: long ? 'long' : 'short' }).format(now)}</span>);
   const progressText = tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) });
 
