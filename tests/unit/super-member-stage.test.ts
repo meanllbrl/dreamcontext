@@ -430,7 +430,7 @@ describe('end review fixes', () => {
   });
 
   it('M6: Esc closes "Üyeleri yönet", the Ekip list or an agent\'s Edit dialog, never the member\'s stage under it', () => {
-    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list, \.aid-scrim'\)\) return;/);
+    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list, \.aid-scrim, \.app-popup-scrim'\)\) return;/);
   });
 });
 

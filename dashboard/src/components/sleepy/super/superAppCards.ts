@@ -95,7 +95,7 @@ export function useAppPopup(waiting: readonly string[], enabled: boolean) {
     step();
     if (waiting.length === 0) return undefined;
     // A pop-up that was in the way closes without telling us: look again every second.
-    const id = window.setInterval(step, 1000);
+    const id = window.setInterval(step, pollMs(1000));
     return () => window.clearInterval(id);
   }, [waiting, enabled]);
   const later = useCallback(() => setS(appPopupLater), []);
