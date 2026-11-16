@@ -35,6 +35,7 @@ import { caption as pictureCaption, fitsTelegram, pngFile, sendMedia, sendPictur
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
+import { cardItemKey, claimThisTurn, release, turnOf } from './sent-once.js';
 import { superMediaRoots } from './media-roots.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
@@ -133,21 +134,37 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const s = await readSuperState(ab.contextRoot).catch(() => null);
     const show = s?.askShows?.find((x) => x.item === itemId);
     const items: MediaItem[] = [];
+    const keys = new Map<MediaItem, string>();
+    const keyOf = (m: MediaItem) => keys.get(m)!;
+    const turn = turnOf(sessionId);
     let roots: string[] | undefined;
+    // Pictures claimed but not yet sent are given back if a card fails midway.
+    try {
     for (const id of show?.cards ?? []) {
       const c = s!.containers.find((k) => k.id === id);
       if (!c || items.length >= 10) continue;
       const out = await cardOut({ contextRoot: ab.contextRoot, sessionId, pictures: true, snapshot: deps.snapshot, mediaRoots: roots ??= await superMediaRoots(ab.contextRoot) }, c);
       if (out.kind === 'media') {
-        items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
+        out.items.forEach((m, i) => keys.set(m, cardItemKey(c.id, c.ref, m, i)));
+        // A file this turn already sent (the same card on the stage, another ask) goes once
+        // (sent-once.ts): claimed now, before any upload; a failed or skipped one is given back.
+        const fresh = claimThisTurn(ab.key, sessionId, out.items, keyOf, turn);
+        const pics = fresh.filter((m) => m.kind !== 'document');
+        const take = pics.slice(0, 10 - items.length);
+        items.push(...take);
+        release(ab.key, sessionId, pics.slice(take.length), keyOf, turn);
         // A page printed to PDF (or a PDF card) goes as its document; a refused send is its line.
-        for (const d of out.items.filter((m) => m.kind === 'document')) {
-          if (!(await sendMedia(ab, d, pictureCaption(d.title)))) await hub.reply(ab, notSentLine('', cleanTitle(d.title, 80), NOT_SENT.refused));
+        for (const d of fresh.filter((m) => m.kind === 'document')) {
+          if (await sendMedia(ab, d, pictureCaption(d.title))) continue;
+          release(ab.key, sessionId, [d], keyOf, turn);
+          await hub.reply(ab, notSentLine('', cleanTitle(d.title, 80), NOT_SENT.refused));
         }
       } else await hub.reply(ab, out.line);
     }
+    } catch (err) { release(ab.key, sessionId, items, keyOf, turn); throw err; }
     if (!items.length) return;
-    const { unsent } = await sendPictures(ab, items, true);
+    const { unsent } = await sendPictures(ab, items, true).catch((err) => { release(ab.key, sessionId, items, keyOf, turn); throw err; });
+    release(ab.key, sessionId, unsent, keyOf, turn);
     if (unsent.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join('; ')}`);
   }
 
