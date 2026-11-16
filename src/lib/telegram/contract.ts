@@ -84,7 +84,14 @@ export interface JournalEntry {
   written: boolean;
   /** Epoch ms of acceptance. */
   at: number;
+  /** His message itself (text or media; capped at `JOURNAL_MSG_MAX_CHARS` as JSON), kept only
+   *  until it is handed to a Super (`ref` set): a message still waiting for its Super when the app
+   *  stopped is delivered at the next start instead of being lost (owner 2026-11-16). */
+  msg?: Record<string, unknown>;
 }
+
+/** The largest message (as JSON) the journal keeps for a replay; a larger one is told, as before. */
+export const JOURNAL_MSG_MAX_CHARS = 16_384;
 
 /** `poll.json`, 0600, beside `bot.json`. */
 export interface PollState {

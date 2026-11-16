@@ -99,6 +99,8 @@ export const INJECTOR_WAIT_MS = 45_000;
 /** An owner message that cannot reach a closed Super waits this long for it, never dropped at the
  *  first failed open (owner 2026-11-15: four "açılamadı" lines while the Mac's window was hidden). */
 export const INJECTOR_HOLD_MS = 2 * 60 * 60 * 1000;
+/** A message kept in the journal is delivered at the next start only this soon after it came. */
+export const JOURNAL_REPLAY_MAX_MS = 24 * 60 * 60 * 1000;
 /** While a message waits, the Super's link is opened again this often. */
 export const INJECTOR_RETRY_MS = 2 * 60 * 1000;
 /** A voice note whose local transcription did not answer is tried again after these pauses (a busy
@@ -119,6 +121,7 @@ export const LINES = {
   cannotOpen: "Super Mac'te açılamadı; uygulamaya bakıp tekrar yaz.",
   holding: "Mac'te sohbet şu an açılamadı; mesajların bekliyor, açılınca sırayla iletirim.",
   heldExpired: "Bekleyen mesajların Mac'e ulaşmadı: sohbet iki saattir açılamadı. Uygulamaya bakıp tekrar gönder.",
+  replaying: (n: number) => (n === 1 ? 'Uygulama yeniden başladı; bekleyen mesajını şimdi iletiyorum.' : `Uygulama yeniden başladı; bekleyen ${n} mesajını sırayla iletiyorum.`),
   voiceRetrying: 'Sesli notu şu an yazıya çeviremedim (Mac meşgul); birkaç dakika içinde yeniden deniyorum.',
   voiceFailed: "Sesli notu yazıya çeviremedim. Tekrar dene'ye bas ya da yazarak gönder.",
   voiceTapMax: (n: number) => `Bu sesli not ${n} kez denendi, yazıya çevrilemedi; yazarak gönder.`,
@@ -177,8 +180,11 @@ export interface HubDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Registered projects: name + context root. */
   vaults?: () => { name: string; contextRoot: string }[];
-  /** `open -g <link>`: reopens the Super window (A3). */
+  /** `open -g <link>`: reopens the Super window (A3). Only when `wakeHeadless` may not start it. */
   openLink?: (url: string) => void;
+  /** Start a Super with no window (headless-super.ts `wakeSuperHeadless`; start.ts wires it, tests
+   *  inject). Absent = only the window can start one (the old path). */
+  wakeHeadless?: (o: { contextRoot: string; vault?: string; sessionId: string; member: string | null; home?: string }) => Promise<'live' | 'started' | 'refused'>;
   injectorWaitMs?: number;
   /** How long an owner message waits for a closed Super (default `INJECTOR_HOLD_MS`). */
   injectorHoldMs?: number;
@@ -814,14 +820,59 @@ export class TelegramHub implements TelegramHubApi {
     io.write({ ...s, pending: fn(s.pending) });
   }
 
-  /** Leftovers from a crash: one notice each, then cleared (E2, F5). */
+  /**
+   * Leftovers from the last run (E2, F5). A message of his that never reached any Super (no ref:
+   * it was still waiting for its Super to start when the app stopped or restarted) is DELIVERED
+   * now, in order, never lost (owner 2026-11-16: "yeniden başlattığımda da çalışmadı"); it was
+   * handed to nobody, so it cannot arrive twice. Anything else (handed to a Super that then died,
+   * or kept without its words) gets one notice per kind, as before. Then cleared.
+   */
   private recoverJournal(ab: ActiveBinding): void {
     const io = this.pollIO(ab.scope, ab.target);
     const s = io.read();
     if (!s.pending.length) return;
-    const lines = s.pending.map((e) => (e.written ? LINES.writtenNotDone : LINES.notWritten));
-    io.write({ ...s, pending: [] });
+    const replay = s.pending.filter((e) => this.replayable(ab, e));
+    const lines = s.pending.filter((e) => !replay.includes(e)).map((e) => (e.written ? LINES.writtenNotDone : LINES.notWritten));
+    io.write({ ...s, pending: replay });
     void (async () => { for (const l of new Set(lines)) await this.notice(ab, 'warn', l, true); })();
+    if (!replay.length) return;
+    void this.notice(ab, 'info', LINES.replaying(replay.length));
+    for (const e of replay) {
+      ab.chain = ab.chain.then(() => this.replayOwnerMessage(ab, e)).catch(() => { /* one failed link never stops the next */ });
+    }
+  }
+
+  /** A journal entry delivered at the next start: his own text or media, never handed to a Super,
+   *  younger than `JOURNAL_REPLAY_MAX_MS`, and still from the paired account. */
+  private replayable(ab: ActiveBinding, e: JournalEntry): boolean {
+    if (e.written || e.ref || !e.msg || (e.kind !== 'text' && e.kind !== 'media')) return false;
+    if (this.now() - e.at > JOURNAL_REPLAY_MAX_MS) return false;
+    return isAuthorized({ update_id: e.updateId, message: e.msg } as unknown as TgUpdateLike, ab.binding);
+  }
+
+  /** One kept message, delivered as it would have been: its Super resolved now (started if it
+   *  sleeps), its wait counted from now. */
+  private async replayOwnerMessage(ab: ActiveBinding, e: JournalEntry): Promise<void> {
+    const drop = () => this.journal(ab, (p) => p.filter((x) => x.updateId !== e.updateId));
+    const msg = e.msg as Obj;
+    const root = this.rootOf(ab);
+    if (!root) { drop(); await this.notice(ab, 'warn', LINES.notWritten, true); return; }
+    let session: string | null;
+    if (ab.target === 'super') {
+      const state = await this.readBound(ab);
+      if (!state?.enabled || !state.session) { drop(); await (this.superOff ? this.superOff(ab) : this.notice(ab, 'info', LINES.superOff)); return; }
+      session = state.session;
+    } else {
+      session = await this.memberSession(ab, root);
+      if (!session) { drop(); return; }
+    }
+    this.journal(ab, (p) => p.map((x) => (x.updateId === e.updateId ? { ...x, at: this.now() } : x)));
+    try {
+      await this.deliver(ab, e.updateId, msg, session, root);
+    } catch {
+      drop();
+      await this.notice(ab, 'warn', LINES.notWritten, true);
+    }
   }
 
   private async onOwnerMessage(ab: ActiveBinding, updateId: number, msg: Obj): Promise<UpdateDisposition> {
@@ -838,7 +889,8 @@ export class TelegramHub implements TelegramHubApi {
       if (!session) return 'accepted';
     }
     const media = pickInboundMedia(msg);
-    this.journal(ab, (p) => [...p, { updateId, kind: media ? 'media' : 'text', written: false, at: this.now() }]);
+    // His message itself is kept until a Super takes it: a restart meanwhile delivers it (recoverJournal).
+    this.journal(ab, (p) => [...p, { updateId, kind: media ? 'media' : 'text', written: false, at: this.now(), msg }]);
     // Confirmed now (journaled); delivered in order behind the previous message.
     const sid = session;
     ab.chain = ab.chain.then(() => this.deliver(ab, updateId, msg, sid, root).catch(async () => {
@@ -1069,7 +1121,8 @@ export class TelegramHub implements TelegramHubApi {
     }
     const ref = this.mintRef(ab);
     telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as?.kind === 'run-report' ? { cardRef: as.cardRef } : {}) });
-    this.journal(ab, (p) => p.map((e) => (e.updateId === updateId ? { ...e, ref, chatRegistryId: inj.chatRegistryId } : e)));
+    // Handed to a Super now: his words leave the journal (a replay could only repeat them).
+    this.journal(ab, (p) => p.map((e) => { if (e.updateId !== updateId) return e; const { msg: _m, ...rest } = e; return { ...rest, ref, chatRegistryId: inj.chatRegistryId }; }));
     const dir = bindingDir(ab.scope, ab.target, this.home);
     const turns = readTurns(dir, this.home);
     const fresh = turns.turns.filter((t) => this.now() - t.firstAt < TURN_ROUTABLE_MS);
@@ -1166,12 +1219,23 @@ export class TelegramHub implements TelegramHubApi {
     });
   }
 
-  /** The live injector, or the Super window reopened through its session link and awaited (A3). */
+  /** The live injector; else the Super started by the server itself, with no window (owner
+   *  2026-11-16: a slept or closed Super never woke from Telegram, because only a window could
+   *  start it); else, when the server may not start it, the window reopened through its session
+   *  link and awaited (A3). */
   private async waitInjector(ab: ActiveBinding, sessionId: string) {
     const have = chatInjector(sessionId);
     if (have) return have;
-    // A member's own Super opens on its stage through the same session link (AgentSurface).
     const root = this.rootOf(ab);
+    if (root && this.deps.wakeHeadless) {
+      const vault = (this.deps.vaults?.() ?? []).find((v) => v.contextRoot === root)?.name ?? (ab.scope !== 'global' ? ab.projectName : undefined);
+      const woke = await this.deps.wakeHeadless({ contextRoot: root, sessionId, member: ab.target === 'super' ? null : ab.target, home: this.home, ...(vault ? { vault } : {}) }).catch(() => 'refused' as const);
+      if (woke !== 'refused') {
+        const inj = await this.registeredWithin(sessionId, this.deps.injectorWaitMs ?? INJECTOR_WAIT_MS);
+        if (inj) return inj;
+      }
+    }
+    // A member's own Super opens on its stage through the same session link (AgentSurface).
     const link = root ? appLinkForContextRoot(root, { kind: 'session', claudeId: sessionId } as never, this.home) : null;
     if (!link) return null;
     const asked = this.now();

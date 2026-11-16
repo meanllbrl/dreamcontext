@@ -4332,11 +4332,29 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     for (const sid of publishedGrantSids.current) publishSessionGrantItems(sid, null);
     publishedGrantSids.current = new Set();
   }, []);
+  /** A tab that holds a Super's conversation without being its pane goes (its process too): not
+   *  `closeSessionById`, which ends the conversation's pins and drafts, and this conversation goes
+   *  on as the Super. */
+  const dropStrayTabOfSuper = useCallback((sid: string) => {
+    try { sessions.current.get(sid)?.dispose(); } catch { /* best-effort: the tab still goes */ }
+    sessions.current.delete(sid);
+    sessionListRef.current = sessionListRef.current.filter((m) => m.id !== sid);
+    setSessionList((prev) => prev.filter((m) => m.id !== sid));
+    setPanes((prev) => prev.map((p) => removeFromPane(p, sid)).filter((p) => p.tabs.length > 0));
+    setMinimizedIds((prev) => (prev.includes(sid) ? prev.filter((x) => x !== sid) : prev));
+  }, []);
   const ensureSuperSession = useCallback((session: string, superId: SuperId = MAIN_SUPER): ChatSession | null => {
     const open = sessionListRef.current.find((m) => m.claudeId === session);
     if (open) {
       const live = sessions.current.get(open.id);
-      return live && live.kind === 'chat' ? live as ChatSession : null;
+      if (open.mode === 'super' && live && live.kind === 'chat') return live as ChatSession;
+      // A tab that holds this Super's conversation but is no Super pane: a plain chat tab a
+      // session link opened before this window held the member's record, then parked or dormant
+      // (owner 2026-11-16, Ege: the member's stage stayed blank, his Telegram messages unanswered).
+      // It can never take a Telegram turn, and while it stands here the stage draws nothing. It
+      // goes, and the Super's own pane opens below (it adopts a Super the server already runs).
+      if (!canSpawn) return null;
+      dropStrayTabOfSuper(open.id);
     }
     if (!canSpawn) return null;
     const member = memberOf(superId);
@@ -4365,7 +4383,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // admitTab: exempt (the Super Agent's own session; `handOver` checked the cap first).
     setSessionList((prev) => (prev.some((m) => m.claudeId === session) ? prev : [...prev, meta]));
     return s;
-  }, [canSpawn, spawn]);
+  }, [canSpawn, spawn, dropStrayTabOfSuper]);
   useEffect(() => {
     // A remote computer joins the Super's chat as a mirror, only while the Mac runs it.
     if (isMacPhoneSurface() && !(remoteDesktop && remoteSuperRow?.live)) return;
