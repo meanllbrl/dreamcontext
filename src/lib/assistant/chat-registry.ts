@@ -34,7 +34,7 @@
  * The assistant's OWN session is never registered — it would be watching itself.
  */
 
-import { outwardAction } from '../super/owed.js';
+import { sentOutwards } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
 import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, supersedesCard, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, SAFETY_CHECK_RE, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
@@ -230,7 +230,7 @@ export interface WatchResult {
 
 /**
  * Who hears a chat's OUTWARD action that went through (a push, a publish, a PR, a deploy, an MCP
- * send: owed.ts `outwardAction`), once per tool call: the Super inbox registers it (a registry
+ * send: owed.ts `sentOutwards`), each step of a tool call once: the Super inbox registers it (a registry
  * never imports the Super). Told only on the call's non-error `tool_result`, so a push the owner
  * denied is never told as sent.
  */
@@ -722,7 +722,7 @@ export function registerChat(init: {
    *  whose last reply was the effort echo, while the child had just started on the message). */
   let messagesOwed = 0;
   const openTools = new Set<string>();
-  const outwardOpen = new Map<string, string>();
+  const outwardOpen = new Map<string, string[]>();
   const outwardTold = new Set<string>();
   /** Every assistant frame (top level and a sub-agent's): an outward call is remembered; every
    *  user frame: its non-error result tells it, once. */
@@ -734,8 +734,8 @@ export function registerChat(init: {
       const blk = b as Record<string, unknown>;
       if (frame.type === 'assistant' && blk.type === 'tool_use' && typeof blk.id === 'string') {
         if (outwardTold.has(blk.id) || outwardOpen.has(blk.id)) continue;
-        const what = outwardAction(blk.name, blk.input);
-        if (!what) continue;
+        const what = sentOutwards(blk.name, blk.input);
+        if (!what.length) continue;
         outwardOpen.set(blk.id, what);
         if (outwardOpen.size > MAX_OUTWARD_OPEN) outwardOpen.delete(outwardOpen.keys().next().value as string);
       } else if (frame.type === 'user' && blk.type === 'tool_result' && typeof blk.tool_use_id === 'string') {
@@ -745,7 +745,7 @@ export function registerChat(init: {
         if (blk.is_error === true) continue;
         outwardTold.add(blk.tool_use_id);
         if (outwardTold.size > MAX_OUTWARD_TOLD) outwardTold.delete(outwardTold.values().next().value as string);
-        try { outwardSink?.(e.sessionId, what, blk.tool_use_id); } catch { /* a sink never breaks the stream */ }
+        for (const w of what) { try { outwardSink?.(e.sessionId, w, blk.tool_use_id); } catch { /* a sink never breaks the stream */ } }
       }
     }
   };
