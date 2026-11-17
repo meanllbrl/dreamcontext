@@ -29,6 +29,7 @@ import { registerBuilderCommand } from './commands/builder.js';
 import { registerReflectCommand } from './commands/reflect.js';
 import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
+import { registerPluginsCommand } from './commands/plugins.js';
 import { registerMemoryCommand } from './commands/memory.js';
 import { registerChangelogCommand } from './commands/changelog.js';
 import { registerEmbedCommand } from './commands/embed.js';
@@ -117,6 +118,7 @@ export function createProgram(): Command {
   registerReflectCommand(program);
   registerCouncilCommand(program);
   registerMarketingCommand(program);
+  registerPluginsCommand(program);
   registerMemoryCommand(program);
   registerChangelogCommand(program);
   registerEmbedCommand(program);

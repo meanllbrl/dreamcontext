@@ -1,11 +1,30 @@
 import { fileSessionParam } from '../lib/chatAppBinding';
 import { phoneAllows } from '../lib/phoneSurface';
+import { PLUGIN_REFUSED_EVENT, type PluginRefusedDetail } from '../lib/plugins';
 
 const BASE_URL = '/api';
 
 interface ApiError {
   error: string;
   message: string;
+  plugin?: string;
+  file?: string;
+}
+
+/**
+ * A write refused because its plugin is not installed (or its entry holds a git conflict), Mağaza
+ * D1 C4: announced ONCE per refusal on `window`, keyed by vault, so the project's notice says
+ * "<plugin> kurulu değil" with a way to its Mağaza page. The error is marked `announced`, so a
+ * surface that toasts its own errors can stay quiet. The Mağaza's own install/remove calls
+ * (`/plugins/…`) answer inline and are never announced.
+ */
+function announcePluginRefusal(vault: string | null, path: string, status: number, code: string, body: ApiError | null): boolean {
+  if (status !== 409 || typeof window === 'undefined') return false;
+  if (code !== 'plugin_not_installed' && code !== 'plugin_entry_conflict') return false;
+  if (path.startsWith('/plugins')) return false;
+  const detail: PluginRefusedDetail = { vault, code, plugin: body?.plugin ?? '', ...(body?.file ? { file: body.file } : {}) };
+  window.dispatchEvent(new CustomEvent(PLUGIN_REFUSED_EVENT, { detail }));
+  return true;
 }
 
 /**
@@ -17,10 +36,19 @@ interface ApiError {
 export const OWNER_REOPEN_LINE = 'dreamcontext has to be reopened before it can do this for you: quit it (⌘Q), open it again and try once more.';
 
 export class RequestError extends Error {
+  /** The project's plugin notice already told the owner about this refusal (C4). */
+  announced = false;
+  /** The file a `plugin_entry_conflict` names, when the route sent one. */
+  file?: string;
   constructor(message: string, readonly status: number, readonly code: string) {
     super(message);
     this.name = 'RequestError';
   }
+}
+
+/** True when the project's plugin notice already spoke for this error: don't toast it again. */
+export function isAnnouncedPluginRefusal(err: unknown): boolean {
+  return err instanceof RequestError && err.announced;
 }
 
 /**
@@ -171,15 +199,20 @@ export class ApiClient {
     if (!res.ok) {
       let message = `Request failed: ${res.status}`;
       let code = '';
+      let body: ApiError | null = null;
       try {
         const err = await res.json() as ApiError;
+        body = err;
         if (err.message) message = err.message;
         if (err.error) code = err.error;
       } catch { /* non-JSON error response */ }
       // The route's own `error` slug rides along. Callers that show a failure to a PERSON
       // need to pick their own words for it — matching on the English of `message` would be
       // a UI that breaks when a route reworded itself.
-      throw new RequestError(message, res.status, code);
+      const failure = new RequestError(message, res.status, code);
+      if (body?.file) failure.file = body.file;
+      failure.announced = announcePluginRefusal(this.vault, path, res.status, code, body);
+      throw failure;
     }
 
     return await res.json() as T;

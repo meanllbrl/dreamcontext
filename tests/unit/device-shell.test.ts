@@ -215,9 +215,11 @@ describe('the device shell\'s chrome', () => {
     expect(morePagesNarrow(true)).not.toContain('settings');
     expect(morePagesNarrow(false)).toContain('settings');
     // A phone's More is the short list, from its one constant; the Mac's stays whole.
-    expect(DEVICE_MORE_PAGES).toEqual(['roadmap', 'whiteboards', 'knowledge']);
-    expect(morePagesNarrow(true)).toEqual(['roadmap', 'whiteboards', 'knowledge']);
-    expect(morePagesNarrow(false)).toEqual(expect.arrayContaining(['hypotheses', 'apps', 'brain', 'council', 'core', 'sleep', 'stats']));
+    // Mağaza D1: the store joins it; a plugin page that is not installed is dropped by the Rail.
+    expect(DEVICE_MORE_PAGES).toEqual(['roadmap', 'whiteboards', 'knowledge', 'store']);
+    expect(morePagesNarrow(true)).toEqual(['roadmap', 'whiteboards', 'knowledge', 'store']);
+    expect(morePagesNarrow(false)).toEqual(expect.arrayContaining(['store', 'brain', 'whiteboards', 'core', 'sleep', 'stats']));
+    expect(morePagesNarrow(false, ['hypotheses', 'council'])).toEqual(expect.arrayContaining(['hypotheses', 'council']));
     expect([...DEVICE_HIDDEN_PAGES].sort()).toEqual(['relations', 'settings']);
     expect(read('dashboard/src/components/layout/newshell/Rail.tsx')).toMatch(/!\(device && DEVICE_HIDDEN_PAGES\.has\(RAIL_FOOT\)\) && pageRow\(RAIL_FOOT\)/);
     const shell = read('dashboard/src/components/layout/Shell.tsx');

@@ -87,7 +87,7 @@ import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { getExistingReleases } from '../../lib/release-discovery.js';
 import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { listPeople } from '../../lib/people-store.js';
-import { isLearningEnabled } from '../../lib/setup-config.js';
+import { isPluginInstalled } from '../../lib/plugins/store.js';
 import type { TaskData } from '../../lib/task-backend/types.js';
 import {
   readCycleReport,
@@ -468,7 +468,7 @@ export async function collectSleepPacket(root: string, opts: { filingRules?: str
     people,
     automationOutputs: opts.outputs ?? signals!.outputs,
     appFindings: opts.appFindings ?? signals!.appFindings.reduce((a, b) => a + b.count, 0),
-    learning: isLearningEnabled(readSetupConfig(projectRoot)),
+    learning: isPluginInstalled(root, 'hypotheses'),
   });
 }
 
@@ -477,12 +477,25 @@ export const PRD_COMPACT_MIN_CHARS = 20_000;
 export const PRD_COMPACT_DAYS = 30;
 export const PRD_COMPACT_KEEP = 5;
 
+/**
+ * The closing steps `sleep done` runs, naming only those whose plugin is installed (Mağaza D1):
+ * the roadmap refresh (Roadmap), `mk rem-sleep` (Marketing), the council count (Council).
+ */
+export function tailSteps(root: string): string[] {
+  const steps: string[] = [];
+  if (isPluginInstalled(root, 'roadmap')) steps.push('the roadmap refresh');
+  steps.push('the feature-link audit', 'PRD compaction');
+  if (isPluginInstalled(root, 'marketing')) steps.push('`mk rem-sleep`');
+  if (isPluginInstalled(root, 'council')) steps.push('the council count');
+  return steps;
+}
+
 /** The steps after the specialists that need judgment, printed by `sleep start` (SL-3). */
-export function remainingChecklist(): string[] {
+export function remainingChecklist(root: string): string[] {
   return [
     'After the specialists (their reports record flags and asks themselves: `sleep flag add|none`, `sleep asks set`):',
     '  1. `dreamcontext reflect`: promote a candidate only when it is load-bearing.',
-    '  2. `dreamcontext sleep done "<summary>"` (+ `--product-ran` when sleep-product ran). It runs the roadmap refresh, the feature-link audit, PRD compaction, `mk rem-sleep` and the council count itself.',
+    `  2. \`dreamcontext sleep done "<summary>"\` (+ \`--product-ran\` when sleep-product ran). It runs ${tailSteps(root).join(', ')} itself.`,
     '  3. Report: relay what `sleep done` printed (escalations, ready-to-close, link drift, slipping objectives, unpromoted debates).',
   ];
 }
@@ -497,7 +510,7 @@ export function remainingChecklist(): string[] {
 export async function runSleepTail(root: string, say: { info: (m: string) => void; warn: (m: string) => void }): Promise<void> {
   try {
     const objectivesDir = join(root, 'core', 'objectives');
-    if (existsSync(objectivesDir) && readdirSync(objectivesDir).some((f) => f.endsWith('.md'))) {
+    if (isPluginInstalled(root, 'roadmap') && existsSync(objectivesDir) && readdirSync(objectivesDir).some((f) => f.endsWith('.md'))) {
       const model = buildRoadmapModel(root);
       writeRoadmapBoard(root, model);
       const slipping = model.objectives.filter((o) => o.slipping === true).map((o) => o.slug);
@@ -521,7 +534,7 @@ export async function runSleepTail(root: string, say: { info: (m: string) => voi
     say.warn(`Feature-link audit: skipped — ${(err as Error).message ?? err}`);
   }
   try {
-    if (existsSync(join(root, 'marketing'))) {
+    if (isPluginInstalled(root, 'marketing') && existsSync(join(root, 'marketing'))) {
       const r = await withMarketingLock(async () => runRemSleep({}));
       if (r.marketingPresent) {
         say.info(
@@ -557,7 +570,7 @@ export async function runSleepTail(root: string, say: { info: (m: string) => voi
   } catch (err) {
     say.warn(`PRD compaction: skipped — ${(err as Error).message ?? err}`);
   }
-  try {
+  if (isPluginInstalled(root, 'council')) try {
     const unpromoted = loadCouncilIndex().filter((e) => e.status === 'complete' && !e.promoted_to_knowledge);
     if (unpromoted.length > 0) {
       say.info(`Council: ${unpromoted.length} finished debate(s) not promoted to knowledge (\`dreamcontext council list --unpromoted\`): promote one only if the owner engaged with it.`);
@@ -1049,7 +1062,7 @@ export function registerSleepCommand(program: Command): void {
         if (carried.reported_by.length > 0 || carried.asks) {
           say.info(`Carried from an unfinished cycle: ${carried.flags.length} flag(s) recorded by ${carried.reported_by.join(', ') || 'nobody'} (${CYCLE_REPORT_REL}); sleep done reads them with this cycle's.`);
         }
-        for (const line of remainingChecklist()) say.info(line);
+        for (const line of remainingChecklist(root)) say.info(line);
 
         // SL-1 — the packet: what every specialist used to rebuild by hand (sessions oldest →
         // newest with every owner-typed turn, the open board, ready-to-close, git, flags, and
@@ -1493,8 +1506,9 @@ export function registerSleepCommand(program: Command): void {
       });
       timer.lap('curator');
 
-      // SL-3 — the flow's deterministic tail (roadmap, link audit, mk rem-sleep, council count).
-      await bounded('Closing steps (roadmap, link audit, PRD compaction, marketing, council)', 'Run `dreamcontext roadmap` and `dreamcontext doctor` to redo them.', () => runSleepTail(root, { info, warn }));
+      // SL-3 — the flow's deterministic tail (roadmap, link audit, mk rem-sleep, council count),
+      // each plugin step only when its plugin is installed (Mağaza D1).
+      await bounded(`Closing steps (${tailSteps(root).join(', ')})`, 'Run `dreamcontext roadmap` and `dreamcontext doctor` to redo them.', () => runSleepTail(root, { info, warn }));
       timer.lap('tail');
 
       // AC7 — semantic dedup digest: surface merge/review/create tallies since

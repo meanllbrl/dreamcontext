@@ -201,7 +201,7 @@ describe('rendering and writing', () => {
       stale_review: [], git: [{ repo: 'project', path: '/p', log: ['abc fix'], status: [], authors: ['Ada'], more: 0, problem: null }],
       active_version: '0.2.0', filing_rules: ['!rules unreadable'], flags: [],
       bookmarks: [{ id: 'b1', salience: 3, message: 'decided: no task for small fixes', task_slug: null, session_id: 's', auto: false }],
-      facts: { people: 1, single_person: true, git_authors: 1, automation_outputs: 0, app_findings: 0, objectives: false, marketing: false, learning: false, depth: 'standard' },
+      facts: { people: 1, single_person: true, git_authors: 1, automation_outputs: 0, app_findings: 0, objectives: false, marketing: false, learning: false, council: false, depth: 'standard' },
     };
   }
 

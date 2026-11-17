@@ -273,6 +273,8 @@ export function useSetLearningEnabled() {
       api.post<{ enabled: boolean }>(enabled ? '/learning/enable' : '/learning/disable', {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['theses'] });
+      // The switch is the Hypotheses plugin (Mağaza D1): the rail and Mağaza follow at once.
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
     },
   });
 }

@@ -451,7 +451,7 @@ ${WORKTREE_DECLARE}
  */
 export function modeBriefing(
   mode: ChatMode,
-  opts: { worktreeAllowed: boolean; assistant?: AssistantBriefingContext },
+  opts: { worktreeAllowed: boolean; assistant?: AssistantBriefingContext; councilInstalled?: boolean },
 ): string {
   // ONE constant for every mode that gets it — copies would be things to keep in step.
   const worktree = opts.worktreeAllowed ? WORKTREE_ALLOWED : WORKTREE_FORBIDDEN;
@@ -470,9 +470,16 @@ export function modeBriefing(
       return assistantBriefing(opts.assistant ?? { name: 'Assistant', character: '', autonomy: 'ask', roster: '' });
     case 'super':
       // No worktree clause: the Super Agent never edits code itself; its children do, each in
-      // the worktree `super delegate --worktree` gives it.
-      return superBriefing();
+      // the worktree `super delegate --worktree` gives it. The `/council` clause names a plugin
+      // (Mağaza D1): offered only where the Council plugin is installed.
+      return opts.councilInstalled === false ? withoutCouncilClause(superBriefing()) : superBriefing();
   }
+}
+
+/** The Super's mode line without its Council suggestion (the Council plugin is not installed). */
+export const SUPER_COUNCIL_CLAUSE = '; a trade-off, `/council`.';
+export function withoutCouncilClause(brief: string): string {
+  return brief.replace(SUPER_COUNCIL_CLAUSE, '.');
 }
 
 // ─── The project's Super Agent ───────────────────────────────────────────────────────

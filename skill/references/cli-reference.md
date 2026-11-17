@@ -384,9 +384,26 @@ Refusals exit non-zero with the reason: an invalid slug, ref (including a page p
 
 ---
 
+## Plugins (Mağaza)
+
+Roadmap (`roadmap`, objectives and RICE), Hypotheses (`hypotheses`, theses), Lab (`lab`), Council (`council`) and Marketing (`marketing`/`mk`) are **plugins**. Everything else is core and always on (Whiteboards included).
+
+```bash
+dreamcontext plugins list [--json]     # installed or not, and why (chosen by <who> <when> | has data | no data)
+dreamcontext plugins install <id>      # team data: writes overrides/plugins/<id>.json, travels with the brain
+dreamcontext plugins remove <id>       # hides: page, snapshot section, sleep step, writes. Data is never deleted
+```
+
+- **Installed** = an owner entry says so; with no entry, a plugin is installed iff its data exists (objectives, `learning.enabled`, insights or boards, debates, `marketing/`). An existing project keeps what it uses; a new one has only core. `init` and `update` write nothing under `overrides/plugins/`.
+- **Not installed:** every read runs (`lab show`, `roadmap objective list`, `theses list`, `council show`, `--help`); every write, sync or job start under its command exits **3** with `plugin_not_installed: <id> — … Ask the owner; on yes run: dreamcontext plugins install <id>`. The API answers 409 `plugin_not_installed`. `tasks objectives`/`tasks rice` and task flags stay writable (task data).
+- **Team:** one file per plugin, so two people installing different plugins never conflict. The same plugin chosen on two machines before a sync is a git conflict in that file: every reader takes the later `at` (a tie → installed; each machine's clock is trusted), installs/removes of it are refused naming the file until it is edited to one side and committed; `doctor` and `plugins list` name it.
+- **Pins** (the rail): this Mac only, `pluginPins` in the ignored `state/.brain-local.json`, seeded once with the installed set. An install from this Mac pins; a teammate's install shows in Launchpad and Mağaza, not on your rail. An older CLI rewriting that file drops the field, which only re-seeds pins.
+- `theses enable|disable` and `/api/learning/enable|disable` are Hypotheses' install/remove (they also write `learning.enabled` as a mirror for older CLIs).
+- An automation that runs a removed plugin's write fails with the exit-3 line; `plugins remove` (and the dashboard confirm) list such automations.
+
 ## Theses (Hypotheses)
 
-Opt-in proactive learning layer (`learning.enabled`, default OFF). Falsifiable claims validated/invalidated across sleep cycles in `_dream_context/theses/`; dashboard label is "Hypotheses", code/CLI say theses throughout. Commands stay callable when the layer is off (a dim hint prints first). See [learning.md](learning.md) for the full lifecycle, derived-confidence formula, and sleep-learn contract.
+The Hypotheses plugin (`dreamcontext plugins install hypotheses`, or `theses enable`). Falsifiable claims validated/invalidated across sleep cycles in `_dream_context/theses/`; dashboard label is "Hypotheses", code/CLI say theses throughout. Not installed, the reads (`list`, `show`, `candidates`) still run and every write exits 3 `plugin_not_installed`. See [learning.md](learning.md) for the full lifecycle, derived-confidence formula, and sleep-learn contract.
 
 | Command | Description |
 |---|---|

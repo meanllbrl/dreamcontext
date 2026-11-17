@@ -12,6 +12,7 @@ import { AddCustomFieldForm } from '../AddCustomFieldForm';
 import { TaskField } from './TaskSection';
 import { TaskDateField } from './TaskDateField';
 import { RiceField } from './RiceField';
+import { usePlugins } from '../../../hooks/usePlugins';
 import { TaskFaceButton } from './AgentJobRow';
 import { findAgent, useAgents } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
@@ -53,6 +54,9 @@ export function PropertiesPanel({ task, allTasks, update, parentError, setParent
   const { data: taxonomy } = useTaxonomy();
   const { data: versions } = usePlanningVersions();
   const { data: objectives = [] } = useObjectives();
+  // RICE and objectives belong to the Roadmap plugin: hidden only when it is known to be not
+  // installed; the stored values stay on the task and come back with a reinstall (Mağaza D1).
+  const roadmapShown = usePlugins().pluginState('roadmap') !== 'not-installed';
 
   const isBacklog = task.tags.some((x) => x.toLowerCase() === 'backlog');
   const setTags = (tags: string[]) => {
@@ -182,7 +186,7 @@ export function PropertiesPanel({ task, allTasks, update, parentError, setParent
         >
           <span className="props-more-caret" aria-hidden data-open={moreOpen || undefined}>▸</span>
           {moreOpen ? 'Less' : 'More'}
-          {!moreOpen && <span className="props-more-summary"> · Urgency, RICE, Objectives, Dates, Parent, Assignee, Tags{customCount ? `, ${customCount} custom` : ''}</span>}
+          {!moreOpen && <span className="props-more-summary"> · Urgency{roadmapShown ? ', RICE, Objectives' : ''}, Dates, Parent, Assignee, Tags{customCount ? `, ${customCount} custom` : ''}</span>}
         </button>
       </div>
 
@@ -195,10 +199,10 @@ export function PropertiesPanel({ task, allTasks, update, parentError, setParent
                   {PRIORITIES.map((p) => <option key={p} value={p}>{t(`priority.${p}`)}</option>)}
                 </select>
               </TaskField>
-              <TaskField label={t('rice.title')}>
+              {roadmapShown && <TaskField label={t('rice.title')}>
                 <RiceField rice={task.rice} onUpdate={(patch: RiceInput | null) => update({ rice: patch })} />
-              </TaskField>
-              <TaskField label="Objectives">
+              </TaskField>}
+              {roadmapShown && <TaskField label="Objectives">
                 <div className="assignee-multi">
                   {taskObjectives.length > 0 && (
                     <div className="assignee-chips">
@@ -224,7 +228,7 @@ export function PropertiesPanel({ task, allTasks, update, parentError, setParent
                     onChange={(v) => { if (v && !taskObjectives.includes(v)) setObjectives([...taskObjectives, v]); }}
                   />
                 </div>
-              </TaskField>
+              </TaskField>}
             </>
           ))}
 

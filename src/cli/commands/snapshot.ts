@@ -24,7 +24,8 @@ import { countPendingSessions } from '../../lib/sleep-consolidation.js';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex, auditCoreFileSizes, CORE_FILE_CHAR_CEILING } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
-import { readSetupConfig, isLearningEnabled, type SetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
+import { isPluginInstalled, pluginStatuses } from '../../lib/plugins/store.js';
 import {
   hasPeopleLayout, isMultiPersonVault, listPeople, personFilePath, PeopleStoreError,
 } from '../../lib/people-store.js';
@@ -256,9 +257,32 @@ const TASKS_FOOTER =
   + '[-s todo|in_progress|in_review|completed | -a] [--version <sprint>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] '
   + '[--objective <slug>] [--feature <slug>]`)';
 /** The tasks footer, teaching the project's ACTUAL status keys when it declares extra ones. */
-function tasksFooter(statuses: readonly StatusDef[]): string {
-  if (!hasCustomStatuses(statuses)) return TASKS_FOOTER;
-  return TASKS_FOOTER.replace('-s todo|in_progress|in_review|completed', `-s ${statusKeys(statuses).join('|')}`);
+function tasksFooter(statuses: readonly StatusDef[], root: string): string {
+  // The `--objective` filter belongs to the Roadmap plugin (Mağaza D1): offered only when installed.
+  const base = isPluginInstalled(root, 'roadmap') ? TASKS_FOOTER : TASKS_FOOTER.replace(' [--objective <slug>]', '');
+  if (!hasCustomStatuses(statuses)) return base;
+  return base.replace('-s todo|in_progress|in_review|completed', `-s ${statusKeys(statuses).join('|')}`);
+}
+
+/**
+ * The one `Plugins:` line (Mağaza D1, C6): what is installed and what the agent may offer.
+ * A conflicted entry names its file. Omitted when both lists are empty.
+ */
+export function renderPluginsLine(root: string): string | null {
+  try {
+    const statuses = pluginStatuses(root);
+    const installed = statuses.filter((s) => s.installed).map((s) => s.id);
+    const installable = statuses.filter((s) => !s.installed).map((s) => s.id);
+    if (installed.length === 0 && installable.length === 0) return null;
+    const parts = [`Plugins: installed ${installed.length > 0 ? installed.join(', ') : '(none)'}`];
+    if (installable.length > 0) {
+      parts.push(`installable ${installable.join(', ')} (ask the owner, then \`dreamcontext plugins install <id>\`)`);
+    }
+    for (const s of statuses) if (s.conflict || s.error) parts.push(`resolve ${s.file}`);
+    return parts.join(' · ');
+  } catch {
+    return null;
+  }
 }
 const BOOKMARKS_FOOTER =
   '(all bookmarks: `dreamcontext bookmark list`)';
@@ -482,6 +506,8 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
   // Declared custom fields (from overrides/task.md) — used to surface each task's
   // custom-field VALUES inline so the agent sees them without opening the file.
   const declaredFields = loadTaskOverride(root)?.customFields ?? [];
+  // Objectives belong to the Roadmap plugin (Mağaza D1): annotated only when it is installed.
+  const roadmapOn = isPluginInstalled(root, 'roadmap');
   const statuses = loadStatuses(root);
 
   for (const file of taskFiles) {
@@ -521,7 +547,7 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
 
       // Objectives (roadmap many-to-many): the goals this task serves, inline —
       // the agent sees the WHY next to the work without opening the file.
-      if (Array.isArray(data.objectives) && data.objectives.length > 0) {
+      if (roadmapOn && Array.isArray(data.objectives) && data.objectives.length > 0) {
         line += `\n  Objectives: ${data.objectives.map(String).join(', ')}`;
       }
 
@@ -1090,13 +1116,13 @@ function thesisCompactLine(t: ThesisManifest): string {
  * Proactive learning layer (theses) section: open count, theses flipped
  * (validated/invalidated) in the last 7 days, awaiting-instrumentation count,
  * and the top 3 open claims ranked by distance from undecided (0.5). Hard-
- * gated on `learning.enabled` — an opt-in layer stays completely silent in
- * the snapshot while off, regardless of what's on disk. Cache-only reads;
+ * gated on the Hypotheses plugin — not installed, it stays completely silent in
+ * the snapshot, regardless of what's on disk. Cache-only reads;
  * must NEVER crash the snapshot on a malformed manifest — every failure
  * degrades to `null` (section omitted), mirroring `renderLabSection`.
  */
-function buildThesesSection(root: string, config: SetupConfig | null): BudgetSection | null {
-  if (!isLearningEnabled(config)) return null;
+function buildThesesSection(root: string): BudgetSection | null {
+  if (!isPluginInstalled(root, 'hypotheses')) return null;
   try {
     const theses = listTheses(root);
     if (theses.length === 0) return null;
@@ -1610,7 +1636,7 @@ export function measureSnapshot(
     parts.push('## Active Tasks\n');
     parts.push(activeTasks.map((t) => t.text).join('\n'));
     parts.push('');
-    parts.push(tasksFooter(taskStatuses));
+    parts.push(tasksFooter(taskStatuses, root));
     parts.push('');
 
     // Demoted design (Fable judge verdict, owner-approved 2026-07-30):
@@ -1677,7 +1703,7 @@ export function measureSnapshot(
           ? `- (+${routine.length} more active task(s), all ${[...byStatus.keys()][0]} — see commands below)`
           : `- (+${routine.length} more active task(s), not listed: ${breakdown} — see commands below)`);
       }
-      out.push('', tasksFooter(taskStatuses), '');
+      out.push('', tasksFooter(taskStatuses, root), '');
       return out.join('\n');
     };
     flushDemotable('tasks', [
@@ -2136,7 +2162,10 @@ export function measureSnapshot(
   // 7.6 Objectives (roadmap) — active goals + recently-finished, so every
   // session's decisions are weighed against the outcomes the PO is driving.
   // Floored at level 2 — the rung below it used to be `- N objective(s)`.
-  const objectivesSection = renderObjectivesSection(root);
+  // Mağaza D1: the plugin line first, then each plugin's section only when it is installed.
+  const pluginsLine = renderPluginsLine(root);
+  if (pluginsLine) sections.push({ id: 'plugins' satisfies NeverEvictSectionId, neverEvict: true, text: pluginsLine + '\n' });
+  const objectivesSection = isPluginInstalled(root, 'roadmap') ? renderObjectivesSection(root) : null;
   if (objectivesSection) {
     sections.push(demotableSection(
       'objectives', objectivesSection.full, objectivesSection.demotions, 2,
@@ -2148,16 +2177,16 @@ export function measureSnapshot(
   // keeps every metric's name + latest value in context under any budget
   // pressure, because that is what tells the agent a metric question is
   // already answered here instead of at some external API (Rule 13).
-  const labSection = renderLabSection(root);
+  const labSection = isPluginInstalled(root, 'lab') ? renderLabSection(root) : null;
   if (labSection) {
     // No rungs at all — see renderLabSection: every insight's name + latest
     // value is the section's whole purpose (Rule 13).
     sections.push(demotableSection('lab', labSection.full, labSection.demotions));
   }
 
-  // 7.8 Learning (proactive learning layer — theses) — hard-gated on
-  // `learning.enabled`; a disabled project sees zero snapshot noise.
-  const thesesSection = buildThesesSection(root, readSetupConfig(dirname(root)));
+  // 7.8 Learning (proactive learning layer — theses) — hard-gated on the
+  // Hypotheses plugin; a project without it sees zero snapshot noise.
+  const thesesSection = buildThesesSection(root);
   if (thesesSection) {
     sections.push(thesesSection);
   }
@@ -2283,7 +2312,7 @@ export function measureSnapshot(
 
   // 11. Marketing snapshot (only present when the marketing surface is bootstrapped)
   try {
-    const marketing = buildMarketingSnapshot();
+    const marketing = isPluginInstalled(root, 'marketing') ? buildMarketingSnapshot() : null;
     if (marketing) {
       parts.push(marketing);
       parts.push('');
@@ -2809,6 +2838,7 @@ function briefingKnowledgeSection(root: string): BudgetSection | null {
 }
 
 function briefingObjectivesSection(root: string): BudgetSection | null {
+  if (!isPluginInstalled(root, 'roadmap')) return null;
   try {
     const model = buildRoadmapModel(root);
     if (model.objectives.length === 0) return null;
@@ -2877,7 +2907,7 @@ function briefingTasksSection(root: string): BudgetSection | null {
   };
   return briefingSection('tasks', render(demoteTaskList(tasks, 12)), [
     () => render(demoteTaskList(tasks, BRIEFING_TASKS_L1)),
-    () => [render(firstLines()), tasksFooter(loadStatuses(root)), ''].join('\n'),
+    () => [render(firstLines()), tasksFooter(loadStatuses(root), root), ''].join('\n'),
   ]);
 }
 

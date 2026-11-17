@@ -92,6 +92,14 @@ describe('sanitizeChatMode', () => {
 });
 
 describe('modeBriefing', () => {
+  it('the Super offers /council only where the Council plugin is installed (Mağaza D1)', () => {
+    expect(modeBriefing('super', { worktreeAllowed: false })).toContain('a trade-off, `/council`.');
+    expect(modeBriefing('super', { worktreeAllowed: false, councilInstalled: true })).toContain('a trade-off, `/council`.');
+    const off = modeBriefing('super', { worktreeAllowed: false, councilInstalled: false });
+    expect(off).not.toContain('/council');
+    expect(off).toContain('a branch review, `/multi-review`.');
+  });
+
   it('Develop with no task named builds small work without filing one, and says what replaces the task steps (gece B7, TK-1)', () => {
     const d = modeBriefing('develop', { worktreeAllowed: true });
     expect(d).toContain('**No task named in your brief = small work.** Create none (never `tasks create`)');

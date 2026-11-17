@@ -1,4 +1,5 @@
 import { noteRunSession } from '../../lib/automations/run-session.js';
+import { isPluginInstalled } from '../../lib/plugins/store.js';
 import { readIndexStop } from '../../lib/embeddings/index-stop.js';
 import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, heavySuggestion } from '../../lib/run-budget.js';
@@ -656,7 +657,7 @@ export function recallGatePasses(hits: readonly RecallHit[], haiku: boolean, que
  * The injected block. Ranks 1-3 print in full; ranks 4-5 are ONE line each (`[type] relPath — title`) so
  * the wider window costs few tokens. An insight keeps its read directive at any rank.
  */
-export function renderRecallBlock(hits: readonly RecallHit[], label: string): string[] {
+export function renderRecallBlock(hits: readonly RecallHit[], label: string, labInstalled = true): string[] {
   const lines: string[] = ['', `— Memory recall (${label}, top ${hits.length}) —`];
   hits.forEach((h, i) => {
     const more = h.family ? `, +${h.family} more file${h.family === 1 ? '' : 's'} of this task` : '';
@@ -664,13 +665,13 @@ export function renderRecallBlock(hits: readonly RecallHit[], label: string): st
     if (i >= RECALL_FULL_RENDER_RANKS) {
       const title = capLine(h.doc.title || h.doc.slug, 80);
       lines.push(`  [${h.doc.type}] ${h.doc.relPath} — ${title}${size}`);
-      if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug));
+      if (h.doc.type === 'insight' && labInstalled) lines.push(insightReadDirective(h.doc.slug));
       return;
     }
     lines.push(`  [${h.doc.type}] ${h.doc.relPath}${size}`);
     if (h.snippet) lines.push(`    Why: ${capLine(h.snippet, RECALL_SNIPPET_MAX_CHARS)}`);
     else if (h.doc.description) lines.push(`    ${capLine(h.doc.description, RECALL_SNIPPET_MAX_CHARS)}`);
-    if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug));
+    if (h.doc.type === 'insight' && labInstalled) lines.push(insightReadDirective(h.doc.slug));
     const excerpt = h.doc.body
       .split('\n')
       .map(l => l.trim())
@@ -853,14 +854,14 @@ export async function judgedPromptRecall(
  * The judged block: must picks first, then confident ones, each with the judge's reason and the passage
  * it read. No count cap: every pick arrives (the hook's byte budget still applies to the whole turn).
  */
-export function renderJudgedBlock(hits: readonly JudgedHit[], label: string): string[] {
+export function renderJudgedBlock(hits: readonly JudgedHit[], label: string, labInstalled = true): string[] {
   const lines: string[] = ['', `— Memory recall (${label}, top ${hits.length}) —`];
   for (const h of hits) {
     const size = h.doc.type === 'insight' ? '' : `  (${hitSize(h.doc.body)})`;
     lines.push(`  [${h.doc.type}${h.level >= 2 ? ' · must' : ''}] ${h.doc.relPath}${size}`);
     if (h.reason) lines.push(`    Why: ${capLine(h.reason, RECALL_SNIPPET_MAX_CHARS)}`);
     else if (h.doc.description) lines.push(`    ${capLine(h.doc.description, RECALL_SNIPPET_MAX_CHARS)}`);
-    if (h.doc.type === 'insight') lines.push(insightReadDirective(h.doc.slug));
+    if (h.doc.type === 'insight' && labInstalled) lines.push(insightReadDirective(h.doc.slug));
     const at = h.section.heading ? `§ ${capLine(h.section.heading, 80)}: ` : '';
     const text = h.section.text.slice(0, 200);
     if (text) lines.push(`    > ${at}${text}${h.section.text.length > 200 ? '…' : ''}`);
@@ -3843,7 +3844,7 @@ export function registerHookCommand(program: Command): void {
                 }
                 if (process.env.DREAMCONTEXT_DEBUG && r.cause) console.error(`[recall] judge: ${r.outcome} (${r.cause})`);
                 if (r.hits.length > 0) {
-                  emitPromptBlock('recall', renderJudgedBlock(r.hits, judged.label).join('\n'));
+                  emitPromptBlock('recall', renderJudgedBlock(r.hits, judged.label, isPluginInstalled(root, 'lab')).join('\n'));
                   hadRecallHits = true;
                   ownShown = true;
                   haiku = true;
@@ -3871,7 +3872,7 @@ export function registerHookCommand(program: Command): void {
                 // re-ranking (see recallGatePasses).
                 ownShown = recallGatePasses(hits, haiku, prompt);
                 if (ownShown) {
-                  const lines = renderRecallBlock(hits, picked.label);
+                  const lines = renderRecallBlock(hits, picked.label, isPluginInstalled(root, 'lab'));
                   emitPromptBlock('recall', lines.join('\n'));
                   hadRecallHits = true;
                   markSessionRecall(recallSid, hits.map((h) => docKey(h.doc)), []);

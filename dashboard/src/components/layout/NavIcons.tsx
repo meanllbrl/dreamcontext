@@ -201,6 +201,16 @@ function AppsIcon() {
   );
 }
 
+/** Mağaza — a shopping bag: where plugins are installed from (D1). */
+function StoreIcon() {
+  return (
+    <Svg>
+      <path d="M5.5 8h13l-1 12h-11z" />
+      <path d="M9 10V7a3 3 0 0 1 6 0v3" />
+    </Svg>
+  );
+}
+
 /** Chat — a speech bubble with a line of text in it: you, talking to the agent now.
  *  Not in {@link ICONS}: Chat is a launcher row, not a `Page`. */
 export function ChatIcon() {
@@ -246,6 +256,7 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   lab: LabIcon,
   whiteboards: WhiteboardsIcon,
   apps: AppsIcon,
+  store: StoreIcon,
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,

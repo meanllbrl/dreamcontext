@@ -78,6 +78,7 @@ const LOADERS = new Map<string, Loader>([
   ['council', async () => (await import('./commands/council.js')).registerCouncilCommand],
   ['marketing', marketing],
   ['mk', marketing],
+  ['plugins', async () => (await import('./commands/plugins.js')).registerPluginsCommand],
   ['memory', async () => (await import('./commands/memory.js')).registerMemoryCommand],
   ['changelog', async () => (await import('./commands/changelog.js')).registerChangelogCommand],
   ['embed', async () => (await import('./commands/embed.js')).registerEmbedCommand],

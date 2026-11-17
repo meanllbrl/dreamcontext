@@ -48,6 +48,8 @@ updated: "<DATE>"
 
 - none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` (never a hand-rolled cron/launchd job or external scheduler)
 
+Plugins: installed marketing · installable roadmap, hypotheses, lab, council (ask the owner, then `dreamcontext plugins install <id>`)
+
 ## Knowledge Index
 
 (+1 more knowledge file(s), not listed — search: `dreamcontext memory recall "<q>" --types knowledge` · full index with descriptions: `dreamcontext knowledge index`)
