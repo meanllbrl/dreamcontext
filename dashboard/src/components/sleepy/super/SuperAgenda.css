@@ -105,6 +105,8 @@
   border-radius: var(--radius-md);
 }
 .super-agenda-row:hover, .super-agenda-row[data-selected='true'] { background: var(--color-bg-secondary); }
+/* The row whose thread the Super chat shows (ajanda-filtre): highlighted while the filter is on. */
+.super-agenda-row[data-thread='on'] { background: var(--color-accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent); }
 .agenda-mark {
   width: 24px;
   height: 28px;

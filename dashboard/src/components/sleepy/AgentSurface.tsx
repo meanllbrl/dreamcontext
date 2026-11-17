@@ -113,6 +113,8 @@ import { AgentAvatar } from '../agents/AgentAvatar';
 import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
+import { pressThread, threadFilterOf, clearThreadFilter, useThreadFilter } from './super/superThreadFilter';
+import type { ThreadPress } from './super/SuperAgenda';
 import { PhoneSuperJobs } from './super/PhoneSuperJobs';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
 import { readDeviceShell, readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
@@ -532,6 +534,34 @@ function tunnelSettings(raw: AgentSettings): AgentSettings {
   // The new layout is always Chat and always on (`agentSurfaceSettings`, read-side only).
   const s = agentSurfaceSettings(raw);
   return isMacPhoneSurface() && !s.chatView ? { ...s, chatView: true } : s;
+}
+
+
+/** What owns Esc over a filtered Super chat: a menu, a picker, a viewer, a drag on the stage. */
+const ESC_OWNERS = [
+  '.agent-new-menu', '.agent-tab-menu', '.image-viewer', '.pdf-viewer', '.fullscreen-overlay', '.quest-receipt-scrim',
+  '.chat-cmp-ref-pop', '.chat-find', '.mm-scrim', '.ns-team-list', '.aid-scrim', '.app-popup-scrim',
+  '.super-group-panel', '.super-size-menu', '.super-add-menu', '.super-surface[data-presenting]',
+  '.super-surface[data-dragging]', '[data-resizing]', '.phone-agenda-layer', '.ns-menu',
+  '.super-zoom[data-inspect]', '[data-testid="super-zoom-clear-ask"]', '.cmd-modal', '.agenda-menu', '.agenda-detail--float', '.agenda-pop',
+].join(', ');
+
+/**
+ * The Super session whose thread filter an Esc would end (ajanda-filtre D6), or null: a chip he
+ * can see, in the chat that has the focus, or on the stage (the agenda row he just pressed,
+ * or nothing focused). A chat folded to its bar hides its chip, so its filter is not his to end.
+ */
+function threadEscSid(): string | null {
+  const focusEl = document.activeElement;
+  const loose = !focusEl || focusEl === document.body || !!focusEl.closest('.super-agenda');
+  for (const chip of document.querySelectorAll<HTMLElement>('.super-thread-chip[data-session]')) {
+    if (!chip.getClientRects().length) continue;
+    const pane = chip.closest('.chat-pane');
+    const sid = chip.dataset.session;
+    if (!pane || !sid || !threadFilterOf(sid)) continue;
+    if (loose || pane.contains(focusEl)) return sid;
+  }
+  return null;
 }
 
 export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
@@ -4920,16 +4950,29 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
    * Its part of the message opens with the line's block (`agendaAboutBlock`).
    */
   /** Stage `row` as an About chip in `cs`'s composer, and focus it. */
+  const aboutWords = useCallback(() => ({ about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'), superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered') }), [t]);
   const writeAboutInto = useCallback((cs: ChatSession | null | undefined, row: AgendaRow) => {
     if (!cs || cs.status === 'closed') return;
     const convId = cs.scratchId || cs.claudeId;
     const text = agendaAboutBlock(row);
     if (!convId || !text) return;
-    const words = { about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'), superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'), unanswered: t('super.agenda.aboutUnanswered') };
-    insertRef(convId, { id: nextAttachmentId(), kind: 'about', name: agendaRefName(row, words), text });
+    insertRef(convId, { id: nextAttachmentId(), kind: 'about', name: agendaRefName(row, aboutWords()), text });
     requestAnimationFrame(() => cs.focus());
-  }, [t]);
+  }, [aboutWords]);
   const writeAboutRow = useCallback((row: AgendaRow) => writeAboutInto(superChatRef.current, row), [writeAboutInto]);
+  /**
+   * An agenda row's press (ajanda-filtre D1): the Super chat shows only that row's thread, its
+   * About chip staged in the composer WITHOUT focus (the phone's keyboard stays down, D4). True:
+   * the filter is on; false: the same row cleared it, or there is no chat to filter.
+   */
+  const threadInto = useCallback((cs: ChatSession | null | undefined, p: ThreadPress): boolean => {
+    if (!cs || !cs.claudeId) return false;
+    const convId = cs.scratchId || cs.claudeId;
+    const text = agendaAboutBlock(p.row);
+    const chip = cs.status !== 'closed' && convId && text ? { convId, name: agendaRefName(p.row, aboutWords()), text } : undefined;
+    return pressThread(cs.claudeId, { rowKey: p.rowKey, key: p.key, ...(p.focusItem ? { focusItem: p.focusItem } : {}), ...(chip ? { chip } : {}) }) === 'on';
+  }, [aboutWords]);
+  const threadRow = useCallback((p: ThreadPress) => threadInto(superChatRef.current, p), [threadInto]);
 
   // ── The hand-over and the take-back, with their flights (D17, D18) ─────────────────
   const flightLayerRef = useRef<HTMLDivElement | null>(null);
@@ -5777,6 +5820,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // order. Without this check one Escape cancelled the drag AND folded the whole surface.
       if (tabDrag.get()) return;
       if (document.querySelector('.agent-new-menu')) return;  // the "＋ New" menu owns Esc
+      // A Super chat filtered to an agenda row (ajanda-filtre D6): its Esc ends the filter, in
+      // the bubble listener below, after every in-chat owner had its turn; nothing folds here.
+      if (threadEscSid()) return;
       // A tab's right-click menu owns Esc too. Tested by presence rather than by focus: it
       // portals to <body> and never takes focus, so the `activeElement` checks below (which
       // is still the terminal that was focused when the menu opened) would all miss it —
@@ -5838,8 +5884,24 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       e.preventDefault();
       setExpanded(false);
     };
+    // The thread filter's Esc runs LAST (bubble phase): a composer menu, a queued edit, a picker
+    // or any other owner stops or claims the key first, and then the filter stays.
+    const onThreadKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (document.querySelector(ESC_OWNERS)) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && ae.matches('input, textarea, select, [contenteditable="true"]') && !ae.classList.contains('chat-cmp-input')) return;
+      const sid = threadEscSid();
+      if (!sid) return;
+      e.preventDefault();
+      clearThreadFilter(sid, 'user');
+    };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onThreadKey);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keydown', onThreadKey);
+    };
   }, [expanded, tabDrag]);
 
   // ── Quick-toggle hotkey (Settings → Agents; default ⌃A) ──────────────────────────
@@ -6621,6 +6683,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // A row's ↩ on the phone: the About chip goes into THIS phone's composer (the desktop's
   // `writeAboutRow` writes into the Mac's Super chat, which the phone does not hold).
   const writePhoneAboutRow = useCallback((row: AgendaRow) => writeAboutInto(phoneSuperChat, row), [phoneSuperChat, writeAboutInto]);
+  const threadPhoneRow = useCallback((p: ThreadPress) => threadInto(phoneSuperChat, p), [phoneSuperChat, threadInto]);
+  const phoneThreadKey = useThreadFilter(phoneSuperChat?.claudeId)?.rowKey ?? null;
   // Phone (Mac mode): tell each chat whether it is the one on screen, so the server does not
   // push a question or a finished turn for the chat the owner is looking at (D2). Behind the open
   // drawer, on another page or in another project no chat is on screen, so every chat may push.
@@ -7298,6 +7362,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onPickElement={pickElementFromCard}
             onCommentCardText={commentOnCard}
             onWriteAbout={writeAboutRow}
+            onThread={threadRow}
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
             onPadStatus={isMacPhoneSurface() ? undefined : setAgendaStatus}
@@ -7519,7 +7584,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
                 {mobileMemberSlug ? <span data-testid="super-member-name">{mobileMemberName}</span> : (mobileActive?.title ?? t('nav.chat'))}
               </span>
               {/* The phone's Super chat: the bar stays one line and the chat keeps the screen. */}
-              {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} onScreen={phoneSheetsOn} />}
+              {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} onThread={threadPhoneRow} threadRowKey={phoneThreadKey} onScreen={phoneSheetsOn} />}
               {phoneSuperChat && <PhoneSuperJobs jobs={phoneJobs} onScreen={phoneSheetsOn} />}
               <button
                 className="mchat-head-btn"

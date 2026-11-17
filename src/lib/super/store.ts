@@ -24,6 +24,7 @@ import { renameWithRetry } from '../fs-retry.js';
 import { asOwnerLanguage } from './owner-language.js';
 import { bindingVerdict, currentBinding, noteOwnWrite } from './record-binding.js';
 import { archiveDoneLines } from './pad-archive.js';
+import { cleanPadRefs } from './pad.js';
 
 /**
  * The Super Agent's state file — `state/.super-agent.json`, one per vault (plan-r7 D2).
@@ -753,6 +754,7 @@ export function sanitizePad(raw: unknown, max: number = MAX_PAD): SuperPadItem[]
     const toldAt = finite(p.toldAt);
     const by = p.by === 'auto' || p.by === 'owner' ? p.by : undefined;
     const born = finite(p.bornAt);
+    const refs = cleanPadRefs(p.refs);
     out.push({
       id: p.id, section: p.section, text, at,
       bornAt: born !== undefined && born >= 0 && born <= at ? born : at,
@@ -762,6 +764,7 @@ export function sanitizePad(raw: unknown, max: number = MAX_PAD): SuperPadItem[]
       ...(by ? { by } : {}),
       ...(by === 'auto' && oneOf(PAD_AUTO_WHY, p.why) ? { why: p.why } : {}),
       ...(toldAt !== undefined && toldAt >= 0 ? { toldAt } : {}),
+      ...(refs ? { refs } : {}),
     });
   }
   return out;

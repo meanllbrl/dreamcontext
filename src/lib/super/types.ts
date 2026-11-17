@@ -1689,7 +1689,18 @@ export interface SuperPadItem {
   /** `owner` = the owner wrote it himself (`POST /api/super/pad/add`): the server's automatic
    *  rules never act on it (pad.ts `ownerLine`). Absent = the Super's. */
   author?: 'owner';
+  /** The owner messages that moved this line's work (ajanda-filtre C1): each `ref` is his
+   *  `<owner-msg ref>`, `at` the time that message ARRIVED at the Super. Appended by `note add`,
+   *  `delegate --note` and `send`/`resume` in his turn (or with `--origin`), never by the server's
+   *  own lines. The dashboard filters the Super chat to these (lineThread.ts). Oldest first. */
+  refs?: PadRef[];
 }
+/** One owner message that moved a line's work (`SuperPadItem.refs`). */
+export interface PadRef { ref: string; at: number }
+/** A guard against a corrupt record, not a budget: the oldest go past it. */
+export const MAX_PAD_REFS = 200;
+/** What the phone digest carries per line: the newest ones. */
+export const MAX_DIGEST_PAD_REFS = 20;
 export const PAD_STAGES = ['todo', 'almost'] as const;
 export type PadStage = typeof PAD_STAGES[number];
 /** The five statuses a line shows; `section` (+ `stage`) stays the stored truth (pad.ts). */

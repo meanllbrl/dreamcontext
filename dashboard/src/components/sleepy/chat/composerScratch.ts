@@ -92,6 +92,12 @@ export interface Attachment {
   /** `about` only: bumped when the same target is pressed again; the composer flashes that chip
    *  and moves the caret after it. */
   flash?: number;
+  /** `about` only: taken back by whoever staged it (a thread filter ending, ajanda-filtre C3);
+   *  the composer deletes its token from the draft and then the chip itself (`withdrawRef`). */
+  withdraw?: boolean;
+  /** `about` only: staged without taking the focus (a thread filter's chip: the phone's keyboard
+   *  stays down, ajanda-filtre D4). The composer draws its token and leaves the focus alone. */
+  quiet?: boolean;
   /** `about` only: the name its token was drawn with (clipped to fit the field), once it is in
    *  the box; a paste of that token is matched against it. */
   chip?: string;
@@ -337,6 +343,21 @@ export function insertRef(convId: string, att: Attachment): 'added' | 'flash' | 
   const staged: Attachment = { ...(back ?? att), kind: 'about', pending: true };
   commit(convId, { ...withRecent(cur, recent), attachments: [...cur.attachments, staged] });
   return 'added';
+}
+
+/**
+ * Take back one About chip this code staged (a thread filter ending, ajanda-filtre C3). Still
+ * pending (no token drawn yet): it simply leaves. In the box: flagged, and the composer removes
+ * its token and then the chip, so the draft and the staged list never disagree. A chip that is
+ * gone already (sent, deleted by him) is left alone.
+ */
+export function withdrawRef(convId: string, id: string): void {
+  const cur = readScratch(convId);
+  const found = cur.attachments.find((a) => a.id === id);
+  if (!found || found.kind !== 'about') return;
+  if (found.pending) { removeAttachment(convId, id); return; }
+  if (found.withdraw) return;
+  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a === found ? { ...a, withdraw: true } : a)) });
 }
 
 /** The composer has put these pending refs' tokens in the draft, each drawn with `chips[id]`. */

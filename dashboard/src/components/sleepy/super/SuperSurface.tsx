@@ -15,7 +15,8 @@ import { PresentQueue } from './PresentQueue';
 import { sendQueueJump } from './queueJump';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
-import { SuperAgenda, type AgendaSize } from './SuperAgenda';
+import { SuperAgenda, type AgendaSize, type ThreadPress } from './SuperAgenda';
+import { useThreadFilter } from './superThreadFilter';
 import type { AgendaDay } from './superApi';
 import { onOpenJobRow, publishSuperEventContext, useQueueHeight } from './superJobsStore';
 import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
@@ -113,6 +114,8 @@ export interface SuperSurfaceProps {
   onCommentCardText?: (id: string, text: string) => void;
   /** "Write about this" on an agenda line: the line becomes the About chip in the centre's composer. */
   onWriteAbout?: (row: AgendaRow) => void;
+  /** An agenda row's press filters the Super chat to its thread (ajanda-filtre D1). */
+  onThread?: (press: ThreadPress) => boolean;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
   onEndChild: (child: string, whenDone: boolean) => void;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
@@ -1101,6 +1104,20 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onWriteAbout(row);
     }
     : undefined;
+  // An agenda row's press (ajanda-filtre C5): a chat folded to its bar unfolds first, so the
+  // filtered thread is on screen; a stage too narrow to float cards goes back to floating.
+  const onThreadProp = props.onThread;
+  const threadRowKey = useThreadFilter(superSession?.claudeId)?.rowKey ?? null;
+  const pressThreadRow = onThreadProp && superSession
+    ? (p: ThreadPress): boolean => {
+      const on = onThreadProp(p);
+      if (on && !remote) {
+        if (plan.chat === 'bar') onLayout({ chat: { value: null, cards: presented } });
+        else if (plan.narrow && viewMode !== 'float') onLayout({ view: { mode: 'float' } });
+      }
+      return on;
+    }
+    : undefined;
   // Task jobs waiting on the owner (M1, AI Team v2 C2): listed in Waiting on you, no session needed.
   const inboxRows = useOwnerInbox().data ?? [];
   const taskRows = inboxRows.filter((r) => r.kind.startsWith('task-'));
@@ -1173,6 +1190,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onShowChild={showChild}
       onShowQuestion={showQuestion}
       onWriteAbout={writeAbout}
+      onThread={pressThreadRow}
+      threadRowKey={threadRowKey}
       taskRows={taskRows}
       recallRows={recallRows}
       syncRows={syncRows}

@@ -160,7 +160,7 @@ const NONE_PLACED: ReadonlySet<string> = new Set();
  * has a place is drawn there by time (cardPlacement.ts), never here: the tail sits under his
  * later messages, and a question asked before them must stay above them (owner 2026-11-15).
  */
-export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED }: {
+export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED, show }: {
   session: ChatSession;
   /** The question ids that already have a live card in the rendered transcript (at their call or
    *  by time). */
@@ -168,16 +168,19 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
   /** The owner-card and member-wait items drawn in their place in the transcript
    *  (cardPlacement.ts); none = every waiting one has no place on screen. */
   placedCards?: ReadonlySet<string>;
+  /** An agenda row's thread is shown (ajanda-filtre C4): only the cards it lets through. */
+  show?: (c: { item: string; sessionId?: string }) => boolean;
 }) {
   const view = useSuperQuestions(session.claudeId);
   if (!view) return null;
-  const rest = view.open.filter((q) => !anchored.has(q.id));
+  const shows = (q: SuperQueueItem) => !show || show({ item: q.id, sessionId: q.sessionId });
+  const rest = view.open.filter((q) => !anchored.has(q.id) && shows(q));
   // An owner card (a child's, or a member's mirror carrying one) is drawn in its place in the
   // transcript (cardPlacement.ts). Here only one that still waits on the owner and has no place on
   // screen (posted behind "Show earlier messages"), so the wait is never lost.
   const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.filter((q) => !placedCards.has(q.id)).map((q) => q.id));
-  const members = (view.members ?? []).filter((q) => (q.card ? waiting.has(q.id) : !placedCards.has(q.id)));
-  const cards = (view.cards ?? []).filter((q) => waiting.has(q.id));
+  const members = (view.members ?? []).filter((q) => (q.card ? waiting.has(q.id) : !placedCards.has(q.id)) && shows(q));
+  const cards = (view.cards ?? []).filter((q) => waiting.has(q.id) && shows(q));
   if (!rest.length && !members.length && !cards.length) return null;
   return (
     <>

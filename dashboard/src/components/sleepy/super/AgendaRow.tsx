@@ -64,6 +64,14 @@ export function AskIcon() {
   );
 }
 
+export function DetailIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M3 4h10M3 8h10M3 12h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function DoneIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -80,7 +88,7 @@ export type AgendaSize = 'small' | 'medium' | 'large' | 'wide' | 'full';
  * nested buttons. Hover shows Done and Ask over the time (small: round icon buttons with tooltips;
  * medium up: labelled); a touch screen has no hover, so a tap opens the detail with both.
  */
-export function AgendaRowView({ entry, actions, size, label, line, chips, time, selected, onPress, onMenu, onHover, hoverDisabled, testId }: {
+export function AgendaRowView({ entry, actions, size, label, line, chips, time, selected, threadOn, onPress, onMenu, onHover, hoverDisabled, testId }: {
   entry: AgendaEntry;
   actions: RowActions;
   size: AgendaSize;
@@ -92,6 +100,8 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
   /** The row's time, already formatted ('' = none). */
   time: string;
   selected?: boolean;
+  /** The Super chat shows this row's thread (ajanda-filtre C5): the row stays highlighted. */
+  threadOn?: boolean;
   /** Absent = the row is not pressable (drawn as plain text). */
   onPress?: () => void;
   /** The status circle (only when `actions.menu`). */
@@ -116,8 +126,8 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
       {line && size !== 'small' && size !== 'medium' && <span className="super-agenda-line">{line}</span>}
     </>
   );
-  const word = (a: HoverAction) => (a === 'done' ? t('super.agenda.done') : a === 'ask' ? t('super.agenda.ask') : t('super.agenda.owed.drop'));
-  const title = (a: HoverAction) => (a === 'done' ? t('super.agenda.doneTitle') : a === 'ask' ? t('super.agenda.askTitle') : t('super.agenda.owed.dropTitle'));
+  const word = (a: HoverAction) => (a === 'done' ? t('super.agenda.done') : a === 'ask' ? t('super.agenda.ask') : a === 'detail' ? t('super.agenda.detail.open') : t('super.agenda.owed.drop'));
+  const title = (a: HoverAction) => (a === 'done' ? t('super.agenda.doneTitle') : a === 'ask' ? t('super.agenda.askTitle') : a === 'detail' ? t('super.agenda.detail.open') : t('super.agenda.owed.dropTitle'));
   return (
     <div
       className="super-agenda-row"
@@ -132,6 +142,7 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
       data-auto={r?.auto ? 'true' : undefined}
       data-stale={r?.stale ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
+      data-thread={threadOn ? 'on' : undefined}
       data-hover={hover.length ? hover.join(' ') : undefined}
     >
       {actions.mark === 'status' && status && actions.menu && onMenu
@@ -155,7 +166,7 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
           </span>
         )}
       {onPress
-        ? <button type="button" className="super-agenda-row-btn" onClick={onPress} aria-expanded={actions.press === 'detail' ? !!selected : undefined}>{body}</button>
+        ? <button type="button" className="super-agenda-row-btn" onClick={onPress} aria-expanded={actions.press === 'detail' ? !!selected : undefined} aria-pressed={actions.press === 'thread' ? !!threadOn : undefined}>{body}</button>
         : <div className="super-agenda-row-btn">{body}</div>}
       {hover.length > 0 && (
         <span className="agenda-hover" data-compact={compact ? 'true' : undefined}>
@@ -165,7 +176,7 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
               type="button"
               className="agenda-hover-btn"
               data-action={a}
-              data-testid={a === 'done' ? 'super-agenda-done' : a === 'ask' ? 'super-agenda-about' : 'super-agenda-owed-drop'}
+              data-testid={a === 'done' ? 'super-agenda-done' : a === 'ask' ? 'super-agenda-about' : a === 'detail' ? 'super-agenda-detail-open' : 'super-agenda-owed-drop'}
               title={title(a)}
               aria-label={title(a)}
               disabled={hoverDisabled && a === 'done'}
@@ -173,6 +184,7 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
             >
               {a === 'done' && <DoneIcon />}
               {a === 'ask' && <AskIcon />}
+              {a === 'detail' && <DetailIcon />}
               {(!compact || a === 'notNeeded') && <span>{word(a)}</span>}
             </button>
           ))}

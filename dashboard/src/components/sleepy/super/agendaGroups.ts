@@ -7,7 +7,7 @@
 import type { SuperPadItem } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import type { SuperApproval } from './superApprovals';
-import { agendaUpdatedAt, padStatusOf, type AgendaRow } from './superHandover';
+import { agendaUpdatedAt, padStatusOf, threadKeyOf, type AgendaRow } from './superHandover';
 
 /** The groups of today's view, in the order he reads them (decision: by who acts next). */
 export type AgendaGroup = 'earlier' | 'waiting' | 'super' | 'mine' | 'done';
@@ -59,6 +59,8 @@ const lineRow = (p: SuperPadItem): AgendaRow => ({
   ...(typeof p.bornAt === 'number' ? { bornAt: p.bornAt } : {}),
   ...(p.for ? { for: p.for } : {}),
   ...(p.section === 'done' && p.by === 'auto' ? { auto: true } : {}),
+  // Its thread in the Super chat (ajanda-filtre C5): Done and past-day lines press into it too.
+  thread: threadKeyOf({ line: p })!,
 });
 
 /**
@@ -201,8 +203,11 @@ export function smallEntries(groups: Record<AgendaGroup, AgendaEntry[]>, n = 3):
 // ─── C8: what a row may do ─────────────────────────────────────────────
 
 export type RowMark = 'status' | 'check' | 'icon';
-export type RowPress = 'detail' | 'legacy' | 'none';
-export type HoverAction = 'done' | 'ask' | 'notNeeded';
+/** `thread`: the press filters the Super chat to the row's thread (ajanda-filtre D1); on a
+ *  wide card it opens the inline detail too (D2), the view decides that by size. */
+export type RowPress = 'detail' | 'legacy' | 'none' | 'thread';
+/** `detail`: small/medium only, added by the view when the press filters instead (D2). */
+export type HoverAction = 'done' | 'ask' | 'notNeeded' | 'detail';
 export interface RowActions {
   /** The leading mark: a status circle, a plain check (archived), or the row kind's icon. */
   mark: RowMark;
@@ -226,6 +231,14 @@ const NONE: RowActions = { mark: 'icon', menu: false, press: 'legacy', hover: []
  * (nothing).
  */
 export function rowActions(entry: Pick<AgendaEntry, 'kind' | 'live' | 'row'>, opts: { readOnly?: boolean } = {}): RowActions {
+  const base = rowActionsToday(entry, opts);
+  // ajanda-filtre D1: a row that carries a thread key filters the Super chat, on both shells;
+  // every other row keeps today's press.
+  const threaded = !!entry.row?.thread && (entry.kind === 'line' || entry.kind === 'question' || entry.kind === 'owed');
+  return threaded ? { ...base, press: 'thread' } : base;
+}
+
+function rowActionsToday(entry: Pick<AgendaEntry, 'kind' | 'live' | 'row'>, opts: { readOnly?: boolean }): RowActions {
   const ro = !!opts.readOnly;
   switch (entry.kind) {
     case 'line': {

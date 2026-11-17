@@ -102,6 +102,10 @@ import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
 import { answerRowAfter, followStep, ownAnchorIndex, shouldWrite } from './super/superScroll';
 import { SuperQuestionLine } from './super/SuperQuestionLine';
+import { afterDraw, clearThreadFilter, lastClearOf, setThreadAnchor, setThreadHider, useThreadFilter, type ThreadAnchor } from './super/superThreadFilter';
+import { lineThread, type ThreadCard } from './super/lineThread';
+import { SuperThreadChip, SuperThreadEmpty } from './super/SuperThreadChip';
+import { anchorIndex, findAnchorRow, readThreadAnchor } from './super/threadAnchor';
 import { landingFor, SUPER_QUESTION_EVENT, type SuperQuestionDetail, type UnreadUnit } from './super/superUnread';
 import './super/SuperSurface.css';
 import './chat/cards.css';
@@ -1253,6 +1257,40 @@ export function ChatPane({
     replyHeadsCache.current = next;
     return next;
   }, [replyMap, replyItems]);
+  // ── An agenda row's thread (ajanda-filtre C4) ──────────────────────────────────────
+  // The derived layers above keep reading the FULL conversation; the filter only changes what is
+  // drawn (the window below runs over the thread's subsequence) and when reads are applied.
+  const threadSid = superView ? session.claudeId ?? null : null;
+  const threadFilter = useThreadFilter(threadSid);
+  const threadAsks = useMemo<AskRef[]>(
+    () => (threadFilter ? [...placeQuestionCards(questEntries).values()].flat().map(({ item, kind, toolItemId }) => ({ item, kind, toolItemId })) : []),
+    [threadFilter, questEntries],
+  );
+  // A card's job, from its queue item (a question card carries only its item id).
+  const queueSessionOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const q of [...(superQuestionView?.open ?? []), ...(superQuestionView?.cards ?? []), ...(superQuestionView?.members ?? [])]) if (q.sessionId) m.set(q.id, q.sessionId);
+    return m;
+  }, [superQuestionView]);
+  const thread = useMemo(() => (threadFilter
+    ? lineThread(questEntries, threadFilter.key, threadAsks, threadSid, {
+      cards: [...(superQuestionView?.open ?? []), ...(superQuestionView?.cards ?? [])].map((q) => ({ item: q.id, sessionId: q.sessionId })),
+      ...(replyMap ? { groups: replyMap } : {}),
+    })
+    : null), [threadFilter, questEntries, threadAsks, threadSid, superQuestionView, replyMap]);
+  /** Whether a card is drawn: always, unless a filter is on and the card is not in its thread. */
+  const threadShows = useCallback((c: ThreadCard) => !thread || thread.card({ ...c, sessionId: c.sessionId ?? queueSessionOf.get(c.item) }), [thread, queueSessionOf]);
+  /** For the question line: an open question whose card the filter hides counts as away. */
+  const threadHidesCard = useMemo(() => (thread ? (item: string) => !threadShows({ item }) : null), [thread, threadShows]);
+  const viewHistory = useMemo(() => (thread ? conv.history.filter((it) => thread.entries.has(it.id)) : conv.history), [thread, conv.history]);
+  const viewItems = useMemo(() => (thread ? conv.items.filter((it) => thread.entries.has(it.id)) : conv.items), [thread, conv.items]);
+  // The card doors (showQuestionCard, showOwnerSlot, showMemberCard) ask this before giving up.
+  useEffect(() => {
+    if (!threadSid || !thread) return undefined;
+    setThreadHider(threadSid, (item) => !threadShows({ item }));
+    return () => setThreadHider(threadSid, null);
+  }, [threadSid, thread, threadShows]);
+
   // Headless teammates: `claude -p` runs this conversation registered or launched with an id,
   // read off their own transcripts. Folded into the runs here, once, so every party, rail and
   // drill-in below sees one list — a builder launched detached, or still going after this
@@ -1461,7 +1499,37 @@ export function ChatPane({
     setFeedIds(nextIds);
     if (shifted !== firstShownState) setFirstShownState(shifted);
   }
-  const windowTotal = feedLen + conv.history.length + conv.items.length;
+  // The filter's way in and out (C4): entering lands on the thread's newest entry; leaving by ×,
+  // Esc or the same row puts the full chat back where he was; leaving by the gate lets the jump
+  // decide. Decided in render, like the feed shift above, so the window is right on first paint.
+  const threadMode = threadFilter?.n ?? null;
+  const [shownThreadMode, setShownThreadMode] = useState<number | null>(null);
+  const threadRestoreRef = useRef<ThreadAnchor | null>(null);
+  const threadLandRef = useRef(false);
+  if (threadMode !== shownThreadMode) {
+    setShownThreadMode(threadMode);
+    setFirstShownState(Number.MAX_SAFE_INTEGER);
+    threadRestoreRef.current = null;
+    threadLandRef.current = false;
+    if (threadMode !== null && threadSid) {
+      if (shownThreadMode === null) setThreadAnchor(threadSid, readThreadAnchor(scrollRef.current, stickRef.current, (id) => questEntries.find((it) => it.id === id)));
+      threadLandRef.current = true;
+    } else if (threadSid) {
+      const c = lastClearOf(threadSid);
+      if (c?.reason === 'user' && c.was.anchor) {
+        threadRestoreRef.current = c.was.anchor;
+        const at = anchorIndex(c.was.anchor, conv.history, conv.items);
+        if (!c.was.anchor.stick && at >= 0) {
+          // He was reading above the bottom: the follow lets go NOW, before this render's window
+          // head is computed, or a pinned window snaps back to the tail and his place is not
+          // mounted (the layout effect below then confirms it with setStick(false)).
+          stickRef.current = false;
+          setFirstShownState(feedLen + Math.max(0, at - 2));
+        }
+      } else if (c?.reason !== 'gate') threadLandRef.current = true;
+    }
+  }
+  const windowTotal = feedLen + viewHistory.length + viewItems.length;
   const settledNow = remainingSettleMs(performance.now(), lastActivityAtRef.current) === 0;
   // The conversation as ONE index space for the card walk — the concatenation the window has
   // always been an index into, read without ever building it (a resumed history is thousands
@@ -1469,7 +1537,7 @@ export function ChatPane({
   const cardWindow: CardWindow<ChatItem> = {
     total: windowTotal,
     entryAt: (i) => (i < feedLen ? feedItems[i]
-      : i < feedLen + conv.history.length ? conv.history[i - feedLen] : conv.items[i - feedLen - conv.history.length]),
+      : i < feedLen + viewHistory.length ? viewHistory[i - feedLen] : viewItems[i - feedLen - viewHistory.length]),
     isGroupable: isPlainToolCard,
     rendersNothing,
     minRun: minToolRun,
@@ -1484,7 +1552,7 @@ export function ChatPane({
   });
   if (firstShown !== firstShownState) setFirstShownState(firstShown);
   const { hiddenCount, historyFrom, itemsFrom, showsHistory, feedFrom } = splitWindow(
-    conv.history.length, conv.items.length, firstShown, feedLen,
+    viewHistory.length, viewItems.length, firstShown, feedLen,
   );
   const feedHasMore = !!feed && feed.hasMore && !feed.loading && !feed.failed;
 
@@ -1705,6 +1773,27 @@ export function ChatPane({
   // The reveal's own commit: React has just prepended the entries, so the hold is settled here,
   // synchronously, before the browser paints a single frame of the un-corrected position.
   useLayoutEffect(() => { holdAnchorSteady(); }, [firstShown, holdAnchorSteady]);
+  // The thread filter's landing (C4): on entry the thread's newest entry; on ×/Esc/the same row
+  // the full chat's saved place (the bottom when its entry is gone). After the hold above, so the
+  // place written here is the one that stays.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (threadLandRef.current) {
+      threadLandRef.current = false;
+      placeAtBottom(null);
+      return;
+    }
+    const a = threadRestoreRef.current;
+    if (!a) return;
+    threadRestoreRef.current = null;
+    const row = !a.stick && el ? findAnchorRow(el, a, questEntries) : null;
+    if (!el || !row) { placeAtBottom(null); return; }
+    setStick(false);
+    el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
+    prevTopRef.current = el.scrollTop;
+    restoreTopRef.current = el.scrollTop;
+    captureAnchor();
+  });
 
   // ── Reply links: a strip scrolls to the message it names (owner 2026-10-23) ────────────
   // `jumpToSubAgent`'s shape: explicit intent to look above, so it releases stick-to-bottom
@@ -1717,11 +1806,11 @@ export function ChatPane({
   /** Unpins the view for a jump to an item and mounts it if it is above the window. True: it
    *  mounts with the next render; null: no such item. */
   const releaseToItem = (itemId: string): boolean | null => {
-    let idx = conv.history.findIndex((it) => it.id === itemId);
+    let idx = viewHistory.findIndex((it) => it.id === itemId);
     if (idx >= 0) idx += feedLen;
     if (idx < 0) {
-      const live = conv.items.findIndex((it) => it.id === itemId);
-      idx = live < 0 ? -1 : feedLen + conv.history.length + live;
+      const live = viewItems.findIndex((it) => it.id === itemId);
+      idx = live < 0 ? -1 : feedLen + viewHistory.length + live;
     }
     if (idx < 0) return null;
     setStick(false);
@@ -1735,6 +1824,13 @@ export function ChatPane({
   /** `part`: a head naming one part of a message with several references lands on the message
    *  and flashes that part's chip too. */
   const jumpToReplyTarget = (itemId: string, part?: number) => {
+    // The gate (C4): a target the thread filter hides ends the filter first, then the jump runs
+    // on the full chat.
+    if (thread && threadSid && !thread.entries.has(itemId)) {
+      clearThreadFilter(threadSid, 'gate');
+      afterDraw(() => replyJumpRef.current.jumpToReplyTarget(itemId, part));
+      return;
+    }
     const reveal = releaseToItem(itemId);
     if (reveal === null) return;
     setReplyJump((prev) => ({ id: itemId, n: (prev?.n ?? 0) + 1, reveal, ...(part ? { part } : {}) }));
@@ -2056,6 +2152,10 @@ export function ChatPane({
     root.addEventListener('keydown', onKey, true);
     return () => root.removeEventListener('keydown', onKey, true);
   }, []);
+  // ⌘F searches the whole chat: a thread filter ends first, the full chat back where he was (C4).
+  useEffect(() => {
+    if (findSignal > 0 && threadSid) clearThreadFilter(threadSid, 'user');
+  }, [findSignal, threadSid]);
   const closeFind = useCallback(() => {
     setFindSignal(0);
     session.focus();
@@ -2489,8 +2589,8 @@ export function ChatPane({
     if (superView) drawnForCards.push(...drawn);
     return kept;
   };
-  const historySlice = conv.history.slice(historyFrom);
-  const liveSlice = conv.items.slice(itemsFrom);
+  const historySlice = viewHistory.slice(historyFrom);
+  const liveSlice = viewItems.slice(itemsFrom);
   // The member's closing words that repeat its answer to the Super Agent: drawn once (plan r4 E4).
   doneRepeats = teamDoneRepeats([...historySlice, ...liveSlice] as never);
   const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, minToolRun, rendersNothing, isQuestOnlyItem);
@@ -2499,8 +2599,10 @@ export function ChatPane({
   // live slice is cut at each one's place and segmented piece by piece, so a tool run never
   // straddles a card, the same way it never straddles the history divider.
   const notices: Array<{ key: string; cut: number; node: React.ReactNode }> = [];
+  // While an agenda row's thread is shown, the notices (placed by index into the full live list)
+  // are not drawn; the full chat has them where they happened (C4).
   // What the branch guard did as this session started: it heads that session.
-  if (conv.branchNotice) {
+  if (!thread && conv.branchNotice) {
     const cut = noticeCut(conv.branchNotice.at, itemsFrom, conv.items.length, false);
     if (cut !== null) {
       notices.push({
@@ -2517,7 +2619,7 @@ export function ChatPane({
       });
     }
   }
-  if (conv.handoff && !conv.handoff.dismissed) {
+  if (!thread && conv.handoff && !conv.handoff.dismissed) {
     const running = conv.handoff.stage === 'clearing' || conv.handoff.stage === 'resuming';
     const cut = noticeCut(conv.handoff.at, itemsFrom, conv.items.length, running);
     if (cut !== null) {
@@ -2530,7 +2632,7 @@ export function ChatPane({
   }
   // The guarantee that the billed account never changes silently: shown where the
   // conversation moved, and it scrolls away with the turns before it like any other entry.
-  if (conv.accountSwitch && !conv.accountSwitch.dismissed) {
+  if (!thread && conv.accountSwitch && !conv.accountSwitch.dismissed) {
     const cut = noticeCut(conv.accountSwitch.at, itemsFrom, conv.items.length, false);
     if (cut !== null) {
       notices.push({
@@ -2542,7 +2644,7 @@ export function ChatPane({
   }
   // The error stays as the record of what broke; once a turn has gone out after it (the retry
   // itself, or anything typed since), Retry would resend into a conversation that moved on.
-  if (conv.lastError) {
+  if (!thread && conv.lastError) {
     const errorAt = conv.lastErrorAt ?? conv.items.length;
     const cut = noticeCut(errorAt, itemsFrom, conv.items.length, false);
     if (cut !== null) {
@@ -2577,6 +2679,7 @@ export function ChatPane({
     if (!questionCards.size) return [];
     const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
     return ids.flatMap((id) => questionCards.get(id) ?? [])
+      .filter((c) => threadShows({ item: c.item, toolItemId: c.toolItemId }))
       .map((c) => ({ ...c, live: c.live && latestAsk.get(c.item) === c.toolItemId }));
   };
   // Everything the owner is asked that has no asking call drawn above, under the last item drawn
@@ -2594,7 +2697,7 @@ export function ChatPane({
     if (!timedItems.length) return [];
     ownerCardsAt ??= anchorOwnerCards(drawnForCards, timedItems);
     const ids = seg.kind === 'run' ? seg.items.map((it) => it.id) : [seg.item.id];
-    return ids.flatMap((id) => ownerCardsAt!.get(id) ?? []);
+    return ids.flatMap((id) => ownerCardsAt!.get(id) ?? []).filter((q) => threadShows({ item: q.id, sessionId: q.sessionId }));
   };
   const questionProbes = (seg: RunSegment<ChatItem>): StretchProbe[] => [
     ...cardsOf(seg).map((c): StretchProbe => ({ key: `question:${c.toolItemId}`, step: false, invisible: false, actor: 'lead', running: false })),
@@ -2665,7 +2768,8 @@ export function ChatPane({
   // the history divider or a notice still gets exactly one). Decided once, in reading order,
   // so the stretch pass and the nodes agree.
   const stripAt = new Map<RunSegment<ChatItem>, { groupId: string; targets: string[]; parts?: number[] }>();
-  if (replyMap) {
+  // Not while an agenda row's thread is shown (C4.1): the thread already is what it answers.
+  if (replyMap && !thread) {
     const seen = new Set<string>();
     for (const seg of [...historySegments, ...liveSegments]) {
       const head = seg.kind === 'run' ? seg.items[0] : seg.item;
@@ -2938,6 +3042,10 @@ export function ChatPane({
 
   // The Super chat's unread marks: the rules, the marks and the painting live in the hook.
   const unreadItems = useMemo(() => [...conv.history, ...conv.items], [conv.history, conv.items]);
+  // A unit the thread filter does not draw (C4.3): a message outside it, or a card it hides.
+  const threadUnitHidden = useMemo(() => (thread
+    ? (u: UnreadUnit) => (u.itemId ? !thread.entries.has(u.itemId) : u.question ? !threadShows({ item: u.question }) : true)
+    : null), [thread, threadShows]);
   const superUnread = useSuperUnread({
     // The view is null once taken back: the record is gone then, and the session may stay.
     enabled: !!superView && !!superQuestionView,
@@ -2957,6 +3065,7 @@ export function ChatPane({
     // still at the bottom (D2).
     isPinned: () => atBottomRef.current,
     isGliding: () => !!glideRef.current,
+    hidden: threadUnitHidden,
   });
   const { rowOf: unreadRowOf, look: lookAtUnread } = superUnread;
   /** Prose lands under the rail's clearance; a question card whole when it fits, its top when not. */
@@ -2978,13 +3087,15 @@ export function ChatPane({
   useLayoutEffect(() => {
     if (!superView || landedRef.current || !unreadReady || historyPending) return;
     landedRef.current = true;
+    // A chat that opens filtered (reopened, unfolded) stays on its thread: no landing elsewhere.
+    if (thread) return;
     if (!firstUnread || lastActivityAtRef.current > openedAtRef.current || glideRef.current) return;
     if (firstUnread.itemId && releaseToItem(firstUnread.itemId) === null) return;
     if (!firstUnread.itemId && !unreadRowOf(firstUnread)) return;
     setStick(false);
     jumpHeldRef.current = true;
     goToUnread(firstUnread, { instant: true });
-  }, [superView, unreadReady, historyPending, firstUnread, releaseToItem, unreadRowOf, setStick, goToUnread]);
+  }, [superView, unreadReady, historyPending, firstUnread, releaseToItem, unreadRowOf, setStick, goToUnread, thread]);
   // The doors to a question (the agenda's waiting row): showQuestionCard asks this pane through
   // the event, and the pane goes straight to the card.
   useEffect(() => {
@@ -2994,6 +3105,8 @@ export function ChatPane({
       const detail = (e as CustomEvent<SuperQuestionDetail>).detail;
       if (!detail?.item) return;
       e.preventDefault();
+      // A card the thread filter hides is not drawn, so its door never reaches here; one that is
+      // drawn but whose question unit the filter hides still lands normally.
       setStick(false);
       jumpHeldRef.current = true;
       goToUnread(superUnread.units.find((u) => u.question === detail.item) ?? { key: `q:${detail.item}`, ts: 0, itemId: null, question: detail.item });
@@ -3080,6 +3193,9 @@ export function ChatPane({
       )}
       <BrowserHostProvider value={browserHost}>
       <SelectionScope handler={selectionHandler}>
+      {thread && threadFilter && threadSid && (
+        <SuperThreadChip sessionId={threadSid} label={threadFilter.key.label} count={thread.count} onClear={() => clearThreadFilter(threadSid, 'user')} />
+      )}
       <div className={superView ? 'chat-transcript chat-transcript--super' : 'chat-transcript'}>
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
                 <div
@@ -3248,6 +3364,8 @@ export function ChatPane({
               />
             )}
             {isEmpty && !bare && <EmptyState />}
+            {/* An agenda row with nothing linked to it (D5): said, with the way back. */}
+            {thread?.empty && threadSid && <SuperThreadEmpty onBack={() => clearThreadFilter(threadSid, 'user')} />}
             {/* The window's ceiling, made visible and operable. Scrolling to the top does
                 this for you (see the scroll handler); the button is what makes the omission
                 honest for a reader who hasn't scrolled yet. */}
@@ -3293,7 +3411,7 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
-            {superView && <SuperQuestionTail session={session} anchored={anchoredQuestions} placedCards={placedCards} />}
+            {superView && <SuperQuestionTail session={session} anchored={anchoredQuestions} placedCards={placedCards} {...(thread ? { show: threadShows } : {})} />}
             {askRouting?.phase === 'preparing' && <PreparingQuestionCard item={askRouting.item} />}
             {askRouting?.phase === 'degraded' && (
               <DegradedQuestionCard item={askRouting.item} onContinueInTerminal={onContinueInTerminal} />
@@ -3427,7 +3545,7 @@ export function ChatPane({
         {session.takenOver && <TakenOverBanner onPhone writeTakes onTakeBack={() => void session.takeBack()} />}
         {/* The open question whose card is out of view: one line on the composer's top edge,
             its press goes to the card (SuperQuestionLine.tsx). It never scrolls by itself. */}
-        {superView && <SuperQuestionLine sessionId={session.claudeId} scrollRef={scrollRef} />}
+        {superView && <SuperQuestionLine sessionId={session.claudeId} scrollRef={scrollRef} {...(threadHidesCard ? { hidden: threadHidesCard } : {})} />}
         <Composer
           session={session}
           folded={isPhone && composerFolded}

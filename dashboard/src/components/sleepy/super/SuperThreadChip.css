@@ -1,0 +1,74 @@
+/* The Super chat shows one agenda row's thread (ajanda-filtre, approved frames b and e). */
+.super-thread-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: var(--space-2) var(--space-4) 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  min-height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+/* Small words on the tint: the ink token, never the swatch (tokens.css: the swatch is 4.15:1 on white). */
+.super-thread-chip-only { flex: 0 0 auto; color: var(--color-accent-ink); font-weight: var(--font-weight-medium); }
+.super-thread-chip-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: var(--font-weight-medium);
+}
+.super-thread-chip-count { flex: 0 0 auto; color: var(--color-text-secondary); white-space: nowrap; }
+.super-thread-chip-x {
+  position: relative;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.super-thread-chip-x:hover { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.super-thread-chip-x:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+.super-thread-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin: auto 0;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+.super-thread-empty p { margin: 0; }
+.super-thread-empty-back {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.super-thread-empty-back:hover { border-color: var(--color-border-hover); }
+.super-thread-empty-back:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+/* A finger (the phone has no Esc): the way out is 44 px to touch, the glyph stays small. */
+@media (pointer: coarse) {
+  .super-thread-chip-x::before { content: ''; position: absolute; inset: -8px; }
+  .super-thread-empty-back { min-height: 44px; }
+}

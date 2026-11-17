@@ -489,7 +489,8 @@ export function registerSuperCommand(program: Command): void {
   n.command('add <section> <text...>')
     .description('Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)')
     .option('--for <child>', 'A Now line about one job: it moves to Done by itself when that child is done, ended or gone (and back while it works again)')
-    .action((section: string, text: string[], o: { for?: string }) => run('note-add', { section, text: text.join(' '), ...(o.for ? { for: o.for } : {}) }));
+    .option('--origin <ref>', 'The owner message this line is about, outside his turn (in his turn it is linked by itself): pressing the line shows its messages')
+    .action((section: string, text: string[], o: { for?: string; origin?: string }) => run('note-add', { section, text: text.join(' '), ...(o.for ? { for: o.for } : {}), ...(o.origin ? { origin: o.origin } : {}) }));
   n.command('done <id>')
     .description('Move a line to Done (it finished, or the owner gave what you waited for)')
     .action((id: string) => run('note-done', { id }));
