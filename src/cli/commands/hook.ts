@@ -31,6 +31,7 @@ import {
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind, type SessionRecall,
 } from '../../lib/hook-delivery.js';
 import { judgedRecall, type JudgedHit, type JudgedRecall } from '../../lib/recall-judged.js';
+import { isAutomationFirePrompt } from '../../lib/automations/fire-prompt.js';
 import { callDir as judgeCallDir, type RunJudgeOpts } from '../../lib/recall-judge.js';
 import type { SleepState, Bookmark, SessionRecord } from './sleep.js';
 import { readSleepState, writeSleepState, resolveRecallMode, type RecallMode } from './sleep.js';
@@ -3817,7 +3818,8 @@ export function registerHookCommand(program: Command): void {
         try {
           // The owner's words only (recallQuery: no Super roster or tools block, no notification,
           // no wrapper line, no paths). Null: a machine turn, no recall at all.
-          const prompt = query;
+          // An automation's fire prompt is the runner's text, the same on every fire: no recall, no peers.
+          const prompt = isAutomationFirePrompt(rawPrompt) ? null : query;
           if (prompt !== null) {
             const recallMode = resolveRecallMode(root);
 

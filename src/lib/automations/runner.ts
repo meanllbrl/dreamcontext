@@ -1,5 +1,6 @@
 import { assertNotAppChat } from '../apps/chat-store.js';
 import { cliAwarePath } from './cli-path.js';
+import { AUTOMATION_FIRE_PREFIX } from './fire-prompt.js';
 import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -252,7 +253,7 @@ export function buildPreamble(
   home?: BoardScope | null,
 ): string {
   return (
-    `You are scheduled dreamcontext automation "${m.title}" in ${projectRoot}. ` +
+    `${AUTOMATION_FIRE_PREFIX}${m.title}" in ${projectRoot}. ` +
     'NO user available: never ask, finish autonomously. ' +
     `Fire time ${fireAt.toISOString()}. ` +
     buildFireSlotLine(m, fireAt) +
