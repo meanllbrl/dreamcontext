@@ -303,11 +303,13 @@ describe('the agenda row\'s Write about this icon', () => {
     expect(css).toMatch(/@media \(hover: none\) \{ \.super-agenda-row:hover \.agenda-hover \{ display: none; \} \}/);
   });
 
-  it('the stage passes it only while the super chat is there; a narrow stage floats first; the surface stages one chip and focuses', () => {
+  it('the stage passes it only while the super chat is there; a narrow stage folds its open sheet first; the surface stages one chip and focuses', () => {
     const surface = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperSurface.tsx', ROOT_URL), 'utf-8');
     expect(surface).toMatch(/const writeAbout = onWriteAbout && superSession && superSession\.status !== 'closed'/);
-    // The automatic float write is the Mac's only: a remote screen never moves the Mac's stage (W2).
-    expect(surface).toMatch(/if \(plan\.narrow && viewMode !== 'float' && !remote\) onLayout\(\{ view: \{ mode: 'float' \} \}\);/);
+    // Owner 2026-11-17: a narrow stage's open sheet folds to its tabs (window state, never a layout
+    // write, so a remote screen never moves the Mac's stage, W2) and the composer is in view.
+    expect(surface).toMatch(/if \(plan\.tabs && !plan\.tabs\.folded\) setSheetOpen\(false\);/);
+    expect(surface).not.toMatch(/onLayout\(\{ view: \{ mode: 'float' \} \}\);/);
     const agent = readFileSync(new URL('dashboard/src/components/sleepy/AgentSurface.tsx', ROOT_URL), 'utf-8');
     // One writer for both surfaces (writeAboutInto); the stage's writes into its Super chat.
     const body = agent.slice(agent.indexOf('const writeAboutInto'), agent.indexOf('const writeAboutInto') + 900);
