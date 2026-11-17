@@ -330,7 +330,8 @@ describe('only the owner decides', () => {
     expect(importers.sort()).toEqual(['server/telegram/blocks.ts', 'server/telegram/w5.ts']);
     // The one door into a decision on the hub: a callback that passed the paired-account gate.
     const hub = readFileSync(join(src, 'server', 'telegram', 'hub.ts'), 'utf8');
-    expect(hub).toMatch(/if \(!isAuthorized\(u as unknown as TgUpdateLike, ab\.binding\)\) \{ this\.strangers\.note/);
+    // The refused branch answers a stranger's press with a toast (tg-grup G3), then counts him; it never reaches a handler.
+    expect(hub).toMatch(/if \(!isAuthorized\(u as unknown as TgUpdateLike, ab\.binding\)\) \{[^}]*?answerCallbackQuery[\s\S]{0,200}?this\.strangers\.note\(u as unknown as TgUpdateLike\);\s*return 'accepted';/);
     expect(hub.indexOf('isAuthorized(u as unknown')).toBeLessThan(hub.indexOf('await this.onCallback(ab, cb)'));
   });
 });
