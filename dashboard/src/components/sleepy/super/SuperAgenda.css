@@ -168,9 +168,9 @@ button.agenda-mark:hover { background: var(--color-bg-tertiary); }
   min-width: 0;
   width: 100%;
   display: grid;
-  /* The name keeps at least half the row: chips wrap inside what is left instead of
-     squeezing the words into a narrow column. */
-  grid-template-columns: minmax(50%, 1fr) minmax(0, auto) auto;
+  /* Small and medium: one line, the words cut to fit and the time on the right. Large and up
+     lay the row out as a wrapping line instead (below). */
+  grid-template-columns: minmax(0, 1fr) auto;
   column-gap: var(--space-2);
   row-gap: 2px;
   align-items: baseline;
@@ -218,6 +218,22 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .super-agenda-chip:is([data-kind='permission'], [data-kind='question'], [data-kind='ask'], [data-kind='needsYou']) { color: var(--color-text); background: color-mix(in srgb, var(--agenda-waiting) 16%, var(--color-bg-elevated)); }
 .super-agenda-chip[data-kind='day'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
 .super-agenda-chip[data-kind='mode'] { font-weight: var(--font-weight-medium); background: none; box-shadow: inset 0 0 0 1px var(--color-border); }
+/* Large and up (owner 2026-11-17, "chipler maddenin altında ufak bir satırda"): the words read
+   across the whole row, the detail under them, then one small muted line: source · date. Every
+   width and the phone sheet (a large card) read it the same way. */
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0; row-gap: 2px; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .super-agenda-name { flex: 1 1 100%; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .super-agenda-line { flex: 1 1 100%; order: 1; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .super-agenda-meta { order: 2; justify-content: flex-start; gap: 0; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row-btn > .agenda-time { order: 3; }
+.super-agenda-row-btn .super-agenda-chip { background: none; box-shadow: none; padding: 0; border-radius: 0; font-weight: var(--font-weight-regular, 400); color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.super-agenda-row-btn .super-agenda-chip + .super-agenda-chip::before { content: '·'; margin: 0 6px; color: var(--color-text-tertiary); }
+.super-agenda-meta:not(:empty) + .agenda-time::before { content: '·'; margin: 0 6px; }
+.super-agenda-meta:empty { display: none; }
+/* Under the words, a chip that means something keeps its colour as text: a stale day warns, and
+   what waits on him reads a step stronger than the rest. */
+.super-agenda-row-btn .super-agenda-chip[data-kind='day'] { color: var(--color-warning-ink); }
+.super-agenda-row-btn .super-agenda-chip:is([data-kind='permission'], [data-kind='question'], [data-kind='ask'], [data-kind='needsYou']) { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
 
 /* Hover: Done and Ask over the time; a touch screen has none (a tap opens the detail with both). */
 .agenda-hover {
@@ -231,6 +247,9 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 }
 /* Keyboard focus shows the actions; a mouse press leaves none behind over the row it selected. */
 .super-agenda-row:hover .agenda-hover, .super-agenda-row:has(:focus-visible) .agenda-hover { display: inline-flex; }
+/* Large and up the time sits on the row's last line: the actions cover that line, never the words. */
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row:has(.agenda-time, .super-agenda-meta:not(:empty)) .agenda-hover { top: auto; bottom: 4px; }
+.super-agenda:not([data-size='small'], [data-size='medium']) .super-agenda-row:has(.agenda-time, .super-agenda-meta:not(:empty)) .agenda-hover-btn { height: 20px; }
 /* Over the selected row the strip keeps the row's tint (its own fill would cut a grey hole in it)
    and the time it covers steps aside. */
 .super-agenda-row[data-thread='on'] .agenda-hover { background: transparent; }

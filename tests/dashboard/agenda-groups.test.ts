@@ -321,3 +321,23 @@ describe('the row that filters the chat stays clearly selected (owner 2026-11-17
     vi.useRealTimers();
   });
 });
+
+describe('a line reads across the whole row; its chips sit in one small line under it (owner 2026-11-17)', () => {
+  const css = async () => (await import('node:fs')).readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperAgenda.css', import.meta.url), 'utf8');
+  const WIDE = ".super-agenda:not([data-size='small'], [data-size='medium'])";
+
+  it('large and up: the row wraps, the words take a whole line, then the detail, then source · date', async () => {
+    const src = await css();
+    expect(src).toContain(`${WIDE} .super-agenda-row-btn { display: flex; flex-wrap: wrap;`);
+    expect(src).toMatch(new RegExp(`${WIDE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\.super-agenda-row-btn > \\.super-agenda-name \\{ flex: 1 1 100%;`));
+    // The old grid kept a column for the chips beside the words.
+    expect(src).not.toMatch(/grid-template-columns: minmax\(50%, 1fr\)/);
+  });
+
+  it('the chips under the words are muted words with a dot between them, no pills', async () => {
+    const src = await css();
+    expect(src).toMatch(/\.super-agenda-row-btn \.super-agenda-chip \{[^}]*background: none;[^}]*padding: 0;/);
+    expect(src).toMatch(/\.super-agenda-row-btn \.super-agenda-chip \+ \.super-agenda-chip::before \{ content: '·';/);
+    expect(src).toMatch(/\.super-agenda-meta:not\(:empty\) \+ \.agenda-time::before \{ content: '·';/);
+  });
+});

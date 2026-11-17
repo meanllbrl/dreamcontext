@@ -345,6 +345,21 @@ const LINE_A = 'Telegram bots move to rich cards';
 const LINE_B = 'Board export splits for the phone';
 const LINE_C = 'Write the beta price idea';
 
+
+/** Rows with source or date chips: how much of the row the words get (owner 2026-11-17). */
+async function rowLayout(page, scope) {
+  return page.evaluate((sel) => [...document.querySelectorAll(`${sel} [data-testid="super-agenda-row"]`)].filter((r) => r.getClientRects().length && r.querySelector('.super-agenda-meta, .agenda-time')).map((r) => {
+    const btn = r.querySelector('.super-agenda-row-btn');
+    const name = r.querySelector('.super-agenda-name');
+    const meta = [...r.querySelectorAll('.super-agenda-meta, .agenda-time')].find((m) => m.getClientRects().length && m.getBoundingClientRect().width > 0);
+    const cs = getComputedStyle(btn);
+    const inner = btn.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const nb = name.getBoundingClientRect();
+    const mb = meta ? meta.getBoundingClientRect() : { top: Infinity };
+    return { text: name.textContent.slice(0, 30), ratio: +(nb.width / inner).toFixed(2), metaBelow: mb.top >= nb.bottom - 1, size: r.closest('.super-agenda')?.getAttribute('data-size') };
+  }), scope);
+}
+
 async function flow(pw, base) {
   const browser = await pw.chromium.launch();
   const errors = [];
@@ -669,6 +684,21 @@ async function flow(pw, base) {
   ok('motion: the inner wrapper is never left transformed', await inner.evaluate((el) => getComputedStyle(el).transform === 'none'));
   await page.emulateMedia({ colorScheme: 'dark' });
 
+  console.log('\n── row layout: the words take the whole row, chips under them (owner 2026-11-17)');
+  for (const scheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' });
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(400);
+    const rows = await rowLayout(page, '[data-testid="super-container"][data-kind="agenda"]');
+    const wide = rows.filter((r) => r.size !== 'small' && r.size !== 'medium');
+    ok(`1440 ${scheme}: every row with chips gives the words the whole row, chips below`, wide.length > 0 && wide.every((r) => r.ratio >= 0.9 && r.metaBelow), JSON.stringify(rows));
+    const box = await agendaCard(page).boundingBox();
+    const shotPath = join(OUT, `satir-1440-${scheme}.png`);
+    await page.screenshot({ path: shotPath, clip: { x: box.x - 8, y: box.y - 8, width: box.width + 16, height: box.height + 16 } });
+    results.shots.push(shotPath);
+  }
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' });
+
   console.log('\n── sizes');
   if (await setSize(page, 'medium')) {
     // Medium shows one group at a time: line A is the Super's, under "On it".
@@ -714,6 +744,22 @@ async function flow(pw, base) {
     await shot(page, 'phone-390-filtered.png');
   } else {
     note('phone: the phone agenda sheet is drawn only on the Mac phone surface; at 390 px in this harness the desktop shell narrows instead');
+    // The narrow shell's agenda: its button opens it; the same rows, the same layout.
+    const openAg = page.locator('[data-testid="super-agenda-open"], [data-testid="super-agenda-pill-btn"]').filter({ visible: true });
+    ok('390: the narrow shell offers its agenda', (await openAg.count()) > 0);
+    if (await openAg.count()) {
+      await openAg.first().click();
+      await page.waitForTimeout(1200);
+      for (const scheme of ['light', 'dark']) {
+        await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' });
+        await page.waitForTimeout(400);
+        const rows = (await rowLayout(page, 'body')).filter((r) => r.size !== 'small' && r.size !== 'medium');
+        if (rows.length) ok(`390 ${scheme}: every row with chips gives the words the whole row, chips below`, rows.every((r) => r.ratio >= 0.9 && r.metaBelow), JSON.stringify(rows));
+        else note(`390 ${scheme}: no large agenda rows drawn at this width`);
+        await shot(page, `satir-390-${scheme}.png`);
+      }
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'no-preference' });
+    }
     ok('phone 390: no horizontal overflow', !(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)));
     await shot(page, 'phone-390.png');
   }
