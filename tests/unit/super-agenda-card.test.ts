@@ -296,11 +296,13 @@ describe('the agenda row\'s Write about this icon', () => {
 
   it('Ask calls onWriteAbout(row); the row keeps its own press; hover shows it, a touch screen opens the detail', () => {
     const src = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.tsx', ROOT_URL), 'utf-8');
-    expect(src).toMatch(/onPress=\{questionClickable\(r\) \? \(\) => pressQuestion\(r\) : undefined\}/);
+    // A question row with a thread key filters the Super chat first (ajanda-filtre D1, D3).
+    expect(src).toMatch(/onPress=\{a\.press === 'thread' && onThread \? \(\) => pressThread\(e, r, r\.item\) : questionClickable\(r\) \? \(\) => pressQuestion\(r\) : undefined\}/);
     expect(src).toMatch(/onHover=\{\{ ask: onWriteAbout \? \(\) => onWriteAbout\(r\) : undefined \}\}/);
     const css = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.css', ROOT_URL), 'utf-8');
-    expect(css).toMatch(/\.super-agenda-row:hover \.agenda-hover, \.super-agenda-row:focus-within \.agenda-hover \{ display: inline-flex; \}/);
-    expect(css).toMatch(/@media \(hover: none\) \{ \.super-agenda-row:hover \.agenda-hover \{ display: none; \} \}/);
+    // Keyboard focus shows it; a mouse press leaves none over the row it selected (owner 2026-11-17).
+    expect(css).toMatch(/\.super-agenda-row:hover \.agenda-hover, \.super-agenda-row:has\(:focus-visible\) \.agenda-hover \{ display: inline-flex; \}/);
+    expect(css).toMatch(/@media \(hover: none\) \{\s*\.super-agenda-row:hover \.agenda-hover \{ display: none; \}/);
   });
 
   it('the stage passes it only while the super chat is there; a narrow stage folds its open sheet first; the surface stages one chip and focuses', () => {
@@ -316,7 +318,7 @@ describe('the agenda row\'s Write about this icon', () => {
     expect(agent).toMatch(/const writeAboutRow = useCallback\(\(row: AgendaRow\) => writeAboutInto\(superChatRef\.current, row\)/);
     expect(body).toMatch(/const convId = cs\.scratchId \|\| cs\.claudeId;/);
     // Owner 2026-10-24: a ↩ ADDS a chip at the caret (several references in one message).
-    expect(body).toMatch(/insertRef\(convId, \{ id: nextAttachmentId\(\), kind: 'about', name: agendaRefName\(row, words\), text \}\);/);
+    expect(body).toMatch(/insertRef\(convId, \{ id: nextAttachmentId\(\), kind: 'about', name: agendaRefName\(row, aboutWords\(\)\), text \}\);/);
     expect(body).toMatch(/requestAnimationFrame\(\(\) => cs\.focus\(\)\)/);
     expect(agent).toMatch(/onWriteAbout=\{writeAboutRow\}/);
   });

@@ -22,7 +22,7 @@ import {
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
@@ -53,12 +53,12 @@ import { getAgent } from '../../lib/agents/store.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
-import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
-import { ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
+import { linkLineRef, ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
 import { tryOwnerMark } from '../../lib/super/owner-marks.js';
 import { agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
 import { hasOwnerKey } from '../owner-key.js';
@@ -1167,6 +1167,12 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       if (heir) s.pad = s.pad?.map((p) => (p.for === heir ? { ...p, for: sid } : p));
       // Its agenda line, in the same write: Now, and it follows this child from here on.
       if (noteText) noted = putPadNote(s, 'now', noteText, sid);
+      // ajanda-filtre C1: the owner message this job answers starts the line's thread.
+      const pair = noted && noted !== 'full' ? ownerPair(c, origin) : undefined;
+      if (pair && noted && noted !== 'full') {
+        linkLineRef(s, { note: noted.id }, pair);
+        noted = s.pad?.find((p) => p.id === (noted as SuperPadItem).id) ?? noted;
+      }
     }, {
       // A failing day archive on a full pad takes this line out again (store.ts): `noteRefused`.
       onPadRefused: (ids) => { if (noted && noted !== 'full' && ids.includes(noted.id)) noted = 'full'; },
@@ -1317,6 +1323,18 @@ function jobOrigin(c: SuperCaller, b: Record<string, unknown>): { ref?: string; 
   return ownersTurn(c) && c.state.session ? { ref: superOwnerMsgRef(c.state.session) } : {};
 }
 
+/** ajanda-filtre C1: the owner message `ref` as an agenda line links it: the ref plus when it
+ *  ARRIVED. His current turn's message carries its arrival (inbox.ts `superOwnerMsgAt`); a
+ *  `--origin` outside his turn takes the open debt's time for that message, else now. */
+function ownerPair(c: SuperCaller, ref: string | undefined): PadRef | undefined {
+  if (!ref || !MSG_REF_RE.test(ref)) return undefined;
+  const sid = c.state.session;
+  const turnAt = sid && superOwnerMsgRef(sid) === ref ? superOwnerMsgAt(sid) : undefined;
+  if (turnAt !== undefined) return { ref, at: turnAt };
+  const debt = (c.state.owed ?? []).find((o) => o.kind === 'msg' && !o.closed && (o.ref === ref || (o.parts ?? []).includes(ref)));
+  return { ref, at: debt?.at ?? Date.now() };
+}
+
 /** His word reached the child (`send`, `resume` in his turn): its next result is his again, and
  *  answers the message he wrote in this turn. */
 async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, unknown> = {}): Promise<void> {
@@ -1330,6 +1348,9 @@ async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, un
     if (!x) return;
     x.awaited = true;
     if (origin) x.origin = origin; else delete x.origin;
+    // ajanda-filtre C1: his message moved this job; every line about it links it.
+    const pair = ownerPair(c, origin);
+    if (pair) linkLineRef(s, { child }, pair);
   })
     // His message already went in: a record that could not be written must not refuse (and resend) it.
     .catch((err) => console.warn(`[super] could not mark ${child} as the owner's job: ${(err as Error).message}`));
@@ -1427,9 +1448,14 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
   return note;
 }
 
-export async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main'): Promise<SuperPadItem | 'full'> {
+export async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main', pair?: PadRef): Promise<SuperPadItem | 'full'> {
   let out: SuperPadItem | 'full' = 'full';
-  await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); }, {
+  await writeSuper(root, id, (s) => {
+    const put = putPadNote(s, section, text, forChild);
+    // ajanda-filtre C1: the owner message of this turn moved this line (new or the same line).
+    if (put !== 'full' && pair) linkLineRef(s, { note: put.id }, pair);
+    out = put === 'full' ? put : s.pad?.find((p) => p.id === put.id) ?? put;
+  }, {
     onPadRefused: (ids) => { if (out !== 'full' && ids.includes(out.id)) out = 'full'; },
   });
   return out;
@@ -2739,7 +2765,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const over = padJobOver(c.state, forChild);
       if (over) { refuse(res, 409, 'job_over', `that job is ${over}; a line about work that goes on: \`super note add now "<line>"\` without --for`); return; }
     }
-    const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild, c.superId);
+    const origin = jobOrigin(c, b);
+    if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
+    const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild, c.superId, ownerPair(c, origin.ref));
     if (added === 'full') { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
     ok(res, { note: added });
   },

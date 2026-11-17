@@ -3,7 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { nextOwedReveal, type PadStatus, type SuperChild, type SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
-import { superNotepad, superUnanswered, type AgendaRow, type JobLook } from './superHandover';
+import { superNotepad, superUnanswered, type AgendaRow, type JobLook, type ThreadKey } from './superHandover';
 import { showApprovalRow, superApprovalSentence, type SuperApproval } from './superApprovals';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { ownerSlotMounted, showOwnerSlot } from './superJobsStore';
@@ -16,11 +16,23 @@ import {
 import { AgendaRowView, type AgendaSize } from './AgendaRow';
 import { AgendaStatusMenu, FloatLayer } from './AgendaStatusMenu';
 import { AgendaDetail, type DetailJob } from './AgendaDetail';
+import { OPEN_ROW_DETAIL } from './agendaRowDetail';
+import { useVaultId } from '../../../context/VaultContext';
 import { AgendaDayNav, AgendaWeekStrip } from './AgendaDayNav';
 import type { AgendaDay } from './superApi';
 import './SuperAgenda.css';
 
 export type { AgendaSize } from './AgendaRow';
+
+/** A thread row's press (ajanda-filtre D1): the host filters the Super chat and answers whether
+ *  the filter is now on (false: the same row was pressed again and it cleared). */
+export interface ThreadPress {
+  rowKey: string;
+  row: AgendaRow;
+  key: ThreadKey;
+  /** A question or owner-card row: its card, brought into view after the filter lands. */
+  focusItem?: string;
+}
 
 /** The row's machine detail (index-stop.ts writes JSON); an unreadable one still reads as a failed update. */
 function parseStopDetail(detail: string | undefined): { reason: string; asOf: string | null; estUsd: number | null } {
@@ -71,7 +83,7 @@ const toMidnight = (now: number) => { const d = new Date(now); d.setHours(24, 0,
  * Nothing polls: the record is pushed; a day's archived Done lines come from `loadDay` (today's
  * merge on open, on a day change and after a pad change).
  */
-export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onThread, threadRowKey = null, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'> & { children?: Readonly<Record<string, SuperChild>> };
   /** The drawn size (small, medium, large, wide) or the full / side-by-side view. */
@@ -86,6 +98,11 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   onShowQuestion: (item: string) => void;
   /** Ask on a row: its About chip into the Super composer. Absent: no Ask. */
   onWriteAbout?: (row: AgendaRow) => void;
+  /** A row with a thread key was pressed (ajanda-filtre D1): filter the Super chat to it. The same
+   *  row again clears it (the store decides). Absent: a line's press opens its detail, as before. */
+  onThread?: (press: ThreadPress) => boolean;
+  /** The row whose thread the Super chat shows: drawn highlighted while the filter is on. */
+  threadRowKey?: string | null;
   /** His status change, Done included (`POST /api/super/pad`). Absent: no circle menu, no Done. */
   onPadStatus?: (id: string, status: PadStatus) => Promise<void>;
   /** His own line (`POST /api/super/pad/add`). Absent (no owner key here): no add box. */
@@ -176,6 +193,18 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // The detail (one at a time), the status menu, medium's filter, the small card's add popover.
   const [selected, setSelected] = useState<string | null>(null);
+  const { bus: projectBus } = useVaultId();
+  // The filter strip's line name opens that line's detail here (agendaRowDetail).
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const key = (ev as CustomEvent).detail;
+      if (typeof key !== 'string' || readOnly) return;
+      setMenu(null);
+      setSelected(key);
+    };
+    projectBus.addEventListener(OPEN_ROW_DETAIL, on);
+    return () => projectBus.removeEventListener(OPEN_ROW_DETAIL, on);
+  }, [readOnly, projectBus]);
   const [menu, setMenu] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const [filter, setFilter] = useState<AgendaFilter>('waiting');
   // List or board (owner 15 Nov: "büyük görünümdeyken board görünümü de opsiyon olarak kalsın"):
@@ -260,6 +289,18 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   };
   const groupName = (g: AgendaGroup | DayGroup) => t(`super.agenda.group.${g}`);
 
+  const inlineDetail = size === 'wide' || size === 'full';
+  // An archived line keeps its day file's id: a message about it joins its thread (C3).
+  const aboutRow = (e: AgendaEntry): AgendaRow => (e.live || e.kind !== 'line' ? e.row! : { ...e.row!, archived: true });
+  /** A thread row's press: filter (or, the same row, unfilter); a question or owner-card row then
+   *  brings its card into view through its own door, once the filtered chat has drawn (D3). */
+  const pressThread = (e: AgendaEntry, r: AgendaRow, focusItem?: string): boolean => {
+    if (!onThread || !r.thread) return false;
+    const on = onThread({ rowKey: e.key, row: r, key: r.thread, ...(focusItem ? { focusItem } : {}) });
+    if (on && focusItem) requestAnimationFrame(() => requestAnimationFrame(() => pressQuestion(r)));
+    return on;
+  };
+
   // ── One row, by kind ──────────────────────────────────────────────────────────
   const rowOf = (e: AgendaEntry) => {
     const a = actionsOf(e);
@@ -315,6 +356,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           key={e.key} entry={e} actions={a} size={size} label={r.text}
           chips={<span className="super-agenda-chip" data-kind="owed">{tr(t, r.owedKind === 'result' ? 'super.agenda.owed.result' : 'super.agenda.owed.msg', r.owedKind === 'result' ? 'Result' : 'Your message')}</span>}
           time={e.at !== null ? fmtTime(e.at) : ''}
+          onPress={a.press === 'thread' && onThread ? () => pressThread(e, r) : undefined}
+          threadOn={threadRowKey === e.key}
           onHover={{ ask: onWriteAbout ? () => onWriteAbout(r) : undefined, notNeeded: onDropOwed && r.owed ? () => onDropOwed(r.owed as string) : undefined }}
         />
       );
@@ -333,13 +376,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           key={e.key} entry={e} actions={a} size={size} label={own ? r.line as string : r.text} line={line}
           chips={r.chip ? <span className="super-agenda-chip" data-kind={r.chip}>{t(`super.jobs.chip.${r.chip}`)}</span> : undefined}
           time={e.at !== null ? fmtTime(e.at) : ''}
-          onPress={questionClickable(r) ? () => pressQuestion(r) : undefined}
+          onPress={a.press === 'thread' && onThread ? () => pressThread(e, r, r.item) : questionClickable(r) ? () => pressQuestion(r) : undefined}
+          threadOn={threadRowKey === e.key}
           onHover={{ ask: onWriteAbout ? () => onWriteAbout(r) : undefined }}
         />
       );
     }
     // An agenda line: live or archived (C8).
-    const id = r.note as string | undefined;
     const job = r.for ? state.children?.[r.for] : undefined;
     const chips = (
       <>
@@ -349,15 +392,26 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         {size === 'full' && r.author === 'owner' && r.status && r.section !== 'done' && <span className="super-agenda-chip" data-kind="status">{t(`super.agenda.status.${r.status}`)}</span>}
       </>
     );
-    const ask = onWriteAbout ? () => onWriteAbout(e.live ? r : { ...r, note: undefined, archived: true }) : undefined;
+    const ask = onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined;
+    const toggleDetail = () => { setMenu(null); setSelected((k) => (k === e.key ? null : e.key)); };
+    // The press filters the chat (Ask writes about the line without filtering); small and medium
+    // reach the detail from the strip's line name, wide and full open it inline with the filter.
+    const threaded = a.press === 'thread' && !!onThread;
     return (
       <AgendaRowView
         key={e.key} entry={e} actions={a} size={size} label={r.text} chips={chips}
         time={e.group === 'earlier' ? '' : fmtTime(e.at ?? r.at)}
         selected={selected === e.key}
-        onPress={a.press === 'detail' ? () => { setMenu(null); setSelected((k) => (k === e.key ? null : e.key)); } : undefined}
+        threadOn={threadRowKey === e.key}
+        onPress={threaded
+          ? () => {
+            const on = pressThread(e, aboutRow(e));
+            // Wide/full: the inline detail follows the filter, on with it and off with it (D2).
+            if (inlineDetail && a.detail !== 'none') { setMenu(null); setSelected(on ? e.key : null); }
+          }
+          : a.press === 'detail' || a.press === 'thread' ? toggleDetail : undefined}
         onMenu={a.menu && onPadStatus ? (anchor) => setMenu({ key: e.key, anchor }) : undefined}
-        onHover={{ done: onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined, ask }}
+        onHover={{ ask }}
       />
     );
   };
@@ -383,8 +437,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         entry={e} actions={a} group={groupName(e.group)} job={job} fmtTime={fmtTime} fmtDay={fmtDay}
         error={error && error.note === id ? error.text : ''}
         onClose={() => setSelected(null)}
-        onAsk={a.hover.includes('ask') && onWriteAbout ? () => onWriteAbout(e.live ? r : { ...r, note: undefined, archived: true }) : undefined}
-        onDone={a.hover.includes('done') && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
+        onAsk={a.hover.includes('ask') && onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined}
+        onDone={a.menu && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
         onRemove={a.remove && onPadRemove && id ? () => {
           setError(null);
           onPadRemove(id).then(() => setSelected(null)).catch((e) => fail(e, id));
@@ -394,7 +448,6 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       />
     );
   };
-  const inlineDetail = size === 'wide' || size === 'full';
   const floatingDetail = !inlineDetail && selectedEntry && actionsOf(selectedEntry).detail !== 'none' && (
     <FloatLayer
       anchorOf={() => (rootRef.current?.closest('[data-stage-key]') as HTMLElement | null) ?? rootRef.current}

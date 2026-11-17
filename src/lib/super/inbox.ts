@@ -1379,11 +1379,18 @@ export function isOwnerProse(text: string): boolean {
  *  every owner message and dropped when an event turn opens: a job the super starts in his turn
  *  records it (`origin`), so its results link under that message. In memory, like the above. */
 const ownerMsgRefs = new Map<string, string>();
+/** When that message ARRIVED (ms): an agenda line links his message by ref + arrival
+ *  (ajanda-filtre C1, `SuperPadItem.refs`), so two turns with the same words stay two. */
+const ownerMsgAts = new Map<string, number>();
 export function noteSuperOwnerMsg(sessionId: string, ref: string | null): void {
-  if (ref) ownerMsgRefs.set(sessionId, ref); else ownerMsgRefs.delete(sessionId);
+  if (ref) { ownerMsgRefs.set(sessionId, ref); ownerMsgAts.set(sessionId, Date.now()); }
+  else { ownerMsgRefs.delete(sessionId); ownerMsgAts.delete(sessionId); }
 }
 export function superOwnerMsgRef(sessionId: string): string | undefined {
   return ownerMsgRefs.get(sessionId);
+}
+export function superOwnerMsgAt(sessionId: string): number | undefined {
+  return ownerMsgAts.get(sessionId);
 }
 
 /** The owner's language per super (owner-language.ts), ahead of the record's write: a second

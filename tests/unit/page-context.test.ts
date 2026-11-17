@@ -133,7 +133,9 @@ describe('the composer', () => {
 
   it('a queued and a steered message carry the block baked at commit; an @peer message carries none', () => {
     const composer = read('dashboard/src/components/sleepy/chat/Composer.tsx');
-    expect(composer).toMatch(/const \{ message, quoted, slash \} = composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath, \{ superView \}\);/);
+    expect(composer).toMatch(/const out = composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath, \{ superView \}\);/);
+    // A filtered Super chat adds only the agenda row's About block, before every delivery below.
+    expect(composer).toMatch(/const message = superView\s+\? withThreadAbout\(session\.claudeId, out\.message,/);
     expect(composer).toMatch(/if \(mode === 'queue'\) enqueue\(\);/);
     expect(composer).toMatch(/if \(!session\.steer\(message\)\) enqueue\(\{ steerWhenPossible: true \}\);/);
     // The peer's body is cut from `quoted` (no page block), also when a picture chip opens it.

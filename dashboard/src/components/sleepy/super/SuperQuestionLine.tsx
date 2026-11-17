@@ -14,15 +14,18 @@ import './SuperQuestionLine.css';
  * (owner 2026-10-22). It never moves the chat by itself (owner 2026-11-13, 2026-11-15): only his
  * press does. It leaves once the card is in view, or the question closes.
  */
-export function SuperQuestionLine({ sessionId, scrollRef }: {
+export function SuperQuestionLine({ sessionId, scrollRef, hidden }: {
   sessionId: string | null;
+  /** An agenda row's thread hides this question's card (ajanda-filtre C4): it counts as away, and
+   *  the press ends the filter on its way to the card (`showQuestionCard`'s gate). */
+  hidden?: (item: string) => boolean;
   /** The transcript's scroller: the card is "on screen" when it shows inside it. */
   scrollRef: RefObject<HTMLElement | null>;
 }) {
   const { t } = useI18n();
   const view = useSuperQuestions(sessionId);
   const open = view?.open ?? NONE;
-  const away = useCardsAway(scrollRef, open);
+  const away = useCardsAway(scrollRef, open, hidden);
   const item = open.find((q) => away.includes(q.id));
   const go = useCallback(() => {
     if (item) showQuestionCard(item.id, scrollRef.current);
@@ -49,7 +52,7 @@ const NONE: readonly SuperQueueItem[] = [];
  * question with no card drawn is not counted: there is nothing to go to. Re-read on scroll, on a
  * size change, and when the transcript's rows change (a card mounting or leaving).
  */
-function useCardsAway(scrollRef: RefObject<HTMLElement | null>, open: readonly SuperQueueItem[]): string[] {
+function useCardsAway(scrollRef: RefObject<HTMLElement | null>, open: readonly SuperQueueItem[], hidden?: (item: string) => boolean): string[] {
   const [away, setAway] = useState<string[]>([]);
   const ids = open.map((q) => q.id).join('\n');
   useEffect(() => {
@@ -65,7 +68,7 @@ function useCardsAway(scrollRef: RefObject<HTMLElement | null>, open: readonly S
         const cards = scroller.querySelectorAll<HTMLElement>('[data-testid="super-question-card"]');
         for (const id of wanted) {
           const card = [...cards].find((el) => el.dataset.item === id);
-          if (card && !cardInView(card.getBoundingClientRect(), box)) next.push(id);
+          if (card ? !cardInView(card.getBoundingClientRect(), box) : !!hidden?.(id)) next.push(id);
         }
       }
       setAway((prev) => (prev.join('\n') === next.join('\n') ? prev : next));
@@ -83,6 +86,6 @@ function useCardsAway(scrollRef: RefObject<HTMLElement | null>, open: readonly S
       sizes?.disconnect();
       rows?.disconnect();
     };
-  }, [scrollRef, ids]);
+  }, [scrollRef, ids, hidden]);
   return away;
 }
