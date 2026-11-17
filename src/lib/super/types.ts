@@ -2342,6 +2342,8 @@ export const SUPER_VERBS = [
   'team-done', 'team-answer',
   // The owner's scheduled jobs (super-rutin plan C4): main Super only.
   'schedule',
+  // A Telegram group's approved request (tg-grup C5): the Super that got it posts the result once.
+  'room-say',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 

@@ -14,9 +14,10 @@
  * arrive meanwhile fold into the next one; one open request per room, a later one held.
  */
 import { randomBytes } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { delimiter } from 'node:path';
 import { executeClaudeDetached, type ClaudeExecution, type ClaudeExecOptions } from '../../lib/automations/runner.js';
 import { accountEnvFor, resolveConfigDir } from '../../lib/claude-accounts.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
@@ -53,6 +54,9 @@ export const ROOM_RECALL_DEADLINE_MS = 2_500;
 const TYPING_EVERY_MS = 4_000;
 /** A card's quote is split over messages past this (Telegram's 4096, minus the card's frame). */
 const CARD_CHUNK = 3500;
+/** A group voice note is heard only up to this long / this big. */
+const VOICE_MAX_S = 300;
+const VOICE_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
  * THE argv of a room turn (G5): read-only search of the brain's shared pages, no settings, no
@@ -163,7 +167,32 @@ export class RoomRunner {
   onMessage(ab: ActiveBinding, chatId: number, msg: Obj): void {
     const from = msg.from as { id: number; first_name?: string; last_name?: string; username?: string } | undefined;
     const text = typeof msg.text === 'string' ? msg.text : typeof msg.caption === 'string' ? msg.caption : '';
-    if (!from || !text.trim()) return;
+    if (!from) return;
+    // A member's voice note (a reply to the bot) is heard into the turn (D4); never kept anywhere.
+    const voice = msg.voice as { file_id?: string; file_size?: number; duration?: number } | undefined;
+    if (!text.trim() && voice?.file_id) { void this.hear(ab, voice).then((heard) => { if (heard) this.queue(ab, chatId, from, heard); }); return; }
+    if (!text.trim()) return;
+    this.queue(ab, chatId, from, text);
+  }
+
+  /** A group voice note → its words, through a private temp folder removed at once. Null when it
+   *  cannot be heard (too long, no transcriber, a failed download): the message is dropped. */
+  private async hear(ab: ActiveBinding, voice: { file_id?: string; file_size?: number; duration?: number }): Promise<string | null> {
+    const transcribe = this.hub.deps.transcribeVoice;
+    if (!transcribe || !voice.file_id || (voice.duration ?? 0) > VOICE_MAX_S || (voice.file_size ?? 0) > VOICE_MAX_BYTES) return null;
+    const dir = mkdtempSync(join(tmpdir(), 'dc-room-voice-'));
+    try {
+      const file = await ab.transport.getFile(voice.file_id);
+      const bytes = await ab.transport.download(file, VOICE_MAX_BYTES);
+      const path = join(dir, 'note.ogg');
+      writeFileSync(path, bytes, { mode: 0o600 });
+      const heard = ((await transcribe(path)) ?? '').trim();
+      return heard ? `🎙 ${heard}` : null;
+    } catch { return null; } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+
+  private queue(ab: ActiveBinding, chatId: number, from: { id: number; first_name?: string; last_name?: string; username?: string }, text: string): void {
+    if (!this.live(ab, chatId)) return;
     const key = this.keyOf(ab, chatId);
     let st = this.rooms.get(key);
     if (!st) { st = { pending: [], running: false, child: null, stopped: false }; this.rooms.set(key, st); }
@@ -407,7 +436,7 @@ export class RoomRunner {
     if (!clean) return { ok: false, status: 400, error: 'invalid_args', message: 'write what the group should read' };
     for (const ab of this.hub.active.values()) {
       const sup = this.hub.superOf(ab);
-      if (!sup || sup.root !== caller.root || ab.disabled) continue;
+      if (!sup || resolve(sup.root) !== resolve(caller.root) || ab.disabled) continue;
       for (const g of ab.binding.groups ?? []) {
         const record = readRoom(ab.scope, ab.target, g.chatId, this.hub.home);
         const req = record.requests.find((q) => q.id === requestId);

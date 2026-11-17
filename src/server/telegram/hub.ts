@@ -794,7 +794,13 @@ export class TelegramHub implements TelegramHubApi {
     // A group's update takes its own branch, before anything private can see it (tg-grup G1): only
     // the room runner and the bind / unbind / owner-command handlers ever read it.
     if (obj(u.my_chat_member) || isGroupUpdate(u)) { await this.onGroupUpdate(ab, u); return 'accepted'; }
-    if (!isAuthorized(u as unknown as TgUpdateLike, ab.binding)) { this.strangers.note(u as unknown as TgUpdateLike); return 'accepted'; }
+    if (!isAuthorized(u as unknown as TgUpdateLike, ab.binding)) {
+      // G3: a press by anyone but the owner reaches no record and no handler; he sees one toast.
+      const cb = obj(u.callback_query);
+      if (cb) await ab.transport.answerCallbackQuery(String(cb.id ?? ''), ROOM_LINES.notYourButton(await this.ownerNameOf(ab))).catch(() => {});
+      this.strangers.note(u as unknown as TgUpdateLike);
+      return 'accepted';
+    }
     if (!this.intact(ab)) { await this.loseBinding(key, 'tamper'); return 'accepted'; }
     if (u.message_reaction) { await this.onReaction(ab, u); return 'accepted'; }
     const cb = obj(u.callback_query);
