@@ -160,11 +160,6 @@ export interface SuperContainer {
   forChild?: string;
   /** When it was (last) shown for that job (epoch ms), beside `forChild`. */
   forAt?: number;
-  /** A picture: when a question that showed it CLOSED (epoch ms, ask-show.ts putBack). Its
-   *  answer used it up: a later question's recent fallback skips it until it is opened again
-   *  after this (owner 2026-11-17: an answered question's pictures opened beside a new one).
-   *  Server-written only. */
-  askedAt?: number;
   /** A picture's width/height (3 decimals), read by the SERVER from the file's header whenever
    *  an agent opens, presents or asks with it (image-aspect.ts); never written by the owner's
    *  layout. Images only, in [ASPECT_MIN, ASPECT_MAX]; absent = unknown (drawn as today). */
@@ -174,10 +169,14 @@ export interface SuperContainer {
 /**
  * A picture question's cards (task a-picture-question…, D2): the question `item` shows `cards`
  * on the stage while it is the owner's head question, and puts them back after his answer.
- * `opened` = the pictures THIS question created or brought back from Others (they go to Others
- * after it); `via` = where the cards came from (`--show`, the option previews, the recent set).
+ * `opened` = the pictures that go back with it (to Others after it): those it created from its
+ * previews, or every card `--show` named; `via` = where the cards came from (`--show`, the option
+ * previews; `recent` only on an entry an older server wrote).
  * Server-written by `super ask` / `super queue ask`, settled on every write (ask-show.ts).
  */
+/** How a question's cards were named. `recent` (the old time guess: pictures opened in the last
+ *  10 minutes) is no longer written (owner 2026-11-17: an unrelated old picture set opened beside
+ *  a question); it is still read, so an entry an older server wrote is put back on its close. */
 export const ASK_SHOW_VIAS = ['show', 'preview', 'recent'] as const;
 export type AskShowVia = typeof ASK_SHOW_VIAS[number];
 export interface AskShow {
@@ -191,8 +190,6 @@ export interface AskShow {
 /** One per question that can be open at once: each live child's and the Super's own (end review:
  *  a cap under that dropped the presented head's entry, and its pictures never went back). */
 export const MAX_ASK_SHOWS = MAX_LIVE_CHILDREN + 1;
-/** `recent`: pictures opened for the job (or the super's last set) at most this long ago. */
-export const ASK_SHOW_RECENT_MS = 10 * 60_000;
 
 /** A picture's aspect outside this is dropped, never clamped (a 1:30 strip is not a mockup). */
 export const ASPECT_MIN = 0.05;
@@ -316,7 +313,7 @@ export type PresentLayout = typeof PRESENT_LAYOUTS[number];
 /** A filmstrip shows at most this many cards (owner 2026-10-29: "the strip must not be limited":
  *  a group is presented whole, its strip scrolls); every other layout {@link MAX_PRESENT}. */
 export const MAX_FILMSTRIP = MAX_CONTAINERS;
-/** A picture question shows at most this many pictures (its previews, `--show`, the last set). */
+/** A picture question shows at most this many pictures (its previews or `--show`). */
 export const MAX_ASK_PICTURES = 8;
 /** A picture at least this much wider than tall is landscape (16:9 is 1.78, 4:3 1.33). */
 export const LANDSCAPE_ASPECT = 1.3;
