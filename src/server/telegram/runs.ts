@@ -67,7 +67,10 @@ export const RUN_LINES = {
   mcp: (names: string) => `🔌 Bağlanacak: ${names}`,
   notHere: "Bu kart buradan çalıştırılamaz; Mac'te çalıştır.",
   noFolder: "Kartın klasörü doğrulanamadı; Mac'ten çalıştır.",
-  folderChanged: "Kartın klasörü değişti; hiçbir şey çalışmadı. Mac'te karta yeniden bakıp oradan bas.",
+  /** The card's folder moved since the message: asked once more, in plain words, never as an error. */
+  folderAsk: (folder: string) => `Bu kart artık ${folder} klasöründe çalışacak. Emin misin?`,
+  folderAsked: 'Klasör değişti; onayını soruyorum.',
+  folderAskFailed: "Kartın klasörü değişti ama onay sorusu gönderilemedi; hiçbir şey çalışmadı. Kartı Mac'ten çalıştır.",
   oldButton: "Bu düğme eski bir sürümden; hiçbir şey çalışmadı. Kartı Mac'te çalıştır.",
 } as const;
 
@@ -189,6 +192,19 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     return true;
   };
 
+  /** "Bu kart artık X klasöründe çalışacak. Emin misin?" with Çalıştır / Vazgeç: the folder shown is
+   *  the button's root, so the folder he agrees to is the folder that runs (`pressRoot`). */
+  const askFolder = async (ab: ActiveBinding, rec: CardRecordEntry, spec: RunViewSpec, root: string, withheld: boolean): Promise<void> => {
+    const folder = `${basename(root)}${spec.cwd ? ` · ${spec.cwd}` : ''}`;
+    const parts = [
+      `<b>${escapeHtml(RUN_LINES.folderAsk(folder))}</b>`,
+      `<pre>${escapeHtml(redactSecrets(spec.command))}</pre>`,
+    ];
+    await hub.sendButtons(ab, parts.join('\n'), [['Çalıştır'], ['Vazgeç']], {
+      kind: 'run', sessionId: rec.sessionId, cardRef: rec.cardRef, singleUse: true,
+    }, { cmdHash: sha(spec.command), cardId: rec.id, root, withheld, confirm: true });
+  };
+
   const announceSecret = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
     const spec = rec.spec as SecretViewSpec;
     secretSessions.set(rec.sessionId, ab.key);
@@ -286,7 +302,10 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       run.interrupt();
       return RUN_LINES.stopped;
     }
-    if (idx === 2) return RUN_LINES.cancelled;
+    // The folder-change ask (`confirm`) has two buttons: Çalıştır, Vazgeç; the card message three.
+    const confirm = rec.data?.confirm === true;
+    if (confirm ? idx === 1 : idx === 2) return RUN_LINES.cancelled;
+    const withheld = confirm ? rec.data?.withheld === true : idx === 1;
     // G1 (K4): Run only for the bound Super's OWN card (main's, or a member's own Super on its
     // bot), through this very binding; never a child's card
     // (an owner item stands for it), whatever button record names it.
@@ -304,11 +323,17 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     // A button from before this release drew no folder: say so plainly, never "folder changed".
     if (typeof rec.data?.root !== 'string' || !rec.data.root) return RUN_LINES.oldButton;
     const press = await pressRoot(live, rec.data.root);
-    if (!press.ok) return press.why === 'no_folder' ? RUN_LINES.noFolder : RUN_LINES.folderChanged;
-    const run = startRun(sessionId, cardRef, 'telegram', { withheld: idx === 1, root: press.root });
+    if (!press.ok) {
+      if (press.why === 'no_folder' || !press.current) return RUN_LINES.noFolder;
+      // Moved: ask once more with the folder it is now. Its Çalıştır runs THERE (that folder is
+      // its button's root) or, moved again, asks again; nothing runs from this tap.
+      void askFolder(ab, live, spec, press.current.path, withheld).catch(() => hub.notice(ab, 'info', RUN_LINES.folderAskFailed, true).catch(() => {}));
+      return RUN_LINES.folderAsked;
+    }
+    const run = startRun(sessionId, cardRef, 'telegram', { withheld, root: press.root });
     if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? LINES.stale : LINES.waitingOnMac;
     void followRun(ab, live, run).catch(() => { /* the run goes on; its report still arrives */ });
-    return RUN_LINES.started(idx === 1);
+    return RUN_LINES.started(withheld);
   };
 
   const prevHook = hub.messageHook;

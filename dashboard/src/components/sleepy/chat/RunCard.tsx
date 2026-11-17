@@ -9,6 +9,7 @@ import {
 import { commandUnsafe, escapeUnsafe } from '../../../lib/unsafeChars';
 import { useOwnerCardT } from '../../../context/I18nContext';
 import { CardHeader } from './molecules';
+import { FolderConfirm } from './FolderConfirm';
 import { RunElapsed, RunErrLine, RunFold, RunStatusHead, RunTime } from './RunCardLook';
 import { InlineTerminal, type CardTarget } from './InlineTerminal';
 import { buildRunReport, type RunOutcome } from './runReport';
@@ -189,6 +190,9 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
   const drawnRoot = shownFolder.folder?.path ?? null;
   const drawnRootRef = useRef(drawnRoot);
   drawnRootRef.current = drawnRoot;
+  // The folder the owner agreed to in the "Are you sure?" sheet: THAT press names it (never a
+  // re-resolved one). Null for an ordinary press, which names the drawn folder.
+  const confirmedRootRef = useRef<string | null>(null);
   // A press refused because the folder moved: reading it again (always settles), then what it is
   // now, or that it cannot be confirmed here. Cleared when the owner presses again.
   const [check, setCheck] = useState<FolderCheck>(null);
@@ -208,7 +212,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
   const [refusal, setRefusal] = useState<string | null>(null);
   const mintTicket = useCallback(async (target: CardTarget): Promise<CardActionResult<string>> => {
     // No folder drawn, no press: never a mint with an empty root.
-    const root = drawnRootRef.current;
+    const root = confirmedRootRef.current ?? drawnRootRef.current;
     if (!root) return { ok: false, error: 'no_folder', message: t('ownerCard.cannotConfirm') };
     const r = await pressRun(api, {
       session: target.sessionId, card: target.cardRef, action: ticketActionOf(target), shown: spec.command, root,
@@ -263,7 +267,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
     // new one; nothing is pressed again.
     if (r.reason === FOLDER_CHANGED && !r.opened) {
       setShown((cur) => (cur?.key === key ? null : cur));
-      if (!checkRef.current) folderChanged(drawnRootRef.current);
+      if (!checkRef.current) folderChanged(confirmedRootRef.current ?? drawnRootRef.current);
       return;
     }
     if (user && !r.opened && !r.exited) {
@@ -297,8 +301,11 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
     outcome: outcome && (!shown || shown.key === outcome.key) ? outcome : null,
   });
 
-  const start = () => {
-    if (!record || unsafe || !pressable) return;
+  /** A press. `confirmed`: the folder the owner agreed to in the sheet; it is this press's root. */
+  const start = (confirmed?: string) => {
+    if (!record || unsafe || !(confirmed || pressable)) return;
+    confirmedRootRef.current = confirmed ?? null;
+    const root = confirmed ?? drawnRoot;
     setRefusal(null);
     setCheck(null);
     starts.current += 1;
@@ -310,7 +317,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
     setShown({
       key: `l${starts.current}`,
       // The phone's press names the folder it drew in its URL; the Mac's in its ticket.
-      target: { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone, ...(phone && drawnRoot ? { root: drawnRoot } : {}) },
+      target: { sessionId, cardRef: record.cardRef, start: true, withheld: !includeOutput, rerun: closed, phone, ...(phone && root ? { root } : {}) },
       user: true,
       ended: false,
       exited: false,
@@ -344,7 +351,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
   const title = recordHost && view.title === 'Ran in chat' ? t('ownerCard.ranOnMac')
     : recordHost && view.title === 'Running in chat' ? t('ownerCard.runningOnMac')
       : view.title;
-  // The folder line: changed (and what it is now, once read again), or not known on the Mac.
+  // The folder line: being read again after a refusal, cannot be confirmed, or not known.
   const folderLine = folderLineOf(t, {
     check, spec, unknown: !drawnRoot && loaded && view.phase !== 'running' && !unsafe,
     reading: !!phoneFolder?.reading, cannot: !!phoneFolder && !phoneFolder.reading,
@@ -366,7 +373,7 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
       type="button"
       className={look === 'ok' || look === 'bad' ? `chat-runcard-again${failed ? ' is-strong' : ''}` : 'chat-btn pill primary chat-runcard-play'}
       data-testid="run-card-play"
-      onClick={start}
+      onClick={() => start()}
       disabled={!view.startable}
     >
       {look ? null : <span aria-hidden>▶</span>} {runWord}
@@ -450,6 +457,15 @@ function ChatRunCard({ spec, host, folder, chatName, startRequest, onEnded, onSt
             </button>
           ) : undefined}
           again={playButton}
+        />
+      )}
+
+      {check?.state === 'now' && (
+        <FolderConfirm
+          message={t('ownerCard.folderConfirmRun').replace('{name}', cardFolderText(check.folder, spec) ?? check.folder.name)}
+          confirmLabel={t('ownerCard.folderConfirmGo')}
+          onConfirm={() => start(check.folder.path)}
+          onCancel={() => setCheck(null)}
         />
       )}
 
