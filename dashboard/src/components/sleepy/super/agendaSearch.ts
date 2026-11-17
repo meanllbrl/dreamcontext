@@ -4,7 +4,8 @@
  * sits in the original text so the row can mark it. React-free, so every rule is a unit test
  * (agenda-search.test.ts).
  */
-import type { AgendaEntry } from './agendaGroups';
+import { dayGroups, localDay, type AgendaEntry } from './agendaGroups';
+import type { SuperPadItem } from '../../../lib/superTypes';
 
 /** One char, folded: Turkish lower case, accents off, dotless ı as i. */
 function foldChar(c: string): string {
@@ -85,4 +86,24 @@ export function searchDays(days: readonly SearchDay[], query: string): SearchDay
     if (entries.length) out.push({ day: d.day, entries });
   }
   return out;
+}
+
+/**
+ * What a search reads: today's lines, every day that has a file, and every day a Done line still
+ * on the live pad finished (it is archived later and must be found before that too). `dayDone` is
+ * each loaded day's Done lines (the route's answer), keyed by day.
+ */
+export function searchSources(today: string, todayEntries: AgendaEntry[], pad: readonly SuperPadItem[], dayDone: Readonly<Record<string, readonly SuperPadItem[] | null | undefined>>): SearchDay[] {
+  const days = new Set([...Object.keys(dayDone), ...pad.filter((p) => p.section === 'done').map((p) => localDay(p.at))]);
+  days.delete(today);
+  return [
+    { day: today, entries: todayEntries },
+    ...[...days].map((d): SearchDay => {
+      // A day not fetched yet reads the live pad's own Done lines of that day (the route's answer,
+      // once fetched, already holds them).
+      const done = dayDone[d] ?? pad.filter((p) => p.section === 'done' && localDay(p.at) === d);
+      const g = dayGroups(d, pad, done);
+      return { day: d, entries: [...g.dayOpen, ...g.dayDone] };
+    }),
+  ];
 }

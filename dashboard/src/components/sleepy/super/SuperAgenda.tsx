@@ -19,7 +19,8 @@ import { AgendaDetail, type DetailJob } from './AgendaDetail';
 import { OPEN_ROW_DETAIL } from './agendaRowDetail';
 import { useVaultId } from '../../../context/VaultContext';
 import { AgendaDayNav, AgendaWeekStrip } from './AgendaDayNav';
-import { searchDays, type SearchDay } from './agendaSearch';
+import { searchDays, searchSources } from './agendaSearch';
+import { AgendaFind } from './AgendaFind';
 import type { AgendaDay } from './superApi';
 import './SuperAgenda.css';
 
@@ -257,13 +258,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   // Every day's lines: today's groups, then each loaded day's own (a past day's Done lines and
   // the open lines born that day). The same line under two days is listed once, newest day.
   const found = markQ ? searchDays(
-    [
-      { day: today, entries: TODAY_GROUPS.flatMap((g) => groups[g]) },
-      ...Object.keys(dayData).filter((d) => d !== today).map((d): SearchDay => {
-        const g = dayGroups(d, pad, dayData[d]?.done ?? null);
-        return { day: d, entries: [...g.dayOpen, ...g.dayDone] };
-      }),
-    ],
+    searchSources(today, TODAY_GROUPS.flatMap((g) => groups[g]), pad, Object.fromEntries(Object.entries(dayData).map(([d, v]) => [d, v?.done ?? null]))),
     deferredQuery,
   ) : null;
   const all = [...TODAY_GROUPS.flatMap((g) => groups[g]), ...(past ? [...past.dayDone, ...past.dayOpen] : []), ...(found ? found.flatMap((g) => g.entries) : [])];
@@ -628,31 +623,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // ── The search: the magnifier (beside the view switch), the field that replaces the header
   // row's words while it is open, and the results that replace the lists ───────────────────
-  const searchBtn = (
-    <button type="button" className="agenda-search-btn" data-testid="super-agenda-search-open" aria-label={t('super.agenda.search.open')} title={t('super.agenda.search.open')} aria-expanded={searchOpen} onClick={() => setSearchOpen(true)}>
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden><circle cx="7" cy="7" r="4.25" /><path d="m10.4 10.4 3.1 3.1" /></svg>
-    </button>
-  );
-  const searchField = (
-    <div className="agenda-search" data-testid="super-agenda-search">
-      <svg className="agenda-search-glass" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden><circle cx="7" cy="7" r="4.25" /><path d="m10.4 10.4 3.1 3.1" /></svg>
-      <input
-        className="agenda-search-input"
-        data-testid="super-agenda-search-input"
-        type="search"
-        value={query}
-        autoFocus
-        maxLength={120}
-        placeholder={t('super.agenda.search.placeholder')}
-        aria-label={t('super.agenda.search.open')}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSearch(); } }}
-      />
-      <button type="button" className="agenda-search-x" data-testid="super-agenda-search-close" aria-label={t('super.agenda.search.close')} title={t('super.agenda.search.close')} onClick={closeSearch}>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="m4 4 8 8M12 4l-8 8" /></svg>
-      </button>
-    </div>
-  );
+  const find = <AgendaFind open={searchOpen} query={query} onOpen={() => setSearchOpen(true)} onClose={closeSearch} onQuery={setQuery} />;
+  const findOn = searchOpen ? 'open' : undefined;
   /** The matching lines of every day, under the day's heading; one quiet line when none match. */
   const results = found && (
     <div className="agenda-groups agenda-results" data-testid="super-agenda-results">
@@ -685,14 +657,10 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     const rows = past ? [...past.dayOpen, ...past.dayDone].slice(0, 3) : smallEntries(groups, 3);
     return (
       <div className="super-agenda" {...common}>
-        <div className="agenda-head">
-          {searchOpen ? searchField : (
-            <>
-              {nav(false)}
-              <span className="agenda-count" data-testid="super-agenda-progress">{progress.done}/{progress.total}</span>
-              {searchBtn}
-            </>
-          )}
+        <div className="agenda-head" data-find={findOn}>
+          {nav(false)}
+          <span className="agenda-count" data-testid="super-agenda-progress">{progress.done}/{progress.total}</span>
+          {find}
         </div>
         {bar}
         {results ?? (
@@ -731,8 +699,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           ))}
         </div>
         <div className="agenda-main">
-          <div className="agenda-main-head" data-search={searchOpen ? 'true' : undefined}>
-            {searchOpen ? searchField : <><span>{past ? tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) }) : groupName(filter === 'onit' ? 'super' : filter)}</span>{searchBtn}</>}
+          <div className="agenda-main-head" data-find={findOn}>
+            <span>{past ? tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) }) : groupName(filter === 'onit' ? 'super' : filter)}</span>{find}
           </div>
           <div className="agenda-scroll">
             {errorLine}
@@ -751,15 +719,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   }
 
   const header = (long: boolean) => (
-    <div className="agenda-head">
-      {searchOpen ? searchField : <>
+    <div className="agenda-head" data-find={findOn}>
       {nav(long)}
       {day === today && <span className="agenda-today">{t('super.agenda.today')}</span>}
       {/* Large is 344 px: the count in short (3/18), so the day, Today and the list/board switch fit. */}
       <span className="agenda-count" data-testid="super-agenda-progress" title={progressText}>{size === 'large' ? `${progress.done}/${progress.total}` : progressText}</span>
-      {searchBtn}
+      {find}
       {viewSwitch}
-      </>}
     </div>
   );
 
@@ -810,12 +776,11 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       <div className="agenda-col">
         <div className="agenda-scroll">
         {loadDay && <AgendaWeekStrip day={day} today={today} onDay={onDay} locale={locale} />}
-        <div className="agenda-title-row">
-          {searchOpen ? searchField : <>
+        <div className="agenda-title-row" data-find={findOn}>
           <h2 className="agenda-title">{new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(new Date(`${day}T12:00:00`))}</h2>
           {day === today && <span className="agenda-today">{t('super.agenda.today')}</span>}
-          {searchBtn}
-          {viewSwitch}</>}
+          {find}
+          {viewSwitch}
         </div>
         <div className="agenda-progress-row">
           {bar}

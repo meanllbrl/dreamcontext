@@ -103,3 +103,46 @@ describe('the header: a magnifier at every size, and on the phone (read only)', 
     expect(typeof api.fetchAgendaDays).toBe('function');
   });
 });
+
+describe('r2 (owner pick A, 2026-11-18): a round magnifier that grows into a capsule in place', () => {
+  const base = { state: { queue: [] as never, pad: [item('a', 'Paddle öğrenci', 17)], owed: [] as never }, look: { live: () => null, titleFor: (s: string) => s, superTitle: 'Super' }, canShowChild: () => false, onShowChild: () => {}, onShowQuestion: () => {} };
+  it.each(['small', 'medium', 'large', 'wide', 'full'] as const)('%s: the closed capsule sits IN the header row, with its own spot; no field row anywhere', (size) => {
+    vi.useFakeTimers({ now: at(17, 15), toFake: ['Date'] });
+    const html = renderToStaticMarkup(createElement(SuperAgenda, { ...base, size }));
+    expect(html).toMatch(/class="agenda-find" data-state="closed"/);
+    expect(html).toContain('class="agenda-find-spot"');
+    expect(html).not.toContain('class="agenda-search"');
+    vi.useRealTimers();
+  });
+  it('closed: one round button, no input; open: glass, input, clear (×) in the same capsule', async () => {
+    const { AgendaFind } = await import('../../dashboard/src/components/sleepy/super/AgendaFind.js');
+    const closed = renderToStaticMarkup(createElement(AgendaFind, { open: false, query: '', onOpen: () => {}, onClose: () => {}, onQuery: () => {} }));
+    expect(closed).toContain('data-testid="super-agenda-search-open"');
+    expect(closed).not.toContain('<input');
+    const open = renderToStaticMarkup(createElement(AgendaFind, { open: true, query: 'ödeme', onOpen: () => {}, onClose: () => {}, onQuery: () => {} }));
+    expect(open).toContain('data-state="open"');
+    expect(open).toMatch(/<input[^>]*data-testid="super-agenda-search-input"[^>]*value="ödeme"/);
+    expect(open).toContain('data-testid="super-agenda-search-close"');
+  });
+});
+
+describe('r2 CSS: motion, height and the dimmed Done result', () => {
+  it('the capsule animates its width, and not at all under reduced motion; finished results are dimmed', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperAgenda.css', import.meta.url), 'utf-8');
+    expect(css).toMatch(/\.agenda-find-cap\s*{[^}]*transition:[^}]*width/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*{[^}]*\.agenda-find/);
+    expect(css).toMatch(/\.agenda-results[^{]*\[data-status='done'\][^{]*{[^}]*opacity/);
+    // The capsule clips its button: the closed magnifier's keyboard focus ring lives on the capsule.
+    expect(css).toMatch(/\.agenda-find-cap:has\(\.agenda-find-btn:focus-visible\)\s*{[^}]*box-shadow/);
+  });
+});
+
+describe('r2: a Done line still on the live pad from an earlier day is found before it is archived', () => {
+  it('yesterday\'s Done line on the pad is read under yesterday, today\'s lines under today', () => {
+    const pad = [item('y', 'Ödeme sayfası bitti', 17, 'done'), item('t', 'Bugünkü iş', 18)];
+    const src = S.searchSources('2026-11-18', [], pad, {});
+    expect(src.map((d) => d.day)).toEqual(['2026-11-18', '2026-11-17']);
+    expect(S.searchDays(src, 'odeme')!.map((g) => [g.day, g.entries.map((e) => e.row?.note)])).toEqual([['2026-11-17', ['y']]]);
+  });
+});
