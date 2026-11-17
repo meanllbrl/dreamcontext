@@ -60,7 +60,7 @@ import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
 import { linkLineRef, ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
 import { tryOwnerMark } from '../../lib/super/owner-marks.js';
-import { agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
+import { agendaDays, agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
 import { hasOwnerKey } from '../owner-key.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
@@ -4530,6 +4530,13 @@ export async function handleSuperAgendaDay(req: IncomingMessage, res: ServerResp
     const open = pad.filter((p) => p.section !== 'done' && localDay(p.bornAt ?? p.at) === date);
     sendJson(res, 200, { date, done, open });
   } catch (err) { storeRefusal(res, err); }
+}
+/** GET /api/super/agenda-days: the days that have a file, newest first (the agenda's search). */
+export async function handleSuperAgendaDays(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireSuperOwner(req, res)) return;
+  const superId = ownerSuperId(req, res, contextRoot);
+  if (!superId) return;
+  try { sendJson(res, 200, { days: await agendaDays(contextRoot, superId) }); } catch (err) { storeRefusal(res, err); }
 }
 export const handleSuperOpen = ownerRoute('open');
 export const handleSuperMember = ownerRoute('member');
