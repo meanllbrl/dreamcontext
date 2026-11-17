@@ -130,6 +130,27 @@ describe('recentAskCards', () => {
     expect(recentAskCards(s, { chain: { at: now - 11 * 60_000, card: 'image-a', group: 'grp-x' } }, now)).toEqual([]);
     expect(recentAskCards(s, { chain: undefined }, now)).toEqual([]);
   });
+  it('a picture a closed question already showed is not recent, until it is opened again', () => {
+    const s = stage({
+      children: { c1: { sessionId: 'c1', brief: '', adopted: false, startedAt: 1 } },
+      containers: [img('image-a', { askedAt: now - 30_000 }), img('image-b', { forChild: 'c1', forAt: now - 60_000, askedAt: now - 30_000 })],
+    });
+    expect(recentAskCards(s, { chain: { at: now - 60_000, card: 'image-a', group: null } }, now)).toEqual([]);
+    expect(recentAskCards(s, { chain: { at: now - 1000, card: 'image-a', group: null } }, now)).toEqual(['image-a']);
+    expect(recentAskCards(s, { child: 'c1' }, now)).toEqual([]);
+    s.containers[1].forAt = now - 1000;
+    expect(recentAskCards(s, { child: 'c1' }, now)).toEqual(['image-b']);
+  });
+  it('a closing question marks every picture it showed (askedAt), moved to Others or not', () => {
+    const s = settle(stage({ containers: [img('image-a'), img('image-b', { pos: { x: 0.1, y: 0.1 } })], queue: [ask('q1')], askShows: [entry('q1', ['image-a', 'image-b'])] }));
+    s.queue[0].state = 'done';
+    settleAskShows(s, null, now);
+    expect(s.containers.map((c) => c.askedAt)).toEqual([now, now]);
+  });
+  it('sanitize keeps askedAt on a picture only', () => {
+    const s = sanitizeSuperState({ ...stage(), containers: [img('image-a', { askedAt: 5 }), { id: 'task-x', kind: 'task', ref: 'x', shape: 'square', place: 'float', askedAt: 5 } as SuperContainer] });
+    expect(s.containers.map((c) => c.askedAt)).toEqual([5, undefined]);
+  });
 });
 
 // ─── settleAskShows (pure) ─────────────────────────────────────────────────────
@@ -564,6 +585,31 @@ describe('super ask presents its pictures and answers show', () => {
     expect((r.json.show as Show).cards).toHaveLength(2);
     // Its own `open` already sent these to the phone: the question sends them no second time.
     expect(mirror.frames).toHaveLength(1);
+  });
+  it('an answered picture question\'s pictures never come back beside the next, unrelated question (owner 2026-11-17)', async () => {
+    // The live case: the agenda A/B question showed its two pictures and was answered; three
+    // minutes later a plain question about a Telegram group got those old pictures beside it.
+    makeVault();
+    const first = await verb('ask', pictureAsk(['mock/a.png', 'mock/b.png']));
+    expect(first.json.show).toMatchObject({ via: 'preview', state: 'presented' });
+    expect((await verb('queue-done', { item: first.json.item })).status).toBe(200);
+    const next = await verb('ask', { text: 'Start the Telegram group plan?', options: ['Yes', 'No'] });
+    expect(next.status).toBe(200);
+    expect(next.json.show).toMatchObject({ cards: [], state: 'none' });
+    const s = await readSuperState(root);
+    expect(s.view).toEqual({ mode: 'float' });
+    expect(s.askShows).toBeUndefined();
+    expect(s.presentQueue?.items ?? []).toEqual([]);
+  });
+  it('the same pictures opened AGAIN after that answer are recent again', async () => {
+    makeVault();
+    const first = await verb('ask', pictureAsk(['mock/a.png', 'mock/b.png']));
+    await verb('queue-done', { item: first.json.item });
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await verb('open', { kind: 'image', refs: ['mock/a.png', 'mock/b.png'] })).status).toBe(200);
+    const next = await verb('ask', { text: 'Which one?', options: ['A', 'B'] });
+    expect(next.json.show).toMatchObject({ via: 'recent', state: 'presented' });
+    expect((next.json.show as Show).cards).toHaveLength(2);
   });
   it('a restart keeps a presented question on the record, and its close after the restart puts the pictures back', async () => {
     makeVault();

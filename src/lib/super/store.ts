@@ -236,6 +236,8 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
       // Media shown for a child's job: only a media card, only a child the record holds.
       ...(isMediaKind(c.kind) && typeof c.forChild === 'string' && Object.prototype.hasOwnProperty.call(children, c.forChild) && (finite(c.forAt) ?? -1) >= 0
         ? { forChild: c.forChild, forAt: finite(c.forAt) as number } : {}),
+      // When a closed question last showed this picture (ask-show.ts): server-written.
+      ...(c.kind === 'image' && (finite(c.askedAt) ?? -1) >= 0 ? { askedAt: finite(c.askedAt) as number } : {}),
       // A picture's shape (server-read): finite and in range, else dropped (drawn as today).
       ...(c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect >= ASPECT_MIN && c.aspect <= ASPECT_MAX
         ? { aspect: Math.round(c.aspect * 1000) / 1000 } : {}),

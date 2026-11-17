@@ -160,6 +160,11 @@ export interface SuperContainer {
   forChild?: string;
   /** When it was (last) shown for that job (epoch ms), beside `forChild`. */
   forAt?: number;
+  /** A picture: when a question that showed it CLOSED (epoch ms, ask-show.ts putBack). Its
+   *  answer used it up: a later question's recent fallback skips it until it is opened again
+   *  after this (owner 2026-11-17: an answered question's pictures opened beside a new one).
+   *  Server-written only. */
+  askedAt?: number;
   /** A picture's width/height (3 decimals), read by the SERVER from the file's header whenever
    *  an agent opens, presents or asks with it (image-aspect.ts); never written by the owner's
    *  layout. Images only, in [ASPECT_MIN, ASPECT_MAX]; absent = unknown (drawn as today). */

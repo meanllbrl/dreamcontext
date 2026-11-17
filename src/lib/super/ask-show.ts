@@ -17,7 +17,7 @@
  */
 import {
   ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_ASK_PICTURES, dropAskItem, leaveGroups, presentCards, queuedCards,
-  type AskShow, type SuperQueueItem, type SuperState,
+  type AskShow, type SuperContainer, type SuperQueueItem, type SuperState,
 } from './types.js';
 import type { ImageChain } from './image-group.js';
 
@@ -39,9 +39,12 @@ function shownNow(s: SuperState): Set<string> {
   return out;
 }
 
-/** A closed question's pictures to Others (D2a). */
-function putBack(s: SuperState, e: AskShow): void {
+/** A closed question's pictures to Others (D2a), each marked as used by its answer (`askedAt`):
+ *  a later question's recent fallback never brings them back beside itself. */
+function putBack(s: SuperState, e: AskShow, now: number): void {
   dropAskItem(s, e.item);
+  const used = new Set([...e.cards, ...e.opened]);
+  for (const k of s.containers) if (k.kind === 'image' && used.has(k.id)) k.askedAt = now;
   if (s.view.mode === 'present' && s.view.ask === e.item) s.view = { mode: 'float' };
   const shown = shownNow(s);
   // Its cards now and what it opened before a repeat ask replaced them (D2).
@@ -77,7 +80,7 @@ export function settleAskShows(s: SuperState, head: SuperQueueItem | null, now: 
   // a. Closed questions.
   for (const e of [...entries]) {
     if (isOpen(s.queue.find((q) => q.id === e.item))) continue;
-    putBack(s, e);
+    putBack(s, e, now);
     entries = entries.filter((x) => x !== e);
   }
   // b. The head question, once.
@@ -113,14 +116,19 @@ export function askShowState(s: SuperState, item: string): 'presented' | 'queued
  */
 export function recentAskCards(s: SuperState, from: { child: string } | { chain: ImageChain | undefined }, now: number): string[] {
   const images = s.containers.filter((c) => c.kind === 'image');
+  // A picture a closed question already showed belongs to that answer, not to this question,
+  // unless it was shown again after (owner 2026-11-17: the agenda A/B pictures, answered, came
+  // back beside an unrelated question about a Telegram group three minutes later).
+  const fresh = (c: SuperContainer, shownAt: number) => c.askedAt === undefined || c.askedAt < shownAt;
   if ('child' in from) {
-    return images.filter((c) => c.forChild === from.child && (c.forAt ?? 0) >= now - ASK_SHOW_RECENT_MS).map((c) => c.id).slice(0, MAX_ASK_PICTURES);
+    return images.filter((c) => c.forChild === from.child && (c.forAt ?? 0) >= now - ASK_SHOW_RECENT_MS && fresh(c, c.forAt ?? 0))
+      .map((c) => c.id).slice(0, MAX_ASK_PICTURES);
   }
   const chain = from.chain;
   if (!chain || now - chain.at > ASK_SHOW_RECENT_MS) return [];
   const g = chain.group ? s.groups.find((x) => x.id === chain.group) : undefined;
   const ids = g ? g.cards : [chain.card];
-  return ids.filter((id) => images.some((c) => c.id === id)).slice(0, MAX_ASK_PICTURES);
+  return ids.filter((id) => images.some((c) => c.id === id && fresh(c, chain.at))).slice(0, MAX_ASK_PICTURES);
 }
 
 /**
