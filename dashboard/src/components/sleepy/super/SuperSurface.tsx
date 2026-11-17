@@ -128,6 +128,8 @@ export interface SuperSurfaceProps {
   onPadRemove?: (id: string) => Promise<void>;
   /** One day of the agenda (`GET /api/super/agenda-day`). Absent: no day browsing. */
   loadAgendaDay?: (date: string) => Promise<AgendaDay | null>;
+  /** The days that have a file (the agenda search). Absent: it reads what is loaded. */
+  loadAgendaDays?: () => Promise<string[]>;
   /** His "Gerek yok" on an unanswered agenda line. Absent: read only. */
   onDropOwed?: (id: string) => void;
   /** The owner opens a card himself (POST /api/super/open): the state is applied before it
@@ -1212,6 +1214,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onPadAdd={props.onPadAdd}
       onPadRemove={props.onPadRemove}
       loadDay={props.loadAgendaDay}
+      loadDays={props.loadAgendaDays}
       onDropOwed={props.onDropOwed}
       extra={member && size !== 'small' && size !== 'medium' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
     />

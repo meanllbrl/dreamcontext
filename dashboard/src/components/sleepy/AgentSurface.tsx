@@ -200,7 +200,7 @@ import {
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, fetchAgendaDay, postSuperOwedDrop, postSuperPadAdd, postSuperPadRemove, postSuperPadStatus, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, fetchAgendaDay, fetchAgendaDays, postSuperOwedDrop, postSuperPadAdd, postSuperPadRemove, postSuperPadStatus, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
@@ -4810,6 +4810,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     applySuperAnswer(sid, await postSuperPadRemove(scopedApi, id, sid));
   }, [scopedApi, applySuperAnswer]);
   const loadAgendaDay = useCallback((date: string) => fetchAgendaDay(scopedApi, date, activeSuperIdRef.current), [scopedApi]);
+  const loadAgendaDays = useCallback(() => fetchAgendaDays(scopedApi, activeSuperIdRef.current), [scopedApi]);
   const endChildFromCard = useCallback((child: string, whenDone: boolean) => {
     const s = chatByClaudeId(child);
     if (whenDone && s?.hasLiveWork()) {
@@ -7369,6 +7370,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onPadAdd={isMacPhoneSurface() || !isDesktop() ? undefined : addAgendaLine}
             onPadRemove={isMacPhoneSurface() || !isDesktop() ? undefined : removeAgendaLine}
             loadAgendaDay={isMacPhoneSurface() ? undefined : loadAgendaDay}
+            loadAgendaDays={isMacPhoneSurface() ? undefined : loadAgendaDays}
             onDropOwed={isMacPhoneSurface() ? undefined : dropOwedLine}
             onOpenCard={isMacPhoneSurface() ? undefined : openCardOnStage}
             endPending={endPending}

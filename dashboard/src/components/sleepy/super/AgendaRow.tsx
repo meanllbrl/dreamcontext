@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import type { PadStatus } from '../../../lib/superTypes';
 import type { AgendaEntry, HoverAction, RowActions } from './agendaGroups';
+import { highlightParts } from './agendaSearch';
 
 /** A line's status as a 16px circle (owner 14 Nov: five statuses, the Günlük app's marks). */
 export function StatusGlyph({ status }: { status: PadStatus }) {
@@ -72,12 +73,14 @@ export type AgendaSize = 'small' | 'medium' | 'large' | 'wide' | 'full';
  * nested buttons. Hover shows Ask over the time (small, medium: a round icon button with a
  * tooltip; large up: labelled); Done and the rest live in the row's detail (owner 2026-11-17).
  */
-export function AgendaRowView({ entry, actions, size, label, line, chips, time, selected, threadOn, onPress, onMenu, onHover, testId }: {
+export function AgendaRowView({ entry, actions, size, label, mark, line, chips, time, selected, threadOn, onPress, onMenu, onHover, testId }: {
   entry: AgendaEntry;
   actions: RowActions;
   size: AgendaSize;
   /** The row's words. */
   label: string;
+  /** The search being typed: its match in the words is lightly marked. */
+  mark?: string;
   /** A second line (a question's own words, an allowed-and-waiting note). */
   line?: ReactNode;
   chips?: ReactNode;
@@ -101,9 +104,10 @@ export function AgendaRowView({ entry, actions, size, label, line, chips, time, 
   // Small and medium draw the round icon buttons (their names on hover): the medium list column
   // is too narrow for worded buttons and the line's name (measured on the stage, 15 Nov).
   const compact = size === 'small' || size === 'medium';
+  const hit = mark ? highlightParts(label, mark) : null;
   const body = (
     <>
-      <span className="super-agenda-name" title={label}>{label}</span>
+      <span className="super-agenda-name" title={label}>{hit ? <>{hit.before}<mark className="agenda-hit" data-testid="super-agenda-hit">{hit.hit}</mark>{hit.after}</> : label}</span>
       {chips && size !== 'small' && size !== 'medium' && <span className="super-agenda-meta">{chips}</span>}
       {time && size !== 'small' && <span className="agenda-time">{time}</span>}
       {line && size !== 'small' && size !== 'medium' && <span className="super-agenda-line">{line}</span>}

@@ -560,3 +560,47 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
      easing out; opacity and transform only, so nothing is laid out again. */
   .super-agenda-row::before, .super-agenda-row::after { transition: opacity 240ms cubic-bezier(0.22, 1, 0.36, 1), transform 280ms cubic-bezier(0.34, 1.4, 0.64, 1); }
 }
+
+/* Search (owner pick A, 18 Nov): a round magnifier in the header row that grows LEFT into a
+   capsule over the day and the count, in the same row; no new row, no height. A filled capsule,
+   no border (the macOS/iOS search field); the accent only as the focus ring. */
+.agenda-head, .agenda-title-row, .agenda-main-head { position: relative; }
+.agenda-find { position: relative; flex: none; display: inline-flex; width: 28px; height: 28px; --find-h: 28px; }
+.super-agenda[data-size='small'] .agenda-find { width: 24px; height: 24px; --find-h: 24px; }
+.agenda-head .agenda-find { margin-left: var(--space-1); }
+.agenda-title-row .agenda-find { margin-left: auto; align-self: center; }
+.agenda-title-row .agenda-find + .agenda-viewswitch { margin-left: var(--space-2); }
+.agenda-main-head .agenda-find { margin-left: auto; }
+.agenda-find-spot { width: 100%; height: 100%; }
+.agenda-find-cap {
+  position: absolute; right: 0; top: 50%; z-index: 2; transform: translateY(-50%);
+  width: var(--find-h); height: var(--find-h); box-sizing: border-box; overflow: hidden;
+  display: flex; align-items: center; gap: 6px;
+  border-radius: var(--radius-full);
+  /* the tint over the card's own surface, so the words it covers never show through */
+  background: linear-gradient(color-mix(in srgb, var(--color-text) 9%, transparent), color-mix(in srgb, var(--color-text) 9%, transparent)), var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  transition: width 260ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 160ms ease;
+}
+.agenda-find[data-state='open'] .agenda-find-cap { padding: 0 6px 0 8px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.agenda-find-btn { width: 100%; height: 100%; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: var(--radius-full); background: none; color: inherit; cursor: pointer; }
+.agenda-find-btn:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 5%, transparent); }
+.agenda-find-clear:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+/* The capsule clips its button, so the closed magnifier's focus ring is drawn on the capsule. */
+.agenda-find-btn:focus-visible { outline: none; }
+.agenda-find-cap:has(.agenda-find-btn:focus-visible) { box-shadow: 0 0 0 2px var(--color-border-focus); }
+.agenda-find-glass { flex: none; }
+.agenda-find-input, .agenda-find-input:focus, .agenda-find-input:focus-visible { flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; box-shadow: none; background: none; font: inherit; font-size: var(--font-size-sm); color: var(--color-text); -webkit-appearance: none; appearance: none; }
+.agenda-find-input::placeholder { color: var(--color-text-tertiary); }
+.agenda-find-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.agenda-find-clear { flex: none; width: 16px; height: 16px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-full); background: color-mix(in srgb, var(--color-text) 28%, transparent); color: var(--color-bg-elevated); cursor: pointer; }
+.agenda-find-clear:hover { background: color-mix(in srgb, var(--color-text) 44%, transparent); }
+/* What the open capsule covers fades out and leaves the tab order; the view switch stays. */
+:is(.agenda-head, .agenda-title-row, .agenda-main-head) > :not(.agenda-find):not(.agenda-viewswitch) { transition: opacity 180ms ease; }
+:is(.agenda-head, .agenda-title-row, .agenda-main-head)[data-find='open'] > :not(.agenda-find):not(.agenda-viewswitch) { opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s linear 180ms; }
+.agenda-hit { padding: 0 1px; border-radius: 2px; background: var(--color-accent-soft); color: inherit; }
+/* A finished line found by the search: its Done mark, and the words quieter. */
+.agenda-results .super-agenda-row[data-status='done'] .super-agenda-row-btn { opacity: 0.64; }
+@media (prefers-reduced-motion: reduce) {
+  .agenda-find-cap, :is(.agenda-head, .agenda-title-row, .agenda-main-head) > * { transition: none !important; }
+}
