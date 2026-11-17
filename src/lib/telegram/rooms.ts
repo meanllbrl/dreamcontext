@@ -9,6 +9,9 @@
  * (`tests/unit/telegram-room-outbound-drift.test.ts`) pins every transport call's chat argument.
  */
 
+import { HIDDEN_CHARS } from '../hidden-chars.js';
+import { redactSecrets, showsAsWritten } from './format.js';
+
 /** What may go to a group. Nothing else ever does: no buttons, files, pictures or voice. */
 export const GROUP_KINDS = ['room-say', 'room-line', 'room-typing'] as const;
 export type GroupKind = typeof GROUP_KINDS[number];
@@ -39,6 +42,8 @@ export const ROOM_LINES = {
   understood: 'Anladığım',
   sayEcho: (title: string) => `«${title}» grubuna yazıldı:`,
   cardStale: 'Bu istek artık geçerli değil.',
+  /** A request whose text the owner's card could not show as written: never offered for a yes. */
+  unshowable: 'Bu isteği iletemedim: içinde gösterilemeyen bir parça var. Gizli bilgi olmadan yeniden yazın.',
 } as const;
 
 /** Turkish dative after a name: Mehmet'e, Can'a, Ali'ye, Ayşe'ye. */
@@ -57,10 +62,29 @@ export function ownerName(label: string | null | undefined): string {
   return n || 'Sahip';
 }
 
-/** Zero-width, bidi and control characters out (D7: in the card and in the turn alike). Newlines
- *  are kept: a member's words are shown whole. */
+/** The hidden set a member's text loses: the shared one (control, zero-width, bidi; TAB and LF
+ *  stay), plus variation selectors and Unicode tag characters, which Telegram does not draw and a
+ *  model still reads. Built from escapes, never raw characters. */
+const ROOM_HIDDEN = new RegExp(`[${HIDDEN_CHARS}\\ufe00-\\ufe0f\\u{e0000}-\\u{e007f}]`, 'gu');
+
+/** Hidden characters out (D7: in the card and in the turn alike). Newlines are kept: a member's
+ *  words are shown whole. */
 export function stripHidden(text: string): string {
-  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f؜​-‏‪-‮⁠-⁩﻿]/g, '');
+  return text.replace(ROOM_HIDDEN, '');
+}
+
+/**
+ * A member's text as the owner's card shows it: hidden characters out, every secret-shaped part
+ * as the phone shows it (the transport redacts each send). A request stores its words and summary
+ * this way, so the turn Onayla sends the Super is the text he read (consent matches display).
+ */
+export function asShown(text: string): string {
+  return redactSecrets(stripHidden(text));
+}
+
+/** The request can be offered for a yes: what he reads is exactly what the Super would get. */
+export function consentable(req: { words: string; summary: string }): boolean {
+  return showsAsWritten(req.words) && showsAsWritten(req.summary);
 }
 
 /** A label for one line (an author, a group title): hidden characters, newlines and brackets out. */

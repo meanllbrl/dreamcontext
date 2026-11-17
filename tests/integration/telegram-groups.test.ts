@@ -17,7 +17,7 @@ import { wireTelegramRooms, type RoomRunner } from '../../src/server/telegram/ro
 import * as reg from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { readBinding, readRoom, scopeOfContextRoot } from '../../src/lib/telegram/config.js';
+import { readBinding, readRoom, scopeOfContextRoot, withKeptGroups, writeBinding, writeRoom } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix, type ButtonRecord } from '../../src/lib/telegram/contract.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import type { ClaudeExecOptions, ClaudeExecution } from '../../src/lib/automations/runner.js';
@@ -267,6 +267,31 @@ describe('a room turn (D4, D5, criterion 3)', () => {
     expect(calls).toEqual([]);
   });
 
+  it('voice notes are heard one at a time, in arrival order, inside the room\'s one turn line (r1 unbounded-member-fanout)', async () => {
+    let inFlight = 0; let most = 0; const heard: string[] = [];
+    let n = 0;
+    Object.assign((hub as unknown as { deps: Record<string, unknown> }).deps, {
+      transcribeVoice: async () => {
+        inFlight += 1; most = Math.max(most, inFlight);
+        await new Promise((r) => setTimeout(r, 15));
+        inFlight -= 1;
+        const w = `not ${++n}`; heard.push(w); return w;
+      },
+    });
+    answers.push({ say: 'Tamam.' }, { say: 'Tamam.' });
+    for (let i = 0; i < 4; i++) {
+      tg.push(TOKEN, groupMsg(CAN, '', { extra: { voice: { file_id: `v${i}`, duration: 20, file_size: 100 }, reply_to_message: { message_id: 1, from: { id: 123456, is_bot: true, username: BOT } } } }));
+    }
+    await vi.waitFor(() => expect(heard).toHaveLength(4), { timeout: 5000 });
+    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0), { timeout: 5000 });
+    await quiet();
+    expect(most).toBe(1);
+    const said = calls.map((c) => c.args.join(' ')).join('\n');
+    const at = [1, 2, 3, 4].map((k) => said.indexOf(`🎙 not ${k}`));
+    expect(at.every((x) => x >= 0)).toBe(true);
+    expect([...at].sort((x, y) => x - y)).toEqual(at);
+  });
+
   it('the room runs in its own EMPTY folder, with no window key (G5)', async () => {
     answers.push({ say: 'Tamam.' });
     tg.push(TOKEN, groupMsg(CAN, 'x?', { at: true }));
@@ -385,7 +410,85 @@ describe('a room request (D6, D7, criterion 5)', () => {
     expect(readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0].words).toBe('');
   });
 
-  it('room say to a group no longer bound is refused', async () => {
+  function superListens(): string[] {
+    const sent: string[] = [];
+    reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: vi.fn(async (t: string) => { sent.push(t); return { ok: true as const }; }), interrupt: vi.fn() });
+    return sent;
+  }
+
+  it('consent matches display: a secret-shaped part the card hides never reaches the Super raw (r1 consent-matches-display)', async () => {
+    const sent = superListens();
+    await asked('deploy et, api_key=SuperGizliDeger123 ve Bearer abcdefghijklmnopqrstuv');
+    const card = lastCard();
+    expect(String(card.params.text)).not.toContain('SuperGizliDeger123');
+    const stored = readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0];
+    expect(stored.words).not.toContain('SuperGizliDeger123');
+    expect(stored.words).not.toContain('abcdefghijklmnopqrstuv');
+    press(card, 0);
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    expect(sent[0]).not.toContain('SuperGizliDeger123');
+    expect(sent[0]).not.toContain('abcdefghijklmnopqrstuv');
+  });
+
+  it('hidden tag characters and variation selectors never reach the card or the turn', async () => {
+    const tag = String.fromCodePoint(0xe0041, 0xe0042);
+    await asked(`merhaba${tag}\ufe0f dünya`);
+    const stored = readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0];
+    expect(stored.words).toContain('merhaba dünya');
+    expect([...stored.words].some((c) => c.codePointAt(0)! >= 0xe0000 || c === '\ufe0f')).toBe(false);
+  });
+
+  it('approving the head asks the next waiting one; a later request waits behind it (r1 room-request-order)', async () => {
+    superListens();
+    await asked();
+    const first = lastCard();
+    answers.push({ say: '', request: { summary: 'İkinci iş.' } });
+    tg.push(TOKEN, groupMsg(CAN, 'bir de şunu yap', { at: true }));
+    await vi.waitFor(() => expect(groupTexts().filter((t) => t.includes('Önceki istek hâlâ onay bekliyor'))).toHaveLength(1), { timeout: 5000 });
+    press(first, 0);
+    await vi.waitFor(() => expect(String(lastCard().params.text)).toContain('İkinci iş.'), { timeout: 5000 });
+    const second = lastCard();
+    answers.push({ say: '', request: { summary: 'Üçüncü iş.' } });
+    tg.push(TOKEN, groupMsg(CAN, 'bir de bunu', { at: true }));
+    await vi.waitFor(() => expect(groupTexts().filter((t) => t.includes('Önceki istek hâlâ onay bekliyor'))).toHaveLength(2), { timeout: 5000 });
+    expect(lastCard()).toBe(second);
+    const st = readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests.map((q) => q.status);
+    expect(st).toEqual(['approved', 'open', 'held']);
+  });
+
+  it('an open request whose card is gone (a restart, a failed send) is offered again with the next request (r1 room-request-liveness)', async () => {
+    tg.failing.set('sendMessage', 500);
+    answers.push({ say: '', request: { summary: 'Kartı gitmeyen iş.' } });
+    tg.push(TOKEN, groupMsg(CAN, 'şunu yap', { at: true }));
+    await vi.waitFor(() => expect(readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests).toHaveLength(1), { timeout: 5000 });
+    await quiet();
+    tg.failing.delete('sendMessage');
+    const before = tg.calls.length;
+    answers.push({ say: '', request: { summary: 'Sonraki iş.' } });
+    tg.push(TOKEN, groupMsg(CAN, 'bir de bunu', { at: true }));
+    await vi.waitFor(() => expect(tg.calls.slice(before).some((c) => c.method === 'sendMessage' && c.params.reply_markup && String(c.params.text).includes('Kartı gitmeyen iş.'))).toBe(true), { timeout: 5000 });
+    expect(readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests.map((q) => q.status)).toEqual(['open', 'held']);
+  });
+
+  it('room say that Telegram refuses leaves the request approved, to be said again (r1 commit-before-send)', async () => {
+    superListens();
+    await asked();
+    const id = readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0].id;
+    press(lastCard(), 0);
+    await vi.waitFor(() => expect(readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0].status).toBe('approved'), { timeout: 5000 });
+    const echoes = () => privateTexts().filter((t) => t.includes('grubuna yazıldı')).length;
+    tg.failing.set('sendMessage', 429);
+    expect(await rooms.say({ root, superId: 'main' }, id, 'Bitti.')).toMatchObject({ ok: false, error: 'not_sent' });
+    tg.failing.delete('sendMessage');
+    expect(readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0].status).toBe('approved');
+    expect(echoes()).toBe(0);
+    expect(await rooms.say({ root, superId: 'main' }, id, 'Bitti.')).toEqual({ ok: true, group: 'Ürün ekibi' });
+    expect(echoes()).toBe(1);
+    expect(await rooms.say({ root, superId: 'main' }, id, 'Bir daha.')).toMatchObject({ ok: false, error: 'already_said' });
+  });
+
+    it('room say to a group no longer bound is refused', async () => {
     reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
     reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: vi.fn(async () => ({ ok: true as const })), interrupt: vi.fn() });
     await asked();
@@ -425,6 +528,26 @@ describe('the presser (G3, criterion 2)', () => {
     await vi.waitFor(() => expect(tg.calls.slice(before).some((c) => c.method === 'answerCallbackQuery')).toBe(true), { timeout: 5000 });
     expect(handler).not.toHaveBeenCalled();
     expect(tg.calls.slice(before).some((c) => c.method.startsWith('edit'))).toBe(false);
+  });
+});
+
+describe('a fresh binding for the same bot keeps its groups (r1 binding-field-dropped-on-rewrite)', () => {
+  it('the same bot, chat and owner keep the permitted groups; another bot keeps none', () => {
+    const scope = scopeOfContextRoot(root);
+    const base = { token: TOKEN, botId: 123456, botUsername: BOT, chatId: OWNER, userId: OWNER, boundAt: new Date(0).toISOString() };
+    writeBinding(scope, 'super', { ...base, groups: [{ chatId: GROUP, title: 'Ürün ekibi', boundAt: new Date(0).toISOString() }] }, home);
+    expect(withKeptGroups(scope, 'super', base, home).groups).toEqual([{ chatId: GROUP, title: 'Ürün ekibi', boundAt: new Date(0).toISOString() }]);
+    expect(withKeptGroups(scope, 'super', { ...base, botId: 999 }, home).groups).toBeUndefined();
+    expect(withKeptGroups(scope, 'super', { ...base, userId: 1 }, home).groups).toBeUndefined();
+  });
+
+  it('pairing the same bot anew keeps the bound group working', async () => {
+    await bindGroup();
+    await bindBot();
+    expect(groupsOf()).toEqual([expect.objectContaining({ chatId: GROUP })]);
+    answers.push({ say: 'Hâlâ buradayım.' });
+    tg.push(TOKEN, groupMsg(CAN, 'orada mısın?', { at: true }));
+    await vi.waitFor(() => expect(groupTexts()).toContain('Hâlâ buradayım.'), { timeout: 5000 });
   });
 });
 

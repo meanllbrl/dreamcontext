@@ -33,7 +33,7 @@ import { readRoom, removeRoom, roomDirs, writeRoom, type RoomFile, type RoomRequ
 import { escapeHtml } from '../../lib/telegram/format.js';
 import { ROOM_SCHEMA, readRoomAnswer, roomSystemPrompt, roomUserMessage, type RoomAnswer } from '../../lib/telegram/room-prompt.js';
 import {
-  ROOM_LINES, approvedTurnText, authorLabel, batchWords, foldBatch, oneLine, redactPaths, requestIdFrom, stripHidden, type RoomLine,
+  ROOM_LINES, approvedTurnText, asShown, authorLabel, batchWords, consentable, foldBatch, oneLine, redactPaths, requestIdFrom, stripHidden, type RoomLine,
 } from '../../lib/telegram/rooms.js';
 import type { ButtonRecord } from '../../lib/telegram/contract.js';
 import { identityFor } from './identity.js';
@@ -135,8 +135,12 @@ export interface RoomDeps {
   cli?: { execPath: string; entry: string | undefined };
 }
 
+type VoiceNote = { file_id?: string; file_size?: number; duration?: number };
+/** A waiting message: its text, or a voice note heard in the drain, in arrival order. */
+type Pending = RoomLine | { authorId: number; author: string; voice: VoiceNote };
+
 interface RoomState {
-  pending: RoomLine[];
+  pending: Pending[];
   running: boolean;
   child: ChildProcess | null;
   stopped: boolean;
@@ -147,6 +151,8 @@ export type RoomSayResult = { ok: true; group: string } | { ok: false; status: n
 
 export class RoomRunner {
   private rooms = new Map<string, RoomState>();
+  /** Request ids whose `room say` is being sent now: a second say waits for the first's outcome. */
+  private saying = new Set<string>();
   constructor(private readonly hub: TelegramHub, private readonly deps: RoomDeps = {}) {}
 
   private keyOf(ab: ActiveBinding, chatId: number): string { return `${ab.key}:${chatId}`; }
@@ -169,15 +175,15 @@ export class RoomRunner {
     const text = typeof msg.text === 'string' ? msg.text : typeof msg.caption === 'string' ? msg.caption : '';
     if (!from) return;
     // A member's voice note (a reply to the bot) is heard into the turn (D4); never kept anywhere.
-    const voice = msg.voice as { file_id?: string; file_size?: number; duration?: number } | undefined;
-    if (!text.trim() && voice?.file_id) { void this.hear(ab, voice).then((heard) => { if (heard) this.queue(ab, chatId, from, heard); }); return; }
+    const voice = msg.voice as VoiceNote | undefined;
+    if (!text.trim() && voice?.file_id) { this.queue(ab, chatId, { authorId: from.id, author: authorLabel(from), voice }); return; }
     if (!text.trim()) return;
-    this.queue(ab, chatId, from, text);
+    this.queue(ab, chatId, { authorId: from.id, author: authorLabel(from), text: text.trim() });
   }
 
   /** A group voice note → its words, through a private temp folder removed at once. Null when it
    *  cannot be heard (too long, no transcriber, a failed download): the message is dropped. */
-  private async hear(ab: ActiveBinding, voice: { file_id?: string; file_size?: number; duration?: number }): Promise<string | null> {
+  private async hear(ab: ActiveBinding, voice: VoiceNote): Promise<string | null> {
     const transcribe = this.hub.deps.transcribeVoice;
     if (!transcribe || !voice.file_id || (voice.duration ?? 0) > VOICE_MAX_S || (voice.file_size ?? 0) > VOICE_MAX_BYTES) return null;
     const dir = mkdtempSync(join(tmpdir(), 'dc-room-voice-'));
@@ -191,20 +197,41 @@ export class RoomRunner {
     } catch { return null; } finally { rmSync(dir, { recursive: true, force: true }); }
   }
 
-  private queue(ab: ActiveBinding, chatId: number, from: { id: number; first_name?: string; last_name?: string; username?: string }, text: string): void {
+  private queue(ab: ActiveBinding, chatId: number, item: Pending): void {
     if (!this.live(ab, chatId)) return;
     const key = this.keyOf(ab, chatId);
     let st = this.rooms.get(key);
     if (!st) { st = { pending: [], running: false, child: null, stopped: false }; this.rooms.set(key, st); }
-    st.pending.push({ authorId: from.id, author: authorLabel(from), text: text.trim() });
+    st.pending.push(item);
     if (!st.running) void this.drain(ab, chatId, st);
+  }
+
+  /**
+   * The waiting messages as lines, in arrival order. Voice notes are heard here, inside the room's
+   * one drain: one transcription at a time per room, never more audio per turn than one note may
+   * hold (VOICE_MAX_S); a note past that, or one that cannot be heard, is dropped.
+   */
+  private async linesOf(ab: ActiveBinding, items: Pending[], st: RoomState): Promise<RoomLine[]> {
+    const out: RoomLine[] = [];
+    let audio = 0;
+    for (const p of items) {
+      if (!('voice' in p)) { out.push(p); continue; }
+      const d = p.voice.duration ?? VOICE_MAX_S;
+      if (st.stopped || audio + d > VOICE_MAX_S) continue;
+      audio += d;
+      const heard = await this.hear(ab, p.voice);
+      if (heard) out.push({ authorId: p.authorId, author: p.author, text: heard });
+    }
+    return out;
   }
 
   private async drain(ab: ActiveBinding, chatId: number, st: RoomState): Promise<void> {
     st.running = true;
     try {
       while (st.pending.length && !st.stopped && this.live(ab, chatId)) {
-        const batch = foldBatch(st.pending.splice(0));
+        const lines = await this.linesOf(ab, st.pending.splice(0), st);
+        if (!lines.length || st.stopped || !this.live(ab, chatId)) continue;
+        const batch = foldBatch(lines);
         await this.turn(ab, chatId, batch, st).catch(() => this.line(ab, chatId, ROOM_LINES.cannotAnswer));
       }
     } finally {
@@ -315,8 +342,10 @@ export class RoomRunner {
   private async newRequest(ab: ActiveBinding, chatId: number, batch: RoomLine[], summary: string): Promise<void> {
     const sup = this.hub.superOf(ab);
     if (!sup) { await this.line(ab, chatId, ROOM_LINES.cannotAnswer); return; }
+    const owner = await this.hub.ownerNameOf(ab);
     const record = readRoom(ab.scope, ab.target, chatId, this.hub.home);
-    const held = record.requests.some((q) => q.status === 'open');
+    // D9: a request waits behind every one not yet answered (open or held), in order.
+    const held = record.requests.some((q) => q.status === 'open' || q.status === 'held');
     const last = batch[batch.length - 1];
     const req: RoomRequest = {
       id: this.mintId(record),
@@ -324,16 +353,45 @@ export class RoomRunner {
       superId: sup.id,
       authorId: last.authorId,
       authorLabel: last.author,
-      words: batchWords(batch),
-      summary: summary || '—',
+      // Stored as the owner's card shows them: the turn Onayla sends is the text he read.
+      words: asShown(batchWords(batch)),
+      summary: asShown(summary) || '—',
       at: this.hub.now(),
     };
     record.requests = [...record.requests.filter((q) => q.status !== 'done' && q.status !== 'refused'), req];
     writeRoom(ab.scope, ab.target, record, this.hub.home);
-    const owner = await this.hub.ownerNameOf(ab);
-    if (held) { await this.line(ab, chatId, ROOM_LINES.heldBehind); return; }
-    await this.sendCard(ab, chatId, req);
-    await this.line(ab, chatId, ROOM_LINES.askedOwner(owner));
+    if (held) {
+      await this.line(ab, chatId, ROOM_LINES.heldBehind);
+      // The one ahead may have lost its card (a restart, a failed send): it is offered again.
+      await this.reofferHead(ab, chatId);
+      return;
+    }
+    if (await this.offer(ab, chatId, req)) await this.line(ab, chatId, ROOM_LINES.askedOwner(owner));
+  }
+
+  /**
+   * The ONE way a request reaches the owner: its card, only when what he reads is what the Super
+   * would get (`consentable`); otherwise it is refused at once, the group told why, and the next
+   * waiting one moves up. False when no card went (refused, or the send failed: it stays open
+   * and `reofferHead` offers it again with the room's next request).
+   */
+  private async offer(ab: ActiveBinding, chatId: number, req: RoomRequest): Promise<boolean> {
+    if (!consentable(req)) {
+      const record = readRoom(ab.scope, ab.target, chatId, this.hub.home);
+      const q = record.requests.find((x) => x.id === req.id);
+      if (q) { q.status = 'refused'; q.words = ''; writeRoom(ab.scope, ab.target, record, this.hub.home); }
+      await this.line(ab, chatId, ROOM_LINES.unshowable);
+      await this.promoteHeld(ab, chatId);
+      return false;
+    }
+    try { await this.sendCard(ab, chatId, req); return true; } catch { return false; }
+  }
+
+  /** The open request of a room with no live card (records do not survive a restart) gets one. */
+  private async reofferHead(ab: ActiveBinding, chatId: number): Promise<void> {
+    if (!this.live(ab, chatId)) return;
+    const head = readRoom(ab.scope, ab.target, chatId, this.hub.home).requests.find((q) => q.status === 'open');
+    if (head && !this.hub.hasRequestCard(head.id)) await this.offer(ab, chatId, head);
   }
 
   private mintId(record: RoomFile): string {
@@ -373,7 +431,7 @@ export class RoomRunner {
     if (!next) return;
     next.status = 'open';
     writeRoom(ab.scope, ab.target, record, this.hub.home);
-    await this.sendCard(ab, chatId, next);
+    await this.offer(ab, chatId, next);
   }
 
   /**
@@ -385,11 +443,11 @@ export class RoomRunner {
     const chatId = Number(rec.data?.chatId);
     if (!Number.isSafeInteger(chatId) || chatId >= 0 || !rec.requestId) return ROOM_LINES.cardStale;
     if (!this.live(ab, chatId)) return ROOM_LINES.cardStale;
+    const owner = await this.hub.ownerNameOf(ab);
     const record = readRoom(ab.scope, ab.target, chatId, this.hub.home);
     const req = record.requests.find((q) => q.id === rec.requestId);
     if (!req || req.status !== 'open') return ROOM_LINES.cardStale;
     const title = this.titleOf(ab, chatId) ?? '';
-    const owner = await this.hub.ownerNameOf(ab);
     if (idx === 1) {
       req.status = 'refused';
       req.words = '';
@@ -407,7 +465,7 @@ export class RoomRunner {
   private async deliver(ab: ActiveBinding, chatId: number, requestId: string, title: string, owner: string): Promise<void> {
     const record = readRoom(ab.scope, ab.target, chatId, this.hub.home);
     const req = record.requests.find((q) => q.id === requestId);
-    if (!req || req.status !== 'open' || !this.live(ab, chatId)) return;
+    if (!req || req.status !== 'open' || !this.live(ab, chatId) || !consentable(req)) return;
     const session = await this.hub.sessionOfBound(ab);
     const text = approvedTurnText({ group: title, author: req.authorLabel, owner, requestId: req.id, words: req.words, summary: req.summary });
     const ok = session ? await this.hub.injectText(ab, this.hub.syntheticUpdateId(), text, session, { kind: 'room-request', requestId: req.id }) : false;
@@ -417,12 +475,14 @@ export class RoomRunner {
     if (!ok) {
       // D7's failure path: the request stays open, its card is offered again, the group is told.
       await this.line(ab, chatId, ROOM_LINES.notDelivered);
-      if (this.live(ab, chatId)) await this.sendCard(ab, chatId, cur);
+      if (this.live(ab, chatId)) await this.offer(ab, chatId, cur);
       return;
     }
     cur.status = 'approved';
     writeRoom(ab.scope, ab.target, now, this.hub.home);
     await this.line(ab, chatId, ROOM_LINES.approved(owner));
+    // Answered: the next waiting request is asked now (D9), never left behind a later one.
+    await this.promoteHeld(ab, chatId);
   }
 
   /**
@@ -442,19 +502,26 @@ export class RoomRunner {
         const req = record.requests.find((q) => q.id === requestId);
         if (!req) continue;
         if (req.superId !== caller.superId) return { ok: false, status: 403, error: 'not_your_request', message: 'this group request went to another Super' };
-        if (req.status === 'done') return { ok: false, status: 409, error: 'already_said', message: 'the result of this request is already in the group' };
+        if (req.status === 'done' || this.saying.has(requestId)) return { ok: false, status: 409, error: 'already_said', message: 'the result of this request is already in the group' };
         if (req.status !== 'approved') return { ok: false, status: 409, error: 'not_approved', message: 'the owner has not approved this request' };
         if (!this.live(ab, g.chatId)) return { ok: false, status: 410, error: 'group_gone', message: 'that group is no longer connected' };
         const root = this.hub.rootOf(ab) ?? caller.root;
         const brainReal = (this.deps.brain ?? quickBrainRoot)(root) ?? root;
         const say = redactPaths(clean, this.privatePaths(root, brainReal)).slice(0, 3500);
-        req.status = 'done';
-        req.words = '';
-        writeRoom(ab.scope, ab.target, record, this.hub.home);
-        const sent = await this.hub.sendRoom(ab, g.chatId, 'room-say', escapeHtml(say));
+        this.saying.add(requestId);
+        let sent: boolean;
+        try {
+          sent = await this.hub.sendRoom(ab, g.chatId, 'room-say', escapeHtml(say));
+          // Done only once Telegram took it: a refused send leaves it approved, to be said again.
+          if (sent) {
+            const now = readRoom(ab.scope, ab.target, g.chatId, this.hub.home);
+            const cur = now.requests.find((q) => q.id === requestId);
+            if (cur) { cur.status = 'done'; cur.words = ''; writeRoom(ab.scope, ab.target, now, this.hub.home); }
+          }
+        } finally { this.saying.delete(requestId); }
+        if (!sent) return { ok: false, status: 502, error: 'not_sent', message: 'Telegram did not take the message; nothing was posted, say it again' };
         await this.hub.send(ab, `${escapeHtml(ROOM_LINES.sayEcho(g.title))}\n<blockquote>${escapeHtml(say)}</blockquote>`).catch(() => undefined);
         await this.promoteHeld(ab, g.chatId);
-        if (!sent) return { ok: false, status: 502, error: 'not_sent', message: 'Telegram did not take the message' };
         return { ok: true, group: g.title };
       }
     }

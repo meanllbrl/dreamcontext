@@ -54,7 +54,7 @@ import {
 } from '../../lib/telegram/contract.js';
 import {
   bindingDir, isValidScope, isValidTarget, isValidToken, listBindings, readBinding, readPollState, readTurns,
-  redactToken, removeBindingDir, scopeOfContextRoot, writeBinding, writePollState, writeTurns,
+  redactToken, removeBindingDir, scopeOfContextRoot, withKeptGroups, writeBinding, writePollState, writeTurns,
 } from '../../lib/telegram/config.js';
 import { writeAwayState } from '../../lib/telegram/away-state.js';
 import { onOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
@@ -621,7 +621,7 @@ export class TelegramHub implements TelegramHubApi {
     if (old && (old.binding.botId !== live.botId || old.binding.chatId !== user.chatId || old.binding.userId !== user.userId)) {
       removeBindingDir(live.scope, live.target, this.home);
     }
-    const binding = writeBinding(live.scope, live.target, fields, this.home);
+    const binding = writeBinding(live.scope, live.target, withKeptGroups(live.scope, live.target, fields, this.home), this.home);
     const ab = this.activate(live.scope, live.target, binding);
     try { this.deps.ensureDispatcher?.(); } catch { /* the bind sheet names it; never fails the bind */ }
     void this.afterBound(ab, displayNameFor(ab, this.home));
@@ -1807,6 +1807,12 @@ export class TelegramHub implements TelegramHubApi {
   /** Does this message still carry live buttons of the hub (none used, none closed)? */
   buttonsLive(ab: ActiveBinding, messageId: number): boolean {
     for (const b of this.buttons.values()) if (b.key === ab.key && b.messageId === messageId) return true;
+    return false;
+  }
+
+  /** A live (unpressed, in-memory) card for this room request: records do not survive a restart. */
+  hasRequestCard(requestId: string): boolean {
+    for (const b of this.buttons.values()) if (b.kind === 'room-request' && b.requestId === requestId) return true;
     return false;
   }
 

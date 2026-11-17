@@ -332,6 +332,18 @@ export function writeBinding(scope: TelegramScope, target: TelegramTarget, field
   writeTelegramJson(join(bindingDir(scope, target, home), 'bot.json'), binding, home);
   return binding;
 }
+/**
+ * A fresh binding for the SAME bot, chat and owner (a pairing anew, a managed bot re-adopted)
+ * keeps the groups he permitted: the bot is still in them and their rooms are still on disk
+ * (tg-grup C2). A different bot, chat or owner keeps none (its folder, rooms included, is gone).
+ */
+export function withKeptGroups<F extends Omit<BotBinding, 'bindingHash' | 'v'>>(scope: TelegramScope, target: TelegramTarget, fields: F, home: string = homedir()): F {
+  const prev = readBinding(scope, target, home);
+  if (!prev.ok || !prev.binding.groups?.length) return fields;
+  const b = prev.binding;
+  if (b.botId !== fields.botId || b.chatId !== fields.chatId || b.userId !== fields.userId) return fields;
+  return { ...fields, groups: b.groups };
+}
 export function writeManagerBinding(fields: Omit<BotBinding, 'bindingHash' | 'v'>, home: string = homedir()): BotBinding {
   if (!isValidToken(fields.token)) throw new Error('invalid telegram token');
   const unhashed = { v: 1 as const, ...fields };
