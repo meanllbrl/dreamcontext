@@ -317,11 +317,11 @@ describe('sidebar rail — no AI Team row; the Ekip row under Chat (plan-r10 1d)
     expect(items.filter((i) => i.hero)).toHaveLength(0);
   });
 
-  it('draws ONE Ekip row under Chat and the Global ekip row in the footer', () => {
+  it('draws ONE Ekip row under Chat (members of all projects inside it) and no Global ekip row (owner 2026-11-17)', () => {
     const src = read(SIDEBAR_TSX);
-    expect(src).toContain('<SidebarTeam kind="project" />');
-    expect(src).toContain('<SidebarTeam kind="global" />');
-    expect(src.indexOf('<SidebarTeam kind="global" />')).toBeGreaterThan(src.indexOf('className="sidebar-footer"'));
+    expect(src.match(/<SidebarTeam \/>/g)).toHaveLength(1);
+    expect(src).not.toContain('kind="global"');
+    expect(read('dashboard/src/components/layout/SidebarTeam.tsx')).toContain('projectEkip(all, true)');
   });
 
   it('shows Insights (page: lab) at beta, like Automations v2 (Insights v2, owner 2026-09-29)', () => {

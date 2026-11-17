@@ -52,7 +52,7 @@ import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, buildGlobalTeam, ekipByProject, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
+  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
   type DeviceChats, type DrawerFacts,
 } from './newshell/drawerModel';
 import { useDrawerProjects } from '../../hooks/useDrawerProjects';
@@ -1237,11 +1237,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       ...(deviceShell ? { device: deviceChats } : {}),
     });
   }, [newShell, drawerProjects, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
-  // The Global ekip row (plan-r10 1f): the members of all projects over every listed project.
-  const globalTeam = useMemo(() => {
-    if (!newShell) return null;
-    return buildGlobalTeam(ekipByProject({ projects: drawerProjects, facts: drawerFacts, fanout, ...(deviceShell ? { device: deviceChats } : {}) }), activeVault || null);
-  }, [newShell, drawerProjects, drawerFacts, fanout, deviceShell, deviceChats, activeVault]);
   /** An Ekip list's switch (`POST /api/agents/:slug/enabled`): the server's answer, and the
    *  project's next read shows it. A refusal (a phone and a member of all projects, a teammate's
    *  member) is said once. */
@@ -1253,7 +1248,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   ), [notify]);
   /** "Üyeleri yönet" for a project not on screen: queued per project (like a drawer intent) and
    *  taken by that project's instance once it is mounted and active, never by a timer. */
-  const [pendingManage, setPendingManage] = useState<Record<string, { nonce: number; create?: boolean }>>({});
+  const [pendingManage, setPendingManage] = useState<Record<string, { nonce: number; create?: boolean; global?: boolean }>>({});
   const manageSeqRef = useRef(0);
   const consumeManage = useCallback((vault: string, nonce: number) => {
     setPendingManage((prev) => {
@@ -1264,14 +1259,16 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   }, []);
   /** "Üyeleri yönet": the modal opens in that project, which comes forward first; `create` opens
    *  it on New member (the drawer Team row's "⋯"). */
-  const manageMembers = useCallback((vault: string | null, opts?: { create?: boolean }) => {
+  const manageMembers = useCallback((vault: string | null, opts?: { create?: boolean; global?: boolean }) => {
     const target = vault ?? activeRef.current;
     if (!target) return;
     setFloatingOpen(false);
-    if (target === activeRef.current) { requestManageMembers(opts?.create ? { create: true } : undefined); return; }
+    // "Tüm projelerde çalışan üye": the create step with "All projects" picked.
+    const ask = opts?.create ? { create: true, ...(opts.global ? { global: true } : {}) } : null;
+    if (target === activeRef.current) { requestManageMembers(ask ?? undefined); return; }
     manageSeqRef.current += 1;
     const nonce = manageSeqRef.current;
-    setPendingManage((prev) => ({ ...prev, [target]: { nonce, ...(opts?.create ? { create: true } : {}) } }));
+    setPendingManage((prev) => ({ ...prev, [target]: { nonce, ...(ask ?? {}) } }));
     if (openRef.current.some((p) => p.vault === target)) { activate(target); return; }
     void addTab(target).then((result) => {
       const tab = openRef.current.find((p) => p.vault === target);
@@ -1588,7 +1585,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 hidden={drawerHidden}
                 {...(deviceShell ? {} : { onHideProject: hideProject, onShowProject: showProject })}
                 newWindowNonce={newWindowNonce}
-                globalTeam={globalTeam}
                 onSwitchMember={switchMember}
                 onManage={manageMembers}
                 {...(deviceShell ? { device: true } : {})}

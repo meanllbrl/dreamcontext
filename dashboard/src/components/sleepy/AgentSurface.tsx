@@ -7124,20 +7124,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownParkedTerminals]);
   const stageSummary = stageMember ? memberSummaries.find((m) => m.slug === stageMember) : undefined;
-  const otherProjects = windowChrome.open.filter((p) => !p.cold && p.vault !== vault).map((p) => p.vault);
   const stageMemberInfo = stageMember ? {
     slug: stageMember,
     vault: vault ?? '',
     task: memberTask,
     onTask: setMemberTask,
     onOpenTask: (task: string) => onOpenAppPage('tasks', task),
-    projects: otherProjects,
-    // A global member's chip: the same member in another open project. The window queues the
-    // member intent for that project and brings it forward (no timer, end review M4).
-    onSwitchProject: (to: string) => {
-      const title = findAgent(memberRoster.data, stageMember)?.title || stageMember;
-      windowChrome.queueDrawerIntent(to, { kind: 'member', slug: stageMember, title, ...(memberTask ? { task: memberTask } : {}) });
-    },
     approval: !!stageSummary?.approval,
     global: !!stageSummary?.global,
     refusal: memberRefusal?.slug === stageMember ? memberRefusal.refusal : null,

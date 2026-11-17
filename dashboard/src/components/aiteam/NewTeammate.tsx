@@ -22,20 +22,24 @@ export type TeamStarter = (typeof TEAM_STARTERS)[number] | 'blank';
 export function NewTeammate({
   start = 'blank',
   whiteboard,
+  everywhere: startEverywhere = false,
   onCancel,
   onCreated,
   onDraftTitle,
 }: {
   start?: TeamStarter;
   whiteboard?: string;
+  /** Opened as "Tüm projelerde çalışan üye": "All projects" is picked (still changeable). */
+  everywhere?: boolean;
   onCancel: () => void;
   onCreated: (slug: string, message: string) => void;
   onDraftTitle: (title: string) => void;
 }) {
   const { t } = useI18n();
   const [starter, setStarter] = useState<TeamStarter>(start);
-  const [everywhere, setEverywhere] = useState(false);
   const canChoose = useIsNewShell() && phoneAllows('POST', '/api/launcher/global-agents');
+  // Global only where the choice is on screen: never a member of all projects the owner did not see picked.
+  const [everywhere, setEverywhere] = useState(startEverywhere && canChoose);
   const initial = starter === 'blank'
     ? undefined
     : { title: t(`agents.starter.${starter}.title`), prompt: t(`agents.starter.${starter}.prompt`) };
@@ -90,7 +94,7 @@ export function NewTeammate({
             inline
             slug={null}
             whiteboard={whiteboard}
-            scope={everywhere ? 'global' : undefined}
+            scope={everywhere && canChoose ? 'global' : undefined}
             initial={initial}
             onClose={onCancel}
             onSaved={onCreated}

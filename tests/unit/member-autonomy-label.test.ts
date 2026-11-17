@@ -99,9 +99,8 @@ describe('the composer wiring', () => {
 });
 
 describe('the stage head', () => {
-  it('mounts the label for the member, and the narrow head hides it with the model chip', () => {
-    expect(read('dashboard/src/components/sleepy/super/MemberStage.tsx')).toMatch(/<MemberAutonomy slug=\{info\.slug\} variant="head" \/>/);
-    expect(read('dashboard/src/components/sleepy/super/TaskStrip.css')).toMatch(/\.super-member-head \.aiteam-autonomy \{ display: none; \}/);
+  it('carries no autonomy label (owner 2026-11-17): the composer has it', () => {
+    expect(read('dashboard/src/components/sleepy/super/MemberStage.tsx')).not.toContain('MemberAutonomy');
   });
 });
 

@@ -104,6 +104,8 @@
 .aiteam-routine .agent-chip--day { min-width: 36px; }
 .aiteam-tip { display: flex; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-secondary); font-size: var(--font-size-xs); line-height: 1.5; color: var(--color-text-secondary); }
 .aiteam-tip b { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+/* A member of all projects' profile: its edits apply everywhere (said above the form). */
+.aiteam-tip--global { margin: var(--space-3) var(--space-4) 0; align-items: center; flex: none; }
 .aiteam-check { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: var(--font-size-sm); color: var(--color-text); }
 .aiteam-check small { display: block; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
 .aiteam-routine-foot { display: flex; align-items: center; gap: var(--space-2); }

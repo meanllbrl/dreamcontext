@@ -866,78 +866,16 @@ export function ekipWorkingCount(members: readonly EkipMember[]): number {
   return members.filter((m) => m.enabled && !m.superOnly && m.ownerWorking > 0).length;
 }
 
-/** A project's own members (a member of all projects is in the Global ekip row instead). */
-export function projectEkip(members: readonly EkipMember[]): EkipMember[] {
-  return members.filter((m) => !m.global);
-}
-
-/** One member of the Global ekip list: its state summed over the open projects, and the project
- *  a click opens it in. */
-export interface GlobalEkipMember extends EkipMember {
-  /** The project of its newest owner-facing item, or null when nothing faces the owner. */
-  project: string | null;
-  /** Where a click opens its stage (`globalOpenVault`). */
-  openIn: string | null;
-}
-
 /**
- * Where a global member opens (plan-r10 1f): the project of its newest owner-facing item, else
- * the project in view, else the project it last worked in, else the first open project.
+ * A project's Ekip list (owner 2026-11-17): its own members, then the members of all projects,
+ * which wear the globe and open in THIS project. Their questions and unread are this project's
+ * (the summary is per project). An approval card of a member of all projects is one machine-wide
+ * bucket: only the project in view (`active`) counts it, so N open projects never show it N times.
  */
-export function globalOpenVault(
-  slug: string,
-  perProject: ReadonlyArray<{ vault: string; members: readonly EkipMember[] }>,
-  inView: string | null,
-): { project: string | null; openIn: string | null } {
-  const mine = perProject.flatMap((p) => p.members.filter((m) => m.slug === slug).map((m) => ({ vault: p.vault, m })));
-  const facing = mine.filter((x) => ownerFacing(x.m) && x.m.enabled).sort((a, b) => b.m.lastAt - a.m.lastAt)[0];
-  if (facing) return { project: facing.vault, openIn: facing.vault };
-  if (inView && perProject.some((p) => p.vault === inView)) return { project: null, openIn: inView };
-  const last = mine.filter((x) => x.m.lastAt > 0).sort((a, b) => b.m.lastAt - a.m.lastAt)[0];
-  if (last) return { project: null, openIn: last.vault };
-  return { project: null, openIn: perProject[0]?.vault ?? inView ?? null };
-}
-
-/**
- * The Global ekip row: each global member ONCE, its questions and unread summed over the open
- * projects, its approval card counted once (one machine-wide bucket), enabled when its global
- * manifest is (the same in every project), in the list's order.
- */
-export function buildGlobalEkip(
-  perProject: ReadonlyArray<{ vault: string; members: readonly EkipMember[] }>,
-  inView: string | null,
-): GlobalEkipMember[] {
-  const by = new Map<string, EkipMember>();
-  for (const p of perProject) {
-    for (const m of p.members) {
-      if (!m.global) continue;
-      const had = by.get(m.slug);
-      if (!had) { by.set(m.slug, { ...m }); continue; }
-      by.set(m.slug, {
-        ...had,
-        title: had.title === had.slug ? m.title : had.title,
-        hasPhoto: had.hasPhoto || m.hasPhoto,
-        face: had.face ?? m.face,
-        enabled: had.enabled && m.enabled,
-        ownerWorking: had.ownerWorking + m.ownerWorking,
-        asking: had.asking || m.asking,
-        ...((had.waiting ?? 0) + (m.waiting ?? 0) > 0 ? { waiting: (had.waiting ?? 0) + (m.waiting ?? 0) } : {}),
-        approval: had.approval || m.approval,
-        unread: had.unread + m.unread,
-        superOnly: had.superOnly && m.superOnly,
-        lastAt: Math.max(had.lastAt, m.lastAt),
-        question: had.question ?? m.question,
-      });
-    }
-  }
-  const rows = [...by.values()].map((m): GlobalEkipMember => {
-    // "Super için" holds only when no project has the owner's work for it.
-    const superOnly = m.superOnly && !m.asking && m.unread === 0 && m.ownerWorking === 0;
-    return { ...m, superOnly, ...globalOpenVault(m.slug, perProject, inView) };
-  });
-  const sub = (m: EkipMember) => (m.asking || m.approval ? 0 : m.unread > 0 ? 1 : 2);
-  return rows.sort((a, b) => ekipRank(a) - ekipRank(b) || (ekipRank(a) === 0 ? sub(a) - sub(b) : 0)
-    || b.lastAt - a.lastAt || a.title.localeCompare(b.title));
+export function projectEkip(members: readonly EkipMember[], active: boolean): EkipMember[] {
+  const own = members.filter((m) => !m.global);
+  const global = members.filter((m) => m.global).map((m) => (active || !m.approval ? m : { ...m, approval: false }));
+  return [...own, ...global];
 }
 
 /** The one line under a member's name in the Ekip list (r8-06), as an i18n key and its fields. */
