@@ -69,7 +69,7 @@ import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
-import { askShowState, askStillOpen, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
+import { askShowState, askStillOpen, recordAskShow } from '../../lib/super/ask-show.js';
 import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
@@ -733,8 +733,8 @@ export function setAskShowFsForTest(fs: SrcFs | null): void { askShowFs = fs ?? 
 
 /**
  * A picture question's cards, read before its write (task a-picture-question…, D1): `--show`
- * named cards (any but the agenda), else the option previews' project pictures, else (inside the
- * write) the recent set. `off` = `--no-show`. Null: refused (the answer is sent).
+ * named cards (any but the agenda), else the option previews' project pictures, nothing else
+ * (owner 2026-11-17: no time guess). `off` = `--no-show`. Null: refused (the answer is sent).
  */
 interface AskShowPrep {
   off: boolean;
@@ -764,16 +764,15 @@ async function prepareAskShow(
     }
   }
   const { found, skipped } = show.length ? { found: [], skipped: [] } : await resolvePreviewImages(project, base, images, askShowFs);
-  // Every picture the question might show, its shape read now (image-aspect.ts).
-  const now = Date.now();
-  const recent = show.length || found.length ? [] : recentAskCards(c.state, child ? { child } : { chain: imageChains.get(imageChainKey(c.who.contextRoot)) }, now);
+  // Every picture the question shows, its shape read now (image-aspect.ts). Only what the
+  // question names (--show, its option previews): no time guess (owner 2026-11-17).
   const refs = [
     ...found.map((f) => f.ref),
-    ...c.state.containers.filter((k) => k.kind === 'image' && (show.includes(k.id) || recent.includes(k.id))).map((k) => k.ref),
+    ...c.state.containers.filter((k) => k.kind === 'image' && show.includes(k.id)).map((k) => k.ref),
   ];
   const aspects = refs.length ? await imageAspects(project, refs) : new Map<string, number | undefined>();
   // A tidy pass racing the write never moves what the question is about to show.
-  touchCards(c.who.contextRoot, [...show, ...recent]);
+  touchCards(c.who.contextRoot, show);
   return { off: false, show, previews: found, skipped, aspects };
 }
 
@@ -786,33 +785,32 @@ function applyAskShow(
     const k = s.containers.find((x) => x.id === id);
     return !!k && k.kind === 'image' && (k.place === 'others' || s.groups.some((g) => g.cards.includes(id) && g.place === 'others'));
   };
-  // Pictures the Super (or this child's job) opened in the last minutes are the question's own:
-  // they go back with it (D2a, the recent rule), whichever source named them.
-  const recent = recentAskCards(s, child ? { child } : { chain: imageChains.get(imageChainKey(root)) }, now);
+  // Only the cards the question itself names are its own (owner 2026-11-17: "eski alakasız bir
+  // sunum dosyası yanda açılıyor"): `--show`, else its option previews. No fallback on pictures
+  // opened in the last minutes: those may be another job's.
   let ids: string[];
   let via: AskShow['via'];
   let opened: string[] = [];
   let cut = 0;
   let chain: ImageChain | null = null;
+  let fresh: string[];
   if (prep.show.length) {
     via = 'show';
     ids = prep.show.filter((id) => s.containers.some((k) => k.id === id && k.kind !== 'agenda'));
-    opened = ids.filter(inOthers);
+    // What this write brings back from Others reaches the phone once (an `open` already sent
+    // the rest); every named picture goes back with the question (putBack keeps the owner's).
+    fresh = ids.filter(inOthers);
+    opened = ids;
   } else if (prep.previews.length) {
     via = 'preview';
     const r = openImageCards(s, prep.previews.map((p) => ({ ref: p.ref, ...(p.label ? { title: p.label } : {}), aspect: prep.aspects.get(p.ref) })),
       { ...(child ? { forChild: child } : {}), now, chain: imageChains.get(imageChainKey(root)) });
     ids = r.ids; opened = r.made; cut = r.cut; chain = r.chain;
+    fresh = [...opened];
   } else {
-    via = 'recent';
-    ids = recent;
-    opened = ids.filter(inOthers);
+    return { ids: [], via: 'show', opened: [], fresh: [], cut: 0, chain: null };
   }
   for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, prep.aspects);
-  // What this write itself put on the stage (made, or back from Others): the phone gets these
-  // once; a recent picture its own `open` already mirrored is not sent again (end review).
-  const fresh = [...opened];
-  opened = [...new Set([...opened, ...ids.filter((id) => recent.includes(id))])];
   if (ids.length) recordAskShow(s, item, ids, opened, via);
   return { ids, via, opened, fresh, cut, chain };
 }
@@ -2579,7 +2577,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = oneLine(typeof b.text === 'string' ? b.text : '').slice(0, MAX_OWNER_TEXT);
     if (!text) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
     // Its pictures (task a-picture-question…): `--show`, the child's own option previews (read
-    // against its worktree, or the project), else the pictures shown for its job lately.
+    // against its worktree, or the project); nothing else is guessed.
     const child = item.sessionId;
     const pq = pendingRequest(getChat(child), item.requestId);
     const images = pq && !pq.isPermission ? pq.images ?? [] : [];
@@ -2865,7 +2863,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
     const { ownerText: raw, options } = askSummary(spec);
     if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
-    // Its pictures (task a-picture-question…): `--show`, the option previews, else the last set.
+    // Its pictures (task a-picture-question…): `--show`, else the option previews; nothing else.
     const prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
     if (!prep) return;
     const batch = superOpenBatch(session);
