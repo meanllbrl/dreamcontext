@@ -1818,7 +1818,7 @@
   transition: background 120ms ease-out, color 120ms ease-out;
 }
 .super-sheet-tab:hover { color: var(--color-text); }
-.super-sheet-tab[aria-selected='true'] {
+.super-sheet-tab[aria-expanded='true'] {
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-text);
 }
@@ -1905,7 +1905,40 @@
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
 }
-.super-sheet-tab { max-width: calc(var(--space-28) + var(--space-16)); overflow: hidden; text-overflow: ellipsis; }
+.super-sheet-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(var(--space-28) + var(--space-16));
+}
+.super-sheet-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.super-sheet-tab-chev { flex: none; font-size: var(--font-size-2xs); opacity: 0.7; }
+/* Folded (owner 2026-11-17): the cards wait as tabs over a full-height chat; each one reads as
+   something to press, not a heading. */
+.super-sheet-tabs[data-folded] { background: transparent; padding: 0; }
+.super-sheet-tabs[data-folded] .super-sheet-tab {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+.super-sheet-tabs[data-folded] .super-sheet-tab:hover { border-color: var(--color-accent); }
+.super-sheet-fold {
+  flex: none;
+  margin-left: auto;
+  width: calc(var(--space-7) + var(--space-1));
+  height: 100%;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.super-sheet-fold:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
+.super-sheet-fold:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
 /* A filmstrip's big card, in its own fixed slot of the strip (owner 2026-10-29): its tile, raised
    and ringed in the accent, so the strip says which one is big without moving anything. */
 .super-strip-current {
