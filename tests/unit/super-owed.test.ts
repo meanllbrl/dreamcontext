@@ -23,7 +23,7 @@ import { _resetChatRegistry, getChat, registerChat, setOutwardSink, type ChatHan
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, msgRef, OWED_NUDGES, SUPER_EVENT_PREFIXES, type SuperChild, type SuperState } from '../../src/lib/super/types.js';
 import {
-  closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, sentOutward, owedVisible, replyMarkRefs, nextOwedReveal,
+  closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, outwardActions, sentOutwards, owedVisible, replyMarkRefs, nextOwedReveal,
 } from '../../src/lib/super/owed.js';
 import {
   OWED_PREFIX, OWNER_PROSE_MIN_CHARS, _resetSuperInbox, _superInboxDrained, isOwnerProse, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes, ownerGist, ownerCardNote,
@@ -160,7 +160,7 @@ describe('outward actions (owner decision D3)', () => {
 
   it('a push into a repo the same command made on this machine is not told as sent; a real one still is', () => {
     for (const command of TEMP_REPO_PUSHES) {
-      expect(sentOutward('Bash', { command })).toBeNull();
+      expect(sentOutwards('Bash', { command })).toEqual([]);
       // The safety predicate (grants, consent) stays strict.
       expect(outwardAction('Bash', { command })).toBe('git push');
     }
@@ -216,10 +216,11 @@ describe('outward actions (owner decision D3)', () => {
       `${M} && git init -q && builtin cd /Users/someone/app && git push origin main`,
       'cd /tmp && mkdir -p site && cd site && git init -q && git push origin main',
     ];
-    for (const command of told) expect(sentOutward('Bash', { command }), command).toBe('git push');
+    for (const command of told) expect(sentOutwards('Bash', { command }), command).toEqual(['git push']);
     // A local push followed by a real PR: the PR is still told.
-    expect(sentOutward('Bash', { command: `${M} && git init && git push origin main && gh pr create --fill` })).toBe('PR create');
-    expect(sentOutward('mcp__whatsapp__send_message', {})).toBe('mcp whatsapp/send_message');
+    expect(sentOutwards('Bash', { command: `${M} && git init && git push origin main && gh pr create --fill` })).toEqual(['PR create']);
+    expect(outwardActions('Bash', { command: 'git push && gh pr create --fill && git push' })).toEqual(['git push', 'PR create']);
+    expect(sentOutwards('mcp__whatsapp__send_message', {})).toEqual(['mcp whatsapp/send_message']);
   });
 
   it('a child\'s frames: a sub-agent\'s push into its own temp repo is not told, its real push is', () => {
@@ -234,6 +235,30 @@ describe('outward actions (owner decision D3)', () => {
       c.observe(toolUse('tp-real', 'Bash', { command: 'git push -u origin super/x' }));
       c.observe(toolResult('tp-real'));
       expect(told).toEqual([['kid-plan', 'git push']]);
+    } finally { setOutwardSink(prev); }
+  });
+
+  // Field 2026-11-17: `git push … && gh pr create …` was told as "git push" alone; the PR went untold.
+  it('every outward step of one command is told, each once; a denied call tells none', () => {
+    const told: Array<[string, string]> = [];
+    const prev = setOutwardSink((sid, what) => told.push([sid, what]));
+    try {
+      const c = reg('kid-many');
+      c.observe(toolUse('m-1', 'Bash', { command: 'git push -u origin super/x 2>&1 | tail -3 && gh pr create --base dev --fill' }));
+      c.observe(toolResult('m-1'));
+      c.observe(toolResult('m-1'));
+      c.observe(toolUse('m-2', 'Bash', { command: 'git push origin a && git push origin b && npm publish' }));
+      c.observe(toolResult('m-2'));
+      c.observe(toolUse('m-3', 'Bash', { command: 'git push && gh pr merge 3' }));
+      c.observe(toolResult('m-3', true));
+      // A throwaway-repo push beside a real PR: only the PR.
+      c.observe(toolUse('m-4', 'Bash', { command: 'T=$(mktemp -d) && cd $T && git init && git push origin main && gh pr create --fill' }));
+      c.observe(toolResult('m-4'));
+      expect(told).toEqual([
+        ['kid-many', 'git push'], ['kid-many', 'PR create'],
+        ['kid-many', 'git push'], ['kid-many', 'npm publish'],
+        ['kid-many', 'PR create'],
+      ]);
     } finally { setOutwardSink(prev); }
   });
 });

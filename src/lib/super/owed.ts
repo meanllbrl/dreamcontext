@@ -80,24 +80,32 @@ function commandText(cmd: string): string {
  * `|`, newlines), so `echo "git push"` is not a push.
  */
 export function outwardAction(name: unknown, input: unknown): string | null {
-  if (typeof name !== 'string' || !name) return null;
+  return outwardActions(name, input)[0] ?? null;
+}
+
+/** Every outward step of one tool call, in order, each label once (`git push && gh pr create`
+ *  is both: field 2026-11-17, the PR went untold). [] for anything else. */
+export function outwardActions(name: unknown, input: unknown): string[] {
+  if (typeof name !== 'string' || !name) return [];
   const inp = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   if (name === 'Bash' || name === 'shell' || name === 'exec_command') {
     const cmd = typeof inp.command === 'string' ? inp.command : Array.isArray(inp.command) ? inp.command.filter((x) => typeof x === 'string').join(' ') : '';
-    if (!cmd) return null;
+    const out: string[] = [];
+    if (!cmd) return out;
     for (const raw of commandText(cmd).split(/&&|\|\||[;|\n]/)) {
       const seg = bareSegment(raw);
-      for (const [re, label] of SHELL_OUTWARD) if (re.test(seg)) return label;
+      const hit = SHELL_OUTWARD.find(([re]) => re.test(seg));
+      if (hit && !out.includes(hit[1])) out.push(hit[1]);
     }
-    return null;
+    return out;
   }
   if (name.startsWith('mcp__')) {
     const words = toolWords((name.split('__').pop() ?? '').split(/[./]/).pop() ?? '');
-    if (!words.some((w) => MCP_SENDS.has(w)) || words.some((w) => MCP_LOOKS.has(w))) return null;
+    if (!words.some((w) => MCP_SENDS.has(w)) || words.some((w) => MCP_LOOKS.has(w))) return [];
     const label = `mcp ${name.slice(5).replace(/__/g, '/').replace(/[^A-Za-z0-9_./-]/g, '')}`.slice(0, 80);
-    return SENT_RE.test(label) ? label : 'mcp send';
+    return [SENT_RE.test(label) ? label : 'mcp send'];
   }
-  return null;
+  return [];
 }
 
 /** A git address that may be on another machine: a URL that is not `file://`, scp form
@@ -159,15 +167,15 @@ function cdTarget(at: TempDir, target: string, tempVars: ReadonlySet<string>): T
 
 /**
  * What a tool call that WENT THROUGH sent out of this machine, for telling the owner (`sent=`):
- * {@link outwardAction}, except a `git push` made while the shell stands in a repo the SAME
+ * {@link outwardActions}, except a `git push` made while the shell stands in a repo the SAME
  * command made inside a temp folder (field 2026-11-17: a plan child's reviewers proved a merge
  * in `mktemp -d` repos, `git init base` + `git clone base A` + `cd A` + `git push origin main`,
  * and the Super told the owner a push went out). Unsure is told: a missed real push is the worse
  * mistake. Only what is told reads this; grants and consent keep the strict {@link outwardAction}.
  */
-export function sentOutward(name: unknown, input: unknown): string | null {
-  const strict = outwardAction(name, input);
-  if (strict === null || (name !== 'Bash' && name !== 'shell' && name !== 'exec_command')) return strict;
+export function sentOutwards(name: unknown, input: unknown): string[] {
+  const strict = outwardActions(name, input);
+  if (!strict.length || (name !== 'Bash' && name !== 'shell' && name !== 'exec_command')) return strict;
   const inp = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const cmd = typeof inp.command === 'string' ? inp.command : Array.isArray(inp.command) ? inp.command.filter((x) => typeof x === 'string').join(' ') : '';
   const segs = commandText(cmd).split(/&&|\|\||[;|\n]/).map((raw0) => {
@@ -197,6 +205,7 @@ export function sentOutward(name: unknown, input: unknown): string | null {
   /** Folders this command created (`mkdir`, a `mktemp` root): only there does a bare init make a repo. */
   const fresh = new Set<string>();
   const isFresh = (d: NonNullable<TempDir>): boolean => d.root !== '/tmp' || d.parts.some((_, i) => fresh.has(dirKey({ root: d.root, parts: d.parts.slice(0, i + 1) })));
+  const told: string[] = [];
   /** `$(` still open from earlier segments (a split cut it at a `|` or `;`): its `)` is not a subshell's. */
   let dollarOpen = 0;
   for (const raw of segs) {
@@ -234,12 +243,13 @@ export function sentOutward(name: unknown, input: unknown): string | null {
       for (const [rx, label] of SHELL_OUTWARD) {
         if (!rx.test(seg)) continue;
         if (label === 'git push' && at && made.has(dirKey(at))) break;
-        return label;
+        if (!told.includes(label)) told.push(label);
+        break;
       }
     }
     for (let k = 0; k < closes && saved.length; k++) at = saved.pop() ?? null;
   }
-  return null;
+  return told;
 }
 
 // ─── Marks (a Super text) ───────────────────────────────────────────────────────
