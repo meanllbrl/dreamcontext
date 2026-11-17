@@ -25,7 +25,7 @@ import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import {
   POLL_RING_SIZE, TELEGRAM_MANAGER_DIR, TELEGRAM_SCOPE_RE, TELEGRAM_TARGET_RE, TELEGRAM_TOKEN_RE,
-  type BotBinding, type ForwardFile, type JournalEntry, JOURNAL_MSG_MAX_CHARS, type ManagedHistoryFile, type ManagedHistoryRow,
+  type BotBinding, type BoundGroup, type ForwardFile, type JournalEntry, JOURNAL_MSG_MAX_CHARS, type ManagedHistoryFile, type ManagedHistoryRow,
   type PollState, type TelegramScope, type TelegramTarget, type TurnsFile,
 } from './contract.js';
 import { keyPath, realPath } from '../real-path.js';
@@ -191,7 +191,114 @@ function isBinding(v: unknown): v is BotBinding {
     && typeof b.botUsername === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(b.botUsername)
     && typeof b.boundAt === 'string' && typeof b.bindingHash === 'string'
     && (b.managed === undefined || typeof b.managed === 'boolean')
-    && (b.managerBotId === undefined || Number.isSafeInteger(b.managerBotId));
+    && (b.managerBotId === undefined || Number.isSafeInteger(b.managerBotId))
+    && (b.groups === undefined || validGroups(b.groups));
+}
+
+/** A binding's groups (tg-grup C2): negative safe integer ids, unique, a short title, a date. */
+export function validGroups(v: unknown): v is BoundGroup[] {
+  if (!Array.isArray(v)) return false;
+  const seen = new Set<number>();
+  for (const g of v as unknown[]) {
+    if (!g || typeof g !== 'object') return false;
+    const r = g as Record<string, unknown>;
+    if (!Number.isSafeInteger(r.chatId) || (r.chatId as number) >= 0 || seen.has(r.chatId as number)) return false;
+    if (typeof r.title !== 'string' || r.title.length > 64 || typeof r.boundAt !== 'string') return false;
+    seen.add(r.chatId as number);
+  }
+  return true;
+}
+
+// ─── rooms/<chatId>.json (tg-grup C2) ───────────────────────────────────────
+
+/** One group request: the member's words kept only until it closes (C2). */
+export interface RoomRequest {
+  id: string;
+  status: 'open' | 'held' | 'approved' | 'refused' | 'done';
+  /** The Super it goes to on Onayla: `main` or a member's own. */
+  superId: string;
+  authorId: number;
+  authorLabel: string;
+  /** Every stored word of the turn's addressed message(s); '' once closed. */
+  words: string;
+  summary: string;
+  at: number;
+  /** The owner's card for it (his private chat), once sent. */
+  cardMessageId?: number;
+}
+
+export interface RoomFile {
+  v: 1;
+  chatId: number;
+  /** The room agent's own conversation (`--resume`), the one each run returns. */
+  sessionId: string | null;
+  requests: RoomRequest[];
+}
+
+export const ROOM_REQUEST_ID_RE = /^[a-z0-9]{10}$/;
+
+function roomsDir(scope: TelegramScope, target: TelegramTarget, home: string): string {
+  return join(bindingDir(scope, target, home), 'rooms');
+}
+
+function checkedChat(chatId: number): number {
+  if (!Number.isSafeInteger(chatId) || chatId >= 0) throw new Error('invalid group id');
+  return chatId;
+}
+
+/** `rooms/<chatId>.json` beside `bot.json`. */
+export function roomFile(scope: TelegramScope, target: TelegramTarget, chatId: number, home: string = homedir()): string {
+  return join(roomsDir(scope, target, home), `${checkedChat(chatId)}.json`);
+}
+
+function isRoomFile(v: unknown, chatId: number): v is RoomFile {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return r.v === 1 && r.chatId === chatId && (r.sessionId === null || typeof r.sessionId === 'string') && Array.isArray(r.requests)
+    && (r.requests as unknown[]).every((q) => {
+      const x = q as Record<string, unknown> | null;
+      return !!x && typeof x.id === 'string' && ROOM_REQUEST_ID_RE.test(x.id)
+        && ['open', 'held', 'approved', 'refused', 'done'].includes(String(x.status))
+        && typeof x.superId === 'string' && Number.isSafeInteger(x.authorId) && typeof x.authorLabel === 'string'
+        && typeof x.words === 'string' && typeof x.summary === 'string' && typeof x.at === 'number';
+    });
+}
+
+/** The room's record; a fresh one when it is absent or unreadable (a refusal never widens anything:
+ *  it only forgets the room's conversation and its requests). */
+export function readRoom(scope: TelegramScope, target: TelegramTarget, chatId: number, home: string = homedir()): RoomFile {
+  const r = readTelegramJson(roomFile(scope, target, chatId, home), home);
+  if (r.ok && isRoomFile(r.value, chatId)) return r.value;
+  return { v: 1, chatId, sessionId: null, requests: [] };
+}
+
+export function writeRoom(scope: TelegramScope, target: TelegramTarget, room: RoomFile, home: string = homedir()): void {
+  writeTelegramJson(roomFile(scope, target, room.chatId, home), room, home);
+}
+
+/**
+ * The room agent's working folder `rooms/<chatId>/cwd/`: created EMPTY at 0700 and never written by
+ * the hub. Under `dontAsk` the working folder is readable whatever the allow rules say, so an empty
+ * one leaves the allow rules the only way in (quick-memory.ts `quickRunDir`). Its shim folder
+ * `rooms/<chatId>/bin/` sits beside it, never inside.
+ */
+export function roomDirs(scope: TelegramScope, target: TelegramTarget, chatId: number, home: string = homedir()): { cwd: string; bin: string } {
+  const base = join(roomsDir(scope, target, home), String(checkedChat(chatId)));
+  ensureDir(join(base, 'cwd'), home);
+  ensureDir(join(base, 'bin'), home);
+  return { cwd: join(base, 'cwd'), bin: join(base, 'bin') };
+}
+
+/** A group's room goes: its record and its folders. */
+export function removeRoom(scope: TelegramScope, target: TelegramTarget, chatId: number, home: string = homedir()): void {
+  const dir = roomsDir(scope, target, home);
+  for (const p of [join(dir, `${checkedChat(chatId)}.json`), join(dir, String(chatId))]) {
+    try {
+      const st = lstatSync(p);
+      if (st.isSymbolicLink() || st.isFile()) unlinkSync(p);
+      else rmSync(p, { recursive: true, force: true });
+    } catch { /* gone */ }
+  }
 }
 
 export type BindingRead =
