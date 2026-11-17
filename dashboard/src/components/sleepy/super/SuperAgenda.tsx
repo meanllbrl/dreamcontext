@@ -16,7 +16,8 @@ import {
 import { AgendaRowView, type AgendaSize } from './AgendaRow';
 import { AgendaStatusMenu, FloatLayer } from './AgendaStatusMenu';
 import { AgendaDetail, type DetailJob } from './AgendaDetail';
-import { agendaClick, OPEN_ROW_DETAIL } from './agendaClick';
+import { OPEN_ROW_DETAIL } from './agendaRowDetail';
+import { useVaultId } from '../../../context/VaultContext';
 import { AgendaDayNav, AgendaWeekStrip } from './AgendaDayNav';
 import type { AgendaDay } from './superApi';
 import './SuperAgenda.css';
@@ -192,7 +193,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // The detail (one at a time), the status menu, medium's filter, the small card's add popover.
   const [selected, setSelected] = useState<string | null>(null);
-  // A: the filter strip's line name opens that line's detail here (agendaClick).
+  const { bus: projectBus } = useVaultId();
+  // The filter strip's line name opens that line's detail here (agendaRowDetail).
   useEffect(() => {
     const on = (ev: Event) => {
       const key = (ev as CustomEvent).detail;
@@ -200,9 +202,9 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       setMenu(null);
       setSelected(key);
     };
-    window.addEventListener(OPEN_ROW_DETAIL, on);
-    return () => window.removeEventListener(OPEN_ROW_DETAIL, on);
-  }, [readOnly]);
+    projectBus.addEventListener(OPEN_ROW_DETAIL, on);
+    return () => projectBus.removeEventListener(OPEN_ROW_DETAIL, on);
+  }, [readOnly, projectBus]);
   const [menu, setMenu] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const [filter, setFilter] = useState<AgendaFilter>('waiting');
   // List or board (owner 15 Nov: "büyük görünümdeyken board görünümü de opsiyon olarak kalsın"):
@@ -392,8 +394,9 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     );
     const ask = onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined;
     const toggleDetail = () => { setMenu(null); setSelected((k) => (k === e.key ? null : e.key)); };
-    // B: a line with a detail opens it; its "Show in chat" filters (agendaClick).
-    const threaded = a.press === 'thread' && !!onThread && !(agendaClick() === 'detail' && a.detail !== 'none' && !readOnly);
+    // The press filters the chat (Ask writes about the line without filtering); small and medium
+    // reach the detail from the strip's line name, wide and full open it inline with the filter.
+    const threaded = a.press === 'thread' && !!onThread;
     return (
       <AgendaRowView
         key={e.key} entry={e} actions={a} size={size} label={r.text} chips={chips}
@@ -436,8 +439,6 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         onClose={() => setSelected(null)}
         onAsk={a.hover.includes('ask') && onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined}
         onDone={a.menu && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
-        onShowInChat={agendaClick() === 'detail' && a.press === 'thread' && onThread && r.thread ? () => { pressThread(e, aboutRow(e)); } : undefined}
-        inChat={threadRowKey === e.key}
         onRemove={a.remove && onPadRemove && id ? () => {
           setError(null);
           onPadRemove(id).then(() => setSelected(null)).catch((e) => fail(e, id));

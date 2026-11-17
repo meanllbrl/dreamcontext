@@ -12,7 +12,7 @@ export function SuperThreadChip({ sessionId, label, count, onClear, onLabel }: {
   label: string;
   count: number;
   onClear: () => void;
-  /** A: the line's name opens its detail in the agenda (agendaClick). Absent: plain words. */
+  /** The line's name opens its detail in the agenda (agendaRowDetail). Absent: plain words. */
   onLabel?: () => void;
 }) {
   const { t } = useI18n();

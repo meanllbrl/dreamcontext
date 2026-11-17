@@ -24,7 +24,7 @@
   text-overflow: ellipsis;
   font-weight: var(--font-weight-medium);
 }
-/* A: the line's name opens its detail; it reads as words until the pointer is on it. */
+/* The line's name opens its detail; it reads as words until the pointer is on it. */
 .super-thread-chip-label--btn {
   display: block;
   padding: 0;

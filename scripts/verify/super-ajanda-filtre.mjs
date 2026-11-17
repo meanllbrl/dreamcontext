@@ -514,60 +514,37 @@ async function flow(pw, base) {
   ok('…and lands on the card', await until(page, async () => (await openQuestionCard(page).count()) > 0 && (await openQuestionCard(page).first().isVisible()), 5000));
   await shot(page, 'dark-6-after-go.png');
 
-  console.log('\n── A/B: what a line press does (owner 2026-11-17), 1440 light');
+  console.log('\n── a line: the press filters, Ask asks without filtering (owner 2026-11-17), 1440 light');
   await page.emulateMedia({ colorScheme: 'light' });
   await page.mouse.move(5, 5);
   await page.waitForTimeout(500);
-  // Hover: Ask alone.
   await rowWith(page, LINE_B).hover();
   await page.waitForTimeout(400);
   const hoverOnly = (await rowWith(page, LINE_B).locator('.agenda-hover-btn').evaluateAll((els) => els.filter((e) => e.getClientRects().length).map((e) => e.dataset.action)));
   ok('hover: the row shows Ask alone', hoverOnly.join(',') === 'ask', hoverOnly.join(','));
-  await shot(page, 'ab-0-hover.png');
+  await shot(page, 'final-0-hover.png');
+  // Ask: an About chip in the box, the chat stays whole.
+  await rowWith(page, LINE_B).getByTestId('super-agenda-about').click();
+  await page.waitForTimeout(600);
+  ok('Ask does not filter the chat', (await chip(page).count()) === 0 && (await transcriptText(page)).includes('Line 1 of a long report'));
+  ok('…it puts the line in the box to write about', (await draft(page)).includes('Board') || (await centre(page).locator('.chat-cmp-hl-ref').count()) > 0, await draft(page));
+  await composer(page).fill('');
+  await page.keyboard.press('Escape');
   await page.mouse.move(5, 5);
-  // A: the press filters; the strip's line name opens the detail.
+  await page.waitForTimeout(400);
+  // The press filters at once; the strip's line name opens the detail, Done is there.
   await pressRow(page, LINE_A);
-  ok('A: the press filters', (await chip(page).count()) === 1);
+  ok('the press filters at once', (await chip(page).count()) === 1);
   await chip(page).getByTestId('super-thread-label').hover();
   await chip(page).getByTestId('super-thread-label').click();
-  ok('A: the strip\'s line name opens the line\'s detail', await until(page, async () => (await page.getByTestId('super-agenda-detail-float').count()) === 1, 3000));
-  const detA = page.getByTestId('super-agenda-detail-float');
-  ok('A: Done is in the detail', (await detA.getByTestId('super-agenda-detail-done').count()) === 1);
-  ok('A: the detail has no "Show in chat"', (await detA.getByTestId('super-agenda-show-in-chat').count()) === 0);
+  ok('the strip\'s line name opens the line\'s detail', await until(page, async () => (await page.getByTestId('super-agenda-detail-float').count()) === 1, 3000));
+  const det = page.getByTestId('super-agenda-detail-float');
+  ok('Done is in the detail', (await det.getByTestId('super-agenda-detail-done').count()) === 1);
   await page.waitForTimeout(500);
-  await shot(page, 'ab-a-detail.png');
+  await shot(page, 'final-1-detail.png');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
   if (await chip(page).count()) await chip(page).getByTestId('super-thread-clear').click();
-  // B: the press opens the detail; its "Show in chat" filters.
-  // No reload (this harness's stand-in has no transcript to replay): the agenda reads the choice
-  // on its next render, which the pointer entering it causes.
-  await page.evaluate(() => localStorage.setItem('dc.agenda.click', 'detail'));
-  await agendaCard(page).hover();
-  await page.waitForTimeout(300);
-  await page.mouse.move(5, 5);
-  await page.waitForTimeout(300);
-  ok('B: the strip name is plain words (no strip yet)', (await chip(page).count()) === 0);
-  await pressRow(page, LINE_A);
-  ok('B: the press opens the detail, no filter', await until(page, async () => (await page.getByTestId('super-agenda-detail-float').count()) === 1, 3000) && (await chip(page).count()) === 0);
-  const detB = page.getByTestId('super-agenda-detail-float');
-  ok('B: Done and "Show in chat" are in the detail', (await detB.getByTestId('super-agenda-detail-done').count()) === 1 && (await detB.getByTestId('super-agenda-show-in-chat').count()) === 1);
-  await page.waitForTimeout(500);
-  await shot(page, 'ab-b-detail.png');
-  await detB.getByTestId('super-agenda-show-in-chat').click();
-  ok('B: "Show in chat" filters the chat', await until(page, async () => (await chip(page).count()) === 1, 4000));
-  const detB2 = page.getByTestId('super-agenda-detail-float');
-  ok('B: the detail stays, its button now leads back to the whole chat', (await detB2.count()) === 1 && (await detB2.getByTestId('super-agenda-show-in-chat').count()) === 1, `detail ${await detB2.count()}, button ${await detB2.getByTestId('super-agenda-show-in-chat').count()}, rows ${await page.getByTestId('super-agenda-detail').evaluateAll((els) => els.map((e) => e.dataset.row).join('|'))}`);
-  ok('B: …and the strip\'s name is plain words', (await chip(page).getByTestId('super-thread-label').count()) === 0);
-  await page.waitForTimeout(600);
-  await shot(page, 'ab-b-filtered.png');
-  ok('B: the back button is readable (its words are not its background)', await page.getByTestId('super-agenda-detail-float').getByTestId('super-agenda-show-in-chat').evaluate((el) => { const cs = getComputedStyle(el); return cs.color !== cs.backgroundColor; }));
-  await chip(page).getByTestId('super-thread-clear').click();
-  await page.keyboard.press('Escape');
-  await page.evaluate(() => localStorage.removeItem('dc.agenda.click'));
-  await agendaCard(page).hover();
-  await page.waitForTimeout(300);
-  await page.mouse.move(5, 5);
   await page.emulateMedia({ colorScheme: 'dark' });
 
   console.log('\n── sizes');

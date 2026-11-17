@@ -21,7 +21,11 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({ locale: 'en', setLocale: () => {}, t: (key: string) => key }),
   I18nProvider: ({ children }: { children: unknown }) => children,
 }));
-vi.mock('../../dashboard/src/context/VaultContext.js', () => ({ useApi: () => ({}), useVaultId: () => ({ vault: 'acme' }) }));
+vi.mock('../../dashboard/src/context/VaultContext.js', () => ({
+  useApi: () => ({}),
+  useVaultId: () => ({ vault: 'acme', bus: new EventTarget() }),
+  emitInstance: (bus: EventTarget, type: string, detail?: unknown) => { bus.dispatchEvent(new CustomEvent(type, { detail })); },
+}));
 
 const G = await import('../../dashboard/src/components/sleepy/super/agendaGroups.js');
 const { superNotepad, superUnanswered, padStatusOf } = await import('../../dashboard/src/components/sleepy/super/superHandover.js');
@@ -208,5 +212,33 @@ describe('no row draws an action rowActions did not return', () => {
     }
     expect(html).toContain('data-testid="super-agenda-section-waiting"');
     vi.useRealTimers();
+  });
+});
+
+describe('the filter strip (owner 2026-11-17): the press filters, the line name opens its detail', () => {
+  it('the name is a button when it can open the detail, plain words otherwise', async () => {
+    const { SuperThreadChip } = await import('../../dashboard/src/components/sleepy/super/SuperThreadChip.js');
+    const withDoor = renderToStaticMarkup(createElement(SuperThreadChip, { sessionId: 'sup-1', label: 'Ship the invoice export', count: 2, onClear: () => {}, onLabel: () => {} }));
+    expect(withDoor).toMatch(/<button[^>]*data-testid="super-thread-label"[^>]*>Ship the invoice export<\/button>/);
+    const plain = renderToStaticMarkup(createElement(SuperThreadChip, { sessionId: 'sup-1', label: 'Ship the invoice export', count: 2, onClear: () => {} }));
+    expect(plain).not.toContain('super-thread-label');
+    expect(plain).toContain('>Ship the invoice export</span>');
+  });
+
+  it('a request for a row detail reaches its own project only (row keys repeat across projects)', async () => {
+    const { OPEN_ROW_DETAIL, requestRowDetail } = await import('../../dashboard/src/components/sleepy/super/agendaRowDetail.js');
+    const mine = new EventTarget();
+    const other = new EventTarget();
+    const got: string[] = [];
+    mine.addEventListener(OPEN_ROW_DETAIL, (e) => { got.push(`mine ${(e as CustomEvent).detail}`); });
+    other.addEventListener(OPEN_ROW_DETAIL, (e) => { got.push(`other ${(e as CustomEvent).detail}`); });
+    requestRowDetail(mine, 'n:n3');
+    expect(got).toEqual(['mine n:n3']);
+  });
+
+  it('no row offers Done or Details on its hover; Done is in the detail', () => {
+    const live = G.rowActions({ kind: 'line', live: true, row: { section: 'now', status: 'in-progress' } } as never);
+    expect(live.hover).toEqual(['ask']);
+    expect(live.menu).toBe(true);
   });
 });
