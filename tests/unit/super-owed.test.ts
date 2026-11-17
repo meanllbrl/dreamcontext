@@ -23,7 +23,7 @@ import { _resetChatRegistry, getChat, registerChat, setOutwardSink, type ChatHan
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { emptySuperState, msgRef, OWED_NUDGES, SUPER_EVENT_PREFIXES, type SuperChild, type SuperState } from '../../src/lib/super/types.js';
 import {
-  closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, owedVisible, replyMarkRefs, nextOwedReveal,
+  closeByMarks, decideOwed, dropDebt, openDebts, openMessageDebt, openResultDebt, outwardAction, sentOutward, owedVisible, replyMarkRefs, nextOwedReveal,
 } from '../../src/lib/super/owed.js';
 import {
   OWED_PREFIX, OWNER_PROSE_MIN_CHARS, _resetSuperInbox, _superInboxDrained, isOwnerProse, attachSuperInbox, nextBatch, noteSuperOwnerMsg, pumpSuper, startSuperInbox, superOwedBlock, superOwnerOwes, ownerGist, ownerCardNote,
@@ -146,6 +146,94 @@ describe('outward actions (owner decision D3)', () => {
         ['kid-codex', 'PR create'],
         ['kid-antigravity', 'mcp slack.post_message'],
       ]);
+    } finally { setOutwardSink(prev); }
+  });
+
+  // Field 2026-11-17: a plan child's reviewers proved a merge in throwaway repos they made in
+  // the same command; the Super told the owner "git push" went out. These are their commands.
+  const TEMP_REPO_PUSHES = [
+    "set -e; T=$(mktemp -d); cd $T; git init -q base; cd base; git config user.email a@x; git config user.name a; echo x>f; git add f; git commit -qm init; cd ..; git clone -q base A; git clone -q base B; for c in A B; do (cd $c; git config user.email a@x; git config user.name a); done\n# A: migration then remove council\ncd A; mkdir -p o; printf '{\"version\":1}\\n' > o/index.json; git add -A; git commit -qm mig; git push -q origin HEAD:main 2>/dev/null || git push -q origin HEAD:master; cd ..",
+    "T=$(mktemp -d); cd $T; git init -q -b main base; cd base; echo x>f; git add f; git commit -qm init; git config receive.denyCurrentBranch ignore; cd ..; git clone -q base A; git clone -q base C\ncd $T/A; mkdir -p o; git add -A; git commit -qm mig; git push -q origin main\ncd $T/C; git pull --no-edit 2>&1 | tail -5",
+    "cd /tmp && rm -rf gtest && mkdir gtest && cd gtest && git init -q -b main origin && cd origin && printf 'a\\n' > .gitignore && git add . && git -c user.name=x -c user.email=x@x commit -qm init && cd .. && git clone -q origin A && git clone -q origin B && cd A && git add -A && git -c user.name=x -c user.email=x@x commit -qm a && git push -q origin main 2>&1; cd ../B && git pull 2>&1 | tail -5",
+    "cd /tmp && rm -rf gtest && mkdir gtest && cd gtest && git init -q --bare -b main origin.git && git clone -q origin.git seed 2>/dev/null; cd seed && git add . && git -c user.name=x -c user.email=x@x commit -qm init && git push -q origin HEAD:main && cd .. && git clone -q origin.git A && cd A && git push -q origin main",
+  ];
+
+  it('a push into a repo the same command made on this machine is not told as sent; a real one still is', () => {
+    for (const command of TEMP_REPO_PUSHES) {
+      expect(sentOutward('Bash', { command })).toBeNull();
+      // The safety predicate (grants, consent) stays strict.
+      expect(outwardAction('Bash', { command })).toBe('git push');
+    }
+    // Still out: a clone from another machine, a remote pointed away, a push to a URL, a cd back
+    // into a real repo, a repo made elsewhere while the shell stays put, a push with -C.
+    const M = 'T=$(mktemp -d) && cd $T';
+    const told = [
+      'git push origin super/x',
+      'cd /tmp && git clone https://github.com/a/b.git && cd b && git push',
+      `${M} && git init && git remote add origin git@github.com:a/b.git && git push -u origin main`,
+      `${M} && git init && git push https://github.com/a/b main`,
+      `${M} && git init && git push "$URL" main`,
+      'cd /tmp/t && git clone base A && cd /Users/someone/app && git push',
+      'cd /tmp/t && git clone base A && cd ~/app && git push',
+      'git init /tmp/x && git push origin main',
+      'git clone -q base A && git push origin main',
+      `${M} && git init && git -C /Users/someone/app push`,
+      `${M} && git init && cd && git push`,
+      // Review round 1: a bare init in a real repo, an unquoted variable, a cd that leaves, a
+      // closed subshell, a cd behind a shell keyword, --repo.
+      'git init && git add -A && git commit -m init && git push -u origin main',
+      'cd /Users/someone/app && git init && git push origin main',
+      'git init && gh repo create acme/x --private --source=. --remote=origin && git push -u origin main',
+      `${M} && git init && git remote add origin $REPO_URL && git push -u origin main`,
+      `${M} && git init && git push $URL main`,
+      `${M} && git clone $REPO r && cd r && git push origin main`,
+      'git clone -q . $T/copy && cd $T/copy && git log && cd $CLAUDE_PROJECT_DIR && git push origin main',
+      'git init -q scratch && cd ../app && git push origin main',
+      'git init -q /tmp/x && cd ${HOME}/app && git push origin main',
+      'T=$(mktemp -d); (cd $T && git init -q && git commit -qm x --allow-empty); git push origin main',
+      `${M} && git init -q && if true; then cd /Users/someone/app; fi; git push origin main`,
+      `${M} && git init -q && git push --repo=git@github.com:a/b.git`,
+      `${M} && git init -q && cd .. && cd .. && git push origin main`,
+      `${M} && git init -q && GIT_DIR=/Users/someone/app/.git git push origin main`,
+      'cd $T && git init && git push origin main',
+      // Review round 2: a push from another temp folder than the repo made, a remote set by
+      // config or -c, a push option before the address, a path that climbs out of temp.
+      'cd /tmp/site && git clone -q . ../site-verify && cd ../site-verify && npm test && cd ../site && git push origin feature',
+      'T=$(mktemp -d); cd $T && git init -q x; cd /tmp/site && git push origin main',
+      `${M} && git init -q && git config remote.origin.url git@github.com:a/b.git && git push origin main`,
+      `${M} && git init -q && git -c remote.origin.url=git@github.com:a/b.git push origin main`,
+      `${M} && git init -q && git push -o ci.skip git@github.com:a/b.git main`,
+      'cd /tmp && git init -q t && cd ../Users/someone/app && git push origin main',
+      `${M} && git init -q && cd $T/../../Users/someone/app && git push origin main`,
+      `${M} && git init -q x && git push origin main`,
+      // Review round 3: a `$(… | …)` inside a subshell, a bare init in a folder made earlier.
+      `${M} && git init -q && (cd /Users/someone/app && n=$(git log --oneline | wc -l) && git push origin main)`,
+      `${M} && git init -q && (cd /Users/someone/app && B=$(git branch --show-current | tr -d x) && git push origin $B)`,
+      'cd /tmp/site && git init -q && git add -A && git commit -qm x && git push origin main',
+      // Review round 4: `time (`, `builtin cd`, `export` over the temp name, `mkdir -p` over a folder.
+      `${M} && git init -q && time (cd /Users/someone/app && git push origin main)`,
+      `${M} && git init -q && export T=/Users/someone/app && cd $T && git push origin main`,
+      `${M} && git init -q && builtin cd /Users/someone/app && git push origin main`,
+      'cd /tmp && mkdir -p site && cd site && git init -q && git push origin main',
+    ];
+    for (const command of told) expect(sentOutward('Bash', { command }), command).toBe('git push');
+    // A local push followed by a real PR: the PR is still told.
+    expect(sentOutward('Bash', { command: `${M} && git init && git push origin main && gh pr create --fill` })).toBe('PR create');
+    expect(sentOutward('mcp__whatsapp__send_message', {})).toBe('mcp whatsapp/send_message');
+  });
+
+  it('a child\'s frames: a sub-agent\'s push into its own temp repo is not told, its real push is', () => {
+    const told: Array<[string, string]> = [];
+    const prev = setOutwardSink((sid, what) => told.push([sid, what]));
+    try {
+      const c = reg('kid-plan');
+      TEMP_REPO_PUSHES.forEach((command, i) => {
+        c.observe(toolUse(`tp-${i}`, 'Bash', { command }, 'agent-r'));
+        c.observe(toolResult(`tp-${i}`, false, 'agent-r'));
+      });
+      c.observe(toolUse('tp-real', 'Bash', { command: 'git push -u origin super/x' }));
+      c.observe(toolResult('tp-real'));
+      expect(told).toEqual([['kid-plan', 'git push']]);
     } finally { setOutwardSink(prev); }
   });
 });

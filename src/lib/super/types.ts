@@ -842,7 +842,7 @@ export interface SuperChild {
    *  ms; `seenAt` is the finish key his window showed): the grace of the pictures that result
    *  turned down counts from here (`forChild`). */
   seenMarkedAt?: number;
-  /** Outward actions this child completed that the Super has not told yet (`outwardAction`:
+  /** Outward actions this child completed that the Super has not told yet (`sentOutward`:
    *  a push, a publish, a PR, a deploy, an MCP send), written by the server from its frames.
    *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
    *  and clears this. At most MAX_SENT. */

@@ -34,7 +34,7 @@
  * The assistant's OWN session is never registered — it would be watching itself.
  */
 
-import { outwardAction } from '../super/owed.js';
+import { sentOutward } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
 import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, supersedesCard, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
 import { imagesInPreviews, SAFETY_CHECK_RE, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
@@ -230,7 +230,7 @@ export interface WatchResult {
 
 /**
  * Who hears a chat's OUTWARD action that went through (a push, a publish, a PR, a deploy, an MCP
- * send: owed.ts `outwardAction`), once per tool call: the Super inbox registers it (a registry
+ * send: owed.ts `sentOutward`), once per tool call: the Super inbox registers it (a registry
  * never imports the Super). Told only on the call's non-error `tool_result`, so a push the owner
  * denied is never told as sent.
  */
@@ -734,7 +734,7 @@ export function registerChat(init: {
       const blk = b as Record<string, unknown>;
       if (frame.type === 'assistant' && blk.type === 'tool_use' && typeof blk.id === 'string') {
         if (outwardTold.has(blk.id) || outwardOpen.has(blk.id)) continue;
-        const what = outwardAction(blk.name, blk.input);
+        const what = sentOutward(blk.name, blk.input);
         if (!what) continue;
         outwardOpen.set(blk.id, what);
         if (outwardOpen.size > MAX_OUTWARD_OPEN) outwardOpen.delete(outwardOpen.keys().next().value as string);
