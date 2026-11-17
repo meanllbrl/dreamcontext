@@ -354,6 +354,41 @@ describe('the ledger in the running inbox', () => {
     expect(owedVisible(d)).toBe(true);
   });
 
+  it('the owed turn quotes what really reached him since the debt opened: said=none when nothing did, never "told above" on faith (2026-11-17)', async () => {
+    // The field case: a plan result's summary was composed only in the Super's thinking, its turn
+    // ran `open web` and `ask` and ended with an unrelated one-liner; the owed turn invited "it is
+    // told above", and the Super claimed a summary that was never written.
+    const { h, delivered } = await boot();
+    await superOwnerOwes(SUPER, 'Show me the two header designs');
+    h.userSent('Show me the two header designs'); h.observe({ type: 'result' });
+    superTurnEnded(SUPER);
+    await vi.waitFor(() => expect(delivered.length).toBe(1), W);
+    expect(delivered[0].text).toMatch(/ said=none\n/);
+    expect(delivered[0].text).toContain('said=none means NOTHING you wrote did');
+    expect(delivered[0].text).not.toContain('Your texts since it opened');
+    // A text with no mark is remembered on the open debt, marks out, one line.
+    await superSaid(SUPER, 'Correction: the report waits in the queue,\nit opens next.');
+    let d = openDebts(await readSuperState(root))[0];
+    expect(d.said?.map((x) => x.head)).toEqual(['Correction: the report waits in the queue, it opens next.']);
+    h.userSent(''); h.observe({ type: 'result' }); superTurnEnded(SUPER);
+    await vi.waitFor(() => expect(delivered.length).toBe(2), W);
+    expect(delivered[1].text).toMatch(/ said=1\n/);
+    expect(delivered[1].text).toContain('Your texts since it opened (start of each): [');
+    expect(delivered[1].text).toContain('Correction: the report waits in the queue, it opens next.');
+    // It survives the record's sanitizer; a section under its ref still closes it.
+    d = openDebts(sanitizeSuperState(JSON.parse(JSON.stringify(await readSuperState(root)))))[0];
+    expect(d.said?.length).toBe(1);
+    await superSaid(SUPER, `<!-- re:${msgRef('Show me the two header designs')} -->\nHere they are.`);
+    expect(openDebts(await readSuperState(root))).toEqual([]);
+  });
+
+  it('a Super text with no open debt writes nothing', async () => {
+    await boot();
+    const before = await readSuperState(root);
+    await superSaid(SUPER, 'Working on it.');
+    expect(await readSuperState(root)).toEqual(before);
+  });
+
   it('an owed turn is re-decided at delivery: answered meanwhile, it is dropped, never sent', async () => {
     const { delivered } = await boot();
     await superOwnerOwes(SUPER, 'Rename the board?');

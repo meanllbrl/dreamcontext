@@ -1627,6 +1627,10 @@ export interface SuperOwed {
   gist: string;
   /** The outward actions of that job (`SuperChild.sent`). */
   sent?: string[];
+  /** The start of each text the Super wrote while it was open (newest MAX_OWED_SAID): the
+   *  `[super owed]` turn quotes them, so "it is told above" is checked against what was really
+   *  written (2026-11-17: a plan summary composed only in its thinking was called "above"). */
+  said?: { at: number; head: string }[];
   /** `[super owed]` turns that named it. At OWED_NUDGES it shows on his agenda instead. */
   nudges: number;
   /** Left open by an end he stopped (`stop`) or a limit refused (`limit`): shown after OWED_PARK_MS. */
@@ -1645,6 +1649,9 @@ export const OWED_NUDGES = 2;
 export const OWED_PARK_MS = 10 * 60_000;
 export const MAX_OWED_MSG_GIST = 300;
 export const MAX_OWED_RESULT_GIST = 120;
+/** Texts a debt remembers (`SuperOwed.said`), newest kept, and how much of each. */
+export const MAX_OWED_SAID = 4;
+export const MAX_OWED_SAID_HEAD = 160;
 /** Outward actions one child or debt holds (`SuperChild.sent`, `SuperOwed.sent`). */
 export const MAX_SENT = 8;
 /** One outward action's label (`outwardAction`): fixed words or a sanitized MCP tool name. */
