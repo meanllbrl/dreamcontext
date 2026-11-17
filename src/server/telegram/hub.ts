@@ -72,6 +72,7 @@ import type { SpeakSummaryResult } from '../voice-speak.js';
 import { cleanOwnerText, inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
+import { TextLedger, turnOf } from './sent-once.js';
 
 type Obj = Record<string, unknown>;
 
@@ -1503,12 +1504,16 @@ export class TelegramHub implements TelegramHubApi {
   private queueAssistantText(sessionId: string, text: string): void {
     const inputs = this.turnInputs.get(sessionId);
     const mark = superTurnMark(sessionId);
-    this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs, mark }));
+    const turn = turnOf(sessionId);
+    const cards = this.textsSent.cardsOf(sessionId, turn);
+    this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs, mark, turn, cards }));
   }
 
   /** True when a message of this text landed on Telegram. */
-  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark?: SuperTurnMark }): Promise<boolean> {
+  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark?: SuperTurnMark; turn?: number; cards?: number }): Promise<boolean> {
     const turns = at?.turns ?? this.turnsOf(sessionId);
+    const turn = at?.turn ?? turnOf(sessionId);
+    const cards = at?.cards ?? this.textsSent.cardsOf(sessionId, turn);
     const inputs = at ? at.inputs : this.turnInputs.get(sessionId);
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
@@ -1525,7 +1530,7 @@ export class TelegramHub implements TelegramHubApi {
       const all = stripReplyMarks(text);
       if (!all.trim()) return false;
       const refs = splitReplySections(text).flatMap((s) => s.refs);
-      return this.answerFor(turns, ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
+      return this.onceThisTurn(ab, sessionId, all, refs, turn, cards, () => this.answerFor(turns, ab!, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]));
     }
     const sections = splitReplySections(text);
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
@@ -1538,13 +1543,30 @@ export class TelegramHub implements TelegramHubApi {
       if ((!hit && !wide) || !s.text.trim()) continue;
       tried = true;
       // One section that does not land does not stop the next.
-      try { if (await this.answerFor(turns, ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
+      try { if (await this.onceThisTurn(ab, sessionId, s.text, s.refs, turn, cards, () => this.answerFor(turns, ab!, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)]))) sent = true; } catch { continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     if (!turns.length || inputs?.mac || !text.trim()) return false;
-    return this.answerFor(turns, ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
+    return this.onceThisTurn(ab, sessionId, text, [], turn, cards, () => this.answerFor(turns, ab!, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref)));
+  }
+
+  /** A question card of the Super was queued for its chat (asks.ts `offerItem`): a text written
+   *  after it that only re-says what went before it is not sent (`onceThisTurn`). */
+  noteQuestionCard(sessionId: string): void { this.textsSent.noteCard(sessionId); }
+
+  /** One answer reaches the chat once per turn (sent-once.ts `TextLedger`): a text written after
+   *  a question card that re-says what went before the card is dropped, never sent; one that
+   *  fails to land is given back so a later one saying the same may still go. */
+  /** What this hub's answers already said, per turn (`onceThisTurn`). */
+  private readonly textsSent = new TextLedger();
+
+  private async onceThisTurn(ab: ActiveBinding, sessionId: string, text: string, refs: readonly string[], turn: number, cards: number, send: () => Promise<boolean>): Promise<boolean> {
+    const claim = this.textsSent.claim(ab.key, sessionId, text, refs, turn, cards);
+    if (!claim) return false;
+    let landed = false;
+    try { landed = await send(); return landed; } finally { if (!landed) this.textsSent.release(ab.key, sessionId, claim); }
   }
 
   // ── Buttons (plan "Button integrity") ──

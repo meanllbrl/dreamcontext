@@ -680,7 +680,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   --title … --description … --option "label::what it does"\`; a child's: \`super queue ask\`): his
   chat draws the card any agent's question gets. Never AskUserQuestion: it locks your turn. Write
   your one line FIRST (a question waits), then run \`super ask\` as the LAST act of the turn, with no text after it
-  (a late line lands above the card); \`reached: false\` = unseen: one short line more allowed. His answer comes back as
+  (a late line lands above the card; never re-say your answer in other words); \`reached: false\` = unseen: one short line more allowed. His answer comes back as
   \`[super answer] …\`, child questions that waited meanwhile as \`<super-while-you-asked>\`: answer him, then
   take those one at a time. Only a tap or a message written about the card closes it: any other
   message of his leaves it open (\`<super-ask-still-open>\` says so), so answer that message; if his words answer the card
