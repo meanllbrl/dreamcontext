@@ -22,7 +22,7 @@ import {
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
-  isHeadlessAgentShell, isTeammateRun, contentTopOf,
+  isHeadlessAgentShell, isTeammateRun, contentTopOf, settleShiftOf,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
 import { isDreamcontextCommand, teamDoneRepeats, teamDoneText } from './chat/dreamCommand';
@@ -1507,8 +1507,11 @@ export function ChatPane({
   const [shownThreadMode, setShownThreadMode] = useState<number | null>(null);
   const threadRestoreRef = useRef<ThreadAnchor | null>(null);
   const threadLandRef = useRef(false);
+  /** A filter came on, changed row or ended: the shown entries settle in once placed (below). */
+  const threadAnimRef = useRef(false);
   if (threadMode !== shownThreadMode) {
     setShownThreadMode(threadMode);
+    threadAnimRef.current = true;
     setFirstShownState(Number.MAX_SAFE_INTEGER);
     threadRestoreRef.current = null;
     threadLandRef.current = false;
@@ -1790,7 +1793,7 @@ export function ChatPane({
     const row = !a.stick && el ? findAnchorRow(el, a, questEntries) : null;
     if (!el || !row) { placeAtBottom(null); return; }
     setStick(false);
-    el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.offset;
+    el.scrollTop += row.getBoundingClientRect().top - settleShiftOf(row) - el.getBoundingClientRect().top - a.offset;
     prevTopRef.current = el.scrollTop;
     restoreTopRef.current = el.scrollTop;
     captureAnchor();
@@ -3169,6 +3172,35 @@ export function ChatPane({
     // follow stops with the new answer's start in view; the rest waits behind ↓.
     placeAtBottom(lastUserItemId);
   }, [lastUserItemId, superView, setStick, scrollToBottom, placeAtBottom]);
+
+  // The filter's motion (owner 2026-11-17, "küt diye değil"): the shown entries fade up into place
+  // (ChatPane.css). Placements measure rows by their rects: this commit's layout effects run while
+  // they are only hidden ('pre', opacity), and every later read subtracts the motion's shift
+  // (`settleShiftOf`), which is what keeps the hold right. The name alternates so a quick second toggle
+  // restarts it; it goes once the motion has ended, so a message arriving later does not animate.
+  const threadAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const threadAnimName = useRef<'a' | 'b'>('b');
+  const threadAnimFrame = useRef(0);
+  useLayoutEffect(() => {
+    if (!threadAnimRef.current) return;
+    threadAnimRef.current = false;
+    const inner = contentRef.current;
+    if (!inner) return;
+    if (threadAnimTimer.current) clearTimeout(threadAnimTimer.current);
+    cancelAnimationFrame(threadAnimFrame.current);
+    inner.dataset.threadAnim = 'pre';
+    const name = threadAnimName.current = threadAnimName.current === 'a' ? 'b' : 'a';
+    threadAnimFrame.current = requestAnimationFrame(() => { inner.dataset.threadAnim = name; });
+    threadAnimTimer.current = setTimeout(() => {
+      threadAnimTimer.current = null;
+      cancelAnimationFrame(threadAnimFrame.current);
+      delete inner.dataset.threadAnim;
+    }, 450);
+  });
+  useEffect(() => () => {
+    if (threadAnimTimer.current) clearTimeout(threadAnimTimer.current);
+    cancelAnimationFrame(threadAnimFrame.current);
+  }, []);
 
   // Stream-interrupted retry (state 12): resend the last user message. There is no
   // reconnect-and-resume machinery in this engine (see the plan's resolved risk) — for a

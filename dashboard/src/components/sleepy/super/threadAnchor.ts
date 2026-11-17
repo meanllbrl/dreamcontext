@@ -5,6 +5,7 @@
  */
 import type { ChatItem } from '../chatSession';
 import type { ThreadAnchor } from './superThreadFilter';
+import { settleShiftOf } from '../chat/chatEntities';
 
 const tsOf = (it: ChatItem | undefined): number => ((it as { ts?: number } | undefined)?.ts ?? 0);
 
@@ -15,7 +16,8 @@ export function readThreadAnchor(el: HTMLElement | null, stick: boolean, itemOf:
   const row = [...el.querySelectorAll<HTMLElement>('[data-item-id]')].find((r) => r.getBoundingClientRect().bottom > top) ?? null;
   const id = row?.dataset.itemId ?? null;
   const it = id ? itemOf(id) : undefined;
-  return { id, ts: tsOf(it), kind: it?.kind ?? '', offset: row ? row.getBoundingClientRect().top - top : 0, stick };
+  // A toggle during the last one's settle motion reads the row where it will rest.
+  return { id, ts: tsOf(it), kind: it?.kind ?? '', offset: row ? row.getBoundingClientRect().top - settleShiftOf(row) - top : 0, stick };
 }
 
 /** The anchor's index in history + items, or -1. */

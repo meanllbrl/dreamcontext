@@ -250,11 +250,48 @@ describe('the row that filters the chat stays clearly selected (owner 2026-11-17
     return i < 0 ? '' : src.slice(i, src.indexOf('}', i) + 1);
   };
 
-  it('the selected row carries an accent bar on its left edge, unlike a hovered row', async () => {
-    const sel = rule(await css(), ".super-agenda-row[data-thread='on']");
-    expect(sel).toMatch(/background:\s*var\(--color-accent-soft\)/);
-    // The bar: an inset shadow 3px wide in the accent, readable in both themes (the token flips).
-    expect(sel).toMatch(/inset 3px 0 0 var\(--color-accent\)/);
+  it('the selected row carries a tint and an accent bar on its left edge, drawn as layers that fade in', async () => {
+    const src = await css();
+    // Owner 2026-11-17: "küt diye değil". The tint and the bar are their own layers, so the press
+    // animates only opacity and transform; the row's own background and shadow never change.
+    expect(rule(src, ".super-agenda-row[data-thread='on']")).toBe('');
+    const tint = rule(src, '.super-agenda-row::before');
+    expect(tint).toMatch(/background:\s*var\(--color-accent-soft\)/);
+    expect(tint).toMatch(/opacity:\s*0/);
+    const bar = rule(src, '.super-agenda-row::after');
+    expect(bar).toMatch(/width:\s*3px/);
+    expect(bar).toMatch(/background:\s*var\(--color-accent\)/);
+    expect(src).toMatch(/\.super-agenda-row\[data-thread='on'\]::before, \.super-agenda-row\[data-thread='on'\]::after \{ opacity: 1; transform: none; \}/);
+  });
+
+  it('every new motion is opacity and transform only, and none of it runs under reduced motion', async () => {
+    const fs = await import('node:fs');
+    const agenda = await css();
+    const chat = fs.readFileSync(new URL('../../dashboard/src/components/sleepy/ChatPane.css', import.meta.url), 'utf8');
+    const chip = fs.readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperThreadChip.css', import.meta.url), 'utf8');
+    const motionBlock = (src: string) => {
+      const i = src.indexOf('@media (prefers-reduced-motion: no-preference) {\n  /* ajanda-filtre motion');
+      expect(i, 'a no-preference block named ajanda-filtre motion').toBeGreaterThan(-1);
+      return src.slice(i, src.indexOf('\n}\n', i) + 3);
+    };
+    const a = motionBlock(agenda);
+    expect(a).toMatch(/\.super-agenda-row::before, \.super-agenda-row::after \{ transition: opacity [0-9]+ms cubic-bezier\([^)]*\), transform [0-9]+ms cubic-bezier\([^)]*\); \}/);
+    const c = motionBlock(chat);
+    expect(c).toMatch(/\.chat-scroll-inner\[data-thread-anim='a'\]/);
+    expect(c).toMatch(/\.chat-scroll-inner\[data-thread-anim='b'\]/);
+    const k = motionBlock(chip);
+    expect(k).toMatch(/\.super-thread-chip \{ animation:/);
+    // Every keyframe and transition in these blocks moves opacity and transform only.
+    for (const block of [a, c, k]) {
+      for (const [, body] of block.matchAll(/@keyframes [\w-]+ \{([\s\S]*?)\}\s*\}/g)) {
+        for (const [, prop] of body.matchAll(/([a-z-]+)\s*:/g)) expect(['opacity', 'transform']).toContain(prop);
+      }
+      for (const [, props] of block.matchAll(/transition:\s*([^;]+);/g)) {
+        for (const part of props.replace(/\([^)]*\)/g, '').split(',')) expect(['opacity', 'transform']).toContain(part.trim().split(/\s+/)[0]);
+      }
+    }
+    // Nothing outside those blocks animates these layers.
+    expect(agenda.replace(a, '')).not.toMatch(/super-agenda-row::(before|after)[^{]*\{[^}]*transition/);
   });
 
   it('a mouse press does not leave the Ask strip over the selected row (keyboard focus still shows it)', async () => {

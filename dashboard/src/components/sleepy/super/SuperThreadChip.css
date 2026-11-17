@@ -86,3 +86,9 @@
   .super-thread-chip-x::before { content: ''; position: absolute; inset: -8px; }
   .super-thread-empty-back { min-height: 44px; }
 }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* ajanda-filtre motion (owner 2026-11-17): the strip settles in with the filtered chat. */
+  .super-thread-chip { animation: super-thread-chip-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  @keyframes super-thread-chip-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+}

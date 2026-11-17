@@ -559,7 +559,11 @@ async function flow(pw, base) {
     el.textContent = t;
     el.style.display = t ? 'block' : 'none';
   }, text);
-  const selOf = (text) => rowWith(page, text).evaluate((el) => ({ on: el.dataset.thread === 'on', shadow: getComputedStyle(el).boxShadow, askShown: [...el.querySelectorAll('.agenda-hover-btn')].some((b) => b.getClientRects().length > 0) }));
+  const selOf = (text) => rowWith(page, text).evaluate((el) => {
+    const bar = getComputedStyle(el, '::after');
+    const tint = getComputedStyle(el, '::before');
+    return { on: el.dataset.thread === 'on', bar: `${bar.width} ${bar.opacity}`, tint: tint.opacity, askShown: [...el.querySelectorAll('.agenda-hover-btn')].some((b) => b.getClientRects().length > 0) };
+  });
   await page.emulateMedia({ colorScheme: 'light' });
   await page.mouse.move(5, 5);
   await page.waitForTimeout(600);
@@ -574,7 +578,7 @@ async function flow(pw, base) {
   await page.waitForTimeout(1800);
   let sel = await selOf(LINE_A);
   ok('selected: the pressed row stays selected while the chat is filtered', sel.on && (await chip(page).count()) === 1);
-  ok('selected: it carries the accent bar on its left edge', /3px 0px 0px 0px/.test(sel.shadow), sel.shadow);
+  ok('selected: it carries the accent bar on its left edge and the tint', sel.bar === '3px 1' && sel.tint === '1', `${sel.bar} / ${sel.tint}`);
   ok('selected: no Ask strip is left over it after a mouse press', !sel.askShown);
   await shot(page, 'secili-1-light.png');
   await caption('Başka satıra bas: seçim oraya geçer');
@@ -609,9 +613,61 @@ async function flow(pw, base) {
   await page.mouse.move(900, 820);
   await page.waitForTimeout(600);
   sel = await selOf(LINE_A);
-  ok('selected (dark): the row stays selected, accent bar and all', sel.on && /3px 0px 0px 0px/.test(sel.shadow), sel.shadow);
+  ok('selected (dark): the row stays selected, accent bar and all', sel.on && sel.bar === '3px 1' && sel.tint === '1', `${sel.bar} / ${sel.tint}`);
   await shot(page, 'secili-2-dark.png');
   await pressRow(page, LINE_A);
+
+  console.log('\n── motion (owner 2026-11-17: "küt diye değil"), 1440 light, before/after clip');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.mouse.move(5, 5);
+  const inner = centre(page).locator('.chat-scroll-inner').first();
+  const motionAt = async (text, waitMs) => {
+    const b = await rowWith(page, text).locator('.super-agenda-name').boundingBox();
+    await page.mouse.move(b.x + 30, b.y + 8, { steps: 8 });
+    await page.waitForTimeout(250);
+    await page.mouse.click(b.x + 30, b.y + 8);
+    await page.waitForTimeout(waitMs);
+    return rowWith(page, text).evaluate((el) => {
+      const inn = document.querySelector('[data-super-slot="centre"] .chat-scroll-inner');
+      const kid = inn ? [...inn.children].find((c) => c.getClientRects().length && !c.classList.contains('chat-reply-lines')) : null;
+      return { tint: Number(getComputedStyle(el, '::before').opacity), anim: inn?.dataset.threadAnim ?? null, kidAnim: kid ? getComputedStyle(kid).animationName : '', kidOpacity: kid ? Number(getComputedStyle(kid).opacity) : 1 };
+    });
+  };
+  // Before: reduced motion is today's instant change.
+  const mFrom = Date.now() - videoT0;
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await caption('ÖNCE: satıra bas, her şey bir anda değişir');
+  await page.waitForTimeout(1200);
+  let m = await motionAt(LINE_A, 40);
+  ok('reduced motion: the selection is there at once, nothing animates', m.tint === 1 && m.kidAnim === 'none', JSON.stringify(m));
+  await page.mouse.move(900, 820, { steps: 6 });
+  await page.waitForTimeout(1200);
+  await caption('ÖNCE: tekrar bas, yine bir anda');
+  await page.waitForTimeout(900);
+  await motionAt(LINE_A, 1200);
+  await page.mouse.move(900, 820, { steps: 6 });
+  // After: the motion.
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await caption('SONRA: satıra bas, seçim belirir, sohbet süzülüp yerine oturur');
+  await page.waitForTimeout(1300);
+  m = await motionAt(LINE_A, 40);
+  ok('motion: right after the press the selection is still fading in', m.tint > 0 && m.tint < 1, JSON.stringify(m));
+  ok('motion: the shown entries settle in (opacity and transform)', m.anim !== null && /chat-thread-settle/.test(m.kidAnim), JSON.stringify(m));
+  await page.waitForTimeout(700);
+  m = await rowWith(page, LINE_A).evaluate((el) => ({ tint: Number(getComputedStyle(el, '::before').opacity), anim: document.querySelector('[data-super-slot="centre"] .chat-scroll-inner')?.dataset.threadAnim ?? null }));
+  ok('motion: it ends settled and the trigger is gone (a later message does not animate in)', m.tint === 1 && m.anim === null, JSON.stringify(m));
+  await page.mouse.move(900, 820, { steps: 6 });
+  await page.waitForTimeout(900);
+  await caption('SONRA: tekrar bas, aynı yumuşaklıkla geri döner');
+  await page.waitForTimeout(1000);
+  m = await motionAt(LINE_A, 40);
+  ok('motion: the way back fades out the selection and settles the full chat', m.tint > 0 && m.tint < 1 && /chat-thread-settle/.test(m.kidAnim), JSON.stringify(m));
+  await page.mouse.move(900, 820, { steps: 6 });
+  await page.waitForTimeout(1400);
+  await caption('');
+  results.motionClip = { from: mFrom, to: Date.now() - videoT0 };
+  ok('motion: the inner wrapper is never left transformed', await inner.evaluate((el) => getComputedStyle(el).transform === 'none'));
+  await page.emulateMedia({ colorScheme: 'dark' });
 
   console.log('\n── sizes');
   if (await setSize(page, 'medium')) {
