@@ -348,7 +348,8 @@ const LINE_C = 'Write the beta price idea';
 async function flow(pw, base) {
   const browser = await pw.chromium.launch();
   const errors = [];
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', recordVideo: { dir: join(SCRATCH, 'video'), size: { width: 1440, height: 900 } } });
+  const videoT0 = Date.now();
   await markAnnouncementsSeen(context, base).catch(() => {});
   const page = await context.newPage();
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`[desk] ${m.text()}`); });
@@ -407,7 +408,8 @@ async function flow(pw, base) {
     ok(`${scheme}: only the thread is drawn (no long reply, no line B turn)`, !filtered.includes('Line 1 of a long report') && !filtered.includes('note add now Board'), filtered.slice(0, 400));
     ok(`${scheme}: the thread holds the message that noted it`, filtered.includes(`note add now ${LINE_A}`), filtered.slice(0, 400));
     ok(`${scheme}: the row stays highlighted`, (await rowWith(page, LINE_A).getAttribute('data-thread')) === 'on');
-    ok(`${scheme}: the composer carries the row's About chip`, (await draft(page)).includes('Telegram'), await draft(page));
+    // Owner 2026-11-17: the strip alone says it; the composer gets no chip of its own.
+    ok(`${scheme}: the composer stays empty (no About chip)`, !(await draft(page)).includes('Telegram') && (await centre(page).locator('.chat-cmp-hl-ref').count()) === 0, await draft(page));
     ok(`${scheme}: the composer was not focused by the press`, !(await composer(page).evaluate((el) => el === document.activeElement)));
     await shot(page, `${scheme}-1-filtered.png`);
     await chip(page).getByTestId('super-thread-clear').click();
@@ -417,10 +419,35 @@ async function flow(pw, base) {
     // At the bottom he comes back to the bottom, even when the chat grew meanwhile.
     const bottomAfter = await atBottomOf(page);
     ok(`${scheme}: …at the place he left it`, bottomBefore ? bottomAfter : Math.abs(topAfter - topBefore) <= 4, `${topBefore} -> ${topAfter}, bottom ${bottomBefore} -> ${bottomAfter}`);
-    ok(`${scheme}: …and the unsent chip is gone`, !(await draft(page)).includes('Telegram'), await draft(page));
     ok(`${scheme}: …and the row is no longer highlighted`, (await rowWith(page, LINE_A).getAttribute('data-thread')) === null);
     await shot(page, `${scheme}-2-after-x.png`);
   }
+  await page.emulateMedia({ colorScheme: 'dark' });
+
+  console.log('\n── the owner clip (light): press, filtered chat, send, ×');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(800);
+  const clipFrom = Date.now() - videoT0;
+  await page.mouse.move(400, 520, { steps: 12 });
+  await pressRow(page, LINE_A);
+  await page.waitForTimeout(1500);
+  await composer(page).click();
+  await page.keyboard.type('add a preview to the card', { delay: 45 });
+  await page.waitForTimeout(500);
+  await page.keyboard.press('Enter');
+  ok('clip: the super got it with the row block, no chip used', await until(page, async () => reports().some((r) => r.kind === 'owner' && r.text.includes('add a preview to the card') && /\[About agenda line note=/.test(r.text)), 30000));
+  await page.waitForTimeout(2200);
+  ok('clip: the sent message is in the filtered chat', (await transcriptText(page)).includes('add a preview to the card'));
+  ok('clip: no "About" label repeats the strip inside the filtered chat', (await centre(page).locator('[data-testid="chat-msg-about"]').count()) === 0);
+  await shot(page, 'light-3-sent.png');
+  await chip(page).getByTestId('super-thread-clear').hover();
+  await page.waitForTimeout(500);
+  await chip(page).getByTestId('super-thread-clear').click();
+  await page.waitForTimeout(2000);
+  ok('clip: in the full chat the message names its line again', (await centre(page).locator('[data-testid="chat-msg-about"]').filter({ hasText: 'Telegram' }).count()) >= 1);
+  await shot(page, 'light-4-after-x.png');
+  results.clip = { from: clipFrom, to: Date.now() - videoT0 };
   await page.emulateMedia({ colorScheme: 'dark' });
 
   console.log('\n── a send from the filter stays in the thread');
@@ -432,7 +459,7 @@ async function flow(pw, base) {
   ok('the super got it, About block and all', await until(page, async () => reports().some((r) => r.kind === 'owner' && r.text.includes('make the title bold') && /\[About agenda line note=/.test(r.text)), 30000));
   await page.waitForTimeout(1500);
   ok('it shows in the filtered chat', (await transcriptText(page)).includes('make the title bold'));
-  ok('the chip is staged again for the next message', await until(page, async () => (await draft(page)).includes('Telegram'), 4000), await draft(page));
+  ok('the box is empty after the send (no chip comes back)', (await draft(page)).trim() === '', await draft(page));
   ok('no message moved the view by itself', (await chip(page).count()) === 1);
   await shot(page, 'dark-3-sent-in-thread.png');
   // Esc in the chat clears.
@@ -474,7 +501,7 @@ async function flow(pw, base) {
   await pressRow(page, LINE_A);
   await pressRow(page, LINE_B);
   ok('another row switches the filter', (await chip(page).innerText()).includes(LINE_B));
-  ok('…and replaces the chip', (await draft(page)).includes('Board') && !(await draft(page)).includes('Telegram'), await draft(page));
+  ok('…and the composer stays empty', (await draft(page)).trim() === '', await draft(page));
   await pressRow(page, LINE_B);
   await superVerb(page, `ask --json ${spec([{ question: 'Ship the cancel flow to staging now?', header: 'Staging', multiSelect: false, options: [{ label: 'Ship it' }, { label: 'Wait' }] }], 'Cancel flow to staging')}`);
   ok('the question card is open', await until(page, async () => (await openQuestionCard(page).count()) > 0, 20000));
@@ -534,7 +561,9 @@ async function flow(pw, base) {
     ok('phone 390: no horizontal overflow', !(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)));
     await shot(page, 'phone-390.png');
   }
+  const video = page.video();
   await context.close();
+  if (video) { const vp = join(OUT, 'flow.webm'); await video.saveAs(vp); results.video = vp; }
   await browser.close();
   return { errors };
 }

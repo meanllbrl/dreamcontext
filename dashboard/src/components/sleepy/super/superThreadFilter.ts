@@ -3,14 +3,12 @@
  * press shows only that row's thread. Window memory, one entry per Super session id: a reload or
  * a new Super session clears it; folding, resizing or reopening the chat keeps it (D7).
  *
- * The store owns the About chip it stages (D4): staged on the press, re-staged after every send
- * the session accepted while filtered, and taken back on clear or switch if still unsent. A chip
- * he staged himself is never touched (a `flash` result stores nothing).
+ * Nothing is staged in the composer (owner 2026-11-17: the strip alone says which thread he is
+ * in): a message sent while filtered opens with the row's About block (`withThreadAbout`), so it
+ * joins the row's thread with no chip on screen.
  */
 import { useSyncExternalStore } from 'react';
 import { msgRef, type PadRef } from '../../../lib/superTypes';
-import { insertRef, nextAttachmentId, readScratch, withdrawRef, type Attachment } from '../chat/composerScratch';
-import { refKey } from '../chat/composerRefs';
 import type { ThreadKey } from './superHandover';
 
 /** Where the full chat was when the filter began: restored on ×, Esc or the same row (D6). */
@@ -31,10 +29,8 @@ export interface ThreadFilter {
   key: ThreadKey;
   /** A question or owner-card row: the card brought into view after the filter lands (D3). */
   focusItem?: string;
-  /** The chip this filter staged, while it is staged. */
-  attachment?: { convId: string; id: string };
-  /** What to stage again after each send. */
-  chip?: { convId: string; name: string; text: string };
+  /** The row's About block: a message sent while filtered opens with it (`withThreadAbout`). */
+  about?: string;
   /** Set by the chat on entry. */
   anchor?: ThreadAnchor;
   /** Unread unit ids he saw while filtered (applied on clear, C4.3). */
@@ -108,62 +104,37 @@ export function afterDraw(fn: () => void): void {
   requestAnimationFrame(() => requestAnimationFrame(fn));
 }
 
-/** The chip a filter staged: found back in the scratch by its target (`insertRef` returns no id). */
-function stagedId(convId: string, text: string): string | undefined {
-  const key = refKey({ text });
-  const hit = readScratch(convId).attachments.find((a) => a.kind === 'about' && (key ? refKey(a) === key : a.text === text));
-  return hit?.id;
-}
-
-function stage(chip: ThreadFilter['chip']): ThreadFilter['attachment'] {
-  if (!chip) return undefined;
-  const att: Attachment = { id: nextAttachmentId(), kind: 'about', name: chip.name, text: chip.text, quiet: true };
-  // `flash`: he has this chip staged already, it is his; `max`: nothing was added.
-  if (insertRef(chip.convId, att) !== 'added') return undefined;
-  const id = stagedId(chip.convId, chip.text);
-  return id ? { convId: chip.convId, id } : undefined;
-}
-
-function unstage(f: ThreadFilter): void {
-  if (f.attachment) withdrawRef(f.attachment.convId, f.attachment.id);
-}
-
 /**
  * An agenda row's press. The same row again clears (D6: 'off'); another row switches; no filter
- * sets one. `chip`: the row's About chip for the Super composer (absent: none staged).
+ * sets one. `about`: the row's About block its sends open with (absent: sends go as typed).
  */
-export function pressThread(sid: string, row: { rowKey: string; key: ThreadKey; focusItem?: string; chip?: ThreadFilter['chip'] }): 'on' | 'off' {
+export function pressThread(sid: string, row: { rowKey: string; key: ThreadKey; focusItem?: string; about?: string }): 'on' | 'off' {
   const cur = filters.get(sid);
   if (cur && cur.rowKey === row.rowKey) {
     clearThreadFilter(sid, 'user');
     return 'off';
   }
-  if (cur) {
-    unstage(cur);
-    lastClear.set(sid, { reason: 'switch', was: cur });
-  }
+  if (cur) lastClear.set(sid, { reason: 'switch', was: cur });
   gen += 1;
   const next: ThreadFilter = {
     rowKey: row.rowKey,
     key: { ...row.key, sent: [...row.key.sent, ...(sentByRow.get(sid)?.get(row.rowKey) ?? [])] },
     ...(row.focusItem ? { focusItem: row.focusItem } : {}),
-    ...(row.chip ? { chip: row.chip } : {}),
+    ...(row.about ? { about: row.about } : {}),
     // A switch keeps the full chat's place: × goes back there, not to the row before.
     ...(cur?.anchor ? { anchor: cur.anchor } : {}),
     seen: cur ? cur.seen : new Set(),
     n: gen,
   };
-  next.attachment = stage(row.chip);
   filters.set(sid, next);
   emit();
   return 'on';
 }
 
-/** End the filter of `sid`. Its chip goes if still staged and unsent; his own never. */
+/** End the filter of `sid`. */
 export function clearThreadFilter(sid: string, reason: ClearReason = 'user'): void {
   const cur = filters.get(sid);
   if (!cur) return;
-  unstage(cur);
   filters.delete(sid);
   lastClear.set(sid, { reason, was: cur });
   emit();
@@ -183,27 +154,31 @@ export function noteThreadSeen(sid: string, ids: readonly string[]): void {
 }
 
 /**
- * The session accepted a send while filtered (send, steer, enqueue: C3). The row's chip is staged
- * again for the next message; a message that went WITHOUT this row's chip is linked by its ref,
- * so it stays in the thread (`key.sent`).
+ * The message a send in `sid` delivers: while filtered to a row it opens with the row's About
+ * block, as if its chip had been staged, unless it is a slash command or already carries an
+ * About block of his own (another row he chose: that message is his to address).
+ */
+export function withThreadAbout(sid: string | null | undefined, message: string, opts: { slash?: boolean; ownAbout?: boolean } = {}): string {
+  const about = threadFilterOf(sid)?.about;
+  if (!about || opts.slash || opts.ownAbout || message.includes(about)) return message;
+  return `${about}\n\n${message}`;
+}
+
+/**
+ * The session accepted a send while filtered (send, steer, enqueue: C3). A message that went
+ * WITHOUT this row's About block (a slash command, his own About for another row) is linked by
+ * its ref, so it stays in the thread (`key.sent`).
  */
 export function noteThreadSend(sid: string | null | undefined, message: string, now = Date.now()): void {
   if (!sid) return;
   const cur = filters.get(sid);
   if (!cur) return;
-  const carried = !!cur.chip && message.includes(cur.chip.text);
-  const pair: PadRef | null = carried ? null : { ref: msgRef(message), at: now };
-  const sent: PadRef[] = pair ? [...cur.key.sent, pair] : cur.key.sent;
-  if (pair) {
-    const rows = sentByRow.get(sid) ?? new Map<string, PadRef[]>();
-    rows.set(cur.rowKey, [...(rows.get(cur.rowKey) ?? []), pair]);
-    sentByRow.set(sid, rows);
-  }
-  const next: ThreadFilter = { ...cur, key: { ...cur.key, sent } };
-  // The sent chip left with the message; one still staged (a slash command keeps it) is reused.
-  const still = cur.attachment && readScratch(cur.attachment.convId).attachments.some((a) => a.id === cur.attachment!.id);
-  next.attachment = still ? cur.attachment : stage(cur.chip);
-  filters.set(sid, next);
+  if (cur.about && message.includes(cur.about)) return;
+  const pair: PadRef = { ref: msgRef(message), at: now };
+  const rows = sentByRow.get(sid) ?? new Map<string, PadRef[]>();
+  rows.set(cur.rowKey, [...(rows.get(cur.rowKey) ?? []), pair]);
+  sentByRow.set(sid, rows);
+  filters.set(sid, { ...cur, key: { ...cur.key, sent: [...cur.key.sent, pair] } });
   emit();
 }
 

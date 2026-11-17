@@ -4961,17 +4961,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   }, [aboutWords]);
   const writeAboutRow = useCallback((row: AgendaRow) => writeAboutInto(superChatRef.current, row), [writeAboutInto]);
   /**
-   * An agenda row's press (ajanda-filtre D1): the Super chat shows only that row's thread, its
-   * About chip staged in the composer WITHOUT focus (the phone's keyboard stays down, D4). True:
-   * the filter is on; false: the same row cleared it, or there is no chat to filter.
+   * An agenda row's press (ajanda-filtre D1): the Super chat shows only that row's thread; nothing
+   * goes into the composer (the strip says it, owner 2026-11-17), and what he sends while filtered
+   * opens with the row's About block. True: the filter is on; false: the same row cleared it, or
+   * there is no chat to filter.
    */
   const threadInto = useCallback((cs: ChatSession | null | undefined, p: ThreadPress): boolean => {
     if (!cs || !cs.claudeId) return false;
-    const convId = cs.scratchId || cs.claudeId;
-    const text = agendaAboutBlock(p.row);
-    const chip = cs.status !== 'closed' && convId && text ? { convId, name: agendaRefName(p.row, aboutWords()), text } : undefined;
-    return pressThread(cs.claudeId, { rowKey: p.rowKey, key: p.key, ...(p.focusItem ? { focusItem: p.focusItem } : {}), ...(chip ? { chip } : {}) }) === 'on';
-  }, [aboutWords]);
+    const about = agendaAboutBlock(p.row);
+    return pressThread(cs.claudeId, { rowKey: p.rowKey, key: p.key, ...(p.focusItem ? { focusItem: p.focusItem } : {}), ...(about ? { about } : {}) }) === 'on';
+  }, []);
   const threadRow = useCallback((p: ThreadPress) => threadInto(superChatRef.current, p), [threadInto]);
 
   // ── The hand-over and the take-back, with their flights (D17, D18) ─────────────────

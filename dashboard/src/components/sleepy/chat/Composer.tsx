@@ -58,7 +58,7 @@ import {
   addAttachments, armTypedSend, composeOutgoing, countsAsContent, disarmTypedSend, expandCardChips, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, ownWords, pendingUploads,
   readScratch, removeAttachment, repend, setQuote, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, wasSent, type Attachment,
 } from './composerScratch';
-import { noteThreadSend } from '../super/superThreadFilter';
+import { noteThreadSend, withThreadAbout } from '../super/superThreadFilter';
 import {
   GLYPH_IMAGE, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, isChatReply, isMediaRef, isTokenRef, parseRefTokens, reconcileRefs, refLabel, refToken,
   refTokenId, sanitizePaste, snapSelection, stripTokens, tokensOnly,
@@ -709,13 +709,12 @@ export function Composer({
   // replacement paths — the `@` menu, the `/`
   // menu, and a prompt recalled with ↑ (whose caret goes to the end, so it also asks the field
   // to scroll there).
-  const pendingCaret = useRef<{ pos: number; scrollToEnd?: boolean; noFocus?: boolean } | null>(null);
+  const pendingCaret = useRef<{ pos: number; scrollToEnd?: boolean } | null>(null);
   useLayoutEffect(() => {
     const want = pendingCaret.current;
     const ta = taRef.current;
     if (!want || !ta) return;
     pendingCaret.current = null;
-    if (want.noFocus && document.activeElement !== ta) return;
     ta.focus();
     ta.setSelectionRange(want.pos, want.pos);
     if (want.scrollToEnd) ta.scrollTop = ta.scrollHeight;
@@ -900,25 +899,6 @@ export function Composer({
       flashSeenRef.current.set(a.id, a.flash);
       flashRef(a.id);
     }
-    // A chip its stager took back (a thread filter ended, `withdrawRef`): its token leaves the
-    // draft, then the chip. The scratch write re-runs this effect for anything pending.
-    const withdrawn = readScratch(convId).attachments.filter((a) => a.withdraw);
-    if (withdrawn.length) {
-      let draft = session.getModel().draft;
-      for (const a of withdrawn) {
-        const span = parseRefTokens(draft).find((x) => x.id === refTokenId(a));
-        if (span) {
-          let s0 = span.start;
-          let e0 = span.end;
-          if (draft[e0] === ' ') e0 += 1; else if (draft[s0 - 1] === ' ') s0 -= 1;
-          draft = draft.slice(0, s0) + draft.slice(e0);
-        }
-      }
-      setDraft(draft);
-      session.syncDraft(draft);
-      for (const a of withdrawn) removeAttachment(convId, a.id);
-      return;
-    }
     // Read live, not from this render: on a mount that also adopts a rewind, that effect has just
     // re-staged the refs and rewritten the draft.
     const pending = readScratch(convId).attachments.filter((a) => isTokenRef(a) && a.pending);
@@ -937,8 +917,7 @@ export function Composer({
     session.syncDraft(next);
     setNavBoth(NO_HISTORY_NAV);
     lastCaretRef.current = caret;
-    // A quiet chip (a thread filter's) never takes the focus: under a finger it would open the keyboard.
-    pendingCaret.current = { pos: caret, ...(pending.every((a) => a.quiet) ? { noFocus: true } : {}) };
+    pendingCaret.current = { pos: caret };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to staged refs only; the draft is read live
   }, [attachments, superView]);
 
@@ -2047,8 +2026,14 @@ export function Composer({
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
     // A message about an agenda line opens with its block (the About chip), before the quote.
-    const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
+    const out = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
+    const { quoted, slash } = out;
     if (!quoted.trim()) return;
+    // A Super chat filtered to an agenda row (ajanda-filtre, owner 2026-11-17): the message opens
+    // with the row's About block, with no chip in the box; an About he staged himself wins.
+    const message = superView
+      ? withThreadAbout(session.claudeId, out.message, { slash, ownAbout: readScratch(convId).attachments.some((a) => a.kind === 'about' && !isChatReply(a) && !!a.text && out.message.includes(a.text)) })
+      : out.message;
     // He wrote this, now, whatever happens to it next (sent, steered, queued by ⌥⏎ or behind an
     // open card, handed to a sleeping tab, a peer or a member): the one place the composer says
     // so (lib/ownerAtMac.ts). A slash command is not his words; a queue drain never passes here.
@@ -2160,8 +2145,8 @@ export function Composer({
       // carried no About block, so the About chip stays for the next message.
       dropSentAttachments(convId, { keepAbout: slash, keepInline: slash });
       onClearQuote();
-      // A Super chat filtered to an agenda row (ajanda-filtre C3): the row's chip comes back for
-      // the next message, and a message sent without it still joins the row's thread.
+      // A Super chat filtered to an agenda row (ajanda-filtre C3): a message sent without the
+      // row's block (a slash command, his own About) still joins the row's thread.
       if (superView) noteThreadSend(session.claudeId, message);
       // The kept draft follows the box NOW, not in the mirror effect: a send can unmount this
       // composer in the same commit (a parked tab's first message swaps it for the live chat's),

@@ -1,14 +1,14 @@
 /**
  * The Super chat's thread filter (task ajanda-gunluk, plan ajanda-filtre C3, C4.3; criteria 5
- * and 7): the store's press / switch / same-row clear, the About chip it stages and takes back
- * (never his own), the sends it links, the jump gate, and the read rule applied when a filter
+ * and 7): the store's press / switch / same-row clear, the row's About block a filtered send opens
+ * with (nothing staged in the composer), the sends it links, the jump gate, and the read rule applied when a filter
  * ends. Fictional words throughout.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  __resetThreadFiltersForTests, clearThreadFilter, lastClearOf, noteThreadSend, pressThread, revealHiddenCard, setThreadHider, threadFilterOf,
+  __resetThreadFiltersForTests, clearThreadFilter, lastClearOf, noteThreadSend, pressThread, revealHiddenCard, setThreadHider, threadFilterOf, withThreadAbout,
 } from '../../dashboard/src/components/sleepy/super/superThreadFilter.js';
-import { dropScratch, insertRef, markInserted, readScratch, withdrawRef } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
+import { readScratch } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 import { agendaAboutBlock, type ThreadKey } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { readsAfterFilter, unreadSinceRead, type UnreadUnit } from '../../dashboard/src/components/sleepy/super/superUnread.js';
 import { msgRef } from '../../dashboard/src/lib/superTypes.js';
@@ -16,86 +16,65 @@ import { msgRef } from '../../dashboard/src/lib/superTypes.js';
 const SID = 'sup-orbit';
 const CONV = 'conv-orbit';
 const key = (note: string): ThreadKey => ({ note, refs: [], sent: [], label: `line ${note}` });
-const chipOf = (note: string) => ({ convId: CONV, name: `About: line ${note}`, text: agendaAboutBlock({ section: 'now', note, text: `line ${note}` }) });
-const abouts = () => readScratch(CONV).attachments.filter((a) => a.kind === 'about');
-const press = (note: string) => pressThread(SID, { rowKey: `row-${note}`, key: key(note), chip: chipOf(note) });
+const aboutOf = (note: string) => agendaAboutBlock({ section: 'now', note, text: `line ${note}` });
+const press = (note: string) => pressThread(SID, { rowKey: `row-${note}`, key: key(note), about: aboutOf(note) });
 
 afterEach(() => {
   __resetThreadFiltersForTests();
-  dropScratch(CONV);
 });
 
 describe('the filter store (C3)', () => {
-  it('a press sets the filter and stages the row chip; the same row again clears both', () => {
+  it('a press sets the filter and stages nothing in the composer; the same row again clears it', () => {
     expect(press('n1')).toBe('on');
     const f = threadFilterOf(SID)!;
     expect(f.rowKey).toBe('row-n1');
-    expect(abouts().map((a) => a.text)).toEqual([chipOf('n1').text]);
-    expect(f.attachment?.id).toBe(abouts()[0].id);
+    expect(f.about).toBe(aboutOf('n1'));
+    // Owner 2026-11-17: the strip alone says which thread he is in, the box stays his.
+    expect(readScratch(CONV).attachments).toEqual([]);
 
     expect(press('n1')).toBe('off');
     expect(threadFilterOf(SID)).toBeNull();
-    // Still pending (no composer drew its token): it simply leaves.
-    expect(abouts()).toEqual([]);
     expect(lastClearOf(SID)?.reason).toBe('user');
   });
 
-  it('another row switches: its chip replaces the first, and the full chat place is kept', () => {
+  it('another row switches, and the full chat place is kept', () => {
     press('n1');
     const f1 = threadFilterOf(SID)!;
     f1.anchor = { id: 'u-9', ts: 9, kind: 'user', offset: 12, stick: false };
     expect(press('n2')).toBe('on');
     const f2 = threadFilterOf(SID)!;
     expect(f2.rowKey).toBe('row-n2');
+    expect(f2.about).toBe(aboutOf('n2'));
     expect(f2.n).toBeGreaterThan(f1.n);
     expect(f2.anchor).toEqual(f1.anchor);
-    expect(abouts().map((a) => a.text)).toEqual([chipOf('n2').text]);
     expect(lastClearOf(SID)?.reason).toBe('switch');
   });
 
-  it('a chip he staged himself is never stored, so never removed', () => {
-    insertRef(CONV, { id: 'att-his', kind: 'about', name: 'his', text: chipOf('n1').text });
+  it('a message sent while filtered opens with the row block; a slash command or his own About does not', () => {
+    expect(withThreadAbout(SID, 'kalın olsun')).toBe('kalın olsun');
     press('n1');
-    expect(threadFilterOf(SID)!.attachment).toBeUndefined();
-    clearThreadFilter(SID);
-    expect(abouts().map((a) => a.id)).toEqual(['att-his']);
+    const block = aboutOf('n1');
+    expect(withThreadAbout(SID, 'kalın olsun')).toBe(`${block}\n\nkalın olsun`);
+    expect(withThreadAbout(SID, '/compact', { slash: true })).toBe('/compact');
+    expect(withThreadAbout(SID, `${aboutOf('n2')}\n\nbaşka satır`, { ownAbout: true })).toBe(`${aboutOf('n2')}\n\nbaşka satır`);
+    // Already carrying it (he pressed Ask on the same row): never twice.
+    expect(withThreadAbout(SID, `${block}\n\nbir kez`)).toBe(`${block}\n\nbir kez`);
+    expect(withThreadAbout('sup-other', 'merhaba')).toBe('merhaba');
   });
 
-  it('a chip already drawn in the box is flagged for the composer, which removes token and chip', () => {
+  it('a send carrying the block links by it; one without it is linked by its ref', () => {
     press('n1');
-    const id = threadFilterOf(SID)!.attachment!.id;
-    // The composer drew it (no longer pending).
-    markInserted(CONV, [id]);
-    clearThreadFilter(SID);
-    expect(abouts().find((a) => a.id === id)?.withdraw).toBe(true);
-    // A second take-back is a no-op; one for a chip that is gone too.
-    withdrawRef(CONV, id);
-    withdrawRef(CONV, 'att-none');
-    expect(abouts()).toHaveLength(1);
-  });
-
-  it('after an accepted send the chip is staged again; a send without it is linked by its ref', () => {
-    press('n1');
-    const block = chipOf('n1').text;
-    // The send carried the chip: the composer dropped it (dropSentAttachments), no pair.
-    dropScratch(CONV);
+    const block = aboutOf('n1');
     noteThreadSend(SID, `${block}\n\nkalın olsun`, 1000);
-    let f = threadFilterOf(SID)!;
-    expect(f.key.sent).toEqual([]);
-    expect(abouts().map((a) => a.text)).toEqual([block]);
-    expect(f.attachment?.id).toBe(abouts()[0].id);
+    expect(threadFilterOf(SID)!.key.sent).toEqual([]);
 
-    // He removed the chip and wrote: that message joins the thread through `sent`.
-    dropScratch(CONV);
-    noteThreadSend(SID, 'ikonsuz olsun', 2000);
-    f = threadFilterOf(SID)!;
-    expect(f.key.sent).toEqual([{ ref: msgRef('ikonsuz olsun'), at: 2000 }]);
-    expect(abouts().map((a) => a.text)).toEqual([block]);
+    noteThreadSend(SID, '/compact', 2000);
+    expect(threadFilterOf(SID)!.key.sent).toEqual([{ ref: msgRef('/compact'), at: 2000 }]);
 
-    // × and the same row again: the chipless send is still in its thread; another row has none.
+    // × and the same row again: the blockless send is still in its thread; another row has none.
     clearThreadFilter(SID, 'user');
     press('n1');
-    expect(threadFilterOf(SID)!.key.sent).toEqual([{ ref: msgRef('ikonsuz olsun'), at: 2000 }]);
+    expect(threadFilterOf(SID)!.key.sent).toEqual([{ ref: msgRef('/compact'), at: 2000 }]);
     press('n2');
     expect(threadFilterOf(SID)!.key.sent).toEqual([]);
   });
