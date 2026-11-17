@@ -128,6 +128,8 @@ function failure(err: unknown): string {
 function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item: SuperQueueItem): boolean {
   if (sentItems.has(item.id)) return true;
   sentItems.add(item.id);
+  // A text after the Super's own question card that re-says its answer is not sent (sent-once.ts).
+  if (item.kind === 'ask' || item.superAsked === true) hub.noteQuestionCard(sessionId);
   // The Super's own ask that LANDS is its turn speaking (no "göndermeden bitti" after it); sent
   // in line with its texts. A child's item or an approval is not the Super's turn speaking.
   hub.queueSend(sessionId, async () => {
