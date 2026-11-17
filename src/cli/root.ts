@@ -36,6 +36,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('whiteboard')}        Read and edit whiteboards (excalidraw boards with live widgets; the draw skill)
   ${chalk.magentaBright('trigger')}           Manage contextual reminders (prospective memory)
   ${chalk.magentaBright('council')}           Run structured multi-agent debates on decisions
+  ${chalk.magentaBright('hackathon')}         Several teams solve one problem; results side by side on its page
   ${chalk.magentaBright('plan')}              Plan review loop: ledger, review packet, stops, gate into Develop
 
 ${chalk.bold('System')}
@@ -107,7 +108,7 @@ export function createRootCommand(): Command {
  * is not under one never loads the plugin modules (`plugins-registry-drift.test.ts` holds
  * the two equal).
  */
-export const PLUGIN_CLI_ROOTS: ReadonlySet<string> = new Set(['roadmap', 'theses', 'lab', 'council', 'marketing']);
+export const PLUGIN_CLI_ROOTS: ReadonlySet<string> = new Set(['roadmap', 'theses', 'lab', 'council', 'marketing', 'hackathon']);
 
 /** The action command's path from the root (`['lab', 'board', 'create']`); an alias resolves to its name. */
 export function commandPath(action: Command): string[] {

@@ -28,6 +28,7 @@ import { registerPlanCommand } from './commands/plan.js';
 import { registerBuilderCommand } from './commands/builder.js';
 import { registerReflectCommand } from './commands/reflect.js';
 import { registerCouncilCommand } from './commands/council.js';
+import { registerHackathonCommand } from './commands/hackathon.js';
 import { registerMarketingCommand } from './commands/marketing.js';
 import { registerPluginsCommand } from './commands/plugins.js';
 import { registerMemoryCommand } from './commands/memory.js';
@@ -117,6 +118,7 @@ export function createProgram(): Command {
   registerBuilderCommand(program);
   registerReflectCommand(program);
   registerCouncilCommand(program);
+  registerHackathonCommand(program);
   registerMarketingCommand(program);
   registerPluginsCommand(program);
   registerMemoryCommand(program);

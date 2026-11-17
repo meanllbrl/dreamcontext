@@ -15,7 +15,7 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isLearningEnabled, readSetupConfig } from '../setup-config.js';
 
-export type PluginId = 'roadmap' | 'hypotheses' | 'lab' | 'council' | 'marketing';
+export type PluginId = 'roadmap' | 'hypotheses' | 'lab' | 'council' | 'marketing' | 'hackathon';
 export type PluginCategory = 'product' | 'data' | 'marketing';
 
 export interface PluginDef {
@@ -130,6 +130,16 @@ function hypothesesHasData(contextRoot: string): boolean {
   }
 }
 
+function hackathonHasData(contextRoot: string): boolean {
+  const dir = join(contextRoot, 'hackathon');
+  if (!isRealDir(dir)) return false;
+  try {
+    return readdirSync(dir).some((name) => /^\d{8}-/.test(name) && isRealDir(join(dir, name)));
+  } catch {
+    return false;
+  }
+}
+
 function marketingHasData(contextRoot: string): boolean {
   return isRealDir(join(contextRoot, 'marketing'));
 }
@@ -230,6 +240,24 @@ export const PLUGINS: readonly PluginDef[] = [
     apiWrites: [],
     apiAlways: [],
     hasData: councilHasData,
+  },
+  {
+    id: 'hackathon',
+    label: 'Hackathon',
+    page: 'hackathon',
+    category: 'product',
+    sleepStep: false,
+    cliRoots: ['hackathon'],
+    cliReads: ['hackathon status', 'hackathon stats', 'hackathon show', 'hackathon list', 'hackathon design'],
+    cliSwitch: [],
+    apiWrites: [
+      'POST /api/hackathon/:run/start',
+      'POST /api/hackathon/:run/resume',
+      'POST /api/hackathon/:run/pick',
+      'POST /api/hackathon/:run/pr',
+    ],
+    apiAlways: ['POST /api/hackathon/:run/stop'],
+    hasData: hackathonHasData,
   },
   {
     id: 'marketing',

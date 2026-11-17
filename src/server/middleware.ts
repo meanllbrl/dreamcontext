@@ -180,8 +180,12 @@ export const OWNER_CARD_WRITE_PATHS: readonly string[] = ['/api/agent/secret', '
 export function isOwnerCardWrite(req: IncomingMessage): boolean {
   let path = '';
   try { path = new URL(req.url || '/', 'http://x').pathname; } catch { return false; }
-  return OWNER_CARD_WRITE_PATHS.includes(path);
+  return OWNER_CARD_WRITE_PATHS.includes(path) || OWNER_WRITE_PATTERNS.some((re) => re.test(path));
 }
+
+/** Owner writes with a path parameter (exact paths above cannot hold them): the hackathon's
+ *  start, resume, pick and pr. Its stop stays outside: any local caller may stop a run. */
+export const OWNER_WRITE_PATTERNS: readonly RegExp[] = [/^\/api\/hackathon\/\d{8}-[a-z0-9-]{1,40}\/(?:start|resume|pick|pr)$/];
 
 export function isCrossSiteWrite(req: IncomingMessage): boolean {
   const method = (req.method || 'GET').toUpperCase();

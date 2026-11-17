@@ -346,8 +346,20 @@ export function isOwnerStorePath(abs: string, home: string = homedir()): boolean
     return p === `${b}/grants` || p.startsWith(`${b}/grants/`) || p === `${b}/automations.json`;
   };
   const written = slashes(resolve(abs));
-  if (hit(written, home)) return true;
-  return hit(realish(written), realish(home));
+  if (hit(written, home) || isHackathonOwnerRecord(written)) return true;
+  const real = realish(written);
+  return hit(real, realish(home)) || isHackathonOwnerRecord(real);
+}
+
+/**
+ * A hackathon's owner records (plan C6): `run.json`, `result.json` and `jury.json` in the brain,
+ * and the conductor's `.conductor/` (the started design copy and its hash). The owner route and
+ * the conductor write them; a chat agent that could would rewrite the design the owner started.
+ */
+export function isHackathonOwnerRecord(abs: string): boolean {
+  const p = slashes(abs);
+  return /\/\.dreamcontext-hackathon\/[^/]+\/\.conductor(?:\/|$)/.test(p)
+    || /\/_dream_context\/hackathon\/\d{8}-[a-z0-9-]+\/(?:run|result|jury)\.json$/.test(p);
 }
 
 /** The owner's store this tool call would write, or null (Edit, Write, MultiEdit, NotebookEdit, Bash). */

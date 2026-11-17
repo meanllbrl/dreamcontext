@@ -60,6 +60,10 @@ import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleK
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleReleasesDelete, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
+import {
+  handleHackathonList, handleHackathonGet, handleHackathonDesign, handleHackathonFrames, handleHackathonResult, handleHackathonFiles,
+  handleHackathonPresentation, handleHackathonMedia, handleHackathonStart, handleHackathonStop, handleHackathonResume, handleHackathonPick, handleHackathonPr,
+} from './routes/hackathon.js';
 import { handlePluginsList, handlePluginInstall, handlePluginRemove, handlePluginPins } from './routes/plugins.js';
 import { apiRefusal } from '../lib/plugins/gate.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
@@ -544,6 +548,19 @@ export function buildRouter(): Router {
   router.get('/api/council', handleCouncilList);
   router.get('/api/council/:debateId', handleCouncilGet);
   router.get('/api/council/:debateId/:personaSlug/research/:researchSlug', handleCouncilResearchGet);
+  router.get('/api/hackathon', handleHackathonList);
+  router.get('/api/hackathon/:run', handleHackathonGet);
+  router.get('/api/hackathon/:run/design', handleHackathonDesign);
+  router.get('/api/hackathon/:run/frames', handleHackathonFrames);
+  router.get('/api/hackathon/:run/result', handleHackathonResult);
+  router.get('/api/hackathon/:run/teams/:team/files', handleHackathonFiles);
+  router.get('/api/hackathon/:run/teams/:team/presentation', handleHackathonPresentation);
+  router.get('/api/hackathon/:run/teams/:team/media', handleHackathonMedia);
+  router.post('/api/hackathon/:run/start', handleHackathonStart);
+  router.post('/api/hackathon/:run/stop', handleHackathonStop);
+  router.post('/api/hackathon/:run/resume', handleHackathonResume);
+  router.post('/api/hackathon/:run/pick', handleHackathonPick);
+  router.post('/api/hackathon/:run/pr', handleHackathonPr);
 
   // Config
   router.get('/api/config', handleConfigGet);

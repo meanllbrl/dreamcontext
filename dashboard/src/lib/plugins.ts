@@ -6,7 +6,7 @@ import type { Page } from '../components/layout/Sidebar';
  * equal by `tests/unit/plugins-mirror.test.ts` (pattern `mirror-with-drift-test`). Names, taglines,
  * descriptions and example prompts live in i18n under `plugin.<id>.*`.
  */
-export type PluginId = 'roadmap' | 'hypotheses' | 'lab' | 'council' | 'marketing';
+export type PluginId = 'roadmap' | 'hypotheses' | 'lab' | 'council' | 'marketing' | 'hackathon';
 export type PluginCategory = 'product' | 'data' | 'marketing';
 
 export interface PluginMirror {
@@ -25,6 +25,7 @@ export const PLUGINS: readonly PluginMirror[] = [
   { id: 'hypotheses', page: 'hypotheses', category: 'data', sleepStep: true, command: 'theses' },
   { id: 'lab', page: 'lab', category: 'data', sleepStep: false, command: 'lab' },
   { id: 'council', page: 'council', category: 'product', sleepStep: true, command: 'council' },
+  { id: 'hackathon', page: 'hackathon', category: 'product', sleepStep: false, command: 'hackathon' },
   { id: 'marketing', category: 'marketing', sleepStep: true, command: 'marketing' },
 ];
 
@@ -66,6 +67,7 @@ export const PLUGIN_LOOK: Record<PluginId, { from: string; to: string }> = {
   lab: { from: '#3b82f6', to: '#1d4ed8' },
   council: { from: '#374151', to: '#111827' },
   marketing: { from: '#f472b6', to: '#e11d48' },
+  hackathon: { from: '#f59e0b', to: '#b45309' },
 };
 
 /** One row of `GET /api/plugins` (C3). */
