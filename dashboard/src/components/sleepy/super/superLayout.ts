@@ -1275,7 +1275,7 @@ function planWith(
     // The waiting queue's control holds the band's right end off a presentation.
     const qb = queueBandRect(f, opts.queueBand, mode);
     const bandRight = qb ? qb.rect : extra.controls;
-    const framed = extra.controls && mode === 'present' ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
+    const framed = extra.controls && mode === 'present' && !narrow ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
@@ -1357,34 +1357,55 @@ function planWith(
     return fit ? Math.max(fit + STAGE.CARD_CHROME.w + STAGE.WIDGET_BORDER_W, STAGE.FIT_MIN.w) : undefined;
   };
 
-  // A narrow stage never splits the screen between a card and the chat (owner 2026-11-17): what
-  // a page or a presentation shows is a row of tabs over the chat. Folded, the chat runs full
-  // height under the row and every card is kept as `tab`; open, the picked card is a sheet under it.
-  const tabRow: Rect = { x: f.content.x, y: f.content.y, width: f.content.width, height: STAGE.TAB_H };
-  const underRow: Rect = (() => {
-    const y = tabRow.y + STAGE.TAB_H + STAGE.GAP / 2;
-    return { x: f.content.x, y, width: f.content.width, height: Math.max(0, f.content.y + f.content.height - y) };
-  })();
-  // A presentation's switcher, exit and queue step stay in the top band while folded: they take
-  // nothing from the chat, and the owner can leave or step on without opening a card first.
-  const foldedTo = (shown: readonly string[], mode: 'half' | 'present', layout: PresentLayout | null = null, controls?: Rect): StagePlan => {
-    for (const id of shown) place(id, underRow, 'tab');
+  // A narrow stage never splits the screen between a card and the chat (owner 2026-11-17, round 2:
+  // "kişi chat'e dönmesi gerektiğini nereden anlayacak"). ONE row of tabs in the top band, like a
+  // browser's: the chat first, then each card the view shows. The chat tab picked (`folded`): the
+  // chat runs the whole content and every card is kept as `tab`. A card picked: that card fills the
+  // content over the chat's composer bar (a question of his open: the mini, so it shows), the rest
+  // kept as `tab`. No frame and no second strip: no name is written twice.
+  const narrowTabs = (shown: readonly string[], pick: string, mode: 'half' | 'present', extra: { layout?: PresentLayout | null; controls?: Rect; filmstrip?: boolean } = {}): StagePlan => {
+    // The row takes the top band only while the band holds nothing else: the job bar (a child's
+    // question or permission waits there) or the waiting presentations' pill keep it, and the row
+    // then sits at the content's top instead, the chat and the card under it.
+    const bandBusy = !!opts.queueUp || !!queueBandRect(f, opts.queueBand, mode);
+    const right = extra.controls && !bandBusy ? extra.controls.x - STAGE.GAP / 2 : f.content.x + f.content.width;
+    const row: Rect = bandBusy
+      ? { x: f.content.x, y: f.content.y, width: f.content.width, height: STAGE.TAB_H }
+      : { x: f.content.x, y: f.bandTop, width: Math.max(0, right - f.content.x), height: STAGE.BAND };
+    const body: Rect = bandBusy
+      ? { x: f.content.x, y: row.y + row.height + STAGE.GAP / 2, width: f.content.width, height: Math.max(0, f.content.y + f.content.height - row.y - row.height - STAGE.GAP / 2) }
+      : { ...f.content };
+    const tabs = { rect: row, ids: [...shown], ...(opts.folded ? { folded: true } : {}) };
+    const base = { layout: extra.layout ?? null, ...(extra.controls ? { controls: extra.controls } : {}), tabs };
+    if (opts.folded) {
+      for (const id of shown) place(id, body, 'tab');
+      for (const c of list) if (!cards[c.id]) toOthers(c);
+      return finish({ ...body }, body.width, mode, undefined, undefined, { ...base, chat: 'column' });
+    }
+    const barH = opts.asking ? Math.min(STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height), body.height / 2) : STAGE.CHAT_BAR_H;
+    const bar: Rect = { x: body.x, y: body.y + body.height - barH, width: body.width, height: barH };
+    const sheet: Rect = { x: body.x, y: body.y, width: body.width, height: Math.max(0, body.height - barH - STAGE.GAP) };
+    const chat = opts.asking ? 'mini' as const : 'bar' as const;
+    if (extra.filmstrip) {
+      const st = stripOf!(sheet);
+      for (const c of list) if (!cards[c.id]) toOthers(c);
+      return finish(bar, bar.width, mode, undefined, undefined, { ...base, chat, strip: st });
+    }
+    for (const id of shown) place(id, sheet, id === pick ? 'sheet' : 'tab');
     for (const c of list) if (!cards[c.id]) toOthers(c);
-    return finish({ ...underRow }, underRow.width, mode, undefined, undefined, { layout, chat: 'column', tabs: { rect: tabRow, ids: [...shown], folded: true }, ...(controls ? { controls } : {}) });
+    return finish(bar, bar.width, mode, undefined, undefined, { ...base, chat });
   };
+  /** The filmstrip's own placement, set by the present branch before it calls narrowTabs. */
+  let stripOf: ((main: Rect) => StripPlan) | undefined;
 
-  // ── half (a narrow stage folds it to its tab, or opens it as a sheet over the centre) ──
+  // ── half (a narrow stage: the chat's tab and the page's) ──
   const half = view.mode === 'half' && view.card && ids.has(view.card) ? view.card : null;
   if (half) {
-    if (narrow && opts.folded) return foldedTo([half], 'half');
+    if (narrow) return narrowTabs([half], half, 'half');
     const content = besideRail([half]);
     let centre: Rect;
     let region: Rect;
-    if (narrow) {
-      centre = { ...underRow };
-      const i = STAGE.SHEET_INSET;
-      region = { x: centre.x + i, y: centre.y, width: centre.width - 2 * i, height: Math.max(0, centre.height - i) };
-    } else {
+    {
       // A web page with a device width picked (owner 2026-10-28): the CARD takes the device's shape,
       // as presentation's fitCard does for a picture: a phone is a narrow tall card and the centre
       // takes the width it frees, a desktop a wide one and the centre narrows beside it, never under
@@ -1403,9 +1424,9 @@ function planWith(
       if (item.kind === 'web' && item.aspect) region = fitCard(region, item.aspect);
       else if (pic) region = fitCard(region, pic);
     }
-    place(half, region, narrow ? 'sheet' : 'half');
+    place(half, region, 'half');
     for (const c of list) if (!cards[c.id]) toOthers(c);
-    return finish(centre, centre.width, 'half', undefined, undefined, narrow ? { tabs: { rect: tabRow, ids: [half] } } : {});
+    return finish(centre, centre.width, 'half');
   }
 
   // ── present: a named layout (a narrow stage opens it as a sheet over a composer bar) ──
@@ -1452,24 +1473,8 @@ function planWith(
     };
 
     if (narrow) {
-      // Folded (the default for what the agent shows): the tab row over a full-height chat.
-      if (opts.folded) return foldedTo(ordered, 'present', layout, controls);
-      // Open: any layout is a sheet under the tab row; the agent's composer is a bar under it
-      // (D14). A question of his open: the chat at the mini's height, its transcript shown, so the
-      // question is there (D7); folding the sheet gives the chat its full height back.
-      const i = STAGE.SHEET_INSET;
-      const barH = opts.asking ? Math.min(STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height), f.content.height / 2) : STAGE.CHAT_BAR_H;
-      const bar: Rect = { x: f.content.x, y: f.content.y + f.content.height - barH, width: f.content.width, height: barH };
-      const sheet: Rect = { x: underRow.x + i, y: underRow.y, width: underRow.width - 2 * i, height: Math.max(0, underRow.height - barH - STAGE.GAP) };
-      const extra = { layout, chat: opts.asking ? 'mini' as const : 'bar' as const, controls, tabs: { rect: tabRow, ids: ordered } };
-      if (layout === 'filmstrip') {
-        const st = strip(sheet);
-        for (const c of list) if (!cards[c.id]) toOthers(c);
-        return finish(bar, bar.width, 'present', undefined, undefined, { ...extra, strip: st });
-      }
-      for (const id of ordered) place(id, sheet, id === selected ? 'sheet' : 'tab');
-      for (const c of list) if (!cards[c.id]) toOthers(c);
-      return finish(bar, bar.width, 'present', undefined, undefined, extra);
+      stripOf = strip;
+      return narrowTabs(ordered, selected, 'present', { layout, controls, filmstrip: layout === 'filmstrip' });
     }
 
     // A wide stage keeps the live jobs beside the presentation; the layouts draw in what they leave.

@@ -198,7 +198,9 @@ describe('the top band never overlaps itself (field 2026-11-15: the Next pill ov
     for (const layoutChoices of [1, 2, 3]) for (const groupExit of [false, true]) {
       const p = planStage(items, present, { width, height: 800 }, { layoutChoices, queueBand: 'step', groupExit });
       const c = p.controls!;
-      expect(clash(p.presentTabs!, c), `${width}/${layoutChoices}/${groupExit}`).toBe(false);
+      // A narrow stage draws its one row of tabs (the chat's and the cards') in the band instead.
+      const strip = p.narrow ? p.tabs!.rect : p.presentTabs!;
+      expect(clash(strip, c), `${width}/${layoutChoices}/${groupExit}`).toBe(false);
       expect(c.x).toBeGreaterThanOrEqual(0);
       expect(c.x + c.width).toBeLessThanOrEqual(width);
       expect(c.width).toBe(controlsWidth(layoutChoices, groupExit));

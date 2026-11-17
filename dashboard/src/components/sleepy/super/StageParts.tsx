@@ -174,42 +174,51 @@ export function PresentFrame({ frame, strip, tabs, onNext }: { frame?: Rect; str
   );
 }
 
-/** A narrow stage's tab row over the chat (owner 2026-11-17): one tab per card the view shows.
- *  Folded, every tab is closed and the chat runs full height under the row; the open one is
- *  expanded, pressing it again or the row's × folds it. Arrows move between the tabs. */
-export function SheetTabs({ rect, ids, open, titleOf, onSelect, onFold }: {
-  rect: Rect; ids: readonly string[]; open: string | null; titleOf: (id: string) => string; onSelect: (id: string) => void; onFold: () => void;
+/** A narrow stage's ONE row of tabs (owner 2026-11-17, round 2), like a browser's: the chat
+ *  first and always there, then each card the view shows; the picked one stands out, the rest are
+ *  quiet. A dot on the chat's tab: a reply came while a card was open. The presentation queue's
+ *  next one waits at the row's end. Arrows walk the tabs. */
+export function SheetTabs({ rect, ids, open, titleOf, onSelect, unread, next }: {
+  rect: Rect; ids: readonly string[]; open: string | null; titleOf: (id: string) => string; onSelect: (id: string | null) => void;
+  unread: boolean; next?: { name: string; onNext: () => void };
 }) {
   const { t } = useI18n();
-  // ←/→ walk the tabs' focus while folded; Enter or a press opens one (the open one folds). Open,
-  // the stage's own arrow keys move the open card instead.
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    const row = e.currentTarget;
-    const tabs = [...row.querySelectorAll<HTMLElement>('[data-tab-id]')];
+    const tabs = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
     const i = tabs.findIndex((el) => el === document.activeElement);
     if (i < 0) return;
     e.preventDefault();
     e.stopPropagation();
-    tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]?.focus();
+    const to = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    to.focus();
+    to.click();
   };
   return (
-    <div className="super-sheet-tabs" role="group" aria-label={t('super.layout.tab')} data-testid="super-sheet-tabs" data-folded={open ? undefined : 'true'} onKeyDown={onKey}
+    <div className="super-sheet-tabs" data-testid="super-sheet-tabs" data-folded={open ? undefined : 'true'}
       style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
+      <div className="super-sheet-tablist" role="tablist" aria-label={t('super.layout.tab')} onKeyDown={onKey}>
+      <button type="button" role="tab" className="super-sheet-tab super-sheet-tab--chat" aria-selected={!open} tabIndex={open ? -1 : 0}
+        data-testid="super-sheet-chat" data-unread={unread && open ? 'true' : undefined} onClick={() => onSelect(null)}>
+        <svg className="super-sheet-tab-icon" viewBox="0 0 16 16" aria-hidden><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /></svg>
+        <span className="super-sheet-tab-name">{t('super.layout.chatTab')}</span>
+        {unread && open && <span className="super-sheet-tab-dot" aria-label={t('super.layout.chatUnread')} />}
+      </button>
       {ids.map((id) => {
-        const title = titleOf(id);
         const isOpen = id === open;
         return (
-          <button key={id} type="button" className="super-sheet-tab" aria-expanded={isOpen}
-            aria-label={t(isOpen ? 'super.layout.foldTab' : 'super.layout.openTab').replace('{title}', title)}
+          <button key={id} type="button" role="tab" className="super-sheet-tab" aria-selected={isOpen} tabIndex={isOpen ? 0 : -1}
             data-testid="super-sheet-tab" data-tab-id={id} onClick={() => onSelect(id)}>
-            <span className="super-sheet-tab-name">{title}</span>
-            <span className="super-sheet-tab-chev" aria-hidden>{isOpen ? '▴' : '▾'}</span>
+            <span className="super-sheet-tab-name">{titleOf(id)}</span>
           </button>
         );
       })}
-      {open && (
-        <button type="button" className="super-sheet-fold" data-testid="super-sheet-fold" aria-label={t('super.layout.fold')} title={t('super.layout.fold')} onClick={onFold}>×</button>
+      </div>
+      {next && (
+        <button type="button" className="super-sheet-next" data-testid="super-sheet-next" onClick={next.onNext} title={t('super.pq.next').replace('{name}', next.name)}>
+          <span className="super-sheet-tab-name">{next.name}</span>
+          <span className="super-sheet-next-chip">{t('super.pq.nextBadge')}</span>
+        </button>
       )}
     </div>
   );

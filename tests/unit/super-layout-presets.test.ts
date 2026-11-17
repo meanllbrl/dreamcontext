@@ -198,10 +198,13 @@ describe('a narrow stage (1000 x 800)', () => {
         // The chat runs from under the row to the content's foot: the screen is not split.
         expect(p.centre.y).toBeGreaterThanOrEqual(p.tabs!.rect.y + p.tabs!.rect.height);
         expect(p.centre.height).toBeGreaterThan(narrow.height / 2);
-        expect(p.centre.width).toBe(p.tabs!.rect.width);
-        // The switcher and exit stay in the top band, above the row, never over the chat.
+        // ONE row, in the top band beside the switcher and exit: never a second strip over the chat.
         expect(p.controls).toBeDefined();
-        expect(p.controls!.y + p.controls!.height).toBeLessThanOrEqual(p.tabs!.rect.y + 0.5);
+        expect(p.tabs!.rect.y).toBe(p.controls!.y);
+        expect(p.tabs!.rect.x + p.tabs!.rect.width).toBeLessThanOrEqual(p.controls!.x);
+        // No frame, so no second strip naming the presentation again.
+        expect(p.presentFrame).toBeUndefined();
+        expect(p.presentTabs).toBeUndefined();
         expect(p.strip).toBeUndefined();
       }
     }
@@ -217,6 +220,22 @@ describe('a narrow stage (1000 x 800)', () => {
     expect(open.cards.c0.where).toBe('sheet');
     expect(open.tabs).toMatchObject({ ids: ['c0'] });
     expect(open.cards.c0.rect.y).toBeGreaterThanOrEqual(open.tabs!.rect.y + open.tabs!.rect.height);
+  });
+
+  it('the row never covers what waits in the top band: the job bar or the waiting presentations\' pill', () => {
+    const half: SuperView = { mode: 'half', card: 'c0' };
+    const pres: SuperView = { mode: 'present', cards: ['c0', 'c1'] };
+    for (const folded of [true, false]) {
+      for (const [view, extra] of [[half, { queueUp: true }], [pres, { queueUp: true }], [half, { queueBand: 'wait' as const }]] as const) {
+        const p = planStage(items(3), view, narrow, { folded, ...extra });
+        const row = p.tabs!.rect;
+        const busy = 'queueUp' in extra ? p.queue : p.queueBand!.rect;
+        expect(overlaps(row, busy), `${view.mode} ${JSON.stringify(extra)} folded=${folded}`).toBe(false);
+        // The chat and the card stay under the row.
+        expect(p.centre.y).toBeGreaterThanOrEqual(row.y + row.height);
+        for (const c of drawn(p)) expect(c.rect.y).toBeGreaterThanOrEqual(row.y + row.height);
+      }
+    }
   });
 
   it('a wide stage ignores the fold: the cards are drawn beside the chat as before', () => {

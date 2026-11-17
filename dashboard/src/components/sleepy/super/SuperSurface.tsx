@@ -453,6 +453,26 @@ export function SuperSurface(props: SuperSurfaceProps) {
     [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, sheetOpen],
   );
   cuesPlanRef.current = plan;
+  // A narrow stage's tabs (owner 2026-11-17, round 2): a message he sends while a card's tab is
+  // picked takes him back to the chat's tab; a reply meanwhile puts a dot on the chat's tab.
+  const [chatUnread, setChatUnread] = useState(false);
+  const cardOpen = !!plan.tabs && !plan.tabs.folded;
+  const cardOpenRef = useRef(cardOpen);
+  cardOpenRef.current = cardOpen;
+  const toChatRef = useRef(() => setSheetOpen(false));
+  toChatRef.current = () => setSheetOpen(false);
+  useEffect(() => { if (!cardOpen) setChatUnread(false); }, [cardOpen]);
+  useEffect(() => {
+    const s = superSession;
+    if (!s) return undefined;
+    let last = chatMarks(s);
+    return s.subscribe(() => {
+      const now = chatMarks(s);
+      if (cardOpenRef.current && now.own > last.own) toChatRef.current();
+      else if (cardOpenRef.current && now.replies > last.replies) setChatUnread(true);
+      last = now;
+    });
+  }, [superSession]);
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
   const stripBig = plan.strip?.big;
   useEffect(() => {
@@ -1434,12 +1454,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {plan.tabs && (() => {
         const tabs = plan.tabs;
         const open = tabs.folded ? null : tabs.ids.find((id) => plan.cards[id]?.where === 'sheet') ?? plan.strip?.big ?? tabs.ids[0];
+        // The queue's next presentation waits at the row's end (the frame's strip is not drawn here).
+        const nextTab = queueBand === 'step' ? presentTabs.find((p) => p.kind === 'next') : undefined;
         return (
-          <SheetTabs rect={tabs.rect} ids={tabs.ids} open={open}
+          <SheetTabs rect={tabs.rect} ids={tabs.ids} open={open} unread={chatUnread}
             titleOf={(id) => { const c = byId.get(id); return c ? titleOf(c) : id; }}
-            // The open tab folds the sheet; any other opens on that card.
-            onSelect={(id) => { if (id === open) { setSheetOpen(false); return; } setSelected(id); setSheetOpen(true); }}
-            onFold={() => setSheetOpen(false)} />
+            // The chat's tab shows the chat; a card's tab shows that card.
+            onSelect={(id) => { if (id === null) { setSheetOpen(false); return; } setSelected(id); setSheetOpen(true); }}
+            {...(nextTab ? { next: { name: nextTab.name, onNext: () => queueStep('next') } } : {})} />
         );
       })()}
       {state.containers.length === 0 && props.terminals.length === 0 && (
@@ -1525,4 +1547,18 @@ export function heldFallback(drawn: SuperView, wanted: SuperView, containers: re
     if (cards.length) return { mode: 'present', cards, ...(drawn.layout ? { layout: drawn.layout } : {}), ...(drawn.chat ? { chat: drawn.chat } : {}) };
   }
   return { mode: 'float' };
+}
+
+/** What the narrow tabs watch in the Super chat: how many messages the owner has sent (typed,
+ *  queued or still on their way; an echo of a pending one moves it, the sum stays) and how many
+ *  replies it holds. Pure over the model. */
+export function chatMarks(s: Pick<ChatSession, 'getModel'>): { own: number; replies: number } {
+  const m = s.getModel();
+  let own = m.pending.length + m.queued.length;
+  let replies = 0;
+  for (const it of m.items) {
+    if (it.kind === 'text') replies++;
+    else if (it.kind === 'user' && !it.superEvent && !it.serverPrompt && !it.echo && !it.stageMedia && !it.queued) own++;
+  }
+  return { own, replies };
 }
