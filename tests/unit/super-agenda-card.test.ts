@@ -300,8 +300,9 @@ describe('the agenda row\'s Write about this icon', () => {
     expect(src).toMatch(/onPress=\{a\.press === 'thread' && onThread \? \(\) => pressThread\(e, r, r\.item\) : questionClickable\(r\) \? \(\) => pressQuestion\(r\) : undefined\}/);
     expect(src).toMatch(/onHover=\{\{ ask: onWriteAbout \? \(\) => onWriteAbout\(r\) : undefined \}\}/);
     const css = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.css', ROOT_URL), 'utf-8');
-    expect(css).toMatch(/\.super-agenda-row:hover \.agenda-hover, \.super-agenda-row:focus-within \.agenda-hover \{ display: inline-flex; \}/);
-    expect(css).toMatch(/@media \(hover: none\) \{ \.super-agenda-row:hover \.agenda-hover \{ display: none; \} \}/);
+    // Keyboard focus shows it; a mouse press leaves none over the row it selected (owner 2026-11-17).
+    expect(css).toMatch(/\.super-agenda-row:hover \.agenda-hover, \.super-agenda-row:has\(:focus-visible\) \.agenda-hover \{ display: inline-flex; \}/);
+    expect(css).toMatch(/@media \(hover: none\) \{\s*\.super-agenda-row:hover \.agenda-hover \{ display: none; \}/);
   });
 
   it('the stage passes it only while the super chat is there; a narrow stage floats first; the surface stages one chip and focuses', () => {

@@ -242,3 +242,45 @@ describe('the filter strip (owner 2026-11-17): the press filters, the line name 
     expect(live.menu).toBe(true);
   });
 });
+
+describe('the row that filters the chat stays clearly selected (owner 2026-11-17)', () => {
+  const css = async () => (await import('node:fs')).readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperAgenda.css', import.meta.url), 'utf8');
+  const rule = (src: string, selector: string) => {
+    const i = src.indexOf(`${selector} {`);
+    return i < 0 ? '' : src.slice(i, src.indexOf('}', i) + 1);
+  };
+
+  it('the selected row carries an accent bar on its left edge, unlike a hovered row', async () => {
+    const sel = rule(await css(), ".super-agenda-row[data-thread='on']");
+    expect(sel).toMatch(/background:\s*var\(--color-accent-soft\)/);
+    // The bar: an inset shadow 3px wide in the accent, readable in both themes (the token flips).
+    expect(sel).toMatch(/inset 3px 0 0 var\(--color-accent\)/);
+  });
+
+  it('a mouse press does not leave the Ask strip over the selected row (keyboard focus still shows it)', async () => {
+    const src = await css();
+    expect(src).not.toMatch(/\.super-agenda-row:focus-within \.agenda-hover/);
+    expect(src).toMatch(/\.super-agenda-row:has\(:focus-visible\) \.agenda-hover/);
+  });
+
+  it('the pressed row is drawn selected and pressed, on the Mac and on the phone sheet', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const threadRow = (readOnly: boolean) => {
+      const props = {
+        state: { queue: queue as never, pad, owed: owed as never, children: children as never }, look, size: 'large' as const, readOnly,
+        canShowChild: () => true, onShowChild: () => {}, onShowQuestion: () => {}, onWriteAbout: () => {}, onThread: () => true,
+      };
+      const html = renderToStaticMarkup(createElement(SuperAgenda, props));
+      const key = /data-row="(n:[^"]+)"[^>]*data-kind="note"/.exec(html)![1];
+      return { key, html: renderToStaticMarkup(createElement(SuperAgenda, { ...props, threadRowKey: key })) };
+    };
+    for (const ro of [false, true]) {
+      const { key, html } = threadRow(ro);
+      const row = new RegExp(`<div class="super-agenda-row" data-row="${key}"[^>]*>`).exec(html)![0];
+      expect(row, `readOnly ${ro}`).toContain('data-thread="on"');
+      expect(html.match(/data-thread="on"/g)?.length, `readOnly ${ro}`).toBe(1);
+      expect(html).toMatch(/aria-pressed="true"/);
+    }
+    vi.useRealTimers();
+  });
+});

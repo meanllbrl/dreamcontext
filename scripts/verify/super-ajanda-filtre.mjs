@@ -547,6 +547,72 @@ async function flow(pw, base) {
   if (await chip(page).count()) await chip(page).getByTestId('super-thread-clear').click();
   await page.emulateMedia({ colorScheme: 'dark' });
 
+  console.log('\n── the row that filters stays selected (owner 2026-11-17), 1440 light, clip');
+  const caption = (text) => page.evaluate((t) => {
+    let el = document.getElementById('verify-caption');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'verify-caption';
+      el.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;padding:10px 22px;border-radius:12px;background:rgba(20,16,40,.88);color:#fff;font:600 22px/1.3 -apple-system,system-ui,sans-serif;pointer-events:none;white-space:nowrap';
+      document.body.appendChild(el);
+    }
+    el.textContent = t;
+    el.style.display = t ? 'block' : 'none';
+  }, text);
+  const selOf = (text) => rowWith(page, text).evaluate((el) => ({ on: el.dataset.thread === 'on', shadow: getComputedStyle(el).boxShadow, askShown: [...el.querySelectorAll('.agenda-hover-btn')].some((b) => b.getClientRects().length > 0) }));
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(600);
+  const selFrom = Date.now() - videoT0;
+  await caption('Satıra bas: sohbet süzülür, satır seçili kalır');
+  await page.waitForTimeout(900);
+  const rbox = await rowWith(page, LINE_A).locator('.super-agenda-name').boundingBox();
+  await page.mouse.move(rbox.x + 30, rbox.y + 8, { steps: 14 });
+  await page.mouse.click(rbox.x + 30, rbox.y + 8);
+  await page.waitForTimeout(500);
+  await page.mouse.move(900, 820, { steps: 10 });
+  await page.waitForTimeout(1800);
+  let sel = await selOf(LINE_A);
+  ok('selected: the pressed row stays selected while the chat is filtered', sel.on && (await chip(page).count()) === 1);
+  ok('selected: it carries the accent bar on its left edge', /3px 0px 0px 0px/.test(sel.shadow), sel.shadow);
+  ok('selected: no Ask strip is left over it after a mouse press', !sel.askShown);
+  await shot(page, 'secili-1-light.png');
+  await caption('Başka satıra bas: seçim oraya geçer');
+  await page.waitForTimeout(900);
+  const bbox = await rowWith(page, LINE_B).locator('.super-agenda-name').boundingBox();
+  await page.mouse.move(bbox.x + 30, bbox.y + 8, { steps: 10 });
+  await page.mouse.click(bbox.x + 30, bbox.y + 8);
+  await page.waitForTimeout(500);
+  await page.mouse.move(900, 820, { steps: 10 });
+  await page.waitForTimeout(1500);
+  ok('selected: another row takes the selection', (await selOf(LINE_B)).on && !(await selOf(LINE_A)).on && (await chip(page).innerText()).includes(LINE_B));
+  await caption('Aynı satıra tekrar bas: süzme kapanır');
+  await page.waitForTimeout(900);
+  await page.mouse.move(bbox.x + 30, bbox.y + 8, { steps: 10 });
+  await page.mouse.click(bbox.x + 30, bbox.y + 8);
+  await page.waitForTimeout(500);
+  await page.mouse.move(900, 820, { steps: 10 });
+  await page.waitForTimeout(1500);
+  ok('selected: the same row again ends the filter and the selection', (await chip(page).count()) === 0 && !(await selOf(LINE_B)).on && !(await selOf(LINE_A)).on);
+  await caption('Üzerine gelince yalnız Ask çıkar');
+  await page.waitForTimeout(700);
+  await page.mouse.move(rbox.x + 60, rbox.y + 8, { steps: 12 });
+  await page.waitForTimeout(2200);
+  const hov = await rowWith(page, LINE_A).locator('.agenda-hover-btn').evaluateAll((els) => els.filter((e) => e.getClientRects().length).map((e) => e.dataset.action));
+  ok('selected: the hover shows Ask alone', hov.join(',') === 'ask', hov.join(','));
+  await caption('');
+  results.selClip = { from: selFrom, to: Date.now() - videoT0 };
+  await page.mouse.move(5, 5);
+  // Dark: the same selection reads on the dark card.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await pressRow(page, LINE_A);
+  await page.mouse.move(900, 820);
+  await page.waitForTimeout(600);
+  sel = await selOf(LINE_A);
+  ok('selected (dark): the row stays selected, accent bar and all', sel.on && /3px 0px 0px 0px/.test(sel.shadow), sel.shadow);
+  await shot(page, 'secili-2-dark.png');
+  await pressRow(page, LINE_A);
+
   console.log('\n── sizes');
   if (await setSize(page, 'medium')) {
     // Medium shows one group at a time: line A is the Super's, under "On it".
