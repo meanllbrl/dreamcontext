@@ -292,6 +292,30 @@ describe('a room turn (D4, D5, criterion 3)', () => {
     expect([...at].sort((x, y) => x - y)).toEqual(at);
   });
 
+  it('a voice note past one turn\'s audio waits for the next turn, never dropped; one too long alone is refused with a line (r2 member-message-dropped-silently)', async () => {
+    let n = 0;
+    Object.assign((hub as unknown as { deps: Record<string, unknown> }).deps, { transcribeVoice: async () => `kayıt ${++n}` });
+    let open!: () => void;
+    gate = new Promise<void>((r) => { open = r; });
+    answers.push({ say: 'Tamam.' }, { say: 'Tamam.' }, { say: 'Tamam.' });
+    const reply = { message_id: 1, from: { id: 123456, is_bot: true, username: BOT } };
+    tg.push(TOKEN, groupMsg(CAN, 'ilk soru', { at: true }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 5000 });
+    // Two three-minute notes and one too long, while the first turn runs.
+    tg.push(TOKEN, groupMsg(CAN, '', { extra: { voice: { file_id: 'a', duration: 180, file_size: 100 }, reply_to_message: reply } }));
+    tg.push(TOKEN, groupMsg(CAN, '', { extra: { voice: { file_id: 'b', duration: 180, file_size: 100 }, reply_to_message: reply } }));
+    tg.push(TOKEN, groupMsg(CAN, '', { extra: { voice: { file_id: 'c', duration: 400, file_size: 100 }, reply_to_message: reply } }));
+    await quiet();
+    gate = null; open();
+    await vi.waitFor(() => expect(calls).toHaveLength(3), { timeout: 5000 });
+    const said = calls.slice(1).map((c) => c.args.join(' '));
+    expect(said[0]).toContain('🎙 kayıt 1');
+    expect(said[0]).not.toContain('kayıt 2');
+    expect(said[1]).toContain('🎙 kayıt 2');
+    expect(n).toBe(2);
+    expect(groupTexts().some((t) => t.includes('Bu ses kaydı çok uzun'))).toBe(true);
+  });
+
   it('the room runs in its own EMPTY folder, with no window key (G5)', async () => {
     answers.push({ say: 'Tamam.' });
     tg.push(TOKEN, groupMsg(CAN, 'x?', { at: true }));
@@ -469,6 +493,28 @@ describe('a room request (D6, D7, criterion 5)', () => {
     tg.push(TOKEN, groupMsg(CAN, 'bir de bunu', { at: true }));
     await vi.waitFor(() => expect(tg.calls.slice(before).some((c) => c.method === 'sendMessage' && c.params.reply_markup && String(c.params.text).includes('Kartı gitmeyen iş.'))).toBe(true), { timeout: 5000 });
     expect(readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests.map((q) => q.status)).toEqual(['open', 'held']);
+  });
+
+  it('while an approved request is being delivered, a new request sends no second card for it (r2 room-request-liveness)', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const sent: string[] = [];
+    reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: vi.fn(async (t: string) => { await held; sent.push(t); return { ok: true as const }; }), interrupt: vi.fn() });
+    await asked();
+    const first = lastCard();
+    press(first, 0);
+    await vi.waitFor(() => expect(tg.calls.some((c) => c.method === 'answerCallbackQuery')).toBe(true), { timeout: 5000 });
+    const cardsOf = (w: string) => tg.calls.filter((c) => c.method === 'sendMessage' && c.params.reply_markup && String(c.params.text).includes(w)).length;
+    answers.push({ say: '', request: { summary: 'Başka iş.' } });
+    tg.push(TOKEN, groupMsg(CAN, 'bir de bunu', { at: true }));
+    await vi.waitFor(() => expect(groupTexts().some((t) => t.includes('Önceki istek hâlâ onay bekliyor'))).toBe(true), { timeout: 5000 });
+    await quiet();
+    expect(cardsOf('Ajandadaki işi tamamlandı yapmak.')).toBe(1);
+    release();
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    await vi.waitFor(() => expect(cardsOf('Başka iş.')).toBe(1), { timeout: 5000 });
+    expect(cardsOf('Ajandadaki işi tamamlandı yapmak.')).toBe(1);
   });
 
   it('room say that Telegram refuses leaves the request approved, to be said again (r1 commit-before-send)', async () => {

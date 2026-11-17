@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { actorOf, addressed, admit, commandOf, isAuthorized, roomOf, type TgUpdateLike } from '../../src/lib/telegram/auth.js';
 import {
-  GROUP_KINDS, ROOM_LINES, approvedTurnText, authorLabel, batchWords, dative, foldBatch, isGroupKind, oneLine, redactPaths, requestIdFrom, stripHidden,
+  CARD_CHUNK, GROUP_KINDS, ROOM_LINES, approvedTurnText, asShown, authorLabel, batchWords, consentable, cutWhole, dative, foldBatch, isGroupKind, oneLine, redactPaths, requestIdFrom, roomCard, stripHidden,
 } from '../../src/lib/telegram/rooms.js';
 import { ROOM_RULES, readRoomAnswer, roomSystemPrompt, roomUserMessage } from '../../src/lib/telegram/room-prompt.js';
 import { readRoom, removeRoom, roomDirs, roomFile, validGroups, writeRoom } from '../../src/lib/telegram/config.js';
@@ -177,5 +177,33 @@ describe('records (C2)', () => {
     removeRoom('0123456789abcdef', 'super', GROUP, home);
     expect(() => statSync(dirs.cwd)).toThrow();
     expect(() => roomFile('0123456789abcdef', 'super', 5, home)).toThrow();
+  });
+});
+
+describe('the owner\'s card is the turn (r2 consent-matches-display)', () => {
+  const req = (words: string) => ({ authorLabel: 'Can', words: asShown(words), summary: 'Bir iş.' });
+
+  it('cuts never split a character, and the pieces joined are the words exactly', () => {
+    const words = 'a'.repeat(CARD_CHUNK - 1) + '😀' + 'b'.repeat(10);
+    const pieces = cutWhole(words);
+    expect(pieces.join('')).toBe(words);
+    expect(pieces.every((p) => p.length <= CARD_CHUNK)).toBe(true);
+    expect(pieces[1].startsWith('😀')).toBe(true);
+  });
+
+  it('a secret-shaped part a cut would reveal (xtoken= split before "token") is never offered for a yes', () => {
+    const whole = 'b'.repeat(CARD_CHUNK - 1) + 'xtoken=SuperGizliDeger123 gönder';
+    expect(asShown(whole)).toBe(whole); // clean as a whole: the old check passed it
+    const r = req(whole);
+    const { pieces, messages } = roomCard(r, 'Ürün ekibi');
+    expect(pieces[1].startsWith('token=')).toBe(true);
+    expect(messages).toHaveLength(2);
+    expect(consentable(r, 'Ürün ekibi')).toBe(false);
+  });
+
+  it('an ordinary long request is offered: every message reaches the phone as built', () => {
+    const r = req('Lütfen şunu yap. '.repeat(400));
+    expect(roomCard(r, 'Ürün ekibi').messages.length).toBeGreaterThan(1);
+    expect(consentable(r, 'Ürün ekibi')).toBe(true);
   });
 });

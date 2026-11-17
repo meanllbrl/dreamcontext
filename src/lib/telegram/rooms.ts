@@ -10,7 +10,7 @@
  */
 
 import { HIDDEN_CHARS } from '../hidden-chars.js';
-import { redactSecrets, showsAsWritten } from './format.js';
+import { escapeHtml, redactSecrets, showsAsWritten } from './format.js';
 
 /** What may go to a group. Nothing else ever does: no buttons, files, pictures or voice. */
 export const GROUP_KINDS = ['room-say', 'room-line', 'room-typing'] as const;
@@ -44,6 +44,8 @@ export const ROOM_LINES = {
   cardStale: 'Bu istek artık geçerli değil.',
   /** A request whose text the owner's card could not show as written: never offered for a yes. */
   unshowable: 'Bu isteği iletemedim: içinde gösterilemeyen bir parça var. Gizli bilgi olmadan yeniden yazın.',
+  /** A group voice note longer than one turn can hear. */
+  voiceTooLong: 'Bu ses kaydı çok uzun; 5 dakikadan kısa bir kayıt gönderin.',
 } as const;
 
 /** Turkish dative after a name: Mehmet'e, Can'a, Ali'ye, Ayşe'ye. */
@@ -82,9 +84,44 @@ export function asShown(text: string): string {
   return redactSecrets(stripHidden(text));
 }
 
-/** The request can be offered for a yes: what he reads is exactly what the Super would get. */
-export function consentable(req: { words: string; summary: string }): boolean {
-  return showsAsWritten(req.words) && showsAsWritten(req.summary);
+/** The most UTF-16 units of a member's words one card message quotes (Telegram's 4096 with room
+ *  for the head, the escapes and the summary). */
+export const CARD_CHUNK = 3500;
+
+/** `text` cut into pieces of at most `max` UTF-16 units, never inside a character (a surrogate
+ *  pair stays whole). The pieces joined are `text` exactly. */
+export function cutWhole(text: string, max = CARD_CHUNK): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const ch of text) {
+    if (cur.length + ch.length > max) { out.push(cur); cur = ''; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** What a request's private card is made of: its pieces and the exact HTML of each message, the
+ *  buttons riding the last. Built ONCE here: `consentable` checks these messages and the runner
+ *  sends these messages, so the check can never see a different cut than the phone. */
+export function roomCard(req: { authorLabel: string; words: string; summary: string }, groupTitle: string): { pieces: string[]; messages: string[] } {
+  const head = `<b>${escapeHtml(ROOM_LINES.cardHead(oneLine(req.authorLabel), oneLine(groupTitle)))}</b>`;
+  const tail = `<b>${escapeHtml(ROOM_LINES.understood)}:</b> ${escapeHtml(req.summary)}`;
+  const pieces = cutWhole(req.words);
+  const messages = pieces.map((p, i) => `${i === 0 ? `${head}\n` : ''}<blockquote>${escapeHtml(p)}</blockquote>${i === pieces.length - 1 ? `\n${tail}` : ''}`);
+  return { pieces, messages };
+}
+
+/**
+ * Consent matches display: the request may be offered for a yes only when every message of its
+ * card reaches the phone exactly as built (the transport redacts each send on its own, so a cut
+ * is a word boundary the whole never had) and each piece and the summary would show as written
+ * in the plain-text fallback too. The turn Onayla sends quotes `req.words`, which is the pieces
+ * joined: what he read, message by message, is what the Super gets.
+ */
+export function consentable(req: { authorLabel: string; words: string; summary: string }, groupTitle: string): boolean {
+  const { pieces, messages } = roomCard(req, groupTitle);
+  return messages.every((m) => redactSecrets(m) === m) && pieces.every(showsAsWritten) && showsAsWritten(req.summary);
 }
 
 /** A label for one line (an author, a group title): hidden characters, newlines and brackets out. */
