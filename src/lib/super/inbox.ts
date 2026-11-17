@@ -49,7 +49,7 @@ import { detectOwnerLanguage, withOwnerLanguage, type OwnerLanguage } from './ow
 import { isServerTurnText } from '../usage-readers.js';
 import { MAX_LEAN_MCP, MCP_NAME_RE } from './lean-mcp.js';
 import {
-  closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, stampOwedSince,
+  closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, noteSaid, saidHead, stampOwedSince,
   type OwedEnd,
 } from './owed.js';
 import {
@@ -1799,12 +1799,19 @@ export function superOwnerOwes(sessionId: string, text: string, now = Date.now()
  */
 export function superSaid(sessionId: string, text: string): Promise<void> {
   const refs = replyMarkRefs(text);
-  if (!refs.length) return Promise.resolve();
+  const head = saidHead(text);
+  if (!refs.length && !head) return Promise.resolve();
   const root = superKeyOfSession(sessionId);
   if (!root) return Promise.resolve();
+  // A text with no mark only feeds the debts' `said` (what the owed turn quotes): no write
+  // when the cached record has no open debt.
+  const cached = lastStates.get(keyOf(root));
+  if (!refs.length && cached && !openDebts(cached).length) return Promise.resolve();
   return track(writeSuper(root, (s) => {
     if (!openDebts(s).length) return;
-    closeByMarks(s, refs, s.owedSeq ?? 0, Date.now());
+    const now = Date.now();
+    if (refs.length) closeByMarks(s, refs, s.owedSeq ?? 0, now);
+    noteSaid(s, text, now);
   }));
 }
 
@@ -1978,7 +1985,7 @@ export const SENT_LINE = `An item whose own server line says sent="…" is a job
 export const OWED_PREFIX = '[super owed]';
 
 /** The last line of a `[super owed]` turn. */
-export const OWED_LAST_LINE = `These are still owed to the owner: the server keeps each one open until a section of yours answers it. Answer each NOW, in the order listed, in its own section opening \`<!-- re:<ref> -->\` on its first line (its line's ref=): his message: answer it (one short line is enough when it needed none); a result: tell it; a send: say plainly what went out. One your text already told in an earlier turn without its mark: open the section and say in one line that it is told above, never tell it again. Nothing else in this turn: no summary, no other subject (${OWNER_VOICE}).`;
+export const OWED_LAST_LINE = `These are still owed to the owner: the server keeps each one open until a section of yours answers it. Answer each NOW, in the order listed, in its own section opening \`<!-- re:<ref> -->\` on its first line (its line's ref=): his message: answer it (one short line is enough when it needed none); a result: tell it; a send: say plainly what went out. Each line's \`said=\` is what really reached him from you since it opened: said=none means NOTHING you wrote did (what you only thought or planned to write never reaches him), so tell it now in full (a plan: its summary, as long as it needs); said=<n> quotes the start of each of your texts since then: only when one of those told it, open the section and say in one line that it is told above, never tell it again. Nothing else in this turn: no summary, no other subject (${OWNER_VOICE}).`;
 
 /** The text of a `[super owed]` turn: only the debts still open. Exported for tests. */
 export function owedTurnText(contextRoot: string, debts: readonly SuperOwed[]): string {
@@ -1986,8 +1993,9 @@ export function owedTurnText(contextRoot: string, debts: readonly SuperOwed[]): 
   return [
     `${OWED_PREFIX} items=${debts.length}`,
     ...debts.flatMap((d) => [
-      `- owed=${d.id} kind=${d.kind} ref=${d.ref} at=${owedClock(d.at)}${d.sent?.length ? ` sent="${d.sent.join(', ')}"` : ''}`,
+      `- owed=${d.id} kind=${d.kind} ref=${d.ref} at=${owedClock(d.at)}${d.sent?.length ? ` sent="${d.sent.join(', ')}"` : ''} said=${d.said?.length ?? 'none'}`,
       wrapUntrusted(vault, `${d.kind === 'msg' ? 'His message' : 'The result'}: ${d.gist}`),
+      ...(d.said?.length ? [wrapUntrusted(vault, `Your texts since it opened (start of each): ${d.said.map((x) => `[${owedClock(x.at)}] ${x.head}`).join(' | ')}`)] : []),
     ]),
     OWED_LAST_LINE,
   ].join('\n');

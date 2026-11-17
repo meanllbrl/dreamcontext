@@ -1,5 +1,5 @@
 import {
-  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_RESULT_GIST, MAX_SENT, MSG_REF_RE, OWED_NUDGES, OWED_PARK_MS, SENT_RE,
+  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_RESULT_GIST, MAX_OWED_SAID, MAX_OWED_SAID_HEAD, MAX_SENT, MSG_REF_RE, OWED_NUDGES, OWED_PARK_MS, SENT_RE,
   msgRef, partRefs,
   type SuperOwed, type SuperState,
 } from './types.js';
@@ -224,6 +224,31 @@ export function closeByMarks(s: SuperState, refs: readonly string[], ceiling: nu
   }
   if (closed) trimClosed(s);
   return closed;
+}
+
+/** A Super text as the owed turn quotes it: its marks out, one line, cut. Empty: nothing said. */
+export function saidHead(text: unknown): string {
+  if (typeof text !== 'string') return '';
+  const plain = text.split('\n').filter((l) => !MARK_AT_LINE.test(l)).join(' ')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return plain.length > MAX_OWED_SAID_HEAD ? `${plain.slice(0, MAX_OWED_SAID_HEAD - 1)}…` : plain;
+}
+
+/**
+ * A Super text landed: every debt still open that was opened before it remembers its start
+ * (newest MAX_OWED_SAID), so the `[super owed]` turn can show what was really written since the
+ * debt opened. Call after `closeByMarks`. Mutates `s`; true when anything was noted.
+ */
+export function noteSaid(s: SuperState, text: unknown, now = Date.now()): boolean {
+  const head = saidHead(text);
+  if (!head) return false;
+  let noted = false;
+  for (const d of openDebts(s)) {
+    if (d.at > now) continue;
+    d.said = [...(d.said ?? []), { at: now, head }].slice(-MAX_OWED_SAID);
+    noted = true;
+  }
+  return noted;
 }
 
 /** His drop ("Gerek yok") of one open debt. Mutates `s`; false when it is not open. */

@@ -138,7 +138,7 @@ export function notSentLine(head: string, title: string, why: string): string {
   return `${head}${title} (gönderilmedi: ${why})`;
 }
 
-function fileMedia(file: UploadFile, ext: string, title: string): MediaItem | null {
+export function fileMedia(file: UploadFile, ext: string, title: string): MediaItem | null {
   if (IMAGE_EXT.has(ext)) return { kind: 'photo', file, title };
   if (VIDEO_EXT.has(ext)) return { kind: 'video', file, title };
   if (ext === '.pdf') return { kind: 'document', file, title };
