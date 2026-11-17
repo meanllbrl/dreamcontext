@@ -101,6 +101,7 @@ import { isOwnSend } from './chat/ownSend';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
 import { answerRowAfter, followStep, ownAnchorIndex, shouldWrite } from './super/superScroll';
+import { SuperQuestionLine } from './super/SuperQuestionLine';
 import { landingFor, SUPER_QUESTION_EVENT, type SuperQuestionDetail, type UnreadUnit } from './super/superUnread';
 import './super/SuperSurface.css';
 import './chat/cards.css';
@@ -3424,6 +3425,9 @@ export function ChatPane({
         {/* A remote screen keeps its composer on a tab the Mac's window holds (hands-free
             sekmeler W2, D3): the first send takes the chat (Composer), the banner says so. */}
         {session.takenOver && <TakenOverBanner onPhone writeTakes onTakeBack={() => void session.takeBack()} />}
+        {/* The open question whose card is out of view: one line on the composer's top edge,
+            its press goes to the card (SuperQuestionLine.tsx). It never scrolls by itself. */}
+        {superView && <SuperQuestionLine sessionId={session.claudeId} scrollRef={scrollRef} />}
         <Composer
           session={session}
           folded={isPhone && composerFolded}
