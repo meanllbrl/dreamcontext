@@ -12,7 +12,7 @@ export interface DetailJob { mode?: string; line?: string; task?: string; canOpe
  * Done (and Remove on his own open line). What it offers is `actions` (rowActions, C8): an
  * archived line is read-only (its words, its day, a "from Mon" chip), never a status or Remove.
  */
-export function AgendaDetail({ entry, actions, group, job, fmtTime, fmtDay, onClose, onAsk, onDone, onRemove, onOpenChat, onOpenTask, error }: {
+export function AgendaDetail({ entry, actions, group, job, fmtTime, fmtDay, onClose, onAsk, onDone, onRemove, onOpenChat, onOpenTask, onShowInChat, inChat = false, error }: {
   entry: AgendaEntry;
   actions: RowActions;
   /** The group's name, as the list heads it. */
@@ -26,6 +26,10 @@ export function AgendaDetail({ entry, actions, group, job, fmtTime, fmtDay, onCl
   onRemove?: () => void;
   onOpenChat?: () => void;
   onOpenTask?: () => void;
+  /** B (agendaClick): filter the Super chat to this line's thread; again, the whole chat. */
+  onShowInChat?: () => void;
+  /** The Super chat shows this line's thread now. */
+  inChat?: boolean;
   error?: string;
 }) {
   const { t } = useI18n();
@@ -77,6 +81,7 @@ export function AgendaDetail({ entry, actions, group, job, fmtTime, fmtDay, onCl
       <div className="agenda-detail-actions">
         {!readOnly && job?.canOpen && onOpenChat && <button type="button" className="agenda-btn" data-primary="true" data-testid="super-agenda-open-chat" onClick={onOpenChat}>{t('super.agenda.detail.openChat')}</button>}
         {!readOnly && job?.task && onOpenTask && <button type="button" className="agenda-btn" data-testid="super-agenda-open-task" onClick={onOpenTask}>{t('super.agenda.detail.openTask')}</button>}
+        {onShowInChat && <button type="button" className="agenda-btn" data-primary={inChat || (job?.canOpen && onOpenChat) ? undefined : 'true'} aria-pressed={inChat} data-testid="super-agenda-show-in-chat" onClick={onShowInChat}>{inChat ? t('super.thread.backToAll') : t('super.agenda.detail.showInChat')}</button>}
         {onAsk && <button type="button" className="agenda-btn" data-testid="super-agenda-detail-ask" title={t('super.agenda.askTitle')} onClick={onAsk}>{t('super.agenda.ask')}</button>}
         {!readOnly && open && onDone && <button type="button" className="agenda-btn" data-testid="super-agenda-detail-done" onClick={onDone}>{t('super.agenda.done')}</button>}
         {actions.remove && onRemove && <button type="button" className="agenda-btn" data-tone="quiet" data-testid="super-agenda-remove" onClick={onRemove}>{t('super.agenda.detail.remove')}</button>}

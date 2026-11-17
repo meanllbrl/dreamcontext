@@ -16,6 +16,7 @@ import {
 import { AgendaRowView, type AgendaSize } from './AgendaRow';
 import { AgendaStatusMenu, FloatLayer } from './AgendaStatusMenu';
 import { AgendaDetail, type DetailJob } from './AgendaDetail';
+import { agendaClick, OPEN_ROW_DETAIL } from './agendaClick';
 import { AgendaDayNav, AgendaWeekStrip } from './AgendaDayNav';
 import type { AgendaDay } from './superApi';
 import './SuperAgenda.css';
@@ -191,6 +192,17 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // The detail (one at a time), the status menu, medium's filter, the small card's add popover.
   const [selected, setSelected] = useState<string | null>(null);
+  // A: the filter strip's line name opens that line's detail here (agendaClick).
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const key = (ev as CustomEvent).detail;
+      if (typeof key !== 'string' || readOnly) return;
+      setMenu(null);
+      setSelected(key);
+    };
+    window.addEventListener(OPEN_ROW_DETAIL, on);
+    return () => window.removeEventListener(OPEN_ROW_DETAIL, on);
+  }, [readOnly]);
   const [menu, setMenu] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const [filter, setFilter] = useState<AgendaFilter>('waiting');
   // List or board (owner 15 Nov: "büyük görünümdeyken board görünümü de opsiyon olarak kalsın"):
@@ -369,7 +381,6 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       );
     }
     // An agenda line: live or archived (C8).
-    const id = r.note as string | undefined;
     const job = r.for ? state.children?.[r.for] : undefined;
     const chips = (
       <>
@@ -381,12 +392,11 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     );
     const ask = onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined;
     const toggleDetail = () => { setMenu(null); setSelected((k) => (k === e.key ? null : e.key)); };
-    const threaded = a.press === 'thread' && !!onThread;
-    // Small and medium: the press filters only; the detail moves to the row's hover (D2).
-    const la = threaded && !inlineDetail && a.detail !== 'none' && !readOnly ? { ...a, hover: [...a.hover, 'detail' as const] } : a;
+    // B: a line with a detail opens it; its "Show in chat" filters (agendaClick).
+    const threaded = a.press === 'thread' && !!onThread && !(agendaClick() === 'detail' && a.detail !== 'none' && !readOnly);
     return (
       <AgendaRowView
-        key={e.key} entry={e} actions={la} size={size} label={r.text} chips={chips}
+        key={e.key} entry={e} actions={a} size={size} label={r.text} chips={chips}
         time={e.group === 'earlier' ? '' : fmtTime(e.at ?? r.at)}
         selected={selected === e.key}
         threadOn={threadRowKey === e.key}
@@ -398,7 +408,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           }
           : a.press === 'detail' || a.press === 'thread' ? toggleDetail : undefined}
         onMenu={a.menu && onPadStatus ? (anchor) => setMenu({ key: e.key, anchor }) : undefined}
-        onHover={{ done: onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined, ask, detail: toggleDetail }}
+        onHover={{ ask }}
       />
     );
   };
@@ -425,7 +435,9 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         error={error && error.note === id ? error.text : ''}
         onClose={() => setSelected(null)}
         onAsk={a.hover.includes('ask') && onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined}
-        onDone={a.hover.includes('done') && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
+        onDone={a.menu && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
+        onShowInChat={agendaClick() === 'detail' && a.press === 'thread' && onThread && r.thread ? () => { pressThread(e, aboutRow(e)); } : undefined}
+        inChat={threadRowKey === e.key}
         onRemove={a.remove && onPadRemove && id ? () => {
           setError(null);
           onPadRemove(id).then(() => setSelected(null)).catch((e) => fail(e, id));

@@ -206,8 +206,9 @@ export type RowMark = 'status' | 'check' | 'icon';
 /** `thread`: the press filters the Super chat to the row's thread (ajanda-filtre D1); on a
  *  wide card it opens the inline detail too (D2), the view decides that by size. */
 export type RowPress = 'detail' | 'legacy' | 'none' | 'thread';
-/** `detail`: small/medium only, added by the view when the press filters instead (D2). */
-export type HoverAction = 'done' | 'ask' | 'notNeeded' | 'detail';
+/** A row's hover holds Ask alone (owner 2026-11-17: Done lives in the detail, the detail is a
+ *  press away); an unanswered debt adds Not needed. */
+export type HoverAction = 'ask' | 'notNeeded';
 export interface RowActions {
   /** The leading mark: a status circle, a plain check (archived), or the row kind's icon. */
   mark: RowMark;
@@ -246,7 +247,7 @@ function rowActionsToday(entry: Pick<AgendaEntry, 'kind' | 'live' | 'row'>, opts
       if (ro) return { ...NONE, mark: 'status', press: 'none' };
       const done = entry.row?.section === 'done';
       return {
-        mark: 'status', menu: true, press: 'detail', hover: done ? ['ask'] : ['done', 'ask'], detail: 'full',
+        mark: 'status', menu: true, press: 'detail', hover: ['ask'], detail: 'full',
         remove: !done && entry.row?.author === 'owner',
       };
     }

@@ -103,6 +103,7 @@ import { useUnreadJump } from './super/useUnreadJump';
 import { answerRowAfter, followStep, ownAnchorIndex, shouldWrite } from './super/superScroll';
 import { SuperQuestionLine } from './super/SuperQuestionLine';
 import { afterDraw, clearThreadFilter, lastClearOf, setThreadAnchor, setThreadHider, useThreadFilter, type ThreadAnchor } from './super/superThreadFilter';
+import { agendaClick, requestRowDetail } from './super/agendaClick';
 import { lineThread, type ThreadCard } from './super/lineThread';
 import { SuperThreadChip, SuperThreadEmpty } from './super/SuperThreadChip';
 import { anchorIndex, findAnchorRow, readThreadAnchor } from './super/threadAnchor';
@@ -3194,7 +3195,7 @@ export function ChatPane({
       <BrowserHostProvider value={browserHost}>
       <SelectionScope handler={selectionHandler}>
       {thread && threadFilter && threadSid && (
-        <SuperThreadChip sessionId={threadSid} label={threadFilter.key.label} count={thread.count} onClear={() => clearThreadFilter(threadSid, 'user')} />
+        <SuperThreadChip sessionId={threadSid} label={threadFilter.key.label} count={thread.count} onClear={() => clearThreadFilter(threadSid, 'user')} onLabel={agendaClick() === 'filter' ? () => requestRowDetail(threadFilter.rowKey) : undefined} />
       )}
       <div className={superView ? 'chat-transcript chat-transcript--super' : 'chat-transcript'}>
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />

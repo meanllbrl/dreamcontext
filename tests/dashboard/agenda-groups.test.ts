@@ -127,7 +127,7 @@ describe('a past day (C4)', () => {
 describe('rowActions (C8): the one source of what a row may do', () => {
   const ent = (kind: string, live: boolean, row: Record<string, unknown> = {}) => ({ kind, live, row } as never);
   it('row by row', () => {
-    expect(G.rowActions(ent('line', true, { section: 'now', status: 'in-progress' }))).toEqual({ mark: 'status', menu: true, press: 'detail', hover: ['done', 'ask'], detail: 'full', remove: false });
+    expect(G.rowActions(ent('line', true, { section: 'now', status: 'in-progress' }))).toEqual({ mark: 'status', menu: true, press: 'detail', hover: ['ask'], detail: 'full', remove: false });
     expect(G.rowActions(ent('line', true, { section: 'now', author: 'owner' })).remove).toBe(true);
     expect(G.rowActions(ent('line', true, { section: 'done', author: 'owner' }))).toEqual({ mark: 'status', menu: true, press: 'detail', hover: ['ask'], detail: 'full', remove: false });
     // An archived line, today's or a past day's: check, Ask, read-only detail, never the menu.
@@ -189,7 +189,8 @@ describe('no row draws an action rowActions did not return', () => {
         const k = kind === 'note' ? 'line' : kind;
         const want = G.rowActions({ kind: k, live, row: { section: /data-state="([^"]+)"/.exec(attrs)![1] } } as never);
         expect(/data-testid="super-agenda-status"/.test(inner), `${size} ${attrs}`).toBe(want.menu);
-        expect(/data-testid="super-agenda-done"/.test(inner), `${size} ${attrs}`).toBe(want.hover.includes('done'));
+        // Owner 2026-11-17: no Done or Details on a row's hover, at any size (Done is in the detail).
+        expect(/data-testid="super-agenda-done"|data-testid="super-agenda-detail-open"/.test(inner), `${size} ${attrs}`).toBe(false);
         expect(/data-testid="super-agenda-about"/.test(inner), `${size} ${attrs}`).toBe(want.hover.includes('ask'));
       }
     }
