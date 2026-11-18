@@ -74,6 +74,9 @@ async function preflightShell(browser, base, path, shots, timeoutMs) {
   }
 }
 
+/** A page init script playing the Mac shell that hands the page the owner key (`openApp({ ownerKey })`). */
+export const ownerShellScript = (key) => `window.__TAURI_INTERNALS__ = { invoke: async (cmd) => (cmd === 'owner_key' ? ${JSON.stringify(key)} : cmd === 'confirm_dialog' ? true : null), transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };`;
+
 const pathOf = (url) => { try { const u = new URL(url); return u.pathname + u.search; } catch { return url; } };
 
 /** Requests a dev server makes that are no finding about the app. */
@@ -93,7 +96,7 @@ export async function openApp(opts = {}) {
   }
 }
 
-async function openAppInner({ suite = 'look', build = false, desktop = false, claude = null, target = '/?vault=proj', preflight = true } = {}) {
+async function openAppInner({ suite = 'look', build = false, desktop = false, claude = null, target = '/?vault=proj', preflight = true, ownerKey = null } = {}) {
   // DC_VERIFY_DIST points at another build on purpose (a before run): its age is the point.
   if (build && !process.env.DC_VERIFY_DIST) {
     const stale = staleDist(REPO);
@@ -155,7 +158,12 @@ async function openAppInner({ suite = 'look', build = false, desktop = false, cl
   let base = `http://127.0.0.1:${apiPort}`;
   let browser;
   try {
-    const api = start(cli[0], [...cli[1], 'dashboard', '--no-open', '-p', String(apiPort)], { cwd: proj, env });
+    // `ownerKey`: the server takes the key off stdin as the Mac shell hands it, so an owner-only
+    // route (a Başlat, a pick) answers a page that carries it (see `ownerShellScript`).
+    const api = ownerKey
+      ? start(cli[0], [...cli[1], 'dashboard', '--no-open', '-p', String(apiPort)], { cwd: proj, env: { ...env, DREAMCONTEXT_OWNER_KEY_STDIN: '1' }, stdio: ['pipe', 'ignore', 'ignore'] })
+      : start(cli[0], [...cli[1], 'dashboard', '--no-open', '-p', String(apiPort)], { cwd: proj, env });
+    if (ownerKey) { api.stdin.write(`${ownerKey}\n`); api.stdin.end(); }
     await waitFor(`${base}/api/health`, 'the API server', api);
     if (!build) {
       const vitePort = await freePort();
