@@ -238,7 +238,7 @@ async function caseAsk(page) {
   step('the bar\'s data (GET /api/super/state) carries the mirror', st.status === 200 && (st.json?.queue ?? []).some((q) => q.id === mirrorId && q.state !== 'done'),
     JSON.stringify({ status: st.status, queue: st.json?.queue?.map((q) => [q.id, q.kind, q.state]) }).slice(0, 600));
 
-  if (SHOTS) { await toMain(page); await shots(page, '1-bar-member-question', bar); await backToRota(page); }
+  if (SHOTS) { await toMain(page); await shots(page, '1-bar-member-question', (pg) => pg.locator('[data-testid="super-member-card"]:visible')); await backToRota(page); }
   const body = { record: 'main', item: mirrorId, answer: { kind: 'ask', text: ANSWER }, via: 'bar' };
   const refused = await answer(page, body);
   step('the answer route without the owner key: 403 owner_page_only', refused.status === 403 && refused.json?.error === 'owner_page_only', JSON.stringify(refused));
