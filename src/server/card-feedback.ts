@@ -21,6 +21,7 @@
  */
 import { CARD_FEEDBACK_TAG, MAX_VIEWS_PER_MESSAGE, isCardFeedbackText, parseViewBlock } from '../lib/chat-view-spec.js';
 import { ownerTextFeedback } from '../lib/super/owner-text-gate.js';
+import type { OwnerLanguage } from '../lib/super/owner-language.js';
 
 export { CARD_FEEDBACK_TAG };
 
@@ -71,12 +72,14 @@ export function feedbackTurn(parts: readonly (string | null | undefined)[]): str
 
 /**
  * What a Super chat adds to its turn's end (owner-text-gate.ts): a text the phone held (a pointer
- * back) comes back to the Super as a request for the answer itself. Read at the `result`, never
+ * back, or not in his language) comes back to the Super as a request for the answer itself. Read at the `result`, never
  * before: the turn's kind is the one it ended as.
  */
 export interface SuperTurnGate {
   /** The server opened this turn (an event), not the owner. */
   eventTurn(): boolean;
+  /** His language as the server knows it (owner-language.ts), or null. */
+  lang(): OwnerLanguage | null;
   /** A text written for him (inbox.ts `isOwnerProse`), passed in so this module stays light. */
   isOwnerProse(text: string): boolean;
 }
@@ -145,7 +148,7 @@ export class CardFeedbackTracker {
     const wasFeedback = this.answeringFeedback;
     this.answeringFeedback = false;
     if (!ok || wasFeedback) return null;
-    const gate = this.gate ? ownerTextFeedback(texts, { eventTurn: this.gate.eventTurn(), isOwnerProse: (t) => this.gate!.isOwnerProse(t) }) : null;
+    const gate = this.gate ? ownerTextFeedback(texts, { lang: this.gate.lang(), eventTurn: this.gate.eventTurn(), isOwnerProse: (t) => this.gate!.isOwnerProse(t) }) : null;
     const text = feedbackTurn([cardFeedback(texts.join('\n\n')), gate]);
     if (text) this.answeringFeedback = true;
     return text;

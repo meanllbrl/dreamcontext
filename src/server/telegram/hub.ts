@@ -43,8 +43,9 @@ import { readSuperState, superIdOfMember } from '../../lib/super/store.js';
 import { ensureMemberSuper, type MemberBirth } from '../../lib/super/member-birth.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import type { SuperId, SuperState } from '../../lib/super/types.js';
-import { isOwnerProse, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
+import { isOwnerProse, superKnownLanguage, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
 import { telegramHold } from '../../lib/super/owner-text-gate.js';
+import type { OwnerLanguage } from '../../lib/super/owner-language.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
@@ -200,6 +201,8 @@ export interface HubDeps {
   toJpeg?: JpegConverter;
   /** A `dream-voice` block → OGG/Opus (voice-speak.ts; tests inject). */
   speakSummary?: (text: string) => Promise<SpeakSummaryResult>;
+  /** The owner's language for a Super session (default inbox.ts `superKnownLanguage`; tests inject). */
+  ownerLanguage?: (sessionId: string) => OwnerLanguage | null;
 }
 
 export type BindingKey = string; // `${scope}/${target}`
@@ -1416,11 +1419,13 @@ export class TelegramHub implements TelegramHubApi {
       const st = await this.readBound(ab);
       if (st && superTurnFolds(mark, st.ownerBatches)) return false;
     }
-    // What fails the owner-text gate never reaches the phone (owner-text-gate.ts): a pointer back
-    // ("I wrote it above"), or a "nothing new" line of an event turn. The turn's end asks the
-    // Super for the answer itself (card-feedback.ts), so a held text is no silent turn.
+    // What fails the owner-text gate never reaches the phone (owner-text-gate.ts): a text not in
+    // his language, a pointer back ("I wrote it above"), or a "nothing new" line of an event turn.
+    // The turn's end asks the Super to write it again (card-feedback.ts), so a held text is no
+    // silent turn.
+    const lang = (this.deps.ownerLanguage ?? superKnownLanguage)(sessionId);
     const hold = (part: string): boolean => {
-      if (!telegramHold(part, { eventTurn: mark.event })) return false;
+      if (!telegramHold(part, { lang, eventTurn: mark.event })) return false;
       for (const t of turns) t.held = true;
       return true;
     };

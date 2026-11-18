@@ -3593,7 +3593,7 @@ export function startChatSession(
   let lastMainContext = 0;
   /** The main agent's words this turn, read for cards the chat skipped (card-feedback.ts). */
   // A Super chat's turn end also reads what the phone held of its text (owner-text-gate.ts).
-  const cardFeedback = new CardFeedbackTracker(isSuper ? { eventTurn: () => isSuperEventTurn(chatRegistryId), isOwnerProse } : null);
+  const cardFeedback = new CardFeedbackTracker(isSuper ? { eventTurn: () => isSuperEventTurn(chatRegistryId), lang: () => superKnownLanguage(chatRegistryId), isOwnerProse } : null);
   const setHandoffRun = (next: HandoffRun | null): void => {
     if (!next) return;
     handoffRun = next;
