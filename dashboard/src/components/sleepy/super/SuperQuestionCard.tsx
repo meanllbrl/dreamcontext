@@ -224,7 +224,7 @@ export function MemberWaitCard({ item, paused = false }: { item: SuperQueueItem;
  * goes through the owner-answer route: options and notes as AskUserQuestion's answers, his own
  * words (a free-text ask) or "Unclear" as his words to the member's Super.
  */
-function MemberAskCard({ item, name, slug, hasPhoto, answer, open }: {
+export function MemberAskCard({ item, name, slug, hasPhoto, answer, open }: {
   item: SuperQueueItem; name: string; slug: string; hasPhoto: boolean;
   answer: ReturnType<typeof useOwnerAnswer>;
   open: () => void;
