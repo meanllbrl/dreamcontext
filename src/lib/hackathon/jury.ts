@@ -33,6 +33,7 @@ export function juryPrompt(first: string, second: string, problem: string): stri
     `Hackathon problem: ${problem.replace(/[<>]/g, '')}`,
     'Two anonymous teams presented. Judge which better answers the problem. Score each 0-10 on: solves the problem, evidence, feasibility, originality.',
     'Answer with one JSON object only: {"winner": "A"|"B", "A": {"solves":n,"evidence":n,"feasible":n,"original":n}, "B": {...}, "why": "one sentence"}.',
+    '"why" is read by the person who asked, under one team\'s result: write it in the language of the problem above, and name what the solutions do ("the free-lesson button", "the phone link"), never the letters A or B.',
     fenceAsData('sunum A', first),
     fenceAsData('sunum B', second),
   ].join('\n\n');

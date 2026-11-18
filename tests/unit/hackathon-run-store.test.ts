@@ -100,6 +100,8 @@ describe('frames', () => {
       { type: 'system', subtype: 'init' },
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'ag', name: 'Agent', input: { subagent_type: 'yapici' } }] } },
       { type: 'assistant', parent_tool_use_id: 'ag', message: { content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: '/repo/index.html', new_string: '<h1>Deneme</h1>' } }] } },
+      // The team's own notes outside its copy of the project are not "what it changed".
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w1', name: 'Write', input: { file_path: '/ws/a/out/thesis-r1.json', content: '{}' } }] } },
       { type: 'assistant', parent_tool_use_id: 'ag', message: { content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/repo/style.css' } }] } },
       { type: 'result' },
     ];

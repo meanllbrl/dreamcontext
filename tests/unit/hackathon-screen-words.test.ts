@@ -12,17 +12,21 @@ describe('hackathon screen words', () => {
   it('puts a team name in the accusative by vowel harmony', () => {
     expect(accusative('Kanıtçı')).toBe("Kanıtçı'yı");
     expect(accusative('Sade')).toBe("Sade'yi");
-    expect(accusative('Kontrol')).toBe("Kontrol'u");
+    expect(accusative('Kontrol')).toBe("Kontrol'ü");
     expect(accusative('Hikâyeci')).toBe("Hikâyeci'yi");
     expect(accusative('Göz')).toBe("Göz'ü");
     expect(accusative('Kanat')).toBe("Kanat'ı");
     expect(accusative('Ekip')).toBe("Ekip'i");
+    expect(accusative('Yol')).toBe("Yol'u");
+    expect(accusative('Global')).toBe("Global'i");
   });
 
   it('says how many of them in Turkish', () => {
     expect(countOf(2)).toBe("2'sini");
     expect(countOf(1)).toBe("1'ini");
     expect(countOf(3)).toBe("3'ünü");
+    expect(countOf(1000)).toBe("1000'ini");
+    expect(countOf(100)).toBe("100'ünü");
     expect(countOf(6)).toBe("6'sını");
     expect(countOf(10)).toBe("10'unu");
     expect(countOf(0)).toBe("0'ını");

@@ -193,8 +193,11 @@ function lastVowel(word: string): string | null {
   return null;
 }
 /** A proper name in the Turkish accusative: "Kanıtçı'yı", "Sade'yi", "Kontrol'ü". */
+const PALATAL_L = /(?:^|\s)(kontrol|protokol|rol|gol|alkol|sembol|futbol|petrol|idol|hal|ideal|normal|lokal|global|final|sinyal|moral|total)$/;
+
 export function accusative(name: string): string {
   const n = name.trim();
+  if (PALATAL_L.test(n.toLocaleLowerCase('tr'))) return `${n}'${/[ou]l$/i.test(n) ? 'ü' : 'i'}`;
   const v = lastVowel(n);
   if (!v) return `${n}'ı`;
   const h = BACK.has(v) ? (v === 'o' || v === 'u' ? 'u' : 'ı') : FRONT_ROUND.has(v) ? 'ü' : 'i';
@@ -207,7 +210,7 @@ export function countOf(n: number): string {
   const units: Record<number, string> = { 0: 'ını', 1: 'ini', 2: 'sini', 3: 'ünü', 4: 'ünü', 5: 'ini', 6: 'sını', 7: 'sini', 8: 'ini', 9: 'unu' };
   const tens: Record<number, string> = { 1: 'unu', 2: 'sini', 3: 'unu', 4: 'ını', 5: 'sini', 6: 'ını', 7: 'ini', 8: 'ini', 9: 'ını' };
   if (n === 0) return "0'ını";
-  const suffix = n % 10 ? units[n % 10]! : (n % 100) ? tens[(n % 100) / 10]! : 'ünü';
+  const suffix = n % 10 ? units[n % 10]! : (n % 100) ? tens[(n % 100) / 10]! : (n % 1000) ? 'ünü' : 'ini';
   return `${n}'${suffix}`;
 }
 

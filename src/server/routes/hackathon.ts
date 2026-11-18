@@ -15,7 +15,7 @@ import { checkPr, fetchWinner, keepAndClean, openPr, writeResult } from '../../l
 import { conductorStatus, earliestEnd, launchConductor, liveConductorPid, needsConductor, ownerStart, realReadUsage, stopRun } from '../../lib/hackathon/conductor.js';
 import { previewText, readDecisions, readMedia } from '../../lib/hackathon/crossing.js';
 import { wholeDiskTeams } from '../../lib/hackathon/designer.js';
-import { runFrames } from '../../lib/hackathon/frames.js';
+import { runFrames, teamFrame } from '../../lib/hackathon/frames.js';
 import { judgeLimit, readingLabel } from '../../lib/hackathon/limit.js';
 import { juryPath, roundPath, type RoundRecord } from '../../lib/hackathon/phases.js';
 import { readPresentation, shotsDir } from '../../lib/hackathon/presentation.js';
@@ -167,7 +167,8 @@ export async function handleHackathonFiles(req: IncomingMessage, res: ServerResp
   const team = teamOf(res, r, params);
   if (!team) return;
   const ws = teamWorkspace(r.id, team);
-  const frame = runFrames(ctx, r.id, r.design, (t) => teamWorkspace(r.id, t).repo).find((f) => f.team === team);
+  const td = r.design.teams.find((t) => t.id === team);
+  const frame = td ? teamFrame(ctx, r.id, td, ws.repo) : null;
   const want = new URL(req.url ?? '/', 'http://x').searchParams.get('preview');
   let preview: { path: string; lines: string[]; truncated: boolean } | { path: string; reason: string } | null = null;
   if (want) {
