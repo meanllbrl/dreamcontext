@@ -107,7 +107,7 @@ describe('C17 computed gaps', () => {
     expect(g.codex.find((x) => x.row === 'feature:Super Agent')!.worksOn).toEqual(['claude']);
   });
 
-  it('the shipped file: Codex and Antigravity have their computed rows (10 each at base)', () => {
+  it('the shipped file: Codex and Antigravity have their computed rows (Codex 10, Antigravity 11 with the hackathon team)', () => {
     expect(TOOL_GAPS.claude).toEqual([]);
     expect(TOOL_GAPS.codex.map((g) => g.row).sort()).toEqual([
       'control:mcp_authenticate', 'control:rewind_conversation', 'control:stop_task',
@@ -116,7 +116,7 @@ describe('C17 computed gaps', () => {
     ]);
     expect(TOOL_GAPS.antigravity.map((g) => g.row).sort()).toEqual([
       'control:mcp_authenticate', 'control:rewind_conversation', 'control:stop_task',
-      'headless:ask-write', 'headless:board-agent', 'headless:builder', 'headless:peer', 'headless:task-step',
+      'headless:ask-write', 'headless:board-agent', 'headless:builder', 'headless:hackathon-team', 'headless:peer', 'headless:task-step',
       'mode:assistant', 'mode:super',
     ]);
   });
@@ -145,7 +145,7 @@ describe('C17 computed gaps', () => {
   it('Settings → Tools lists exactly the computed gaps of each picked agent', () => {
     expect(pickedGapList(['claude'])).toEqual([]);
     expect(pickedGapList(['codex']).map((g) => g.row)).toEqual(TOOL_GAPS.codex.map((g) => g.row));
-    expect(pickedGapList(['antigravity']).length).toBe(10);
+    expect(pickedGapList(['antigravity']).length).toBe(11);
   });
 });
 
