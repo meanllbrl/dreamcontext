@@ -451,9 +451,8 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
 
   // Each real brain ONCE: a code repo whose _dream_context links to a brain is the same project,
   // never a second, unapproved copy of its routines (listDistinctProjects).
-  const { roots, missing, aliases } = listDistinctProjects(home);
+  const { roots, missing } = listDistinctProjects(home);
   for (const projectRoot of missing) logFn(`[automations] registered project's _dream_context/ is missing, skipping: ${projectRoot}`);
-  for (const a of aliases) logFn(`[automations] ${a.root} is the same brain as ${a.sameAs}, ticked once there`);
 
   // Projects tick CONCURRENTLY: one project's long run (its timeout can be an hour) must not
   // hold every other project's routines until it ends. Inside a project the runs stay in order.

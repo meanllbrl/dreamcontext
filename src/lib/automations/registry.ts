@@ -371,7 +371,10 @@ export interface DistinctProjects {
  *
  * Two roots whose `_dream_context` resolves to the same folder are one project. The kept root is
  * the one whose bucket holds approvals (where the owner's yes actually lives), then the one whose
- * `_dream_context` is the real folder rather than a link, then the first registered.
+ * `_dream_context` is the real folder rather than a link, then the first registered. Only a root
+ * whose bucket holds NO approval is skipped: one that holds its own yes (an older version could
+ * approve through the link) keeps ticking, as it did, so no approved routine stops. Nothing is
+ * moved or merged (owner 2026-11-19, review narrowed).
  */
 export function listDistinctProjects(home?: string): DistinctProjects {
   const registry = readAutomationsRegistry(home);
@@ -399,7 +402,11 @@ export function listDistinctProjects(home?: string): DistinctProjects {
     // Stable: equal ranks keep registry order.
     const best = group.reduce((a, b) => (rank(b) < rank(a) ? b : a));
     keep.add(best);
-    for (const r of group) if (r !== best) aliases.push({ root: r, sameAs: best });
+    for (const r of group) {
+      if (r === best) continue;
+      if (holdsApprovals(r)) keep.add(r);
+      else aliases.push({ root: r, sameAs: best });
+    }
   }
   const roots = Object.keys(registry.projects).filter((r) => keep.has(r));
   return { roots, missing, aliases };

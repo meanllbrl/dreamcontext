@@ -471,8 +471,23 @@ describe('tickAll', () => {
       expect(calls.map((c) => c.slug)).toEqual(['gece']);
       expect(roots).toEqual([contextRoot]);
       expect(result.projects.map((p) => p.projectRoot)).toEqual([projectRoot]);
-      expect(lines.some((l) => l.includes(codeRepo) && l.includes('same brain'))).toBe(true);
       expect(listDistinctProjects(home).aliases).toEqual([{ root: codeRepo, sameAs: projectRoot }]);
+    } finally {
+      rmSync(codeRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('a linked root that holds its OWN approvals keeps ticking (an older version approved through it): no approved routine stops', () => {
+    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
+    try {
+      symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
+      registerProject(codeRepo, home);
+      registerProject(projectRoot, home);
+      approveAutomation(projectRoot, makeDue('in-brain'), NOW, home);
+      approveAutomation(codeRepo, makeDue('via-code-repo'), NOW, home);
+      const d = listDistinctProjects(home);
+      expect(d.roots.sort()).toEqual([codeRepo, projectRoot].sort());
+      expect(d.aliases).toEqual([]);
     } finally {
       rmSync(codeRepo, { recursive: true, force: true });
     }
