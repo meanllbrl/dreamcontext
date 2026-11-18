@@ -15,6 +15,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { assertNotAppChat } from '../apps/chat-store.js';
 import { absRule } from '../automations/board-scope.js';
 import { LIGHT_DISALLOWED_TOOLS } from '../automations/light-run.js';
 import { codexStrictArgs, type CodexListedServer } from '../t3-bridge/launch.js';
@@ -151,7 +152,7 @@ export function claudeTeamArgv(i: ClaudeTurnInput): string[] {
   const tools = i.design.mcpTools.filter((t) => wanted.has(serversOf([t])[0] ?? '') && (serversOf([t])[0]! in servers));
   const agents = teamAgents(i.team);
   return [
-    ...(i.resume ? ['--resume', i.sessionId] : ['--session-id', i.sessionId]),
+    ...(i.resume ? ['--resume', assertNotAppChat(i.sessionId)] : ['--session-id', i.sessionId]),
     '--model', i.team.model,
     '--setting-sources', '',
     '--strict-mcp-config', '--mcp-config', mcpFile,

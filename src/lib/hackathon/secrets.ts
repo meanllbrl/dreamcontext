@@ -12,7 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { CREDENTIAL_ANYWHERE, CREDENTIAL_HOME_DIRS, CREDENTIAL_HOME_FILES, absRule, credentialReadDenies } from '../automations/board-scope.js';
 import { APP_CREDENTIAL_FILES } from '../apps/assistant.js';
 import { readCredentials } from '../lab/credentials.js';
@@ -24,7 +24,9 @@ export const MIN_SECRET_CHARS = 8;
 
 /** Home-relative folders and files the hackathon adds to the board's credential list. */
 export const HACKATHON_HOME_DENIES = ['.codex', '.dreamcontext/claude-accounts', '.dreamcontext/codex-accounts', '.dreamcontext/telegram'] as const;
-export const HACKATHON_HOME_FILE_DENIES = ['.dreamcontext/.secrets.json', '.dreamcontext/mcp.json', '.dreamcontext/voice.json', '.dreamcontext/recall-cloud.json'] as const;
+/** The recall key file, named by its config module (the only place that spells its name). */
+const RECALL_CLOUD_FILE = `.dreamcontext/${basename(recallCloudConfigPath())}`;
+export const HACKATHON_HOME_FILE_DENIES = ['.dreamcontext/.secrets.json', '.dreamcontext/mcp.json', '.dreamcontext/voice.json', RECALL_CLOUD_FILE] as const;
 
 export type DenySource =
   | { pattern: string; reader: string }
@@ -65,7 +67,7 @@ export const DENY_SOURCES: readonly DenySource[] = [
   { pattern: '.dreamcontext/.secrets.json', reader: 'secretsJson' },
   { pattern: '.dreamcontext/mcp.json', reader: 'mcpJson' },
   { pattern: '.dreamcontext/voice.json', reader: 'jsonValues' },
-  { pattern: '.dreamcontext/recall-cloud.json', reader: 'recallKey' },
+  { pattern: RECALL_CLOUD_FILE, reader: 'recallKey' },
   { pattern: '.dreamcontext/release-signing', notScannable: 'signing keys on purpose: matched by path' },
   // Not a path: the W1 proof found sandboxed Bash can reach the login Keychain.
   { pattern: 'keychain:Claude Code-credentials', reader: 'keychainToken' },

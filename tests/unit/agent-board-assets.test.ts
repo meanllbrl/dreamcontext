@@ -420,9 +420,11 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * asking; the denial sends you back to his words). Ceiling stays 12000; actual ~11,924.
    * 2026-11-15 (bekleyen-kapanmaz): the run card paragraph says a later card of the same kind
    * replaces the earlier open one, so what the agent needs now goes in ONE message. Actual 11,952.
+   * 2026-11-18 (hackathon-yapim): +209 for the hackathon start card (`hackathon start` prints it;
+   * the dream-view heading counts twelve). Ceiling -> 12600; actual 12,490.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12400);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12600);
   });
 
   /**
@@ -433,7 +435,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12281)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12490)).toBeLessThanOrEqual(20);
   });
 
   /**

@@ -41,6 +41,8 @@ function walk(dir: string, exts: string[], out: string[] = []): string[] {
 const NON_TEXT_FILLS: Record<string, string> = {
   'components/layout/newshell/ChatDrawer.css::.ns-dr-win[data-drop-before="true"]::after, .ns-dr-win[data-drop-after="true"]::after': 'drop line',
   'components/roadmap/Priority.css::.pc-bar > span': 'bar',
+  'components/hackathon/hackathon.css::.hk-meter__fill, .hk-bar__fill': 'bar',
+  "components/hackathon/hackathon.css::.hk-step[data-now='true']::before": 'dot',
   'components/roadmap/Priority.css::.pc-dot': 'dot',
   'components/sleepy/super/SuperSurface.css::.super-present-tab-dot': 'shown presentation tab dot',
   'components/roadmap/Priority.css::.pv-map-dot.is-suggested': 'dot',

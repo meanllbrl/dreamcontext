@@ -149,7 +149,7 @@ const BRIEFING_REST = `## The rest of the surface
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
   \`app-install\` takes a \`repo\` (\`owner/name\`): the Apps page's install sheet, when the hook offers it.
 
-## \`dream-view\` — the eleven things HTML must NOT be
+## \`dream-view\` — the twelve things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -249,6 +249,13 @@ only from that command's \`Shown:\` line, never "on your screen" otherwise.
 
 \`\`\`dream-view
 {"type":"app-request","id":"0b1d3c97-6daf-4943-96d5-8614e7d0960e"}
+\`\`\`
+
+**A hackathon run that waits for the owner's start.** \`hackathon start\` prints it; paste it as is.
+The card reads the design from the run.
+
+\`\`\`dream-view
+{"type":"hackathon","run":"20261118-login-speed"}
 \`\`\`
 
 **An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.

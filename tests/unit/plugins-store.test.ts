@@ -42,8 +42,8 @@ afterEach(() => {
 });
 
 describe('registry', () => {
-  it('lists the five D1 plugins in order with categories and gives', () => {
-    expect(PLUGINS.map((p) => p.id)).toEqual(['roadmap', 'hypotheses', 'lab', 'council', 'marketing']);
+  it('lists the six plugins in order with categories and gives', () => {
+    expect(PLUGINS.map((p) => p.id)).toEqual(['roadmap', 'hypotheses', 'lab', 'council', 'hackathon', 'marketing']);
     expect(getPlugin('lab')!.category).toBe('data');
     expect(pluginGives(getPlugin('lab')!)).toEqual(['screen', 'command', 'agent']);
     expect(pluginGives(getPlugin('marketing')!)).toEqual(['command', 'agent', 'sleep']);
@@ -117,7 +117,7 @@ describe('owner entries', () => {
   });
 
   it('an unknown id is refused', () => {
-    expect(() => installPlugin(ctx, 'hackathon', 'x')).toThrow(UnknownPluginError);
+    expect(() => installPlugin(ctx, 'no-such-plugin', 'x')).toThrow(UnknownPluginError);
   });
 
   it('hypotheses install/remove mirrors learning.enabled', () => {
@@ -129,10 +129,10 @@ describe('owner entries', () => {
   });
 
   it('files for unknown ids are left alone and listed', () => {
-    write('overrides/plugins/hackathon.json', JSON.stringify({ state: 'installed', at: '2026-11-17T00:00:00Z', by: 'x' }));
+    write('overrides/plugins/no-such-plugin.json', JSON.stringify({ state: 'installed', at: '2026-11-17T00:00:00Z', by: 'x' }));
     installPlugin(ctx, 'council', 'x');
-    expect(unknownEntryFiles(ctx)).toEqual(['overrides/plugins/hackathon.json']);
-    expect(existsSync(join(ctx, 'overrides/plugins/hackathon.json'))).toBe(true);
+    expect(unknownEntryFiles(ctx)).toEqual(['overrides/plugins/no-such-plugin.json']);
+    expect(existsSync(join(ctx, 'overrides/plugins/no-such-plugin.json'))).toBe(true);
   });
 });
 

@@ -27,8 +27,8 @@
 .hk-btn:hover:not(:disabled) { border-color: var(--color-border-hover); }
 .hk-btn:active:not(:disabled) { transform: scale(0.98); }
 .hk-btn:disabled { opacity: 0.5; cursor: default; }
-.hk-btn--primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-text-on-brand); }
-.hk-btn--primary:hover:not(:disabled) { background: var(--color-accent-strong); border-color: var(--color-accent-strong); }
+.hk-btn--primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
+.hk-btn--primary:hover:not(:disabled) { filter: brightness(1.06); }
 .hk-btn:focus-visible, .hk-back:focus-visible, .hk-table:focus-visible, .hk-run:focus-visible, .hk-tab:focus-visible, .hk-file:focus-visible, .hk-mini:focus-visible, .hk-step__btn:focus-visible {
   outline: 2px solid var(--color-accent); outline-offset: 2px;
 }
@@ -208,7 +208,7 @@ div.hk-mini { cursor: default; }
 .hk-result__thesis { margin: 0; padding: var(--space-4); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
 .hk-result__head { display: flex; align-items: center; gap: var(--space-2); }
 .hk-place { margin-left: auto; padding: 0 var(--space-2); border-radius: var(--radius-full); background: var(--color-bg-secondary); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); }
-.hk-place[data-first='true'] { background: var(--color-accent); color: var(--color-text-on-brand); }
+.hk-place[data-first='true'] { background: var(--color-accent-strong); color: var(--color-accent-text); }
 .hk-result__foot { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 
 /* PR confirm. */

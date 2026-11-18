@@ -102,7 +102,7 @@ describe('/api/plugins', () => {
     expect(isPluginInstalled(ctx, 'council')).toBe(true);
     expect((await call('POST', '/api/plugins/council/remove')).status).toBe(200);
     expect(isPluginInstalled(ctx, 'council')).toBe(false);
-    expect((await call('POST', '/api/plugins/hackathon/install')).status).toBe(404);
+    expect((await call('POST', '/api/plugins/no-such-plugin/install')).status).toBe(404);
     const pins = await call('PUT', '/api/plugins/pins', { pinned: ['roadmap', 'nope'] });
     expect(pins.status).toBe(200);
     expect(readBrainLocal(project).pluginPins).toEqual(['roadmap']);
