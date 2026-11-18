@@ -52,7 +52,10 @@ describe('run record', () => {
   });
   it('hashes the design canonically (key order does not matter)', () => {
     const a = designHash({ design });
-    const shuffled = JSON.parse(JSON.stringify(design, Object.keys(design).sort().reverse())) as typeof design;
+    const reverse = (v: unknown): unknown => Array.isArray(v) ? v.map(reverse)
+      : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).reverse().map((k) => [k, reverse((v as Record<string, unknown>)[k])])) : v;
+    const shuffled = reverse(design) as typeof design;
+    expect(Object.keys(shuffled)[0]).not.toBe(Object.keys(design)[0]);
     expect(designHash({ design: shuffled })).toBe(a);
     expect(designHash({ design: { ...design, rounds: 3 } })).not.toBe(a);
   });

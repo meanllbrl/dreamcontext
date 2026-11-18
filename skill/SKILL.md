@@ -213,7 +213,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
 1. **User's request is king.** Execute direct instructions. The task queue is reference, not auto-pilot. Suggest related tasks; never auto-pick them.
 
 2. **Skill triage before action — HARD RULE.** Your available-skills list is your primary toolkit. Before user-visible output or code in any skill's domain, match the task to skill `description` triggers and invoke `Skill` for each match BEFORE drafting, in parallel, unprompted. Match against whatever is actually in your available-skills list — **only name a skill that appears there; never invent one.** The skills dreamcontext ships (all installed with every update) and their typical triggers:
-   UI/frontend → `design`; a multi-aspect diff review → `multi-review`; a big feature end-to-end → `goal-skill`; "let's debate" → `council`; a drawing → `draw`; a video → `video-watching`.
+   UI/frontend → `design`; a multi-aspect diff review → `multi-review`; a big feature end-to-end → `goal-skill`; "let's debate" → `council`; a drawing → `draw`; a video → `video-watching`. `/hackathon` or "let several teams try this" is the Hackathon plugin, not a skill: read [hackathon.md](references/hackathon.md).
 
    Skip triage only when the request is (a) a 1-line factual question, (b) purely about dreamcontext mechanics (this skill), or (c) outside every available skill's domain. When in doubt, load.
 
@@ -441,6 +441,7 @@ Open these with `Read` when the task needs depth:
 - **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (for a rule's edge case).
 - **[learning.md](references/learning.md)**: theses (hypotheses): the quality bar, evidence ledger, derived confidence, flips and promotion.
 - **[automations.md](references/automations.md)**: agents and scheduled headless runs: capture, the `## Flow` graph and questions, the retired per-routine Telegram, sharing, the channel, approval, stopping a run.
+- **[hackathon.md](references/hackathon.md)**: the Hackathon plugin: several teams solve one problem in rounds; the agent drafts the design, the owner presses Başlat, picks the winner.
 - **[apps.md](references/apps.md)**: local web apps in their own Mac windows: manifest, run, `apps do`, schedules.
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync, dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.

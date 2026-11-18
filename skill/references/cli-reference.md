@@ -386,7 +386,7 @@ Refusals exit non-zero with the reason: an invalid slug, ref (including a page p
 
 ## Plugins (Mağaza)
 
-Roadmap (`roadmap`, objectives and RICE), Hypotheses (`hypotheses`, theses), Lab (`lab`), Council (`council`) and Marketing (`marketing`/`mk`) are **plugins**. Everything else is core and always on (Whiteboards included).
+Roadmap (`roadmap`, objectives and RICE), Hypotheses (`hypotheses`, theses), Lab (`lab`), Council (`council`), Hackathon (`hackathon`) and Marketing (`marketing`/`mk`) are **plugins**. Everything else is core and always on (Whiteboards included).
 
 ```bash
 dreamcontext plugins list [--json]     # installed or not, and why (chosen by <who> <when> | has data | no data)
@@ -765,6 +765,19 @@ Persona helpers: `round-context` (now includes verdict landscape + injected fact
 The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-changing commands; the app's live chamber panel renders from it, in BOTH agent renderers — above the composer in Terminal view, on the live rail in Chat view (the panel is scoped to the conversation that started the debate, so it only appears in the orchestrator's own pane). No browser viewer.
 
 ---
+
+## Hackathon (see [hackathon.md](hackathon.md))
+
+```bash
+dreamcontext hackathon design --problem "<text>" [--kind screen|experiment|plan] [--target <repo>] [--json]   # stats-backed draft, no model call
+dreamcontext hackathon start --design <file>     # creates the run (awaiting-owner), prints the {"type":"hackathon","run":…} card
+dreamcontext hackathon status [run] | list [--json] | show <run> [--json]
+dreamcontext hackathon stop <run> [--why "<reason>"]   # open to anyone
+dreamcontext hackathon stats [--kind <kind>] [--json]  # derived from every result.json
+dreamcontext hackathon outcome <run> --pr merged|closed|none
+```
+
+Start, resume, pick and the winner's PR are owner-only page actions (`/api/hackathon/:run/start|resume|pick|pr` refuse an agent's window token and require the owner key). Read-only routes: `GET /api/hackathon`, `/api/hackathon/:run` and its `/design`, `/frames`, `/rounds`, `/result`, `/pr-check`, `/teams/:team/files|presentation|media`; `POST …/stop` is open.
 
 ## Notifications
 
