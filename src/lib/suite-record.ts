@@ -266,32 +266,54 @@ export interface RunSummary {
 
 const BLOCK = /^\s*⎯+\s*(Failed Suites|Failed Tests|Unhandled Errors?|Unhandled Rejection|[A-Z][A-Za-z ]+)\b.*⎯+\s*$/;
 
-/** vitest's default reporter output, ANSI or not. A test's own `FAIL …` output is never listed. */
+const FILES_LINE = /^\s*Test Files\s+(.*)\((\d+)\)\s*$/;
+
+/** The run's own summary line (the last `Test Files`, else the end) and the summary before it (-1 = none). */
+function runRange(lines: string[]): { lo: number; hi: number } {
+  const idx: number[] = [];
+  lines.forEach((l, i) => { if (FILES_LINE.test(l)) idx.push(i); });
+  const hi = idx.length ? idx[idx.length - 1] : lines.length;
+  const lo = idx.length > 1 ? idx[idx.length - 2] : -1;
+  // A second `RUN v…` banner after the earlier summary can be a second REAL run in one log
+  // (`vitest a; vitest b`): its red must not be dropped, so read the whole log as before. That
+  // can only end incomplete (a mismatch), never green.
+  if (lo >= 0 && lines.slice(lo + 1, hi).some((l) => /^\s*RUN\s+v\d/.test(l))) return { hi, lo: -1 };
+  return { hi, lo };
+}
+
+/**
+ * vitest's default reporter output, ANSI or not. A test's own output is never read as the run's:
+ * a fixture test prints whole vitest logs (blocks, `Test Files`, `Errors`, ` FAIL` lines) into its
+ * stdout. The run's own summary is the LAST `Test Files` line and nothing prints after it but its
+ * `Tests`/`Errors` lines, so the blocks are read only between the summary before it (a printed
+ * fixture's, or the start) and that one, and the counts only after it.
+ */
 export function parseVitestLog(raw: string): RunSummary {
   const lines = stripAnsi(raw).split(/\r?\n/);
   const listed = new Set<string>();
   const origins: string[] = [];
   let block: string | null = null;
   let failedSuites = false;
-  let summary: Pick<RunSummary, 'failedFiles' | 'failedTests' | 'errors'> & { found: boolean } = { found: false, failedFiles: 0, failedTests: 0, errors: 0 };
-  for (const line of lines) {
+  const { lo, hi } = runRange(lines);
+  const files = hi < lines.length ? FILES_LINE.exec(lines[hi]) : null;
+  const summary: Pick<RunSummary, 'failedFiles' | 'failedTests' | 'errors'> & { found: boolean } = {
+    found: files !== null, failedFiles: files ? Number(/(\d+) failed/.exec(files[1])?.[1] ?? 0) : 0, failedTests: 0, errors: 0,
+  };
+  for (let i = lo + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (i > hi) {
+      const tests = /^\s*Tests\s+(.*)\(\d+\)\s*$/.exec(line);
+      if (tests) { summary.failedTests = Number(/(\d+) failed/.exec(tests[1])?.[1] ?? 0); continue; }
+      const errs = /^\s*Errors\s+(\d+) errors?\b/.exec(line);
+      if (errs) { summary.errors = Number(errs[1]); continue; }
+      continue;
+    }
+    if (i === hi) { block = null; continue; }
     const head = BLOCK.exec(line);
     if (head && !/\[\d+\/\d+\]/.test(line)) {
       block = head[1];
       if (block === 'Failed Suites') failedSuites = true;
       continue;
-    }
-    const files = /^\s*Test Files\s+(.*)\((\d+)\)\s*$/.exec(line);
-    if (files) {
-      block = null;
-      summary = { ...summary, found: true, failedFiles: Number(/(\d+) failed/.exec(files[1])?.[1] ?? 0) };
-      continue;
-    }
-    if (summary.found) {
-      const tests = /^\s*Tests\s+(.*)\(\d+\)\s*$/.exec(line);
-      if (tests) { summary.failedTests = Number(/(\d+) failed/.exec(tests[1])?.[1] ?? 0); continue; }
-      const errs = /^\s*Errors\s+(\d+) errors?\b/.exec(line);
-      if (errs) { summary.errors = Number(errs[1]); continue; }
     }
     if (block === 'Failed Tests' || block === 'Failed Suites') {
       // vitest's badge: " FAIL  <file> > test" or " FAIL  <file> [ <file> ]".
@@ -608,10 +630,12 @@ function baseRedDir(toplevel: string): string | null {
 export function parseVitestFailedIds(raw: string): BaseRedTest[] {
   const out = new Map<string, BaseRedTest>();
   let block: string | null = null;
-  for (const line of stripAnsi(raw).split(/\r?\n/)) {
+  const lines = stripAnsi(raw).split(/\r?\n/);
+  const { lo, hi } = runRange(lines);
+  for (let i = lo + 1; i < hi; i++) {
+    const line = lines[i];
     const head = BLOCK.exec(line);
     if (head && !/\[\d+\/\d+\]/.test(line)) { block = head[1]; continue; }
-    if (/^\s*Test Files\s/.test(line)) { block = null; continue; }
     if (block !== 'Failed Tests' && block !== 'Failed Suites') continue;
     const m = /^ FAIL {2}(\S+)(.*)$/.exec(line);
     if (!m) continue;
