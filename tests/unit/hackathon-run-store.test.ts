@@ -5,7 +5,7 @@
  * holds a dollar amount; the chat's hackathon card names only the run.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -91,6 +91,28 @@ describe('frames', () => {
     expect(f.screen?.command).not.toContain('sk-ant-api03');
     expect(f.screen?.command).toContain('[gizli]');
     expect(f.members.map((m) => m.role)).toEqual(['kaptan', 'yapici', 'elestirmen']);
+  });
+  it('counts the files a team changed across every round, not only the newest turn', () => {
+    const r = seed('running');
+    const dir = join(runDir(ctx, r.id), 'teams', 'a');
+    mkdirSync(dir, { recursive: true });
+    const r1 = [
+      { type: 'system', subtype: 'init' },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'ag', name: 'Agent', input: { subagent_type: 'yapici' } }] } },
+      { type: 'assistant', parent_tool_use_id: 'ag', message: { content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: '/repo/index.html', new_string: '<h1>Deneme</h1>' } }] } },
+      { type: 'assistant', parent_tool_use_id: 'ag', message: { content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/repo/style.css' } }] } },
+      { type: 'result' },
+    ];
+    writeFileSync(join(dir, 'r1.jsonl'), r1.map((l) => JSON.stringify(l)).join('\n'));
+    // Round 2 has begun and made no move yet (only its init line).
+    writeFileSync(join(dir, 'r2.jsonl'), JSON.stringify({ type: 'system', subtype: 'init' }));
+    const later = new Date(Date.now() + 5_000);
+    utimesSync(join(dir, 'r2.jsonl'), later, later);
+    const f = runFrames(ctx, r.id, design, () => '/repo').find((x) => x.team === 'a')!;
+    expect(f.edited).toEqual(['index.html']);
+    expect(f.reads).toBe(1);
+    expect(f.screen?.path).toBe('style.css');
+    expect(f.ended).toBe(false);
   });
   it('reads a sub-agent tool call as the Yapıcı and a result as the turn end', () => {
     const raw = [

@@ -41,20 +41,25 @@ export function readTail(path: string, bytes = TAIL_BYTES): string {
   }
 }
 
-/** The newest transcript of a team (by mtime) and its mtime. */
-export function latestTranscript(contextRoot: string, runId: string, team: string): { path: string; mtime: number } | null {
+/** A team's transcripts, oldest first (by mtime): one per turn (r1, r2, …, sunum). */
+export function teamTranscripts(contextRoot: string, runId: string, team: string): { path: string; mtime: number }[] {
   const dir = join(runDir(contextRoot, runId), 'teams', team);
-  let best: { path: string; mtime: number } | null = null;
   let names: string[];
-  try { names = readdirSync(dir); } catch { return null; }
+  try { names = readdirSync(dir); } catch { return []; }
+  const out: { path: string; mtime: number }[] = [];
   for (const n of names) {
     if (!n.endsWith('.jsonl')) continue;
     try {
       const st = lstatSync(join(dir, n));
-      if (st.isFile() && (!best || st.mtimeMs > best.mtime)) best = { path: join(dir, n), mtime: st.mtimeMs };
+      if (st.isFile()) out.push({ path: join(dir, n), mtime: st.mtimeMs });
     } catch { /* gone */ }
   }
-  return best;
+  return out.sort((a, b) => a.mtime - b.mtime);
+}
+
+/** The newest transcript of a team (by mtime) and its mtime. */
+export function latestTranscript(contextRoot: string, runId: string, team: string): { path: string; mtime: number } | null {
+  return teamTranscripts(contextRoot, runId, team).pop() ?? null;
 }
 
 interface ToolEvent { id?: string; role: MemberRole; name: string; input: Record<string, unknown>; result?: string; at: number }
@@ -140,14 +145,23 @@ function screenOf(ev: ToolEvent, repo: string): Screen {
   }
 }
 
-/** One team's frame now. */
+/**
+ * One team's frame now. Live state and the screen come from the newest turn; the files it edited
+ * and the sources it read count the whole run (every turn's transcript), so a new round does not
+ * read as "0 files changed" for a team that changed files in an earlier one. A turn that has made
+ * no move yet shows the team's last move from an earlier turn.
+ */
 export function teamFrame(contextRoot: string, runId: string, team: TeamDesign, repo: string, now: number = Date.now()): Frame {
-  const t = latestTranscript(contextRoot, runId, team.id);
+  const all = teamTranscripts(contextRoot, runId, team.id);
+  const t = all[all.length - 1];
   const roles: MemberRole[] = team.inner === 'trio' ? ['kaptan', 'yapici', 'elestirmen'] : ['kaptan'];
   if (!t) return { team: team.id, members: roles.map((role) => ({ role, state: 'idle' })), screen: null, updatedAt: null, edited: [], reads: 0, ended: false };
-  const { events, ended } = parseEvents(readTail(t.path));
+  const turns = all.map((x) => parseEvents(readTail(x.path)));
+  const { events, ended } = turns[turns.length - 1]!;
+  const everything = turns.flatMap((x) => x.events);
   const live = !ended && now - t.mtime < LIVE_MS;
   const last = events[events.length - 1];
+  const shown = last ?? everything[everything.length - 1];
   const openAgent = [...events].reverse().find((e) => (e.name === 'Agent' || e.name === 'Task') && e.result === undefined);
   const members = roles.map((role) => {
     let state: MemberState = 'idle';
@@ -157,14 +171,16 @@ export function teamFrame(contextRoot: string, runId: string, team: TeamDesign, 
     }
     return { role, state };
   });
-  const edited = [...new Set(events.filter((e) => ['Edit', 'Write', 'MultiEdit'].includes(e.name)).map((e) => screenOf(e, repo).path!).filter(Boolean))].slice(-30);
+  const editedAll = everything.filter((e) => ['Edit', 'Write', 'MultiEdit'].includes(e.name)).map((e) => screenOf(e, repo).path!).filter(Boolean);
+  // Newest last, each path once (at its latest edit).
+  const edited = editedAll.filter((p, i) => editedAll.lastIndexOf(p) === i).slice(-30);
   return {
     team: team.id,
     members,
-    screen: last ? screenOf(last, repo) : null,
+    screen: shown ? screenOf(shown, repo) : null,
     updatedAt: new Date(t.mtime).toISOString(),
     edited,
-    reads: events.filter((e) => ['Read', 'Grep', 'Glob'].includes(e.name)).length,
+    reads: everything.filter((e) => ['Read', 'Grep', 'Glob'].includes(e.name)).length,
     ended,
   };
 }
