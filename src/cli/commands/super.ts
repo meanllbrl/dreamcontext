@@ -371,7 +371,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--origin <ref>', ORIGIN_HELP)
     .action((child: string, text: string, o: { origin?: string }) => run('send', { child, text, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
-  const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread');
+  const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread; a member tells the Super Agent something (team tell)');
   team.command('ask <member> <job>')
     .description('Give an AI Team member a job: it lands in the member\'s own thread and starts now in its own session on its own approval, beside whatever else the member is doing, on its own model unless this job names one. A member is a project agent or, when no project member holds its name, one of this machine\'s global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A member takes any number of jobs at once; only the general limit of live jobs (say_at_limit) and the heavy-step queue bound them')
     .option('--brief <line>', 'The one-line reminder its card shows (default: the job\'s first line)')
@@ -390,6 +390,11 @@ export function registerSuperCommand(program: Command): void {
   team.command('done <item> <result>')
     .description('A member\'s Super only: close a request the Super Agent gave you, with its result in a few lines. The Super Agent hears it as one event. Refused: `already_done` (it is closed), `unknown_item`, `member_only` (the project\'s Super Agent has no requests)')
     .action((item: string, result: string) => run('team-done', { item, result }));
+
+  team.command('tell <message>')
+    .description('An AI Team member only (its own chat, which is its Super): tell the project\'s Super Agent something on your own, whether or not it gave you a job (the owner says "tell the Super"). It hears it as one event (event=member-note), as your words, never the owner\'s, and acts on it or tells the owner when it needs him; nothing goes to Telegram by itself. Refused: `member_only` (403, from the project\'s Super Agent), `super_off` (409, it is not running: tell the owner yourself), `unknown_item` (404, a --for that is not its request to you)')
+    .option('--for <item>', 'One of the Super Agent\'s requests to you (`super state`), when the message is about that job')
+    .action((message: string, o: { for?: string }) => run('team-tell', { text: message, ...(o.for !== undefined ? { for: o.for } : {}) }));
 
   team.command('answer <item> <text>')
     .description('The project\'s Super Agent only: answer a member\'s question about a job you gave it (an item in your queue). The answer reaches the member\'s Super as an event, never as the owner\'s words. When you cannot answer it, ask the owner with your own `super ask`. Refused from a member\'s Super (`main_only`)')

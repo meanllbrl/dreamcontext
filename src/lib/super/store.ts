@@ -397,8 +397,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const routine = isRoutine && typeof q.routine === 'string' && okMember(q.routine) ? q.routine : undefined;
     const fact = isRoutine && typeof q.fact === 'string' && ROUTINE_FACT_RE.test(q.fact) ? q.fact : undefined;
     if (isRoutine && (!routine || !fact)) continue;
-    const member = (q.kind === 'approval' || q.kind === 'automation' || isMirror || isRoutine) && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
-    if (q.kind === 'approval' && !member) continue;
+    // A `member-note` (`super team tell`) names the member that wrote it and carries its text.
+    const isNote = q.kind === 'member-note';
+    const member = (q.kind === 'approval' || q.kind === 'automation' || isMirror || isRoutine || isNote) && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
+    if ((q.kind === 'approval' || isNote) && !member) continue;
     const mirrorOf = isMirror && oneOf(MEMBER_ITEM_OF, q.of) ? q.of : undefined;
     if (isMirror && (!member || !mirrorOf || typeof q.answers !== 'string' || !QUEUE_ID_RE.test(q.answers))) continue;
     // An automation item exists only for its automation (or member) and a decision the owner made.
@@ -448,8 +450,8 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const isReply = q.kind === 'reply';
     // A team event about a member Super's job (its result, a note, its question to main) carries text too.
     const teamText = !!team && (q.kind === 'done' || q.kind === 'question');
-    const text = isRequest || isReply || teamText ? cap(q.text, MAX_REQUEST_TEXT) : undefined;
-    if ((isRequest || isReply) && !text) continue;
+    const text = isRequest || isReply || teamText || isNote ? cap(q.text, MAX_REQUEST_TEXT) : undefined;
+    if ((isRequest || isReply || isNote) && !text) continue;
     const answers = (isReply || isMirror || (q.kind === 'question' && !!team)) && typeof q.answers === 'string' && QUEUE_ID_RE.test(q.answers) ? q.answers : undefined;
     const result = isRequest ? cap(q.result, MAX_REQUEST_RESULT) : undefined;
     const acceptedAt = isRequest ? finite(q.acceptedAt) : undefined;
@@ -495,6 +497,9 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
       ...(read.length ? { read } : {}),
       ...(text ? { text } : {}),
+      ...(isNote && q.ownerAsked === true ? { ownerAsked: true as const } : {}),
+      ...(isNote && typeof q.forRequest === 'string' && QUEUE_ID_RE.test(q.forRequest) ? { forRequest: q.forRequest } : {}),
+      ...(isNote && typeof q.origin === 'string' && MSG_REF_RE.test(q.origin) ? { origin: q.origin } : {}),
       ...(isRequest && typeof q.model === 'string' && sanitizeModel(q.model) ? { model: q.model } : {}),
       ...(isRequest && typeof q.effort === 'string' && (JOB_EFFORTS as readonly string[]).includes(q.effort) ? { effort: q.effort } : {}),
       ...(isRequest && q.light === true ? { light: true as const } : {}),
