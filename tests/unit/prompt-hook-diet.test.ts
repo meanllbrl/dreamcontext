@@ -29,6 +29,12 @@ describe('recallQuery: the owner words, nothing a machine wrote (MM-1)', () => {
     expect(recallQuery('[super events] child b1 finished: green, 3 commits')).toBeNull();
     expect(recallQuery('Handoff: continue the checkout work from the task')).toBeNull();
   });
+  it('a sub-agent or teammate message is not the owner speaking', () => {
+    const report = 'Another Claude session sent a message:\n<agent-message from="a1b2c3">\n[Subagent hand-back] The report follows:\n  REVIEW: the checkout flow in src/lib/pay.ts has two Major findings, retry loop and refund race\n</agent-message>\n\nThat "other Claude session" is an agent working inside this same session, so this was not typed by your user.';
+    expect(recallQuery(report)).toBeNull();
+    expect(recallQuery('<agent-message from="t9">still running the payment tests</agent-message>')).toBeNull();
+    expect(recallQuery(report + '\nwhy is the checkout slow?')).toBe('why is the checkout slow?');
+  });
 
   it('a child kickoff keeps the job, drops the dev-server line and the brief path', () => {
     const p = 'If you start a dev server, pin its url (a `dream-view` pin) so the owner sees the site. Your job is B1. Read and follow /Users/me/brain/_dream_context/tmp/super-prompts/gece/brief.md';
