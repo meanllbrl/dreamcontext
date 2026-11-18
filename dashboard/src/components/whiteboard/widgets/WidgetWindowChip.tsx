@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { isAnnouncedPluginRefusal } from '../../../api/client';
 import { useI18n } from '../../../context/I18nContext';
 import { useApplyTweaks, useLabInsight } from '../../../hooks/useLab';
 import { chartEntry } from '../../lab/chartRegistry';
@@ -38,7 +39,8 @@ export function WidgetWindowChip({ slug }: { slug: string }) {
       onSuccess: ({ synced, error }) => host.toast(synced
         ? tx('whiteboard.window.applied', 'Date range updated: {title}').replace('{title}', title)
         : tx('whiteboard.window.syncFailed', 'Saved the range, but {title} did not refresh: {error}').replace('{title}', title).replace('{error}', error ?? '')),
-      onError: (err) => host.toast(tx('whiteboard.window.failed', 'Could not change the range of {title}: {error}')
+      // A refused write for an uninstalled plugin already got the project's notice (Mağaza D1 C4).
+      onError: (err) => isAnnouncedPluginRefusal(err) ? undefined : host.toast(tx('whiteboard.window.failed', 'Could not change the range of {title}: {error}')
         .replace('{title}', title).replace('{error}', (err as Error).message)),
     });
   };

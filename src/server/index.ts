@@ -13,7 +13,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { handleCors, isCrossSiteWrite, isOwnerCardWrite, refuseForeignFrame, sendError, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
+import { handleCors, isCrossSiteWrite, isOwnerCardWrite, refuseForeignFrame, sendError, sendJson, macPhoneGate, macUpgradeRefusal, rejectMacUpgrade } from './middleware.js';
 import { carriesCloudflareHeaders, isPhoneSocket, macExposedVaults, markPhoneSocket } from './phone-origin.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
@@ -60,6 +60,8 @@ import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleK
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleReleasesDelete, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
+import { handlePluginsList, handlePluginInstall, handlePluginRemove, handlePluginPins } from './routes/plugins.js';
+import { apiRefusal } from '../lib/plugins/gate.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
 import { handleVaultsGet } from './routes/vaults.js';
 import {
@@ -1151,6 +1153,13 @@ export function buildRouter(): Router {
   router.post('/api/learning/enable', handleLearningEnable);
   router.post('/api/learning/disable', handleLearningDisable);
 
+  // Mağaza D1: installable plugins (the installed set is team data in overrides/plugins/;
+  // pins are this Mac's own, in state/.brain-local.json).
+  router.get('/api/plugins', handlePluginsList);
+  router.post('/api/plugins/:id/install', handlePluginInstall);
+  router.post('/api/plugins/:id/remove', handlePluginRemove);
+  router.put('/api/plugins/pins', handlePluginPins);
+
   // Tasks-board preferences (saved views) — split persistence:
   //   shared → overrides/board.json (version-controlled, "save for all")
   //   local  → state/board.local.json (git-ignored, "save for yourself")
@@ -1400,6 +1409,19 @@ export function makeRequestHandler(ctx: RequestHandlerCtx): (req: IncomingMessag
             return;
           }
           const effRoot = vaultGate.root;
+          // Mağaza D1 (C4): a write a plugin owns is refused while that plugin is not installed
+          // in this vault. GET is never gated, so app reads, page routes and embeds pass.
+          if (effRoot && match.method !== 'GET') {
+            const refused = apiRefusal(match.method, match.path, effRoot);
+            if (refused) {
+              sendJson(res, 409, {
+                error: 'plugin_not_installed',
+                plugin: refused.id,
+                message: `The ${refused.label} plugin is not installed in this project.`,
+              });
+              return;
+            }
+          }
           // Vault-agnostic routes ignore the context root; cast keeps the
           // handler signature satisfied while the null is harmless there.
           await match.handler(req, res, match.params, effRoot as string);

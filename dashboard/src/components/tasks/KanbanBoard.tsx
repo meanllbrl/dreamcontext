@@ -13,7 +13,7 @@ import { useBoardState } from '../../hooks/useBoard';
 import {
   type SaveScope,
   PRIO_ORDER,
-  activeFilterCount, dimGroups, dueInfo, filterTasks, levelLabel, nestChildren, prioColor, sortTasks, taskAssignees,
+  activeFilterCount, dimGroups, effectiveFilters, dueInfo, filterTasks, levelLabel, nestChildren, prioColor, sortTasks, taskAssignees,
 } from './boardModel';
 import { BoardViewTabs } from './BoardViewTabs';
 import { BoardToolbar, type MenuKey } from './BoardToolbar';
@@ -155,9 +155,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 
   const viewCounts = useMemo(() => {
     const m: Record<string, number> = {};
-    s.views.forEach((v) => { m[v.id] = filterTasks(tasks, v.config.filters, v.config.search, versionMeta, sm).length; });
+    s.views.forEach((v) => { m[v.id] = filterTasks(tasks, effectiveFilters(v.config.filters, s.roadmapShown), v.config.search, versionMeta, sm).length; });
     return m;
-  }, [s.views, tasks, versionMeta, sm]);
+  }, [s.views, tasks, versionMeta, sm, s.roadmapShown]);
 
   // ── overdue chip (the tab row's right side; replaces the red Attention banner) ──────
   // Live = not terminal by KIND (a cancelled-kind task is never overdue).

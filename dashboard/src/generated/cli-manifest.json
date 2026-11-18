@@ -3523,6 +3523,31 @@
       ]
     },
     {
+      "path": "plugins",
+      "desc": "Installable features (Mağaza): list, install, remove. The installed set is shared with the team.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "plugins install",
+      "desc": "Install a plugin for this project and its team",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "plugins list",
+      "desc": "Every plugin: installed or not, and why",
+      "args": []
+    },
+    {
+      "path": "plugins remove",
+      "desc": "Remove a plugin (hides it; its data stays and stays readable)",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
       "path": "recall",
       "desc": "Control memory recall mode (haiku / raw / hybrid / off)",
       "args": [],
@@ -5107,12 +5132,12 @@
     },
     {
       "path": "theses disable",
-      "desc": "Turn the proactive learning layer off (learning.enabled = false)",
+      "desc": "Remove the Hypotheses plugin (same as `plugins remove hypotheses`; theses stay)",
       "args": []
     },
     {
       "path": "theses enable",
-      "desc": "Turn the proactive learning layer on (learning.enabled = true)",
+      "desc": "Install the Hypotheses plugin (same as `plugins install hypotheses`)",
       "args": []
     },
     {

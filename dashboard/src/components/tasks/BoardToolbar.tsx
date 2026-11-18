@@ -7,8 +7,8 @@ import type { BoardState } from '../../hooks/useBoard';
 import { VersionsPopover } from './VersionsPopover';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import {
-  type BoardFilters, type CardProps, type Dim, type DueFilter, type SortKey,
-  PRIO_ORDER, SORT_LABEL, URG_ORDER,
+  type BoardFilters, type CardProps, type Dim, type DueFilter,
+  PRIO_ORDER, SORT_LABEL, URG_ORDER, sortKeysFor,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
   dimGet, levelLabel, prioColor, taskAgentKeys, taskAssignees, taskFeature, taskVersion, urgColor,
   activeFilterCount,
@@ -81,6 +81,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const sm = useStatusModel();
   const { data: featureOptions = [] } = useFeatureOptions();
   const { data: agents } = useAgents();
+  // RICE belongs to the Roadmap plugin (Mağaza D1): hidden only when known to be not installed.
+  const roadmapShown = s.roadmapShown;
   const [filterPane, setFilterPane] = useState<keyof BoardFilters | 'sort' | null>(null);
   // The Versions & Sprints popover shows the filter list, or (after "Manage versions") the manager.
   const [managingVersions, setManagingVersions] = useState(false);
@@ -250,7 +252,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const propsBody = (
     <>
       <div style={{ ...sectionLabel, padding: '6px 8px 8px' }}>Shown on cards</div>
-      {PROP_DEFS.map(([k, l]) => (
+      {PROP_DEFS.filter(([k]) => roadmapShown || k !== 'rice').map(([k, l]) => (
         <button key={k} type="button" className="bd-btnreset bd-row" role="menuitemcheckbox" aria-checked={s.cardProps[k]} onClick={() => s.toggleCardProp(k)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 7, width: '100%', fontSize: 13, color: 'var(--color-text-secondary)' }}>
           <span style={checkBox(s.cardProps[k])}>{s.cardProps[k] ? '✓' : ''}</span>
           <span style={{ flex: 1 }}>{l}</span>
@@ -263,7 +265,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
 
   const sortPane = (
     <>
-      {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+      {sortKeysFor(roadmapShown).map((k) => (
         <button key={k} type="button" className="bd-btnreset bd-row" role="menuitemradio" aria-checked={s.sortBy === k} onClick={() => s.setSort(k)} style={{ ...optRow, width: '100%' }}>
           <span style={radioBox(s.sortBy === k)}>{s.sortBy === k ? '●' : ''}</span>
           <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{SORT_LABEL[k]}</span>
@@ -350,7 +352,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
                 </div>
                 {FIELD_DEFS.map((fd) => { const sum = fieldSummary(fd.key); return paneRow(fd.label, sum.text, sum.active, () => setFilterPane(fd.key), fd.key); })}
                 {paneRow('Due date', f.due === 'all' ? 'Any' : (DUE_OPTS.find((o) => o.v === f.due)?.l ?? 'Any'), f.due !== 'all', () => setFilterPane('due'))}
-                {paneRow('Min RICE', f.minRice > 0 ? `≥ ${f.minRice}` : 'Any', f.minRice > 0, () => setFilterPane('minRice'))}
+                {roadmapShown && paneRow('Min RICE', f.minRice > 0 ? `≥ ${f.minRice}` : 'Any', f.minRice > 0, () => setFilterPane('minRice'))}
                 <div style={{ height: 1, background: 'var(--color-border)', margin: '5px 4px' }} />
                 {paneRow('Sort', SORT_LABEL[s.sortBy], s.sortBy !== 'manual', () => setFilterPane('sort'))}
               </div>

@@ -1,10 +1,10 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { today } from '../../lib/id.js';
-import { readSetupConfig, updateSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
+import { installPlugin, isPluginInstalled, removePlugin, PluginEntryConflictError } from '../../lib/plugins/store.js';
 import {
   thesesDir,
   listTheses,
@@ -40,10 +40,10 @@ import {
  * thin wrappers over the same store the CLI uses. ThesisError from a "not
  * found" message → 404, any other ThesisError → 400 (client-fixable), else 500.
  *
- * Read routes (list/show) work REGARDLESS of `learning.enabled` — the flag is
- * surfaced (`enabled`) so the dashboard can render the off-state, not used to
- * block reads/writes here. This mirrors the CLI's "still callable, just
- * hinted" disabled-layer behavior (see setup-config.ts `isLearningEnabled`).
+ * Read routes (list/show) work whether or not the Hypotheses plugin is installed (`enabled`
+ * says which). Writes are refused before they reach these handlers by the server's plugin
+ * gate (409 `plugin_not_installed`, Mağaza D1 C4); `/api/learning/enable|disable` are the
+ * plugin's switch and always pass.
  */
 
 export interface ThesisView extends Omit<ThesisManifest, 'path' | 'body'> {
@@ -128,9 +128,8 @@ export async function handleThesesList(
   contextRoot: string,
 ): Promise<void> {
   try {
-    const config = readSetupConfig(dirname(contextRoot));
     const theses = listTheses(contextRoot).map(toThesisView);
-    sendJson(res, 200, { enabled: isLearningEnabled(config), theses, candidates: readCandidates(contextRoot) });
+    sendJson(res, 200, { enabled: isPluginInstalled(contextRoot, 'hypotheses'), theses, candidates: readCandidates(contextRoot) });
   } catch (err) {
     console.error('[theses] list failed:', err);
     sendError(res, 500, 'list_failed', 'Failed to read theses.');
@@ -513,7 +512,7 @@ export async function handleThesesPromote(
   }
 }
 
-/** POST /api/learning/enable — flips `learning.enabled` on (the one-command switch). */
+/** POST /api/learning/enable — installs the Hypotheses plugin (its one switch, Mağaza D1). */
 export async function handleLearningEnable(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -521,15 +520,19 @@ export async function handleLearningEnable(
   contextRoot: string,
 ): Promise<void> {
   try {
-    const config = updateSetupConfig(dirname(contextRoot), { learning: { enabled: true } });
-    sendJson(res, 200, { enabled: isLearningEnabled(config) });
+    installPlugin(contextRoot, 'hypotheses');
+    sendJson(res, 200, { enabled: isPluginInstalled(contextRoot, 'hypotheses') });
   } catch (err) {
+    if (err instanceof PluginEntryConflictError) {
+      sendJson(res, 409, { error: 'plugin_entry_conflict', plugin: err.plugin, file: err.file, message: err.message });
+      return;
+    }
     console.error('[theses] learning enable failed:', err);
     sendError(res, 500, 'enable_failed', 'Failed to enable the learning layer.');
   }
 }
 
-/** POST /api/learning/disable — flips `learning.enabled` off. */
+/** POST /api/learning/disable — removes the Hypotheses plugin (theses stay). */
 export async function handleLearningDisable(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -537,9 +540,13 @@ export async function handleLearningDisable(
   contextRoot: string,
 ): Promise<void> {
   try {
-    const config = updateSetupConfig(dirname(contextRoot), { learning: { enabled: false } });
-    sendJson(res, 200, { enabled: isLearningEnabled(config) });
+    removePlugin(contextRoot, 'hypotheses');
+    sendJson(res, 200, { enabled: isPluginInstalled(contextRoot, 'hypotheses') });
   } catch (err) {
+    if (err instanceof PluginEntryConflictError) {
+      sendJson(res, 409, { error: 'plugin_entry_conflict', plugin: err.plugin, file: err.file, message: err.message });
+      return;
+    }
     console.error('[theses] learning disable failed:', err);
     sendError(res, 500, 'disable_failed', 'Failed to disable the learning layer.');
   }

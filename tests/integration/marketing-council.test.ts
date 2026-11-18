@@ -32,6 +32,10 @@ describe('mk council (integration)', () => {
     project = makeProject();
     // Bootstrap a project so council create works
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', project);
+    // A new project has only core (Mağaza D1): `mk council` is a Marketing write and creates its
+    // debate through `council create`, so it needs both plugins.
+    run('plugins install marketing', project);
+    run('plugins install council', project);
   });
 
   afterEach(() => {

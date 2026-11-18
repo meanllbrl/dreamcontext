@@ -1,6 +1,6 @@
 # Proactive learning layer — theses (Hypotheses)
 
-Opt-in subsystem (`learning.enabled`, default OFF — see [Disable switch](#disable-switch)). A **thesis** is a falsifiable claim the brain is actively trying to validate or invalidate across sleep cycles: an observation forms a hunch, predictions get pre-registered, evidence accumulates cycle over cycle, and confidence is DERIVED from that evidence by arithmetic — never asserted by an agent. The dashboard label is **"Hypotheses"**; code/CLI/storage say **theses** throughout.
+A plugin (Mağaza; not installed in a new project — see [Disable switch](#disable-switch)). A **thesis** is a falsifiable claim the brain is actively trying to validate or invalidate across sleep cycles: an observation forms a hunch, predictions get pre-registered, evidence accumulates cycle over cycle, and confidence is DERIVED from that evidence by arithmetic — never asserted by an agent. The dashboard label is **"Hypotheses"**; code/CLI/storage say **theses** throughout.
 
 ---
 
@@ -148,7 +148,7 @@ The dashboard's create/review modal doubles as the meeting-note candidate review
 
 One conditional sub-agent (`agents/sleep-learn.md`) re-tests open theses each cycle it's dispatched. Full contract lives in that file and in [sleep.md](sleep.md); summary:
 
-- Dispatched only when `learning.enabled` AND (fresh evidence exists OR the minimum 2-sleep wake cadence is due) — over-fires cheaply otherwise (checks `theses list`, finds nothing due, no-ops).
+- Dispatched only when the Hypotheses plugin is installed AND (fresh evidence exists OR the minimum 2-sleep wake cadence is due) — over-fires cheaply otherwise (checks `theses list`, finds nothing due, no-ops).
 - Owns `_dream_context/theses/*.md` exclusively, via the `theses` CLI — never hand-edits, never touches knowledge/tasks/insights/objectives/config.
 - Appends an understanding-changelog entry to every thesis it touches (including "still watching, nothing new").
 - Re-tests against Lab insight caches, roadmap/objective movement, completed tasks, and the changelog since the epoch, appending discrete evidence events.
@@ -160,22 +160,23 @@ One conditional sub-agent (`agents/sleep-learn.md`) re-tests open theses each cy
 
 ## Disable switch
 
-Single config flag: `learning.enabled` in `_dream_context/state/.config.json` (via `SetupConfig.learning`). **Absent = OFF** (default) — nothing about this subsystem is on until explicitly enabled.
+Hypotheses is a **plugin** (Mağaza): `overrides/plugins/hypotheses.json` holds the team's choice; with no entry it is installed iff `learning.enabled` is true in `_dream_context/state/.config.json` (absent = not installed). Thesis files alone do not install it.
 
 ```bash
-dreamcontext theses enable    # learning.enabled = true
-dreamcontext theses disable   # learning.enabled = false
+dreamcontext plugins install hypotheses   # = theses enable (also writes learning.enabled = true as a mirror)
+dreamcontext plugins remove hypotheses    # = theses disable; theses stay on disk and stay readable
 ```
 
-The switch is user-flippable from three places: the CLI (`theses enable|disable`), the dashboard **Settings → Memory → Learning layer** toggle, and the Enable CTA on the off-state Hypotheses page.
+The switch is user-flippable from the CLI (`plugins install|remove hypotheses`, `theses enable|disable`), the dashboard's Mağaza (Kur) and Launchpad (Kaldır), and Settings → Memory → Learning layer.
 
-Gates, hard, on this flag:
-- `sleep-learn` dispatch (sleep.md skips it entirely when off — no speculative dispatch).
-- The SessionStart snapshot's theses section (omitted, not just demoted, when off).
-- The `hypotheses` page's CONTENT — the board and everything on it. The **nav item itself is not gated**: it stays in the rail for every project, dimmed with an `Off` tag, and the page renders a "the layer is off" explainer with an Enable CTA. (It used to be hidden entirely, which made the layer undiscoverable by exactly the people who had never enabled it — the page carrying the switch was reachable only once the switch was already on.)
-- **Agent behavior (awake capture): when `learning.enabled` is off, do NOT propose, extract, or capture theses** — no offer-and-confirm prompts, no "anything worth testing?" suggestions, no candidate staging from source material. If the user explicitly asks for a thesis while the layer is off, tell them the layer is disabled and offer `dreamcontext theses enable` first; never work around the switch.
+Not installed, these stop:
+- `sleep-learn` dispatch (the sleep packet's `learning` fact; no speculative dispatch).
+- The SessionStart snapshot's theses section (omitted, not demoted).
+- The `hypotheses` page: the rail drops it and any link to it opens its Mağaza page with Kur.
+- Every theses write: CLI verbs other than `list`, `show`, `candidates`, `enable`, `disable` exit 3 `plugin_not_installed`; API writes answer 409.
+- **Agent behavior (awake capture): do NOT propose, extract, or capture theses** — no offer-and-confirm prompts, no candidate staging. If the user asks for a thesis, say the Hypotheses plugin is not installed and ask "Hipotezler kurulu değil, kurayım mı?"; on yes run `dreamcontext plugins install hypotheses`. Never work around it.
 
-**Not** gated: the `theses` CLI verbs themselves stay callable when off (a dim `⚗ Learning layer is off — run 'dreamcontext theses enable' to turn it on.` hint prints, then the command proceeds) — this keeps CLI scripting and doctor checks simple and consistent rather than special-casing every verb. Recall indexing is likewise ungated (naturally a no-op when `theses/` is empty).
+**Not** gated: reads (`theses list|show|candidates`, `GET /api/theses`) and recall indexing.
 
 ---
 
@@ -195,7 +196,7 @@ See [cli-reference.md](cli-reference.md#theses-hypotheses) for the full command/
 | `theses block` / `unblock` | Mark/clear instrumentation-blocked. |
 | `theses promote <slug> --knowledge <path>` | Record that a validated/invalidated thesis was promoted (the write to `knowledge/` happens separately, by a human/agent decision). |
 | `theses retire` / `restore` | Retire a thesis (pointer or anti-knowledge) / bring a retired one back to `draft`. |
-| `theses enable` / `disable` | The one-command switch. |
+| `theses enable` / `disable` | Install / remove the Hypotheses plugin (same as `plugins install|remove hypotheses`). |
 | `theses candidates <file.json>` | Stage meeting-note candidate claims for the dashboard review flow. |
 
 ---
@@ -222,5 +223,5 @@ SKILL.md keeps one line per capability and one home per rule. This is the fuller
 
 ### Capability summary and routing
 
-- **Proactive learning (Hypotheses)**: Falsifiable **theses** validated/invalidated across sleep cycles: derived confidence from an evidence ledger, pre-registered predictions, understanding changelog, relations to insights/objectives/tasks, dashboard "Hypotheses" board. Opt-in — off until `dreamcontext theses enable`
-- **Thesis** — `theses/<slug>.md`. Triggers: "I have a thesis: X improves Y", "track this hypothesis", "anything worth testing in these notes?". A falsifiable OPTIMIZATION claim validated/invalidated across cycles; confidence is DERIVED from an evidence ledger, never asserted. Create with: `dreamcontext theses create "<claim>"` (quality bar FIRST — "if validated, what do we change and which revenue-bearing outcome improves?"; an observation like "step X loses 84%" is evidence, never a thesis; then offer-and-confirm, recall-dedup, default draft; layer off (`learning.enabled`) → offer `theses enable` first, never capture silently → [learning.md](references/learning.md))
+- **Proactive learning (Hypotheses)**: Falsifiable **theses** validated/invalidated across sleep cycles: derived confidence from an evidence ledger, pre-registered predictions, understanding changelog, relations to insights/objectives/tasks, dashboard "Hypotheses" board. A plugin: `dreamcontext plugins install hypotheses`
+- **Thesis** — `theses/<slug>.md`. Triggers: "I have a thesis: X improves Y", "track this hypothesis", "anything worth testing in these notes?". A falsifiable OPTIMIZATION claim validated/invalidated across cycles; confidence is DERIVED from an evidence ledger, never asserted. Create with: `dreamcontext theses create "<claim>"` (quality bar FIRST — "if validated, what do we change and which revenue-bearing outcome improves?"; an observation like "step X loses 84%" is evidence, never a thesis; then offer-and-confirm, recall-dedup, default draft; Hypotheses plugin not installed → ask, then `plugins install hypotheses`, never capture silently → [learning.md](references/learning.md))

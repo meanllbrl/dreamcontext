@@ -35,7 +35,8 @@ import { parseDatasetBundle, DATASET_HISTORY_MAX, DATASET_HISTORY_MAX_BYTES } fr
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { inspectJsonArray } from '../../lib/json-file.js';
-import { readSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
+import { isPluginInstalled, pluginStatuses, unknownEntryFiles } from '../../lib/plugins/store.js';
 import { hasInvalidSleepThresholds } from '../../lib/sleep-consolidation.js';
 import { isKnownSleepModel } from '../../lib/sleep-settings.js';
 import { hasPeopleLayout, listPeople, personFilePath } from '../../lib/people-store.js';
@@ -864,6 +865,29 @@ export function checkRecallTier(root: string, home?: string): CheckResult[] {
   }];
 }
 
+/**
+ * Mağaza D1: an owner entry under `overrides/plugins/` that holds a git conflict or cannot be
+ * read is an error naming the file (writes to that plugin are refused until it is resolved).
+ */
+export function checkPlugins(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  try {
+    for (const s of pluginStatuses(root)) {
+      if (s.conflict) {
+        results.push({ name: 'Plugins', status: 'error', message: `${s.id}: çakışma var · ${s.file} — resolve the git conflict: edit it to one side and commit` });
+      } else if (s.error) {
+        results.push({ name: 'Plugins', status: 'error', message: `${s.id}: ${s.file} is unreadable (${s.error}) — fix or delete it, then commit` });
+      }
+    }
+    for (const file of unknownEntryFiles(root)) {
+      results.push({ name: 'Plugins', status: 'info', message: `${file}: a plugin this CLI does not know (a newer CLI's); left alone` });
+    }
+  } catch {
+    /* doctor never breaks on the plugin store */
+  }
+  return results;
+}
+
 export function checkLab(root: string): CheckResult[] {
   const results: CheckResult[] = [];
   const insights = listInsights(root);
@@ -1036,7 +1060,7 @@ export function checkLab(root: string): CheckResult[] {
  */
 export function checkTheses(root: string): CheckResult[] {
   const results: CheckResult[] = [];
-  const enabled = isLearningEnabled(readSetupConfig(dirname(root)));
+  const enabled = isPluginInstalled(root, 'hypotheses');
   if (!enabled && !existsSync(thesesDir(root))) return results;
 
   const theses = listTheses(root);
@@ -1170,6 +1194,7 @@ const NEVER_EVICT_SECTIONS: Record<NeverEvictSectionId, true> = {
   'product-and-nudge': true,
   awareness: true,
   marketing: true,
+  plugins: true,
   'peer-mail': true,
   federation: true,
 };
@@ -1840,6 +1865,7 @@ export function registerDoctorCommand(program: Command): void {
         ...checkLab(root),
         ...checkRecallTier(root),
         ...checkTheses(root),
+        ...checkPlugins(root),
         checkAntigravity(),
 
         // Snapshot health. Core files FIRST so the snapshot-size message's

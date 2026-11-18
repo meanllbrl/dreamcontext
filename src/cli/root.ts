@@ -83,5 +83,35 @@ export function createRootCommand(): Command {
   // Root `dreamcontext --version` / `-V` is handled manually in main() instead,
   // which leaves `--version <id>` free for subcommands.
 
+  // Mağaza D1 (C4): one preAction hook covers the full tree and every lazy start (both build
+  // on this root). It decides on the command path only; the plugin modules load only for a
+  // command under a plugin's root, so every other start pays nothing.
+  program.hook('preAction', async (_root, action) => {
+    const path = commandPath(action);
+    if (path.length === 0 || !PLUGIN_CLI_ROOTS.has(path[0])) return;
+    const [{ cliRefusal, cliRefusalMessage, PLUGIN_NOT_INSTALLED_EXIT }, { resolveContextRoot }] = await Promise.all([
+      import('../lib/plugins/gate.js'),
+      import('../lib/context-path.js'),
+    ]);
+    const refused = cliRefusal(path, resolveContextRoot());
+    if (!refused) return;
+    process.stderr.write(cliRefusalMessage(refused) + '\n');
+    process.exit(PLUGIN_NOT_INSTALLED_EXIT);
+  });
+
   return program;
+}
+
+/**
+ * Top-level commands a plugin owns, mirrored from `lib/plugins/registry.ts` so a start that
+ * is not under one never loads the plugin modules (`plugins-registry-drift.test.ts` holds
+ * the two equal).
+ */
+export const PLUGIN_CLI_ROOTS: ReadonlySet<string> = new Set(['roadmap', 'theses', 'lab', 'council', 'marketing']);
+
+/** The action command's path from the root (`['lab', 'board', 'create']`); an alias resolves to its name. */
+export function commandPath(action: Command): string[] {
+  const out: string[] = [];
+  for (let c: Command | null = action; c && c.parent; c = c.parent) out.unshift(c.name());
+  return out;
 }

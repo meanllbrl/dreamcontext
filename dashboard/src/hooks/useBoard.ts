@@ -15,6 +15,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
+import { usePlugins } from './usePlugins';
+import { effectiveFilters, effectiveSort } from '../components/tasks/boardModel';
 import type { ApiClient } from '../api/client';
 import {
   type BoardFilters, type BoardView, type CardProps, type Dim, type LocalBoard,
@@ -62,6 +64,8 @@ export interface BoardState {
   sortBy: SortKey;
   sortDir: SortDir;
   search: string;
+  /** False only when the Roadmap plugin is known not installed: RICE is neither offered nor applied. */
+  roadmapShown: boolean;
   // working-config setters
   setSearch: (v: string) => void;
   cycleFilter: (key: keyof BoardFilters, val: string, mode: 'inc' | 'exc') => void;
@@ -305,11 +309,17 @@ export function useBoardState(): BoardState {
     if (activeViewId === id && remaining[0]) applyView(remaining[0].id);
   }, [shared, local, activeViewId, persistShared, persistLocal, applyView]);
 
+  const roadmapShown = usePlugins().pluginState('roadmap') !== 'not-installed';
+  const shownFilters = useMemo(() => effectiveFilters(working.filters, roadmapShown), [working.filters, roadmapShown]);
+
   return {
     ready: seeded.current,
     views, activeViewId, activeView, versions: shared.versions, cardProps, isDirty,
-    filters: working.filters, groupBy: working.groupBy, subGroupBy: working.subGroupBy,
-    layout: working.layout, sortBy: working.sortBy, sortDir: working.sortDir, search: working.search,
+    // The Roadmap gate applies here, once: every reader (board, toolbar, filter count) gets the
+    // effective values; setters keep writing the stored config, so RICE returns on install.
+    filters: shownFilters, groupBy: working.groupBy, subGroupBy: working.subGroupBy,
+    layout: working.layout, sortBy: effectiveSort(working.sortBy, roadmapShown), sortDir: working.sortDir, search: working.search,
+    roadmapShown,
     setSearch, cycleFilter, setDue, setMinRice, clearField, clearAllFilters,
     setFieldInc, setSort, toggleSortDir,
     toggleCardProp, addVersion, removeVersion,

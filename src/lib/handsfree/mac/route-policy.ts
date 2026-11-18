@@ -608,6 +608,10 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/theses/:slug': allow(READ),
   'PATCH /api/theses/:slug': allow(PROJECT_WRITE),
   'DELETE /api/theses/:slug': allow(PROJECT_WRITE),
+  'GET /api/plugins': allow('read: this project\'s installed plugins; side-effect free beyond seeding this Mac\'s own pin list once (machine-local, ignored by git)'),
+  'POST /api/plugins/:id/install': allow(PROJECT_WRITE),
+  'POST /api/plugins/:id/remove': allow(PROJECT_WRITE),
+  'PUT /api/plugins/pins': allow('this Mac\'s own rail pins for this project (machine-local, ignored by git)'),
   'POST /api/learning/enable': allow(PROJECT_WRITE),
   'POST /api/learning/disable': allow(PROJECT_WRITE),
 

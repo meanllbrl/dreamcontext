@@ -30,6 +30,7 @@ import {
 } from '../lab/boards.js';
 import { compact, findOverlaps } from '../lab/grid.js';
 import { withFileLockSync } from '../file-lock.js';
+import { mergePluginEntry } from '../plugins/store.js';
 import {
   LEARNED_RULES_VIEW_REL,
   RULES_JSON_REL,
@@ -74,6 +75,9 @@ export type MergeClass =
    *  ours beside the renamed agent; an edit of a shared file takes the prose path. */
   | 'agent-file'
   | 'other'
+  /** `overrides/plugins/<id>.json` (Mağaza D1): one owner entry, the later `at` wins, a tie →
+   *  installed (pickEntry). An unparseable side → the other side. */
+  | 'plugin-entry'
   /** `core/RULES.json` (learning loop C2): union of records by id, events by eid (mergeRulesJson). */
   | 'rules-json'
   /** `knowledge/patterns/learned-rules.md`: a generated view, never merged: regenerated from the merged store. */
@@ -104,6 +108,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (norm === RULES_JSON_REL) return 'rules-json';
   if (norm === LEARNED_RULES_VIEW_REL) return 'learned-rules-view';
   if (norm === 'state/.task-objections.json') return 'task-objections-json';
+  if (/^overrides\/plugins\/[a-z][a-z0-9-]*\.json$/.test(norm)) return 'plugin-entry';
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
   if (/^knowledge\/features\//.test(norm)) return 'feature-md';
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
@@ -922,6 +927,10 @@ export function resolveConflicts(cwd: string, conflicts: string[], opts: Resolve
         break;
       case 'whiteboard-group-order':
         mergedContent = mergeGroupOrderJson(base, ours, theirs);
+        break;
+      case 'plugin-entry':
+        mergedContent = mergePluginEntry(ours, theirs);
+        if (mergedContent === null) deferredToHuman.push({ path: relPath, class: cls });
         break;
       case 'task-md': {
         const taskResult = mergeTaskMd(base, ours, theirs, { statuses: statusSet() });

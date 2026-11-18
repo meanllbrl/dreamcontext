@@ -75,6 +75,10 @@ _dream_context/
 - Person: `dreamcontext people add "<Name>" --email <address>`.
 - Board over tracked insights: `dreamcontext lab board create <slug> --title "<title>"`.
 
+Objectives, insights, theses, council and marketing belong to plugins. A command that
+exits 3 `plugin_not_installed` means that plugin is not installed here: report it so the
+owner can be asked; never work around it (`dreamcontext plugins install <id>` after his yes).
+
 If you cannot tell which entity something is, report the ambiguity instead of
 guessing. One fact lives in one place: recall before you create, update over duplicate.
 

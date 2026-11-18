@@ -6,6 +6,7 @@ import type { Duplex } from 'node:stream';
 import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, dirname, basename, extname, resolve } from 'node:path';
+import { isPluginInstalled } from '../../lib/plugins/store.js';
 import { tmpdir, homedir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
@@ -2755,7 +2756,7 @@ export function startChatSession(
     // A member's own Super (plan-r10 1): the Super briefing with its member slot, after who it is.
     const tabBrief = isSuper && agentChat
       ? superMemberBriefing(memberSlotOf(agentChat.manifest))
-      : modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
+      : modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx, councilInstalled: isPluginInstalled(join(projectRoot, '_dream_context'), 'council') });
     const ownBrief = app ? app.briefing : card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
@@ -2808,7 +2809,7 @@ export function startChatSession(
       const state = transcript ? heldModeFromTranscript(jsonl) : null;
       const sources = modeNoteSources(state, mode);
       if (state && sources.length) {
-        const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot) });
+        const brief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), councilInstalled: isPluginInstalled(join(projectRoot, '_dream_context'), 'council') });
         const note = modeNoteHookOutput(modeSwitchNote(state.held, mode, brief));
         const id = randomUUID();
         const out = join(tmpdir(), `dreamcontext-chat-mode-${id}.json`);
