@@ -32,6 +32,7 @@ Patch on 0.41.21. Local build; not published.
 - **Automations.** An automation's fire prompt no longer runs a judged memory recall.
 - **Agenda.** Pressing a line filters the Super chat to that line's conversation, and a search on the agenda card finds every day.
 - **Whiteboard security.** A board's quick edit now runs in an empty folder, so it can read only the pages its allow rules name.
+- **Member routines.** A routine made for an AI Team member runs as that member, instead of creating a second member for each routine.
 
 ## [0.41.19] - 2026-11-12
 
