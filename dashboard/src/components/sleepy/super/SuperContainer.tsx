@@ -288,6 +288,10 @@ export function SuperContainer(props: SuperContainerProps) {
     else v.webkitEnterFullscreen?.();
   };
   const small = drawnSize === 'small';
+  // A 344 px agenda holds the lights, its head tools (search, list/board) and the hover buttons in
+  // one row: its To Others and side-by-side buttons are the red and green lights' own jobs there
+  // (close collapses it to its pill; zoom is side by side), so the hover buttons drop those two.
+  const agendaRoom = c.kind === 'agenda' && drawnSize === 'large';
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
   // A member's own card is never closed by anyone (plan r4 K3): no close control at all.
@@ -356,7 +360,7 @@ export function SuperContainer(props: SuperContainerProps) {
           // the card, its title bar, opens it side by side the way a click on the card did before
           // the Günlük agenda (owner 15 Nov). The head is pointer-inert on a floating card, so its
           // click lands on the frame: "outside the list", never "inside the head".
-          if (c.kind === 'agenda') { if (!el.closest('.super-agenda')) props.onSideBySide(c.id); return; }
+          if (c.kind === 'agenda') { if (!el.closest('.super-agenda, .agenda-head-tools, .agenda-glyph-btn')) props.onSideBySide(c.id); return; }
           openCard();
         } : undefined}
       onKeyDown={onKeyDown}
@@ -397,9 +401,9 @@ export function SuperContainer(props: SuperContainerProps) {
           <>
             {/* A 160 px tile holds the lights and two buttons: To Others joins size and full
                 screen in its ⋯ menu. */}
-            {!props.remote && !small && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
+            {!props.remote && !small && !agendaRoom && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
             {/* The agenda's body takes every click: its way to side by side is a button of its own. */}
-            {c.kind === 'agenda' && <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} testId="super-agenda-side" />}
+            {c.kind === 'agenda' && !agendaRoom && <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} testId="super-agenda-side" />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
             {small ? (
               <IconButton icon="more" label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')} onClick={() => setMenu((m) => (m ? null : 'more'))} testId="super-card-more" expanded={!!menu} />
@@ -858,6 +862,17 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
 function CardHead({ kind, title, container, team }: { kind: Container['kind']; title: string; container?: Container; team?: TeamCard }) {
   // A member card: its member's face and name (owner 2026-11-15), never the glyph and slug.
   if (kind === 'team' && team) return <div className="super-card-head"><TeamHeadTitle member={team.job.member} /></div>;
+  // The agenda's head is ONE row (owner 19 Nov): its ≡ (day menu), the title, and a tools slot
+  // (search, list/board) that SuperAgenda fills; nothing else sits under it.
+  if (kind === 'agenda') {
+    return (
+      <div className="super-card-head" data-agenda-head>
+        <span className="super-card-glyph" data-agenda-slot="glyph" />
+        <span className="super-card-title" title={title}>{title}</span>
+        <span className="agenda-head-tools" data-agenda-slot="tools" />
+      </div>
+    );
+  }
   return (
     <div className="super-card-head">
       <span className="super-card-glyph" aria-hidden>{KIND_GLYPH[kind]}</span>

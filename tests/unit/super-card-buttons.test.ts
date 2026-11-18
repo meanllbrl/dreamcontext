@@ -85,7 +85,7 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
     expect(GROUP).toContain("testId: 'super-group-open-all'");
   });
   it('a 160 px tile fits the lights and two buttons: To Others moves into its ⋯ menu, Ungroup into the group panel', () => {
-    expect(CONTAINER).toContain("{!props.remote && !small && <IconButton icon=\"others\"");
+    expect(CONTAINER).toContain("{!props.remote && !small && !agendaRoom && <IconButton icon=\"others\"");
     expect(CONTAINER).toContain("onToOthers={menu === 'more' && !props.remote ? () => { setMenu(null); props.onToOthers(c.id); } : undefined}");
     expect(CONTAINER).toContain('data-testid="super-card-to-others"');
     expect(GROUP).not.toContain('icon="ungroup"');
