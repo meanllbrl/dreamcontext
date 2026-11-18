@@ -359,9 +359,6 @@ export function unregisterProject(projectRoot: string, home?: string): boolean {
   const registry = readAutomationsRegistry(home);
   const key = findProjectKey(registry, projectRoot);
   if (key === null) return false;
-  // Only this path's own bucket (itself, or the same folder by another spelling): a code repo
-  // linking a brain resolves to the brain's bucket, which unregistering the repo must never delete.
-  if (key !== projectRoot && tryRealpath(key) !== tryRealpath(projectRoot)) return false;
   delete registry.projects[key];
   writeAutomationsRegistry(registry, home);
   return true;
@@ -370,40 +367,6 @@ export function unregisterProject(projectRoot: string, home?: string): boolean {
 /** Every project root currently registered on this machine. */
 export function listRegisteredProjects(home?: string): string[] {
   return Object.keys(readAutomationsRegistry(home).projects).filter((k) => k !== GLOBAL_REGISTRY_KEY);
-}
-
-/**
- * ONE BRAIN, ONE BUCKET (2026-11-19). An older version opened a separate approvals bucket for a code
- * repo whose `_dream_context` links to a brain (anything run from that repo registered it), so one
- * brain's approvals can sit in two buckets, and a lookup sees only the one its path finds. Fold every
- * such bucket into the kept one (`listDistinctProjects`' pick): each entry moves over, the newer
- * `approvedAt` winning when both hold the same slug, and the extra key goes, so nothing is lost and
- * every path reads the same answer. Returns what was folded ([] when nothing was, no write).
- */
-export function foldSameBrainBuckets(home?: string): Array<{ from: string; into: string }> {
-  const { aliases } = listDistinctProjects(home);
-  if (!aliases.length) return [];
-  const registry = readAutomationsRegistry(home);
-  const newer = (a: ApprovalEntry | undefined, b: ApprovalEntry): ApprovalEntry =>
-    !a || Date.parse(b.approvedAt) > Date.parse(a.approvedAt) ? b : a;
-  const merge = (into: Record<string, ApprovalEntry>, from: Record<string, ApprovalEntry> | undefined): void => {
-    for (const [slug, e] of Object.entries(from ?? {})) into[slug] = newer(into[slug], e);
-  };
-  const folded: Array<{ from: string; into: string }> = [];
-  for (const { root, sameAs } of aliases) {
-    const from = registry.projects[root];
-    const into = registry.projects[sameAs];
-    if (!from || !into) continue;
-    merge(into.approvals, from.approvals);
-    if (from.agentApprovals && Object.keys(from.agentApprovals).length) {
-      into.agentApprovals ??= {};
-      merge(into.agentApprovals, from.agentApprovals);
-    }
-    delete registry.projects[root];
-    folded.push({ from: root, into: sameAs });
-  }
-  if (folded.length) writeAutomationsRegistry(registry, home);
-  return folded;
 }
 
 /** What {@link listDistinctProjects} answers. */

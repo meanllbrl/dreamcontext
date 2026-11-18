@@ -475,12 +475,7 @@ describe('tickAll', () => {
       expect(roots).toEqual([contextRoot]);
       expect(result.projects.map((p) => p.projectRoot)).toEqual([projectRoot]);
       expect(lines.some((l) => l.includes(codeRepo) && l.includes('same brain'))).toBe(true);
-      // Folded once: the second bucket is gone, so the next tick says nothing more.
-      expect(Object.keys(readAutomationsRegistry(home).projects)).toEqual([projectRoot]);
-      expect(listDistinctProjects(home).aliases).toEqual([]);
-      const again: string[] = [];
-      await tickAll({ now: NOW, home, runImpl, log: (l) => again.push(l) });
-      expect(again.some((l) => l.includes('same brain'))).toBe(false);
+      expect(listDistinctProjects(home).aliases).toEqual([{ root: codeRepo, sameAs: projectRoot }]);
     } finally {
       rmSync(codeRepo, { recursive: true, force: true });
     }

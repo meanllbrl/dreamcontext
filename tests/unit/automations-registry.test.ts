@@ -12,7 +12,6 @@ import {
   listRegisteredProjects,
   canonicalApprovalPayload,
   manifestHash,
-  foldSameBrainBuckets,
   approvalFields,
   approvalDiff,
   canonicalFlowJson,
@@ -31,7 +30,6 @@ import {
 import {
   EFFORT_LEVELS,
   APPROVAL_DIFF_FIELDS,
-  APPROVAL_PAYLOAD_VERSION,
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
   sharedSlugNegations,
@@ -672,43 +670,6 @@ describe('the project key survives a symlinked path', () => {
     expect(Object.keys(reg.projects[brain].approvals).sort()).toEqual([m.slug, m2.slug].sort());
     expect(Object.keys(reg.projects[code].approvals)).toEqual([]);
 
-    rmSync(real, { recursive: true, force: true });
-  });
-
-  it('two buckets of one brain, each with its own yes: the fold keeps both, the newer wins a shared slug, every path reads the same', () => {
-    const real = mkdtempSync(join(tmpdir(), 'dc-samebrain-'));
-    const brain = join(real, 'brain');
-    const code = join(real, 'code');
-    mkdirSync(join(brain, '_dream_context'), { recursive: true });
-    mkdirSync(code, { recursive: true });
-    symlinkSync(join(brain, '_dream_context'), join(code, '_dream_context'), 'dir');
-    const x = makeManifest({ slug: 'x', prompt: 'from the code repo' });
-    const y = makeManifest({ slug: 'y', prompt: 'from the app' });
-    const shared = makeManifest({ slug: 'shared', prompt: 'v2' });
-    const sharedOld = makeManifest({ slug: 'shared', prompt: 'v1' });
-    // The state an older version could leave: X approved through the code repo, Y in the brain.
-    const r = readAutomationsRegistry(home);
-    r.projects[code] = { approvals: {} };
-    r.projects[brain] = { approvals: {} };
-    writeAutomationsRegistry(r, home);
-    const seeded = readAutomationsRegistry(home);
-    const entry = (m: AutomationManifest, at: string) => ({ manifestSha256: manifestHash(m), approvedAt: at, payloadVersion: APPROVAL_PAYLOAD_VERSION });
-    seeded.projects[code].approvals = { x: entry(x, '2026-11-01T00:00:00Z'), shared: entry(shared, '2026-11-10T00:00:00Z') };
-    seeded.projects[brain].approvals = { y: entry(y, '2026-11-02T00:00:00Z'), shared: entry(sharedOld, '2026-11-05T00:00:00Z') };
-    writeAutomationsRegistry(seeded, home);
-
-    expect(foldSameBrainBuckets(home)).toEqual([{ from: code, into: brain }]);
-    for (const path of [brain, code]) {
-      expect(checkApproval(path, x, home).approved).toBe(true);
-      expect(checkApproval(path, y, home).approved).toBe(true);
-      expect(checkApproval(path, shared, home).approved).toBe(true);
-      expect(checkApproval(path, sharedOld, home).approved).toBe(false);
-    }
-    expect(Object.keys(readAutomationsRegistry(home).projects).filter((k) => k.includes('dc-samebrain-'))).toEqual([brain]);
-    expect(foldSameBrainBuckets(home)).toEqual([]);
-    // Unregistering the code repo never deletes the brain's bucket it resolves to.
-    expect(unregisterProject(code, home)).toBe(false);
-    expect(Object.keys(readAutomationsRegistry(home).projects[brain].approvals).sort()).toEqual(['shared', 'x', 'y']);
     rmSync(real, { recursive: true, force: true });
   });
 
