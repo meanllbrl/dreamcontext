@@ -361,21 +361,6 @@ export interface DistinctProjects {
   missing: string[];
   /** Registered roots skipped because their `_dream_context/` is the same folder as a kept root's. */
   aliases: Array<{ root: string; sameAs: string }>;
-  /** For a kept root that shares its brain with another kept root: every kept root of that brain,
-   *  the primary first. Such a brain's routines must each fire from ONE of them (`slugOwnerIn`). */
-  shared: Map<string, string[]>;
-}
-
-/**
- * Which of a brain's kept roots fires routine `m`: the first that approves it as it stands (the
- * primary first), else the primary, whose refusal then is the truthful one. One fire per routine
- * per due time, never a second, refused copy from the other root (owner 2026-11-19).
- */
-export function slugOwnerIn(roots: string[], m: AutomationManifest, home?: string): string {
-  for (const r of roots) {
-    try { if (checkApproval(r, m, home, 'run').approved) return r; } catch { /* the runner reports it */ }
-  }
-  return roots[0];
 }
 
 /**
@@ -387,9 +372,8 @@ export function slugOwnerIn(roots: string[], m: AutomationManifest, home?: strin
  * Two roots whose `_dream_context` resolves to the same folder are one project. The kept root is
  * the one whose bucket holds approvals (where the owner's yes actually lives), then the one whose
  * `_dream_context` is the real folder rather than a link, then the first registered. Only a root
- * whose bucket holds NO approval is skipped: one that holds its own yes (an approval given from the
- * code repo's path lands there) keeps ticking, but each routine of the brain fires from ONE root
- * (`shared` + `slugOwnerIn`), so no approved routine stops and none fires twice. Nothing is
+ * whose bucket holds NO approval is skipped: one that holds its own yes (an older version could
+ * approve through the link) keeps ticking, as it did, so no approved routine stops. Nothing is
  * moved or merged (owner 2026-11-19, review narrowed).
  */
 export function listDistinctProjects(home?: string): DistinctProjects {
@@ -414,7 +398,6 @@ export function listDistinctProjects(home?: string): DistinctProjects {
   const rank = (root: string): number => (holdsApprovals(root) ? 0 : 2) + (isLink(root) ? 1 : 0);
   const keep = new Set<string>();
   const aliases: DistinctProjects['aliases'] = [];
-  const shared: DistinctProjects['shared'] = new Map();
   for (const group of groups.values()) {
     // Stable: equal ranks keep registry order.
     const best = group.reduce((a, b) => (rank(b) < rank(a) ? b : a));
@@ -424,11 +407,9 @@ export function listDistinctProjects(home?: string): DistinctProjects {
       if (holdsApprovals(r)) keep.add(r);
       else aliases.push({ root: r, sameAs: best });
     }
-    const kept = [best, ...group.filter((r) => r !== best && keep.has(r))];
-    if (kept.length > 1) for (const r of kept) shared.set(r, kept);
   }
   const roots = Object.keys(registry.projects).filter((r) => keep.has(r));
-  return { roots, missing, aliases, shared };
+  return { roots, missing, aliases };
 }
 
 // ─── Approval payload (the tripwire's whole correctness claim) ──────────────

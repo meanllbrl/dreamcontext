@@ -477,29 +477,17 @@ describe('tickAll', () => {
     }
   });
 
-  it('a linked root that holds its OWN approvals keeps ticking, but each routine fires ONCE, from the root that approves it', async () => {
+  it('a linked root that holds its OWN approvals keeps ticking (an older version approved through it): no approved routine stops', () => {
     const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
     try {
       symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
       registerProject(codeRepo, home);
       registerProject(projectRoot, home);
       approveAutomation(projectRoot, makeDue('in-brain'), NOW, home);
-      // An approval given from the code repo's path lands in its own bucket.
       approveAutomation(codeRepo, makeDue('via-code-repo'), NOW, home);
-      makeDue('nobody-approved');
       const d = listDistinctProjects(home);
       expect(d.roots.sort()).toEqual([codeRepo, projectRoot].sort());
-      const runs: string[] = [];
-      const runImpl = vi.fn(async (c: string, slug: string) => {
-        runs.push(`${slug}@${c.startsWith(codeRepo) ? 'code' : 'brain'}`);
-        return fakeOutcome(slug, 'ok');
-      }) as unknown as typeof runAutomation;
-      const result = await tickAll({ now: NOW, home, runImpl });
-      // One run per routine; the never-approved one is tried once, from the primary (its refusal is the true one).
-      expect(runs.sort()).toEqual(['in-brain@brain', 'nobody-approved@brain', 'via-code-repo@code']);
-      const byRoot = Object.fromEntries(result.projects.map((p) => [p.projectRoot, p.ran.map((r) => r.slug).sort()]));
-      expect(byRoot[projectRoot]).toEqual(['in-brain', 'nobody-approved']);
-      expect(byRoot[codeRepo]).toEqual(['via-code-repo']);
+      expect(d.aliases).toEqual([]);
     } finally {
       rmSync(codeRepo, { recursive: true, force: true });
     }
