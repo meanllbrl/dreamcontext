@@ -37,6 +37,7 @@ import {
 } from '../../lib/telegram/rooms.js';
 import type { ButtonRecord } from '../../lib/telegram/contract.js';
 import { identityFor } from './identity.js';
+import { appChatRefusal } from '../../lib/apps/chat-store.js';
 import type { ActiveBinding, TelegramHub } from './hub.js';
 import type { SuperId } from '../../lib/super/types.js';
 
@@ -75,7 +76,8 @@ export function roomAgentArgs(o: { system: string; user: string; brainReal: stri
     '--disable-slash-commands',
     '--system-prompt', o.system,
     '--json-schema', JSON.stringify(ROOM_SCHEMA),
-    ...(o.resume ? ['--resume', o.resume] : []),
+    // An app's conversation opens only in Chat (apps-resume-drift): such an id starts fresh here.
+    ...(o.resume && !appChatRefusal(o.resume, o.home) ? ['--resume', o.resume] : []),
   ];
 }
 
