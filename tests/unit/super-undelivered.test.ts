@@ -41,16 +41,21 @@ const VOICE = '<!-- re:abc123 -->\nÖzet:\n\n```dream-voice Haftalık özet\nDö
 const OWNER_TURN = { event: false, batch: null };
 
 describe('the store (undelivered.ts)', () => {
-  it('takes each line once; the same line is told again only after ten minutes, deferred meanwhile', () => {
+  it('takes each line once; the same line failing again is never retold while it keeps failing (review r2)', () => {
+    const MIN = 60_000;
     noteUndelivered('s', 'voice', 'voice A', 0);
     noteUndelivered('s', 'voice', 'voice A', 1); // the same line twice is one
     noteUndelivered('s', 'picture', 'picture B', 2);
     expect(takeUndelivered('s', 3)).toEqual(['voice A', 'picture B']);
     expect(takeUndelivered('s', 4)).toEqual([]);
-    noteUndelivered('s', 'voice', 'voice A', 5);
-    expect(takeUndelivered('s', 6)).toEqual([]); // a re-send that failed again the same way: no loop
-    // ...but it is deferred, never dropped: told once its window is over.
-    expect(takeUndelivered('s', UNDELIVERED_TELL_MS + 10)).toEqual(['voice A']);
+    // The reviewer's loop: told at 0, the re-send fails the same way at 1 m and again at 9 m. The
+    // repeats are dropped, never kept for a later take, so nothing is told at 11 m, 23 m or 35 m.
+    noteUndelivered('s', 'voice', 'voice A', 1 * MIN);
+    noteUndelivered('s', 'voice', 'voice A', 9 * MIN); // within ten minutes of the last failure
+    for (const at of [11, 23, 35]) expect(takeUndelivered('s', at * MIN)).toEqual([]);
+    // Quiet for ten minutes, then it fails again (a new send): a new failure, told.
+    noteUndelivered('s', 'voice', 'voice A', 40 * MIN);
+    expect(takeUndelivered('s', 40 * MIN + 1)).toEqual(['voice A']);
   });
 
   it('a different failure of the same kind inside ten minutes is told at once (review r1)', () => {

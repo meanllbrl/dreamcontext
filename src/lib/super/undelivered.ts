@@ -10,15 +10,17 @@
  * lines to the Super as one hidden note: at its turn's end, or at once when it is idle (a voice
  * fails seconds after the turn ended).
  *
- * In memory and bounded by time: a line is kept an hour at most. The SAME line (kind + words) is
- * told at most once per ten minutes, so a Super that re-sends one thing and fails again never loops
- * on its own notes; a line inside that window is deferred (kept for a later take), never dropped,
- * and a different failure of the same kind is told at once (review r1, undelivered-dedupe-by-kind).
+ * In memory and bounded by time: a line is kept an hour at most. A different failure, even of the
+ * same kind, is told at once (review r1, undelivered-dedupe-by-kind). The SAME line (kind + words)
+ * failing again within ten minutes of being told is the Super's re-send failing the same way: it
+ * already knows, so the repeat is dropped and the window starts again. A thing that fails every
+ * time is told once while it keeps failing, never every ten minutes (review r2,
+ * undelivered-retell-loop).
  */
 
 export type UndeliveredKind = 'text' | 'voice' | 'picture' | 'card';
 
-/** The same line is told again only after this long (a re-send that fails again). */
+/** The same line is told again only after this long without failing again. */
 export const UNDELIVERED_TELL_MS = 10 * 60_000;
 /** A line nobody took within this long is history. */
 export const UNDELIVERED_KEEP_MS = 60 * 60_000;
@@ -38,13 +40,16 @@ function prune(now: number): void {
 }
 
 /** One line's identity for the ten-minute window: the session, its kind and its words. */
-const toldKey = (sessionId: string, e: Entry): string => `${sessionId}\u0000${e.kind}\u0000${e.line}`;
+const toldKey = (sessionId: string, kind: UndeliveredKind, line: string): string => `${sessionId}\u0000${kind}\u0000${line}`;
 
 /** A sender's failure: what of the Super's answer did not reach him, in one line. */
 export function noteUndelivered(sessionId: string | null | undefined, kind: UndeliveredKind, line: string, now = Date.now()): void {
   const clean = line.trim().slice(0, 300);
   if (!sessionId || !clean) return;
   prune(now);
+  // Told within the window and failing again: the Super knows; the window starts again.
+  const k = toldKey(sessionId, kind, clean);
+  if (lastTold.has(k)) { lastTold.set(k, now); return; }
   const list = pending.get(sessionId) ?? [];
   const same = list.find((e) => e.kind === kind && e.line === clean);
   if (same) same.at = now; else list.push({ kind, line: clean, at: now });
@@ -54,22 +59,14 @@ export function noteUndelivered(sessionId: string | null | undefined, kind: Unde
   }
 }
 
-/** The lines to tell the Super now, taken. A line told within `UNDELIVERED_TELL_MS` stays pending
- *  for a later take: deferred, never lost. */
+/** The lines to tell the Super now, taken: each pending line once. */
 export function takeUndelivered(sessionId: string, now = Date.now()): string[] {
   prune(now);
   const list = pending.get(sessionId);
+  pending.delete(sessionId);
   if (!list) return [];
-  const out: string[] = [];
-  const later: Entry[] = [];
-  for (const e of list) {
-    const k = toldKey(sessionId, e);
-    if (lastTold.has(k)) { later.push(e); continue; }
-    lastTold.set(k, now);
-    out.push(e.line);
-  }
-  if (later.length) pending.set(sessionId, later); else pending.delete(sessionId);
-  return out;
+  for (const e of list) lastTold.set(toldKey(sessionId, e.kind, e.line), now);
+  return list.map((e) => e.line);
 }
 
 /** Be told a failure was noted (the Super's chat, to tell an idle Super at once). */

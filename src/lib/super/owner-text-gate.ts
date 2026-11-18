@@ -19,8 +19,8 @@
  *    (superHandover.ts `isOwnerProse`).
  *
  * Pure (no node imports): the dashboard reads it too. The detectors are deliberately narrow:
- * a pointer back is a SHORT text every clause of which says "see earlier" or "nothing new",
- * never an answer that also says "as I wrote above" or "the other job still runs"; a wrong
+ * a pointer back is a SHORT text with nothing left once its "see earlier" / "nothing new" phrases
+ * are cut out, never an answer that also says "as I wrote above" or "the other job still runs"; a wrong
  * language needs a clear majority of the other language's own words (quotes left out), never a
  * few English terms in a Turkish sentence.
  */
@@ -51,45 +51,59 @@ const NOTHING_NEW = [
   /\b(?:nothing (?:new|has changed|changed)|no (?:news|change|update)s?\b|still (?:waiting|running|pending|the same))\b/i,
 ];
 
-/** Filler that carries nothing on its own ("Tamam.", "ok"): neither news nor a pointer. */
-const FILLER = /^(?:tamam|ok(?:ay)?|evet|peki|yes|sure|alright|[^\p{L}\p{N}])*$/iu;
+/** Words that carry nothing on their own: articles, copulas, "and", filler ("tamam", "ok"). */
+const EMPTY_WORDS = new Set([
+  'the', 'a', 'an', 'is', 'are', 'was', 'it', 'its', 'this', 'that', 'on', 'for', 'of', 'to', 'and', 'we', 'you',
+  'bu', 'şu', 'o', 'da', 'de', 've', 'bir', 'şey', 'hep', 'tamam', 'ok', 'okay', 'evet', 'peki', 'yes', 'sure', 'alright',
+]);
+
+/** A result in a word: done, failed, merged, live, an error. Any one makes the text news. */
+const RESULT_WORD = /^(?:bit|tamamlan|geçt|geçme|kırıl|hata|başarı|düş|çök|yayın|canlı|hazır|açıl|açtım|kapan|birleş|merge|gönder|reddet|onaylan|fail|error|broke|done|finish|pass|ship|live|ready|complete|crash|refus|reject|approved|return|sent|open)/u;
 
 /**
- * The text cut into the clauses a reader takes one by one: sentences, then ";", ":", ", " and
- * "ve"/"and". A text is judged by EVERY clause, never by one phrase in it: "Ödeme sayfası bitti,
- * fiyat testi hâlâ çalışıyor" carries a result in its first clause and is news, though its second
- * says something still runs (review r1, gate-drops-real-news).
+ * Nothing new in it, by what is LEFT: every pointer ("I wrote it above") and "nothing changed /
+ * still waiting" phrase is cut out, and what remains may be at most one subject word per phrase
+ * plus one ("Fatura işi hâlâ bekliyor", "The deploy is still running"), with no number and no
+ * result word. Anything more is a reason, a result or a figure, and so news: "Deploy hâlâ
+ * çalışıyor ama testler kırıldı", "Still waiting on Stripe — the webhook returned 500",
+ * "Vergi raporu hâlâ çalışıyor (%80)" all go to him (review r1/r2, gate-drops-real-news: a phrase
+ * found ANYWHERE is never the verdict; how the text is cut into clauses does not matter).
+ * Returns how many phrases (and pointer phrases) were cut, or null when the text carries news.
  */
-function clauses(t: string): string[] {
-  return t.split(/[.!?;:\n]+|,\s+|\s+(?:ve|and)\s+/i).map((c) => c.trim()).filter((c) => c && !FILLER.test(c));
+function emptyBesidesPhrases(t: string): { pointers: number; phrases: number } | null {
+  if (/\p{N}/u.test(t)) return null;
+  let rest = t;
+  let pointers = 0;
+  let phrases = 0;
+  for (const re of POINTS_BACK) rest = rest.replace(new RegExp(re.source, 'giu'), () => { pointers += 1; phrases += 1; return ' '; });
+  for (const re of NOTHING_NEW) rest = rest.replace(new RegExp(re.source, 'giu'), () => { phrases += 1; return ' '; });
+  if (!phrases) return null;
+  const words = rest.toLocaleLowerCase('tr-TR').split(/[^\p{L}]+/u).filter((w) => w && !EMPTY_WORDS.has(w));
+  if (words.some((w) => RESULT_WORD.test(w))) return null;
+  return words.length <= phrases + 1 ? { pointers, phrases } : null;
 }
 
-const isPointerClause = (c: string): boolean => POINTS_BACK.some((re) => re.test(c));
-const isNoNewsClause = (c: string): boolean => isPointerClause(c) || NOTHING_NEW.some((re) => re.test(c));
-
-/** A short text whose point is that the answer was given earlier: every clause points back or says
- *  nothing changed, and one of them points back. He can never scroll to "above" on a phone, and on
- *  the Mac it tells him nothing. A clause that carries a result makes it an answer. */
+/** A short text whose point is that the answer was given earlier: it points back and carries
+ *  nothing else new. He can never scroll to "above" on a phone, and on the Mac it tells him
+ *  nothing. A result, a reason or a figure in it makes it an answer. */
 export function pointsBack(text: string): boolean {
   const t = plain(text);
   if (!t || t.length > POINTER_MAX_CHARS) return false;
-  const cs = clauses(t);
-  return cs.length > 0 && cs.every(isNoNewsClause) && cs.some(isPointerClause);
+  return (emptyBesidesPhrases(t)?.pointers ?? 0) > 0;
 }
 
-/** A short text that only points back, says nothing changed or that something still waits: every
- *  clause of it is one of those, so nothing in it is news. */
+/** A short text that only points back, says nothing changed or that something still waits, and
+ *  carries nothing else: no result, no reason, no figure. */
 export function saysNothingNew(text: string): boolean {
   const t = plain(text);
   if (!t || t.length > POINTER_MAX_CHARS) return false;
-  const cs = clauses(t);
-  return cs.length > 0 && cs.every(isNoNewsClause);
+  return emptyBesidesPhrases(t) !== null;
 }
 
-/** Quoted spans ("…", “…”, «…»): an error message or a title he is shown verbatim, never the
- *  language the Super writes him in. */
+/** Quoted spans ("…", “…”, ‘…’, «…»): an error message or a title he is shown verbatim, never
+ *  the language the Super writes him in. A straight ' is Turkish grammar (PR'ı), never a quote. */
 function unquoted(t: string): string {
-  return t.replace(/"[^"\n]*"|“[^”\n]*”|«[^»\n]*»|`[^`\n]*`/g, ' ');
+  return t.replace(/"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’|«[^»\n]*»|`[^`\n]*`/g, ' ');
 }
 
 /** The other language, clearly: his language is known and the text's own words (quotes left out)

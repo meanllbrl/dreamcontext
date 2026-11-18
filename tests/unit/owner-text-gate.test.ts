@@ -79,7 +79,26 @@ describe('pointer back and no news (finding 1)', () => {
       expect(pointsBack(t), t).toBe(false);
       expect(telegramHold(t, { eventTurn: true, lang: null }), t).toBeNull();
     }
-    // Only pointers, "nothing new" and filler: still nothing to tell.
+    // Review r2: a result, a reason or a figure inside the "still" clause, whatever joins them.
+    const mixed = [
+      'Deploy hâlâ çalışıyor ama 3 test kırıldı.',
+      'Deploy hâlâ çalışıyor ama testler kırıldı.',
+      'The deploy is still running but 3 tests failed.',
+      'Fatura işi hâlâ bekliyor çünkü Stripe 402 döndü.',
+      'Fatura işi hâlâ bekliyor çünkü Stripe ödemeyi reddetti.',
+      'Still waiting on Stripe — the webhook returned 500.',
+      'Still waiting on Stripe, the webhook returned an error.',
+      'Vergi raporu hâlâ çalışıyor (%80).',
+      'As I said above the build failed.',
+    ];
+    for (const t of mixed) {
+      expect(saysNothingNew(t), t).toBe(false);
+      expect(telegramHold(t, { eventTurn: true, lang: null }), t).toBeNull();
+    }
+    // Only pointers, "nothing new", a subject and filler: still nothing to tell.
+    expect(saysNothingNew('Fatura işi hâlâ bekliyor.')).toBe(true);
+    expect(saysNothingNew('The deploy is still running.')).toBe(true);
+    expect(saysNothingNew('Still waiting for approval.')).toBe(true);
     expect(saysNothingNew('Tamam. Değişen bir şey yok ve kart hâlâ bekliyor.')).toBe(true);
     expect(pointsBack('Durumu yukarıda yazdım ve değişen bir şey yok.')).toBe(true);
     expect(pointsBack('Değişen bir şey yok.')).toBe(false); // nothing new, but no pointer
