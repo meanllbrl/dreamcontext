@@ -243,7 +243,7 @@ async function main() {
     ok('no tabs row (criterion 1)', await page.locator('.wbp-bar, .wbt-tab').count() === 0);
     ok('the field is drawn, the corner pill is not (criterion 4)', await until(page, async () => (await field.count()) === 1 && (await pill.count()) === 0, 10000));
     ok('Excalidraw\'s help button is not drawn', await page.evaluate(() => [...document.querySelectorAll('.excalidraw .help-icon')].every((el) => el.getBoundingClientRect().width === 0)));
-    ok('"Saved" and "Agents" sit top-right (criterion 3)', await page.locator('.wbp-canvas .wbp-status').count() === 1 && await page.locator('.wbp-canvas .wbp-agent-toggle').count() === 1);
+    ok('"Saved" and "Sync" sit top-right (criterion 3)', await page.locator('.wbp-canvas .wbp-status').count() === 1 && await page.locator('.wbp-canvas .wbp-sync-btn').count() === 1);
     const measureField = async (tag) => {
       const fb = await field.boundingBox();
       const cb = await page.locator('.wbp-canvas').boundingBox();
@@ -269,24 +269,22 @@ async function main() {
     await page.waitForTimeout(500);
     await measureField('1024');
     ok('1024: the field is back once the window closes', !!(await field.boundingBox()));
-    // Review r1: the save state and Agents stay inside the canvas and clickable at every width.
+    // Review r1: the save state and Sync stay inside the canvas and clickable at every width.
     for (const [w, h] of [[1024, 768], [1280, 800], [1440, 900]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.waitForTimeout(600);
       const cb = await page.locator('.wbp-canvas').boundingBox();
-      const parts = await page.evaluate(() => [...document.querySelectorAll('.wbp-canvas .wbp-status, .wbp-canvas .wbp-agent-toggle')]
+      const parts = await page.evaluate(() => [...document.querySelectorAll('.wbp-canvas .wbp-status, .wbp-canvas .wbp-sync-btn')]
         .map((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
-      ok(`${w}: "Saved" and "Agents" sit whole inside the canvas`, parts.length === 2 && parts.every((r) => r.width > 0 && r.x >= cb.x && r.x + r.width <= cb.x + cb.width + 0.5), JSON.stringify({ cb, parts }));
+      ok(`${w}: "Saved" and "Sync" sit whole inside the canvas`, parts.length === 2 && parts.every((r) => r.width > 0 && r.x >= cb.x && r.x + r.width <= cb.x + cb.width + 0.5), JSON.stringify({ cb, parts }));
     }
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.waitForTimeout(600);
-    await page.locator('.wbp-canvas .wbp-agent-toggle').click();
-    ok('1024: Agents opens the board agents panel', await until(page, async () => (await page.locator('.wb-agent-panel-head').count()) >= 1, 4000));
-    await page.locator('.wbp-canvas .wbp-agent-toggle').click();
+    ok('1024: no board agents panel or its toggle (retired 2026-11-18)', await page.locator('.wb-agent-panel-head, .wbp-agent-toggle').count() === 0);
     // Review r2: a page overlay never paints over Excalidraw's Library sidebar.
     {
       const aside = page.locator('[data-testid="wbp-controls-aside"]');
-      ok('1024: the save state and Agents stand aside in their own group', (await aside.count()) === 1);
+      ok('1024: the save state and Sync stand aside in their own group', (await aside.count()) === 1);
       const trigger = page.locator('.excalidraw .default-sidebar-trigger').first();
       const tb = await trigger.boundingBox().catch(() => null);
       const cb = await page.locator('.wbp-canvas').boundingBox();
@@ -412,10 +410,10 @@ async function main() {
           const tag = `${w}${selected ? ' with a selection' : ''}`;
           ok(`${tag}: the Boards toggle takes its own click`, await hitsSelf(showList));
           ok(`${tag}: the field's words, send and mark take their own clicks`, (await field.count()) === 1 && await hitsSelf(input) && await hitsSelf(field.locator('.bsf-send')) && await hitsSelf(field.locator('[data-testid="board-super-mark"]')));
-          const aside = page.locator('[data-testid="wbp-controls-aside"] .wbp-agent-toggle');
-          const inRow = page.locator('.wbp-canvas .excalidraw .wbp-agent-toggle');
+          const aside = page.locator('[data-testid="wbp-controls-aside"] .wbp-sync-btn');
+          const inRow = page.locator('.wbp-canvas .excalidraw .wbp-sync-btn');
           const agents = (await aside.count()) ? aside : inRow;
-          ok(`${tag}: Agents takes its own click`, await hitsSelf(agents));
+          ok(`${tag}: Sync takes its own click`, await hitsSelf(agents));
         }
       }
       await page.setViewportSize({ width: 1440, height: 900 });
@@ -461,9 +459,9 @@ async function main() {
       });
       const pToggle = phone.locator('.wbp-float-left .wbp-explorer-toggle');
       if (await pToggle.count()) { const v = await tapsSelf(pToggle); ok(`390 ${scheme}: the Boards toggle is whole and takes its own tap`, v === 'ok', v); }
-      const pAgents = phone.locator('.wbp-canvas .wbp-agent-toggle').first();
+      const pAgents = phone.locator('.wbp-canvas .wbp-sync-btn').first();
       const va = (await pAgents.count()) === 1 ? await tapsSelf(pAgents) : 'missing';
-      ok(`390 ${scheme}: Agents is whole and takes its own tap`, va === 'ok', va);
+      ok(`390 ${scheme}: Sync is whole and takes its own tap`, va === 'ok', va);
       await phone.screenshot({ path: join(SHOTS, `telefon-390-${scheme}.png`) });
       await phoneCtx.close();
     }

@@ -10,7 +10,6 @@ import type {
   ExcalidrawElement, ExcalidrawEmbeddableElement, NonDeleted, OrderedExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
 import { emitInstance, useVault } from '../../context/VaultContext';
-import { useAgents } from '../../hooks/useAgents';
 import { requestOpenAgents } from '../../lib/openAgents';
 import { openExternalUrl } from '../../lib/desktop';
 import { DEFAULT_WIDGET_BOXES, DEFAULT_WIDGET_SIZES, isCardColor, nearestWidgetSize, type CardColor, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
@@ -28,10 +27,9 @@ import {
 import { placeNewWidget, widgetSizeOf } from './widgetSize';
 import { WidgetSizePicker } from './WidgetSizePicker';
 import {
-  dropOnAgentCard, hoverTargetOf, linkOpenerId, samePicker, setWidgetColor, setWidgetSize, sizePickerFor, subscribeWidgetActivation,
-  subscribeWidgetSnapping, type AgentDropHandler, type AgentHoverHandler, type DropContext, type SizePickerState,
+  linkOpenerId, samePicker, setWidgetColor, setWidgetSize, sizePickerFor, subscribeWidgetActivation,
+  subscribeWidgetSnapping, type SizePickerState,
 } from './canvasGestures';
-import { agentCardsOf, panelAgentSlug, registerCardLocator, setBoardCards, setDropTarget } from './agentPanelState';
 import { boardAfterWheel } from './htmlWidgetFrame';
 import { useCanvasPalette } from './useCanvasPalette';
 import { useCanvasWrapEffects } from './useCanvasWrapEffects';
@@ -269,57 +267,6 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     boardSlug,
   }), [toast, boardSlug]);
 
-  // ── drag-to-ask: an element dropped on an agent card (or the agent panel) goes back and
-  // becomes a chip in that agent's composer, the panel's ─────────────────────────────────────
-  const boardSlugRef = useRef(boardSlug);
-  const vaultRef = useRef(vault);
-  vaultRef.current = vault;
-  boardSlugRef.current = boardSlug;
-  // The agent roster (`/api/agents`), the list Chat reads: a drop asks the CHAT verdict, because
-  // what lands in the panel's composer is conversation, never a run.
-  const { data: roster } = useAgents();
-  const rosterRef = useRef(roster);
-  rosterRef.current = roster;
-  const dropContext = useCallback((): DropContext | null => {
-    const vaultNow = vaultRef.current;
-    const board = boardSlugRef.current;
-    if (!vaultNow || !board) return null;
-    return {
-      vault: vaultNow,
-      board,
-      tx: txRef.current,
-      agentOf: (slug) => {
-        const a = rosterRef.current?.find((x) => x.slug === slug);
-        return a ? { title: a.title, approved: a.approvedForChat } : null;
-      },
-      panelAgent: () => panelAgentSlug(vaultNow, board, rosterRef.current),
-      toast,
-    };
-  }, [toast]);
-  const agentDrop = useCallback<AgentDropHandler>((api, drag) => {
-    const ctx = dropContext();
-    return !!ctx && dropOnAgentCard(api, drag, ctx);
-  }, [dropContext]);
-  const agentHover = useCallback<AgentHoverHandler>((api, drag) => {
-    const ctx = dropContext();
-    if (!ctx) return;
-    setDropTarget(ctx.vault, ctx.board, drag ? hoverTargetOf(api, drag, ctx) : null);
-  }, [dropContext]);
-  const agentDropRef = useRef(agentDrop);
-  agentDropRef.current = agentDrop;
-  const agentHoverRef = useRef(agentHover);
-  agentHoverRef.current = agentHover;
-
-  // The panel's Find its card: bring the card into view (zoom kept unless it would not fit).
-  useEffect(() => registerCardLocator(vault, boardSlug, (elementId) => {
-    const api = apiRef.current;
-    const el = api?.getSceneElements().find((e) => e.id === elementId);
-    if (!api || !el) return;
-    const st = api.getAppState();
-    const fits = el.width * st.zoom.value <= st.width * 0.9 && el.height * st.zoom.value <= st.height * 0.9;
-    api.scrollToContent(el, { fitToViewport: !fits, viewportZoomFactor: 0.8, animate: true, duration: 350 });
-  }), [vault, boardSlug]);
-
   // ── the page's handle ─────────────────────────────────────────────────────────────────────
   const onApiRef = useRef(onApi);
   onApiRef.current = onApi;
@@ -329,7 +276,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     setReadyApi(api);
     unsubscribers.current.forEach((off) => off());
     unsubscribers.current = [
-      ...subscribeWidgetSnapping(api, (a, drag) => agentDropRef.current(a, drag), (a, drag) => agentHoverRef.current(a, drag)),
+      ...subscribeWidgetSnapping(api),
       ...subscribeWidgetActivation(api),
     ];
     onApiRef.current?.({
@@ -388,9 +335,6 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     setSizePicker((prev) => (samePicker(prev, nextPicker) ? prev : nextPicker));
     // With the select tool only: another tool's properties are for what it is about to draw.
     setWidgetsOnly(appState.activeTool.type === 'selection' && selectionIsOnlyWidgets(elements, appState.selectedElementIds));
-    // The panel knows every agent with a card here (heard only when the list really changes).
-    // Before the version check: a poll's remote copy has already recorded its version.
-    if (boardSlug) setBoardCards(vault, boardSlug, agentCardsOf(elements));
     // The writing field's selection chip: only when the selected ids or the scene changed.
     if (onSelectionRef.current) {
       const ids = Object.keys(appState.selectedElementIds).filter((id) => appState.selectedElementIds[id]);
