@@ -1,20 +1,26 @@
 import { useI18n } from '../../context/I18nContext';
 import { useVaultId } from '../../context/VaultContext';
-import { badge, fill, mediaUrl, usePresentation, type JuryView, type ResultView, type RunTeam } from './data';
+import {
+  accusative, countOf, criteria, fill, mediaUrl, modelLabel, teamHue, usePresentation, wins,
+  type JuryView, type ResultView, type RunTeam,
+} from './data';
+import { Browser, Criteria, Score, TeamMark, fillNodes, people } from './parts';
+
 
 /**
- * The result screen (approved mockup `hackathon-sonuc.png`): the jury's line on top (its pick, how
- * many pairwise matches it won, and that the owner decides), then one column per team in the
- * jury's order: its screen or thesis, score, originality, what it borrowed, and its buttons.
+ * The result screen (design B, "Karar masası", `sonuc-b-1440` and `secildi-1440`): the jury's
+ * recommendation in one sentence with its caution, then one column per team in the jury's order,
+ * side by side: rank, colour and letter, score on its scale, the screen it made at a readable
+ * size, all four criteria, and its buttons. The only filled button is the jury's pick ("seç");
+ * after the pick it is "PR olarak uygula" on the picked column, which gets a dark frame.
  */
-export function Results({ run, teams, controlTeam, data, canPick, picking, pickError, onOpen, onPick, onApply }: {
+export function Results({ run, teams, controlTeam, data, canPick, picking, onOpen, onPick, onApply }: {
   run: string;
   teams: RunTeam[];
   controlTeam: string | null;
   data: ResultView | undefined;
   canPick: boolean;
   picking: string | null;
-  pickError: string | null;
   onOpen: (team: string) => void;
   onPick: (team: string) => void;
   onApply: () => void;
@@ -22,88 +28,102 @@ export function Results({ run, teams, controlTeam, data, canPick, picking, pickE
   const { t } = useI18n();
   const jury = data?.jury ?? null;
   const pick = data?.result?.pick ?? null;
-  const order = jury?.ranking.length ? [...jury.ranking, ...teams.map((x) => x.id).filter((id) => !jury.ranking.includes(id))] : teams.map((x) => x.id);
-  const first = jury?.ranking[0] ? teams.find((x) => x.id === jury.ranking[0]) : undefined;
-  const w = first && jury ? wins(jury, first.id) : null;
+  const ranked = !!jury?.ranking.length;
+  const order = ranked ? [...jury!.ranking, ...teams.map((x) => x.id).filter((id) => !jury!.ranking.includes(id))] : teams.map((x) => x.id);
+  const first = ranked ? teams.find((x) => x.id === jury!.ranking[0]) : undefined;
+  const picked = pick ? teams.find((x) => x.id === pick) : undefined;
 
   return (
     <div className="hk-results">
-      {data?.result?.stoppedReason && !pick && <p className="hk-note">{fill(t('hk.result.stopped'), { reason: data.result.stoppedReason })}</p>}
-      {first && w && (
-        <p className="hk-jury">
-          {pick
-            ? fill(t('hk.result.juryPicked'), { team: first.name, pick: teams.find((x) => x.id === pick)?.name ?? pick })
-            : w.of ? fill(t('hk.result.jury'), { team: first.name, won: w.won, of: w.of }) : fill(t('hk.result.juryShort'), { team: first.name })}
-          {jury?.sameVendor && <span className="hk-chip">{t('hk.result.sameVendor')}</span>}
-        </p>
-      )}
-      {!jury && data?.state === 'judging' && <p className="hk-muted">{t('hk.result.judging')}</p>}
-      {jury && !jury.ranking.length && !pick && <p className="hk-jury">{t('hk.result.juryNone')}</p>}
-      {pickError && <p className="hk-error" role="alert">{pickError}</p>}
-
-      <div className="hk-results__cols">
+      <Verdict jury={jury} first={first} picked={picked} judging={!jury && data?.state === 'judging'} stopped={data?.result?.stoppedReason ?? null} />
+      <div className="hk-cols" data-n={order.length}>
         {order.map((id, i) => {
           const tm = teams.find((x) => x.id === id);
           if (!tm) return null;
           return (
             <TeamResult
-              key={id} run={run} team={tm} place={jury?.ranking.length ? i + 1 : null}
-              score={jury?.ranking.length ? jury.scores[id] ?? null : null} originality={jury?.ranking.length ? jury.originality[id] ?? null : null}
-              control={id === controlTeam} picked={pick === id}
+              key={id} run={run} teams={teams} team={tm} place={ranked ? i + 1 : null} jury={jury}
+              recommended={first?.id === id} control={id === controlTeam} picked={pick === id} anyPicked={!!pick}
               canPick={canPick} picking={picking === id} anyPicking={!!picking}
               onOpen={() => onOpen(id)} onPick={() => onPick(id)} onApply={onApply}
             />
           );
         })}
       </div>
+      {!order.length && <p className="hk-quiet">{t('hk.result.noTeams')}</p>}
     </div>
   );
 }
 
-function TeamResult({ run, team, place, score, originality, control, picked, canPick, picking, anyPicking, onOpen, onPick, onApply }: {
-  run: string; team: RunTeam; place: number | null; score: number | null; originality: number | null; control: boolean; picked: boolean;
+function Verdict({ jury, first, picked, judging, stopped }: { jury: JuryView | null; first: RunTeam | undefined; picked: RunTeam | undefined; judging: boolean; stopped: string | null }) {
+  const { t } = useI18n();
+  const judge = jury?.judges?.[0] ? modelLabel(jury.judges[0].tool, '') : 'Claude';
+  const caution = jury?.sameVendor ? <small>{fill(t('hk.result.caution'), { judge })}</small> : null;
+  if (picked) {
+    const agree = !first || first.id === picked.id;
+    return (
+      <p className="hk-verdict">
+        {fillNodes(t(agree ? (first ? 'hk.result.pickedAgree' : 'hk.result.pickedNoJury') : 'hk.result.pickedDiffer'), {
+          teamAcc: accusative(picked.name), team: picked.name, juryAcc: first ? accusative(first.name) : '', jury: first?.name ?? '',
+        })}
+      </p>
+    );
+  }
+  if (stopped) return <p className="hk-verdict">{fill(t('hk.result.stopped'), { reason: stopped })}</p>;
+  if (judging) return <p className="hk-verdict">{t('hk.result.judging')}</p>;
+  if (!jury) return null;
+  if (!first) return <p className="hk-verdict">{t('hk.result.juryNone')}{caution}</p>;
+  const w = wins(jury, first.id);
+  return (
+    <p className="hk-verdict">
+      {fillNodes(t(w.of ? 'hk.result.jury' : 'hk.result.juryShort'), {
+        teamAcc: <b>{accusative(first.name)}</b>, team: <b>{first.name}</b>, won: countOf(w.won), wonN: w.won, of: w.of,
+      })}
+      {caution}
+    </p>
+  );
+}
+
+function TeamResult({ run, teams, team, place, jury, recommended, control, picked, anyPicked, canPick, picking, anyPicking, onOpen, onPick, onApply }: {
+  run: string; teams: RunTeam[]; team: RunTeam; place: number | null; jury: JuryView | null;
+  recommended: boolean; control: boolean; picked: boolean; anyPicked: boolean;
   canPick: boolean; picking: boolean; anyPicking: boolean; onOpen: () => void; onPick: () => void; onApply: () => void;
 }) {
   const { t } = useI18n();
   const { vault } = useVaultId();
   const { data: p } = usePresentation(run, team.id);
   const shot = p?.screens.find((s) => s.width === 1440) ?? p?.screens[0];
+  const score = place != null ? jury?.scores[team.id] ?? null : null;
+  const crit = place != null ? criteria(jury, team.id) : null;
+  const hue = teamHue(teams, team.id);
   return (
-    <article className="hk-panel hk-result" data-picked={picked ? 'true' : undefined}>
-      <div className="hk-result__thumb">
-        {shot ? <img alt={fill(t('hk.result.shotAlt'), { team: team.name })} src={mediaUrl(vault, run, team.id, shot.media)} />
-          : p?.thesis ? <p className="hk-result__thesis">{p.thesis.thesis}</p>
-          : <p className="hk-muted">{t('hk.result.noThumb')}</p>}
-      </div>
-      <header className="hk-result__head">
-        {score != null && <strong className="hk-score">{score.toFixed(1)}</strong>}
-        <span className="hk-badge hk-badge--sm" data-tool={team.tool}>{badge(team.name)}</span>
-        <span className="hk-table__name">{team.name}</span>
-        <span className="hk-muted">{team.tool === 'codex' ? 'Codex' : 'Claude'}</span>
-        {place != null && <span className="hk-place" data-first={place === 1 ? 'true' : undefined}>{place}.</span>}
+    <article className="hk-col" data-hue={hue} data-picked={picked ? 'true' : undefined}>
+      <header className="hk-col__head">
+        {place != null && <span className="hk-col__rank">{place}</span>}
+        <TeamMark teams={teams} team={team} />
+        <span className="hk-col__name">{team.name}</span>
+        {picked ? <span className="hk-chip">{t('hk.result.yourPick')}</span> : recommended && !anyPicked ? <span className="hk-chip">{t('hk.result.recommended')}</span> : null}
+        {score != null && <Score value={score} big />}
       </header>
-      {originality != null && (
-        <div className="hk-bar">
-          <span>{t('hk.result.originality')}</span>
-          <span className="hk-bar__track"><span className="hk-bar__fill" style={{ width: `${Math.round(Math.min(10, originality) * 10)}%` }} /></span>
-          <span className="hk-bar__num">{originality.toFixed(1)}</span>
-        </div>
-      )}
-      {control && <p className="hk-muted">{t('hk.result.control')}</p>}
-      {p?.borrowed.map((b, i) => <p key={i} className="hk-muted">{fill(t('hk.result.borrowed'), { idea: b.idea })}</p>)}
-      {p?.flags.map((f, i) => <p key={i} className="hk-warn-ink">{f}</p>)}
-      <footer className="hk-result__foot">
-        <button type="button" className={`hk-btn${picked ? ' hk-btn--primary' : ''}`} onClick={onOpen}>{t('hk.result.open')}</button>
-        {canPick && <button type="button" className="hk-btn" disabled={anyPicking} onClick={onPick}>{picking ? t('hk.result.picking') : t('hk.result.pick')}</button>}
-        {picked && <button type="button" className="hk-btn" onClick={onApply}>{t('hk.result.apply')}</button>}
-        {picked && <span className="hk-chip">{t('hk.result.yourPick')}</span>}
+      <p className="hk-col__persona">{[team.persona, people(t, team.inner)].filter(Boolean).join(' · ')}</p>
+      <Browser className="hk-col__screen" caption={shot ? t('hk.result.made') : t('hk.result.idea')}>
+        {shot ? <img alt={fill(t('hk.result.shotAlt'), { team: team.name })} src={mediaUrl(vault, run, team.id, shot.media)} />
+          : p?.thesis ? <p className="hk-col__thesis">{p.thesis.thesis}</p>
+          : <p className="hk-quiet hk-col__thesis">{t('hk.result.noThumb')}</p>}
+      </Browser>
+      {crit && <Criteria scores={crit} hue={hue} />}
+      {control && <p className="hk-small">{t('hk.result.control')}</p>}
+      {p?.borrowed.map((b, i) => <p key={i} className="hk-small">{fill(t('hk.result.borrowed'), { idea: b.idea })}</p>)}
+      {p?.flags.map((f, i) => <p key={i} className="hk-small hk-warn">{f}</p>)}
+      <footer className="hk-col__foot">
+        {canPick && !anyPicked && (
+          <button type="button" className={`hk-btn hk-btn--lg${recommended ? ' hk-btn--primary' : ''}`} disabled={anyPicking} onClick={onPick}>
+            {picking ? t('hk.result.picking') : fill(t('hk.result.pickTeam'), { teamAcc: accusative(team.name), team: team.name })}
+          </button>
+        )}
+        {picked && <button type="button" className="hk-btn hk-btn--lg hk-btn--primary" onClick={onApply}>{t('hk.result.apply')}</button>}
+        <button type="button" className="hk-btn hk-btn--lg" onClick={onOpen}>{t('hk.result.open')}</button>
       </footer>
     </article>
   );
-}
-
-/** Pairwise matches a team won, out of those it played (both orders count). */
-export function wins(jury: JuryView, team: string): { won: number; of: number } {
-  const mine = jury.verdicts.filter((v) => v.a === team || v.b === team);
-  return { won: mine.filter((v) => v.winner === team).length, of: mine.length };
 }

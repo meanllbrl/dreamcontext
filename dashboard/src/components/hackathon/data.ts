@@ -32,7 +32,7 @@ export interface RunView {
 
 export interface DesignView {
   run: string; state: RunState; designHash: string; problem: string; kind: string;
-  teams: { id: string; name: string; tool: TeamTool; model: string; inner: 'trio' | 'solo'; readIsolated: boolean; wholeDisk: boolean; control: boolean }[];
+  teams: { id: string; name: string; persona?: string; tool: TeamTool; model: string; inner: 'trio' | 'solo'; readIsolated: boolean; wholeDisk: boolean; control: boolean }[];
   mcpTools: string[]; mcpServers: string[]; rounds: number; roundMinutes: number; endsAt: string;
   limit: { weeklyShareCeiling: number; sessionGuard: number };
   target: string;
@@ -63,9 +63,12 @@ export interface PresentationView {
   flags: string[]; screens: { width: number; media: string }[]; reason?: string; decisions: number;
 }
 
+export interface CriteriaScores { solves: number; evidence: number; feasible: number; original: number }
+export interface Judge { tool: TeamTool; model: string }
 export interface JuryView {
   scores: Record<string, number>; originality: Record<string, number>; ranking: string[]; sameVendor: boolean;
-  verdicts: { a: string; b: string; order: 'ab' | 'ba'; winner: string | null; why: string }[];
+  verdicts: { a: string; b: string; order: 'ab' | 'ba'; winner: string | null; why: string; scores?: Record<string, CriteriaScores>; judge?: Judge }[];
+  judges?: Judge[];
 }
 export interface ResultView { run: string; state: RunState; jury: JuryView | null; result: { pick: string | null; pr: string; stoppedReason?: string } | null }
 
@@ -170,4 +173,97 @@ export function minutesLeft(iso: string, now = Date.now()): number {
 /** A team's one-letter badge: its name's first letter (the mockups' K, C, S). */
 export function badge(name: string): string {
   return (name.trim()[0] ?? '?').toLocaleUpperCase('tr');
+}
+
+// ─── Design B helpers: team identity, Turkish suffixes, scores ─────────────
+
+/** Team identity colours (`--hk-team-1..6`): never the accent, green, orange or red. Stable by design order. */
+export const TEAM_HUES = 5;
+export function teamHue(teams: readonly { id: string }[], id: string): number {
+  const i = teams.findIndex((x) => x.id === id);
+  return (i < 0 ? 0 : i % TEAM_HUES) + 1;
+}
+
+const BACK = new Set(['a', 'ı', 'o', 'u', 'â']);
+const FRONT_ROUND = new Set(['ö', 'ü']);
+const VOWELS = 'aeıioöuüâîû';
+function lastVowel(word: string): string | null {
+  const w = word.toLocaleLowerCase('tr');
+  for (let i = w.length - 1; i >= 0; i--) if (VOWELS.includes(w[i]!)) return w[i]!;
+  return null;
+}
+/** A proper name in the Turkish accusative: "Kanıtçı'yı", "Sade'yi", "Kontrol'ü". */
+export function accusative(name: string): string {
+  const n = name.trim();
+  const v = lastVowel(n);
+  if (!v) return `${n}'ı`;
+  const h = BACK.has(v) ? (v === 'o' || v === 'u' ? 'u' : 'ı') : FRONT_ROUND.has(v) ? 'ü' : 'i';
+  const endsVowel = VOWELS.includes(n.toLocaleLowerCase('tr').slice(-1));
+  return `${n}'${endsVowel ? 'y' : ''}${h}`;
+}
+
+/** "2'sini", "1'ini", "3'ünü": a count's "of them" suffix, as Turkish reads the digits aloud. */
+export function countOf(n: number): string {
+  const units: Record<number, string> = { 0: 'ını', 1: 'ini', 2: 'sini', 3: 'ünü', 4: 'ünü', 5: 'ini', 6: 'sını', 7: 'sini', 8: 'ini', 9: 'unu' };
+  const tens: Record<number, string> = { 1: 'unu', 2: 'sini', 3: 'unu', 4: 'ını', 5: 'sini', 6: 'ını', 7: 'ini', 8: 'ini', 9: 'ını' };
+  if (n === 0) return "0'ını";
+  const suffix = n % 10 ? units[n % 10]! : (n % 100) ? tens[(n % 100) / 10]! : 'ünü';
+  return `${n}'${suffix}`;
+}
+
+/** A score in the owner's language: "6,8" in Turkish, "6.8" elsewhere; whole numbers without decimals. */
+export function num(n: number, locale: string): string {
+  const r = Math.round(n * 10) / 10;
+  return r.toLocaleString(locale.startsWith('tr') ? 'tr-TR' : 'en-US', { maximumFractionDigits: 1 });
+}
+
+/** A team's four criteria: the mean of every verdict's scores for it (null when no judge scored it). */
+export function criteria(jury: JuryView | null | undefined, team: string): CriteriaScores | null {
+  const rows = (jury?.verdicts ?? []).map((v) => v.scores?.[team]).filter((x): x is CriteriaScores => !!x);
+  if (!rows.length) return null;
+  const mean = (k: keyof CriteriaScores) => rows.reduce((a, r) => a + (Number.isFinite(r[k]) ? r[k] : 0), 0) / rows.length;
+  return { solves: mean('solves'), evidence: mean('evidence'), feasible: mean('feasible'), original: mean('original') };
+}
+
+/** Pairwise matches a team won, out of those it played (both orders count). */
+export function wins(jury: JuryView, team: string): { won: number; of: number } {
+  const mine = jury.verdicts.filter((v) => v.a === team || v.b === team);
+  return { won: mine.filter((v) => v.winner === team).length, of: mine.length };
+}
+
+/** The jury's one-sentence reason for a team: a verdict it won, else any it played. */
+export function juryWhy(jury: JuryView | null | undefined, team: string): { why: string; judge: Judge | null } | null {
+  const mine = (jury?.verdicts ?? []).filter((v) => (v.a === team || v.b === team) && v.why);
+  const v = mine.find((x) => x.winner === team) ?? mine[0];
+  return v ? { why: v.why, judge: v.judge ?? null } : null;
+}
+
+const MODEL_NAMES: Record<string, string> = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus', fable: 'Fable' };
+/** "Claude Haiku", "Codex", "Claude": a tool and model as a person reads them. */
+export function modelLabel(tool: TeamTool, model: string): string {
+  const base = tool === 'codex' ? 'Codex' : 'Claude';
+  const m = (model ?? '').trim();
+  if (!m) return base;
+  const key = Object.keys(MODEL_NAMES).find((k) => m.toLowerCase().includes(k));
+  return key ? `${base} ${MODEL_NAMES[key]}` : `${base} ${m}`;
+}
+
+/** A conductor moment, as a sentence: first letter up, a few internal phrasings said plainly. */
+export function momentText(text: string, t: (k: string) => string): string {
+  let s = text.trim();
+  if (/^sahip başlattı$/i.test(s)) return t('hk.moment.started');
+  const close = /^yakınlık: \d+ çift ölçüldü(, (\d+) çift çok yakın)?/i.exec(s);
+  if (close) return close[1] ? t('hk.moment.similarClose') : t('hk.moment.similar');
+  s = s.replace(/ \(aynı firma\)/, '');
+  return s ? s[0]!.toLocaleUpperCase('tr') + s.slice(1) : s;
+}
+
+/**
+ * The language a hackathon screen speaks: its own content's (the problem the owner wrote, the
+ * teams' Turkish theses), not the dashboard's. Turkish letters in the text → Turkish; otherwise
+ * the dashboard's locale. One language per screen: Turkish content never sits under English labels.
+ */
+export function textLocale(texts: readonly (string | null | undefined)[], fallback: string): 'en' | 'tr' {
+  if (texts.some((x) => !!x && /[çğıöşüÇĞİÖŞÜâî]/.test(x))) return 'tr';
+  return fallback.startsWith('tr') ? 'tr' : 'en';
 }

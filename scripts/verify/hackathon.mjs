@@ -14,7 +14,7 @@ import { copyFileSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
-import { openApp } from './lib/app.mjs';
+import { openApp, ownerShellScript } from './lib/app.mjs';
 
 const { values } = parseArgs({ options: { out: { type: 'string' } } });
 const app = await openApp({ suite: 'hackathon' });
@@ -231,10 +231,18 @@ try {
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
     const table = page.locator('.hk-live__tables > *', { hasText: 'Sade' }).first();
-    await table.locator('button').first().click().catch(async () => { await table.click(); });
+    try { await table.click({ timeout: 5_000 }); } catch (e) { app.findings.push(`room@${w.name}: tap ${String(e.message).slice(0, 900)}`); }
     await page.waitForTimeout(800);
     check(await visible(page, 'text=Kart alanı katlanır'), `room@${w.name}: Sade's decisions not shown`);
   }, { name: '04-team-room' });
+
+  // The Mac shell at phone width: the desk must still open with a tap.
+  await app.look(`/?vault=${V}`, async (page, w) => {
+    await openRun(page, 'Gelir artıracak');
+    const table = page.locator('.hk-live__tables > *', { hasText: 'Sade' }).first();
+    try { await table.click({ timeout: 5_000 }); } catch (e) { app.findings.push(`room-shell@${w.name}: tap ${String(e.message).slice(0, 1500)}`); }
+    await page.waitForTimeout(800);
+  }, { name: '04b-team-room-shell', init: () => ownerShellScript('k') });
 
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApi, useVault } from '../context/VaultContext';
-import { useI18n } from '../context/I18nContext';
+import { ScopedLocale, useI18n } from '../context/I18nContext';
 import { sendFromPage } from '../lib/superPageBridge';
 import { askAgent } from '../components/apps/askAgent';
 import { StartCard } from '../components/hackathon/StartCard';
@@ -12,7 +12,7 @@ import { Presentation } from '../components/hackathon/Presentation';
 import { Results } from '../components/hackathon/Results';
 import { PrConfirm } from '../components/hackathon/PrConfirm';
 import {
-  clock, fill, minutesLeft, pct, useFrames, useResult, useRounds, useRun, useRuns,
+  clock, fill, minutesLeft, momentText, pct, textLocale, useFrames, useResult, useRounds, useRun, useRuns,
   type RoundRecord, type RunState, type RunView,
 } from '../components/hackathon/data';
 import '../components/hackathon/hackathon.css';
@@ -30,9 +30,20 @@ export function HackathonPage({ focus }: { focus?: { id: string | null; nonce: n
   useEffect(() => { if (focus?.id) setOpen(focus.id); }, [focus?.id, focus?.nonce]);
   return (
     <div className="hk-page">
-      {open ? <RunScreen id={open} onBack={() => setOpen(null)} /> : <RunList onOpen={setOpen} />}
+      <PageLocale run={open}>
+        {open ? <RunScreen id={open} onBack={() => setOpen(null)} /> : <RunList onOpen={setOpen} />}
+      </PageLocale>
     </div>
   );
+}
+
+/** The page speaks its content's language (a Turkish problem → Turkish labels), like a Lab card. */
+function PageLocale({ run, children }: { run: string | null; children: ReactNode }) {
+  const { locale } = useI18n();
+  const { data: list } = useRuns();
+  const { data: one } = useRun(run);
+  const texts = run ? [one?.problem] : (list?.runs ?? []).map((r) => r.problem);
+  return <ScopedLocale locale={textLocale(texts, locale)}>{children}</ScopedLocale>;
 }
 
 function RunList({ onOpen }: { onOpen: (id: string) => void }) {
@@ -136,66 +147,66 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
   const picking = busy?.startsWith('pick:') ? busy.slice(5) : null;
 
   if (view.kind === 'room' && teamOf(view.team)) {
-    return <TeamRoom run={id} team={teamOf(view.team)!} frame={frameOf(view.team)} round={run.round} rounds={run.rounds} onBack={() => setView({ kind: 'main' })} />;
+    return <TeamRoom run={id} teams={run.teams} team={teamOf(view.team)!} frame={frameOf(view.team)} round={run.round} rounds={run.rounds} onBack={() => setView({ kind: 'main' })} />;
   }
   if (view.kind === 'peek') {
     const rec = rounds?.rounds.find((r) => r.round === view.round);
     if (rec) return <Peek rec={rec} teams={run.teams} controlTeam={run.controlTeam} onBack={() => setView({ kind: 'main' })} />;
   }
   if (view.kind === 'present' && teamOf(view.team)) {
-    const order = result?.jury?.ranking.length ? result.jury.ranking : run.teams.map((x) => x.id);
-    const at = order.indexOf(view.team);
-    const next = order.length > 1 ? teamOf(order[(at + 1) % order.length]!) ?? null : null;
+    const order = result?.jury?.ranking.length ? [...result.jury.ranking, ...run.teams.map((x) => x.id).filter((x) => !result.jury!.ranking.includes(x))] : run.teams.map((x) => x.id);
     return (
       <Presentation
-        key={view.team} run={id} team={teamOf(view.team)!} error={err}
-        place={result?.jury?.ranking.length ? at + 1 : null} score={result?.jury?.scores[view.team] ?? null}
-        nextTeam={next} canPick={canPick} picking={picking === view.team}
-        onPick={() => void pick(view.team)} onNext={() => next && setView({ kind: 'present', team: next.id })}
+        key={view.team} run={id} teams={run.teams} order={order} team={teamOf(view.team)!} error={err}
+        jury={result?.jury ?? null} pick={result?.result?.pick ?? null} canPick={canPick} picking={picking === view.team}
+        onPick={() => void pick(view.team)} onApply={() => setView({ kind: 'pr' })} onTeam={(team) => setView({ kind: 'present', team })}
         onBack={() => setView({ kind: 'main' })}
       />
     );
   }
 
+  const onBoard = run.state === 'running' || run.state === 'presenting';
   return (
     <div className="hk-run-screen">
       <RunHeader run={run} onBack={onBack} busy={busy} onStop={() => void act('stop', false)} />
+      <Timeline run={run} rounds={rounds?.rounds ?? []} onPeek={(round) => setView({ kind: 'peek', round })} />
       {run.conductor === 'gone' && (
-        <div className="hk-paused hk-paused--conductor" role="status">
+        <div className="hk-banner" role="status">
           <span>{t('hk.conductor.gone')}</span>
-          <button type="button" className="hk-btn hk-btn--primary" disabled={busy === 'relaunch'} onClick={() => void act('relaunch', true)}>{t('hk.conductor.relaunch')}</button>
+          <button type="button" className="hk-btn" disabled={busy === 'relaunch'} onClick={() => void act('relaunch', true)}>{t('hk.conductor.relaunch')}</button>
         </div>
       )}
-      <Timeline run={run} rounds={rounds?.rounds ?? []} onPeek={(round) => setView({ kind: 'peek', round })} />
       {run.paused && run.state === 'running' && run.conductor !== 'gone' && (
-        <div className="hk-paused" role="status">
+        <div className="hk-banner" role="status">
           <span>{fill(t('hk.paused'), { reason: run.paused })}</span>
-          <button type="button" className="hk-btn hk-btn--primary" disabled={busy === 'resume'} onClick={() => void act('resume', true)}>{t('hk.resume')}</button>
+          <button type="button" className="hk-btn" disabled={busy === 'resume'} onClick={() => void act('resume', true)}>{t('hk.resume')}</button>
         </div>
       )}
       {err && <p className="hk-error" role="alert">{err}</p>}
 
-      {(run.state === 'awaiting-owner' || run.state === 'draft') && <StartCard run={id} onStarted={() => void refresh()} />}
+      {(run.state === 'awaiting-owner' || run.state === 'draft') && (
+        <StartCard run={id} inPage onStarted={() => void refresh()} onCancel={() => void act('stop', false)} cancelling={busy === 'stop'} />
+      )}
 
-      {(run.state === 'running' || run.state === 'presenting') && (
+      {onBoard && (
         <div className="hk-live">
           <div className="hk-live__tables">
-            {run.state === 'presenting' && <p className="hk-note hk-live__wide">{t('hk.presenting')}</p>}
+            {run.state === 'presenting' && <p className="hk-lede hk-live__wide">{t('hk.presenting')}</p>}
             {run.teams.map((tm) => (
-              <TeamTable key={tm.id} run={id} team={tm} frame={frameOf(tm.id)} control={tm.id === run.controlTeam} onOpen={() => setView({ kind: 'room', team: tm.id })} />
+              <TeamTable key={tm.id} run={id} teams={run.teams} team={tm} frame={frameOf(tm.id)} control={tm.id === run.controlTeam} onOpen={() => setView({ kind: 'room', team: tm.id })} />
             ))}
           </div>
           <aside className="hk-live__side">
             <Distance run={run} rounds={rounds?.rounds ?? []} />
-            <section className="hk-panel">
-              <h3 className="hk-section">{t('hk.moments')}</h3>
+            <section className="hk-box">
+              <h3 className="hk-label">{t('hk.moments')}</h3>
               {run.strip.moments.length ? (
-                <ul className="hk-moments">
-                  {[...run.strip.moments].reverse().map((m, i) => (
-                    <li key={`${m.at}-${i}`}><span className="hk-muted hk-mono">{clock(m.at)}</span><span>{m.text}</span></li>
+                <ul className="hk-feed">
+                  {[...run.strip.moments].reverse().slice(0, 12).map((m, i) => (
+                    <li key={`${m.at}-${i}`}><time>{clock(m.at)}</time><span>{momentText(m.text, t)}</span></li>
                   ))}
                 </ul>
-              ) : <p className="hk-muted">{t('hk.noMoments')}</p>}
+              ) : <p className="hk-quiet">{t('hk.noMoments')}</p>}
             </section>
           </aside>
         </div>
@@ -205,7 +216,7 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
       {ended && view.kind !== 'pr' && (
         <Results
           run={id} teams={run.teams} controlTeam={run.controlTeam} data={result}
-          canPick={canPick} picking={picking} pickError={null}
+          canPick={canPick} picking={picking}
           onOpen={(team) => setView({ kind: 'present', team })} onPick={(team) => void pick(team)} onApply={() => setView({ kind: 'pr' })}
         />
       )}
@@ -213,38 +224,29 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
   );
 }
 
+/** Every screen's head (design B): ‹ Hackathonlar, the problem, then the state or the clock. */
 function RunHeader({ run, onBack, busy, onStop }: { run: RunView; onBack: () => void; busy: string | null; onStop: () => void }) {
   const { t } = useI18n();
   const [confirming, setConfirming] = useState(false);
   const s = run.strip;
-  // Judging spends nothing and waits for the pick: no clock, and no Stop beside the Pick buttons.
+  // Judging spends nothing and waits for the pick: no clock, and no Stop beside the pick.
   const running = run.state === 'running' || run.state === 'presenting';
-  const stoppable = running || run.state === 'awaiting-owner' || run.state === 'draft';
-  const share = s.used != null ? Math.min(100, Math.round((s.used / Math.max(1, s.ceiling)) * 100)) : null;
-  const stateChip = run.state === 'running' && run.round != null ? fill(t('hk.round'), { n: run.round, of: run.rounds }) : t(`hk.state.${run.state}`);
   return (
-    <header className="hk-head hk-head--wrap">
+    <header className="hk-top">
       <button type="button" className="hk-back" onClick={onBack}>‹ {t('hk.back')}</button>
-      <h2 className="hk-head__title">{run.problem}</h2>
-      <span className="hk-chip" data-state={run.state}>{stateChip}</span>
-      <span className="hk-head__grow" />
-      {running && (
-        <span className="hk-meters">
-          <span className="hk-meter">
-            <span>{fill(t('hk.meter.end'), { end: clock(s.endsAt), left: minutesLeft(s.endsAt) })}</span>
-          </span>
-          <span className="hk-meter">
-            <span>{s.reading}</span>
-            {share != null && <span className="hk-meter__track" aria-hidden="true"><span className="hk-meter__fill" style={{ width: `${share}%` }} /></span>}
-          </span>
+      <h1 className="hk-title">{run.problem}</h1>
+      {running ? (
+        <span className="hk-top__meta">
+          <span>{fill(t('hk.meter.left'), { end: clock(s.endsAt), left: minutesLeft(s.endsAt) })}</span>
+          {s.used != null && <span>{s.reading}</span>}
+          {!confirming && <button type="button" className="hk-btn" disabled={busy === 'stop'} onClick={() => setConfirming(true)}>{t('hk.stop')}</button>}
         </span>
+      ) : (
+        <span className="hk-chip" data-state={run.state}>{t(`hk.state.${run.state}`)}</span>
       )}
-      {stoppable && !confirming && (
-        <button type="button" className="hk-btn" disabled={busy === 'stop'} onClick={() => setConfirming(true)}>{t('hk.stop')}</button>
-      )}
-      {stoppable && confirming && (
+      {running && confirming && (
         <span className="hk-confirm" role="group" aria-label={t('hk.stop')}>
-          <span>{running ? t('hk.stop.confirmRunning') : t('hk.stop.confirmDraft')}</span>
+          <span>{t('hk.stop.confirmRunning')}</span>
           <button type="button" className="hk-btn hk-btn--danger" disabled={busy === 'stop'} onClick={() => { setConfirming(false); onStop(); }}>{t('hk.stop.yes')}</button>
           <button type="button" className="hk-btn" onClick={() => setConfirming(false)}>{t('hk.stop.no')}</button>
         </span>
@@ -253,7 +255,10 @@ function RunHeader({ run, onBack, busy, onStop }: { run: RunView; onBack: () => 
   );
 }
 
-/** The run's path: started, each round (with its peek when it opens), presentations, jury. */
+/**
+ * The run's steps (design B): Tur 1, Tur 2, Sunumlar, Jüri, Seçim; done ones ticked, the current
+ * one with a dot. A finished round with a peek record opens that peek.
+ */
 function Timeline({ run, rounds, onPeek }: { run: RunView; rounds: RoundRecord[]; onPeek: (round: number) => void }) {
   const { t } = useI18n();
   if (run.state === 'draft' || run.state === 'awaiting-owner') return null;
@@ -261,19 +266,20 @@ function Timeline({ run, rounds, onPeek }: { run: RunView; rounds: RoundRecord[]
   const at = run.state === 'stopped' ? -1 : order.indexOf(run.state);
   const steps: { key: string; label: string; done: boolean; now: boolean; peek?: number }[] = [];
   for (let r = 1; r <= run.rounds; r++) {
-    const done = at > 0 || (run.round ?? 0) > r || rounds.some((x) => x.round === r);
-    steps.push({ key: `r${r}`, label: fill(t('hk.step.round'), { n: r }), done, now: run.state === 'running' && run.round === r });
     const rec = rounds.find((x) => x.round === r);
-    if (r + 1 > 1 && r + 1 < run.rounds) steps.push({ key: `p${r}`, label: fill(t('hk.step.peek'), { n: r }), done: !!rec, now: false, peek: rec ? r : undefined });
+    const now = run.state === 'running' && run.round === r;
+    const done = at > 0 || (run.round ?? 0) > r || (!!rec && !now);
+    steps.push({ key: `r${r}`, label: fill(t(now ? 'hk.step.roundNow' : 'hk.step.round'), { n: r }), done, now, peek: rec && Object.keys(rec.cards).length ? r : undefined });
   }
   steps.push({ key: 'present', label: t('hk.step.present'), done: at > 1, now: at === 1 });
-  steps.push({ key: 'jury', label: t('hk.step.jury'), done: at > 2, now: at === 2 });
+  steps.push({ key: 'jury', label: t('hk.step.jury'), done: at > 2 || at === 2, now: false });
+  steps.push({ key: 'pick', label: t('hk.step.pick'), done: at === 3, now: at === 2 });
   return (
     <ol className="hk-steps">
       {steps.map((s) => (
-        <li key={s.key} className="hk-step" data-done={s.done ? 'true' : undefined} data-now={s.now ? 'true' : undefined}>
+        <li key={s.key} className="hk-step" data-done={s.done ? 'true' : undefined} data-now={s.now ? 'true' : undefined} data-live={s.now && run.state === 'running' ? 'true' : undefined}>
           {s.peek != null
-            ? <button type="button" className="hk-step__btn" onClick={() => onPeek(s.peek!)}>{s.label}</button>
+            ? <button type="button" className="hk-step__btn" title={fill(t('hk.step.peekHint'), { n: s.peek })} onClick={() => onPeek(s.peek!)}>{s.label}</button>
             : <span>{s.label}</span>}
         </li>
       ))}
@@ -281,26 +287,30 @@ function Timeline({ run, rounds, onPeek }: { run: RunView; rounds: RoundRecord[]
   );
 }
 
-/** "How similar the teams are": the latest round's pair scores (lower is better). */
+/** "Ekipler ne kadar benzer": the latest round's pairs; a pair over the gate says so in orange. */
 function Distance({ run, rounds }: { run: RunView; rounds: RoundRecord[] }) {
   const { t, locale } = useI18n();
   const last = [...rounds].reverse().find((r) => r.pairs.length);
   const name = (id: string) => run.teams.find((x) => x.id === id)?.name ?? id;
+  const gate = Math.round((last?.gate ?? 0.6) * 100);
+  const pairs = last ? [...last.pairs].sort((a, b) => b.score - a.score) : [];
   return (
-    <section className="hk-panel">
-      <h3 className="hk-section">{t('hk.distance')} <span className="hk-muted">{t('hk.distance.hint')}</span></h3>
-      {last ? (
-        <ul className="hk-bars">
-          {last.pairs.map((p) => (
-            <li key={`${p.a}-${p.b}`} className="hk-bar" data-over={p.score > last.gate ? 'true' : undefined}>
-              <span>{name(p.a)} · {name(p.b)}</span>
-              <span className="hk-bar__track"><span className="hk-bar__fill" style={{ width: `${Math.round(p.score * 100)}%` }} /></span>
-              <span className="hk-bar__num">{pct(p.score, locale)}</span>
-            </li>
-          ))}
+    <section className="hk-box">
+      <h3 className="hk-label">{t('hk.distance')}</h3>
+      {pairs.length ? (
+        <ul className="hk-sims">
+          {pairs.map((p) => {
+            const over = p.score > (last?.gate ?? 1);
+            return (
+              <li key={`${p.a}-${p.b}`} className="hk-sim" data-over={over ? 'true' : undefined}>
+                {run.teams.length > 2 && <span className="hk-quiet">{fill(t('hk.distance.pair'), { a: name(p.a), b: name(p.b) })}</span>}
+                <strong>{fill(t(over ? 'hk.distance.close' : 'hk.distance.apart'), { pct: pct(p.score, locale) })}</strong>
+              </li>
+            );
+          })}
         </ul>
-      ) : <p className="hk-muted">{t('hk.distance.none')}</p>}
-      <p className="hk-muted">{fill(t('hk.peek.gateRule'), { gate: Math.round((last?.gate ?? 0.6) * 100) })}</p>
+      ) : <p className="hk-quiet">{t('hk.distance.none')}</p>}
+      <p className="hk-small">{fill(t('hk.distance.rule'), { gate: pct(gate / 100, locale) })}</p>
     </section>
   );
 }

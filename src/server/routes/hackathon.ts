@@ -92,7 +92,7 @@ export async function handleHackathonDesign(_req: IncomingMessage, res: ServerRe
   const disk = wholeDiskTeams(d);
   sendJson(res, 200, {
     run: r.id, state: r.state, designHash: designHash(r), problem: clip(d.problem, 500), kind: d.kind,
-    teams: d.teams.map((t) => ({ id: t.id, name: clip(t.name, 40), tool: t.tool, model: t.model, inner: t.inner, readIsolated: teamReadIsolated(t), wholeDisk: disk.includes(t.id), control: t.id === d.controlTeam })),
+    teams: d.teams.map((t) => ({ id: t.id, name: clip(t.name, 40), persona: clip(t.persona, 300), tool: t.tool, model: t.model, inner: t.inner, readIsolated: teamReadIsolated(t), wholeDisk: disk.includes(t.id), control: t.id === d.controlTeam })),
     mcpTools: d.mcpTools, mcpServers: serversOf(d.mcpTools),
     // Before Başlat the card shows the end a start NOW gets (ownerStart re-bases a past one).
     rounds: d.rounds, roundMinutes: d.roundMinutes, endsAt: r.state === 'awaiting-owner' ? new Date(Math.max(Date.parse(d.limit.endsAt) || 0, earliestEnd(d, new Date()).getTime())).toISOString() : d.limit.endsAt,

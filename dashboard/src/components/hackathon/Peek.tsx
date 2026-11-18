@@ -1,10 +1,13 @@
 import { useI18n } from '../../context/I18nContext';
-import { badge, clock, fill, type RoundRecord, type RunTeam, pct } from './data';
+import { clock, fill, pct, type RoundRecord, type RunTeam } from './data';
+import { TeamMark } from './parts';
+
+const STATUS = new Set(['on-track', 'pivot', 'stuck', 'done']);
 
 /**
- * The peek screen (approved mockup `hackathon-goz-atma.png`): after a round, every team's thesis
- * card, whose cards it saw, the questions that crossed and the similarity gate. Teams saw the cards
- * without names; the owner sees everything.
+ * The peek after a round (design B rules on the approved `hackathon-goz-atma` layout): every
+ * team's main idea and claims, whose cards it saw, the questions that crossed and how similar
+ * the teams are, said as a sentence. Teams saw the cards without names; the owner sees everything.
  */
 export function Peek({ rec, teams, controlTeam, onBack }: {
   rec: RoundRecord;
@@ -17,36 +20,36 @@ export function Peek({ rec, teams, controlTeam, onBack }: {
   const opened = Object.keys(rec.seen).length > 0;
   return (
     <div className="hk-peek">
-      <header className="hk-head">
+      <header className="hk-top hk-top--room">
         <button type="button" className="hk-back" onClick={onBack}>‹ {t('hk.room.back')}</button>
-        <h2 className="hk-head__title">{fill(t('hk.peek.title'), { n: rec.round })}</h2>
-        <span className="hk-chip">{fill(t('hk.peek.at'), { n: rec.round, at: clock(rec.at) })}</span>
-        <span className="hk-muted hk-head__sub">{opened ? t('hk.peek.rule') : t('hk.peek.closed')}</span>
+        <h2 className="hk-title">{fill(t('hk.peek.title'), { n: rec.round })}</h2>
+        <span className="hk-quiet hk-top__end">{fill(t('hk.peek.at'), { n: rec.round, at: clock(rec.at) })}</span>
       </header>
+      <p className="hk-lede">{opened ? t('hk.peek.rule') : t('hk.peek.closed')}</p>
 
       <div className="hk-peek__cards">
         {teams.map((tm) => {
           const c = rec.cards[tm.id];
           const saw = rec.seen[tm.id] ?? [];
           return (
-            <article key={tm.id} className="hk-panel hk-thesis">
-              <header className="hk-table__head">
-                <span className="hk-badge" data-tool={tm.tool}>{badge(tm.name)}</span>
-                <span className="hk-table__name">{tm.name}</span>
+            <article key={tm.id} className="hk-box hk-peekcard">
+              <header className="hk-tc__head">
+                <TeamMark teams={teams} team={tm} />
+                <b>{tm.name}</b>
                 {tm.id === controlTeam && <span className="hk-chip">{t('hk.control')}</span>}
+                {c && STATUS.has(c.status) && <span className="hk-quiet hk-top__end">{t(`hk.status.${c.status}`)}</span>}
               </header>
               {c ? (
                 <>
-                  <span className="hk-eyebrow">{t('hk.peek.thesis')}</span>
-                  <h3 className="hk-thesis__title">{c.thesis}</h3>
-                  <ol className="hk-thesis__claims">{c.claims.map((x, i) => <li key={i}>{x}</li>)}</ol>
-                  <dl className="hk-thesis__facts">
-                    <dt>{t('hk.peek.status')}</dt><dd>{c.status}</dd>
-                    {c.stuck && (<><dt>{t('hk.peek.stuck')}</dt><dd>{c.stuck}</dd></>)}
-                  </dl>
+                  <h3 className="hk-label">{t('hk.present.idea')}</h3>
+                  <p className="hk-thesis">{c.thesis}</p>
+                  <ul className="hk-claims">
+                    {c.claims.map((x, i) => <li key={i}>{x}</li>)}
+                    {c.stuck && <li className="hk-claims__risk"><span><b>{t('hk.present.open')}</b> {c.stuck}</span></li>}
+                  </ul>
                 </>
-              ) : <p className="hk-muted">{t('hk.peek.noCard')}</p>}
-              <p className="hk-muted hk-thesis__saw">
+              ) : <p className="hk-quiet">{t('hk.peek.noCard')}</p>}
+              <p className="hk-small">
                 {tm.id === controlTeam ? t('hk.peek.sawNone') : saw.length ? fill(t('hk.peek.saw'), { teams: saw.map(name).join(', ') }) : t('hk.peek.sawClosed')}
               </p>
             </article>
@@ -55,33 +58,32 @@ export function Peek({ rec, teams, controlTeam, onBack }: {
       </div>
 
       <div className="hk-peek__below">
-        <section className="hk-panel">
-          <h3 className="hk-section">{t('hk.peek.questions')}</h3>
+        <section className="hk-box">
+          <h3 className="hk-label">{t('hk.peek.questions')}</h3>
           {rec.questions.length ? (
-            <ul className="hk-qa">
+            <ul className="hk-tl">
               {rec.questions.map((q, i) => (
-                <li key={i} className="hk-balloon" data-kind="objection">
-                  <span className="hk-balloon__who">{name(q.from)} → {name(q.to)}</span>
-                  <span>{q.text}</span>
-                </li>
+                <li key={i} data-role="kaptan"><span><b>{fill(t('hk.peek.asked'), { from: name(q.from), to: name(q.to) })}</b> {q.text}</span></li>
               ))}
             </ul>
-          ) : <p className="hk-muted">{t('hk.peek.noQuestions')}</p>}
+          ) : <p className="hk-quiet">{t('hk.peek.noQuestions')}</p>}
         </section>
-        <section className="hk-panel">
-          <h3 className="hk-section">{t('hk.peek.gate')}</h3>
+        <section className="hk-box">
+          <h3 className="hk-label">{t('hk.distance')}</h3>
           {rec.pairs.length ? (
-            <ul className="hk-bars">
-              {rec.pairs.map((p) => (
-                <li key={`${p.a}-${p.b}`} className="hk-bar" data-over={p.score > rec.gate ? 'true' : undefined}>
-                  <span>{name(p.a)} · {name(p.b)}</span>
-                  <span className="hk-bar__track"><span className="hk-bar__fill" style={{ width: `${Math.round(p.score * 100)}%` }} /></span>
-                  <span className="hk-bar__num">{pct(p.score, locale)}</span>
-                </li>
-              ))}
+            <ul className="hk-sims">
+              {[...rec.pairs].sort((a, b) => b.score - a.score).map((p) => {
+                const over = p.score > rec.gate;
+                return (
+                  <li key={`${p.a}-${p.b}`} className="hk-sim" data-over={over ? 'true' : undefined}>
+                    <span className="hk-quiet">{fill(t('hk.distance.pair'), { a: name(p.a), b: name(p.b) })}</span>
+                    <strong>{fill(t(over ? 'hk.distance.close' : 'hk.distance.apart'), { pct: pct(p.score, locale) })}</strong>
+                  </li>
+                );
+              })}
             </ul>
-          ) : <p className="hk-muted">{t('hk.peek.noPairs')}</p>}
-          <p className="hk-muted">{fill(t('hk.peek.gateRule'), { gate: Math.round(rec.gate * 100) })}</p>
+          ) : <p className="hk-quiet">{t('hk.peek.noPairs')}</p>}
+          <p className="hk-small">{fill(t('hk.distance.rule'), { gate: pct(rec.gate, locale) })}</p>
         </section>
       </div>
     </div>
