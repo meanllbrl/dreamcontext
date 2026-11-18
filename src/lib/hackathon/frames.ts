@@ -125,10 +125,20 @@ export function parseEvents(raw: string): { events: ToolEvent[]; ended: boolean 
   return { events, ended };
 }
 
+/** macOS writes one folder as both /var/... and /private/var/... (also /tmp): compare without the prefix. */
+const unPrivate = (p: string) => (p.startsWith('/private/') ? p.slice('/private'.length) : p);
+
+/** The path inside `repo` ('' for the repo itself), or null when `p` lies outside it. */
+function inside(p: string, repo: string): string | null {
+  const a = unPrivate(p);
+  const r = unPrivate(repo);
+  return a === r ? '' : a.startsWith(`${r}/`) ? a.slice(r.length + 1) : null;
+}
+
 function screenOf(ev: ToolEvent, repo: string): Screen {
   const rel = (p: unknown) => {
     const s = typeof p === 'string' ? p : '';
-    return cut(s.startsWith(repo) ? s.slice(repo.length + 1) : s.split('/').slice(-3).join('/'), 120);
+    return cut(inside(s, repo) ?? s.split('/').slice(-3).join('/'), 120);
   };
   const lastLine = (s?: string) => (s ? cut(s.trim().split('\n').filter(Boolean).pop() ?? '') : undefined);
   switch (ev.name) {
@@ -172,7 +182,7 @@ export function teamFrame(contextRoot: string, runId: string, team: TeamDesign, 
     return { role, state };
   });
   // A relative path (a Codex file_change may write one) is relative to the team's cwd, its repo.
-  const inRepo = (e: ToolEvent) => typeof e.input.file_path === 'string' && (!e.input.file_path.startsWith('/') || e.input.file_path.startsWith(`${repo}/`));
+  const inRepo = (e: ToolEvent) => typeof e.input.file_path === 'string' && (!e.input.file_path.startsWith('/') || inside(e.input.file_path, repo) !== null);
   const editedAll = everything.filter((e) => ['Edit', 'Write', 'MultiEdit'].includes(e.name) && inRepo(e)).map((e) => screenOf(e, repo).path!).filter(Boolean);
   // Newest last, each path once (at its latest edit).
   const edited = editedAll.filter((p, i) => editedAll.lastIndexOf(p) === i).slice(-30);

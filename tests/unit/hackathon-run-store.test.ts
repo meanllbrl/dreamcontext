@@ -103,6 +103,8 @@ describe('frames', () => {
       // The team's own notes outside its copy of the project are not "what it changed".
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w1', name: 'Write', input: { file_path: '/ws/a/out/thesis-r1.json', content: '{}' } }] } },
       { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w2', name: 'Write', input: { file_path: 'pricing.html', content: '<p>' } }] } },
+      // macOS names the same folder /private/var/... and /var/...: both are the repo.
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w3', name: 'Write', input: { file_path: '/private/repo/plans.html', content: '<p>' } }] } },
       { type: 'assistant', parent_tool_use_id: 'ag', message: { content: [{ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/repo/style.css' } }] } },
       { type: 'result' },
     ];
@@ -112,7 +114,7 @@ describe('frames', () => {
     const later = new Date(Date.now() + 5_000);
     utimesSync(join(dir, 'r2.jsonl'), later, later);
     const f = runFrames(ctx, r.id, design, () => '/repo').find((x) => x.team === 'a')!;
-    expect(f.edited).toEqual(['index.html', 'pricing.html']);
+    expect(f.edited).toEqual(['index.html', 'pricing.html', 'plans.html']);
     expect(f.reads).toBe(1);
     expect(f.screen?.path).toBe('style.css');
     expect(f.ended).toBe(false);
