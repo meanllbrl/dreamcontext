@@ -55,7 +55,7 @@ import { isDue, type DueVerdict } from './schedule.js';
 import { getAutomation, listAutomations, readAutomationCache, writeAutomationCache } from './store.js';
 import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
-import { checkApproval, listDistinctProjects, recordTickCompleted, recordTickStarted } from './registry.js';
+import { checkApproval, listDistinctProjects, recordTickCompleted, slugOwnerIn, recordTickStarted } from './registry.js';
 import type { AutomationCache, AutomationManifest } from './types.js';
 import { adoptLocalPending } from './adopt-local.js';
 import { rotateLogIfLarge } from './launchd.js';
@@ -101,6 +101,9 @@ export interface TickOptions {
   /** The clock each RUN reads: starts at `now` and moves with the wall clock, so a run's start,
    *  end and duration are real. Defaults to that; `tickAll` passes one shared clock. */
   clock?: () => Date;
+  /** Set only for a brain reached from two kept roots (`listDistinctProjects` `shared`): this
+   *  root fires only the routines this returns true for; the other root fires the rest. */
+  owns?: (m: AutomationManifest) => boolean;
 }
 
 /** Per-manifest disposition for one `tickProject` pass — lets a caller log or
@@ -254,6 +257,8 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       logFn(`[automations] queued fire for ${fire.slug} has no manifest — dropping`);
       continue;
     }
+    // The brain's other root fires this one (its schedule and shared cache still owe the fire).
+    if (opts.owns && !opts.owns(manifest)) continue;
     // The manifest is re-resolved for exactly this class of change, and mode
     // belongs in the same guard as `enabled`: a scheduled agent can have a
     // fire queued (a sleep lock held it, say) and then be edited to on-call
@@ -312,6 +317,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // ── isDue(), for everything the drain phase didn't already run ──────────
   for (const manifest of manifests) {
     if (drainedAndRan.has(manifest.slug)) continue;
+    if (opts.owns && !opts.owns(manifest)) continue;
 
     // A teammate's routine is read-only here, and the owner's other machine runs its own: neither
     // is tried (the runner would refuse it anyway, every tick, into its history).
@@ -451,7 +457,7 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
 
   // Each real brain ONCE: a code repo whose _dream_context links to a brain is the same project,
   // never a second, unapproved copy of its routines (listDistinctProjects).
-  const { roots, missing } = listDistinctProjects(home);
+  const { roots, missing, shared } = listDistinctProjects(home);
   for (const projectRoot of missing) logFn(`[automations] registered project's _dream_context/ is missing, skipping: ${projectRoot}`);
 
   // Projects tick CONCURRENTLY: one project's long run (its timeout can be an hour) must not
@@ -468,7 +474,10 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
     while (next < roots.length) {
       const i = next++;
       try {
-        results[i] = await tickProject(roots[i], { ...opts, now, clock });
+        // A brain reached from two kept roots: each routine fires from the root that approves it.
+        const group = shared.get(roots[i]);
+        const owns = group ? (m: AutomationManifest) => slugOwnerIn(group, m, home) === roots[i] : undefined;
+        results[i] = await tickProject(roots[i], { ...opts, now, clock, ...(owns ? { owns } : {}) });
       } catch (err) {
         logFn(`[automations] tick failed for ${roots[i]}: ${(err as Error)?.message ?? String(err)}`);
       }
