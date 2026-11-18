@@ -67,9 +67,11 @@ export interface TeamRow {
 }
 
 /** Is this automation one of `agentSlug`'s routines? An older backend names no agent: the
- *  automation runs as itself, so its own slug is the agent's. */
+ *  automation runs as itself, so its own slug is the agent's. A file of its own that you only call
+ *  IS the member, never a routine of it; a member's on-call routine (bound to another slug) is one. */
 export function routineOf(a: TeamAutomation, agentSlug: string): boolean {
-  return a.runKind !== 'agent' && a.mode === 'sched' && (a.agent ?? a.slug) === agentSlug;
+  const agent = a.agent ?? a.slug;
+  return a.runKind !== 'agent' && agent === agentSlug && (a.mode === 'sched' || agent !== a.slug);
 }
 
 /** The slugs whose messages are this agent's conversation: its own call target and every
