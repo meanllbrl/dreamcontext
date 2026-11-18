@@ -115,14 +115,19 @@ json(join(runDir(R2), 'rounds', 'r1.json'), {
   pairs: [{ a: 'sade', b: 'kanitci', score: 0.42 }, { a: 'sade', b: 'hikaye', score: 0.18 }, { a: 'kanitci', b: 'hikaye', score: 0.83 }], gate: 0.8,
 });
 
+const SONNET = { tool: 'claude', model: 'sonnet' };
 // 3. Judging (screen): presentations with screenshots and the jury.
 const R3 = '20261116-fiyat-sayfasi';
 const d3 = { ...design('screen', 'Fiyat sayfası: hangi plan daha çok seçilir?', 2), baseSha: 'b'.repeat(40) };
 json(join(runDir(R3), 'run.json'), run(R3, 'judging', d3, { phase: 'jury', round: 2, startedAt: iso(300), moments: [{ at: iso(10), text: 'jüri bitti' }] }));
 json(join(runDir(R3), 'jury.json'), {
-  verdicts: [{ a: 'sade', b: 'kanitci', order: 'ab', winner: 'sade', why: 'Tek plan önerisi kararı kolaylaştırıyor.' }, { a: 'sade', b: 'kanitci', order: 'ba', winner: 'sade', why: 'Daha az seçenek, daha net fiyat.' }],
+  verdicts: [
+    { a: 'sade', b: 'kanitci', order: 'ab', winner: 'sade', why: 'Tek plan önerisi kararı kolaylaştırıyor.', judge: SONNET, scores: { sade: { solves: 9, evidence: 7, feasible: 9, original: 7 }, kanitci: { solves: 8, evidence: 9, feasible: 7, original: 6 } } },
+    { a: 'sade', b: 'kanitci', order: 'ba', winner: 'sade', why: 'Daha az seçenek, daha net fiyat.', judge: SONNET, scores: { sade: { solves: 8, evidence: 7, feasible: 9, original: 8 }, kanitci: { solves: 8, evidence: 8, feasible: 7, original: 7 } } },
+    { a: 'hikaye', b: 'kontrol', order: 'ab', winner: 'hikaye', why: 'Hikâye fiyatı bir güne bağlıyor; kontrol yalnız tabloyu düzeltmiş.', judge: SONNET, scores: { hikaye: { solves: 7, evidence: 5, feasible: 7, original: 9 }, kontrol: { solves: 6, evidence: 6, feasible: 8, original: 4 } } },
+  ],
   scores: { sade: 8.4, kanitci: 7.6, hikaye: 6.9, kontrol: 6.1 }, originality: { sade: 7.5, kanitci: 6.8, hikaye: 8.9, kontrol: 4.2 },
-  ranking: ['sade', 'kanitci', 'hikaye', 'kontrol'], sameVendor: false, judges: [{ tool: 'codex', model: '' }],
+  ranking: ['sade', 'kanitci', 'hikaye', 'kontrol'], sameVendor: true, judges: [SONNET],
 });
 
 // 4. Picked (plan): the owner chose; result.json written.
@@ -185,6 +190,7 @@ const go = async (page) => {
 };
 /** Frames are live for 90 s after a transcript's last write: keep the seeded ones fresh. */
 const touch = () => { const t = new Date(); for (const tm of TEAMS) { try { utimesSync(join(runDir(R2), 'teams', tm.id, 'r2.jsonl'), t, t); } catch {} } };
+const dark = () => "localStorage.setItem('dreamcontext-theme','dark')";
 const openRun = async (page, problem) => {
   touch();
   await go(page);
@@ -210,27 +216,27 @@ try {
     await openRun(page, 'Ana sayfanın');
     await visible(page, '.hk-card--start button.hk-btn--primary');
     json(file, { ...before, design: { ...before.design, rounds: before.design.rounds + 1 } });
-    check(await visible(page, '.hk-start__foot button:not(.hk-btn--primary)', 12_000), `start@${w.name}: a changed design redrew with Başlat still live`);
+    check(await visible(page, '.hk-start__reread', 12_000), `start@${w.name}: a changed design redrew with Başlat still live`);
     json(file, before);
   }, { name: '11-design-changed' });
 
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
     check(await visible(page, '.hk-live'), `live@${w.name}: no live grid`);
-    check((await page.locator('.hk-live__tables > *').count()) >= 4, `live@${w.name}: fewer than four tables`);
+    check((await page.locator('.hk-desk').count()) >= 4, `live@${w.name}: fewer than four tables`);
     // Seeded with no conductor holding its lock: the page offers Sürdür.
-    check(await visible(page, '.hk-paused--conductor button'), `live@${w.name}: a run with no live conductor offers no Sürdür`);
+    check(await visible(page, '.hk-banner button'), `live@${w.name}: a run with no live conductor offers no Sürdür`);
   }, { name: '03-live' });
 
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
-    await page.locator('.hk-head button', { hasText: /^(Durdur|Stop)$/ }).first().click();
+    await page.locator('.hk-top button', { hasText: /^(Durdur|Stop)$/ }).first().click();
     check(await visible(page, '.hk-confirm'), `stop@${w.name}: Durdur stopped without asking`);
   }, { name: '10-stop-confirm' });
 
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
-    const table = page.locator('.hk-live__tables > *', { hasText: 'Sade' }).first();
+    const table = page.locator('.hk-desk', { hasText: 'Sade' }).first();
     try { await table.click({ timeout: 5_000 }); } catch (e) { app.findings.push(`room@${w.name}: tap ${String(e.message).slice(0, 900)}`); }
     await page.waitForTimeout(800);
     check(await visible(page, 'text=Kart alanı katlanır'), `room@${w.name}: Sade's decisions not shown`);
@@ -239,7 +245,7 @@ try {
   // The Mac shell at phone width: the desk must still open with a tap.
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
-    const table = page.locator('.hk-live__tables > *', { hasText: 'Sade' }).first();
+    const table = page.locator('.hk-desk', { hasText: 'Sade' }).first();
     try { await table.click({ timeout: 5_000 }); } catch (e) { app.findings.push(`room-shell@${w.name}: tap ${String(e.message).slice(0, 1500)}`); }
     await page.waitForTimeout(800);
   }, { name: '04b-team-room-shell', init: () => ownerShellScript('k') });
@@ -255,21 +261,21 @@ try {
   json(join(runDir(R2), 'run.json'), { ...run2, paused: "5 saatlik pencere %84: ekipler bu turdan sonra bekliyor (Devam ile sürer)" });
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
-    check(await visible(page, '.hk-paused'), `paused@${w.name}: no paused strip`);
+    check(await visible(page, '.hk-banner'), `paused@${w.name}: no paused strip`);
   }, { name: '06-paused' });
   json(join(runDir(R2), 'run.json'), run2);
 
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Fiyat sayfası');
-    check(await visible(page, 'text=Sade'), `results@${w.name}: no team on the results`);
-    check((await page.locator('.hk-head button', { hasText: /^(Durdur|Stop)$/ }).count()) === 0, `results@${w.name}: Durdur sits beside the pick while judging`);
+    check((await page.locator('.hk-cols .hk-col').count()) >= 2, `results@${w.name}: the teams are not side by side`);
+    check(await visible(page, '.hk-crit'), `results@${w.name}: no criteria bars`);
+    check((await page.locator('.hk-btn--primary').count()) <= 1, `results@${w.name}: more than one filled button`);
+    check((await page.locator('.hk-top button', { hasText: /^(Durdur|Stop)$/ }).count()) === 0, `results@${w.name}: Durdur sits beside the pick while judging`);
   }, { name: '07-results-judging' });
 
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Fiyat sayfası');
-    await page.locator('.hk-results__cols > *', { hasText: 'Sade' }).first().locator('button').first().click().catch(() => app.findings.push(`present@${w.name}: could not open Sade's presentation`));
-    await page.waitForTimeout(800);
-    await page.locator('button', { hasText: 'Yeni fiyat sayfası' }).first().click().catch(() => {});
+    await page.locator('.hk-col', { hasText: 'Sade' }).first().locator('.hk-col__foot button', { hasText: /^(Sunumu aç|Open presentation)$/ }).click({ timeout: 5_000 }).catch(() => app.findings.push(`present@${w.name}: could not open Sade's presentation`));
     await page.waitForTimeout(800);
     check(await visible(page, '.hk-page img'), `present@${w.name}: no screenshot on the stage`);
   }, { name: '08-presentation' });
@@ -277,6 +283,22 @@ try {
   await app.look(`/?vault=${V}`, async (page) => {
     await openRun(page, 'Yıllık plana');
   }, { name: '09-picked' });
+
+  for (const [name, problem, act] of [
+    ['02-start-card', 'Ana sayfanın', null],
+    ['03-live', 'Gelir artıracak', null],
+    ['04-team-room', 'Gelir artıracak', async (page) => { await page.locator('.hk-desk', { hasText: 'Sade' }).first().click({ timeout: 5_000 }); }],
+    ['07-results-judging', 'Fiyat sayfası', null],
+    ['08-presentation', 'Fiyat sayfası', async (page) => { await page.locator('.hk-col', { hasText: 'Sade' }).first().locator('.hk-col__foot button', { hasText: /^(Sunumu aç|Open presentation)$/ }).click({ timeout: 5_000 }); }],
+    ['09-picked', 'Yıllık plana', null],
+  ]) {
+    await app.look(`/?vault=${V}`, async (page, w) => {
+      await openRun(page, problem);
+      if (act) await act(page).catch((e) => app.findings.push(`${name}-dark@${w.name}: ${String(e.message).slice(0, 300)}`));
+      await page.waitForTimeout(600);
+      check(await page.evaluate(() => document.documentElement.dataset.theme === 'dark' || document.documentElement.classList.contains('dark')), `${name}-dark@${w.name}: not dark`);
+    }, { name: `${name}-dark`, init: dark });
+  }
 
   // Empty page last: remove the runs.
   const { rmSync } = await import('node:fs');

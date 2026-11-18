@@ -101,8 +101,10 @@ function TeamResult({ run, teams, team, place, jury, recommended, control, picke
       <header className="hk-col__head">
         {place != null && <span className="hk-col__rank">{place}</span>}
         <TeamMark teams={teams} team={team} />
-        <span className="hk-col__name">{team.name}</span>
-        {picked ? <span className="hk-chip">{t('hk.result.yourPick')}</span> : recommended && !anyPicked ? <span className="hk-chip">{t('hk.result.recommended')}</span> : null}
+        <span className="hk-col__who">
+          <span className="hk-col__name">{team.name}</span>
+          {picked ? <span className="hk-chip">{t('hk.result.yourPick')}</span> : recommended && !anyPicked ? <span className="hk-chip">{t('hk.result.recommended')}</span> : null}
+        </span>
         {score != null && <Score value={score} big />}
       </header>
       <p className="hk-col__persona">{[team.persona, people(t, team.inner)].filter(Boolean).join(' · ')}</p>

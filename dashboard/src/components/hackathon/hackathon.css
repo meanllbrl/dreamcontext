@@ -285,10 +285,12 @@
 .hk-cols[data-n='4'] { grid-template-columns: repeat(4, minmax(260px, 1fr)); overflow-x: auto; }
 .hk-col { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-bg); min-width: 0; }
 .hk-col[data-picked='true'] { border: 2px solid var(--color-text); padding: calc(var(--space-5) - 1px); }
-.hk-col__head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.hk-col__head { display: flex; align-items: center; gap: var(--space-3); }
+/* Name and chip share one box that wraps inside itself, so the score never leaves the name's line. */
+.hk-col__who { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-3); min-width: 0; flex: 1 1 auto; }
 .hk-col__rank { width: 24px; font-family: var(--font-family-display); font-weight: 800; font-size: var(--font-size-lg); color: var(--color-text-secondary); }
 .hk-col__name { font-family: var(--font-family-display); font-weight: var(--font-weight-bold); font-size: var(--font-size-lg); color: var(--color-text); }
-.hk-col__head .hk-score { margin-left: auto; }
+.hk-col__head .hk-score { margin-left: auto; flex: none; }
 .hk-col__persona { margin: calc(var(--space-2) * -1) 0 0; padding-left: 36px; font-size: var(--font-size-md); color: var(--color-text-secondary); }
 .hk-col__screen .hk-browser__body { max-height: 300px; }
 .hk-col__thesis { margin: 0; padding: var(--space-5); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); color: var(--color-text); }

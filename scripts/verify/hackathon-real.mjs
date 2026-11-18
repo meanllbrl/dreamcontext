@@ -128,13 +128,18 @@ const home = async (p) => { await p.goto(`${app.base}/?vault=${V}`, { waitUntil:
 /** The desktop shot from the recorded page, the phone shot from a fresh 390 context doing `act`. */
 const shots = async (name, act = async () => {}) => {
   await page.screenshot({ path: join(OUT, `${name}-1440.png`), fullPage: true }).catch((e) => findings.push(`${name}: desktop shot failed ${e.message}`));
-  const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
-  await pctx.addInitScript(ownerShellScript(KEY));
-  await markAnnouncementsSeen(pctx, app.base);
-  const pp = await pctx.newPage();
-  try { await home(pp); await act(pp); await pp.waitForTimeout(800); await pp.screenshot({ path: join(OUT, `${name}-390.png`), fullPage: true }); }
-  catch (e) { findings.push(`${name}: phone shot failed ${e instanceof Error ? e.message.split('\n')[0] : e}`); }
-  await pctx.close();
+  // Phone light, phone dark and desktop dark, each from a fresh context doing `act`.
+  for (const v of [{ width: 390, height: 844, dark: false }, { width: 390, height: 844, dark: true }, { width: 1440, height: 900, dark: true }]) {
+    const pctx = await browser.newContext({ viewport: { width: v.width, height: v.height }, deviceScaleFactor: 2 });
+    await pctx.addInitScript(ownerShellScript(KEY));
+    if (v.dark) await pctx.addInitScript("localStorage.setItem('dreamcontext-theme','dark')");
+    await markAnnouncementsSeen(pctx, app.base);
+    const pp = await pctx.newPage();
+    const file = `${name}-${v.width}${v.dark ? '-koyu' : ''}.png`;
+    try { await home(pp); await act(pp); await pp.waitForTimeout(800); await pp.screenshot({ path: join(OUT, file), fullPage: true }); }
+    catch (e) { findings.push(`${file}: shot failed ${e instanceof Error ? e.message.split('\n')[0] : e}`); }
+    await pctx.close();
+  }
   mark(`shot ${name}`);
 };
 
@@ -177,8 +182,9 @@ try {
     }
     if (rec?.state === 'running' && liveShot && !roomShot) {
       const openRoom = async (p) => {
-        const table = p.locator('.hk-live__tables > *').first();
-        await table.locator('button').first().click().catch(async () => { await table.click(); });
+        // The desk is itself the button. A refused tap is recorded with Playwright's own reason (what covers it).
+        try { await p.locator('.hk-desk').first().click({ timeout: 5_000 }); }
+        catch (e) { findings.push(`room tap@${p.viewportSize()?.width}: ${String(e.message).slice(0, 1500)}`); throw e; }
         await p.waitForTimeout(1500);
       };
       await home(page); await openRoom(page);
@@ -211,9 +217,9 @@ try {
       await home(page); await page.waitForTimeout(2500);
       await shots('08-results');
       // Each team's presentation, opened on the stage.
-      const teams = await page.locator('.hk-results__cols > *').count();
+      const teams = await page.locator('.hk-cols .hk-col').count();
       for (let i = 0; i < teams; i++) {
-        const openPres = async (p) => { await p.locator('.hk-results__cols > *').nth(i).locator('.hk-result__foot button').first().click(); await p.waitForTimeout(1500); const screen = p.locator('.hk-present button, .hk-stage button').filter({ hasText: /./ }); if (await screen.count()) { await screen.nth(Math.min(1, (await screen.count()) - 1)).click().catch(() => {}); await p.waitForTimeout(1200); } };
+        const openPres = async (p) => { await p.locator('.hk-cols .hk-col').nth(i).locator('.hk-col__foot button', { hasText: /^(Sunumu aç|Open presentation)$/ }).click({ timeout: 10_000 }); await p.waitForTimeout(1500); };
         await home(page); await openPres(page);
         await page.waitForTimeout(4000);
         await shots(`09-presentation-${i + 1}`, openPres);
@@ -221,10 +227,10 @@ try {
       // The owner picks the jury's first.
       await home(page); await page.waitForTimeout(1500);
       const first = result.jury.ranking[0] ?? (await api("GET", `/hackathon/${RUN}/design`)).body?.teams?.[0]?.id;
-      const names = await page.locator('.hk-results__cols > *').allInnerTexts();
+      const names = await page.locator('.hk-cols .hk-col').allInnerTexts();
       const teamName = (await api("GET", `/hackathon/${RUN}/design`)).body?.teams?.find?.((t) => t.id === first)?.name ?? first;
       const idx = Math.max(0, names.findIndex((n) => n.includes(teamName)));
-      const pickBtn = page.locator('.hk-results__cols > *').nth(idx).locator('.hk-result__foot button').nth(1);
+      const pickBtn = page.locator('.hk-cols .hk-col').nth(idx).locator('.hk-col__foot button').first();
       check(await pickBtn.isVisible().catch(() => false), 'no pick button on the results');
       await pickBtn.click();
       mark(`owner picked ${teamName}`);
