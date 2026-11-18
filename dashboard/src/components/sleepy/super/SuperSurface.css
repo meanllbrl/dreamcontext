@@ -1936,6 +1936,12 @@
 .super-strip-nav:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
 /* A filmstrip thumb: a static tile the owner presses to make it big. */
 .super-card-frame[data-where='thumb'] { cursor: pointer; }
+/* A filmstrip thumb of a picture is the picture itself, shrunk whole (never cropped, never under a
+   label): the kind chip is for the tiles in Others; the caption stands in its own line below. */
+:is(.super-card-frame[data-where='thumb'], .super-strip-current) .super-tile--image .super-tile-top { display: none; }
+:is(.super-card-frame[data-where='thumb'], .super-strip-current) .super-tile-picture { inset: var(--space-2) var(--space-2) var(--space-8); }
+:is(.super-card-frame[data-where='thumb'], .super-strip-current) .super-tile-picture :is(img, .viewer-media) { object-fit: contain; }
+:is(.super-card-frame[data-where='thumb'], .super-strip-current) .super-tile-caption { padding: var(--space-2) var(--space-3); background: none; }
 .super-card-frame[data-where='thumb']:hover .super-card-clip {
   border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
 }

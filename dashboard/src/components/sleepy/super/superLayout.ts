@@ -1248,7 +1248,7 @@ function planWith(
   // A page side by side or a presentation keeps its bands: it is drawn over the chat's head, and
   // its exits live there.
   const phone = stage.width > 0 && stage.width < PHONE_STAGE_PX && view.mode === 'float';
-  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
+  let f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
     phone ? { queue: !!opts.queueUp, terminals: (opts.terminals ?? 0) > 0 } : undefined, opts.queueUp ? opts.queueHeight ?? STAGE.BAND : STAGE.BAND);
   const narrow = f.width < (opts.narrowPx ?? NARROW_STAGE_PX);
   const ids = new Set(list.map((c) => c.id));
@@ -1260,6 +1260,9 @@ function planWith(
   const others: string[] = [];
   /** The corners that found no room beside the chat, on a floating stage. */
   const inHead = { others: false, agenda: false };
+  /** How far a presentation's own row (tabs + controls) sits below the band: a question's bar holds
+   *  the band, so the row stands under it, never over it. */
+  let rowDy = 0;
   const toOthers = (c: StageItem) => {
     cards[c.id] = { id: c.id, rect: f.othersRect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
     others.push(c.id);
@@ -1267,9 +1270,11 @@ function planWith(
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
     extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
     // The waiting queue's control holds the band's right end off a presentation.
-    const qb = queueBandRect(f, opts.queueBand, mode);
-    const bandRight = qb ? qb.rect : extra.controls;
-    const framed = extra.controls && mode === 'present' ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
+    const fRow = rowDy ? { ...f, bandTop: f.bandTop + rowDy } : f;
+    const qb = queueBandRect(fRow, opts.queueBand, mode);
+    // A presentation's row of its own leaves the question's bar the band's whole width.
+    const bandRight = rowDy ? undefined : qb ? qb.rect : extra.controls;
+    const framed = extra.controls && mode === 'present' ? presentFrameOf(fRow, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
@@ -1389,6 +1394,11 @@ function planWith(
   const pool = view.mode === 'present' ? [...new Set((view.cards ?? []).filter((id) => ids.has(id)))] : [];
   if (pool.length) {
     const layout = drawnLayout(view.layout, pool.length);
+    // Only a bar that is really drawn (it reports its height) holds the band.
+    if (opts.queueUp && (opts.queueHeight ?? 0) > 0 && !f.phone) {
+      rowDy = Math.max(STAGE.BAND, opts.queueHeight ?? STAGE.BAND);
+      f = { ...f, content: { ...f.content, y: f.content.y + STAGE.BAND, height: Math.max(0, f.content.height - STAGE.BAND) } };
+    }
     // The agenda is never a filmstrip's big card: drawn last there (the record keeps its order).
     const kindOf = (id: string) => list.find((x) => x.id === id)?.kind;
     const shown = pool.slice(0, presentRange(layout).max);
@@ -1396,7 +1406,7 @@ function planWith(
     const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
     const cw = controlsWidth(choices, !!opts.groupExit);
-    const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
+    const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop + rowDy, width: Math.min(cw, f.content.width), height: STAGE.BAND };
     const strip = (main: Rect): StripPlan => {
       // The big card over one row holding a slot for EVERY card, in their fixed order: the big
       // one's slot is marked, never given to another card (selecting never reorders).
