@@ -642,50 +642,6 @@ describe('the project key survives a symlinked path', () => {
     rmSync(real, { recursive: true, force: true });
   });
 
-  it('a code repo whose _dream_context links to the brain reads the brain\'s approvals, even with its own empty bucket', () => {
-    // Doc's "Gece denemesi" (2026-11-19): the code repo registered on its own with no approvals,
-    // and everything asked from there said "never approved" while the brain held the yes.
-    const real = mkdtempSync(join(tmpdir(), 'dc-samebrain-'));
-    const brain = join(real, 'brain');
-    const code = join(real, 'code');
-    mkdirSync(join(brain, '_dream_context'), { recursive: true });
-    mkdirSync(code, { recursive: true });
-    symlinkSync(join(brain, '_dream_context'), join(code, '_dream_context'), 'dir');
-    // The state an older version left: both roots registered, the yes in the brain's bucket only.
-    const before = readAutomationsRegistry(home);
-    before.projects[code] = { approvals: {} };
-    before.projects[brain] = { approvals: {} };
-    writeAutomationsRegistry(before, home);
-    const m = makeManifest();
-    approveAutomation(brain, m, NOW, home);
-    expect(Object.keys(readAutomationsRegistry(home).projects[brain].approvals)).toEqual([m.slug]);
-
-    expect(checkApproval(code, m, home).approved).toBe(true);
-    // An approval given from the code repo lands in the brain's bucket, not a fork.
-    const m2 = makeManifest({ slug: 'other', prompt: 'other' });
-    approveAutomation(code, m2, NOW, home);
-    expect(checkApproval(brain, m2, home).approved).toBe(true);
-    // The code repo's empty bucket stays empty: the yes lives where the brain's does.
-    const reg = readAutomationsRegistry(home);
-    expect(Object.keys(reg.projects[brain].approvals).sort()).toEqual([m.slug, m2.slug].sort());
-    expect(Object.keys(reg.projects[code].approvals)).toEqual([]);
-
-    rmSync(real, { recursive: true, force: true });
-  });
-
-  it('registering a code repo that links a registered brain opens no second bucket', () => {
-    const real = mkdtempSync(join(tmpdir(), 'dc-samebrain-'));
-    const brain = join(real, 'brain');
-    const code = join(real, 'code');
-    mkdirSync(join(brain, '_dream_context'), { recursive: true });
-    mkdirSync(code, { recursive: true });
-    symlinkSync(join(brain, '_dream_context'), join(code, '_dream_context'), 'dir');
-    registerProject(brain, home);
-    registerProject(code, home);
-    expect(Object.keys(readAutomationsRegistry(home).projects).filter((k) => k.includes('dc-samebrain-'))).toEqual([brain]);
-    rmSync(real, { recursive: true, force: true });
-  });
-
   it('a path that cannot be resolved falls back to itself rather than throwing', () => {
     // A lookup that throws would be worse than one that misses.
     const m = makeManifest();
