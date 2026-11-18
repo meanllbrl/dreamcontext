@@ -367,15 +367,28 @@ export interface DistinctProjects {
 }
 
 /**
- * Which of a brain's kept roots fires routine `m`: the first that approves it as it stands (the
- * primary first), else the primary, whose refusal then is the truthful one. One fire per routine
- * per due time, never a second, refused copy from the other root (owner 2026-11-19).
+ * Which of a brain's kept roots fires routine `m`, by the runner's own gate (`approvedTarget`):
+ * first a root where it may run (approved as it stands, or on its last approved text while a change
+ * waits), then a root that approved it before (a changed or re-formatted routine, whose run asks the
+ * "changed" question), and only when no root ever approved it, the primary, whose "not approved" is
+ * then true. One fire per routine per due time, never a refused twin (owner 2026-11-19).
  */
 export function slugOwnerIn(roots: string[], m: AutomationManifest, home?: string): string {
-  for (const r of roots) {
-    try { if (checkApproval(r, m, home, 'run').approved) return r; } catch { /* the runner reports it */ }
+  const rank = (r: string): number => {
+    try {
+      const v = approvedTarget(r, m, home, 'run').verdict;
+      if (v.approved) return 0;
+      return v.reason === 'manifest-changed' || v.reason === 'payload-format-changed' ? 1 : 2;
+    } catch { return 2; }
+  };
+  let best = roots[0];
+  let bestRank = rank(best);
+  for (const r of roots.slice(1)) {
+    if (bestRank === 0) break;
+    const k = rank(r);
+    if (k < bestRank) { best = r; bestRank = k; }
   }
-  return roots[0];
+  return best;
 }
 
 /**
