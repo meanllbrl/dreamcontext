@@ -24,8 +24,8 @@ children that finish fast. Verbs are in
    `delegate`; an omitted effort is set by the server (basic and develop `medium`, plan `high`), never
    inherited from the owner's own setting. `xhigh` and `max` only when you name them (§3).
 7. **Capacity.** At most 15 live children: the 16th `delegate` answers `held` (reason `cap`) and
-   KEEPS the job in the pool (its id in the answer; `--from` starts it when a slot frees). The cap
-   is the only limit. `dreamcontext super state` shows `machine` (memory, swap, disk, Claude
+   KEEPS the job in the pool (its id in the answer; `--from` starts it when a slot frees);
+   `pool_full` or `not_kept`: NOT started. The cap is the only limit. `dreamcontext super state` shows `machine` (memory, swap, disk, Claude
    sessions, and `notes` naming any line crossed): information only. A full swap or little free
    memory alone does not mean the machine cannot take one more (the system swaps on its own), so
    it is never a reason to start fewer, to wait, or to tell the owner. `claudeSessions` counts
