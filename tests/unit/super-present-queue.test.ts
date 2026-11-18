@@ -3,7 +3,8 @@
  * "I was looking at one, you opened this and mine was gone; it should have joined the queue").
  *
  *  - AC1: whoever opened the presentation he looks at, a new present joins the END of the queue;
- *  - AC2/AC4: next / closing passes the head, an unanswered picture question waits instead;
+ *  - AC2: next / closing passes the head, even a picture question still open (owner 2026-11-18);
+ *  - the waiting strip's ✕ drops the head; a closed question's or stale item never survives a read;
  *  - AC5: leaving keeps the rest waiting, resume opens the head;
  *  - AC6: an unseen item's cards are never put in Others, closed or retired;
  *  - AC7: a remote screen sends the same step;
@@ -11,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  SUPER_STATE_VERSION, emptySuperState, ownerQueueStep, presentCards, queueCounter, queuedCards,
+  PRESENT_ITEM_STALE_MS, SUPER_STATE_VERSION, emptySuperState, ownerQueueStep, presentCards, queueCounter, queuedCards,
   type SuperContainer, type SuperState,
 } from '../../src/lib/super/types.js';
 import { sanitizeSuperState } from '../../src/lib/super/store.js';
@@ -28,6 +29,8 @@ const stage = (over: Partial<SuperState> = {}): SuperState => ({ ...emptySuperSt
 /** The record as the store writes it (the queue settles against the cards). */
 const store = (s: SuperState): SuperState => sanitizeSuperState(JSON.parse(JSON.stringify(s)));
 const never = () => false;
+/** A recent item time: an item older than PRESENT_ITEM_STALE_MS leaves on read. */
+const T = Date.now();
 
 describe('presentCards queues instead of replacing (AC1, D1, D6)', () => {
   it('a present over a Super-opened presentation: the view still shows [a], [b] waits, 1/2', () => {
@@ -65,7 +68,7 @@ describe('presentCards queues instead of replacing (AC1, D1, D6)', () => {
     const s = stage({ containers: [img('image-a'), img('image-b'), img('image-c')] });
     presentCards(s, ['image-a']);
     presentCards(s, ['image-b']);
-    ownerQueueStep(s, 'leave', s.presentQueue!.items[0].id, never);
+    ownerQueueStep(s, 'leave', s.presentQueue!.items[0].id);
     expect(s.view.mode).toBe('float');
     expect(presentCards(s, ['image-c']).shown).toBe(true);
     expect(s.view.cards).toEqual(['image-c']);
@@ -91,38 +94,65 @@ describe('the owner\'s steps (AC2, AC4, AC5)', () => {
   it('next opens the next item, the last one floats the stage and empties the queue', () => {
     const s = three();
     const [a, b, c] = s.presentQueue!.items.map((i) => i.id);
-    expect(ownerQueueStep(s, 'next', b, never)).toBe(false);
-    expect(ownerQueueStep(s, 'next', a, never)).toBe(true);
+    expect(ownerQueueStep(s, 'next', b)).toBe(false);
+    expect(ownerQueueStep(s, 'next', a)).toBe(true);
     expect(s.view.cards).toEqual(['image-b']);
     expect(queueCounter(s.presentQueue)).toMatchObject({ at: 2, of: 3 });
-    ownerQueueStep(s, 'next', b, never);
-    ownerQueueStep(s, 'next', c, never);
+    ownerQueueStep(s, 'next', b);
+    ownerQueueStep(s, 'next', c);
     expect(s.view).toEqual({ mode: 'float' });
     expect(s.presentQueue).toMatchObject({ items: [], seen: 0 });
   });
   it('leave floats the stage with the rest waiting; resume opens the first waiting', () => {
     const s = three();
-    ownerQueueStep(s, 'leave', s.presentQueue!.items[0].id, never);
+    ownerQueueStep(s, 'leave', s.presentQueue!.items[0].id);
     expect(s.view.mode).toBe('float');
     expect(queueCounter(s.presentQueue)).toMatchObject({ waiting: 2, showing: false });
-    expect(ownerQueueStep(s, 'resume', s.presentQueue!.items[0].id, never)).toBe(true);
+    expect(ownerQueueStep(s, 'resume', s.presentQueue!.items[0].id)).toBe(true);
     expect(s.view.cards).toEqual(['image-b']);
     expect(queueCounter(s.presentQueue)).toMatchObject({ at: 2, of: 3, showing: true });
   });
-  it('an unanswered picture question is not passed: it waits at the end; alone, it waits off screen', () => {
+  it('a seen picture question leaves the queue even while still open: closing it never brings the strip back', () => {
     const s = stage({ containers: [img('image-a'), img('image-b')] });
     presentCards(s, ['image-a'], undefined, 'q1');
     presentCards(s, ['image-b']);
-    ownerQueueStep(s, 'next', s.presentQueue!.items[0].id, () => true);
+    ownerQueueStep(s, 'next', s.presentQueue!.items[0].id);
     expect(s.view.cards).toEqual(['image-b']);
-    expect(s.presentQueue?.items.map((i) => i.ask ?? '-')).toEqual(['-', 'q1']);
-    // [b] passes: the question is next, and opens.
-    ownerQueueStep(s, 'next', s.presentQueue!.items[0].id, () => true);
-    expect(s.view).toMatchObject({ cards: ['image-a'], ask: 'q1' });
-    // Closed again unanswered with nothing else waiting: it is not opened again at once.
-    ownerQueueStep(s, 'next', s.presentQueue!.items[0].id, () => true);
+    expect(s.presentQueue?.items.map((i) => i.ask ?? '-')).toEqual(['-']);
+    ownerQueueStep(s, 'next', s.presentQueue!.items[0].id);
+    expect(s.view).toEqual({ mode: 'float' });
+    expect(queueCounter(s.presentQueue)).toMatchObject({ waiting: 0 });
+  });
+  it('the field case: Continue, then closing a lone open question\'s presentation empties the queue', () => {
+    const s = stage({ containers: [img('image-a'), img('image-b')], view: { mode: 'half', card: 'image-b', by: 'owner', ownerAt: Date.now() } });
+    presentCards(s, ['image-a'], undefined, 'q1');
+    expect(queueCounter(s.presentQueue)).toMatchObject({ waiting: 1, showing: false });
+    const id = s.presentQueue!.items[0].id;
+    expect(ownerQueueStep(s, 'resume', id)).toBe(true);
+    applyOwnerLayout(s, { exit: { cards: ['image-a'], closing: [] } });
     expect(s.view.mode).toBe('float');
-    expect(queueCounter(s.presentQueue)).toMatchObject({ waiting: 1 });
+    expect(queueCounter(s.presentQueue)).toMatchObject({ waiting: 0 });
+  });
+  it('drop (the strip\'s ✕) takes the waiting head off unseen and leaves the stage as it is', () => {
+    const s = stage({ containers: [img('image-a'), img('image-b'), img('image-c')], view: { mode: 'half', card: 'image-c', by: 'owner', ownerAt: Date.now() } });
+    presentCards(s, ['image-a'], undefined, 'q1');
+    presentCards(s, ['image-b']);
+    const [a, b] = s.presentQueue!.items.map((i) => i.id);
+    expect(ownerQueueStep(s, 'drop', b)).toBe(false);
+    expect(ownerQueueStep(s, 'drop', a)).toBe(true);
+    expect(s.view).toMatchObject({ mode: 'half', card: 'image-c' });
+    expect(s.presentQueue!.items.map((i) => i.id)).toEqual([b]);
+    applyOwnerLayout(s, { queue: { op: 'drop', item: b } });
+    expect(s.presentQueue!.items).toEqual([]);
+    expect(s.view).toMatchObject({ mode: 'half', card: 'image-c' });
+  });
+  it('drop on the item on screen passes it and floats the stage', () => {
+    const s = stage({ containers: [img('image-a'), img('image-b')] });
+    presentCards(s, ['image-a']);
+    presentCards(s, ['image-b']);
+    ownerQueueStep(s, 'drop', s.presentQueue!.items[0].id);
+    expect(s.view).toEqual({ mode: 'float' });
+    expect(queueCounter(s.presentQueue)).toMatchObject({ waiting: 1, showing: false });
   });
   it('closing the presentation through the layout door passes the item and opens the next', () => {
     const s = three();
@@ -212,22 +242,58 @@ describe('the store and a remote screen (AC7)', () => {
     const st = sanitizeSuperState({
       v: SUPER_STATE_VERSION, containers: [img('image-a'), img('image-b')],
       view: { mode: 'present', cards: ['image-a'] },
-      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: 1 }, { id: 'pq2', cards: ['image-zz'], at: 2 }, { id: 'BAD', cards: ['image-b'] }, { id: 'pq3', cards: ['image-b', 'image-zz'], at: 3 }], seen: 0, seq: 3, showing: 'pq1' },
+      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: T }, { id: 'pq2', cards: ['image-zz'], at: T }, { id: 'BAD', cards: ['image-b'] }, { id: 'pq3', cards: ['image-b', 'image-zz'], at: T }], seen: 0, seq: 3, showing: 'pq1' },
     });
-    expect(st.presentQueue).toEqual({ items: [{ id: 'pq1', cards: ['image-a'], at: 1 }, { id: 'pq3', cards: ['image-b'], at: 3 }], seen: 0, seq: 3, showing: 'pq1' });
+    expect(st.presentQueue).toEqual({ items: [{ id: 'pq1', cards: ['image-a'], at: T }, { id: 'pq3', cards: ['image-b'], at: T }], seen: 0, seq: 3, showing: 'pq1' });
   });
   it('another view drops "showing" but keeps the item unseen', () => {
     const st = sanitizeSuperState({
       v: SUPER_STATE_VERSION, containers: [img('image-a'), img('image-b')],
       view: { mode: 'half', card: 'image-b' },
-      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: 1 }], seen: 0, seq: 1, showing: 'pq1' },
+      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: T }], seen: 0, seq: 1, showing: 'pq1' },
     });
-    expect(st.presentQueue).toEqual({ items: [{ id: 'pq1', cards: ['image-a'], at: 1 }], seen: 0, seq: 1 });
+    expect(st.presentQueue).toEqual({ items: [{ id: 'pq1', cards: ['image-a'], at: T }], seen: 0, seq: 1 });
     expect(st.view).toEqual({ mode: 'half', card: 'image-b' });
+  });
+  it('an item whose question is over, or gone from the queue, leaves on the next read', () => {
+    const SID = '11111111-2222-4333-8444-555555555555';
+    const now = Date.now();
+    const st = sanitizeSuperState({
+      v: SUPER_STATE_VERSION, session: SID, containers: [img('image-a'), img('image-b'), img('image-c')],
+      view: { mode: 'float' },
+      queue: [
+        { id: 'q-done-1', sessionId: SID, kind: 'ask', state: 'done', createdAt: now },
+        { id: 'q-open-1', sessionId: SID, kind: 'ask', state: 'escalated', createdAt: now },
+      ],
+      presentQueue: { items: [
+        { id: 'pq1', cards: ['image-a'], ask: 'q-done-1', at: now },
+        { id: 'pq2', cards: ['image-b'], ask: 'q-gone-1', at: now },
+        { id: 'pq3', cards: ['image-c'], ask: 'q-open-1', at: now },
+      ], seen: 0, seq: 3 },
+    }, { now });
+    expect(st.presentQueue?.items.map((i) => i.id)).toEqual(['pq3']);
+  });
+  it('a stale unseen item (from an earlier day) never survives a read, the one on screen stays', () => {
+    const now = Date.now();
+    const old = now - PRESENT_ITEM_STALE_MS - 1;
+    const st = sanitizeSuperState({
+      v: SUPER_STATE_VERSION, containers: [img('image-a'), img('image-b')],
+      view: { mode: 'float' },
+      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: old }], seen: 0, seq: 1 },
+    }, { now });
+    expect(queueCounter(st.presentQueue)).toMatchObject({ waiting: 0 });
+    const shown = sanitizeSuperState({
+      v: SUPER_STATE_VERSION, containers: [img('image-a'), img('image-b')],
+      view: { mode: 'present', cards: ['image-a'] },
+      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: old }, { id: 'pq2', cards: ['image-b'], at: old }], seen: 0, seq: 2, showing: 'pq1' },
+    }, { now });
+    expect(shown.presentQueue).toMatchObject({ items: [{ id: 'pq1' }], showing: 'pq1' });
+    expect(shown.view).toMatchObject({ mode: 'present', cards: ['image-a'] });
   });
   it('a remote screen\'s step is checked key by key and reaches the same queue', () => {
     expect(checkRemoteLayout({ queue: { op: 'next', item: 'pq4' } }).patch).toEqual({ queue: { op: 'next', item: 'pq4' } });
     expect(() => checkRemoteLayout({ queue: { op: 'skip', item: 'pq4' } })).toThrow();
+    expect(checkRemoteLayout({ queue: { op: 'drop', item: 'pq4' } }).patch).toEqual({ queue: { op: 'drop', item: 'pq4' } });
     expect(() => checkRemoteLayout({ queue: { op: 'next', item: 'pq4', extra: 1 } })).toThrow();
     const s = stage({ containers: [img('image-a'), img('image-b')] });
     presentCards(s, ['image-a']);

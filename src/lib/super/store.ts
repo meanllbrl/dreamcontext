@@ -980,7 +980,12 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   const owedSince = finite(raw.owedSince);
   const ownerLanguage = asOwnerLanguage(raw.ownerLanguage);
   // The presentation queue settles against the cards, and may open its next item (types.ts).
-  const pq = settlePresentQueue(raw.presentQueue, sanitizeView(raw.view, containers), containers);
+  // An item whose picture question is over (done, or gone from the queue) or that waited unseen too
+  // long leaves here, on every read (owner 2026-11-18: "1 presentation waiting" stayed stuck).
+  const pq = settlePresentQueue(raw.presentQueue, sanitizeView(raw.view, containers), containers, {
+    now: opts.now ?? Date.now(),
+    askClosed: (ask) => { const it = queue.find((x) => x.id === ask); return !it || it.state === 'done'; },
+  });
   const ownerMarks = sanitizeOwnerMarks(raw.ownerMarks);
   const rawMarkSeq = finite(raw.ownerMarkSeq);
   const ownerMarkSeq = Math.max(rawMarkSeq !== undefined && rawMarkSeq > 0 && rawMarkSeq < 1e9 ? Math.floor(rawMarkSeq) : 0, ...ownerMarks.map((m) => m.seq ?? 0));

@@ -564,29 +564,42 @@ export function presentCards(
   return counter(item, true);
 }
 
-/** A picture question that is still open with the owner: its item waits instead of leaving (AC4). */
-export type AskStillOpen = (ask: string) => boolean;
+/** The owner's queue gestures: `next`, `leave`, `resume`, and `drop` (the waiting strip's ✕). */
+export type QueueStepOp = 'next' | 'leave' | 'resume' | 'drop';
+export const QUEUE_STEP_OPS: readonly QueueStepOp[] = ['next', 'leave', 'resume', 'drop'];
+
+/**
+ * An item waiting this long, never seen, is stale (owner 2026-11-18, "şu takılı kalıyor": a picture
+ * question's presentation from 03:40 still waited at 21:40): the store drops it on its next read.
+ */
+export const PRESENT_ITEM_STALE_MS = 12 * 60 * 60 * 1000;
 
 /**
  * The owner's queue gesture (D2, AC2, AC5), guarded by the item his window showed: `next` (also
  * closing the presentation) passes the head and opens the next, `leave` passes it and floats the
- * stage with the rest waiting, `resume` opens the head. A head whose picture question is still
- * open is not passed: it goes to the end and waits (AC4). Returns whether anything changed.
+ * stage with the rest waiting, `resume` opens the head, `drop` (the waiting strip's ✕) takes the
+ * head off the queue without showing it and leaves the stage as it is. An item he has seen or
+ * dismissed is gone for good, even while its picture question is still open (owner 2026-11-18:
+ * re-queueing it made "1 presentation waiting" come back after every close): the question stays
+ * open on its own card. Returns whether anything changed.
  */
 export function ownerQueueStep(
-  s: Pick<SuperState, 'view' | 'presentQueue'>, op: 'next' | 'leave' | 'resume', item: string, askOpen: AskStillOpen,
+  s: Pick<SuperState, 'view' | 'presentQueue'>, op: QueueStepOp, item: string,
 ): boolean {
   const q = s.presentQueue;
   const head = q?.items[0];
   if (!q || !head || head.id !== item) return false;
   if (op === 'resume') { showHead(s); return true; }
-  if (!headShowing(s)) return false;
+  const onScreen = headShowing(s);
+  if (op !== 'drop' && !onScreen) return false;
   q.items.shift();
-  if (head.ask && askOpen(head.ask)) q.items.push(head); else q.seen += 1;
+  q.seen += 1;
   delete q.showing;
-  // Alone and re-queued (an unanswered question): it waits rather than opening again at once.
-  if (op === 'next' && q.items.length && q.items[0].id !== head.id) showHead(s);
-  else { s.view = { mode: 'float' }; if (!q.items.length) q.seen = 0; }
+  if (!q.items.length) q.seen = 0;
+  // A dismissed item that was not on screen leaves the stage alone.
+  if (op === 'drop' && !onScreen) return true;
+  if (op === 'next' && q.items.length) showHead(s);
+  else s.view = { mode: 'float' };
   return true;
 }
 
@@ -632,11 +645,13 @@ export function dropAskItem(s: Pick<SuperState, 'view' | 'presentQueue'>, ask: s
  */
 export function settlePresentQueue(
   raw: unknown, view: SuperView, containers: readonly (LayoutCard & { id: string })[],
+  opts: { now?: number; askClosed?: (ask: string) => boolean } = {},
 ): { queue?: PresentQueue; view: SuperView } {
   const rec = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   if (!rec || !Array.isArray(rec.items)) return { view };
   const known = new Set(containers.map((c) => c.id));
   const rawIds: string[] = [];
+  const retired = new Set<string>();
   const items: PresentItem[] = [];
   for (const x of rec.items as unknown[]) {
     const r = x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, unknown> : null;
@@ -644,11 +659,16 @@ export function settlePresentQueue(
     rawIds.push(r.id);
     const cards = Array.isArray(r.cards) ? [...new Set((r.cards as unknown[]).filter((id): id is string => typeof id === 'string' && known.has(id)))].slice(0, MAX_FILMSTRIP) : [];
     if (!cards.length || items.some((i) => sameCardSet(i.cards, cards))) continue;
-    const layout = typeof r.layout === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(r.layout) ? r.layout as PresentLayout : undefined;
+    const ask = typeof r.ask === 'string' && QUEUE_ID_RE.test(r.ask) ? r.ask : undefined;
     const at = typeof r.at === 'number' && Number.isFinite(r.at) ? r.at : 0;
+    // No longer valid (owner 2026-11-18): its question is over, or it waited unseen past
+    // PRESENT_ITEM_STALE_MS (so a stale item never survives a restart). The one on screen stays.
+    const onScreen = r.id === rec.showing && !items.length && viewShowsItem(view, { id: r.id, cards, ...(ask ? { ask } : {}), at });
+    if (!onScreen && ((ask && opts.askClosed?.(ask)) || (opts.now !== undefined && opts.now - at > PRESENT_ITEM_STALE_MS))) { retired.add(r.id); continue; }
+    const layout = typeof r.layout === 'string' && (PRESENT_LAYOUTS as readonly string[]).includes(r.layout) ? r.layout as PresentLayout : undefined;
     items.push({
       id: r.id, cards, ...(layout ? { layout } : {}), ...(layout && r.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
-      ...(typeof r.ask === 'string' && QUEUE_ID_RE.test(r.ask) ? { ask: r.ask } : {}), at,
+      ...(ask ? { ask } : {}), at,
     });
   }
   const num = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < max ? Math.floor(v) : 0);
@@ -661,7 +681,7 @@ export function settlePresentQueue(
   if (showing) {
     const head = items[0];
     if (head?.id === showing && viewShowsItem(view, head)) q.showing = showing;
-    else if (rawIds.includes(showing) && !items.some((i) => i.id === showing)) {
+    else if (rawIds.includes(showing) && !retired.has(showing) && !items.some((i) => i.id === showing)) {
       // The item on screen lost its cards (closed): it is passed, and the next opens. Only when
       // the stage was left floating by it, never over another view.
       if (view.mode === 'float') {
