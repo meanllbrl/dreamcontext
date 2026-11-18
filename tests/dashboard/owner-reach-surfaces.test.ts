@@ -238,6 +238,16 @@ describe("the Super chat's member card (B1, B2)", () => {
     expect(has(html, 'super-member-reply')).toBe(false);
     expect(has(html, 'super-member-send')).toBe(false);
   });
+  it('are the same question card too, never the old list', () => {
+    const multi = tail(mirror({ id: 'q-m7', member: 'otobot', of: 'ask', ask: { questions: [
+      { question: 'Which list?', options: [{ label: 'Growth' }, { label: 'Sales' }, { label: 'Both' }, { label: 'None' }, { label: 'Later' }] },
+      { question: 'Which channel?', multiSelect: true, options: [{ label: 'Mail' }, { label: 'SMS' }] },
+    ] } }));
+    expect(multi).toContain('chat-memberask-head');
+    const child = tail(mirror({ id: 'q-m8', member: 'otobot', of: 'question', ask: { questions: [{ question: 'Ship?', multiSelect: true, options: [{ label: 'Yes' }, { label: 'No' }] }] } }));
+    expect(child).toContain('chat-memberask-head');
+    expect(has(child, 'super-member-option')).toBe(false);
+  });
 });
 
 describe("a refusal card in a member's own chat", () => {
