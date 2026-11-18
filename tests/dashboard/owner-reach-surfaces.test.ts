@@ -244,8 +244,10 @@ describe("the Super chat's member card (B1, B2)", () => {
       { question: 'Which channel?', multiSelect: true, options: [{ label: 'Mail' }, { label: 'SMS' }] },
     ] } }));
     expect(multi).toContain('chat-memberask-head');
-    const child = tail(mirror({ id: 'q-m8', member: 'otobot', of: 'question', ask: { questions: [{ question: 'Ship?', multiSelect: true, options: [{ label: 'Yes' }, { label: 'No' }] }] } }));
-    expect(child).toContain('chat-memberask-head');
+    // A child's question carries no card of its own on the mirror (only its words): Open, as before.
+    const child = tail(mirror({ id: 'q-m8', member: 'otobot', of: 'question', ownerText: 'Ship it? (options: Yes | No)' }));
+    expect(child).not.toContain('chat-memberask-head');
+    expect(has(child, 'super-member-open')).toBe(true);
     expect(has(child, 'super-member-option')).toBe(false);
   });
 });

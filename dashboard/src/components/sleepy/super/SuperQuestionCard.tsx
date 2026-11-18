@@ -252,10 +252,13 @@ function MemberAskCard({ item, name, slug, hasPhoto, answer, open }: {
     // "Unclear" / "Already answered": the asker is told to ask with `super ask`, never
     // AskUserQuestion (it would hold its turn). A member's child question takes it as the answer.
     answer: (_requestId, opts) => {
-      const msg = (opts.message || '').replace(
-        /Ask again with AskUserQuestion,/,
-        'Ask again with `dreamcontext super ask --json` (AskUserQuestion\'s shape; never AskUserQuestion itself, it would hold your turn),',
-      );
+      const raw = opts.message || '';
+      const msg = item.of === 'ask'
+        ? raw.replace(
+          /Ask again with AskUserQuestion,/,
+          'Ask again with `dreamcontext super ask --json` (AskUserQuestion\'s shape; never AskUserQuestion itself, it would hold your turn),',
+        )
+        : raw;
       if (item.of === 'ask') answer.submit({ kind: 'ask', text: msg });
       else answer.submit({ kind: 'question', answers: { [pending.questions[0]?.question ?? '']: msg } });
       return true;
@@ -290,7 +293,7 @@ function MemberWaitBody({ item, name, slug, hasPhoto }: { item: SuperQueueItem; 
   const grant = live && !allowed && (row === 'permission' || row === 'refusal') && !!call;
   // A member's question to him is the chat's own AskUserQuestion card (owner 2026-11-18: the
   // hand-drawn one was ugly): who asks and Open on one small line, the card below answers.
-  if (live && !allowed && row === 'question' && true) {
+  if (live && !allowed && row === 'question' && (item.of === 'ask' || !!item.ask)) {
     return <MemberAskCard item={item} name={name} slug={slug} hasPhoto={hasPhoto} answer={answer} open={open} />;
   }
   const title = row === 'refusal' ? 'owner.answer.refusedTitle' : item.of === 'permission' ? 'super.queue.memberCardPermission' : 'super.queue.memberCard';
