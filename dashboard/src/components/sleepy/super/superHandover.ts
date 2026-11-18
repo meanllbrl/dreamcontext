@@ -15,7 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types (and the card
  * mention's words, cardMention.ts).
  */
-import { saysNothingNew } from '../../../../../src/lib/super/owner-text-gate.js';
+import { pointsBack } from '../../../../../src/lib/super/owner-text-gate.js';
 import { superAnswerPicks, type QuestionLike } from '../../../../../src/lib/super/request-answer.js';
 import {
   ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type PadStatus, type QueueKind, type SuperChild, type SuperPadItem, type SuperEventKind, type SuperQueueItem, type SuperState,
@@ -451,9 +451,9 @@ const RAW_MARK = /(^|\n)[ \t]*<!--\s*re:/;
  * Prose the Super wrote for the owner (owner 2026-11-14, "anlatmamış ama anlattım diyor"): a text
  * under a `<!-- re:… -->` mark (its `replyTo`, or the raw mark while it streams), or one of real
  * length. It is drawn in place even inside an event turn folded into one line (the server counts
- * every marked section as told, inbox.ts `superSaid`), except a text with nothing new in it, every
- * clause a pointer back or a "still waiting" (owner-text-gate.ts `saysNothingNew`): that folds with
- * the turn's steps, as Telegram holds it. Short unmarked narration still folds. The server twin is
+ * every marked section as told, inbox.ts `superSaid`), except a text that is ONLY a pointer back
+ * ("durumu yukarıda yazdım", owner-text-gate.ts `pointsBack`): that folds with the turn's steps,
+ * as Telegram holds it. Short unmarked narration still folds. The server twin is
  * inbox.ts `isOwnerProse` (Telegram).
  */
 export function isOwnerProse(it: Pick<EventItemLike, 'kind' | 'text' | 'replyTo'>): boolean {
@@ -513,7 +513,7 @@ export function groupSuperEventTurns<T extends EventItemLike>(
       if (it.kind === 'tool' && !isSuperCommand(it)) open.commands += 1;
       // A reply to the owner never folds with the steps: it stays drawn under the line. One that
       // only points back or says nothing changed is no news (owner-text-gate.ts): it folds.
-      if (!open.full && !(open.kind !== 'recap' && isOwnerProse(it) && !saysNothingNew(it.text ?? ''))) { open.folded.push(it.id); continue; }
+      if (!open.full && !(open.kind !== 'recap' && isOwnerProse(it) && !pointsBack(it.text ?? ''))) { open.folded.push(it.id); continue; }
     }
     kept.push(it);
   }

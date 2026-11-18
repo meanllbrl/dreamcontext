@@ -15,12 +15,12 @@
  *  - the chat route, at the turn's end, hands the Super ONE hidden note naming what was held and
  *    asking it to write that answer properly (`ownerTextFeedback`): the answer itself, in his
  *    language, never a pointer back;
- *  - the Mac folds a no-news line of an event turn with the turn's other steps
- *    (superHandover.ts `isOwnerProse`).
+ *  - the Mac folds a pure pointer of an event turn with the turn's other steps
+ *    (superHandover.ts `groupSuperEventTurns`).
  *
  * Pure (no node imports): the dashboard reads it too. The detectors are deliberately narrow:
- * a pointer back is a SHORT text with nothing left once its "see earlier" / "nothing new" phrases
- * are cut out, never an answer that also says "as I wrote above" or "the other job still runs"; a wrong
+ * a pointer back is a SHORT text with nothing left once its "see earlier" phrase is cut out,
+ * never an answer that also says "as I wrote above"; a "nothing changed" line is never held; a wrong
  * language needs a clear majority of the other language's own words (quotes left out), never a
  * few English terms in a Turkish sentence.
  */
@@ -45,59 +45,37 @@ const POINTS_BACK = [
   /\b(?:see|as I (?:said|wrote|mentioned)|as (?:noted|stated|mentioned))\s+(?:my (?:previous|last) (?:message|reply)|above)\b/i,
 ];
 
-/** "Nothing changed / still waiting": news only when he asked for it. */
-const NOTHING_NEW = [
-  /de[ğg]i[şs]en (?:bir )?[şs]ey yok|yeni (?:bir )?(?:[şs]ey|geli[şs]me|haber) yok|h[âa]l[âa] (?:bekliyor|ayn[ıi]|s[üu]r[üu]yor|[çc]al[ıi][şs][ıi]yor)/i,
-  /\b(?:nothing (?:new|has changed|changed)|no (?:news|change|update)s?\b|still (?:waiting|running|pending|the same))\b/i,
-];
-
-/** Words that carry nothing on their own: articles, copulas, "and", filler ("tamam", "ok"). */
+/** Words that carry nothing on their own: articles, copulas, filler ("tamam", "ok"). */
 const EMPTY_WORDS = new Set([
-  'the', 'a', 'an', 'is', 'are', 'was', 'it', 'its', 'this', 'that', 'on', 'for', 'of', 'to', 'and', 'we', 'you',
-  'bu', 'şu', 'o', 'da', 'de', 've', 'bir', 'şey', 'hep', 'tamam', 'ok', 'okay', 'evet', 'peki', 'yes', 'sure', 'alright',
+  'the', 'a', 'an', 'is', 'it', 'this', 'that', 'bu', 'şu', 'da', 'de', 'tamam', 'ok', 'okay', 'evet', 'peki', 'yes', 'sure', 'alright',
 ]);
 
-/** A result in a word: done, failed, merged, live, an error. Any one makes the text news. */
-const RESULT_WORD = /^(?:bit|tamamlan|geçt|geçme|kırıl|hata|başarı|düş|çök|yayın|canlı|hazır|açıl|açtım|kapan|birleş|merge|gönder|reddet|onaylan|fail|error|broke|done|finish|pass|ship|live|ready|complete|crash|refus|reject|approved|return|sent|open)/u;
-
 /**
- * Nothing new in it, by what is LEFT: every pointer ("I wrote it above") and "nothing changed /
- * still waiting" phrase is cut out, and what remains may be at most one subject word per phrase
- * plus one ("Fatura işi hâlâ bekliyor", "The deploy is still running"), with no number and no
- * result word. Anything more is a reason, a result or a figure, and so news: "Deploy hâlâ
- * çalışıyor ama testler kırıldı", "Still waiting on Stripe — the webhook returned 500",
- * "Vergi raporu hâlâ çalışıyor (%80)" all go to him (review r1/r2, gate-drops-real-news: a phrase
- * found ANYWHERE is never the verdict; how the text is cut into clauses does not matter).
- * Returns how many phrases (and pointer phrases) were cut, or null when the text carries news.
+ * ONLY a pointer back, nothing else (owner 2026-11-19, review r3 stop: "yalnız saf 'yukarıda
+ * yazdım'"): once its pointer phrases are cut out, nothing is left after them and at most one
+ * word (its subject: "Durumu", "Bunu", "Sonucu") before them, with no number. Any word after a
+ * pointer ("Yukarıda yazdım, kart reddedildi"), a "still waiting" with a reason, a figure: all
+ * of it is his to read, so it goes. "Nothing changed / still waiting" lines are never held: three
+ * review rounds showed no word list tells such a line from a short result in two languages
+ * (gate-drops-real-news), and a line too many costs him less than a result never sent.
  */
-function emptyBesidesPhrases(t: string): { pointers: number; phrases: number } | null {
-  if (/\p{N}/u.test(t)) return null;
+function onlyPointer(t: string): boolean {
+  if (/\p{N}/u.test(t)) return false;
   let rest = t;
-  let pointers = 0;
-  let phrases = 0;
-  for (const re of POINTS_BACK) rest = rest.replace(new RegExp(re.source, 'giu'), () => { pointers += 1; phrases += 1; return ' '; });
-  for (const re of NOTHING_NEW) rest = rest.replace(new RegExp(re.source, 'giu'), () => { phrases += 1; return ' '; });
-  if (!phrases) return null;
-  const words = rest.toLocaleLowerCase('tr-TR').split(/[^\p{L}]+/u).filter((w) => w && !EMPTY_WORDS.has(w));
-  if (words.some((w) => RESULT_WORD.test(w))) return null;
-  return words.length <= phrases + 1 ? { pointers, phrases } : null;
+  let cut = 0;
+  for (const re of POINTS_BACK) rest = rest.replace(new RegExp(re.source, 'giu'), () => { cut += 1; return '\u0001'; });
+  if (!cut) return false;
+  const first = rest.indexOf('\u0001');
+  if (/[\p{L}\p{N}]/u.test(rest.slice(first))) return false;
+  const before = rest.slice(0, first).toLowerCase().split(/[^\p{L}]+/u).filter((w) => w && !EMPTY_WORDS.has(w));
+  return before.length <= 1;
 }
 
-/** A short text whose point is that the answer was given earlier: it points back and carries
- *  nothing else new. He can never scroll to "above" on a phone, and on the Mac it tells him
- *  nothing. A result, a reason or a figure in it makes it an answer. */
+/** A short text whose whole point is that the answer was given earlier. He can never scroll to
+ *  "above" on a phone, and on the Mac it tells him nothing. */
 export function pointsBack(text: string): boolean {
   const t = plain(text);
-  if (!t || t.length > POINTER_MAX_CHARS) return false;
-  return (emptyBesidesPhrases(t)?.pointers ?? 0) > 0;
-}
-
-/** A short text that only points back, says nothing changed or that something still waits, and
- *  carries nothing else: no result, no reason, no figure. */
-export function saysNothingNew(text: string): boolean {
-  const t = plain(text);
-  if (!t || t.length > POINTER_MAX_CHARS) return false;
-  return emptyBesidesPhrases(t) !== null;
+  return !!t && t.length <= POINTER_MAX_CHARS && onlyPointer(t);
 }
 
 /** Quoted spans ("…", “…”, ‘…’, «…»): an error message or a title he is shown verbatim, never
@@ -116,17 +94,16 @@ export function inWrongLanguage(text: string, lang: OwnerLanguage | null | undef
   return other >= 4 && other > 2 * his;
 }
 
-export type HoldReason = 'language' | 'points-back' | 'no-news';
+export type HoldReason = 'language' | 'points-back';
 
 /**
  * Why one section of the Super's text must not reach the phone, or null when it may go.
- * `eventTurn`: the server opened the turn (a child finished, an event) and he did not ask: a
- * "nothing changed" line is then noise; in his own turn it can be the answer he asked for.
+ * `eventTurn`: the server opened the turn (a child finished, an event); kept for the callers, the
+ * hold no longer depends on it (a pure pointer is held in every turn, nothing else is).
  */
 export function telegramHold(text: string, opts: { lang?: OwnerLanguage | null; eventTurn: boolean }): HoldReason | null {
   if (inWrongLanguage(text, opts.lang)) return 'language';
   if (pointsBack(text)) return 'points-back';
-  if (opts.eventTurn && saysNothingNew(text)) return 'no-news';
   return null;
 }
 
@@ -139,8 +116,8 @@ export const OWNER_TEXT_GATE_TAG = 'owner-text-gate';
  * and every text written for him (a reply mark or real length, `isOwnerProse`). Each is judged in
  * the SAME units the phone holds it by: `sections` cuts a text into its reply sections (the hub's
  * `splitReplySections`), so a section the hub held is a section asked for again (review r1,
- * held-without-retell). In an event turn a text with nothing new in it is just dropped (silence
- * was right), never re-asked.
+ * held-without-retell). In an event turn a pure pointer is just dropped (it carries nothing),
+ * never re-asked.
  */
 export function ownerTextFeedback(texts: readonly string[], opts: { lang?: OwnerLanguage | null; eventTurn: boolean; isOwnerProse: (t: string) => boolean; sections?: (t: string) => string[] }): string | null {
   const split = opts.sections ?? ((t: string) => [t]);

@@ -1461,7 +1461,7 @@ export class TelegramHub implements TelegramHubApi {
       if (st && superTurnFolds(mark, st.ownerBatches)) return false;
     }
     // What fails the owner-text gate never reaches the phone (owner-text-gate.ts): a text not in
-    // his language, a pointer back ("I wrote it above"), or a "nothing new" line of an event turn.
+    // his language, or a text that is only a pointer back ("I wrote it above").
     // The turn's end asks the Super to write it again (card-feedback.ts), so a held text is no
     // silent turn.
     const lang = (this.deps.ownerLanguage ?? superKnownLanguage)(sessionId);

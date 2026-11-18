@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { inWrongLanguage, pointsBack, saysNothingNew, telegramHold, ownerTextFeedback } from '../../src/lib/super/owner-text-gate.js';
+import { inWrongLanguage, pointsBack, telegramHold, ownerTextFeedback } from '../../src/lib/super/owner-text-gate.js';
 import { detectOwnerLanguage } from '../../src/lib/super/owner-language.js';
 import { CardFeedbackTracker, CARD_FEEDBACK_TAG } from '../../src/server/card-feedback.js';
 import { isOwnerProse } from '../../src/lib/super/inbox.js';
@@ -42,16 +42,18 @@ function onTelegramHub(lang: 'Turkish' | 'English' | null = 'Turkish', sleep?: (
 const OWNER_TURN = { event: false, batch: null };
 const EVENT_TURN = { event: true, batch: 'b1' };
 
-describe('pointer back and no news (finding 1)', () => {
+describe('only a pure pointer back is held (finding 1; owner 2026-11-19: "yalnız saf yukarıda yazdım")', () => {
   it.each([
     'Durumu bir önceki mesajda yazdım.',
-    'Bunu yukarıda yazdım, değişen bir şey yok.',
+    'Bunu yukarıda yazdım.',
+    'Tamam, yukarıda yazdım.',
     'Sonucu önceki mesajımda paylaştım.',
     'I already told you this result in my previous message.',
-    'As I said above, nothing changed.',
+    'As I said above.',
   ])('a short "%s" points back', (t) => {
     expect(pointsBack(t)).toBe(true);
-    expect(saysNothingNew(t)).toBe(true);
+    expect(telegramHold(t, { eventTurn: true })).toBe('points-back');
+    expect(telegramHold(t, { eventTurn: false })).toBe('points-back');
   });
 
   it('a real answer that also says "as I wrote above" is an answer, not a pointer', () => {
@@ -60,48 +62,30 @@ describe('pointer back and no news (finding 1)', () => {
     expect(pointsBack('Canlıya bugün 17:00\'de çıkıyoruz; mağaza onayı geldi.')).toBe(false);
   });
 
-  it('"still waiting" is news only when he asked: held in an event turn, sent in his own', () => {
-    expect(telegramHold('Kart hâlâ bekliyor.', { eventTurn: true })).toBe('no-news');
-    expect(telegramHold('Kart hâlâ bekliyor.', { eventTurn: false })).toBeNull();
-    expect(telegramHold('Durumu bir önceki mesajda yazdım.', { eventTurn: false })).toBe('points-back');
-  });
-
-  it('a text is judged by every clause: a result next to "still running" or "see above" is news (review r1)', () => {
-    const news = [
-      'Ödeme sayfası bitti: build yeşil, PR #42 açık. Fiyat testi hâlâ çalışıyor.',
-      'Payment page is done: build green, PR #42 open. The price test is still running.',
-      'Build geçti, PR #42 açık. Detayı yukarıda yazdım.',
-      'No change on the invoice job; the tax report finished with 3 e-notices.',
+  it('anything besides the pointer, and every "nothing changed / still waiting" line, reaches him (review r1-r3)', () => {
+    const goes = [
+      // a pointer with anything after it
+      'Bunu yukarıda yazdım, değişen bir şey yok.',
+      'As I said above, nothing changed.',
+      'As I said above the build failed.',
+      'Yukarıda yazdım, kart reddedildi.',
       'Yukarıda yazdım: ödeme sayfası canlıda.',
+      'Build geçti, PR #42 açık. Detayı yukarıda yazdım.',
+      'Ödeme işi tamam yukarıda yazdım.',
+      // "still waiting" with or without a result (never held any more)
+      'Kart hâlâ bekliyor.',
+      'Değişen bir şey yok.',
+      'Ödeme sayfası bitti: build yeşil, PR #42 açık. Fiyat testi hâlâ çalışıyor.',
+      'Deploy hâlâ çalışıyor ama testler kırıldı.',
+      'Still waiting on Stripe — the webhook returned 500.',
+      'Hâlâ bekliyor, kart reddedildi.',
+      'Still running. Build FAILED.',
+      'Değişen bir şey yok, Stripe çalışmıyor.',
     ];
-    for (const t of news) {
-      expect(saysNothingNew(t), t).toBe(false);
+    for (const t of goes) {
       expect(pointsBack(t), t).toBe(false);
       expect(telegramHold(t, { eventTurn: true, lang: null }), t).toBeNull();
     }
-    // Review r2: a result, a reason or a figure inside the "still" clause, whatever joins them.
-    const mixed = [
-      'Deploy hâlâ çalışıyor ama 3 test kırıldı.',
-      'Deploy hâlâ çalışıyor ama testler kırıldı.',
-      'The deploy is still running but 3 tests failed.',
-      'Fatura işi hâlâ bekliyor çünkü Stripe 402 döndü.',
-      'Fatura işi hâlâ bekliyor çünkü Stripe ödemeyi reddetti.',
-      'Still waiting on Stripe — the webhook returned 500.',
-      'Still waiting on Stripe, the webhook returned an error.',
-      'Vergi raporu hâlâ çalışıyor (%80).',
-      'As I said above the build failed.',
-    ];
-    for (const t of mixed) {
-      expect(saysNothingNew(t), t).toBe(false);
-      expect(telegramHold(t, { eventTurn: true, lang: null }), t).toBeNull();
-    }
-    // Only pointers, "nothing new", a subject and filler: still nothing to tell.
-    expect(saysNothingNew('Fatura işi hâlâ bekliyor.')).toBe(true);
-    expect(saysNothingNew('The deploy is still running.')).toBe(true);
-    expect(saysNothingNew('Still waiting for approval.')).toBe(true);
-    expect(saysNothingNew('Tamam. Değişen bir şey yok ve kart hâlâ bekliyor.')).toBe(true);
-    expect(pointsBack('Durumu yukarıda yazdım ve değişen bir şey yok.')).toBe(true);
-    expect(pointsBack('Değişen bir şey yok.')).toBe(false); // nothing new, but no pointer
   });
 
   it('the reply mark is not part of the text it judges', () => {
@@ -119,10 +103,12 @@ describe('the phone never gets it (hub.onAssistantText)', () => {
     expect(turn.held).toBe(true);
   });
 
-  it('a "nothing changed" result line of an event turn is held; a real result goes', async () => {
+  it('a pure pointer of an event turn is held; a "still waiting" line and a real result go', async () => {
     const { hub, log } = onTelegramHub();
-    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nDeğişen bir şey yok, kart hâlâ bekliyor.', { turns: [], inputs: undefined, mark: EVENT_TURN })).toBe(false);
+    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nDurumu yukarıda yazdım.', { turns: [], inputs: undefined, mark: EVENT_TURN })).toBe(false);
     expect(log.filter((l) => l.method === 'sendMessage')).toEqual([]);
+    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nHâlâ bekliyor, kart reddedildi.', { turns: [], inputs: undefined, mark: EVENT_TURN })).toBe(true);
+    expect(log.map((l) => l.text).join('\n')).toContain('kart reddedildi');
     expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nSürüm 2.4 yayında; mağaza onayı geldi.', { turns: [], inputs: undefined, mark: { event: false, batch: null } })).toBe(true);
     expect(log.map((l) => l.text).join('\n')).toContain('Sürüm 2.4 yayında');
   });
@@ -150,14 +136,15 @@ describe('the Super is asked for the answer itself (turn end)', () => {
 });
 
 describe('the Mac folds it with the event turn', () => {
-  it('a marked no-news line folds; a marked real result stays drawn', () => {
+  it('a marked pure pointer folds; a "still waiting" line and a real result stay drawn', () => {
     const items = [
       { kind: 'user', id: 'u1', text: '[super events] batch=b1\n- item=q1 child=c1 event=done' },
-      { kind: 'text', id: 't1', text: '<!-- re:abc123 -->\nDeğişen bir şey yok, kart hâlâ bekliyor.', replyTo: ['abc123'] },
+      { kind: 'text', id: 't1', text: '<!-- re:abc123 -->\nDurumu bir önceki mesajda yazdım.', replyTo: ['abc123'] },
       { kind: 'text', id: 't2', text: '<!-- re:abc123 -->\nSürüm 2.4 yayında.', replyTo: ['abc123'] },
+      { kind: 'text', id: 't3', text: '<!-- re:abc123 -->\nKart hâlâ bekliyor, onay gelmedi.', replyTo: ['abc123'] },
     ];
     const { kept, groups } = groupSuperEventTurns(items, { ownerBatches: [], expanded: new Set() });
-    expect(kept.map((i) => i.id)).toEqual(['u1', 't2']);
+    expect(kept.map((i) => i.id)).toEqual(['u1', 't2', 't3']);
     expect(groups.get('u1')!.folded).toEqual(['t1']);
   });
 });
