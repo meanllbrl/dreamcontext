@@ -3,7 +3,9 @@
  *
  *  1. the conductor's snapshot repo (every `team/<team>` branch) is bundled into the run's local
  *     folder and `git bundle verify` runs on the copy;
- *  2. a team's workspace is removed only when its final snapshot is in that verified bundle;
+ *  2. a team's workspace is removed only when its final snapshot is in that verified bundle, that
+ *     snapshot took the whole tree (no failure, no over-size file left at an older version), and
+ *     its owner-facing `out/` was moved to the kept folder first (the results screen reads it);
  *  3. the winner's branch is fetched from the conductor's repo (never a team directory) into the
  *     target as `hackathon/<run>/<team>`; nothing is checked out;
  *  4. `pr` scans the diff (pattern redactor + every known secret value), lists every changed path
@@ -14,15 +16,17 @@
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { redactSecrets } from '../telegram/format.js';
 import type { Design } from './designer.js';
 import { juryPath } from './phases.js';
-import { designHash, readJson, resultPath, runDir, runWorkspace, teamWorkspace, writeJsonAtomic, type RunRecord } from './run-store.js';
+import { readState } from './conductor.js';
+import { designHash, keptOutDir, readJson, resultPath, runDir, runWorkspace, teamWorkspace, writeJsonAtomic, type RunRecord } from './run-store.js';
 import { isKeyFilePath, knownSecretValues, type SecretSources } from './secrets.js';
 import { git, snapPaths, snapshotHead } from './snapshot.js';
 import type { ResultRecord, TeamResult } from './stats.js';
+import { teamReadIsolated } from './team-session.js';
 import type { JuryResult } from './jury.js';
 
 export function bundlePath(contextRoot: string, runId: string): string {
@@ -48,16 +52,38 @@ export function keepAndClean(contextRoot: string, run: RunRecord, design: Design
     for (const t of design.teams) kept.push({ team: t.id, reason: `paket doğrulanamadı: ${(e as Error).message.split('\n')[0]!.slice(0, 120)}` });
     return { bundle: existsSync(out) ? out : null, verified, removed, kept };
   }
-  const refs = git(['bundle', 'list-heads', out]).split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p.length === 2);
+  let refs: string[][];
+  try {
+    refs = git(['bundle', 'list-heads', out]).split('\n').map((l) => l.trim().split(/\s+/)).filter((p) => p.length === 2);
+  } catch (e) {
+    for (const t of design.teams) kept.push({ team: t.id, reason: `paket okunamadı: ${(e as Error).message.split('\n')[0]!.slice(0, 120)}` });
+    return { bundle: out, verified, removed, kept };
+  }
+  const snaps = readState(run.id, o.wsHome).teams;
   for (const t of design.teams) {
     const head = snapshotHead(run.id, t.id, o.wsHome);
     const inBundle = !!head && refs.some(([sha, ref]) => sha === head && ref === `refs/heads/team/${t.id}`);
     if (!inBundle) { kept.push({ team: t.id, reason: 'son kopyası pakette yok: klasörü duruyor' }); continue; }
-    const root = teamWorkspace(run.id, t.id, o.wsHome).root;
+    // The bundle holds the latest snapshot, which must have taken the whole tree.
+    const snap = snaps[t.id]?.snap;
+    if (!snap?.ok) { kept.push({ team: t.id, reason: 'son kopyası alınamadı: klasörü duruyor' }); continue; }
+    if (snap.kept > 0) { kept.push({ team: t.id, reason: `${snap.kept} büyük dosya kopyaya girmedi: klasörü duruyor` }); continue; }
+    const ws = teamWorkspace(run.id, t.id, o.wsHome);
+    const root = ws.root;
     // Contained: the path is the run workspace's own child, and never a link.
     const parent = runWorkspace(run.id, o.wsHome);
     try {
       if (!root.startsWith(`${parent}/`) || lstatSync(root).isSymbolicLink()) { kept.push({ team: t.id, reason: 'klasör beklenen yerde değil' }); continue; }
+      // The owner-facing out/ moves (a rename: the entry itself, links never followed) beside the
+      // team folders before the folder goes; a link in its place is not kept.
+      let outIsDir = false;
+      try { outIsDir = lstatSync(ws.out).isDirectory(); } catch { /* no out/ */ }
+      if (outIsDir) {
+        const dest = keptOutDir(run.id, t.id, o.wsHome);
+        mkdirSync(join(dest, '..'), { recursive: true });
+        rmSync(dest, { recursive: true, force: true });
+        renameSync(ws.out, dest);
+      }
       rmSync(root, { recursive: true, force: true });
       removed.push(t.id);
     } catch {
@@ -114,9 +140,29 @@ export function diffFiles(target: string, base: string, branch: string): DiffFil
 
 export interface SecretHit { path: string; line: number; kind: 'pattern' | 'known' | 'key-file' }
 
+/**
+ * Every form a known value is looked for in: as written, base64 (standard and URL-safe, without
+ * padding) and hex. A team can reach the Keychain through an interpreter, so a copied token may
+ * arrive encoded; a split or re-encoded copy is beyond a scan (the card says reads are open).
+ */
+export function knownForms(known: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const k of known) {
+    out.add(k);
+    const b64 = Buffer.from(k, 'utf-8').toString('base64').replace(/=+$/, '');
+    out.add(b64);
+    out.add(b64.replace(/\+/g, '-').replace(/\//g, '_'));
+    const hex = Buffer.from(k, 'utf-8').toString('hex');
+    out.add(hex);
+    out.add(hex.toUpperCase());
+  }
+  return [...out];
+}
+
 /** Added lines that carry a secret, with file:line. */
 export function scanSecrets(files: readonly DiffFile[], known: readonly string[]): SecretHit[] {
   const hits: SecretHit[] = [];
+  const forms = knownForms(known);
   for (const f of files) {
     if (f.status !== 'D' && isKeyFilePath(f.path)) hits.push({ path: f.path, line: 0, kind: 'key-file' });
     let line = 0;
@@ -128,7 +174,7 @@ export function scanSecrets(files: readonly DiffFile[], known: readonly string[]
         line++;
         const body = l.slice(1);
         if (redactSecrets(body) !== body) hits.push({ path: f.path, line, kind: 'pattern' });
-        else if (known.some((k) => body.includes(k))) hits.push({ path: f.path, line, kind: 'known' });
+        else if (forms.some((k) => body.includes(k))) hits.push({ path: f.path, line, kind: 'known' });
       } else if (!l.startsWith('-')) line++;
     }
   }
@@ -219,7 +265,7 @@ export function writeResult(contextRoot: string, run: RunRecord, design: Design,
     firstOutputMinute: null,
     usageShare: perTeam,
     hours,
-    readIsolated: t.tool === 'claude',
+    readIsolated: teamReadIsolated(t),
   }));
   const peers = teams.filter((t) => !t.control && t.juryScore != null);
   const ctl = teams.find((t) => t.control && t.juryScore != null);

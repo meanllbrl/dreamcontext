@@ -94,6 +94,8 @@
 .hk-step[data-now='true'] { color: var(--color-accent-ink); font-weight: var(--font-weight-semibold); }
 .hk-step[data-now='true']::before { background: var(--color-accent); border-color: var(--color-accent); }
 .hk-step__btn { border: 0; background: transparent; padding: 0; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; min-height: 24px; }
+.hk-confirm { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); font-size: var(--font-size-sm); color: var(--color-text); }
+.hk-btn--danger { color: var(--color-error-ink); border-color: var(--color-error); }
 .hk-paused { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4); border-radius: var(--radius-lg); background: var(--color-warning-subtle); color: var(--color-text); font-size: var(--font-size-sm); }
 
 /* Canlı: a 2-column grid of tables beside the strip column; one column on a phone. */
@@ -124,7 +126,7 @@
 .hk-win__title { display: inline-flex; gap: var(--space-2); align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .hk-win__title .hk-mono { overflow: hidden; text-overflow: ellipsis; }
 .hk-win__who { padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text); font-weight: var(--font-weight-semibold); }
-.hk-win__live { margin-left: auto; color: var(--color-error-ink); font-weight: var(--font-weight-semibold); flex: none; }
+.hk-win__live { margin-left: auto; color: var(--color-success-ink, var(--color-text-secondary)); font-weight: var(--font-weight-semibold); flex: none; }
 .hk-win__live::before { content: '● '; }
 .hk-win__tabs { display: inline-flex; gap: var(--space-1); }
 .hk-win__tab { padding: 0 var(--space-2); border-radius: var(--radius-sm); }

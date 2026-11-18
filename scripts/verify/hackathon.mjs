@@ -10,7 +10,7 @@
  * results with the jury (judging), a presentation, the picked result. No team runs: every file a
  * conductor would write is written here. Exit 0 = clean, 1 = findings.
  */
-import { copyFileSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { chromium } from 'playwright';
@@ -203,11 +203,30 @@ try {
     check(await visible(page, '.hk-card--start button.hk-btn--primary'), `start@${w.name}: no Başlat on the start card`);
   }, { name: '02-start-card' });
 
+  // The design changes on disk while the card is open: Başlat waits for his confirm of the new one.
+  await app.look(`/?vault=${V}`, async (page, w) => {
+    const file = join(runDir(R1), 'run.json');
+    const before = JSON.parse(readFileSync(file, 'utf-8'));
+    await openRun(page, 'Ana sayfanın');
+    await visible(page, '.hk-card--start button.hk-btn--primary');
+    json(file, { ...before, design: { ...before.design, rounds: before.design.rounds + 1 } });
+    check(await visible(page, '.hk-start__foot button:not(.hk-btn--primary)', 12_000), `start@${w.name}: a changed design redrew with Başlat still live`);
+    json(file, before);
+  }, { name: '11-design-changed' });
+
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
     check(await visible(page, '.hk-live'), `live@${w.name}: no live grid`);
     check((await page.locator('.hk-live__tables > *').count()) >= 4, `live@${w.name}: fewer than four tables`);
+    // Seeded with no conductor holding its lock: the page offers Sürdür.
+    check(await visible(page, '.hk-paused--conductor button'), `live@${w.name}: a run with no live conductor offers no Sürdür`);
   }, { name: '03-live' });
+
+  await app.look(`/?vault=${V}`, async (page, w) => {
+    await openRun(page, 'Gelir artıracak');
+    await page.locator('.hk-head button', { hasText: /^(Durdur|Stop)$/ }).first().click();
+    check(await visible(page, '.hk-confirm'), `stop@${w.name}: Durdur stopped without asking`);
+  }, { name: '10-stop-confirm' });
 
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Gelir artıracak');
@@ -235,6 +254,7 @@ try {
   await app.look(`/?vault=${V}`, async (page, w) => {
     await openRun(page, 'Fiyat sayfası');
     check(await visible(page, 'text=Sade'), `results@${w.name}: no team on the results`);
+    check((await page.locator('.hk-head button', { hasText: /^(Durdur|Stop)$/ }).count()) === 0, `results@${w.name}: Durdur sits beside the pick while judging`);
   }, { name: '07-results-judging' });
 
   await app.look(`/?vault=${V}`, async (page, w) => {

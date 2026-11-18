@@ -12,7 +12,7 @@ import { Presentation } from '../components/hackathon/Presentation';
 import { Results } from '../components/hackathon/Results';
 import { PrConfirm } from '../components/hackathon/PrConfirm';
 import {
-  clock, fill, minutesLeft, useFrames, useResult, useRounds, useRun, useRuns,
+  clock, fill, minutesLeft, pct, useFrames, useResult, useRounds, useRun, useRuns,
   type RoundRecord, type RunState, type RunView,
 } from '../components/hackathon/data';
 import '../components/hackathon/hackathon.css';
@@ -110,11 +110,12 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
   if (isError || !run) return <p className="hk-error">{t('hk.run.failed')} {(error as Error | null)?.message ?? ''}</p>;
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['hackathon'] });
-  const act = async (what: 'stop' | 'resume', owner: boolean) => {
+  const act = async (what: 'stop' | 'resume' | 'relaunch', owner: boolean) => {
     setBusy(what); setErr(null);
     try {
-      const path = `/hackathon/${encodeURIComponent(id)}/${what}`;
-      if (owner) await api.ownerPost(path, {}); else await api.post(path, {});
+      const path = `/hackathon/${encodeURIComponent(id)}/${what === 'relaunch' ? 'resume' : what}`;
+      const body = what === 'relaunch' ? { conductor: true } : {};
+      if (owner) await api.ownerPost(path, body); else await api.post(path, body);
       await refresh();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
   };
@@ -145,7 +146,7 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
     const next = order.length > 1 ? teamOf(order[(at + 1) % order.length]!) ?? null : null;
     return (
       <Presentation
-        run={id} team={teamOf(view.team)!}
+        key={view.team} run={id} team={teamOf(view.team)!} error={err}
         place={result?.jury?.ranking.length ? at + 1 : null} score={result?.jury?.scores[view.team] ?? null}
         nextTeam={next} canPick={canPick} picking={picking === view.team}
         onPick={() => void pick(view.team)} onNext={() => next && setView({ kind: 'present', team: next.id })}
@@ -157,6 +158,12 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
   return (
     <div className="hk-run-screen">
       <RunHeader run={run} onBack={onBack} busy={busy} onStop={() => void act('stop', false)} />
+      {run.conductor === 'gone' && (
+        <div className="hk-paused hk-paused--conductor" role="status">
+          <span>{t('hk.conductor.gone')}</span>
+          <button type="button" className="hk-btn hk-btn--primary" disabled={busy === 'relaunch'} onClick={() => void act('relaunch', true)}>{t('hk.conductor.relaunch')}</button>
+        </div>
+      )}
       <Timeline run={run} rounds={rounds?.rounds ?? []} onPeek={(round) => setView({ kind: 'peek', round })} />
       {run.paused && run.state === 'running' && (
         <div className="hk-paused" role="status">
@@ -206,8 +213,11 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
 
 function RunHeader({ run, onBack, busy, onStop }: { run: RunView; onBack: () => void; busy: string | null; onStop: () => void }) {
   const { t } = useI18n();
+  const [confirming, setConfirming] = useState(false);
   const s = run.strip;
-  const running = run.state === 'running' || run.state === 'presenting' || run.state === 'judging';
+  // Judging spends nothing and waits for the pick: no clock, and no Stop beside the Pick buttons.
+  const running = run.state === 'running' || run.state === 'presenting';
+  const stoppable = running || run.state === 'awaiting-owner' || run.state === 'draft';
   const share = s.used != null ? Math.min(100, Math.round((s.used / Math.max(1, s.ceiling)) * 100)) : null;
   const stateChip = run.state === 'running' && run.round != null ? fill(t('hk.round'), { n: run.round, of: run.rounds }) : t(`hk.state.${run.state}`);
   return (
@@ -227,8 +237,15 @@ function RunHeader({ run, onBack, busy, onStop }: { run: RunView; onBack: () => 
           </span>
         </span>
       )}
-      {run.state !== 'stopped' && run.state !== 'picked' && (
-        <button type="button" className="hk-btn" disabled={busy === 'stop'} onClick={onStop}>{t('hk.stop')}</button>
+      {stoppable && !confirming && (
+        <button type="button" className="hk-btn" disabled={busy === 'stop'} onClick={() => setConfirming(true)}>{t('hk.stop')}</button>
+      )}
+      {stoppable && confirming && (
+        <span className="hk-confirm" role="group" aria-label={t('hk.stop')}>
+          <span>{running ? t('hk.stop.confirmRunning') : t('hk.stop.confirmDraft')}</span>
+          <button type="button" className="hk-btn hk-btn--danger" disabled={busy === 'stop'} onClick={() => { setConfirming(false); onStop(); }}>{t('hk.stop.yes')}</button>
+          <button type="button" className="hk-btn" onClick={() => setConfirming(false)}>{t('hk.stop.no')}</button>
+        </span>
       )}
     </header>
   );
@@ -262,9 +279,9 @@ function Timeline({ run, rounds, onPeek }: { run: RunView; rounds: RoundRecord[]
   );
 }
 
-/** "How different the teams are": the latest round's pair scores (lower is better). */
+/** "How similar the teams are": the latest round's pair scores (lower is better). */
 function Distance({ run, rounds }: { run: RunView; rounds: RoundRecord[] }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const last = [...rounds].reverse().find((r) => r.pairs.length);
   const name = (id: string) => run.teams.find((x) => x.id === id)?.name ?? id;
   return (
@@ -276,7 +293,7 @@ function Distance({ run, rounds }: { run: RunView; rounds: RoundRecord[] }) {
             <li key={`${p.a}-${p.b}`} className="hk-bar" data-over={p.score > last.gate ? 'true' : undefined}>
               <span>{name(p.a)} · {name(p.b)}</span>
               <span className="hk-bar__track"><span className="hk-bar__fill" style={{ width: `${Math.round(p.score * 100)}%` }} /></span>
-              <span className="hk-bar__num">%{Math.round(p.score * 100)}</span>
+              <span className="hk-bar__num">{pct(p.score, locale)}</span>
             </li>
           ))}
         </ul>

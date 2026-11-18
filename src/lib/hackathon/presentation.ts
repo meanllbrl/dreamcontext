@@ -7,7 +7,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readDecisions, readManifest, readMedia, readShotRequest, readThesis } from './crossing.js';
 import type { Design } from './designer.js';
-import { conductorDir, teamWorkspace } from './run-store.js';
+import { conductorDir, teamOutDir, teamWorkspace } from './run-store.js';
 import { copyBuild, pdfFirstPage, shootBuild, shotsSupported } from './shots.js';
 import type { Manifest, ThesisCard } from './team-files.js';
 
@@ -77,7 +77,7 @@ export async function captureEvidence(runId: string, team: string, kind: Design[
 }
 
 export function readPresentation(runId: string, team: string, rounds: number, wsHome?: string): Presentation {
-  const out = teamWorkspace(runId, team, wsHome).out;
+  const out = teamOutDir(runId, team, wsHome);
   const thesis = lastThesis(out, rounds);
   const dir = shotsDir(runId, team, wsHome);
   let shotNames: string[] = [];

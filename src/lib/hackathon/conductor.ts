@@ -9,9 +9,9 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, createWriteStream, mkdirSync, openSync, writeFileSync } from 'node:fs';
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { acquireFileLock, releaseFileLock } from '../file-lock.js';
+import { acquireFileLock, lockHolderPid, reclaimDeadHolderLock, releaseFileLock } from '../file-lock.js';
 import { readUsageLimits } from '../claude-usage.js';
 import { codexStrictArgs, parseCodexMcpList } from '../t3-bridge/launch.js';
 import type { Design, TeamDesign } from './designer.js';
@@ -34,6 +34,8 @@ export interface TeamState {
   /** Codex servers seen at start (a new one refuses the turn). */
   codexServers?: string[];
   installPaths?: string[];
+  /** The team's latest snapshot: ok, and how many over-size files kept an older version. */
+  snap?: { label: string; ok: boolean; kept: number };
 }
 
 export interface ConductorState {
@@ -76,10 +78,13 @@ export interface ConductorDeps {
   sleep(ms: number): Promise<void>;
   startTurn(req: TurnRequest): TurnHandle;
   readUsage(): UsageReading | null;
+  /** Hands the caller the kill for every live team turn (its SIGTERM handler calls it). */
+  onAbort?(killAll: () => void): void;
   /** Workspace preparation (clone, install, snapshot repo); injectable for the unit test. */
   prepare(run: RunRecord, design: Design): Promise<Record<string, Partial<TeamState>>> | Record<string, Partial<TeamState>>;
   /** The team's snapshot after a round's turn ends. */
-  snapshot(run: RunRecord, team: string, label: string): void;
+  /** Snapshot the team's tree; returns the over-size paths that kept their older version. */
+  snapshot(run: RunRecord, team: string, label: string): { kept: readonly string[] } | void;
   notify?(text: string): void;
 }
 
@@ -148,8 +153,11 @@ export interface PhaseCtx {
   deps: ConductorDeps;
   design: Design;
   state: ConductorState;
-  /** Run every team's turn for `label` with its message, until done or deadline + overrun. */
-  runTurns(label: string, round: number, messages: Record<string, string>, deadlineMs: number, teams?: readonly string[]): Promise<void>;
+  /**
+   * Run every team's turn for `label` with its message, until done or `durationMs` + overrun.
+   * The clock starts when the turns start, after any session-guard wait (never before it).
+   */
+  runTurns(label: string, round: number, messages: Record<string, string>, durationMs: number, teams?: readonly string[]): Promise<void>;
   limit(): LimitVerdict;
   saveState(): void;
 }
@@ -183,7 +191,7 @@ export async function conduct(runId: string, deps: ConductorDeps, phases: readon
 
   const stopped = (): boolean => (readRun(deps.contextRoot, runId)?.state ?? 'stopped') === 'stopped';
 
-  const runTurns: PhaseCtx['runTurns'] = async (label, round, messages, deadlineMs, only) => {
+  const runTurns: PhaseCtx['runTurns'] = async (label, round, messages, durationMs, only) => {
     const teams = design.teams.filter((t) => (!only || only.includes(t.id)) && messages[t.id]);
     // The session guard: no new team turn while the 5-hour window is past it.
     for (;;) {
@@ -193,9 +201,11 @@ export async function conduct(runId: string, deps: ConductorDeps, phases: readon
         break;
       }
       run = updateRun(deps.contextRoot, runId, (r) => (r.paused === v.reason ? null : addMoment({ ...r, paused: v.reason }, v.reason ?? '')));
-      await deps.sleep(60_000);
+      // A minute between readings, in ticks, so a Stop is seen within one.
+      for (let w = 0; w < 60_000 && !stopped(); w += TICK_MS) await deps.sleep(TICK_MS);
     }
     if (stopped()) return;
+    const deadlineMs = deps.now() + durationMs;
     const handles = teams.map((team) => {
       const st = state.teams[team.id] ?? (state.teams[team.id] = { sessionId: randomUUID(), turns: 0 });
       const transcript = transcriptPath(deps.contextRoot, runId, team.id, label);
@@ -223,7 +233,12 @@ export async function conduct(runId: string, deps: ConductorDeps, phases: readon
     await all;
     // Every team's snapshot after its turn ends or is stopped.
     for (const x of handles) {
-      try { deps.snapshot(run!, x.team.id, label); } catch (e) {
+      const st = state.teams[x.team.id]!;
+      try {
+        const got = deps.snapshot(run!, x.team.id, label);
+        st.snap = { label, ok: true, kept: got?.kept.length ?? 0 };
+      } catch (e) {
+        st.snap = { label, ok: false, kept: 0 };
         run = updateRun(deps.contextRoot, runId, (r) => addMoment(r, `${x.team.name}: kopya alınamadı (${(e as Error).message.slice(0, 80)})`));
       }
     }
@@ -231,6 +246,7 @@ export async function conduct(runId: string, deps: ConductorDeps, phases: readon
   };
 
   const ctx: PhaseCtx = { deps, design, state, runTurns, limit, saveState };
+  deps.onAbort?.(() => { for (const h of live) h.kill(); });
 
   try {
     if (!state.prepared) {
@@ -309,11 +325,15 @@ export function realStartTurn(base: { brainRoot: string; linkedRepos: readonly s
       writeFileSync(req.transcript, `${JSON.stringify({ type: 'refused', reason: refused })}\n`, { flag: 'a' });
       return { done: Promise.resolve(1), kill() {} };
     }
-    const done = new Promise<number | null>((res) => { child!.on('close', (code) => res(code)); child!.on('error', () => res(1)); });
+    let closed = false;
+    const done = new Promise<number | null>((res) => { child!.on('close', (code) => { closed = true; res(code); }); child!.on('error', () => { closed = true; res(1); }); });
+    const signal = (sig: NodeJS.Signals) => { try { if (child?.pid) process.kill(-child.pid, sig); } catch { /* gone */ } };
     return {
       done,
       kill() {
-        try { if (child?.pid) process.kill(-child.pid, 'SIGTERM'); } catch { /* gone */ }
+        signal('SIGTERM');
+        // A turn that ignores SIGTERM is not left running (and `await all` never hangs on it).
+        setTimeout(() => { if (!closed) signal('SIGKILL'); }, 10_000).unref();
       },
     };
   };
@@ -336,11 +356,39 @@ export function conductorLockPath(runId: string, wsHome?: string): string {
 /** Take the run's PID lock; false when a live conductor already holds it. */
 export function takeConductorLock(runId: string, wsHome?: string): boolean {
   mkdirSync(conductorDir(runId, wsHome), { recursive: true });
+  // A dead holder (reboot, crash, kill -9) frees the run at once, whatever the lock's age.
+  reclaimDeadHolderLock(conductorLockPath(runId, wsHome));
   return acquireFileLock(conductorLockPath(runId, wsHome), Date.now(), 24 * 3600_000, { verifyPidLiveness: true });
 }
 
 export function releaseConductorLock(runId: string, wsHome?: string): void {
   releaseFileLock(conductorLockPath(runId, wsHome));
+}
+
+/** The pid of the live conductor holding this run's lock, else null. Reads only. */
+export function liveConductorPid(runId: string, wsHome?: string, probe: (pid: number) => void = (pid) => { process.kill(pid, 0); }): number | null {
+  const pid = lockHolderPid(conductorLockPath(runId, wsHome));
+  if (pid === null) return null;
+  try { probe(pid); return pid; } catch (e) { return (e as NodeJS.ErrnoException)?.code === 'EPERM' ? pid : null; }
+}
+
+/** A run whose phases are not done yet: it needs a live conductor to move. */
+export function needsConductor(contextRoot: string, run: RunRecord): boolean {
+  return run.state === 'running' || run.state === 'presenting' || (run.state === 'judging' && !existsSync(join(runDir(contextRoot, run.id), 'jury.json')));
+}
+
+/** Grace after Başlat or a relaunch before a missing conductor counts as gone. */
+export const CONDUCTOR_GRACE_MS = 30_000;
+
+/**
+ * `alive`, `starting` (launched within the grace), `gone` (the run needs one and none holds its
+ * lock: the page offers Sürdür) or null (the run needs none).
+ */
+export function conductorStatus(contextRoot: string, run: RunRecord, o: { wsHome?: string; now?: number } = {}): 'alive' | 'starting' | 'gone' | null {
+  if (!needsConductor(contextRoot, run)) return null;
+  if (liveConductorPid(run.id, o.wsHome) !== null) return 'alive';
+  const since = Date.parse(run.launchedAt ?? run.startedAt ?? '');
+  return Number.isFinite(since) && (o.now ?? Date.now()) - since < CONDUCTOR_GRACE_MS ? 'starting' : 'gone';
 }
 
 /** Start the detached conductor (`dreamcontext hackathon conduct <run>`); it outlives every chat. */
@@ -355,6 +403,14 @@ export function launchConductor(cliEntry: { file: string; args: string[] }, runI
 }
 
 // ─── The owner's Başlat ─────────────────────────────────────────────────────
+
+/** Minutes a team's workspace preparation may take (clone + install) before round 1. */
+export const PREP_MINUTES_PER_TEAM = 15;
+
+/** The earliest end a run started at `at` needs: prep, every round, presentation and slack. */
+export function earliestEnd(design: Design, at: Date): Date {
+  return new Date(at.getTime() + (design.teams.length * PREP_MINUTES_PER_TEAM + design.rounds * design.roundMinutes + 30) * 60_000);
+}
 
 export type StartOutcome = { ok: true; run: RunRecord } | { ok: false; status: number; reason: string };
 
@@ -375,10 +431,15 @@ export function ownerStart(contextRoot: string, runId: string, shownHash: string
   const usage = o.usage();
   const run = updateRun(contextRoot, runId, (r) => {
     if (r.state !== 'awaiting-owner' || designHash(r) !== shownHash) return null;
-    const design = { ...r.design, baseSha: base };
+    // The end time counts from Başlat, never from the drafting: a card started the next morning
+    // still gets every round (the weekly share ceiling stays the spending bound).
+    const earliest = earliestEnd(r.design, at);
+    const late = Date.parse(r.design.limit.endsAt) < earliest.getTime();
+    const design = { ...r.design, baseSha: base, limit: late ? { ...r.design.limit, endsAt: earliest.toISOString() } : r.design.limit };
     const hash = designHash({ design });
     writeJsonAtomic(designCopyPath(runId, o.wsHome), { design, hash });
-    return addMoment({ ...r, design, state: 'running', startedAt: at.toISOString(), startedHash: hash, usageAtStart: usage, phase: 'rounds', round: 1 }, 'sahip başlattı', at);
+    const started = addMoment({ ...r, design, state: 'running', startedAt: at.toISOString(), startedHash: hash, usageAtStart: usage, phase: 'rounds', round: 1 }, 'sahip başlattı', at);
+    return late ? addMoment(started, `bitiş başlangıca göre ${earliest.toISOString().slice(11, 16)} UTC oldu`, at) : started;
   });
   if (run.state !== 'running') return { ok: false, status: 409, reason: 'tasarım değişti' };
   return { ok: true, run };

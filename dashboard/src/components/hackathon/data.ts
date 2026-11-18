@@ -26,6 +26,8 @@ export interface RunView {
   id: string; state: RunState; phase: string | null; round: number | null; problem: string; kind: string;
   rounds: number; roundMinutes: number; controlTeam: string | null; teams: RunTeam[];
   paused: string | null; stopReason: string | null; strip: Strip;
+  /** `gone`: the run needs a conductor and none is alive (the page offers Sürdür). */
+  conductor?: 'alive' | 'starting' | 'gone' | null;
 }
 
 export interface DesignView {
@@ -87,7 +89,11 @@ export function useRun(id: string | null) {
 
 export function useDesign(id: string) {
   const api = useApi();
-  return useQuery({ queryKey: ['hackathon', 'design', id], queryFn: () => api.get<DesignView>(`/hackathon/${enc(id)}/design`), refetchInterval: LIVE_MS });
+  return useQuery({
+    queryKey: ['hackathon', 'design', id], queryFn: () => api.get<DesignView>(`/hackathon/${enc(id)}/design`),
+    // An old card in chat history stops polling once its run has left the start.
+    refetchInterval: (q) => (q.state.data && q.state.data.state !== 'awaiting-owner' && q.state.data.state !== 'draft' ? false : LIVE_MS),
+  });
 }
 
 export function useFrames(id: string, live: boolean) {
@@ -137,6 +143,22 @@ export function clock(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** "16:30" today, "19 Nov 16:30" on another day: an end time is never read as today's by mistake. */
+export function when(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const today = new Date();
+  const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+  return sameDay ? clock(iso) : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${clock(iso)}`;
+}
+
+/** A 0..1 share as a percent in the owner's language: "%42" in Turkish, "42%" elsewhere. */
+export function pct(share: number, locale: string): string {
+  const n = Math.round(share * 100);
+  return locale.startsWith('tr') ? `%${n}` : `${n}%`;
 }
 
 /** Minutes left until `iso` (never negative). */

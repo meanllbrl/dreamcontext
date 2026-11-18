@@ -5,23 +5,24 @@
  * in the listener-wide owner-write backstop (middleware `isOwnerCardWrite`). Stop is open to any
  * local caller: the safe direction.
  */
+import { existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { redactSecrets } from '../../lib/telegram/format.js';
 import { WINDOW_TOKEN_HEADER } from '../../lib/window-control.js';
 import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { checkPr, fetchWinner, keepAndClean, openPr, writeResult } from '../../lib/hackathon/apply.js';
-import { launchConductor, ownerStart, realReadUsage, stopRun } from '../../lib/hackathon/conductor.js';
+import { conductorStatus, earliestEnd, launchConductor, liveConductorPid, needsConductor, ownerStart, realReadUsage, stopRun } from '../../lib/hackathon/conductor.js';
 import { previewText, readDecisions, readMedia } from '../../lib/hackathon/crossing.js';
 import { wholeDiskTeams } from '../../lib/hackathon/designer.js';
 import { runFrames } from '../../lib/hackathon/frames.js';
 import { judgeLimit, readingLabel } from '../../lib/hackathon/limit.js';
 import { juryPath, roundPath, type RoundRecord } from '../../lib/hackathon/phases.js';
 import { readPresentation, shotsDir } from '../../lib/hackathon/presentation.js';
-import { addMoment, designHash, listRuns, readJson, readRun, resultPath, teamWorkspace, updateRun, RUN_ID_RE, TEAM_ID_RE, type RunRecord } from '../../lib/hackathon/run-store.js';
+import { addMoment, designHash, listRuns, readJson, readRun, resultPath, teamOutDir, teamWorkspace, updateRun, RUN_ID_RE, TEAM_ID_RE, type RunRecord } from '../../lib/hackathon/run-store.js';
 import { headSha } from '../../lib/hackathon/snapshot.js';
 import { MEDIA_MIME } from '../../lib/hackathon/team-files.js';
-import { serversOf } from '../../lib/hackathon/team-session.js';
+import { serversOf, teamReadIsolated } from '../../lib/hackathon/team-session.js';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 
@@ -79,7 +80,7 @@ export async function handleHackathonGet(_req: IncomingMessage, res: ServerRespo
     id: r.id, state: r.state, phase: r.phase ?? null, round: r.round ?? null, problem: clip(r.problem, 500), kind: r.design.kind,
     rounds: r.design.rounds, roundMinutes: r.design.roundMinutes, controlTeam: r.design.controlTeam,
     teams: r.design.teams.map((t) => ({ id: t.id, name: clip(t.name, 40), persona: clip(t.persona, 300), tool: t.tool, model: t.model, inner: t.inner })),
-    paused: r.paused ?? null, stopReason: r.stopReason ?? null, strip: strip(r),
+    paused: r.paused ?? null, stopReason: r.stopReason ?? null, strip: strip(r), conductor: conductorStatus(ctx, r),
   });
 }
 
@@ -91,9 +92,10 @@ export async function handleHackathonDesign(_req: IncomingMessage, res: ServerRe
   const disk = wholeDiskTeams(d);
   sendJson(res, 200, {
     run: r.id, state: r.state, designHash: designHash(r), problem: clip(d.problem, 500), kind: d.kind,
-    teams: d.teams.map((t) => ({ id: t.id, name: clip(t.name, 40), tool: t.tool, model: t.model, inner: t.inner, readIsolated: t.tool === 'claude', wholeDisk: disk.includes(t.id), control: t.id === d.controlTeam })),
+    teams: d.teams.map((t) => ({ id: t.id, name: clip(t.name, 40), tool: t.tool, model: t.model, inner: t.inner, readIsolated: teamReadIsolated(t), wholeDisk: disk.includes(t.id), control: t.id === d.controlTeam })),
     mcpTools: d.mcpTools, mcpServers: serversOf(d.mcpTools),
-    rounds: d.rounds, roundMinutes: d.roundMinutes, endsAt: d.limit.endsAt,
+    // Before Başlat the card shows the end a start NOW gets (ownerStart re-bases a past one).
+    rounds: d.rounds, roundMinutes: d.roundMinutes, endsAt: r.state === 'awaiting-owner' ? new Date(Math.max(Date.parse(d.limit.endsAt) || 0, earliestEnd(d, new Date()).getTime())).toISOString() : d.limit.endsAt,
     limit: { weeklyShareCeiling: d.limit.weeklyShareCeiling, sessionGuard: d.limit.sessionGuard },
     target: d.target,
     experiment: d.experiment,
@@ -109,9 +111,15 @@ export async function handleHackathonStart(req: IncomingMessage, res: ServerResp
   const hash = typeof b.designHash === 'string' ? b.designHash : '';
   const out = ownerStart(ctx, r.id, hash, { baseSha: headSha, usage: realReadUsage });
   if (!out.ok) { sendError(res, out.status, out.status === 409 ? 'design_changed' : 'start_refused', out.reason); return; }
-  const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
-  const pid = launchConductor({ file: process.execPath, args: [cli] }, r.id, dirname(ctx));
+  const pid = startConductor(ctx, r.id);
   sendJson(res, 200, { ok: true, state: out.run.state, pid });
+}
+
+/** Launch the detached conductor for a run and stamp the launch (Başlat and Sürdür). */
+function startConductor(ctx: string, runId: string): number | null {
+  updateRun(ctx, runId, (x) => ({ ...x, launchedAt: new Date().toISOString() }));
+  const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+  return launchConductor({ file: process.execPath, args: [cli] }, runId, dirname(ctx));
 }
 
 /** POST /api/hackathon/:run/stop — any local caller may stop a run. */
@@ -120,7 +128,7 @@ export async function handleHackathonStop(_req: IncomingMessage, res: ServerResp
   if (!r) return;
   const next = stopRun(ctx, r.id, 'sahip durdurdu');
   if (r.state !== 'awaiting-owner' && r.state !== 'draft' && r.state !== 'stopped' && r.state !== 'picked') writeResult(ctx, next, next.design, null, { stoppedReason: 'sahip durdurdu' });
-  if (r.conductorPid) try { process.kill(r.conductorPid, 'SIGTERM'); } catch { /* gone */ }
+  // No signal: the conductor sees `stopped` within one tick and kills every team group itself.
   sendJson(res, 200, { ok: true, state: next.state });
 }
 
@@ -129,6 +137,16 @@ export async function handleHackathonResume(req: IncomingMessage, res: ServerRes
   if (!gate(req, res)) return;
   const r = runOf(res, params, ctx);
   if (!r) return;
+  const b = (await parseJsonBody(req)) ?? {};
+  if (b.conductor === true) {
+    // Sürdür: the run needs a conductor and none is alive (reboot, crash, a failed launch).
+    if (!needsConductor(ctx, r)) { sendError(res, 409, 'not_stalled', 'Koşu bir koşturucu beklemiyor.'); return; }
+    if (liveConductorPid(r.id) !== null) { sendError(res, 409, 'conductor_alive', 'Koşturucu zaten çalışıyor.'); return; }
+    updateRun(ctx, r.id, (x) => addMoment(x, 'sahip Sürdür dedi'));
+    const pid = startConductor(ctx, r.id);
+    sendJson(res, 200, { ok: true, state: r.state, pid });
+    return;
+  }
   if (r.state !== 'running') { sendError(res, 409, 'not_running', 'Koşu sürmüyor.'); return; }
   const next = updateRun(ctx, r.id, (x) => addMoment({ ...x, guardOverride: true, paused: null }, 'sahip Devam dedi'));
   sendJson(res, 200, { ok: true, state: next.state });
@@ -156,7 +174,7 @@ export async function handleHackathonFiles(req: IncomingMessage, res: ServerResp
     const p = previewText(ws.repo, want);
     preview = p.ok ? { path: want, lines: p.lines.map((l) => clip(l, 240)), truncated: p.truncated } : { path: want, reason: p.reason };
   }
-  const d = readDecisions(ws.out);
+  const d = readDecisions(teamOutDir(r.id, team));
   sendJson(res, 200, {
     team, edited: frame?.edited ?? [], reads: frame?.reads ?? 0,
     decisions: d.lines.slice(-40).map((l) => ({ ...l, text: clip(l.text, 280) })), dropped: d.dropped.slice(-5),
@@ -187,7 +205,7 @@ export async function handleHackathonMedia(req: IncomingMessage, res: ServerResp
     if (!/^[A-Za-z0-9._-]{1,120}\.png$/.test(name)) { sendError(res, 400, 'bad_media', 'Not a media name.'); return; }
     got = readMedia(shotsDir(r.id, team), name);
   } else if (m.startsWith('out:')) {
-    got = readMedia(teamWorkspace(r.id, team).out, m.slice(4));
+    got = readMedia(teamOutDir(r.id, team), m.slice(4));
   } else { sendError(res, 400, 'bad_media', 'Not a media name.'); return; }
   if (!got.ok) { sendError(res, 404, 'no_media', got.reason); return; }
   res.writeHead(200, { 'Content-Type': MEDIA_MIME[got.type], 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'", 'Cache-Control': 'no-store', 'Content-Length': got.bytes.length });
@@ -227,7 +245,7 @@ export async function handleHackathonPick(req: IncomingMessage, res: ServerRespo
   if (!gate(req, res)) return;
   const r = runOf(res, params, ctx);
   if (!r) return;
-  if (r.state !== 'judging') { sendError(res, 409, 'not_judging', 'Seçim jüriden sonra yapılır.'); return; }
+  if (r.state !== 'judging' || !existsSync(juryPath(ctx, r.id))) { sendError(res, 409, 'not_judging', 'Seçim jüriden sonra yapılır.'); return; }
   const b = (await parseJsonBody(req)) ?? {};
   const team = typeof b.team === 'string' && r.design.teams.some((t) => t.id === b.team) ? b.team : null;
   if (!team) { sendError(res, 400, 'bad_team', 'Hangi ekip?'); return; }

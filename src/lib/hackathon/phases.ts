@@ -47,8 +47,8 @@ export function roundsPhase(opts: PhaseOptions = {}): Phase<PhaseCtx> {
         for (const t of design.teams) messages[t.id] = roundMessage(run, design, t, round, deps.brainRoot, pending[t.id] ?? []);
         state.pending = {};
         ctx.saveState();
-        const deadline = deps.now() + design.roundMinutes * 60_000;
-        await ctx.runTurns(`r${round}`, round, messages, deadline);
+        await ctx.runTurns(`r${round}`, round, messages, design.roundMinutes * 60_000);
+        if ((readRun(deps.contextRoot, run.id)?.state ?? 'stopped') === 'stopped') return readRun(deps.contextRoot, run.id) ?? run;
 
         // Thesis cards: valid or dropped with a reason line on the strip.
         const cards: Record<string, ThesisCard | null> = {};
@@ -125,7 +125,7 @@ export function presentationPhase(): Phase<PhaseCtx> {
         design.kind === 'screen' ? 'Leave your static build in out/build/ with out/shot-request.json {"entry":"index.html"}; the conductor takes the screenshots.' : '',
       ].filter(Boolean).join('\n');
       const messages = Object.fromEntries(design.teams.map((t) => [t.id, msg]));
-      await ctx.runTurns('sunum', design.rounds + 1, messages, deps.now() + PRESENTATION_MINUTES * 60_000);
+      await ctx.runTurns('sunum', design.rounds + 1, messages, PRESENTATION_MINUTES * 60_000);
       for (const t of design.teams) {
         const notes = await captureEvidence(run.id, t.id, design.kind, deps.wsHome);
         for (const n of notes) run = moment(ctx, run, `${t.name}: ${n}`);

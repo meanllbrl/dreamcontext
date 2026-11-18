@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { conduct, designCopyPath, ownerStart, stopRun, type ConductorDeps, type TurnHandle, type TurnRequest } from '../../src/lib/hackathon/conductor.js';
+import { spawnSync } from 'node:child_process';
+import { conduct, conductorLockPath, conductorStatus, designCopyPath, earliestEnd, ownerStart, stopRun, takeConductorLock, releaseConductorLock, type ConductorDeps, type TurnHandle, type TurnRequest } from '../../src/lib/hackathon/conductor.js';
 import { roundsPhase } from '../../src/lib/hackathon/phases.js';
 import { createRun, designHash, newRunId, readRun, updateRun, type RunRecord, type UsageReading } from '../../src/lib/hackathon/run-store.js';
 import { validateDesign, type Design } from '../../src/lib/hackathon/designer.js';
@@ -46,13 +47,13 @@ function start(r: RunRecord, usage: UsageReading | null = reading(10, 20)) {
 
 interface Harness { deps: ConductorDeps; turns: TurnRequest[]; sleeps: number; }
 
-function harness(o: { usage?: () => UsageReading | null; onSleep?: (n: number) => void; turn?: (req: TurnRequest) => TurnHandle } = {}): Harness {
+function harness(o: { usage?: () => UsageReading | null; onSleep?: (n: number, clock: number) => void; turn?: (req: TurnRequest) => TurnHandle; onAbort?: (k: () => void) => void } = {}): Harness {
   const h: Harness = { turns: [], sleeps: 0, deps: undefined as unknown as ConductorDeps };
   let clock = Date.parse('2026-11-18T10:05:00Z');
   h.deps = {
     contextRoot: ctx, brainRoot: root, linkedRepos: [], wsHome: ws,
     now: () => clock,
-    sleep: async (ms) => { h.sleeps++; clock += ms; o.onSleep?.(h.sleeps); },
+    sleep: async (ms) => { h.sleeps++; clock += ms; o.onSleep?.(h.sleeps, clock); },
     startTurn: (req) => {
       h.turns.push(req);
       return o.turn ? o.turn(req) : { done: Promise.resolve(0), kill() {} };
@@ -60,6 +61,7 @@ function harness(o: { usage?: () => UsageReading | null; onSleep?: (n: number) =
     readUsage: o.usage ?? (() => reading(10, 20)),
     prepare: () => ({}),
     snapshot: () => {},
+    onAbort: o.onAbort,
   };
   return h;
 }
@@ -74,6 +76,19 @@ describe('Başlat bound to the design', () => {
     const out = ownerStart(ctx, r.id, shown, { wsHome: ws, baseSha: () => 'a'.repeat(40), usage: () => null });
     expect(out).toMatchObject({ ok: false, status: 409, reason: 'tasarım değişti' });
     expect(readRun(ctx, r.id)?.state).toBe('awaiting-owner');
+  });
+
+  it('a card started long after its drafting gets an end time counted from Başlat', () => {
+    const r = seed();
+    const at = new Date('2026-11-19T09:00:00Z');
+    const out = ownerStart(ctx, r.id, designHash(r), { wsHome: ws, baseSha: () => 'a'.repeat(40), usage: () => null, now: () => at });
+    expect(out.ok).toBe(true);
+    const got = readRun(ctx, r.id)!;
+    expect(Date.parse(got.design.limit.endsAt)).toBe(earliestEnd(design, at).getTime());
+    expect(Date.parse(got.design.limit.endsAt)).toBeGreaterThan(at.getTime() + design.rounds * design.roundMinutes * 60_000);
+    expect((got.moments ?? []).map((m) => m.text).join('\n')).toContain('bitiş başlangıca göre');
+    // The conductor's copy carries the same end, so its hash check still holds.
+    expect(JSON.parse(readFileSync(designCopyPath(r.id, ws), 'utf-8')).design.limit.endsAt).toBe(got.design.limit.endsAt);
   });
 
   it('starts with the base SHA in the design and a conductor copy of it', () => {
@@ -161,5 +176,70 @@ describe('conductor', () => {
     expect(final.state).toBe('stopped');
     expect(killed.sort()).toEqual(['alfa', 'beta']);
     expect(h.turns.every((t) => t.round === 1)).toBe(true);
+  });
+});
+
+describe('conductor lifecycle', () => {
+  it('a round\'s clock starts when its turns start, after a long session-guard wait', async () => {
+    const r = seed();
+    start(r);
+    const t0 = Date.parse('2026-11-18T10:05:00Z');
+    let clock = t0;
+    // The 5-hour window holds new turns for 40 minutes (longer than a round plus its overrun);
+    // each turn then ends after a few ticks of work.
+    let releases: (() => void)[] = [];
+    let ticks = 0;
+    const h = harness({
+      usage: () => reading(10, clock < t0 + 40 * 60_000 ? 85 : 30),
+      onSleep: (_n, c) => { clock = c; if (releases.length && ++ticks > 3) { for (const f of releases) f(); releases = []; ticks = 0; } },
+      turn: () => ({ done: new Promise<number | null>((res) => { releases.push(() => res(0)); }), kill() {} }),
+    });
+    const final = await conduct(r.id, h.deps, [roundsPhase({ modelCall: async () => '{"score":0.1}' })]);
+    const texts = (final.moments ?? []).map((m) => m.text).join('\n');
+    expect(texts).toContain('5 saatlik pencere');
+    expect(texts).not.toContain('süre doldu');
+  });
+
+  it('the abort hook kills every live team turn', async () => {
+    const r = seed();
+    start(r);
+    let killAll: (() => void) | null = null;
+    let killed = 0;
+    let atFirstTick = -1;
+    const h = harness({
+      onAbort: (k) => { killAll = k; },
+      // Without the hook only the round's overrun (25 minutes of ticks later) would kill them.
+      onSleep: (n) => { killAll?.(); if (n === 1) atFirstTick = killed; },
+      turn: () => {
+        let res!: (c: number | null) => void;
+        const done = new Promise<number | null>((r2) => { res = r2; });
+        return { done, kill() { killed++; res(null); } };
+      },
+    });
+    await conduct(r.id, h.deps, [roundsPhase({ modelCall: async () => '{"score":0.1}' })]);
+    expect(atFirstTick).toBe(2);
+  });
+
+  it('a dead holder\'s lock is reclaimed at once; a live one is not', () => {
+    const r = seed();
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid!;
+    mkdirSync(join(conductorLockPath(r.id, ws), '..'), { recursive: true });
+    writeFileSync(conductorLockPath(r.id, ws), JSON.stringify({ pid: dead, at: Date.now() }));
+    expect(takeConductorLock(r.id, ws)).toBe(true);
+    // Now this process holds it: a second take is refused.
+    expect(takeConductorLock(r.id, ws)).toBe(false);
+    releaseConductorLock(r.id, ws);
+  });
+
+  it('a running run with no live conductor reads as gone (Sürdür), after the launch grace', () => {
+    const r = seed();
+    start(r);
+    const run = updateRun(ctx, r.id, (x) => ({ ...x, launchedAt: '2026-11-18T10:05:00Z' }));
+    expect(conductorStatus(ctx, run, { wsHome: ws, now: Date.parse('2026-11-18T10:05:10Z') })).toBe('starting');
+    expect(conductorStatus(ctx, run, { wsHome: ws, now: Date.parse('2026-11-18T10:10:00Z') })).toBe('gone');
+    expect(takeConductorLock(r.id, ws)).toBe(true);
+    expect(conductorStatus(ctx, run, { wsHome: ws, now: Date.parse('2026-11-18T10:10:00Z') })).toBe('alive');
+    releaseConductorLock(r.id, ws);
+    expect(conductorStatus(ctx, stopRun(ctx, r.id, 'x'), { wsHome: ws })).toBeNull();
   });
 });

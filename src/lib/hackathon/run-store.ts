@@ -53,7 +53,9 @@ export interface RunRecord {
   /** Lines for the page strip (newest last, capped). */
   moments?: { at: string; text: string }[];
   stopReason?: string;
-  /** The conductor's PID while it runs. */
+  /** When a conductor was last launched for this run (Başlat or Sürdür). */
+  launchedAt?: string;
+  /** The conductor's PID while it runs (cleared when it ends; never signalled). */
   conductorPid?: number;
 }
 
@@ -100,6 +102,21 @@ export function teamWorkspace(runId: string, teamId: string, home?: string): { r
   assertTeamId(teamId);
   const root = join(runWorkspace(runId, home), teamId);
   return { root, repo: join(root, 'repo'), out: join(root, 'out') };
+}
+
+/**
+ * Where a team's `out/` (thesis cards, decisions, presentation, media) is kept once the pick
+ * removes its workspace: beside the team folders, never inside one (`.kept` is no team id).
+ */
+export function keptOutDir(runId: string, teamId: string, home?: string): string {
+  assertTeamId(teamId);
+  return join(runWorkspace(runId, home), '.kept', teamId, 'out');
+}
+
+/** A team's owner-facing `out/`: its live folder while it exists, the kept one after the pick. */
+export function teamOutDir(runId: string, teamId: string, home?: string): string {
+  const live = teamWorkspace(runId, teamId, home).out;
+  return existsSync(live) ? live : keptOutDir(runId, teamId, home);
 }
 
 export function conductorDir(runId: string, home?: string): string {

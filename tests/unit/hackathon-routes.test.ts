@@ -16,7 +16,7 @@ import {
 import { isCrossSiteWrite, isOwnerCardWrite } from '../../src/server/middleware.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 import { WINDOW_TOKEN_HEADER } from '../../src/lib/window-control.js';
-import { createRun, designHash, newRunId, readRun, type RunRecord } from '../../src/lib/hackathon/run-store.js';
+import { createRun, updateRun, designHash, newRunId, readRun, type RunRecord } from '../../src/lib/hackathon/run-store.js';
 import { validateDesign } from '../../src/lib/hackathon/designer.js';
 
 const KEY = 'c4'.repeat(32);
@@ -116,6 +116,28 @@ describe('owner-only hackathon writes', () => {
     const out = await call(handleHackathonStop, r.id, 'stop', AGENT);
     expect(out.status).toBe(200);
     expect(readRun(ctx, r.id)?.state).toBe('stopped');
+  });
+
+  it('stop never signals a pid: a stale conductorPid (now any process) is left alone', async () => {
+    const r = seed('judging');
+    // This very process stands in for "whatever now has that PID".
+    updateRun(ctx, r.id, (x) => ({ ...x, conductorPid: process.pid }));
+    const killed: unknown[] = [];
+    const real = process.kill;
+    (process as { kill: typeof process.kill }).kill = ((pid: number, sig?: string | number) => { killed.push([pid, sig]); return true; }) as typeof process.kill;
+    try {
+      const out = await call(handleHackathonStop, r.id, 'stop', AGENT);
+      expect(out.status).toBe(200);
+    } finally { (process as { kill: typeof process.kill }).kill = real; }
+    expect(killed).toEqual([]);
+    expect(readRun(ctx, r.id)?.state).toBe('stopped');
+  });
+
+  it('Sürdür refuses a run that needs no conductor', async () => {
+    const r = seed('stopped');
+    const out = await call(handleHackathonResume, r.id, 'resume', OWNER, { conductor: true });
+    expect(out.status).toBe(409);
+    expect(JSON.stringify(out.body)).toContain('not_stalled');
   });
 
   it('the listener backstop closes the no-Origin pass for the four, not for stop', () => {

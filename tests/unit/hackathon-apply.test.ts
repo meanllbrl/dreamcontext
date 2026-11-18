@@ -12,7 +12,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bundlePath, checkPr, fetchWinner, keepAndClean, openPr, winnerBranch } from '../../src/lib/hackathon/apply.js';
 import { git, headSha, initSnapshots, prepareWorkspace, snapPaths, takeSnapshot } from '../../src/lib/hackathon/snapshot.js';
-import { teamWorkspace, type RunRecord } from '../../src/lib/hackathon/run-store.js';
+import { keptOutDir, teamOutDir, teamWorkspace, type RunRecord } from '../../src/lib/hackathon/run-store.js';
+import { readState, writeState } from '../../src/lib/hackathon/conductor.js';
+import { readPresentation } from '../../src/lib/hackathon/presentation.js';
 import { validateDesign, type Design } from '../../src/lib/hackathon/designer.js';
 import type { SecretSources } from '../../src/lib/hackathon/secrets.js';
 
@@ -38,6 +40,14 @@ function teamWrites(team: string, files: Record<string, string>): void {
   }
   const r = takeSnapshot(RUN, team, `${team} r1`, { wsHome: ws });
   expect(r.ok).toBe(true);
+  snapped(team, { ok: true, kept: r.kept.length });
+}
+
+/** What the conductor records after a team's snapshot. */
+function snapped(team: string, snap: { ok: boolean; kept: number }): void {
+  const st = readState(RUN, ws);
+  st.teams[team] = { ...(st.teams[team] ?? { sessionId: 'x', turns: 1 }), snap: { label: 'sunum', ...snap } };
+  writeState(RUN, st, ws);
 }
 
 beforeEach(() => {
@@ -85,6 +95,34 @@ describe('keep and clean', () => {
     const heads = git(['bundle', 'list-heads', k.bundle!]);
     expect(heads).toContain('refs/heads/team/alfa');
     expect(heads).toContain('refs/heads/team/beta');
+  });
+
+  it('keeps every team\'s out/ (cards, decisions, presentation) readable after its folder goes', () => {
+    teamWrites('alfa', { 'index.html': '<h1>Alfa</h1>\n' });
+    teamWrites('beta', { 'index.html': '<h1>Beta</h1>\n' });
+    const out = teamWorkspace(RUN, 'alfa', ws).out;
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, 'thesis-r2.json'), JSON.stringify({ thesis: 'Tek sütun daha hızlı okunur', claims: ['a', 'b', 'c'], status: 'on-track' }));
+    writeFileSync(join(out, 'decisions.jsonl'), `${JSON.stringify({ at: '2026-11-18T10:05:00Z', role: 'kaptan', kind: 'plan', text: 'tek sütun' })}\n`);
+    const k = keepAndClean(ctx, run, design, { wsHome: ws });
+    expect(k.removed.sort()).toEqual(['alfa', 'beta']);
+    expect(existsSync(teamWorkspace(RUN, 'alfa', ws).root)).toBe(false);
+    expect(teamOutDir(RUN, 'alfa', ws)).toBe(keptOutDir(RUN, 'alfa', ws));
+    expect(readFileSync(join(keptOutDir(RUN, 'alfa', ws), 'decisions.jsonl'), 'utf-8')).toContain('tek sütun');
+    const p = readPresentation(RUN, 'alfa', 2, ws);
+    expect(JSON.stringify(p)).toContain('Tek sütun daha hızlı okunur');
+  });
+
+  it('keeps the folder of a team whose last snapshot failed or left an over-size file behind', () => {
+    teamWrites('alfa', { 'index.html': '<h1>Alfa</h1>\n' });
+    teamWrites('beta', { 'index.html': '<h1>Beta</h1>\n' });
+    snapped('alfa', { ok: false, kept: 0 });
+    snapped('beta', { ok: true, kept: 1 });
+    const k = keepAndClean(ctx, run, design, { wsHome: ws });
+    expect(k.removed).toEqual([]);
+    expect(k.kept.map((x) => x.team).sort()).toEqual(['alfa', 'beta']);
+    expect(existsSync(teamWorkspace(RUN, 'alfa', ws).repo)).toBe(true);
+    expect(existsSync(teamWorkspace(RUN, 'beta', ws).repo)).toBe(true);
   });
 
   it('keeps a team folder whose last copy is not in the bundle', () => {
@@ -138,6 +176,18 @@ describe('the PR gate', () => {
     const c = checkPr(run, design, 'alfa', sources);
     expect(c.secretHits).toEqual([{ path: 'notes.md', line: 2, kind: 'known' }]);
     expect(openPr(run, design, 'alfa', null, sources, noSend).ok).toBe(false);
+  });
+
+  it('refuses a known value the team copied in encoded (base64, URL-safe base64, hex)', () => {
+    mkdirSync(join(ctx, 'lab'), { recursive: true });
+    const v = 'phx_Lab7credential9Q';
+    writeFileSync(join(ctx, 'lab', 'credentials.json'), JSON.stringify({ posthog: v }));
+    const b64 = Buffer.from(v).toString('base64').replace(/=+$/, '');
+    const hex = Buffer.from(v).toString('hex').toUpperCase();
+    teamWrites('alfa', { 'a.txt': `x ${b64} y\n`, 'b.txt': `const k = "${hex}";\n` });
+    fetchWinner(run, design, 'alfa', ws);
+    const c = checkPr(run, design, 'alfa', sources);
+    expect(c.secretHits.map((h) => `${h.path}:${h.line}:${h.kind}`).sort()).toEqual(['a.txt:1:known', 'b.txt:1:known']);
   });
 
   it('refuses a key file by its path', () => {

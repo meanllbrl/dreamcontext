@@ -67,13 +67,23 @@ export function teamPaths(input: { runId: string; team: string; design: Design; 
 }
 
 /**
- * Commands closed by rule (second layer): the W1 proof found the sandbox lets `security` reach
- * the login Keychain, so a team could copy the owner's Claude token into its files; the PR scan
- * also carries that token's value (secrets.ts `keychainToken`).
+ * Command-prefix denies. They only stop a DIRECT call: the W1 proof found the sandbox lets
+ * `security` reach the login Keychain, and an interpreter (`python3 -c`, `node -e`, `sh -c`) gets
+ * past a prefix. So no team is read-isolated from the Keychain ({@link teamReadIsolated}), the
+ * card says so, and the PR scan looks for the token's value plain and encoded (apply.ts).
  */
 export const TEAM_BASH_DENIES = ['Bash(security:*)', 'Bash(/usr/bin/security:*)', 'Bash(gh:*)', 'Bash(osascript:*)', 'Bash(open:*)'] as const;
 
 /** Write denies: everything the team can reach that is not its workspace. */
+/**
+ * Whether a team's reads are closed at the OS boundary. False for every tool: Claude's sandbox
+ * leaves the Keychain service reachable (W1) and Codex reads the whole disk. The start card and
+ * the stats read this, never a per-tool guess.
+ */
+export function teamReadIsolated(_t: Pick<TeamDesign, 'tool'>): boolean {
+  return false;
+}
+
 export function teamWriteDenies(p: TeamPaths): string[] {
   const roots = [p.brainRoot, ...p.linkedRepos, join(p.home, '.dreamcontext'), join(p.home, '.claude'), join(p.home, '.codex'), ...p.rivals, p.conductor];
   return roots.flatMap((r) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((tool) => absRule(tool, r)));

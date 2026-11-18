@@ -1,5 +1,5 @@
 import { useI18n } from '../../context/I18nContext';
-import { badge, clock, fill, type RoundRecord, type RunTeam } from './data';
+import { badge, clock, fill, type RoundRecord, type RunTeam, pct } from './data';
 
 /**
  * The peek screen (approved mockup `hackathon-goz-atma.png`): after a round, every team's thesis
@@ -12,7 +12,7 @@ export function Peek({ rec, teams, controlTeam, onBack }: {
   controlTeam: string | null;
   onBack: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const name = (id: string) => teams.find((x) => x.id === id)?.name ?? id;
   const opened = Object.keys(rec.seen).length > 0;
   return (
@@ -76,7 +76,7 @@ export function Peek({ rec, teams, controlTeam, onBack }: {
                 <li key={`${p.a}-${p.b}`} className="hk-bar" data-over={p.score > rec.gate ? 'true' : undefined}>
                   <span>{name(p.a)} · {name(p.b)}</span>
                   <span className="hk-bar__track"><span className="hk-bar__fill" style={{ width: `${Math.round(p.score * 100)}%` }} /></span>
-                  <span className="hk-bar__num">%{Math.round(p.score * 100)}</span>
+                  <span className="hk-bar__num">{pct(p.score, locale)}</span>
                 </li>
               ))}
             </ul>

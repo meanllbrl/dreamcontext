@@ -17,18 +17,18 @@ Several teams solve ONE problem the owner gives, each on its own, over timed rou
    {"type":"hackathon","run":"<run-id>"}
    ```
 
-   The owner reads the design on that card and presses **Başlat**. The start is bound to the design's hash: an edit after the card was drawn makes him look again.
+   The owner reads the design on that card and presses **Başlat**. The start is bound to the design he read: an edit after the card was drawn makes him confirm the new design first. The end time counts from Başlat: a card started late gets every round.
 5. **Watch.** `dreamcontext hackathon status [run]` / `show <run>`. The page shows the tables, each team's screen in a window frame, the team room, the peek between rounds, then the presentation and the results.
 
 ## What only the owner does
 
-Start, resume after a pause, pick the winner and open the winner's PR are owner actions on the page (his key, his click). **Never** call those routes yourself (no curl, no fetch): the server refuses an agent's token for them. The PR is opened only after the secret scan passes and he confirms any hunk that runs elsewhere.
+Start, resume after a pause, **Sürdür** (a run whose conductor stopped: reboot, crash), pick the winner and open the winner's PR are owner actions on the page (his key, his click). **Never** call those routes yourself (no curl, no fetch): the server refuses an agent's token for them. The PR is opened only after the secret scan passes and he confirms any hunk that runs elsewhere.
 
-**Stop is open to anyone** (the safe direction): `dreamcontext hackathon stop <run> [--why "<reason>"]`.
+**Stop is open to anyone** (the safe direction): `dreamcontext hackathon stop <run> [--why "<reason>"]`. It only marks the run stopped; the conductor ends every team turn within a few seconds. A stopped run cannot be picked.
 
 ## Boundaries the teams run in
 
-Each team works in its own clone under `~/.dreamcontext-hackathon/<run>/<team>/`, OS-sandboxed with no network (localhost included); it reads the brain and linked repos, writes only its own clone and `out/`. Secrets are unreadable to it. v1 teams: Claude and Codex (Codex teams can read the whole disk and get no MCP; the design says so). Antigravity is refused.
+Each team works in its own clone under `~/.dreamcontext-hackathon/<run>/<team>/`, OS-sandboxed with no network (localhost included); it reads the brain and linked repos, writes only its own clone and `out/`. Secret files are denied to it, but its Bash can still reach the Mac Keychain (the card says so), so the PR scan looks for every known value plain and encoded. After the pick a team's folder goes only when its last copy is whole; its `out/` is kept for the results. v1 teams: Claude and Codex (Codex teams can read the whole disk and get no MCP; the design says so). Antigravity is refused.
 
 ## After a run
 

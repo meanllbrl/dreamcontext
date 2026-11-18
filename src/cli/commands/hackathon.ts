@@ -148,6 +148,13 @@ export function registerHackathonCommand(program: Command): void {
     const root = projectRoot(ctx);
     const linked = linkedPaths(root);
     if (!takeConductorLock(id)) { console.error('başka bir koşturucu çalışıyor'); process.exit(0); }
+    // SIGTERM (shutdown, a kill): every live team group goes with the conductor, and the run is
+    // left for a relaunch (Sürdür), never holding a dead lock or a stale pid.
+    let killAll = (): void => {};
+    const leave = (): void => { try { updateRun(ctx, id, (r) => (r.conductorPid === process.pid ? { ...r, conductorPid: undefined } : null)); } catch { /* best effort */ } releaseConductorLock(id); };
+    const onSignal = (): void => { killAll(); leave(); process.exit(143); };
+    process.once('SIGTERM', onSignal);
+    process.once('SIGINT', onSignal);
     try {
       updateRun(ctx, id, (r) => ({ ...r, conductorPid: process.pid }));
       const hookCommand = null;
@@ -156,6 +163,7 @@ export function registerHackathonCommand(program: Command): void {
         now: () => Date.now(), sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
         startTurn: realStartTurn({ brainRoot: root, linkedRepos: linked, env: process.env, hookCommand }),
         readUsage: realReadUsage,
+        onAbort: (k) => { killAll = k; },
         prepare: (run, design) => {
           const base = design.baseSha!;
           const out: Record<string, { installPaths: string[]; codexServers?: string[] }> = {};
@@ -172,13 +180,16 @@ export function registerHackathonCommand(program: Command): void {
           const st = readState(run.id).teams[team];
           const r = takeSnapshot(run.id, team, `${team} ${label}`, { skip: st?.installPaths ?? [] });
           if (!r.ok) throw new Error(r.reason ?? 'kopya alınamadı');
+          return { kept: r.kept };
         },
       }, allPhases());
       console.log(`${id}: ${final.state}`);
     } catch (e) {
       stopRun(ctx, id, `koşturucu hatası: ${(e as Error).message.slice(0, 160)}`);
     } finally {
-      releaseConductorLock(id);
+      process.off('SIGTERM', onSignal);
+      process.off('SIGINT', onSignal);
+      leave();
     }
   });
 }

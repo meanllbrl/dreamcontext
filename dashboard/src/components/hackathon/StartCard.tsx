@@ -1,16 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { RequestError } from '../../api/client';
-import { clock, fill, useDesign, type DesignView } from './data';
+import { fill, useDesign, when, type DesignView } from './data';
 import './hackathon.css';
 
 /**
  * The owner's start card (plan C6, criterion 4): drawn ONLY from `GET …/design` (the run's real
  * design, never the agent's labels): each team's tool, model and reach, every data tool teams may
- * call, rounds, end time and the limit. Başlat posts the hash it drew; a design changed after the
- * card was drawn comes back as "tasarım değişti" and the card redraws from the new design.
+ * call, rounds, end time and the limit. Başlat posts the hash of the design the owner READ: the
+ * first one drawn. A refetch that brings another design shows "tasarım değişti" and Başlat waits
+ * until he confirms he has read the new one (the server refuses any other hash too).
  */
 export function StartCard({ run, onStarted }: { run: string; onStarted?: () => void }) {
   const { t } = useI18n();
@@ -20,14 +21,19 @@ export function StartCard({ run, onStarted }: { run: string; onStarted?: () => v
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
+  // The hash of the design he has in front of him: set once, moved only by his own confirm.
+  const [seen, setSeen] = useState<string | null>(null);
+  useEffect(() => { if (d?.designHash && seen === null) setSeen(d.designHash); }, [d?.designHash, seen]);
 
   if (isLoading) return <div className="hk-card hk-card--start"><p className="hk-muted">{t('common.loading')}</p></div>;
   if (isError || !d) return <div className="hk-card hk-card--start"><p className="hk-error">{t('hk.start.loadFailed')} {(error as Error | null)?.message ?? ''}</p></div>;
 
+  const moved = seen !== null && seen !== d.designHash;
   const start = async () => {
+    if (moved || seen === null) return;
     setBusy(true); setErr(null); setChanged(false);
     try {
-      await api.ownerPost(`/hackathon/${encodeURIComponent(run)}/start`, { designHash: d.designHash });
+      await api.ownerPost(`/hackathon/${encodeURIComponent(run)}/start`, { designHash: seen });
       await qc.invalidateQueries({ queryKey: ['hackathon'] });
       onStarted?.();
     } catch (e) {
@@ -42,7 +48,7 @@ export function StartCard({ run, onStarted }: { run: string; onStarted?: () => v
       <header className="hk-start__head">
         <span className="hk-eyebrow">{t('hk.start.eyebrow')}</span>
         <h3 className="hk-start__title">{d.problem}</h3>
-        <p className="hk-muted">{fill(t('hk.start.shape'), { kind: t(`hk.kind.${d.kind}`), rounds: d.rounds, minutes: d.roundMinutes, end: clock(d.endsAt) })}</p>
+        <p className="hk-muted">{fill(t('hk.start.shape'), { kind: t(`hk.kind.${d.kind}`), rounds: d.rounds, minutes: d.roundMinutes, end: when(d.endsAt) })}</p>
       </header>
 
       <table className="hk-start__teams">
@@ -74,12 +80,16 @@ export function StartCard({ run, onStarted }: { run: string; onStarted?: () => v
         {d.experiment && (<><dt>{t('hk.start.experiment')}</dt><dd>{fill(t('hk.start.experimentLine'), { variable: d.experiment.variable, team: teamName(d, d.experiment.team) })}</dd></>)}
       </dl>
 
-      {changed && <p className="hk-note" role="status">{t('hk.start.changed')}</p>}
+      {(changed || moved) && <p className="hk-note" role="status">{t('hk.start.changed')}</p>}
       {err && <p className="hk-error" role="alert">{err}</p>}
 
       <footer className="hk-start__foot">
-        {waiting ? (
-          <button type="button" className="hk-btn hk-btn--primary" onClick={() => void start()} disabled={busy}>
+        {waiting && moved ? (
+          <button type="button" className="hk-btn" onClick={() => { setSeen(d.designHash); setChanged(false); }}>
+            {t('hk.start.reread')}
+          </button>
+        ) : waiting ? (
+          <button type="button" className="hk-btn hk-btn--primary" onClick={() => void start()} disabled={busy || seen === null}>
             {busy ? t('hk.start.starting') : t('hk.start.go')}
           </button>
         ) : (

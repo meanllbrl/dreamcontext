@@ -10,8 +10,10 @@ import { WindowFrame } from './WindowFrame';
  * the owner is choosing, "Bu ekibi seç". Media is drawn only as images and video from the media
  * route (bytes checked by magic, no-script CSP); team markup is never rendered.
  */
-export function Presentation({ run, team, place, score, nextTeam, canPick, picking, onPick, onNext, onBack }: {
+export function Presentation({ run, team, place, score, nextTeam, canPick, picking, onPick, onNext, onBack, error }: {
   run: string;
+  /** The last owner action's failure (a refused pick): shown where he pressed it. */
+  error?: string | null;
   team: RunTeam;
   place: number | null;
   score: number | null;
@@ -44,6 +46,7 @@ export function Presentation({ run, team, place, score, nextTeam, canPick, picki
         {nextTeam && <button type="button" className="hk-btn" onClick={onNext}>{fill(t('hk.present.next'), { team: nextTeam.name })} ›</button>}
       </header>
 
+      {error && <p className="hk-error" role="alert">{error}</p>}
       {isLoading && <p className="hk-muted">{t('common.loading')}</p>}
       {isError && <p className="hk-error">{t('hk.present.failed')}</p>}
       {p && !cards.length && <p className="hk-muted">{p.reason ? fill(t('hk.present.none'), { reason: p.reason }) : t('hk.present.empty')}</p>}
