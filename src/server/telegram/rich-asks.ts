@@ -36,6 +36,7 @@ import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
 import { superMediaRoots } from './media-roots.js';
+import { previewSource } from './preview-media.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
 type Obj = Record<string, unknown>;
@@ -125,6 +126,21 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return pngs?.[0] ?? null;
   }
 
+  /** One option's picture as the Mac card shows it (preview-media.ts, owner 2026-11-18: blank
+   *  boxes): a lone project picture or clip is that file; any other preview is drawn with its
+   *  project pictures written in. A picture it names that cannot be read → nothing (the
+   *  question says the drawing is on the Mac), never a broken-image box. */
+  async function optionMedia(ab: ActiveBinding, sessionId: string, o: { label: string; preview?: string }, oi: number, tries: { headless: boolean }, roots: () => Promise<string[] | undefined>, misses: string[]): Promise<MediaItem | null> {
+    const preview = o.preview ?? '';
+    const name = `${drawingTag(oi)}-${o.label}`;
+    const src = previewSource(ab.contextRoot ? { contextRoot: ab.contextRoot, mediaRoots: await roots() } : null, preview, o.label);
+    if (src.kind === 'unreadable') { misses.push(`${o.label}: picture not readable (${src.refs.map((r) => cleanTitle(r, 60)).join(', ')})`); return null; }
+    if (src.kind === 'file') return src.item;
+    const png = await drawPreview(sessionId, src.html, tries);
+    if (!png) { misses.push(`${o.label}: not drawn`); return null; }
+    return { kind: 'photo', file: pngFile(name, png), title: o.label };
+  }
+
   /** The ask's `--show` cards (when pictures are allowed), BEFORE its drawings and never in one
    *  album with them: their own group, each picture with its own "N · name" caption and a
    *  numbered list (pictures.ts sendPictures). */
@@ -156,17 +172,18 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
    *  names it (owner 2026-11-11: two drawings in one album with stage pictures, no way to tell
    *  which option is which). Adds the `qi:oi` keys (ask-format.ts drawingKey) that reached
    *  Telegram to `drawn`; `budget` caps the drawings of the whole ask (10, as one album held). */
-  async function sendDrawings(ab: ActiveBinding, sessionId: string, q: RichQuestion, qi: number, drawn: Set<string>, budget: { left: number }, misses: string[], tries: { headless: boolean }): Promise<void> {
+  async function sendDrawings(ab: ActiveBinding, sessionId: string, q: RichQuestion, qi: number, drawn: Set<string>, budget: { left: number }, misses: string[], tries: { headless: boolean }, roots: () => Promise<string[] | undefined>): Promise<void> {
     for (const [oi, o] of q.options.entries()) {
       if (!o.preview?.trim()) continue;
       const key = drawingKey(qi, oi);
       if (budget.left <= 0) { misses.push(`${o.label}: over 10 pictures`); continue; }
-      const png = await drawPreview(sessionId, o.preview, tries);
-      if (!png) { misses.push(`${o.label}: not drawn`); continue; }
+      const it = await optionMedia(ab, sessionId, o, oi, tries, roots, misses);
+      if (!it) continue;
       budget.left--;
-      const it: MediaItem = { kind: 'photo', file: pngFile(`${drawingTag(oi)}-${o.label}`, png), title: o.label };
       if (!fitsTelegram(it)) { misses.push(`${o.label}: too large for Telegram, not sent`); continue; }
-      if (await sendWhole(ab, it, pictureCaption(drawingCaption(oi, o.label)))) drawn.add(key);
+      const cap = pictureCaption(drawingCaption(oi, o.label));
+      const ok = it.kind === 'photo' ? await sendWhole(ab, it, cap) : !!(await sendMedia(ab, it, cap));
+      if (ok) drawn.add(key);
       else misses.push(`${o.label}: Telegram refused the picture`);
     }
   }
@@ -212,10 +229,12 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const head = { title: opts.title ? cleanTitle(opts.title, 120) : undefined, lead: opts.lead };
     const budget = { left: 10 };
     const tries = { headless: true };
+    let rootsOnce: Promise<string[] | undefined> | undefined;
+    const roots = () => (rootsOnce ??= ab.contextRoot ? superMediaRoots(ab.contextRoot).catch(() => undefined) : Promise.resolve(undefined));
     try {
       for (let i = 0; i < questions.length; i++) {
         // Its drawings always (they are part of the question), never while a secret is pending.
-        if (!secret) await sendDrawings(ab, opts.sessionId, questions[i], i, drawn, budget, misses, tries).catch(fail);
+        if (!secret) await sendDrawings(ab, opts.sessionId, questions[i], i, drawn, budget, misses, tries, roots).catch(fail);
         await sendQuestion(ab, a, i, i === 0 ? head : {}, drawn);
       }
     } finally {
