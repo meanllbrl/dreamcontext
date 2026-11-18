@@ -15,6 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types (and the card
  * mention's words, cardMention.ts).
  */
+import { saysNothingNew } from '../../../../../src/lib/super/owner-text-gate.js';
 import { superAnswerPicks, type QuestionLike } from '../../../../../src/lib/super/request-answer.js';
 import {
   ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type PadStatus, type QueueKind, type SuperChild, type SuperPadItem, type SuperEventKind, type SuperQueueItem, type SuperState,
@@ -508,8 +509,9 @@ export function groupSuperEventTurns<T extends EventItemLike>(
     }
     if (open) {
       if (it.kind === 'tool' && !isSuperCommand(it)) open.commands += 1;
-      // A reply to the owner never folds with the steps: it stays drawn under the line.
-      if (!open.full && !(open.kind !== 'recap' && isOwnerProse(it))) { open.folded.push(it.id); continue; }
+      // A reply to the owner never folds with the steps: it stays drawn under the line. One that
+      // only points back or says nothing changed is no news (owner-text-gate.ts): it folds.
+      if (!open.full && !(open.kind !== 'recap' && isOwnerProse(it) && !saysNothingNew(it.text ?? ''))) { open.folded.push(it.id); continue; }
     }
     kept.push(it);
   }

@@ -19,7 +19,8 @@
  * turn: the answer to a feedback turn is never fed back again, so a model that repeats its mistake
  * costs one extra turn, never a loop.
  */
-import { CARD_FEEDBACK_TAG, MAX_VIEWS_PER_MESSAGE, parseViewBlock } from '../lib/chat-view-spec.js';
+import { CARD_FEEDBACK_TAG, MAX_VIEWS_PER_MESSAGE, isCardFeedbackText, parseViewBlock } from '../lib/chat-view-spec.js';
+import { ownerTextFeedback } from '../lib/super/owner-text-gate.js';
 
 export { CARD_FEEDBACK_TAG };
 
@@ -53,6 +54,31 @@ export function cardFeedback(answer: string): string | null {
     'If you told the owner a card is there, say plainly that it was not drawn, then send it again by the rules: a run card\'s "command" is ONE line (join steps with && or ;, or write a script and run that), and one answer holds at most ' + `${MAX_VIEWS_PER_MESSAGE} cards. Do not mention this note itself.`,
     `</${CARD_FEEDBACK_TAG}>`,
   ].join('\n');
+}
+
+/**
+ * One hidden turn from its parts: the skipped-card note as it is when it stands alone, else every
+ * part inside ONE card-feedback tag, so the bridge and the history read it as the harness's
+ * (`isCardFeedbackText`) whatever it carries.
+ */
+export function feedbackTurn(parts: readonly (string | null | undefined)[]): string | null {
+  const have = parts.filter((p): p is string => !!p && !!p.trim());
+  if (!have.length) return null;
+  if (have.length === 1 && isCardFeedbackText(have[0])) return have[0];
+  const inner = have.map((p) => p.replace(new RegExp(`^\\s*<${CARD_FEEDBACK_TAG}>\\n?|\\n?</${CARD_FEEDBACK_TAG}>\\s*$`, 'g'), ''));
+  return [`<${CARD_FEEDBACK_TAG}>`, ...inner, `</${CARD_FEEDBACK_TAG}>`].join('\n');
+}
+
+/**
+ * What a Super chat adds to its turn's end (owner-text-gate.ts): a text the phone held (a pointer
+ * back) comes back to the Super as a request for the answer itself. Read at the `result`, never
+ * before: the turn's kind is the one it ended as.
+ */
+export interface SuperTurnGate {
+  /** The server opened this turn (an event), not the owner. */
+  eventTurn(): boolean;
+  /** A text written for him (inbox.ts `isOwnerProse`), passed in so this module stays light. */
+  isOwnerProse(text: string): boolean;
 }
 
 /** What the chat route knows at a main `result`, for `endedClean`. */
@@ -93,6 +119,9 @@ export class CardFeedbackTracker {
   private words: string[] = [];
   private answeringFeedback = false;
 
+  /** `gate`: a Super chat's owner-text checks (none for any other chat). */
+  constructor(private readonly gate: SuperTurnGate | null = null) {}
+
   /** A frame from the child: the main agent's text blocks are kept, a sub-agent's and the
    *  bridge's own notes (`<synthetic>`) are not. */
   noteFrame(obj: Record<string, unknown>): void {
@@ -111,12 +140,13 @@ export class CardFeedbackTracker {
    * (no error, no refusal, nothing else about to restart or rotate the session).
    */
   atResult(ok: boolean): string | null {
-    const answer = this.words.join('\n\n');
+    const texts = this.words;
     this.words = [];
     const wasFeedback = this.answeringFeedback;
     this.answeringFeedback = false;
     if (!ok || wasFeedback) return null;
-    const text = cardFeedback(answer);
+    const gate = this.gate ? ownerTextFeedback(texts, { eventTurn: this.gate.eventTurn(), isOwnerProse: (t) => this.gate!.isOwnerProse(t) }) : null;
+    const text = feedbackTurn([cardFeedback(texts.join('\n\n')), gate]);
     if (text) this.answeringFeedback = true;
     return text;
   }

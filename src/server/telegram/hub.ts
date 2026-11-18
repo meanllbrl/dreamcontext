@@ -44,6 +44,7 @@ import { ensureMemberSuper, type MemberBirth } from '../../lib/super/member-birt
 import { memberScope } from '../../lib/agents/scope.js';
 import type { SuperId, SuperState } from '../../lib/super/types.js';
 import { isOwnerProse, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
+import { telegramHold } from '../../lib/super/owner-text-gate.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
@@ -250,6 +251,9 @@ interface TgTurn {
   startedAt: number;
   typing: ReturnType<typeof setInterval> | null;
   answered: boolean;
+  /** A text of this turn was held from the phone (owner-text-gate.ts) and the turn's end asks the
+   *  Super to write it again: not an "ended silent" turn. */
+  held?: boolean;
 }
 
 // ─── The hub ────────────────────────────────────────────────────────────────
@@ -1280,7 +1284,7 @@ export class TelegramHub implements TelegramHubApi {
           await sending;
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
           // for the owner says one plain line (it failed or stopped while he waits).
-          if (!t.answered) await this.notice(ab, 'warn', LINES.endedSilent, true);
+          if (!t.answered && !t.held) await this.notice(ab, 'warn', LINES.endedSilent, true);
         })();
       }
     }
@@ -1407,13 +1411,22 @@ export class TelegramHub implements TelegramHubApi {
     // note, row chatter) is not for the owner: nothing of it goes out. The same call the Mac
     // folds by; a result he waits on, a job waiting on him, an owed answer are owner batches.
     // A reply written for him (`isOwnerProse`) goes out whatever the turn: the Mac draws it too.
+    const mark = at?.mark ?? superTurnMark(sessionId);
     if (!isOwnerProse(text)) {
       const st = await this.readBound(ab);
-      if (st && superTurnFolds(at?.mark ?? superTurnMark(sessionId), st.ownerBatches)) return false;
+      if (st && superTurnFolds(mark, st.ownerBatches)) return false;
     }
+    // What fails the owner-text gate never reaches the phone (owner-text-gate.ts): a pointer back
+    // ("I wrote it above"), or a "nothing new" line of an event turn. The turn's end asks the
+    // Super for the answer itself (card-feedback.ts), so a held text is no silent turn.
+    const hold = (part: string): boolean => {
+      if (!telegramHold(part, { eventTurn: mark.event })) return false;
+      for (const t of turns) t.held = true;
+      return true;
+    };
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
-      if (!all.trim()) return false;
+      if (!all.trim() || hold(all)) return false;
       const refs = splitReplySections(text).flatMap((s) => s.refs);
       return this.sendAnswer(ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
     }
@@ -1427,13 +1440,14 @@ export class TelegramHub implements TelegramHubApi {
       const hit = s.refs.find((r) => this.routable(ab!, r));
       if ((!hit && !wide) || !s.text.trim()) continue;
       tried = true;
+      if (hold(s.text)) continue;
       // One section that does not land does not stop the next.
       try { if (await this.sendAnswer(ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
-    if (!turns.length || inputs?.mac || !text.trim()) return false;
+    if (!turns.length || inputs?.mac || !text.trim() || hold(text)) return false;
     return this.sendAnswer(ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
   }
 
