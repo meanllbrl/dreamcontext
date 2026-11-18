@@ -230,6 +230,9 @@ function MemberAskCard({ item, name, slug, hasPhoto, answer, open }: {
   open: () => void;
 }) {
   const { t } = useI18n();
+  // A send that failed brings the card back answerable, its picks restored from the draft.
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => { if (answer.note && !answer.fallback) setAttempt((a) => a + 1); }, [answer.note, answer.fallback]);
   const pending: PendingQuestion = item.ask || item.options?.length
     ? askPendingOf(item)
     : { kind: 'question', requestId: item.id, toolName: 'AskUserQuestion', questions: [{ question: item.ownerText ?? '', options: [], kind: 'text' }] };
@@ -246,7 +249,17 @@ function MemberAskCard({ item, name, slug, hasPhoto, answer, open }: {
       answer.submit({ kind: 'question', answers });
       return true;
     },
-    answer: (_requestId, opts) => { answer.submit({ kind: 'ask', text: opts.message || '' }); return true; },
+    // "Unclear" / "Already answered": the asker is told to ask with `super ask`, never
+    // AskUserQuestion (it would hold its turn). A member's child question takes it as the answer.
+    answer: (_requestId, opts) => {
+      const msg = (opts.message || '').replace(
+        /Ask again with AskUserQuestion,/,
+        'Ask again with `dreamcontext super ask --json` (AskUserQuestion\'s shape; never AskUserQuestion itself, it would hold your turn),',
+      );
+      if (item.of === 'ask') answer.submit({ kind: 'ask', text: msg });
+      else answer.submit({ kind: 'question', answers: { [pending.questions[0]?.question ?? '']: msg } });
+      return true;
+    },
   };
   return (
     <div className="chat-memberask" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of} data-row="question">
@@ -256,7 +269,7 @@ function MemberAskCard({ item, name, slug, hasPhoto, answer, open }: {
         <span className="chat-memberask-says">{t('super.queue.memberAsks')}</span>
         <button type="button" className="chat-memberask-open" data-testid="super-member-open" disabled={!slug} onClick={open}>{t('owner.answer.open')}</button>
       </div>
-      <SurveyCard key={item.id} item={pending} session={host} draftKey={surveyDraftKey(MAIN_RECORD, item.id)} />
+      <SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} draftKey={surveyDraftKey(MAIN_RECORD, item.id)} />
       {answer.note && <p className="chat-agentthread-note" data-testid="super-member-note">{t(answer.note)}</p>}
     </div>
   );

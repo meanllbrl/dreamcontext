@@ -232,7 +232,7 @@ describe("the Super chat's member card (B1, B2)", () => {
     expect(has(html, 'super-member-open')).toBe(true);
     // The card itself is SurveyCard (mocked here): the head is the only thing this card draws.
     expect(html).toContain('chat-memberask-head');
-    expect(readFileSync(fileURLToPath(new URL('../../dashboard/src/components/sleepy/super/SuperQuestionCard.tsx', import.meta.url)), 'utf8')).toMatch(/<SurveyCard key=\{item\.id\} item=\{pending\} session=\{host\}/);
+    expect(readFileSync(fileURLToPath(new URL('../../dashboard/src/components/sleepy/super/SuperQuestionCard.tsx', import.meta.url)), 'utf8')).toMatch(/<SurveyCard key=\{`\$\{item\.id\}:\$\{attempt\}`\} item=\{pending\} session=\{host\} draftKey/);
     // No look-alike controls of its own.
     expect(has(html, 'super-member-option')).toBe(false);
     expect(has(html, 'super-member-reply')).toBe(false);
