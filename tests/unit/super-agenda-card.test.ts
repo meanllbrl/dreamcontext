@@ -311,7 +311,10 @@ describe('the agenda row\'s Write about this icon', () => {
     // Owner 2026-11-17: a narrow stage's open sheet folds to its tabs (window state, never a layout
     // write, so a remote screen never moves the Mac's stage, W2) and the composer is in view.
     expect(surface).toMatch(/if \(plan\.tabs && !plan\.tabs\.folded\) setSheetOpen\(false\);/);
-    expect(surface).not.toMatch(/onLayout\(\{ view: \{ mode: 'float' \} \}\);/);
+    // Within writeAbout only: an agenda row's thread press (ajanda-filtre C5) may float a narrow
+    // stage on this screen, never a remote one.
+    const writeAboutBody = surface.slice(surface.indexOf('const writeAbout = '), surface.indexOf('const onThreadProp'));
+    expect(writeAboutBody).not.toMatch(/onLayout\(/);
     const agent = readFileSync(new URL('dashboard/src/components/sleepy/AgentSurface.tsx', ROOT_URL), 'utf-8');
     // One writer for both surfaces (writeAboutInto); the stage's writes into its Super chat.
     const body = agent.slice(agent.indexOf('const writeAboutInto'), agent.indexOf('const writeAboutInto') + 900);
