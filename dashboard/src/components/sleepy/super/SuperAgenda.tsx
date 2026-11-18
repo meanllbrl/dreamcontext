@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useS
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { KIND_GLYPH } from '../../../lib/cardMention';
+import { useAgendaCardActions } from './agendaCardActions';
 import { nextOwedReveal, type PadStatus, type SuperChild, type SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
@@ -154,6 +155,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   /** Small keeps its magnifier in the foot: the head's right side is the hover buttons' on a 160 px tile. */
   const toolsInHead = sade && size !== 'small';
   const [dayMenu, setDayMenu] = useState(false);
+  const cardActions = useAgendaCardActions();
   // The tools' width, so a floating card's hover buttons step left of them (CSS: --agenda-tools-w).
   useLayoutEffect(() => {
     const frame = slots?.head.closest<HTMLElement>('.super-card-frame');
@@ -701,7 +703,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     <>
       {createPortal(
         // A 160 px tile has no room for it: the lights cover the ≡ on hover. Its day is the full view's.
-        sade && size !== 'small' && dayMenuItems.length > 0
+        sade && size !== 'small' && (dayMenuItems.length > 0 || cardActions.length > 0)
           ? <button type="button" className="agenda-glyph-btn" data-testid="super-agenda-daymenu-btn" aria-haspopup="menu" aria-expanded={dayMenu} aria-label={t('super.agenda.dayMenu')} title={t('super.agenda.dayMenu')} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setDayMenu((o) => !o); }}>{KIND_GLYPH.agenda}</button>
           : <span aria-hidden>{KIND_GLYPH.agenda}</span>,
         slots.glyph,
@@ -711,6 +713,10 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         <div className="agenda-daymenu" role="menu" data-testid="super-agenda-daymenu">
           {dayMenuItems.map((m) => (
             <button key={m.key} type="button" role="menuitem" className="agenda-daymenu-item" data-testid={`super-agenda-daymenu-${m.key}`} disabled={m.disabled} onClick={() => { m.go(); setDayMenu(false); }}>{m.label}</button>
+          ))}
+          {cardActions.length > 0 && dayMenuItems.length > 0 && <div className="agenda-daymenu-rule" role="separator" />}
+          {cardActions.map((m) => (
+            <button key={m.key} type="button" role="menuitem" className="agenda-daymenu-item" data-testid={`super-agenda-menu-${m.key}`} onClick={() => { setDayMenu(false); m.go(); }}>{m.label}</button>
           ))}
         </div>
       )}
@@ -729,7 +735,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   };
 
   if (size === 'small') {
-    const rows = past ? [...past.dayOpen, ...past.dayDone].slice(0, 3) : smallEntries(groups, 3);
+    const rows = past ? [...past.dayOpen, ...past.dayDone].slice(0, sade ? 2 : 3) : smallEntries(groups, sade ? 2 : 3);
     return (
       <div className="super-agenda" {...common}>
         {sade ? pastBar : (

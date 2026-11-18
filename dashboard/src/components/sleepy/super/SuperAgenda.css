@@ -645,3 +645,8 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 /* While the search is open in the head, the lights and the hover buttons give way: the field
    takes the whole head row and every click in it is the field's. */
 .super-card-frame:has(.super-card-head[data-find='open']) :is(.super-card-lights, .super-card-actions) { opacity: 0; pointer-events: none; }
+
+.agenda-daymenu-rule { height: 1px; margin: 4px 2px; background: var(--color-border); }
+/* A floating card's hover buttons sit over the head row and a little under it (6 px top + 34 px,
+   the head is 36): the lines start below them, and the last line ends above the resize corner. */
+.super-card-frame[data-where='float'] .super-agenda { padding-top: var(--space-2); padding-bottom: 20px; }
