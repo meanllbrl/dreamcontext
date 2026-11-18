@@ -104,6 +104,8 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
     for (let el = document.querySelector('.hk-page') as HTMLElement | null; el; el = el.parentElement) {
       if (el.scrollTop > 0) el.scrollTop = 0;
     }
+    // An action's failure belongs to the screen it was pressed on.
+    setErr(null);
   }, [viewKey]);
 
   if (isLoading) return <p className="hk-muted">{t('common.loading')}</p>;
@@ -165,7 +167,7 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
       )}
       <Timeline run={run} rounds={rounds?.rounds ?? []} onPeek={(round) => setView({ kind: 'peek', round })} />
-      {run.paused && run.state === 'running' && (
+      {run.paused && run.state === 'running' && run.conductor !== 'gone' && (
         <div className="hk-paused" role="status">
           <span>{fill(t('hk.paused'), { reason: run.paused })}</span>
           <button type="button" className="hk-btn hk-btn--primary" disabled={busy === 'resume'} onClick={() => void act('resume', true)}>{t('hk.resume')}</button>

@@ -52,7 +52,8 @@ export interface ConductorState {
 export interface TurnHandle {
   /** Resolves with the exit code when the turn ends (or is killed). */
   done: Promise<number | null>;
-  kill(): void;
+  /** SIGTERM, then SIGKILL after 10 s; `now` sends SIGKILL at once (the conductor is exiting). */
+  kill(now?: boolean): void;
 }
 
 export interface TurnRequest {
@@ -246,7 +247,7 @@ export async function conduct(runId: string, deps: ConductorDeps, phases: readon
   };
 
   const ctx: PhaseCtx = { deps, design, state, runTurns, limit, saveState };
-  deps.onAbort?.(() => { for (const h of live) h.kill(); });
+  deps.onAbort?.(() => { for (const h of live) h.kill(true); });
 
   try {
     if (!state.prepared) {
@@ -330,7 +331,9 @@ export function realStartTurn(base: { brainRoot: string; linkedRepos: readonly s
     const signal = (sig: NodeJS.Signals) => { try { if (child?.pid) process.kill(-child.pid, sig); } catch { /* gone */ } };
     return {
       done,
-      kill() {
+      kill(now?: boolean) {
+        // The conductor exiting cannot keep a timer: no team turn outlives it.
+        if (now) { signal('SIGKILL'); return; }
         signal('SIGTERM');
         // A turn that ignores SIGTERM is not left running (and `await all` never hangs on it).
         setTimeout(() => { if (!closed) signal('SIGKILL'); }, 10_000).unref();
@@ -439,7 +442,7 @@ export function ownerStart(contextRoot: string, runId: string, shownHash: string
     const hash = designHash({ design });
     writeJsonAtomic(designCopyPath(runId, o.wsHome), { design, hash });
     const started = addMoment({ ...r, design, state: 'running', startedAt: at.toISOString(), startedHash: hash, usageAtStart: usage, phase: 'rounds', round: 1 }, 'sahip başlattı', at);
-    return late ? addMoment(started, `bitiş başlangıca göre ${earliest.toISOString().slice(11, 16)} UTC oldu`, at) : started;
+    return late ? addMoment(started, `bitiş başlangıca göre ${earliest.toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} oldu`, at) : started;
   });
   if (run.state !== 'running') return { ok: false, status: 409, reason: 'tasarım değişti' };
   return { ok: true, run };

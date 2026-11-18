@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { changedPaths, git, headSha, initSnapshots, prepareWorkspace, snapPaths, snapshotHead, takeSnapshot } from '../../src/lib/hackathon/snapshot.js';
+import { SNAPSHOT_FILE_MAX, changedPaths, git, headSha, initSnapshots, prepareWorkspace, snapPaths, snapshotHead, takeSnapshot } from '../../src/lib/hackathon/snapshot.js';
 import { teamWorkspace } from '../../src/lib/hackathon/run-store.js';
 
 const RUN = '20261118-snapshot-test';
@@ -55,6 +55,23 @@ describe('team snapshots', () => {
     ]));
     // The other team is untouched.
     expect(changedPaths(RUN, 'beta', base, ws)).toEqual([]);
+  });
+
+  it('an over-size file holds the copy back only when the team changed it', () => {
+    const big = Buffer.alloc(SNAPSHOT_FILE_MAX + 10, 7);
+    writeFileSync(join(target, 'asset.bin'), big);
+    sh(target, 'add', '-A');
+    sh(target, 'commit', '-q', '-m', 'big asset');
+    const base2 = headSha(target);
+    const RUN2 = '20261118-snapshot-big';
+    prepareWorkspace(RUN2, 'alfa', target, base2, { wsHome: ws, install: false });
+    initSnapshots(RUN2, target, base2, ['alfa'], ws);
+    const repo = teamWorkspace(RUN2, 'alfa', ws).repo;
+    writeFileSync(join(repo, 'index.html'), '<h1>Yeni</h1>\n');
+    expect(takeSnapshot(RUN2, 'alfa', 'alfa r1', { wsHome: ws }).kept).toEqual([]);
+    big[0] = 9;
+    writeFileSync(join(repo, 'asset.bin'), big);
+    expect(takeSnapshot(RUN2, 'alfa', 'alfa r2', { wsHome: ws }).kept).toEqual(['asset.bin']);
   });
 
   it('a second round is a child of the first; an unchanged tree adds no commit', () => {

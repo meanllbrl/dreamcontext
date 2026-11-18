@@ -144,7 +144,13 @@ export function takeSnapshot(runId: string, team: string, message: string, o: { 
         if (err) return err;
       } else if (st.isFile()) {
         seen.add(r);
-        if (st.size > SNAPSHOT_FILE_MAX) { kept.push(r); continue; }
+        if (st.size > SNAPSHOT_FILE_MAX) {
+          // Only a changed over-size file is left behind; an unchanged one is already in the copy.
+          let same = false;
+          try { const d = lstatSync(dst); same = d.isFile() && d.size === st.size && readFileSync(dst).equals(readFileSync(abs)); } catch { /* not in the copy */ }
+          if (!same) kept.push(r);
+          continue;
+        }
         total += st.size;
         if (total > SNAPSHOT_TREE_MAX) return `ekip ağacı ${Math.round(SNAPSHOT_TREE_MAX / 1048576)} MB sınırını aştı`;
         let same = false;
