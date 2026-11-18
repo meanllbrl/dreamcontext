@@ -23,8 +23,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PERMISSION_FULL_CAP, _resetChatRegistry, bridgeRefusalFrame, crewHandle, getChat, onOwnerWaitChange, ownerWaitAnswered,
-  refusalSource, registerChat, registerCrewHandle, setChatPermissionMode, type ChatHandle,
+  PERMISSION_FULL_CAP, _resetChatRegistry, adoptOwnerWaits, allowedPassedBy, bridgeRefusalFrame, clearOwnerAllowed, crewHandle, getChat, markOwnerAllowed, onOwnerWaitChange, ownerWaitAnswered,
+  refusalSource, registerChat, registerCrewHandle, setChatPermissionMode, startAllowTurn, type ChatHandle,
 } from '../../src/lib/assistant/chat-registry.js';
 import { refusalWaitId, noteSuperSend, _resetSuperSends, type OwnerWait } from '../../src/lib/super/owner-wait.js';
 import { MAX_REFUSAL_INPUT } from '../../src/lib/super/types.js';
@@ -200,6 +200,116 @@ describe('K2 — how a refusal closes', () => {
     expect(waitsOf(sid)).toEqual([]);
     expect(ownerWaitAnswered(sid, 'refusal', id)).toBe(true);
     expect(seen).toEqual([1, 0, 1, 0]);
+  });
+
+  it('the child moving on closes every refusal wait of an earlier turn: any later call that runs', () => {
+    const { h, sid } = open();
+    for (const f of [...classifierBlock('t1', 'node a.mjs'), ...classifierBlock('t2', 'node b.mjs'), result]) h.observe(f);
+    expect(waitsOf(sid)).toHaveLength(2);
+    const ids = waitsOf(sid).map((w) => w.id);
+    // A later turn (a woken child, a background agent's result) runs something else entirely.
+    for (const f of [call('t3', 'ls -la'), accepted('t3')]) h.observe(f);
+    expect(waitsOf(sid)).toEqual([]);
+    for (const id of ids) expect(ownerWaitAnswered(sid, 'refusal', id)).toBe(true);
+    // Met again: a new ask, as before.
+    for (const f of [...classifierBlock('t4', 'node a.mjs'), result]) h.observe(f);
+    expect(waitsOf(sid).map((w) => w.id)).toEqual([ids[0]]);
+  });
+
+  it('a wait he ALLOWED is not closed by another call first: only its own call (his one-shot is not pruned)', () => {
+    const { h, sid } = open();
+    for (const f of [...classifierBlock('t1', 'node a.mjs'), ...classifierBlock('t2', 'node b.mjs'), result]) h.observe(f);
+    const [a, b] = waitsOf(sid).map((w) => w.id);
+    markOwnerAllowed(sid, a);
+    // The Allow turn: the child checks something first.
+    for (const f of [call('t3', 'git status'), accepted('t3')]) h.observe(f);
+    expect(waitsOf(sid).map((w) => w.id)).toEqual([a]);
+    expect(ownerWaitAnswered(sid, 'refusal', a)).toBe(false);
+    expect(ownerWaitAnswered(sid, 'refusal', b)).toBe(true);
+    // Then the allowed call itself runs: closed, and the mark goes with it.
+    for (const f of [call('t4', 'node a.mjs'), accepted('t4')]) h.observe(f);
+    expect(waitsOf(sid)).toEqual([]);
+    expect(getChat(sid)?.ownerAllowed).toBeUndefined();
+  });
+
+  it('an allowed wait the Allow turn runs past is noted, so its turn end closes it rather than offering it again', () => {
+    const { h, sid } = open();
+    for (const f of [...classifierBlock('t1', 'node a.mjs'), result]) h.observe(f);
+    const [a] = waitsOf(sid).map((w) => w.id);
+    markOwnerAllowed(sid, a);
+    // A call before the Allow turn went in (the outbox held it) does not count.
+    for (const f of [call('t2', 'ls'), accepted('t2')]) h.observe(f);
+    expect(allowedPassedBy(sid).has(a)).toBe(true);
+    startAllowTurn(sid);
+    expect(allowedPassedBy(sid).size).toBe(0);
+    // The Allow turn runs something else and never the allowed call.
+    for (const f of [call('t3', 'node other.mjs'), accepted('t3')]) h.observe(f);
+    expect(allowedPassedBy(sid)).toEqual(new Set([a]));
+    expect(waitsOf(sid).map((w) => w.id)).toEqual([a]);
+    // Its own call running instead clears both marks.
+    for (const f of [call('t4', 'node a.mjs'), accepted('t4')]) h.observe(f);
+    expect(allowedPassedBy(sid).size).toBe(0);
+    expect(getChat(sid)?.ownerAllowedPassed).toBeUndefined();
+  });
+
+  it('re-offered (refused again, or cleared by the turn-end re-offer): his old Allow no longer holds it', () => {
+    const { h, sid } = open();
+    for (const f of [...classifierBlock('t1', 'node a.mjs'), result]) h.observe(f);
+    const [a] = waitsOf(sid).map((w) => w.id);
+    markOwnerAllowed(sid, a);
+    for (const f of [...classifierBlock('t2', 'node a.mjs'), result]) h.observe(f);
+    expect(getChat(sid)?.ownerAllowed).toBeUndefined();
+    for (const f of [call('t3', 'ls'), accepted('t3')]) h.observe(f);
+    expect(waitsOf(sid)).toEqual([]);
+    // The re-offer path clears it the same way.
+    for (const f of [...classifierBlock('t5', 'node c.mjs'), result]) h.observe(f);
+    const [c] = waitsOf(sid).map((w) => w.id);
+    markOwnerAllowed(sid, c);
+    clearOwnerAllowed(sid, [c]);
+    for (const f of [call('t6', 'ls'), accepted('t6')]) h.observe(f);
+    expect(waitsOf(sid)).toEqual([]);
+  });
+
+  it('adopted from the record after a restart: an allowed one keeps its Allow, an unallowed one closes on progress', () => {
+    const { h, sid } = open();
+    const wa = { kind: 'refusal' as const, id: refusalWaitId('Bash', 'node a.mjs'), line: 'Bash: node a.mjs', key: 'Bash', refusal: { tool: 'Bash', input: 'node a.mjs', whole: true, source: 'classifier' as const } };
+    const wb = { ...wa, id: refusalWaitId('Bash', 'node b.mjs'), line: 'Bash: node b.mjs', refusal: { ...wa.refusal, input: 'node b.mjs' } };
+    const later = Date.now() + 60_000; // born after the opening message, so it answers neither
+    adoptOwnerWaits(sid, [{ wait: wa, since: later, allowed: true }, { wait: wb, since: later }]);
+    expect(waitsOf(sid)).toHaveLength(2);
+    for (const f of [call('t1', 'ls'), accepted('t1')]) h.observe(f);
+    expect(waitsOf(sid).map((w) => w.id)).toEqual([wa.id]);
+  });
+
+  it('a call refused and another run in the SAME turn still ends as a wait (the run came before it was born)', () => {
+    const { h, sid } = open();
+    for (const f of [...classifierBlock('t1', 'node a.mjs'), call('t2', 'ls'), accepted('t2'), result]) h.observe(f);
+    expect(waitsOf(sid)).toHaveLength(1);
+  });
+
+  it('auto mode\'s "no verdict" refusal (a hook changed the input) is no judgment: no wait, four times over', () => {
+    const noVerdict = (id: string): Frame[] => [
+      { type: 'assistant', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Agent', input: { description: `scan ${id}`, prompt: `Scan part ${id}`, model: 'haiku' } }] } },
+      rejected(id, { source: 'config', reason_type: 'classifier' }, 'automode-blocked',
+        "The server-side auto mode classifier gave no verdict for Agent: a hook changed this call's input after auto mode reviewed it, so the review does not cover what would run. This is not a judgment that the action is unsafe."),
+    ];
+    const { waits } = replay([...noVerdict('a1'), ...noVerdict('a2'), ...noVerdict('a3'), ...noVerdict('a4'), result]);
+    expect(waits).toEqual([]);
+    // The same words on the denied event alone (no tool_result text) read the same.
+    const ev = replay([
+      call('b1', 'node s.mjs'),
+      { type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: 'b1', decision_reason_type: 'classifier', message: 'The server-side auto mode classifier gave no verdict for Bash.' },
+      result,
+    ]);
+    expect(ev.waits).toEqual([]);
+    // A real block whose reason only QUOTES those words (a commit message) is still a refusal.
+    const quoted = replay([
+      call('c1', 'git commit -m "skip when the classifier gave no verdict" && git push'),
+      { type: 'system', subtype: 'permission_denied', tool_name: 'Bash', tool_use_id: 'c1', decision_reason_type: 'classifier', message: 'Blocked: pushes "skip when the classifier gave no verdict" to a shared branch' },
+      rejected('c1', { source: 'config', reason_type: 'classifier' }, 'automode-blocked', 'Permission denied. The server-side auto mode classifier gave no verdict for Bash is quoted here.'),
+      result,
+    ]);
+    expect(quoted.waits).toHaveLength(1);
   });
 
   it('the owner writing into the session closes it; the server\'s own turn and a Super send never do', () => {

@@ -359,6 +359,18 @@ describe('a call a built-in safety check refused (field 2026-11-15: Allow once p
     expect(s.queue[0].state).toBe('done');
   });
 
+  it('an allowed item whose call the Allow turn ran past (the moot predicate names it) closes, never offered again', () => {
+    const s = { ...emptySuperState(), session: MAIN, enabled: true };
+    s.queue.push({
+      id: 'q-pass-1', sessionId: 'sess-c', kind: 'owner', state: 'escalated', createdAt: 1, allowed: 'once',
+      wait: { kind: 'refusal', id: 'rf-p', refusal: { tool: 'Bash', input: 'node build.mjs', whole: true, source: 'classifier' } },
+    });
+    const out = reofferDraft(s, 'sess-c', new Set(['rf-p']), 2, undefined, (tool, input) => tool === 'Bash' && input === 'node build.mjs');
+    expect(out).toEqual([{ old: 'q-pass-1', next: '', moot: true }]);
+    expect(s.queue).toHaveLength(1);
+    expect(s.queue[0].state).toBe('done');
+  });
+
   it('the record keeps a rewrite offer with no size (else every surface would fall back to Allow once)', () => {
     expect(cleanGrantOffer({ sizes: [], rewrite: true, onceOnlyReason: 'x' })).toEqual({ sizes: [], rewrite: true, onceOnlyReason: 'x' });
     expect(cleanGrantOffer({ sizes: [] })).toBeUndefined();

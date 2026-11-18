@@ -227,6 +227,16 @@ export function grantGateAllow(
   }
 }
 
+/**
+ * May a PreToolUse answer change the call's input (`updatedInput`)? Not under auto mode: its
+ * classifier reviewed the ORIGINAL input before any hook, and Claude Code refuses a call whose
+ * input a hook changed afterwards ("gave no verdict … a hook changed this call's input"). Every
+ * other mode has no review to invalidate. One predicate for every rewrite this hook makes.
+ */
+export function rewritesInput(input: Record<string, unknown> | null | undefined): boolean {
+  return input?.permission_mode !== 'auto';
+}
+
 function readStdin(): Record<string, unknown> | null {
   if (process.stdin.isTTY) return null;
   try {
@@ -3282,13 +3292,13 @@ export function registerHookCommand(program: Command): void {
           const granted = agy ? null : grantGateAllow(input as Record<string, unknown>, toolName, toolInput);
           // A dispatch's prompt carries his always and hot rules (learning loop C7, D8): merged into
           // the one answer, an existing grant kept, none added for the append.
-          if (granted || nudge || updatedInput) {
+          if (granted || nudge || (updatedInput && rewritesInput(input as Record<string, unknown>))) {
             console.log(JSON.stringify({
               hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
                 ...(granted ? { permissionDecision: 'allow', permissionDecisionReason: granted.reason } : {}),
                 ...(nudge ? { additionalContext: nudge } : {}),
-                ...(updatedInput ? { updatedInput } : {}),
+                ...(updatedInput && rewritesInput(input as Record<string, unknown>) ? { updatedInput } : {}),
               },
             }));
           }
@@ -3431,7 +3441,12 @@ export function registerHookCommand(program: Command): void {
       }
 
       // A dispatch's prompt with his always and hot rules appended; null on any error or when none ride.
+      // Never under auto mode: its classifier reviews the call BEFORE this hook, and a changed input
+      // is refused as unreviewed ("a hook changed this call's input after auto mode reviewed it"),
+      // so a harmless Agent call was lost and its refusal reached the owner as an Allow card. The
+      // same rules still reach the sub-agent through the SubagentStart hook (`subagent-start`).
       const dispatchInput = (): Record<string, unknown> | null => {
+        if (!rewritesInput(input as Record<string, unknown>)) return null;
         try {
           const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
           if (!dRoot || typeof toolInput.prompt !== 'string') return null;

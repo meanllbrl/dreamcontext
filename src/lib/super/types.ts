@@ -1247,6 +1247,10 @@ export const MAX_REFUSAL_REASON = 300;
  *  call (2.1.325: a removal it cannot resolve, `circuitBreaker: dangerousRemoval`). Only a person at
  *  its own prompt may pass such a check; a PreToolUse allow (every grant) cannot. */
 export const SAFETY_CHECK_RE = /built-in Claude Code safety check/i;
+/** The words of Claude Code's auto-mode refusal that is NOT a judgment: its classifier gave no
+ *  verdict (a hook changed the input after the review, the classifier was unreachable). The model
+ *  already has the refusal and a plain retry is the way on: nothing for the owner to allow. */
+export const NO_VERDICT_RE = /^\s*(?:Error:\s*)?The server-side auto mode classifier gave no verdict for /;
 /** A refusal no grant can lift: born `safety`, or born before that source existed (`unknown`) with
  *  Claude Code's own safety-check words in its reason. */
 export function isSafetyRefusal(r: Pick<RefusalFact, 'source' | 'reason'> | null | undefined): boolean {
