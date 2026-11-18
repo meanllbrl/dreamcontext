@@ -58,7 +58,7 @@ import {
   ConditionNeedsWitness,
   conditionNeedsWitness,
   manifestHash,
-  listRegisteredProjects,
+  isProjectRegistered,
   registerProject,
   revokeApproval,
   readDispatcherHeartbeat,
@@ -1810,7 +1810,7 @@ function dispatcherView(check: InstallCheck, contextRoot: string): DispatcherVie
     runningBin: check.runningBin,
     logPath: check.logPath,
     logSizeBytes: check.logSizeBytes,
-    projectRegistered: listRegisteredProjects().includes(dirname(contextRoot)),
+    projectRegistered: isProjectRegistered(dirname(contextRoot)),
     lastTickStartedAt: heartbeat.lastTickStartedAt,
     lastTickCompletedAt: heartbeat.lastTickCompletedAt,
     notifier: {

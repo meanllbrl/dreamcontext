@@ -8,7 +8,7 @@ import { PARENT_BY_KIND } from '../task-status.js';
 import { readVaultFileSafe } from '../vault-read.js';
 import { findTranscriptBySessionId } from '../transcript-locate.js';
 import { TASK_CONTEXT_ROOT_ENV, TASK_WORKTREE_ENV } from '../context-path.js';
-import { listRegisteredProjects } from '../automations/registry.js';
+import { isProjectRegistered } from '../automations/registry.js';
 import { getRunTarget } from '../automations/store.js';
 import { oneDataLine, runAutomation, type RunOptions, type RunOutcome, type SpawnImpl, type TaskJobBrief } from '../automations/runner.js';
 import { DEFAULT_AGENT_AUTONOMY } from '../automations/types.js';
@@ -27,7 +27,6 @@ import {
 } from './task-starter.js';
 import { fanOutDelivered, type NotifyFn } from './task-delivery.js';
 import { approvedRunTarget } from '../automations/approved-run-target.js';
-import { realPath } from '../real-path.js';
 
 /**
  * The task host (AI Team v2 C1-3): the detached `dreamcontext tasks run-job <slug> --run <id>`
@@ -63,10 +62,6 @@ export interface TaskHostDeps extends TaskJobDeps {
 export interface TaskHostResult {
   state: string | null;
   outcome: RunOutcome | null;
-}
-
-function realOr(p: string): string {
-  try { return realPath(p); } catch { return p; }
 }
 
 /** git in a workspace the agent wrote: no hooks, no fsmonitor, no signing (GIT_SAFE_ARGS). Only
@@ -195,8 +190,7 @@ async function resolveWorkspace(
   const machine = thisMachine(home).name;
   if (!meta.repo) return { refused: `no code repo was picked for it on ${machine}` };
   // The live brain must resolve from the worktree: the project is one this machine's scheduler ticks.
-  const registered = listRegisteredProjects(home).map(realOr);
-  if (!registered.includes(realOr(projectRoot))) return { refused: `the brain would not resolve from the worktree on ${machine} (the scheduler does not know this project)` };
+  if (!isProjectRegistered(projectRoot, home)) return { refused: `the brain would not resolve from the worktree on ${machine} (the scheduler does not know this project)` };
   try {
     const wt = await attachChildWorktree({ projectRoot, repo: meta.repo, slug: taskWorkspaceSlug(view.id), base: meta.base ?? 'HEAD', home });
     if (wt.created && wt.base) patchMeta(projectRoot, view.id, { base: wt.base }, home);

@@ -349,7 +349,8 @@ function bucketHoldsApprovals(registry: AutomationsRegistry, key: string): boole
 export function registerProject(projectRoot: string, home?: string): void {
   const registry = readAutomationsRegistry(home);
   if (findProjectKey(registry, projectRoot)) return;
-  registry.projects[projectRoot] = { approvals: {} };
+  // A code repo linking a brain registers the brain's own folder: one brain, one bucket.
+  registry.projects[brainHomeOf(projectRoot)] = { approvals: {} };
   writeAutomationsRegistry(registry, home);
 }
 
@@ -372,35 +373,83 @@ export function listRegisteredProjects(home?: string): string[] {
   return Object.keys(readAutomationsRegistry(home).projects).filter((k) => k !== GLOBAL_REGISTRY_KEY);
 }
 
+/** True when `root/_dream_context` is a link (or unreadable): a code repo pointing at a brain. */
+function contextIsLink(root: string): boolean {
+  try { return lstatSync(join(root, '_dream_context')).isSymbolicLink(); } catch { return true; }
+}
+
 /**
- * ONE BRAIN, ONE BUCKET (2026-11-19). An older version opened a separate approvals bucket for a code
- * repo whose `_dream_context` links to a brain (anything run from that repo registered it), so one
- * brain's approvals can sit in two buckets, and a lookup sees only the one its path finds. Fold every
- * such bucket into the kept one (`listDistinctProjects`' pick): each entry moves over, the newer
- * `approvedAt` winning when both hold the same slug, and the extra key goes, so nothing is lost and
- * every path reads the same answer. Returns what was folded ([] when nothing was, no write).
+ * The key a brain's bucket belongs under: the folder whose `_dream_context` is the REAL folder,
+ * never a code repo that links to it. A root whose `_dream_context` is a plain folder is its own
+ * home, spelled as given (lookups resolve other spellings); a linking root's home is the folder
+ * holding the real `_dream_context`.
+ */
+function brainHomeOf(root: string): string {
+  return contextIsLink(root) ? dirname(tryRealpath(join(root, '_dream_context'))) : root;
+}
+
+/** True when this project (by any path that reaches its brain) has a bucket on this machine: every
+ *  "is it registered" question asks this, never an exact-key membership. */
+export function isProjectRegistered(projectRoot: string, home?: string): boolean {
+  return findProjectKey(readAutomationsRegistry(home), projectRoot) !== null;
+}
+
+/** Every registered root, grouped by the real `_dream_context` folder it reaches. */
+function brainGroups(registry: AutomationsRegistry): { groups: Map<string, string[]>; missing: string[] } {
+  const missing: string[] = [];
+  const groups = new Map<string, string[]>();
+  for (const root of Object.keys(registry.projects)) {
+    if (root === GLOBAL_REGISTRY_KEY) continue;
+    const ctx = join(root, '_dream_context');
+    if (!existsSync(ctx)) { missing.push(root); continue; }
+    const real = tryRealpath(ctx);
+    const g = groups.get(real);
+    if (g) g.push(root); else groups.set(real, [root]);
+  }
+  return { groups, missing };
+}
+
+/** The group's root that is the brain's own folder (not a link), or null when only links reach it. */
+function brainRootIn(group: string[]): string | null {
+  return group.find((r) => !contextIsLink(r)) ?? null;
+}
+
+/**
+ * ONE BRAIN, ONE BUCKET, under the brain's own folder (2026-11-19). An older version opened a
+ * separate approvals bucket for a code repo whose `_dream_context` links to a brain (anything run
+ * from that repo registered it), so one brain's approvals could sit in two buckets, or only under
+ * the code repo. Fold every bucket of a brain into the brain's own folder (created when only links
+ * were registered): each entry moves over, the newer `approvedAt` winning a shared slug (an
+ * unreadable date loses), and the link's key goes. Nothing is lost, every path reads one bucket, and
+ * the brain's own page finds itself registered. Returns what was folded ([] = nothing, no write).
+ * The tick's one registry write, and only on a machine that has such a pair.
  */
 export function foldSameBrainBuckets(home?: string): Array<{ from: string; into: string }> {
-  const { aliases } = listDistinctProjects(home);
-  if (!aliases.length) return [];
   const registry = readAutomationsRegistry(home);
-  const newer = (a: ApprovalEntry | undefined, b: ApprovalEntry): ApprovalEntry =>
-    !a || Date.parse(b.approvedAt) > Date.parse(a.approvedAt) ? b : a;
+  const { groups } = brainGroups(registry);
+  const time = (e: ApprovalEntry | undefined): number => {
+    const t = e ? Date.parse(e.approvedAt) : NaN;
+    return Number.isFinite(t) ? t : -Infinity;
+  };
   const merge = (into: Record<string, ApprovalEntry>, from: Record<string, ApprovalEntry> | undefined): void => {
-    for (const [slug, e] of Object.entries(from ?? {})) into[slug] = newer(into[slug], e);
+    for (const [slug, e] of Object.entries(from ?? {})) if (!into[slug] || time(e) > time(into[slug])) into[slug] = e;
   };
   const folded: Array<{ from: string; into: string }> = [];
-  for (const { root, sameAs } of aliases) {
-    const from = registry.projects[root];
-    const into = registry.projects[sameAs];
-    if (!from || !into) continue;
-    merge(into.approvals, from.approvals);
-    if (from.agentApprovals && Object.keys(from.agentApprovals).length) {
-      into.agentApprovals ??= {};
-      merge(into.agentApprovals, from.agentApprovals);
+  for (const [real, group] of groups) {
+    const target = brainRootIn(group) ?? dirname(real);
+    const others = group.filter((r) => r !== target);
+    if (!others.length) continue;
+    const into = (registry.projects[target] ??= { approvals: {} });
+    for (const root of others) {
+      const from = registry.projects[root];
+      merge(into.approvals, from.approvals);
+      if (from.agentApprovals && Object.keys(from.agentApprovals).length) {
+        into.agentApprovals ??= {};
+        merge(into.agentApprovals, from.agentApprovals);
+      }
+      delete registry.projects[root];
+      folded.push({ from: root, into: target });
     }
-    delete registry.projects[root];
-    folded.push({ from: root, into: sameAs });
   }
   if (folded.length) writeAutomationsRegistry(registry, home);
   return folded;
@@ -418,35 +467,19 @@ export interface DistinctProjects {
 
 /**
  * Every registered project, each REAL BRAIN once (owner 2026-11-19, "Gece denemesi"). A code repo
- * whose `_dream_context` is a link to a brain registers under its own path, with its own empty
- * approvals bucket. Ticking both ran the brain's routines twice per fire: once approved, once
- * "never approved", and the refused copy went to the owner's phone as a false alarm.
- *
- * Two roots whose `_dream_context` resolves to the same folder are one project. The kept root is
- * the one whose bucket holds approvals (where the owner's yes actually lives), then the one whose
- * `_dream_context` is the real folder rather than a link, then the first registered.
+ * whose `_dream_context` links to a brain registered under its own path; ticking both ran the
+ * brain's routines twice per fire, once approved and once "never approved", and the refused copy
+ * reached the owner's phone. Two roots reaching the same `_dream_context` folder are one project;
+ * the kept root is the brain's own folder, else the first registered. (`foldSameBrainBuckets`, run
+ * first by the tick, leaves one key per brain; this holds even before it has.)
  */
 export function listDistinctProjects(home?: string): DistinctProjects {
   const registry = readAutomationsRegistry(home);
-  const missing: string[] = [];
-  const groups = new Map<string, string[]>();
-  for (const root of Object.keys(registry.projects)) {
-    if (root === GLOBAL_REGISTRY_KEY) continue;
-    const ctx = join(root, '_dream_context');
-    if (!existsSync(ctx)) { missing.push(root); continue; }
-    const real = tryRealpath(ctx);
-    const g = groups.get(real);
-    if (g) g.push(root); else groups.set(real, [root]);
-  }
-  const isLink = (root: string): boolean => {
-    try { return lstatSync(join(root, '_dream_context')).isSymbolicLink(); } catch { return true; }
-  };
-  const rank = (root: string): number => (bucketHoldsApprovals(registry, root) ? 0 : 2) + (isLink(root) ? 1 : 0);
+  const { groups, missing } = brainGroups(registry);
   const keep = new Set<string>();
   const aliases: DistinctProjects['aliases'] = [];
   for (const group of groups.values()) {
-    // Stable: equal ranks keep registry order.
-    const best = group.reduce((a, b) => (rank(b) < rank(a) ? b : a));
+    const best = brainRootIn(group) ?? group[0];
     keep.add(best);
     for (const r of group) if (r !== best) aliases.push({ root: r, sameAs: best });
   }

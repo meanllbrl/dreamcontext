@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -13,6 +13,7 @@ import {
   canonicalApprovalPayload,
   manifestHash,
   foldSameBrainBuckets,
+  isProjectRegistered,
   approvalFields,
   approvalDiff,
   canonicalFlowJson,
@@ -709,6 +710,49 @@ describe('the project key survives a symlinked path', () => {
     // Unregistering the code repo never deletes the brain's bucket it resolves to.
     expect(unregisterProject(code, home)).toBe(false);
     expect(Object.keys(readAutomationsRegistry(home).projects[brain].approvals).sort()).toEqual(['shared', 'x', 'y']);
+    rmSync(real, { recursive: true, force: true });
+  });
+
+  it('the fold lands on the brain\'s own folder: an empty brain bucket, or none at all, still ends up holding the code repo\'s yes', () => {
+    const real = mkdtempSync(join(tmpdir(), 'dc-samebrain-'));
+    const brain = join(real, 'brain');
+    const code = join(real, 'code');
+    mkdirSync(join(brain, '_dream_context'), { recursive: true });
+    mkdirSync(code, { recursive: true });
+    symlinkSync(join(brain, '_dream_context'), join(code, '_dream_context'), 'dir');
+    const x = makeManifest({ slug: 'x' });
+    const entry = { manifestSha256: manifestHash(x), approvedAt: '2026-11-01T00:00:00Z', payloadVersion: APPROVAL_PAYLOAD_VERSION };
+    for (const brainBucket of [true, false]) {
+      const r = readAutomationsRegistry(home);
+      for (const k of Object.keys(r.projects)) if (k.includes('dc-samebrain-')) delete r.projects[k];
+      r.projects[code] = { approvals: { x: entry } };
+      if (brainBucket) r.projects[brain] = { approvals: {} };
+      writeAutomationsRegistry(r, home);
+      // With no brain bucket the brain's folder is spelled physically (realpath); compare physically.
+      const folded = foldSameBrainBuckets(home);
+      expect(folded.map((f) => [f.from, realpathSync(f.into)])).toEqual([[code, realpathSync(brain)]]);
+      const after = readAutomationsRegistry(home);
+      const keys = Object.keys(after.projects).filter((k) => k.includes('dc-samebrain-'));
+      expect(keys.map((k) => realpathSync(k))).toEqual([realpathSync(brain)]);
+      expect(Object.keys(after.projects[keys[0]].approvals)).toEqual(['x']);
+      // The brain's own page finds itself registered (the dashboard's "watching this project").
+      expect(isProjectRegistered(brain, home)).toBe(true);
+      expect(isProjectRegistered(code, home)).toBe(true);
+      expect(checkApproval(brain, x, home).approved).toBe(true);
+    }
+    rmSync(real, { recursive: true, force: true });
+  });
+
+  it('a code repo linking an unregistered brain registers the brain\'s own folder', () => {
+    const real = mkdtempSync(join(tmpdir(), 'dc-samebrain-'));
+    const brain = join(real, 'brain');
+    const code = join(real, 'code');
+    mkdirSync(join(brain, '_dream_context'), { recursive: true });
+    mkdirSync(code, { recursive: true });
+    symlinkSync(join(brain, '_dream_context'), join(code, '_dream_context'), 'dir');
+    registerProject(code, home);
+    const keys = Object.keys(readAutomationsRegistry(home).projects).filter((k) => k.includes('dc-samebrain-'));
+    expect(keys.map((k) => realpathSync(k))).toEqual([realpathSync(brain)]);
     rmSync(real, { recursive: true, force: true });
   });
 
