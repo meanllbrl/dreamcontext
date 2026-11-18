@@ -40,7 +40,7 @@ import { approvalFields, approvedTarget, conditionNeedsWitness, getApproval, man
 import { boundConditionData, CONDITION_ERROR_PREFIX, conditionEnv, conditionWakes, killCondition, runCondition } from './condition.js';
 import { agentNotPickedMessage, jobAgentPicked, pickedAgents } from '../agent-pick.js';
 import { claimPendingNotice } from '../agents/pending-change.js';
-import { buildRoutineForward, mintRunPostKey, routineReachesPhone, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
+import { approvalNeededOf, buildRoutineForward, mintRunPostKey, type ApprovalNeeded, routineReachesPhone, RUN_POST_STAMP_ENV, verifiedRunPosts } from '../telegram/member-forward.js';
 import { TELEGRAM_WRITING_RULE } from '../telegram/writing.js';
 import { ownerAwayNow } from '../telegram/away-state.js';
 import type { OnDeferredSend } from '../telegram/contract.js';
@@ -2158,7 +2158,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     });
     // After recordRun (plan W4): the message is built now and sent once the lock is released.
     if (params.status === 'ok' || params.status === 'failed' || params.status === 'timeout' || params.status === 'awaiting-review') buildForward(params);
-    else if (approvalFact && !factTold) buildForward({ ...params, approvalNeeded: approvalFact.startsWith('awaiting-approval:') ? 'awaiting-approval' : 'not-approved' });
+    else if (approvalFact && !factTold) buildForward({ ...params, approvalNeeded: approvalFact.startsWith('awaiting-approval:') ? 'awaiting-approval' : approvalNeededOf(params.error) });
     else if (waitFact && !factTold && params.accountWait) {
       buildForward({ ...params, accountWait: params.accountWait });
       if (manifest.notify && !taskStep) {
@@ -2306,7 +2306,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
   /** The Telegram message for this run, or none (member-forward.ts): its member's bot, else the
    *  project's Super bot (super-rutin). Only a scheduled fire, never a task step or a job the
    *  Super sent; best-effort, never the run's outcome. */
-  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null; approvalNeeded?: 'awaiting-approval' | 'not-approved'; accountWait?: AccountWaitNotice }): void => {
+  const buildForward = (params: { status: RunStatus; error: string | null; reviewCardId?: string | null; summary?: string | null; document?: string | null; approvalNeeded?: ApprovalNeeded; accountWait?: AccountWaitNotice }): void => {
     try {
       const scheduled = !opts.ask && !opts.app && !opts.task && !opts.board && !opts.override?.light && !taskStep;
       // A Super automation's answer is the Super's own turn, never a forwarded run result.

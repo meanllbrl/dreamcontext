@@ -1201,7 +1201,8 @@ export function registerAutomationsCommand(program: Command): void {
     .command('list')
     .description('List automations with schedule, approval, and last-run status')
     .option('--json', 'Emit as JSON')
-    .action((opts: { json?: boolean }) => {
+    .option('--agent <slug>', "Only this AI Team member's own automations (it and its routines)")
+    .action((opts: { json?: boolean; agent?: string }) => {
       const root = ensureContextRoot();
       const projectRoot = projectRootFor(root);
 
@@ -1210,7 +1211,7 @@ export function registerAutomationsCommand(program: Command): void {
         warn(`Auto-repaired: removed stray sharing entry "${line}" — that automation is flagged private.`);
       }
 
-      const manifests = listAutomations(root);
+      const manifests = listAutomations(root).filter((m) => !opts.agent || m.agent === opts.agent);
 
       if (opts.json) {
         const now = new Date();

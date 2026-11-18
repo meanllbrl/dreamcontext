@@ -855,7 +855,10 @@
     {
       "path": "automations list",
       "desc": "List automations with schedule, approval, and last-run status",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--agent"
+      ]
     },
     {
       "path": "automations logs",
