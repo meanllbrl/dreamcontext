@@ -172,3 +172,47 @@ describe('his language, enforced (finding 2)', () => {
     expect(t.atResult(true)).toBeNull();
   });
 });
+
+describe('a step between tools never reaches his phone (finding 5)', () => {
+  type HubInternals = { onChatChange(entry: { sessionId: string; status: string }, from: string): void; textChains: Map<string, Promise<void>> };
+  const idle = async (hub: TelegramHub) => {
+    const h = hub as unknown as HubInternals;
+    h.onChatChange({ sessionId: 's', status: 'idle' }, 'working');
+    await h.textChains.get('s');
+  };
+
+  it('the permission note of 11 Nov, written between tools: never sent, only the reply after it', async () => {
+    const { hub, log } = onTelegramHub('English');
+    expect(await hub.onAssistantText('s', 'No rm in the command; it only writes review packets in its worktree. Allowing.', { turns: [], inputs: undefined, mark: OWNER_TURN })).toBe(false);
+    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nThe review passed; the branch is ready to merge.', { turns: [], inputs: undefined, mark: OWNER_TURN })).toBe(true);
+    await idle(hub);
+    const sent = log.filter((l) => l.method === 'sendMessage').map((l) => l.text ?? '');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).not.toContain('Allowing');
+  });
+
+  it('in his Telegram turn, short texts between tools are dropped; the last one is his answer, sent at the end', async () => {
+    const { hub, log } = onTelegramHub('Turkish');
+    const turn = { ref: 'abc123', answered: false, sessionId: 's' } as unknown as { answered: boolean };
+    const at = { turns: [turn as never], inputs: undefined, mark: OWNER_TURN };
+    expect(await hub.onAssistantText('s', 'Şimdi kayıtlara bakıyorum.', at)).toBe(false);
+    expect(await hub.onAssistantText('s', 'Testleri çalıştırıyorum.', at)).toBe(false);
+    expect(await hub.onAssistantText('s', 'Tamam, sürüm yayında.', at)).toBe(false);
+    expect(log.filter((l) => l.method === 'sendMessage')).toEqual([]);
+    await idle(hub);
+    const sent = log.filter((l) => l.method === 'sendMessage').map((l) => l.text ?? '');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('sürüm yayında');
+  });
+
+  it('a marked reply after a step goes at once, and the step is gone', async () => {
+    const { hub, log } = onTelegramHub('Turkish');
+    const at = { turns: [{ ref: 'abc123', answered: false, sessionId: 's' } as never], inputs: undefined, mark: OWNER_TURN };
+    await hub.onAssistantText('s', 'Bakıyorum.', at);
+    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nSürüm 2.4 yayında.', at)).toBe(true);
+    await idle(hub);
+    const sent = log.filter((l) => l.method === 'sendMessage').map((l) => l.text ?? '');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('Sürüm 2.4');
+  });
+});

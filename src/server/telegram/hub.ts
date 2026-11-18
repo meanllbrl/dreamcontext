@@ -280,6 +280,10 @@ export class TelegramHub implements TelegramHubApi {
   /** Per Super chat: its texts still being sent, chained so they reach Telegram in the order the
    *  Super wrote them; a turn's end waits on it before it may call the turn silent. */
   private textChains = new Map<string, Promise<void>>();
+  /** Per Super chat, its newest short unmarked text of his Telegram turn (finding 5): sent at the
+   *  turn's end only if nothing came after it; a later text means it was a step between tools.
+   *  Dies on the next text, the turn's end or the chat's death. */
+  private tails = new Map<string, { text: string; turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark: SuperTurnMark }>();
   /** Per Super binding: where the owner's LATEST message came from (`onTelegram`).
    *  DERIVED, never set by an agent: `injectText` (an authorized Telegram message or a button the
    *  hub turned into a turn) marks `telegram`; his own words typed on the Mac in ANY dreamcontext
@@ -1278,9 +1282,20 @@ export class TelegramHub implements TelegramHubApi {
     if (!key) return;
     const ab = this.active.get(key);
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
-    if (entry.status === 'gone') for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
+    if (entry.status === 'gone') {
+      this.tails.delete(entry.sessionId);
+      for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
+    }
     if (entry.status === 'idle' && from !== 'idle') {
       this.turnInputs.delete(entry.sessionId);
+      // The turn's last short text, if it still is the last: his answer. Queued after every text
+      // of the turn, so it is read once they all went their way.
+      const sid = entry.sessionId;
+      this.queueSend(sid, async () => {
+        const tail = this.tails.get(sid);
+        this.tails.delete(sid);
+        return tail ? this.onAssistantText(sid, tail.text, { turns: tail.turns, inputs: tail.inputs, mark: tail.mark, tail: true }) : false;
+      });
       // Every text of this turn was emitted before its `result`: the ones still sending are here.
       const sending = this.textChains.get(entry.sessionId);
       for (const t of [...this.turns.values()]) {
@@ -1408,7 +1423,9 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** True when a message of this text landed on Telegram. */
-  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark?: SuperTurnMark }): Promise<boolean> {
+  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark?: SuperTurnMark; tail?: boolean }): Promise<boolean> {
+    // A new text: the short one held before it was a step between tools, never his answer.
+    if (!at?.tail) this.tails.delete(sessionId);
     const turns = at?.turns ?? this.turnsOf(sessionId);
     const inputs = at ? at.inputs : this.turnInputs.get(sessionId);
     let ab = this.bindingOfSession(sessionId);
@@ -1440,6 +1457,13 @@ export class TelegramHub implements TelegramHubApi {
       return this.sendAnswer(ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
     }
     const sections = splitReplySections(text);
+    // A short text with no reply mark is the Super talking to itself between tool calls ("No rm in
+    // the command ... Allowing.", Doc's report finding 5) until the turn proves it the last word:
+    // it waits for the turn's end and goes, by the rules below, only if nothing came after it.
+    if (!at?.tail && !isOwnerProse(text) && !sections.some((s) => s.refs.length)) {
+      if (text.trim()) this.tails.set(sessionId, { text, turns, inputs, mark });
+      return false;
+    }
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
     // under a Mac ref, an owed answer); each section once, through this one sender.
     const wide = this.onTelegram(ab);
