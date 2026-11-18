@@ -38,6 +38,7 @@ export function Results({ run, teams, controlTeam, data, canPick, picking, pickE
         </p>
       )}
       {!jury && data?.state === 'judging' && <p className="hk-muted">{t('hk.result.judging')}</p>}
+      {jury && !jury.ranking.length && !pick && <p className="hk-jury">{t('hk.result.juryNone')}</p>}
       {pickError && <p className="hk-error" role="alert">{pickError}</p>}
 
       <div className="hk-results__cols">
@@ -47,7 +48,7 @@ export function Results({ run, teams, controlTeam, data, canPick, picking, pickE
           return (
             <TeamResult
               key={id} run={run} team={tm} place={jury?.ranking.length ? i + 1 : null}
-              score={jury?.scores[id] ?? null} originality={jury?.originality[id] ?? null}
+              score={jury?.ranking.length ? jury.scores[id] ?? null : null} originality={jury?.ranking.length ? jury.originality[id] ?? null : null}
               control={id === controlTeam} picked={pick === id}
               canPick={canPick} picking={picking === id} anyPicking={!!picking}
               onOpen={() => onOpen(id)} onPick={() => onPick(id)} onApply={onApply}

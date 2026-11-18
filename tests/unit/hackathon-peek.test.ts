@@ -72,6 +72,25 @@ describe('jury', () => {
     expect(res.sameVendor).toBe(true);
     expect(res.ranking).toHaveLength(3);
   });
+  it('a failed Codex judge is replaced by a Claude model, and no verdict at all ranks nobody', async () => {
+    const ok = '{"winner":"B","A":{"solves":5,"evidence":5,"feasible":5,"original":5},"B":{"solves":8,"evidence":8,"feasible":8,"original":8},"why":"y"}';
+    const asked: string[] = [];
+    // Codex is over its usage limit: every Codex call throws, Claude answers.
+    const call: ModelCall = async (m, _p, tool) => { asked.push(`${tool}:${m}`); if (tool === 'codex') throw new Error('usage limit'); return ok; };
+    const two = [{ id: 'a', name: 'A', persona: '', tool: 'claude' as const, model: 'haiku', inner: 'solo' as const }, { id: 'b', name: 'B', persona: '', tool: 'claude' as const, model: 'haiku', inner: 'trio' as const }];
+    const res = await runJury({ teams: two, problem: 'Hero' }, { a: 'Sunum A', b: 'Sunum B' }, call, { codex: true });
+    expect(asked).toEqual(['codex:', 'claude:sonnet', 'codex:', 'claude:sonnet']);
+    expect(res.verdicts.every((v) => v.winner && v.judge.tool === 'claude')).toBe(true);
+    expect(res.judges).toEqual([{ tool: 'claude', model: 'sonnet' }]);
+    expect(res.sameVendor).toBe(true);
+    expect(res.undecided).toBe(false);
+    expect(res.ranking).toHaveLength(2);
+
+    const dead: ModelCall = async () => { throw new Error('down'); };
+    const none = await runJury({ teams: two, problem: 'Hero' }, { a: 'Sunum A', b: 'Sunum B' }, dead, { codex: true });
+    expect(none.undecided).toBe(true);
+    expect(none.ranking).toEqual([]);
+  });
   it('judge and similarity calls carry no tools', () => {
     for (const argv of [juryArgv('opus', 'p'), closedCallArgv('haiku', 'p')]) {
       expect(argv[argv.indexOf('--tools') + 1]).toBe('');

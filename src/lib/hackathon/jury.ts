@@ -13,15 +13,19 @@ export const CRITERIA = ['sorunu çözüyor', 'kanıt', 'uygulanabilirlik', 'öz
 
 export interface Judge { tool: TeamTool; model: string }
 
+/** A Claude model no team of the pair used (sonnet first): the same-vendor judge. */
+export function claudeJudge(teamModels: readonly string[]): Judge {
+  const used = new Set(teamModels.map((m) => m.toLowerCase()));
+  return { tool: 'claude', model: ['sonnet', 'opus', 'haiku'].find((m) => !used.has(m)) ?? 'sonnet' };
+}
+
 /** The judge for a pair of teams. */
 export function pickJudge(teamTools: readonly TeamTool[], teamModels: readonly string[], installed: { codex: boolean }): { judge: Judge; sameVendor: boolean } {
   const vendors = new Set(teamTools);
   if (!vendors.has('codex') && installed.codex) return { judge: { tool: 'codex', model: '' }, sameVendor: false };
   if (!vendors.has('claude')) return { judge: { tool: 'claude', model: 'opus' }, sameVendor: false };
   // Both vendors play, or only Claude is installed: a Claude model no team of the pair used.
-  const used = new Set(teamModels.map((m) => m.toLowerCase()));
-  const model = ['sonnet', 'opus', 'haiku'].find((m) => !used.has(m)) ?? 'sonnet';
-  return { judge: { tool: 'claude', model }, sameVendor: true };
+  return { judge: claudeJudge(teamModels), sameVendor: true };
 }
 
 export function juryPrompt(first: string, second: string, problem: string): string {
@@ -51,6 +55,8 @@ export interface JuryResult {
   ranking: string[];
   sameVendor: boolean;
   judges: Judge[];
+  /** No judge gave a verdict (every call failed or answered no JSON): no ranking, the owner picks. */
+  undecided: boolean;
 }
 
 /** Every pair in both orders. `texts` = each team's presentation text (validated manifest + thesis). */
@@ -65,17 +71,32 @@ export async function runJury(design: Pick<Design, 'teams' | 'problem'>, texts: 
       const ta = design.teams.find((t) => t.id === a)!; const tb = design.teams.find((t) => t.id === b)!;
       const { judge, sameVendor: sv } = pickJudge([ta.tool, tb.tool], [ta.model, tb.model], installed);
       sameVendor ||= sv;
-      judges.push(judge);
+      const note = (j: Judge) => { if (!judges.some((x) => x.tool === j.tool && x.model === j.model)) judges.push(j); };
       for (const order of ['ab', 'ba'] as const) {
         const [x, y] = order === 'ab' ? [a, b] : [b, a];
-        let parsed: Record<string, unknown> | null = null;
-        try { parsed = firstJson(await call(judge.model, juryPrompt(texts[x]!, texts[y]!, design.problem), judge.tool)); } catch { /* counted as no verdict */ }
+        const ask = async (j: Judge): Promise<Record<string, unknown> | null> => {
+          try {
+            const o = firstJson(await call(j.model, juryPrompt(texts[x]!, texts[y]!, design.problem), j.tool));
+            return o && (o.winner === 'A' || o.winner === 'B') ? o : null;
+          } catch { return null; }
+        };
+        let used = judge;
+        let parsed = await ask(judge);
+        // A Codex judge that fails (signed out, over its usage limit, no JSON) is not a verdict:
+        // the pair is judged again by a Claude model, and the result says "aynı firma" when the
+        // teams were Claude too.
+        if (!parsed && judge.tool === 'codex') {
+          const fallback = ta.tool === 'claude' || tb.tool === 'claude' ? claudeJudge([ta.model, tb.model]) : { tool: 'claude' as const, model: 'opus' };
+          parsed = await ask(fallback);
+          if (parsed) { used = fallback; sameVendor ||= ta.tool === 'claude' || tb.tool === 'claude'; }
+        }
+        note(used);
         const sc = (k: 'A' | 'B') => {
           const o = (parsed?.[k] ?? {}) as Record<string, unknown>;
           return { solves: n10(o.solves), evidence: n10(o.evidence), feasible: n10(o.feasible), original: n10(o.original) };
         };
         const w = parsed?.winner === 'A' ? x : parsed?.winner === 'B' ? y : null;
-        verdicts.push({ a, b, order, winner: w, scores: parsed ? { [x]: sc('A'), [y]: sc('B') } : {}, judge, why: String(parsed?.why ?? '').slice(0, 200) });
+        verdicts.push({ a, b, order, winner: w, scores: parsed ? { [x]: sc('A'), [y]: sc('B') } : {}, judge: used, why: String(parsed?.why ?? '').slice(0, 200) });
       }
     }
   }
@@ -87,8 +108,10 @@ export async function runJury(design: Pick<Design, 'teams' | 'problem'>, texts: 
   }
   const scores = Object.fromEntries(ids.map((id) => [id, sums[id]!.n ? sums[id]!.w / sums[id]!.n : 0]));
   const originality = Object.fromEntries(ids.map((id) => [id, sums[id]!.n ? sums[id]!.o / sums[id]!.n : 0]));
-  const ranking = [...ids].sort((p, q) => sums[q]!.wins - sums[p]!.wins || scores[q]! - scores[p]!);
-  return { verdicts, scores, originality, ranking, sameVendor, judges };
+  const undecided = !verdicts.some((v) => v.winner);
+  // No verdict at all is no recommendation: an order drawn from zeros would read as one.
+  const ranking = undecided ? [] : [...ids].sort((p, q) => sums[q]!.wins - sums[p]!.wins || scores[q]! - scores[p]!);
+  return { verdicts, scores, originality, ranking, sameVendor, judges, undecided };
 }
 
 /** For the test that every judge call is closed. */

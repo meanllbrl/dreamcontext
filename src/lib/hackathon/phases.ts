@@ -171,6 +171,7 @@ export function juryPhase(opts: PhaseOptions = {}): Phase<PhaseCtx> {
       const installed = { codex: (opts.codexInstalled ?? (() => !!findCodexBin()))() };
       const result = await runJury(design, texts, opts.modelCall ?? realModelCall, installed);
       writeJsonAtomic(juryPath(deps.contextRoot, run.id), { ...result, at: new Date(deps.now()).toISOString() });
+      if (result.undecided) return moment(ctx, run, 'jüri karar veremedi (hiçbir yargıç cevap vermedi); seçim senin');
       const first = design.teams.find((t) => t.id === result.ranking[0]);
       return moment(ctx, run, `jüri önerisi: ${first?.name ?? '—'}${result.sameVendor ? ' (aynı firma)' : ''}; seçim senin`);
     },
