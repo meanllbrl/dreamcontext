@@ -39,7 +39,7 @@ export function TeamTable({ run, team, frame, control, onOpen }: {
           </span>
         ))}
         <span className="hk-table__edits hk-muted">
-          {frame?.ended ? t('hk.table.ended') : frame ? `${frame.edited.length} ${t('hk.table.files')}` : t('hk.table.waiting')}
+          {frame?.ended ? t('hk.table.ended') : frame ? (frame.edited.length === 1 ? t('hk.table.files.one') : `${frame.edited.length} ${t('hk.table.files')}`) : t('hk.table.waiting')}
         </span>
       </span>
     </button>

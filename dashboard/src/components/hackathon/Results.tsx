@@ -31,7 +31,9 @@ export function Results({ run, teams, controlTeam, data, canPick, picking, pickE
       {data?.result?.stoppedReason && !pick && <p className="hk-note">{fill(t('hk.result.stopped'), { reason: data.result.stoppedReason })}</p>}
       {first && w && (
         <p className="hk-jury">
-          {fill(t('hk.result.jury'), { team: first.name, won: w.won, of: w.of })}
+          {pick
+            ? fill(t('hk.result.juryPicked'), { team: first.name, pick: teams.find((x) => x.id === pick)?.name ?? pick })
+            : w.of ? fill(t('hk.result.jury'), { team: first.name, won: w.won, of: w.of }) : fill(t('hk.result.juryShort'), { team: first.name })}
           {jury?.sameVendor && <span className="hk-chip">{t('hk.result.sameVendor')}</span>}
         </p>
       )}

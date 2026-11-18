@@ -57,7 +57,7 @@ export function StartCard({ run, onStarted }: { run: string; onStarted?: () => v
                 <span className="hk-muted"> · {t(`hk.inner.${tm.inner}`)}</span>
                 {tm.control && <span className="hk-chip">{t('hk.control')}</span>}
               </td>
-              <td>{tm.tool === 'codex' ? 'Codex' : 'Claude'} · {tm.model}</td>
+              <td>{tm.tool === 'codex' ? 'Codex' : 'Claude'} · {tm.model || t('hk.defaultModel')}</td>
               <td className={tm.wholeDisk ? 'hk-warn-ink' : undefined}>{tm.wholeDisk ? t('hk.start.wholeDisk') : t('hk.start.isolated')}</td>
             </tr>
           ))}

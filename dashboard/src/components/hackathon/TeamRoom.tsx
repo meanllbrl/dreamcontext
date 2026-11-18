@@ -104,7 +104,7 @@ export function TeamRoom({ run, team, frame, round, rounds, onBack }: {
             </ul>
           ) : <p className="hk-muted">{t('hk.room.noChanges')}</p>}
           <h4 className="hk-section">{t('hk.room.sources')}</h4>
-          <p className="hk-muted">{fill(t('hk.room.reads'), { n: files?.reads ?? 0 })}</p>
+          <p className="hk-muted">{((files?.reads ?? 0) === 1 ? t('hk.room.reads.one') : fill(t('hk.room.reads'), { n: files?.reads ?? 0 }))}</p>
           {!!files?.dropped.length && (
             <>
               <h4 className="hk-section">{t('hk.room.dropped')}</h4>

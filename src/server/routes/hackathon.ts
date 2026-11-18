@@ -91,7 +91,7 @@ export async function handleHackathonDesign(_req: IncomingMessage, res: ServerRe
   const disk = wholeDiskTeams(d);
   sendJson(res, 200, {
     run: r.id, state: r.state, designHash: designHash(r), problem: clip(d.problem, 500), kind: d.kind,
-    teams: d.teams.map((t) => ({ id: t.id, name: clip(t.name, 40), tool: t.tool, model: t.model || '(hesabın varsayılanı)', inner: t.inner, readIsolated: t.tool === 'claude', wholeDisk: disk.includes(t.id), control: t.id === d.controlTeam })),
+    teams: d.teams.map((t) => ({ id: t.id, name: clip(t.name, 40), tool: t.tool, model: t.model, inner: t.inner, readIsolated: t.tool === 'claude', wholeDisk: disk.includes(t.id), control: t.id === d.controlTeam })),
     mcpTools: d.mcpTools, mcpServers: serversOf(d.mcpTools),
     rounds: d.rounds, roundMinutes: d.roundMinutes, endsAt: d.limit.endsAt,
     limit: { weeklyShareCeiling: d.limit.weeklyShareCeiling, sessionGuard: d.limit.sessionGuard },

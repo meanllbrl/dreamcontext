@@ -39,7 +39,7 @@
 .hk-head__title { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); color: var(--color-text); min-width: 0; overflow-wrap: anywhere; }
 .hk-head__sub { margin-left: auto; }
 .hk-head__grow { flex: 1; }
-.hk-back { border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--font-size-sm); cursor: pointer; padding: var(--space-2) var(--space-1); border-radius: var(--radius-sm); min-height: 36px; }
+.hk-back { border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--font-size-sm); cursor: pointer; padding: var(--space-2) var(--space-1); border-radius: var(--radius-sm); min-height: 36px; white-space: nowrap; flex-shrink: 0; }
 .hk-back:hover { color: var(--color-text); }
 
 .hk-badge {
@@ -70,6 +70,12 @@
 .hk-start__teams th { text-align: left; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); color: var(--color-text-tertiary); padding: var(--space-1) var(--space-2) var(--space-1) 0; }
 .hk-start__teams td { padding: var(--space-2) var(--space-2) var(--space-2) 0; border-top: 1px solid var(--color-border); vertical-align: top; color: var(--color-text); }
 .hk-start__teams .hk-chip { margin-left: var(--space-2); height: 20px; }
+.hk-card--start { container-type: inline-size; }
+@container (max-width: 520px) {
+  .hk-start__teams thead { display: none; }
+  .hk-start__teams tr { display: grid; gap: var(--space-1); padding: var(--space-2) 0; border-top: 1px solid var(--color-border); }
+  .hk-start__teams td { display: block; padding: 0; border-top: 0; }
+}
 .hk-start__facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-3); font-size: var(--font-size-sm); }
 .hk-start__facts dt { color: var(--color-text-tertiary); }
 .hk-start__facts dd { margin: 0; color: var(--color-text); overflow-wrap: anywhere; }
@@ -144,7 +150,8 @@
 .hk-bar[data-over='true'] .hk-bar__fill { background: var(--color-warning); }
 .hk-bar__num { text-align: right; font-variant-numeric: tabular-nums; color: var(--color-text); }
 .hk-moments { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--font-size-sm); color: var(--color-text); }
-.hk-moments li { display: grid; grid-template-columns: 48px 1fr; gap: var(--space-2); }
+.hk-moments li { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2); }
+.hk-moments li > .hk-mono { white-space: nowrap; }
 
 /* Team room. */
 .hk-room__grid { display: grid; grid-template-columns: 240px minmax(0, 1fr) 300px; gap: var(--space-4); align-items: start; }

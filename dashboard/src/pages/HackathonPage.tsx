@@ -98,6 +98,13 @@ function RunScreen({ id, onBack }: { id: string; onBack: () => void }) {
   const [view, setView] = useState<View>({ kind: 'main' });
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // A new screen (room, peek, presentation, back) opens at its top, not where the last one was scrolled.
+  const viewKey = `${view.kind}:${'team' in view ? view.team : 'round' in view ? view.round : ''}`;
+  useEffect(() => {
+    for (let el = document.querySelector('.hk-page') as HTMLElement | null; el; el = el.parentElement) {
+      if (el.scrollTop > 0) el.scrollTop = 0;
+    }
+  }, [viewKey]);
 
   if (isLoading) return <p className="hk-muted">{t('common.loading')}</p>;
   if (isError || !run) return <p className="hk-error">{t('hk.run.failed')} {(error as Error | null)?.message ?? ''}</p>;
