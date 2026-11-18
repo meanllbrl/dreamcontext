@@ -302,7 +302,7 @@ describe('sidebar rail — Workspace order (owner, 2026-10-02)', () => {
     const workspace = block.slice(0, block.indexOf("'nav.group.memory'"));
     const rows = [...workspace.matchAll(/\{\s*(?:page|launch):\s*'([^']+)'([^}]*)\}/g)].map((m) => ({ id: m[1], maturity: /maturity:\s*'([^']+)'/.exec(m[2])?.[1] }));
     // The AI Team row left the rail (owner `uv773y`): members are the Ekip row under Chat.
-    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'lab', 'roadmap', 'apps', 'hypotheses', 'whiteboards', 'council']);
+    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'lab', 'roadmap', 'apps', 'store', 'hypotheses', 'whiteboards', 'council', 'hackathon']);
     // No beta or stable row may sit below an alpha one.
     const firstAlpha = rows.findIndex((r) => r.maturity === 'alpha');
     expect(rows.slice(firstAlpha).every((r) => r.maturity === 'alpha')).toBe(true);

@@ -41,7 +41,8 @@ export function keepAndClean(contextRoot: string, run: RunRecord, design: Design
   let verified = false;
   try {
     git(['--git-dir', gitDir, 'bundle', 'create', out, '--branches']);
-    git(['bundle', 'verify', out], { cwd: join(out, '..') });
+    // Verify against the snapshot repo itself: the brain folder need not be a git repo.
+    git(['--git-dir', gitDir, 'bundle', 'verify', out]);
     verified = true;
   } catch (e) {
     for (const t of design.teams) kept.push({ team: t.id, reason: `paket doğrulanamadı: ${(e as Error).message.split('\n')[0]!.slice(0, 120)}` });

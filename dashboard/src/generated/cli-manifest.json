@@ -2037,6 +2037,84 @@
       ]
     },
     {
+      "path": "hackathon",
+      "desc": "Hackathon: several teams solve one problem; results side by side on its page",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "hackathon conduct",
+      "desc": "",
+      "args": [
+        "<run>"
+      ]
+    },
+    {
+      "path": "hackathon design",
+      "desc": "Print a stats-backed draft design (no model call): every line with its reason and run count",
+      "args": [],
+      "valueFlags": [
+        "--problem",
+        "--kind",
+        "--target"
+      ]
+    },
+    {
+      "path": "hackathon list",
+      "desc": "Every hackathon run, newest first",
+      "args": []
+    },
+    {
+      "path": "hackathon outcome",
+      "desc": "Record what became of the winner's PR",
+      "args": [
+        "<run>"
+      ],
+      "valueFlags": [
+        "--pr"
+      ]
+    },
+    {
+      "path": "hackathon show",
+      "desc": "A run in full: design, hash, moments",
+      "args": [
+        "<run>"
+      ]
+    },
+    {
+      "path": "hackathon start",
+      "desc": "Create the run from a design file and print the start card; the owner presses Başlat on it",
+      "args": [],
+      "valueFlags": [
+        "--design"
+      ]
+    },
+    {
+      "path": "hackathon stats",
+      "desc": "What past hackathons taught, derived from every result.json",
+      "args": [],
+      "valueFlags": [
+        "--kind"
+      ]
+    },
+    {
+      "path": "hackathon status",
+      "desc": "Where a run is (default: the newest)",
+      "args": [
+        "[run]"
+      ]
+    },
+    {
+      "path": "hackathon stop",
+      "desc": "Stop a run now (any caller may: the safe direction)",
+      "args": [
+        "<run>"
+      ],
+      "valueFlags": [
+        "--why"
+      ]
+    },
+    {
       "path": "handsfree",
       "desc": "Hands-free mode: drive this laptop's sessions from your phone (Mac mode)",
       "args": [],
