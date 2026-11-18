@@ -70,7 +70,7 @@ import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, askStillOpen, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
-import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
+import { askWarning, planReportRefusal } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
@@ -2616,10 +2616,6 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
     });
     const show = finishAskShow(c, state, id as string, prep, shown);
-    // A plan child's question whose summary the Super's text never gave: sent, the Super is told
-    // to write it now (owner 2026-11-13: three sentences that pointed at a stage).
-    const superText = getChat(c.who.sessionId)?.lastAssistantText;
-    const warning = planTextWarning(childMode, superText?.[superText.length - 1]);
     // What reached the owner, told as it is (owner-question.ts): a Telegram copy counts only once
     // it LANDED, so its send is waited for (bounded). Only a question he has seen makes the
     // turn's end no second ping; one nobody saw keeps the reply's own notch row.
@@ -2627,7 +2623,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const reach = ownerQuestionReach(state, id as string);
     if (reach.reached) noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
-    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
+    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show });
   },
 
   'queue-done': async (c, b, res) => {

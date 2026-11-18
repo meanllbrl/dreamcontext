@@ -21,11 +21,15 @@ describe('Telegram briefing line', () => {
 });
 
 describe('the Telegram line keeps one question in one place (owner 2026-11-10)', () => {
-  it('tells the Super the card is the question: no repeat, no waiting line, a new card when not answered', async () => {
+  it('tells the Super the card is the question: no repeat, no waiting line, never asked again when not answered (owner 2026-11-18)', async () => {
     const { SUPER_TELEGRAM_LINE: line } = await import('../../src/server/chat-modes.js');
     expect(line).toContain('that card IS the question');
     expect(line).toContain('never repeat its question or options');
-    expect(line).toContain('ask again with a new `super ask` card, never in prose');
+    expect(line).toContain('When his message left the card open (`<super-ask-still-open>`): answer his message and never ask the open card again, in a card or in prose');
+    expect(line).toContain('When his message closed it without deciding');
+    expect(line).toContain('when his words settle it, `super queue done <ask id>`');
+    expect(line).not.toContain('ask again with a new `super ask` card');
+    expect(line).toContain('A choice only he can make still goes in a `super ask` card');
     expect(line).toContain('lists one level deep');
   });
 });
