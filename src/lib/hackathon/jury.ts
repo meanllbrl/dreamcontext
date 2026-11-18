@@ -28,6 +28,15 @@ export function pickJudge(teamTools: readonly TeamTool[], teamModels: readonly s
   return { judge: claudeJudge(teamModels), sameVendor: true };
 }
 
+/** The judge's reason as the owner reads it: whole, or cut at a word with "…" when it runs long. */
+export function sentence(s: string, max = 400): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > max * 0.6 ? cut.slice(0, at) : cut).replace(/[\s,;:.-]+$/, '')}…`;
+}
+
 export function juryPrompt(first: string, second: string, problem: string): string {
   return [
     `Hackathon problem: ${problem.replace(/[<>]/g, '')}`,
@@ -97,7 +106,7 @@ export async function runJury(design: Pick<Design, 'teams' | 'problem'>, texts: 
           return { solves: n10(o.solves), evidence: n10(o.evidence), feasible: n10(o.feasible), original: n10(o.original) };
         };
         const w = parsed?.winner === 'A' ? x : parsed?.winner === 'B' ? y : null;
-        verdicts.push({ a, b, order, winner: w, scores: parsed ? { [x]: sc('A'), [y]: sc('B') } : {}, judge: used, why: String(parsed?.why ?? '').slice(0, 200) });
+        verdicts.push({ a, b, order, winner: w, scores: parsed ? { [x]: sc('A'), [y]: sc('B') } : {}, judge: used, why: sentence(String(parsed?.why ?? '')) });
       }
     }
   }

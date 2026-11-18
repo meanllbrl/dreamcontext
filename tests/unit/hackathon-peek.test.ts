@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { neighbours, peekFeeds, planPeek, routeQuestions } from '../../src/lib/hackathon/peek.js';
 import { overlapLines, scorePairs, closedCallArgv, type ModelCall } from '../../src/lib/hackathon/similarity.js';
-import { juryArgv, pickJudge, runJury } from '../../src/lib/hackathon/jury.js';
+import { juryArgv, pickJudge, runJury, sentence } from '../../src/lib/hackathon/jury.js';
 import type { ThesisCard } from '../../src/lib/hackathon/team-files.js';
 
 const card = (t: string): ThesisCard => ({ thesis: `${t} tezi.`, claims: [`${t} 1`, `${t} 2`, `${t} 3`], status: 'on-track' });
@@ -96,5 +96,16 @@ describe('jury', () => {
       expect(argv[argv.indexOf('--tools') + 1]).toBe('');
       expect(argv).toContain('--strict-mcp-config');
     }
+  });
+});
+
+describe('the jury reason the owner reads', () => {
+  it('stays whole when short and is cut at a word with an ellipsis when long', () => {
+    expect(sentence('Kısa ve net.')).toBe('Kısa ve net.');
+    const long = `${'kayıt formu '.repeat(50)}son`;
+    const out = sentence(long);
+    expect(out.endsWith('…')).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(401);
+    expect(out.slice(0, -1).endsWith('formu') || out.slice(0, -1).endsWith('kayıt')).toBe(true);
   });
 });
