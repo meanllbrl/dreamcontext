@@ -148,3 +148,16 @@ describe('pcmToOggOpus', () => {
     if (r.ok) expect(r.ogg.subarray(0, 4).toString('latin1')).toBe('OggS');
   });
 });
+
+describe('speakSummary — wav (the Mac chat voice card)', () => {
+  it('returns the same speech as one WAV and never calls the encoder', async () => {
+    let encoded = false;
+    const { deps } = fakeDeps({ encode: async () => { encoded = true; return { ok: true, ogg: Buffer.alloc(0) }; } });
+    const r = await speakSummary(LONG, { deps, format: 'wav' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(encoded).toBe(false);
+    expect(r.wav?.subarray(0, 4).toString('latin1')).toBe('RIFF');
+    expect(r.seconds).toBeGreaterThan(0);
+  });
+});

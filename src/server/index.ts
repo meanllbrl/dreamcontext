@@ -284,6 +284,7 @@ import {
   handleVoiceRetranscribe,
   handleDictationStatus, handleDictationInstall,
 } from './routes/agent-voice.js';
+import { handleVoiceSummary } from './routes/voice-summary.js';
 import { pruneTakes } from '../lib/voice/voiceLog.js';
 import { handleAgentDownload } from './routes/agent-download.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut, handleAgentWindowOrderPut } from './routes/agent-sessions.js';
@@ -902,6 +903,8 @@ export function buildRouter(): Router {
   // preferences belong to the MACHINE, not to any one project.
   router.post('/api/agent/voice/stt', handleVoiceStt);
   router.post('/api/agent/voice/tts', handleVoiceTts);
+  // A `dream-voice` card's play button: the whole summary as one WAV, the same speech Telegram gets.
+  router.post('/api/agent/voice/summary', handleVoiceSummary);
   router.post('/api/agent/voice/warm', handleVoiceWarm);
   // A chat's agent retranscribes a take it received (`dreamcontext voice retry`). Vault-
   // agnostic: the vault is the one the caller's window token names, never a `?vault=`.
@@ -1216,7 +1219,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/summary', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

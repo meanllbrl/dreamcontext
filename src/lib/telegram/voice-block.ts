@@ -7,8 +7,9 @@
  *   ```
  *
  * The answer path that already sends that answer to Telegram speaks each block as a voice bubble
- * (`server/telegram/voice-reply.ts`) and sends the rest as before. Nothing else reads it: at the
- * Mac the block is plain text in the chat, and no path but a Telegram answer ever speaks it.
+ * (`server/telegram/voice-reply.ts`) and sends the rest as before. At the Mac chat the block is a
+ * voice-message card (dashboard `VoiceCard`), spoken only when its play button is tapped
+ * (`POST /api/agent/voice/summary`).
  * Pure: no I/O.
  */
 

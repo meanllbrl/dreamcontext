@@ -18,6 +18,7 @@ import { AppRequestCard } from './AppRequestCard';
 import { LearnedCard } from './LearnedCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
+import { VoiceCard } from './VoiceCard';
 import './ChatViews.css';
 
 /**
@@ -71,6 +72,8 @@ export function ChatBlockSegment({ segment, conversationId, session, report, pla
   switch (segment.kind) {
     case 'html':
       return <HtmlView html={segment.html} />;
+    case 'voice':
+      return <VoiceCard title={segment.title} text={segment.text} />;
     case 'view': {
       const sink = session ? (text: string) => postToSession(session, text) : report;
       return conversationId || sink

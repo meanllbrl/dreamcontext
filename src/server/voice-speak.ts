@@ -19,7 +19,7 @@ import { voiceApiKey, readVoiceConfig, DEFAULT_VOICE } from '../lib/voice/config
 import { resolveModel } from '../lib/voice/openrouter.js';
 import { ttsGate, type VoiceGate } from '../lib/voice/limits.js';
 import { speakable } from '../lib/voice/speakable.js';
-import { CLAUSE_TAIL_MS, SENTENCE_TAIL_MS, PCM16_SAMPLE_RATE } from '../lib/voice/wav.js';
+import { CLAUSE_TAIL_MS, SENTENCE_TAIL_MS, PCM16_SAMPLE_RATE, wavFromPcm16 } from '../lib/voice/wav.js';
 import { logVoiceEvent } from '../lib/voice/voiceLog.js';
 import { pcmToOggOpus } from '../lib/voice/encode.js';
 import { redactSecrets } from '../lib/telegram/format.js';
@@ -36,7 +36,7 @@ export const GATE_WAIT_MS = 15_000;
 const GATE_STEP_MS = 250;
 
 export type SpeakSummaryResult =
-  | { ok: true; ogg: Buffer; seconds: number }
+  | { ok: true; ogg: Buffer; seconds: number; wav?: Buffer }
   | { ok: false; reason: 'no_key' | 'too_long' | 'nothing_speakable' | 'no_ffmpeg' | 'failed' };
 
 export interface SpeakDeps {
@@ -75,7 +75,7 @@ export function summaryChunks(text: string, max: number = SUMMARY_CHUNK_CHARS): 
   return out;
 }
 
-export async function speakSummary(text: string, opts: { signal?: AbortSignal; home?: string; deps?: SpeakDeps } = {}): Promise<SpeakSummaryResult> {
+export async function speakSummary(text: string, opts: { signal?: AbortSignal; home?: string; deps?: SpeakDeps; format?: 'ogg' | 'wav' } = {}): Promise<SpeakSummaryResult> {
   const d = opts.deps ?? {};
   const home = opts.home;
   const log = d.log ?? ((e: Record<string, unknown>) => logVoiceEvent(e, home));
@@ -149,6 +149,8 @@ export async function speakSummary(text: string, opts: { signal?: AbortSignal; h
   }
   const pcm = Buffer.concat(results.map((r) => r!.pcm!));
   const seconds = pcm.length / (PCM16_SAMPLE_RATE * 2);
+  // The Mac chat's card plays the SAME speech as a WAV (WKWebView has no Ogg/Opus): no ffmpeg.
+  if (opts.format === 'wav') return done({ ok: true, ogg: Buffer.alloc(0), wav: wavFromPcm16(pcm), seconds }, { chunks: chunks.length, retried, format: 'wav' });
   const enc = await (d.encode ?? pcmToOggOpus)(pcm);
   if (!enc.ok) return done({ ok: false, reason: enc.reason === 'ffmpeg_missing' ? 'no_ffmpeg' : 'failed' }, { chunks: chunks.length, retried });
   return done({ ok: true, ogg: enc.ogg, seconds }, { chunks: chunks.length, retried });

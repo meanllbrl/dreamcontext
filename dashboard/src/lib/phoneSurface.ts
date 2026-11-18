@@ -238,6 +238,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/telegram-readopt/:id/preview',
   'POST /api/telegram-readopt/:id/start',
   'POST /api/agent/voice/tts',
+  'POST /api/agent/voice/summary',
   'POST /api/agent/voice/warm',
   'POST /api/agent/voice/retranscribe',
   'POST /api/agent/voice/log',
