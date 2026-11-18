@@ -163,7 +163,7 @@ async function openAppInner({ suite = 'look', build = false, desktop = false, cl
     const api = ownerKey
       ? start(cli[0], [...cli[1], 'dashboard', '--no-open', '-p', String(apiPort)], { cwd: proj, env: { ...env, DREAMCONTEXT_OWNER_KEY_STDIN: '1' }, stdio: ['pipe', 'ignore', 'ignore'] })
       : start(cli[0], [...cli[1], 'dashboard', '--no-open', '-p', String(apiPort)], { cwd: proj, env });
-    if (ownerKey) { api.stdin.write(`${ownerKey}\n`); api.stdin.end(); }
+    if (ownerKey) { api.stdin.on("error", () => {}); api.stdin.write(`${ownerKey}\n`); api.stdin.end(); }
     await waitFor(`${base}/api/health`, 'the API server', api);
     if (!build) {
       const vitePort = await freePort();

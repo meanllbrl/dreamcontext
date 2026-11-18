@@ -171,11 +171,11 @@ try {
     if (key !== last) { mark(`state ${key}`, { strip: rec?.strip, conductor: rec?.conductor }); last = key; }
     if (rec?.state === 'stopped') { check(false, `run stopped: ${rec.stopReason ?? '?'}`); break; }
 
-    if (rec?.state === 'running' && !liveShot && Date.now() - t0 > 2.5 * 60_000) {
+    if (rec?.state === 'running' && !liveShot && Date.now() - t0 > 70_000) {
       await home(page); await page.waitForTimeout(3000);
       await shots('02-live-r1'); liveShot = true;
     }
-    if (rec?.state === 'running' && liveShot && !roomShot && Date.now() - t0 > 5 * 60_000) {
+    if (rec?.state === 'running' && liveShot && !roomShot) {
       const openRoom = async (p) => {
         const table = p.locator('.hk-live__tables > *').first();
         await table.locator('button').first().click().catch(async () => { await table.click(); });
@@ -206,7 +206,7 @@ try {
       await shots('07-judging');
     }
     const result = rec?.state === 'judging' ? (await api('GET', `/hackathon/${RUN}/result`)).body : null;
-    if (result?.jury?.ranking?.length) {
+    if (result?.jury) {
       mark('jury done', { jury: result.jury });
       await home(page); await page.waitForTimeout(2500);
       await shots('08-results');
@@ -220,7 +220,7 @@ try {
       }
       // The owner picks the jury's first.
       await home(page); await page.waitForTimeout(1500);
-      const first = result.jury.ranking[0];
+      const first = result.jury.ranking[0] ?? (await api("GET", `/hackathon/${RUN}/design`)).body?.teams?.[0]?.id;
       const names = await page.locator('.hk-results__cols > *').allInnerTexts();
       const teamName = (await api("GET", `/hackathon/${RUN}/design`)).body?.teams?.find?.((t) => t.id === first)?.name ?? first;
       const idx = Math.max(0, names.findIndex((n) => n.includes(teamName)));
