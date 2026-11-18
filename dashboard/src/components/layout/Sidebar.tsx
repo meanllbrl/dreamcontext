@@ -104,6 +104,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // stays 'whiteboards': persisted nav state and the chat's appNav deep links carry it.
       { page: 'whiteboards', labelKey: 'nav.whiteboard', maturity: 'alpha' },
       { page: 'council', labelKey: 'nav.council', maturity: 'alpha' },
+      { page: 'hackathon', labelKey: 'nav.hackathon', maturity: 'alpha' },
     ],
   },
   {

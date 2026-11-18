@@ -248,7 +248,7 @@ export function addMoment(r: RunRecord, text: string, at: Date = new Date()): Ru
  * The brain-side local-only paths: team folders, kept work and media never reach git or brain
  * sync. Written once into `_dream_context/hackathon/.gitignore`.
  */
-export const HACKATHON_GITIGNORE = ['*/brief.md', '*/teams/', '*/kept/', '*/media/', '*/.run.lock', '*.tmp'] as const;
+export const HACKATHON_GITIGNORE = ['*/brief.md', '*/teams/', '*/kept/', '*/media/', '*/rounds/', '*/.run.lock', '*.tmp'] as const;
 
 export function ensureGitignore(contextRoot: string): void {
   const p = join(hackathonDir(contextRoot), '.gitignore');

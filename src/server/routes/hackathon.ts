@@ -16,7 +16,7 @@ import { previewText, readDecisions, readMedia } from '../../lib/hackathon/cross
 import { wholeDiskTeams } from '../../lib/hackathon/designer.js';
 import { runFrames } from '../../lib/hackathon/frames.js';
 import { judgeLimit, readingLabel } from '../../lib/hackathon/limit.js';
-import { juryPath } from '../../lib/hackathon/phases.js';
+import { juryPath, roundPath, type RoundRecord } from '../../lib/hackathon/phases.js';
 import { readPresentation, shotsDir } from '../../lib/hackathon/presentation.js';
 import { addMoment, designHash, listRuns, readJson, readRun, resultPath, teamWorkspace, updateRun, RUN_ID_RE, TEAM_ID_RE, type RunRecord } from '../../lib/hackathon/run-store.js';
 import { headSha } from '../../lib/hackathon/snapshot.js';
@@ -194,6 +194,18 @@ export async function handleHackathonMedia(req: IncomingMessage, res: ServerResp
   res.end(got.bytes);
 }
 
+/** GET /api/hackathon/:run/rounds — every finished round's owner record (peek, pair scores). */
+export async function handleHackathonRounds(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>, ctx: string): Promise<void> {
+  const r = runOf(res, params, ctx);
+  if (!r) return;
+  const rounds: RoundRecord[] = [];
+  for (let n = 1; n <= r.design.rounds; n++) {
+    const rec = readJson<RoundRecord>(roundPath(ctx, r.id, n));
+    if (rec && rec.round === n) rounds.push(rec);
+  }
+  sendJson(res, 200, JSON.parse(redactSecrets(JSON.stringify({ run: r.id, rounds }))));
+}
+
 /** GET /api/hackathon/:run/result — jury and result. */
 export async function handleHackathonResult(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>, ctx: string): Promise<void> {
   const r = runOf(res, params, ctx);
@@ -228,7 +240,23 @@ export async function handleHackathonPick(req: IncomingMessage, res: ServerRespo
   const kept = keepAndClean(ctx, next, next.design);
   let check = null;
   if (branch) try { check = checkPr(next, next.design, team, sources(ctx)); } catch { /* shown as unavailable */ }
-  sendJson(res, 200, { ok: true, branch, fetchError, kept, check: check && { branch: check.branch, secretHits: check.secretHits, elsewhere: check.elsewhere.map((f) => ({ path: f.path, hunks: clip(f.hunks, 6000) })), confirmHash: check.confirmHash, diffstat: clip(check.diffstat, 4000), codexWinner: check.codexWinner } });
+  sendJson(res, 200, { ok: true, branch, fetchError, kept, check: checkView(check) });
+}
+
+function checkView(check: ReturnType<typeof checkPr> | null) {
+  return check && { branch: check.branch, secretHits: check.secretHits, elsewhere: check.elsewhere.map((f) => ({ path: f.path, hunks: clip(f.hunks, 6000) })), confirmHash: check.confirmHash, diffstat: clip(check.diffstat, 4000), codexWinner: check.codexWinner };
+}
+
+/** GET /api/hackathon/:run/pr-check — the PR confirm card's facts for the picked team (read only). */
+export async function handleHackathonPrCheck(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>, ctx: string): Promise<void> {
+  const r = runOf(res, params, ctx);
+  if (!r) return;
+  const result = readJson<{ pick: string | null }>(resultPath(ctx, r.id));
+  if (r.state !== 'picked' || !result?.pick) { sendError(res, 409, 'not_picked', 'Önce bir ekip seç.'); return; }
+  let check: ReturnType<typeof checkPr> | null = null;
+  let reason: string | null = null;
+  try { check = checkPr(r, r.design, result.pick, sources(ctx)); } catch (e) { reason = clip((e as Error).message.split('\n')[0] ?? '', 200); }
+  sendJson(res, 200, { pick: result.pick, check: checkView(check), reason });
 }
 
 /** POST /api/hackathon/:run/pr — push and open the PR, only on the owner's word. */
@@ -249,7 +277,7 @@ export async function handleHackathonPr(req: IncomingMessage, res: ServerRespons
 
 /** Read for tests: the hackathon route patterns, as registered. */
 export const HACKATHON_ROUTES = {
-  get: ['/api/hackathon', '/api/hackathon/:run', '/api/hackathon/:run/design', '/api/hackathon/:run/frames', '/api/hackathon/:run/result',
+  get: ['/api/hackathon', '/api/hackathon/:run', '/api/hackathon/:run/design', '/api/hackathon/:run/frames', '/api/hackathon/:run/rounds', '/api/hackathon/:run/result', '/api/hackathon/:run/pr-check',
     '/api/hackathon/:run/teams/:team/files', '/api/hackathon/:run/teams/:team/presentation', '/api/hackathon/:run/teams/:team/media'],
   post: ['/api/hackathon/:run/start', '/api/hackathon/:run/stop', '/api/hackathon/:run/resume', '/api/hackathon/:run/pick', '/api/hackathon/:run/pr'],
 } as const;

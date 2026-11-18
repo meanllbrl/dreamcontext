@@ -61,7 +61,7 @@ import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleRelea
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 import {
-  handleHackathonList, handleHackathonGet, handleHackathonDesign, handleHackathonFrames, handleHackathonResult, handleHackathonFiles,
+  handleHackathonList, handleHackathonGet, handleHackathonDesign, handleHackathonFrames, handleHackathonResult, handleHackathonFiles, handleHackathonRounds, handleHackathonPrCheck,
   handleHackathonPresentation, handleHackathonMedia, handleHackathonStart, handleHackathonStop, handleHackathonResume, handleHackathonPick, handleHackathonPr,
 } from './routes/hackathon.js';
 import { handlePluginsList, handlePluginInstall, handlePluginRemove, handlePluginPins } from './routes/plugins.js';
@@ -553,6 +553,8 @@ export function buildRouter(): Router {
   router.get('/api/hackathon/:run/design', handleHackathonDesign);
   router.get('/api/hackathon/:run/frames', handleHackathonFrames);
   router.get('/api/hackathon/:run/result', handleHackathonResult);
+  router.get('/api/hackathon/:run/rounds', handleHackathonRounds);
+  router.get('/api/hackathon/:run/pr-check', handleHackathonPrCheck);
   router.get('/api/hackathon/:run/teams/:team/files', handleHackathonFiles);
   router.get('/api/hackathon/:run/teams/:team/presentation', handleHackathonPresentation);
   router.get('/api/hackathon/:run/teams/:team/media', handleHackathonMedia);

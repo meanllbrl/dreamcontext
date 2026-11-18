@@ -11,7 +11,7 @@ import { runJury } from './jury.js';
 import { answerBlock, planPeek, questionBlock, routeQuestions } from './peek.js';
 import { captureEvidence, juryText, readPresentation } from './presentation.js';
 import { addMoment, readRun, runDir, teamWorkspace, updateRun, writeJsonAtomic, type Phase, type RunRecord } from './run-store.js';
-import { overlapLines, realModelCall, scorePairs, type ModelCall } from './similarity.js';
+import { overlapLines, realModelCall, scorePairs, type ModelCall, type SimilarPair } from './similarity.js';
 import type { PeekQuestion, ThesisCard } from './team-files.js';
 
 export const PRESENTATION_MINUTES = 15;
@@ -86,14 +86,22 @@ export function roundsPhase(opts: PhaseOptions = {}): Phase<PhaseCtx> {
         }
 
         // Similarity gate: the later team of a pair above the gate is told.
+        let pairs: SimilarPair[] = [];
         if (round < design.rounds) {
           const peers = Object.fromEntries(Object.entries(cards).filter(([id]) => id !== design.controlTeam));
-          const pairs = await scorePairs(peers, call);
+          pairs = await scorePairs(peers, call);
           const lines = overlapLines(pairs, design.teams.map((t) => t.id), design.peek.gate);
           for (const [team, ls] of Object.entries(lines)) for (const l of ls) push(team, l);
           const close = pairs.filter((p) => p.score > design.peek.gate).length;
           if (pairs.length) run = moment(ctx, run, `yakınlık: ${pairs.length} çift ölçüldü${close ? `, ${close} çift çok yakın` : ''}`);
         }
+        // The owner's record of the round (the peek screen and the strip's "how different"): who
+        // saw whom, the cards, the routed questions and the pair scores. Local only (gitignored).
+        writeRoundRecord(deps.contextRoot, run.id, {
+          round, at: new Date(deps.now()).toISOString(), cards, seen: peek.seen,
+          questions: Object.entries(routed).flatMap(([to, list]) => list.map((q) => ({ from: q.from, to, text: q.text }))),
+          pairs: pairs.map((p) => ({ a: p.a, b: p.b, score: p.score })), gate: design.peek.gate,
+        });
         state.pending = next;
         ctx.saveState();
       }
@@ -125,6 +133,26 @@ export function presentationPhase(): Phase<PhaseCtx> {
       return readRun(deps.contextRoot, run.id) ?? run;
     },
   };
+}
+
+/** One round's owner record (the peek screen reads it). */
+export interface RoundRecord {
+  round: number;
+  at: string;
+  cards: Record<string, ThesisCard | null>;
+  /** team -> the teams whose cards it saw (empty when the peek was closed). */
+  seen: Record<string, string[]>;
+  questions: { from: string; to: string; text: string }[];
+  pairs: { a: string; b: string; score: number }[];
+  gate: number;
+}
+
+export function roundPath(contextRoot: string, runId: string, round: number): string {
+  return `${runDir(contextRoot, runId)}/rounds/r${round}.json`;
+}
+
+export function writeRoundRecord(contextRoot: string, runId: string, rec: RoundRecord): void {
+  writeJsonAtomic(roundPath(contextRoot, runId, rec.round), rec);
 }
 
 export function juryPath(contextRoot: string, runId: string): string {

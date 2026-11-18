@@ -42,6 +42,8 @@ export interface PeekPlan {
   messages: Record<string, string[]>;
   /** Per team: who its question goes to (resolved team id). */
   routes: Record<string, { to: string; side: 'left' | 'right' }>;
+  /** Per team: the teams whose cards it saw (the owner's peek screen). */
+  seen: Record<string, string[]>;
 }
 
 /**
@@ -51,7 +53,8 @@ export interface PeekPlan {
 export function planPeek(design: Pick<Design, 'teams' | 'controlTeam' | 'rounds'>, round: number, cards: Record<string, ThesisCard | null>): PeekPlan {
   const messages: Record<string, string[]> = {};
   const routes: PeekPlan['routes'] = {};
-  if (!peekFeeds(round, design.rounds)) return { messages, routes };
+  const seen: PeekPlan['seen'] = {};
+  if (!peekFeeds(round, design.rounds)) return { messages, routes, seen };
   for (const team of ring(design)) {
     const n = neighbours(design, team);
     if (!n) continue;
@@ -66,8 +69,9 @@ export function planPeek(design: Pick<Design, 'teams' | 'controlTeam' | 'rounds'
       ...blocks,
     ];
     routes[team] = { to: n.right, side: 'right' };
+    seen[team] = sides.map((side) => (side === 'left' ? n.left : n.right));
   }
-  return { messages, routes };
+  return { messages, routes, seen };
 }
 
 /**

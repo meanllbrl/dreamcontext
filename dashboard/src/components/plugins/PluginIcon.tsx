@@ -27,4 +27,5 @@ const GLYPH: Record<PluginId, ReactElement> = {
   lab: <><path d="M5 20V10" /><path d="M10 20V5" /><path d="M15 20v-7" /><path d="M20 20V8" /></>,
   council: <><circle cx="12" cy="6" r="2.5" /><circle cx="5.5" cy="17" r="2.5" /><circle cx="18.5" cy="17" r="2.5" /><path d="M10.7 8.2 7 14.8M13.3 8.2 17 14.8M8 17h8" /></>,
   marketing: <><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z" /></>,
+  hackathon: <><path d="M8 4h8v5a4 4 0 0 1-8 0z" /><path d="M8 6H5.5a2.5 2.5 0 0 0 2.6 3.6M16 6h2.5a2.5 2.5 0 0 1-2.6 3.6" /><path d="M12 13v4M8.5 20h7" /></>,
 };

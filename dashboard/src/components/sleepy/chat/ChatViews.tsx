@@ -16,6 +16,7 @@ import { AgentThreadCard } from './AgentThreadCard';
 import { AutomationApprovalCard } from './AutomationApprovalCard';
 import { AppRequestCard } from './AppRequestCard';
 import { LearnedCard } from './LearnedCard';
+import { StartCard as HackathonStartCard } from '../../hackathon/StartCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
@@ -157,6 +158,10 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
     // from the rules store by id (learning loop C9). His tap is reported into this conversation.
     case 'learned':
       return <LearnedCard spec={view} session={session} report={report} />;
+    // DERIVED: a hackathon run's start card, drawn only from the run's real design
+    // (`GET /api/hackathon/:run/design`); Başlat is the owner's own click, bound to the design hash.
+    case 'hackathon':
+      return <HackathonStartCard run={view.run} />;
     // Hoisted OUT of the transcript: a pin lives on the shelf docked to the composer, which is
     // the whole point of it — drawn here as well, it would scroll away exactly like the inline
     // card it exists to replace. `PinShelf` collects them. Their `notices` still render above,

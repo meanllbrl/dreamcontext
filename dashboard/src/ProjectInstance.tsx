@@ -19,6 +19,7 @@ import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
 import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
 import { CouncilPage } from './pages/CouncilPage';
+import { HackathonPage } from './pages/HackathonPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
 import { AppsPage } from './pages/AppsPage';
@@ -529,6 +530,8 @@ const PageRouter = memo(function PageRouter({
       return <KnowledgePage focus={focus} />;
     case 'council':
       return <CouncilPage />;
+    case 'hackathon':
+      return <HackathonPage focus={focus} />;
     case 'settings':
       return <SettingsPage focus={focus} />;
     case 'whiteboards':
