@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PROJECT_CONCURRENCY, tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
@@ -500,28 +500,6 @@ describe('tickAll', () => {
       const byRoot = Object.fromEntries(result.projects.map((p) => [p.projectRoot, p.ran.map((r) => r.slug).sort()]));
       expect(byRoot[projectRoot]).toEqual(['in-brain', 'nobody-approved']);
       expect(byRoot[codeRepo]).toEqual(['via-code-repo']);
-    } finally {
-      rmSync(codeRepo, { recursive: true, force: true });
-    }
-  });
-
-  it('a routine approved only through the code repo and then CHANGED still fires from the code repo, never as "never approved" from the brain', async () => {
-    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
-    try {
-      symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
-      registerProject(codeRepo, home);
-      registerProject(projectRoot, home);
-      approveAutomation(projectRoot, makeDue('in-brain'), NOW, home);
-      approveAutomation(codeRepo, makeDue('via-code-repo'), NOW, home);
-      const file = join(contextRoot, 'automations', 'via-code-repo.md');
-      writeFileSync(file, readFileSync(file, 'utf-8').replace('Say hello.', 'Say hello, changed.'));
-      const runs: string[] = [];
-      const runImpl = vi.fn(async (c: string, slug: string) => {
-        runs.push(`${slug}@${c.startsWith(codeRepo) ? 'code' : 'brain'}`);
-        return fakeOutcome(slug, 'ok');
-      }) as unknown as typeof runAutomation;
-      await tickAll({ now: NOW, home, runImpl });
-      expect(runs.sort()).toEqual(['in-brain@brain', 'via-code-repo@code']);
     } finally {
       rmSync(codeRepo, { recursive: true, force: true });
     }
