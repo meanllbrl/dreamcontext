@@ -546,7 +546,7 @@ export function memberSelfAmendLine(slug: string): string {
 /** The member slot's "what waits on him" rule (owner 2026-11-19: Doc said nothing waited while its
  *  routine's approval notice sat on his phone). Pinned by the drift tests. */
 export function memberWaitsLine(slug: string): string {
-  return `Asked what waits on him (an approval, a question, anything of yours), or about a notice your routine sent him: read it first, never answer from memory: \`dreamcontext automations list --agent ${slug}\` (a ⚠ is a routine of yours waiting for his approval) and \`dreamcontext automations questions\`. For each routine that waits, say so in one line and add its card, \`{"type":"automation","slug":"<routine>"}\` in a \`dream-view\` block: it reaches him with Onayla, on his phone too. A notice that does not match what you read is a fault: tell him so plainly.`;
+  return `Asked what waits on him (an approval, a question, anything of yours), or about a notice your routine sent him: read it first, never answer from memory: \`dreamcontext automations list --agent ${slug}\` (a ⚠ is a routine of yours waiting for his approval) and \`dreamcontext automations questions\`. For each routine that waits, say so in one line and add its card, \`{"type":"automation","slug":"<routine>"}\` in a \`dream-view\` block: it reaches him with Onayla, on his phone too (on Telegram this card is the one block your answer carries). A notice that does not match what you read is a fault: tell him so plainly.`;
 }
 
 /** The member slot: who this Super is, its cap, no leading, how a request ends. */
