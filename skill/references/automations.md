@@ -613,7 +613,7 @@ Full flags for every verb live in [cli-reference.md](cli-reference.md#automation
 |---|---|
 | `agents list` / `show` / `create` / `edit` / `approve` / `share` / `unshare` / `remove` | The agents themselves: who does the work. `approve` refuses inside a Claude session or an agent run. |
 | `automations create <slug>` | Scaffold a manifest and auto-approve it locally. `--agent <a> [--job "…"]` runs it as an existing agent; `--whiteboard <board>` (without `--agent`) makes it a board agent, scoped to that board. |
-| `automations list` / `show <slug>` | See every automation, or one in full: every slot, the next fire, approval state, run history, and whether a previous run is still orphaned. |
+| `automations list [--agent <member>]` / `show <slug>` | See every automation (or one member's own), or one in full: every slot, the next fire, approval state, run history, and whether a previous run is still orphaned. |
 | `automations condition <slug> [--run]` | Print the approved condition script, or run it once (true / false / error and its output; nothing starts or is recorded). Set it with `create`/`edit --condition`, `--no-condition`, `--wake-when true\|false`. |
 | `automations schedule <slug>` | Show the slots, or edit them: `--add <spec>`, `--remove <n>`, `--slot <spec>` (replace all), `--days/--at` (one slot), `--catchup <hours>` (catch-up window, 1-168). No re-approval. |
 | `automations run <slug> --force` | Run it right now, ignoring the schedule. The live-test step of the capture protocol. |
