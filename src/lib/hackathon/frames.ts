@@ -171,7 +171,8 @@ export function teamFrame(contextRoot: string, runId: string, team: TeamDesign, 
     }
     return { role, state };
   });
-  const inRepo = (e: ToolEvent) => typeof e.input.file_path === 'string' && e.input.file_path.startsWith(`${repo}/`);
+  // A relative path (a Codex file_change may write one) is relative to the team's cwd, its repo.
+  const inRepo = (e: ToolEvent) => typeof e.input.file_path === 'string' && (!e.input.file_path.startsWith('/') || e.input.file_path.startsWith(`${repo}/`));
   const editedAll = everything.filter((e) => ['Edit', 'Write', 'MultiEdit'].includes(e.name) && inRepo(e)).map((e) => screenOf(e, repo).path!).filter(Boolean);
   // Newest last, each path once (at its latest edit).
   const edited = editedAll.filter((p, i) => editedAll.lastIndexOf(p) === i).slice(-30);
