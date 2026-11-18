@@ -43,7 +43,9 @@ import {
   registerProject,
 } from '../../lib/automations/registry.js';
 import {
-  AGENT_AUTONOMY_LEVELS,
+  ASK_NOT_A_LEVEL,
+  CHOOSABLE_AGENT_AUTONOMY,
+  memberLevel,
   AGENT_SELF_ENV,
   APPROVAL_DIFF_FIELDS,
   AutomationError,
@@ -61,8 +63,9 @@ function readAutonomyOption(v: string | undefined): AgentAutonomy | undefined {
   if (insideAgentRun()) {
     throw new AutomationError('An agent cannot change an autonomy level. Ask the owner to set it on the AI Team page.');
   }
-  if (!(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
-    throw new AutomationError(`Invalid autonomy "${v}": expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  if (v === 'ask') throw new AutomationError(ASK_NOT_A_LEVEL);
+  if (!(CHOOSABLE_AGENT_AUTONOMY as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy "${v}": expected one of ${CHOOSABLE_AGENT_AUTONOMY.join(', ')}.`);
   }
   return v as AgentAutonomy;
 }
@@ -255,7 +258,7 @@ export function registerAgentsCommand(program: Command): void {
           agent: {
             slug: agent.slug, title: agent.title, prompt: agent.prompt, soul: agent.soul, pattern, model: agent.model, effort: agent.effort,
             learning: agent.learning, whiteboard: agent.whiteboard, boardOnly: agent.boardOnly === true, shared: agent.shared, implicit: agent.implicit,
-            reportsTo: agent.reportsTo, team: agent.team, autonomy: agent.autonomy,
+            reportsTo: agent.reportsTo, team: agent.team, autonomy: memberLevel(agent.autonomy),
             approvedForChat: v.chat, approvedToRun: v.run, waits: v.waits, usedBy: usage,
             effective: effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy)).replace(/^effective: /, ''),
             boardLimited: envelope.limited, boardQuestion: envelope.question,
@@ -264,7 +267,7 @@ export function registerAgentsCommand(program: Command): void {
         return;
       }
       console.log(header(`${agent.title} (${agent.slug})`));
-      console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}  autonomy: ${agent.autonomy}`);
+      console.log(`  model: ${agent.model ?? 'default'}  effort: ${agent.effort ?? 'default'}  learning: ${agent.learning ? 'on' : 'off'}  autonomy: ${memberLevel(agent.autonomy)}`);
       if (agent.whiteboard) console.log(`  home board: ${agent.whiteboard}${agent.boardOnly ? '  (scope: board)' : ''}`);
       console.log(`  ${effectiveEnvelopeLine(envelope, levelChatMode(agent.autonomy))}`);
       if (envelope.question) {
@@ -388,7 +391,7 @@ export function registerAgentsCommand(program: Command): void {
     .option('--reports-to <agent>', 'The agent it reports to ("none" = straight to you). Unhashed: changes only how the team is drawn')
     .option('--team <name>', 'Its team\'s name, carried by a lead and inherited by its reports ("none" removes it). Unhashed')
     .option('--photo <file>', 'Its photo: a PNG, JPEG, GIF or WebP file (4 MB at most, no symlink); "none" removes it. Unhashed: stays approved')
-    .option('--autonomy <level>', `How much it decides alone (${AGENT_AUTONOMY_LEVELS.join(', ')}); sets the permission mode of its sessions`)
+    .option('--autonomy <level>', `How much it decides alone (${CHOOSABLE_AGENT_AUTONOMY.join(', ')}); sets the permission mode of its sessions`)
     .action((slug: string, opts: SoulOptions & { photo?: string; title?: string; prompt?: string; quote?: string; model?: string; effort?: string; whiteboard?: string; boardOnly?: boolean; learning?: boolean; reportsTo?: string; team?: string; autonomy?: string }) => {
       const root = ensureContextRoot();
       try {

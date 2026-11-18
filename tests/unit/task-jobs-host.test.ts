@@ -13,7 +13,7 @@ import {
   type ChildScript, type Fixture, type SpawnCall,
 } from '../helpers/task-job-fixture.js';
 import { commitAssignment, prepareAssignment } from '../../src/lib/agents/task-assignment.js';
-import { approvePlanAction, continueTaskAction, startDueTaskJobs, unassignTaskJob, type TaskJobDeps } from '../../src/lib/agents/task-starter.js';
+import { continueTaskAction, startDueTaskJobs, unassignTaskJob, type TaskJobDeps } from '../../src/lib/agents/task-starter.js';
 import { runTaskJob, type TaskHostDeps } from '../../src/lib/agents/task-host.js';
 import { deliverTask, reviewTask } from '../../src/lib/agents/task-delivery.js';
 import { claimsForTask, metaFor, readTaskJobs, taskSessionFor } from '../../src/lib/agents/task-jobs.js';
@@ -323,24 +323,17 @@ describe('the level envelopes (M4, AC-C1-6)', () => {
     expect(argAfter(h.calls[1].args, '--disallowedTools')).toBe('Write Edit MultiEdit NotebookEdit');
   });
 
-  it('Ask: the plan step cannot write and its plan reaches a row; work starts only after Approve, resuming the plan\'s session', async () => {
+  it('a stored Ask: no plan step, the work runs at once under Balanced (owner 2026-11-18)', async () => {
     makeAgent(f, 'careful', 'ask');
     writeTask(f, 'fix', { id: 'task_fix' });
     assign('fix', 'careful');
     const h = harness();
     startDueTaskJobs(f.contextRoot, h.deps);
-    expect(await h.runHosts([{ result: '1. Read login.ts\n2. Fix the 500' }])).toEqual(['waiting_owner']);
-    expect(argAfter(h.calls[0].args, '--permission-mode')).toBe('plan');
-    expect(h.calls[0].args).toContain('--disallowedTools');
-    const row = listInboxRows(f.projectRoot, f.home).find((r) => r.kind === 'task-plan');
-    expect(row?.detail).toContain('Fix the 500');
-    // Nothing else starts while the plan waits.
-    startDueTaskJobs(f.contextRoot, h.deps);
-    expect(h.hosts).toHaveLength(1);
-    expect(approvePlanAction(f.contextRoot, 'fix', h.deps)).toEqual({ ok: true });
     await h.runHosts([delivers()]);
-    expect(argAfter(h.calls[1].args, '--permission-mode')).toBe('auto');
-    expect(h.calls[1].args.slice(0, 2)).toEqual(['--resume', argAfter(h.calls[0].args, '--session-id')]);
+    expect(argAfter(h.calls[0].args, '--permission-mode')).toBe('auto');
+    expect(h.calls.map((c) => argAfter(c.args, '--permission-mode'))).not.toContain('plan');
+    expect(h.calls.map((c) => argAfter(c.args, '--permission-mode'))).not.toContain('default');
+    expect(listInboxRows(f.projectRoot, f.home).find((r) => r.kind === 'task-plan')).toBeUndefined();
   });
 
   it('the in-run account-switch continue carries the step\'s envelope', async () => {

@@ -71,7 +71,9 @@ import { loadStatuses } from '../../lib/overrides.js';
 import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
-  AGENT_AUTONOMY_LEVELS,
+  ASK_NOT_A_LEVEL,
+  CHOOSABLE_AGENT_AUTONOMY,
+  memberLevel,
   AutomationError,
   EFFORT_LEVELS,
   type AgentAutonomy,
@@ -303,8 +305,9 @@ function readSoul(v: unknown): string | undefined {
  *  the owner's proof there (uye-bildirim K3 "Level"), which no agent holds. */
 function readAutonomy(v: unknown): AgentAutonomy | undefined {
   if (v === undefined) return undefined;
-  if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
-    throw new AutomationError(`Invalid autonomy: expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  if (v === 'ask') throw new AutomationError(ASK_NOT_A_LEVEL);
+  if (typeof v !== 'string' || !(CHOOSABLE_AGENT_AUTONOMY as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy: expected one of ${CHOOSABLE_AGENT_AUTONOMY.join(', ')}.`);
   }
   return v as AgentAutonomy;
 }
@@ -491,7 +494,7 @@ function globalAgentRow(agent: AgentManifest): GlobalAgentRow {
     roleLine: roleLineOf(agent.prompt),
     description: agent.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     face: faceOf(agent.slug, agent.face),
-    autonomy: agent.autonomy,
+    autonomy: memberLevel(agent.autonomy),
     model: agent.model,
     approvedToRun: checkApproval(GLOBAL_REGISTRY_KEY, target, undefined, 'run').approved,
   };
