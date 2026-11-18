@@ -80,6 +80,10 @@ type Obj = Record<string, unknown>;
 
 /** A Super answer Telegram refused, said back to the Super (undelivered.ts). */
 const LOST_TEXT = 'One of your answers did not reach his phone: Telegram refused the message. It is on the Mac only.';
+/** A turn whose only text was held (owner-text-gate.ts) waits this long for the Super's corrected
+ *  answer before it says "ended silent": the correction turn may never be written (a turn that did
+ *  not end cleanly, the answer to a feedback turn), and then he must still hear something. */
+export const HELD_RETELL_GRACE_MS = 120_000;
 
 /**
  * What the owner himself typed or said in one Telegram message (learning loop C3): the cleaned
@@ -258,8 +262,8 @@ interface TgTurn {
   startedAt: number;
   typing: ReturnType<typeof setInterval> | null;
   answered: boolean;
-  /** A text of this turn was held from the phone (owner-text-gate.ts) and the turn's end asks the
-   *  Super to write it again: not an "ended silent" turn. */
+  /** A text of this turn was held from the phone (owner-text-gate.ts): its end waits
+   *  `HELD_RETELL_GRACE_MS` for the corrected answer before it calls the turn silent. */
   held?: boolean;
 }
 
@@ -280,6 +284,9 @@ export class TelegramHub implements TelegramHubApi {
   /** Per Super chat: its texts still being sent, chained so they reach Telegram in the order the
    *  Super wrote them; a turn's end waits on it before it may call the turn silent. */
   private textChains = new Map<string, Promise<void>>();
+  /** Per Super chat: how many sends LANDED on Telegram so far, so a held turn's end can tell whether
+   *  any answer came after it. Born on a landed send, dies with the chat (`gone`). */
+  private landedCount = new Map<string, number>();
   /** Per Super chat, its newest short unmarked text of his Telegram turn (finding 5): sent at the
    *  turn's end only if nothing came after it; a later text means it was a step between tools.
    *  Dies on the next text, the turn's end or the chat's death. */
@@ -1284,6 +1291,7 @@ export class TelegramHub implements TelegramHubApi {
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
     if (entry.status === 'gone') {
       this.tails.delete(entry.sessionId);
+      this.landedCount.delete(entry.sessionId);
       for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
     }
     if (entry.status === 'idle' && from !== 'idle') {
@@ -1305,8 +1313,16 @@ export class TelegramHub implements TelegramHubApi {
         void (async () => {
           await sending;
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
-          // for the owner says one plain line (it failed or stopped while he waits).
-          if (!t.answered && !t.held) await this.notice(ab, 'warn', LINES.endedSilent, true);
+          // for the owner says one plain line (it failed or stopped while he waits). A turn whose
+          // text was held first waits for the Super's corrected answer: nothing landed in the
+          // grace = he got nothing, so he hears that.
+          if (t.answered) return;
+          if (t.held) {
+            const before = this.landedCount.get(sid) ?? 0;
+            await (this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => { const h = setTimeout(r, ms); h.unref?.(); })))(HELD_RETELL_GRACE_MS);
+            if ((this.landedCount.get(sid) ?? 0) > before) return;
+          }
+          await this.notice(ab, 'warn', LINES.endedSilent, true);
         })();
       }
     }
@@ -1409,7 +1425,11 @@ export class TelegramHub implements TelegramHubApi {
     const turns = this.turnsOf(sessionId);
     const next = (this.textChains.get(sessionId) ?? Promise.resolve())
       .then(() => send(turns))
-      .then((landed) => { if (landed) for (const t of turns) t.answered = true; })
+      .then((landed) => {
+        if (!landed) return;
+        for (const t of turns) t.answered = true;
+        this.landedCount.set(sessionId, (this.landedCount.get(sessionId) ?? 0) + 1);
+      })
       .catch(() => { /* best-effort: nothing landed, the turn stays silent */ });
     this.textChains.set(sessionId, next);
     void next.then(() => { if (this.textChains.get(sessionId) === next) this.textChains.delete(sessionId); });
@@ -1454,7 +1474,12 @@ export class TelegramHub implements TelegramHubApi {
       const all = stripReplyMarks(text);
       if (!all.trim() || hold(all)) return false;
       const refs = splitReplySections(text).flatMap((s) => s.refs);
-      return this.sendAnswer(ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
+      try {
+        return await this.sendAnswer(ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
+      } catch (e) {
+        noteUndelivered(sessionId, 'text', LOST_TEXT);
+        throw e;
+      }
     }
     const sections = splitReplySections(text);
     // A short text with no reply mark is the Super talking to itself between tool calls ("No rm in

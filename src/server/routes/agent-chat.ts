@@ -3603,9 +3603,10 @@ export function startChatSession(
     if (switchPending || heldTexts.length || (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed')) return;
     const note = feedbackTurn([undeliveredNote(takeUndelivered(chatRegistryId))]);
     if (!note) return;
-    cardFeedback.noteFeedbackWritten();
     openTurn();
-    if (!writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: withOwnerLanguage(note, superKnownLanguage(chatRegistryId)) }] } })) closeTurn();
+    // Marked only once it is really written: a failed write leaves the next real turn judged.
+    if (writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: withOwnerLanguage(note, superKnownLanguage(chatRegistryId)) }] } })) cardFeedback.noteFeedbackWritten();
+    else closeTurn();
   }) : () => { /* not a Super */ };
   const setHandoffRun = (next: HandoffRun | null): void => {
     if (!next) return;

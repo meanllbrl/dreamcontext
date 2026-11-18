@@ -19,9 +19,10 @@
  *    (superHandover.ts `isOwnerProse`).
  *
  * Pure (no node imports): the dashboard reads it too. The detectors are deliberately narrow:
- * a pointer back is a SHORT text whose point is "see earlier", never a long answer that also
- * says "as I wrote above"; a wrong language needs a clear majority of the other language's
- * words, never a few English terms in a Turkish sentence.
+ * a pointer back is a SHORT text every clause of which says "see earlier" or "nothing new",
+ * never an answer that also says "as I wrote above" or "the other job still runs"; a wrong
+ * language needs a clear majority of the other language's own words (quotes left out), never a
+ * few English terms in a Turkish sentence.
  */
 import { languageVotes, type OwnerLanguage } from './owner-language.js';
 
@@ -50,24 +51,53 @@ const NOTHING_NEW = [
   /\b(?:nothing (?:new|has changed|changed)|no (?:news|change|update)s?\b|still (?:waiting|running|pending|the same))\b/i,
 ];
 
-/** A short text whose point is that the answer was given earlier: he can never scroll to it on a
- *  phone, and on the Mac it tells him nothing. */
+/** Filler that carries nothing on its own ("Tamam.", "ok"): neither news nor a pointer. */
+const FILLER = /^(?:tamam|ok(?:ay)?|evet|peki|yes|sure|alright|[^\p{L}\p{N}])*$/iu;
+
+/**
+ * The text cut into the clauses a reader takes one by one: sentences, then ";", ":", ", " and
+ * "ve"/"and". A text is judged by EVERY clause, never by one phrase in it: "Ödeme sayfası bitti,
+ * fiyat testi hâlâ çalışıyor" carries a result in its first clause and is news, though its second
+ * says something still runs (review r1, gate-drops-real-news).
+ */
+function clauses(t: string): string[] {
+  return t.split(/[.!?;:\n]+|,\s+|\s+(?:ve|and)\s+/i).map((c) => c.trim()).filter((c) => c && !FILLER.test(c));
+}
+
+const isPointerClause = (c: string): boolean => POINTS_BACK.some((re) => re.test(c));
+const isNoNewsClause = (c: string): boolean => isPointerClause(c) || NOTHING_NEW.some((re) => re.test(c));
+
+/** A short text whose point is that the answer was given earlier: every clause points back or says
+ *  nothing changed, and one of them points back. He can never scroll to "above" on a phone, and on
+ *  the Mac it tells him nothing. A clause that carries a result makes it an answer. */
 export function pointsBack(text: string): boolean {
   const t = plain(text);
-  return !!t && t.length <= POINTER_MAX_CHARS && POINTS_BACK.some((re) => re.test(t));
+  if (!t || t.length > POINTER_MAX_CHARS) return false;
+  const cs = clauses(t);
+  return cs.length > 0 && cs.every(isNoNewsClause) && cs.some(isPointerClause);
 }
 
-/** A short text that only points back, says nothing changed or that something still waits. */
+/** A short text that only points back, says nothing changed or that something still waits: every
+ *  clause of it is one of those, so nothing in it is news. */
 export function saysNothingNew(text: string): boolean {
   const t = plain(text);
-  return !!t && t.length <= POINTER_MAX_CHARS && (pointsBack(t) || NOTHING_NEW.some((re) => re.test(t)));
+  if (!t || t.length > POINTER_MAX_CHARS) return false;
+  const cs = clauses(t);
+  return cs.length > 0 && cs.every(isNoNewsClause);
 }
 
-/** The other language, clearly: his language is known and the text's words are mostly the other
- *  one (at least 4 words of it and more than twice his). A few English terms in Turkish pass. */
+/** Quoted spans ("…", “…”, «…»): an error message or a title he is shown verbatim, never the
+ *  language the Super writes him in. */
+function unquoted(t: string): string {
+  return t.replace(/"[^"\n]*"|“[^”\n]*”|«[^»\n]*»|`[^`\n]*`/g, ' ');
+}
+
+/** The other language, clearly: his language is known and the text's own words (quotes left out)
+ *  are mostly the other one (at least 4 words of it and more than twice his). A few English terms
+ *  in Turkish pass, and so does a Turkish answer quoting an English error. */
 export function inWrongLanguage(text: string, lang: OwnerLanguage | null | undefined): boolean {
   if (!lang) return false;
-  const v = languageVotes(plain(text));
+  const v = languageVotes(unquoted(plain(text)));
   const [his, other] = lang === 'Turkish' ? [v.tr, v.en] : [v.en, v.tr];
   return other >= 4 && other > 2 * his;
 }
@@ -92,11 +122,18 @@ export const OWNER_TEXT_GATE_TAG = 'owner-text-gate';
 /**
  * The hidden note for one finished Super turn, or null when every owner-facing text passed.
  * `texts`: the main agent's text blocks of the turn, in order. Owner-facing = the turn's last text
- * and every text written for him (a reply mark or real length, `isOwnerProse`). In an event turn
- * a pointer back or a "nothing new" line is just dropped (silence was right), never re-asked.
+ * and every text written for him (a reply mark or real length, `isOwnerProse`). Each is judged in
+ * the SAME units the phone holds it by: `sections` cuts a text into its reply sections (the hub's
+ * `splitReplySections`), so a section the hub held is a section asked for again (review r1,
+ * held-without-retell). In an event turn a text with nothing new in it is just dropped (silence
+ * was right), never re-asked.
  */
-export function ownerTextFeedback(texts: readonly string[], opts: { lang?: OwnerLanguage | null; eventTurn: boolean; isOwnerProse: (t: string) => boolean }): string | null {
-  const facing = texts.filter((t, i) => plain(t) && (i === texts.length - 1 || opts.isOwnerProse(t)));
+export function ownerTextFeedback(texts: readonly string[], opts: { lang?: OwnerLanguage | null; eventTurn: boolean; isOwnerProse: (t: string) => boolean; sections?: (t: string) => string[] }): string | null {
+  const split = opts.sections ?? ((t: string) => [t]);
+  const facing = texts
+    .filter((t, i) => plain(t) && (i === texts.length - 1 || opts.isOwnerProse(t)))
+    .flatMap((t) => split(t))
+    .filter((t) => plain(t));
   const lines: string[] = [];
   if (opts.lang && facing.some((t) => inWrongLanguage(t, opts.lang))) {
     lines.push(`Your last answer to him was not in ${opts.lang}. He writes ${opts.lang}, and his phone did not get it. Write that same answer again, in ${opts.lang} only, as short as it was.`);

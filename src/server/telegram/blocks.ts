@@ -174,7 +174,8 @@ export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text
   }
   if (lines.length) await hub.send(ab, lines.map((l) => `📎 <i>${escapeHtml(l)}</i>`).join('\n')).catch(() => {});
   // The Super hears it too (undelivered.ts): his note says what did not go, the Super must not say "sent".
-  if (lines.length) noteUndelivered(sessionId, 'picture', `${lines.length} of the ${wanted.length} picture(s) in your answer did not reach his phone (${lines.join('; ')}).`);
+  // Pictures held back while a secret card waits are not a failure: they go after it (as the card branch).
+  if (lines.length && pictures) noteUndelivered(sessionId, 'picture', `${lines.length} of the ${wanted.length} picture(s) in your answer did not reach his phone (${lines.join('; ')}).`);
   return sent;
 }
 

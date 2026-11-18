@@ -22,6 +22,7 @@
 import { CARD_FEEDBACK_TAG, MAX_VIEWS_PER_MESSAGE, isCardFeedbackText, parseViewBlock } from '../lib/chat-view-spec.js';
 import { ownerTextFeedback } from '../lib/super/owner-text-gate.js';
 import { undeliveredNote } from '../lib/super/undelivered.js';
+import { splitReplySections } from '../lib/telegram/format.js';
 import type { OwnerLanguage } from '../lib/super/owner-language.js';
 
 export { CARD_FEEDBACK_TAG };
@@ -144,15 +145,28 @@ export class CardFeedbackTracker {
   /**
    * The main turn ended: the hidden turn to write now, or null. `ok` = the turn ended normally
    * (no error, no refusal, nothing else about to restart or rotate the session).
+   * The answer to a feedback turn is never judged again (no loop), except for what did not reach
+   * him: a re-send that fails is told, and a failure noted while that turn ran is told now, not
+   * left for his next turn (undelivered.ts keeps each line from being told twice in a row).
    */
   atResult(ok: boolean): string | null {
     const texts = this.words;
     this.words = [];
     const wasFeedback = this.answeringFeedback;
     this.answeringFeedback = false;
-    if (!ok || wasFeedback) return null;
-    const gate = this.gate ? ownerTextFeedback(texts, { lang: this.gate.lang(), eventTurn: this.gate.eventTurn(), isOwnerProse: (t) => this.gate!.isOwnerProse(t) }) : null;
+    if (!ok) return null;
     const lost = this.gate ? undeliveredNote(this.gate.undelivered()) : null;
+    if (wasFeedback) {
+      const text = feedbackTurn([lost]);
+      if (text) this.answeringFeedback = true;
+      return text;
+    }
+    const gate = this.gate ? ownerTextFeedback(texts, {
+      lang: this.gate.lang(),
+      eventTurn: this.gate.eventTurn(),
+      isOwnerProse: (t) => this.gate!.isOwnerProse(t),
+      sections: (t) => splitReplySections(t).map((s) => s.text),
+    }) : null;
     const text = feedbackTurn([cardFeedback(texts.join('\n\n')), gate, lost]);
     if (text) this.answeringFeedback = true;
     return text;

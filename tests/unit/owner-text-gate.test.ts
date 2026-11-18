@@ -11,7 +11,7 @@ import { inWrongLanguage, pointsBack, saysNothingNew, telegramHold, ownerTextFee
 import { detectOwnerLanguage } from '../../src/lib/super/owner-language.js';
 import { CardFeedbackTracker, CARD_FEEDBACK_TAG } from '../../src/server/card-feedback.js';
 import { isOwnerProse } from '../../src/lib/super/inbox.js';
-import { TelegramHub, type ActiveBinding } from '../../src/server/telegram/hub.js';
+import { HELD_RETELL_GRACE_MS, TelegramHub, type ActiveBinding } from '../../src/server/telegram/hub.js';
 import { groupSuperEventTurns } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 
 type Sent = { method: string; text?: string };
@@ -20,10 +20,10 @@ let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'owner-gate-')); });
 afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
-function onTelegramHub(lang: 'Turkish' | 'English' | null = 'Turkish') {
+function onTelegramHub(lang: 'Turkish' | 'English' | null = 'Turkish', sleep?: (ms: number) => Promise<void>) {
   const log: Sent[] = [];
   let mid = 100;
-  const hub = new TelegramHub({ home, ownerLanguage: () => lang });
+  const hub = new TelegramHub({ home, ownerLanguage: () => lang, ...(sleep ? { sleep } : {}) });
   const ab = {
     key: '0123456789abcdef/super', scope: '0123456789abcdef', target: 'super',
     binding: { v: 1, token: 't', botId: 1, botUsername: 'b', chatId: 777, userId: 777, boundAt: '' },
@@ -64,6 +64,25 @@ describe('pointer back and no news (finding 1)', () => {
     expect(telegramHold('Kart hâlâ bekliyor.', { eventTurn: true })).toBe('no-news');
     expect(telegramHold('Kart hâlâ bekliyor.', { eventTurn: false })).toBeNull();
     expect(telegramHold('Durumu bir önceki mesajda yazdım.', { eventTurn: false })).toBe('points-back');
+  });
+
+  it('a text is judged by every clause: a result next to "still running" or "see above" is news (review r1)', () => {
+    const news = [
+      'Ödeme sayfası bitti: build yeşil, PR #42 açık. Fiyat testi hâlâ çalışıyor.',
+      'Payment page is done: build green, PR #42 open. The price test is still running.',
+      'Build geçti, PR #42 açık. Detayı yukarıda yazdım.',
+      'No change on the invoice job; the tax report finished with 3 e-notices.',
+      'Yukarıda yazdım: ödeme sayfası canlıda.',
+    ];
+    for (const t of news) {
+      expect(saysNothingNew(t), t).toBe(false);
+      expect(pointsBack(t), t).toBe(false);
+      expect(telegramHold(t, { eventTurn: true, lang: null }), t).toBeNull();
+    }
+    // Only pointers, "nothing new" and filler: still nothing to tell.
+    expect(saysNothingNew('Tamam. Değişen bir şey yok ve kart hâlâ bekliyor.')).toBe(true);
+    expect(pointsBack('Durumu yukarıda yazdım ve değişen bir şey yok.')).toBe(true);
+    expect(pointsBack('Değişen bir şey yok.')).toBe(false); // nothing new, but no pointer
   });
 
   it('the reply mark is not part of the text it judges', () => {
@@ -135,6 +154,16 @@ describe('his language, enforced (finding 2)', () => {
     expect(inWrongLanguage("That's on me, sorry.", 'Turkish')).toBe(false); // too short to judge: two words
     expect(inWrongLanguage(EN, null)).toBe(false); // his language not known yet: nothing is held
     expect(inWrongLanguage(TR, 'English')).toBe(true);
+    // A Turkish answer quoting an English error verbatim is Turkish (review r1).
+    expect(inWrongLanguage('Hata şu: "The file is not in the repository and it cannot be read by the tool".', 'Turkish')).toBe(false);
+    expect(inWrongLanguage('Hata şu: “The file is not in the repository and it cannot be read by the tool”.', 'Turkish')).toBe(false);
+  });
+
+  it('the turn end judges each reply section, as the phone holds it (review r1)', () => {
+    const said = (text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text }] } });
+    const t = new CardFeedbackTracker({ eventTurn: () => false, lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
+    t.noteFrame(said(`<!-- re:aaa111 -->\n${TR} Ayrıca bugün iki yeni bildirim daha geldi, onlar da olağan.\n<!-- re:bbb222 -->\n${EN}`));
+    expect(t.atResult(true)).toMatch(/not in Turkish/);
   });
 
   it('his own message is still read the same way (detectOwnerLanguage unchanged)', () => {
@@ -170,6 +199,44 @@ describe('his language, enforced (finding 2)', () => {
     // A Turkish answer passes.
     t.noteFrame(said(`<!-- re:abc123 -->\n${TR}`));
     expect(t.atResult(true)).toBeNull();
+  });
+});
+
+describe('a held turn still hears something (review r1, held-without-retell)', () => {
+  type HubInternals = { onChatChange(entry: { sessionId: string; status: string }, from: string): void; turns: Map<string, unknown> };
+  function heldTurn(hub: TelegramHub) {
+    const t = { ref: 'abc123', key: '0123456789abcdef/super', chatId: 777, sessionId: 's', startedAt: 0, typing: null, answered: false, held: true };
+    (hub as unknown as HubInternals).turns.set(t.ref, t);
+  }
+  const silent = (log: Sent[]) => log.filter((l) => (l.text ?? '').includes('cevap yazmadan bitti'));
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  it('no corrected answer within the grace: "ended silent" after all', async () => {
+    let wake!: () => void;
+    const slept: number[] = [];
+    const { hub, log } = onTelegramHub('Turkish', (ms) => { slept.push(ms); return new Promise<void>((r) => { wake = r; }); });
+    heldTurn(hub);
+    (hub as unknown as HubInternals).onChatChange({ sessionId: 's', status: 'idle' }, 'working');
+    await tick();
+    expect(slept).toEqual([HELD_RETELL_GRACE_MS]);
+    expect(silent(log)).toEqual([]);
+    wake();
+    await tick();
+    expect(silent(log)).toHaveLength(1);
+  });
+
+  it('the corrected answer lands within the grace: no "ended silent"', async () => {
+    let wake!: () => void;
+    const { hub, log } = onTelegramHub('Turkish', () => new Promise<void>((r) => { wake = r; }));
+    heldTurn(hub);
+    (hub as unknown as HubInternals).onChatChange({ sessionId: 's', status: 'idle' }, 'working');
+    await tick();
+    hub.queueSend('s', (turns) => hub.onAssistantText('s', '<!-- re:abc123 -->\nSürüm 2.4 yayında.', { turns, inputs: undefined, mark: OWNER_TURN }));
+    await tick();
+    wake();
+    await tick();
+    expect(log.map((l) => l.text).join('\n')).toContain('Sürüm 2.4');
+    expect(silent(log)).toEqual([]);
   });
 });
 

@@ -450,9 +450,11 @@ const RAW_MARK = /(^|\n)[ \t]*<!--\s*re:/;
 /**
  * Prose the Super wrote for the owner (owner 2026-11-14, "anlatmamış ama anlattım diyor"): a text
  * under a `<!-- re:… -->` mark (its `replyTo`, or the raw mark while it streams), or one of real
- * length. It is drawn in place even inside an event turn folded into one line: the server counts
- * every marked section as told (inbox.ts `superSaid`), so the screen must show every one. Short
- * unmarked narration still folds. The server twin is inbox.ts `isOwnerProse` (Telegram).
+ * length. It is drawn in place even inside an event turn folded into one line (the server counts
+ * every marked section as told, inbox.ts `superSaid`), except a text with nothing new in it, every
+ * clause a pointer back or a "still waiting" (owner-text-gate.ts `saysNothingNew`): that folds with
+ * the turn's steps, as Telegram holds it. Short unmarked narration still folds. The server twin is
+ * inbox.ts `isOwnerProse` (Telegram).
  */
 export function isOwnerProse(it: Pick<EventItemLike, 'kind' | 'text' | 'replyTo'>): boolean {
   if (it.kind !== 'text') return false;

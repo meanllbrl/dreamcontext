@@ -10,14 +10,15 @@
  * lines to the Super as one hidden note: at its turn's end, or at once when it is idle (a voice
  * fails seconds after the turn ended).
  *
- * In memory and bounded by time: a line is kept an hour at most and taken once; the same kind of
- * failure is told at most once per ten minutes, so a Super that re-sends and fails again never
- * loops on its own notes.
+ * In memory and bounded by time: a line is kept an hour at most. The SAME line (kind + words) is
+ * told at most once per ten minutes, so a Super that re-sends one thing and fails again never loops
+ * on its own notes; a line inside that window is deferred (kept for a later take), never dropped,
+ * and a different failure of the same kind is told at once (review r1, undelivered-dedupe-by-kind).
  */
 
 export type UndeliveredKind = 'text' | 'voice' | 'picture' | 'card';
 
-/** One kind of failure is told again only after this long (a re-send that fails again). */
+/** The same line is told again only after this long (a re-send that fails again). */
 export const UNDELIVERED_TELL_MS = 10 * 60_000;
 /** A line nobody took within this long is history. */
 export const UNDELIVERED_KEEP_MS = 60 * 60_000;
@@ -36,33 +37,38 @@ function prune(now: number): void {
   for (const [k, at] of lastTold) if (now - at >= UNDELIVERED_TELL_MS) lastTold.delete(k);
 }
 
+/** One line's identity for the ten-minute window: the session, its kind and its words. */
+const toldKey = (sessionId: string, e: Entry): string => `${sessionId}\u0000${e.kind}\u0000${e.line}`;
+
 /** A sender's failure: what of the Super's answer did not reach him, in one line. */
 export function noteUndelivered(sessionId: string | null | undefined, kind: UndeliveredKind, line: string, now = Date.now()): void {
-  if (!sessionId || !line.trim()) return;
+  const clean = line.trim().slice(0, 300);
+  if (!sessionId || !clean) return;
   prune(now);
   const list = pending.get(sessionId) ?? [];
-  if (!list.some((e) => e.kind === kind && e.line === line)) list.push({ kind, line: line.trim().slice(0, 300), at: now });
+  const same = list.find((e) => e.kind === kind && e.line === clean);
+  if (same) same.at = now; else list.push({ kind, line: clean, at: now });
   pending.set(sessionId, list);
   for (const fn of [...listeners]) {
     try { fn(sessionId); } catch { /* a listener's failure is its own */ }
   }
 }
 
-/** The lines to tell the Super now (each kind once per `UNDELIVERED_TELL_MS`), taken. */
+/** The lines to tell the Super now, taken. A line told within `UNDELIVERED_TELL_MS` stays pending
+ *  for a later take: deferred, never lost. */
 export function takeUndelivered(sessionId: string, now = Date.now()): string[] {
   prune(now);
   const list = pending.get(sessionId);
-  pending.delete(sessionId);
   if (!list) return [];
   const out: string[] = [];
-  const toldNow = new Set<UndeliveredKind>();
+  const later: Entry[] = [];
   for (const e of list) {
-    const k = `${sessionId}\u0000${e.kind}`;
-    if (lastTold.has(k) && !toldNow.has(e.kind)) continue;
-    toldNow.add(e.kind);
+    const k = toldKey(sessionId, e);
+    if (lastTold.has(k)) { later.push(e); continue; }
     lastTold.set(k, now);
     out.push(e.line);
   }
+  if (later.length) pending.set(sessionId, later); else pending.delete(sessionId);
   return out;
 }
 
@@ -80,7 +86,8 @@ export function undeliveredNote(lines: readonly string[]): string | null {
   return [
     `<${UNDELIVERED_TAG}>`,
     'Part of what you sent did NOT reach the owner:',
-    ...lines.map((l) => `- ${l}`),
+    // A line can carry the Super's own words (a drawing's title): never a tag of its own.
+    ...lines.map((l) => `- ${l.replace(/</g, '‹')}`),
     'Never say it was sent, is ready or is there. Tell him in one short line what did not arrive, then send it again in a way that reaches him, or say where it is (the Mac). Do not mention this note itself.',
     `</${UNDELIVERED_TAG}>`,
   ].join('\n');
