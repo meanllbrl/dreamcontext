@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { PROJECT_CONCURRENCY, tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
 import { createAutomation, setAutomationEnabled, writeAutomationCache } from '../../src/lib/automations/store.js';
 import { enqueueFire, queuedFire } from '../../src/lib/automations/queue.js';
-import { approveAutomation, listDistinctProjects, registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
+import { approveAutomation, listDistinctProjects, readAutomationsRegistry, registerProject, readDispatcherHeartbeat, writeAutomationsRegistry } from '../../src/lib/automations/registry.js';
 import { automationsLogPath } from '../../src/lib/automations/launchd.js';
 import { LOG_ROTATE_BYTES, type AutomationCache, type RunOutcome } from '../../src/lib/automations/types.js';
 import type { runAutomation } from '../../src/lib/automations/runner.js';
@@ -457,8 +457,11 @@ describe('tickAll', () => {
     const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
     try {
       symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
-      registerProject(codeRepo, home);
-      registerProject(projectRoot, home);
+      // The state an older version left: the link registered first, each root its own bucket.
+      const reg = readAutomationsRegistry(home);
+      reg.projects[codeRepo] = { approvals: {} };
+      reg.projects[projectRoot] = { approvals: {} };
+      writeAutomationsRegistry(reg, home);
       const m = makeDue('gece');
       approveAutomation(projectRoot, m, NOW, home);
       const calls: Array<{ slug: string; fireAt: Date | undefined }> = [];
@@ -482,8 +485,11 @@ describe('tickAll', () => {
     const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
     try {
       symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
-      registerProject(codeRepo, home);
-      registerProject(projectRoot, home);
+      // The state an older version left: the link registered first, each root its own bucket.
+      const reg = readAutomationsRegistry(home);
+      reg.projects[codeRepo] = { approvals: {} };
+      reg.projects[projectRoot] = { approvals: {} };
+      writeAutomationsRegistry(reg, home);
       expect(listDistinctProjects(home).roots).toEqual([projectRoot]);
     } finally {
       rmSync(codeRepo, { recursive: true, force: true });

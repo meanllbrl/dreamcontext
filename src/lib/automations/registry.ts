@@ -314,18 +314,34 @@ function tryRealpath(p: string): string {
 
 /** The stored key for this project, or null when it has none yet. */
 function findProjectKey(registry: AutomationsRegistry, projectRoot: string): string | null {
-  if (registry.projects[projectRoot]) return projectRoot;
   // The global agents' bucket is a name, never a path to resolve (D1).
-  if (projectRoot === GLOBAL_REGISTRY_KEY) return null;
+  if (projectRoot === GLOBAL_REGISTRY_KEY) return registry.projects[projectRoot] ? projectRoot : null;
+  if (registry.projects[projectRoot] && bucketHoldsApprovals(registry, projectRoot)) return projectRoot;
   const canonical = tryRealpath(projectRoot);
-  if (canonical !== projectRoot && registry.projects[canonical]) return canonical;
+  const brain = tryRealpath(join(projectRoot, '_dream_context'));
+  // Every stored key for this project, in the old lookup order: the exact path, its realpath, a
+  // stored path to the same folder, then (2026-11-19) a stored root whose `_dream_context` is the
+  // same folder: a code repo linking a brain IS that brain, so its empty bucket must not hide the
+  // owner's approvals ("Gece denemesi: hiç onaylanmadı" while approved).
+  const candidates: string[] = [];
+  if (registry.projects[projectRoot]) candidates.push(projectRoot);
+  if (canonical !== projectRoot && registry.projects[canonical]) candidates.push(canonical);
+  const sameBrain: string[] = [];
   for (const stored of Object.keys(registry.projects)) {
     // Only a stored absolute path is an alias: the `global` bucket (D1) is a name, and resolving
     // it would read `<cwd>/global`, which a project folder (or a committed link) could be.
-    if (stored === GLOBAL_REGISTRY_KEY || !isAbsolute(stored)) continue;
-    if (stored !== projectRoot && tryRealpath(stored) === canonical) return stored;
+    if (stored === GLOBAL_REGISTRY_KEY || !isAbsolute(stored) || candidates.includes(stored)) continue;
+    if (tryRealpath(stored) === canonical) candidates.push(stored);
+    else if (tryRealpath(join(stored, '_dream_context')) === brain) sameBrain.push(stored);
   }
-  return null;
+  candidates.push(...sameBrain);
+  return candidates.find((k) => bucketHoldsApprovals(registry, k)) ?? candidates[0] ?? null;
+}
+
+/** True when this stored bucket holds any approval (an automation's or an agent's). */
+function bucketHoldsApprovals(registry: AutomationsRegistry, key: string): boolean {
+  const p = registry.projects[key];
+  return Object.keys(p?.approvals ?? {}).length > 0 || Object.keys(p?.agentApprovals ?? {}).length > 0;
 }
 
 /** Idempotently register a project (create an empty approvals bucket if one
@@ -385,14 +401,10 @@ export function listDistinctProjects(home?: string): DistinctProjects {
     const g = groups.get(real);
     if (g) g.push(root); else groups.set(real, [root]);
   }
-  const holdsApprovals = (root: string): boolean => {
-    const p = registry.projects[root];
-    return Object.keys(p?.approvals ?? {}).length > 0 || Object.keys(p?.agentApprovals ?? {}).length > 0;
-  };
   const isLink = (root: string): boolean => {
     try { return lstatSync(join(root, '_dream_context')).isSymbolicLink(); } catch { return true; }
   };
-  const rank = (root: string): number => (holdsApprovals(root) ? 0 : 2) + (isLink(root) ? 1 : 0);
+  const rank = (root: string): number => (bucketHoldsApprovals(registry, root) ? 0 : 2) + (isLink(root) ? 1 : 0);
   const keep = new Set<string>();
   const aliases: DistinctProjects['aliases'] = [];
   for (const group of groups.values()) {
