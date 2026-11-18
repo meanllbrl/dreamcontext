@@ -1460,13 +1460,12 @@ export class TelegramHub implements TelegramHubApi {
       const st = await this.readBound(ab);
       if (st && superTurnFolds(mark, st.ownerBatches)) return false;
     }
-    // What fails the owner-text gate never reaches the phone (owner-text-gate.ts): a text not in
-    // his language, or a text that is only a pointer back ("I wrote it above").
-    // The turn's end asks the Super to write it again (card-feedback.ts), so a held text is no
-    // silent turn.
+    // A text not in his language never reaches the phone (owner-text-gate.ts). The turn's end asks
+    // the Super to write it again (card-feedback.ts); a turn whose text was held waits for that
+    // answer before it calls itself silent.
     const lang = (this.deps.ownerLanguage ?? superKnownLanguage)(sessionId);
     const hold = (part: string): boolean => {
-      if (!telegramHold(part, { lang, eventTurn: mark.event })) return false;
+      if (!telegramHold(part, { lang })) return false;
       for (const t of turns) t.held = true;
       return true;
     };

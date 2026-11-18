@@ -113,7 +113,7 @@ describe('the senders note it', () => {
 describe('the Super hears it at its turn end', () => {
   it('the turn end carries the undelivered lines in the one hidden turn', () => {
     noteUndelivered('s', 'voice', 'Your voice message "Haftalık özet" did not reach his phone as a voice (no_key); its text went instead.');
-    const t = new CardFeedbackTracker({ eventTurn: () => false, lang: () => 'Turkish', isOwnerProse, undelivered: () => takeUndelivered('s') });
+    const t = new CardFeedbackTracker({ lang: () => 'Turkish', isOwnerProse, undelivered: () => takeUndelivered('s') });
     t.noteFrame({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text: '<!-- re:abc123 -->\nSesli özeti gönderdim.' }] } });
     const note = t.atResult(true)!;
     expect(note.startsWith(`<${CARD_FEEDBACK_TAG}>`)).toBe(true);
@@ -122,7 +122,7 @@ describe('the Super hears it at its turn end', () => {
   });
 
   it('a failure noted while a feedback turn ran is told at that turn\'s end, not left for his next turn', () => {
-    const t = new CardFeedbackTracker({ eventTurn: () => false, lang: () => 'Turkish', isOwnerProse, undelivered: () => takeUndelivered('s') });
+    const t = new CardFeedbackTracker({ lang: () => 'Turkish', isOwnerProse, undelivered: () => takeUndelivered('s') });
     t.noteFeedbackWritten();
     noteUndelivered('s', 'card', 'Your drawing "Plan" did not reach his phone.');
     t.noteFrame({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text: 'Durumu yukarıda yazdım.' }] } });

@@ -73,13 +73,11 @@ export function feedbackTurn(parts: readonly (string | null | undefined)[]): str
 }
 
 /**
- * What a Super chat adds to its turn's end (owner-text-gate.ts): a text the phone held (a pointer
- * back, or not in his language) comes back to the Super as a request for the answer itself. Read at the `result`, never
- * before: the turn's kind is the one it ended as.
+ * What a Super chat adds to its turn's end: a text the phone held for not being in his language
+ * (owner-text-gate.ts) comes back to the Super as a request to write it again, and what did not
+ * reach him (undelivered.ts) is told. Read at the `result`, never before.
  */
 export interface SuperTurnGate {
-  /** The server opened this turn (an event), not the owner. */
-  eventTurn(): boolean;
   /** His language as the server knows it (owner-language.ts), or null. */
   lang(): OwnerLanguage | null;
   /** A text written for him (inbox.ts `isOwnerProse`), passed in so this module stays light. */
@@ -163,7 +161,6 @@ export class CardFeedbackTracker {
     }
     const gate = this.gate ? ownerTextFeedback(texts, {
       lang: this.gate.lang(),
-      eventTurn: this.gate.eventTurn(),
       isOwnerProse: (t) => this.gate!.isOwnerProse(t),
       sections: (t) => splitReplySections(t).map((s) => s.text),
     }) : null;

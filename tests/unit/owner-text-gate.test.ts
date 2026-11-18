@@ -1,15 +1,15 @@
 /**
- * The owner-text gate (Doc's 7-day friction report, 2026-11-18): what of the Super's text may
- * reach the owner. The cases are the report's real ones (Tilki 16 Nov: seven "durumu bir önceki
- * mesajda yazdım" in one morning, even as the answer to "ne durumdayız").
+ * The owner-text gate (Doc's 7-day friction report, 2026-11-18): a text not in his language never
+ * reaches his phone and is asked for again. The cases are the report's real ones. Pointer-back and
+ * "nothing changed" lines are NOT held (owner 2026-11-19), and the tests prove it.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { inWrongLanguage, pointsBack, telegramHold, ownerTextFeedback } from '../../src/lib/super/owner-text-gate.js';
+import { inWrongLanguage, telegramHold, ownerTextFeedback } from '../../src/lib/super/owner-text-gate.js';
 import { detectOwnerLanguage } from '../../src/lib/super/owner-language.js';
-import { CardFeedbackTracker, CARD_FEEDBACK_TAG } from '../../src/server/card-feedback.js';
+import { CardFeedbackTracker } from '../../src/server/card-feedback.js';
 import { isOwnerProse } from '../../src/lib/super/inbox.js';
 import { HELD_RETELL_GRACE_MS, TelegramHub, type ActiveBinding } from '../../src/server/telegram/hub.js';
 import { groupSuperEventTurns } from '../../dashboard/src/components/sleepy/super/superHandover.js';
@@ -42,110 +42,42 @@ function onTelegramHub(lang: 'Turkish' | 'English' | null = 'Turkish', sleep?: (
 const OWNER_TURN = { event: false, batch: null };
 const EVENT_TURN = { event: true, batch: 'b1' };
 
-describe('only a pure pointer back is held (finding 1; owner 2026-11-19: "yalnız saf yukarıda yazdım")', () => {
-  it.each([
+describe('a reply that points back or says nothing changed is never held (owner 2026-11-19: "bu kuralı tamamen çıkar")', () => {
+  // Four review rounds: no detector told these from a short result in two languages. Each goes.
+  const goes = [
     'Durumu bir önceki mesajda yazdım.',
-    'Bunu yukarıda yazdım.',
-    'Tamam, yukarıda yazdım.',
-    'Sonucu önceki mesajımda paylaştım.',
-    'I already told you this result in my previous message.',
-    'As I said above.',
-  ])('a short "%s" points back', (t) => {
-    expect(pointsBack(t)).toBe(true);
-    expect(telegramHold(t, { eventTurn: true })).toBe('points-back');
-    expect(telegramHold(t, { eventTurn: false })).toBe('points-back');
-  });
+    'Bitti, az önce yazdım.',
+    'I told you the build failed before.',
+    'Kart hâlâ bekliyor.',
+    'Hâlâ bekliyor, kart reddedildi.',
+    'Still running. Build FAILED.',
+  ];
 
-  it('a real answer that also says "as I wrote above" is an answer, not a pointer', () => {
-    const long = `Yukarıda yazdığım gibi canlıya bugün çıkıyoruz. ${'Testler geçti, mağaza incelemesi bitti, sürüm notu hazır. '.repeat(6)}`;
-    expect(pointsBack(long)).toBe(false);
-    expect(pointsBack('Canlıya bugün 17:00\'de çıkıyoruz; mağaza onayı geldi.')).toBe(false);
-  });
-
-  it('anything besides the pointer, and every "nothing changed / still waiting" line, reaches him (review r1-r3)', () => {
-    const goes = [
-      // a pointer with anything after it
-      'Bunu yukarıda yazdım, değişen bir şey yok.',
-      'As I said above, nothing changed.',
-      'As I said above the build failed.',
-      'Yukarıda yazdım, kart reddedildi.',
-      'Yukarıda yazdım: ödeme sayfası canlıda.',
-      'Build geçti, PR #42 açık. Detayı yukarıda yazdım.',
-      'Ödeme işi tamam yukarıda yazdım.',
-      // "still waiting" with or without a result (never held any more)
-      'Kart hâlâ bekliyor.',
-      'Değişen bir şey yok.',
-      'Ödeme sayfası bitti: build yeşil, PR #42 açık. Fiyat testi hâlâ çalışıyor.',
-      'Deploy hâlâ çalışıyor ama testler kırıldı.',
-      'Still waiting on Stripe — the webhook returned 500.',
-      'Hâlâ bekliyor, kart reddedildi.',
-      'Still running. Build FAILED.',
-      'Değişen bir şey yok, Stripe çalışmıyor.',
-    ];
-    for (const t of goes) {
-      expect(pointsBack(t), t).toBe(false);
-      expect(telegramHold(t, { eventTurn: true, lang: null }), t).toBeNull();
+  it('the gate passes each, in an event turn and in his own', async () => {
+    for (const t of goes) expect(telegramHold(t, { lang: 'Turkish' }), t).toBeNull();
+    const { hub, log } = onTelegramHub();
+    for (const t of goes.slice(0, 2)) {
+      expect(await hub.onAssistantText('s', `<!-- re:abc123 -->\n${t}`, { turns: [], inputs: undefined, mark: EVENT_TURN }), t).toBe(true);
     }
+    expect(log.map((l) => l.text).join('\n')).toContain('az önce yazdım');
   });
 
-  it('the reply mark is not part of the text it judges', () => {
-    expect(pointsBack('<!-- re:abc123 -->\nDurumu bir önceki mesajda yazdım.')).toBe(true);
-  });
-});
-
-describe('the phone never gets it (hub.onAssistantText)', () => {
-  it('a pointer back in his own turn is held, and the turn is not "ended silent"', async () => {
-    const { hub, log } = onTelegramHub();
-    const turn = { ref: 'abc123', answered: false } as unknown as { held?: boolean };
-    const landed = await hub.onAssistantText('s', '<!-- re:abc123 -->\nDurumu bir önceki mesajda yazdım.', { turns: [turn as never], inputs: undefined, mark: OWNER_TURN });
-    expect(landed).toBe(false);
-    expect(log.filter((l) => l.method === 'sendMessage')).toEqual([]);
-    expect(turn.held).toBe(true);
-  });
-
-  it('a pure pointer of an event turn is held; a "still waiting" line and a real result go', async () => {
-    const { hub, log } = onTelegramHub();
-    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nDurumu yukarıda yazdım.', { turns: [], inputs: undefined, mark: EVENT_TURN })).toBe(false);
-    expect(log.filter((l) => l.method === 'sendMessage')).toEqual([]);
-    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nHâlâ bekliyor, kart reddedildi.', { turns: [], inputs: undefined, mark: EVENT_TURN })).toBe(true);
-    expect(log.map((l) => l.text).join('\n')).toContain('kart reddedildi');
-    expect(await hub.onAssistantText('s', '<!-- re:abc123 -->\nSürüm 2.4 yayında; mağaza onayı geldi.', { turns: [], inputs: undefined, mark: { event: false, batch: null } })).toBe(true);
-    expect(log.map((l) => l.text).join('\n')).toContain('Sürüm 2.4 yayında');
-  });
-});
-
-describe('the Super is asked for the answer itself (turn end)', () => {
-  const said = (text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text }] } });
-
-  it('his turn ending on a pointer back gets one hidden note; the answer to it gets none', () => {
-    const t = new CardFeedbackTracker({ eventTurn: () => false, lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
-    t.noteFrame(said('<!-- re:abc123 -->\nDurumu bir önceki mesajda yazdım.'));
-    const note = t.atResult(true)!;
-    expect(note.startsWith(`<${CARD_FEEDBACK_TAG}>`)).toBe(true);
-    expect(note).toMatch(/write the answer itself/);
+  it('the turn end never asks for it again, and the Mac draws it', () => {
+    const said = (text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text }] } });
+    const t = new CardFeedbackTracker({ lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
     t.noteFrame(said('<!-- re:abc123 -->\nDurumu bir önceki mesajda yazdım.'));
     expect(t.atResult(true)).toBeNull();
-  });
-
-  it('an event turn is never re-asked (silence was right), and a plain chat has no gate', () => {
-    expect(ownerTextFeedback(['<!-- re:abc123 -->\nDeğişen bir şey yok.'], { eventTurn: true, isOwnerProse })).toBeNull();
-    const plain = new CardFeedbackTracker();
-    plain.noteFrame(said('Durumu bir önceki mesajda yazdım.'));
-    expect(plain.atResult(true)).toBeNull();
-  });
-});
-
-describe('the Mac folds it with the event turn', () => {
-  it('a marked pure pointer folds; a "still waiting" line and a real result stay drawn', () => {
     const items = [
       { kind: 'user', id: 'u1', text: '[super events] batch=b1\n- item=q1 child=c1 event=done' },
       { kind: 'text', id: 't1', text: '<!-- re:abc123 -->\nDurumu bir önceki mesajda yazdım.', replyTo: ['abc123'] },
-      { kind: 'text', id: 't2', text: '<!-- re:abc123 -->\nSürüm 2.4 yayında.', replyTo: ['abc123'] },
-      { kind: 'text', id: 't3', text: '<!-- re:abc123 -->\nKart hâlâ bekliyor, onay gelmedi.', replyTo: ['abc123'] },
+      { kind: 'text', id: 't2', text: '<!-- re:abc123 -->\nKart hâlâ bekliyor.', replyTo: ['abc123'] },
     ];
-    const { kept, groups } = groupSuperEventTurns(items, { ownerBatches: [], expanded: new Set() });
-    expect(kept.map((i) => i.id)).toEqual(['u1', 't2', 't3']);
-    expect(groups.get('u1')!.folded).toEqual(['t1']);
+    const { kept } = groupSuperEventTurns(items, { ownerBatches: [], expanded: new Set() });
+    expect(kept.map((i) => i.id)).toEqual(['u1', 't1', 't2']);
+  });
+
+  it('a plain chat has no gate', () => {
+    expect(ownerTextFeedback(['<!-- re:abc123 -->\nDeğişen bir şey yok.'], { lang: 'Turkish', isOwnerProse })).toBeNull();
   });
 });
 
@@ -167,7 +99,7 @@ describe('his language, enforced (finding 2)', () => {
 
   it('the turn end judges each reply section, as the phone holds it (review r1)', () => {
     const said = (text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text }] } });
-    const t = new CardFeedbackTracker({ eventTurn: () => false, lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
+    const t = new CardFeedbackTracker({ lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
     t.noteFrame(said(`<!-- re:aaa111 -->\n${TR} Ayrıca bugün iki yeni bildirim daha geldi, onlar da olağan.\n<!-- re:bbb222 -->\n${EN}`));
     expect(t.atResult(true)).toMatch(/not in Turkish/);
   });
@@ -195,7 +127,7 @@ describe('his language, enforced (finding 2)', () => {
 
   it('the turn end asks for the same answer again, in Turkish; once', () => {
     const said = (text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text }] } });
-    const t = new CardFeedbackTracker({ eventTurn: () => true, lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
+    const t = new CardFeedbackTracker({ lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
     t.noteFrame(said(`<!-- re:abc123 -->\n${EN}`));
     const note = t.atResult(true)!;
     expect(note).toMatch(/not in Turkish/);
