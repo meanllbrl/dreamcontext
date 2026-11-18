@@ -37,7 +37,8 @@ import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
-import { CardFeedbackTracker, endedClean } from '../card-feedback.js';
+import { CardFeedbackTracker, endedClean, feedbackTurn } from '../card-feedback.js';
+import { onUndelivered, takeUndelivered, undeliveredNote } from '../../lib/super/undelivered.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
@@ -3593,7 +3594,19 @@ export function startChatSession(
   let lastMainContext = 0;
   /** The main agent's words this turn, read for cards the chat skipped (card-feedback.ts). */
   // A Super chat's turn end also reads what the phone held of its text (owner-text-gate.ts).
-  const cardFeedback = new CardFeedbackTracker(isSuper ? { eventTurn: () => isSuperEventTurn(chatRegistryId), lang: () => superKnownLanguage(chatRegistryId), isOwnerProse } : null);
+  const cardFeedback = new CardFeedbackTracker(isSuper ? { eventTurn: () => isSuperEventTurn(chatRegistryId), lang: () => superKnownLanguage(chatRegistryId), isOwnerProse, undelivered: () => takeUndelivered(chatRegistryId) } : null);
+  // What of its answers did not reach him (undelivered.ts) is said at the turn's end above; a
+  // failure noted while the Super is idle (a voice fails seconds after the turn ended) is said at
+  // once, as the same hidden turn. Busy or about to hand over: the next turn's end says it.
+  const unlistenUndelivered = isSuper && registry ? onUndelivered((sid) => {
+    if (sid !== chatRegistryId || !alive || stdinEnding() || handedOff || turnsInFlight > 0 || respawnTo !== null) return;
+    if (switchPending || heldTexts.length || (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed')) return;
+    const note = feedbackTurn([undeliveredNote(takeUndelivered(chatRegistryId))]);
+    if (!note) return;
+    cardFeedback.noteFeedbackWritten();
+    openTurn();
+    if (!writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: withOwnerLanguage(note, superKnownLanguage(chatRegistryId)) }] } })) closeTurn();
+  }) : () => { /* not a Super */ };
   const setHandoffRun = (next: HandoffRun | null): void => {
     if (!next) return;
     handoffRun = next;
@@ -4260,6 +4273,7 @@ export function startChatSession(
     ownerReceiptTurns.clear();
     registry?.exited();
     unregisterInjector();
+    unlistenUndelivered();
     unlistenCards();
     // A respawn in place hands the notch's surface to its successor on the same socket.
     if (!handedOff) disposeSurface();

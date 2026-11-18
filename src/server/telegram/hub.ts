@@ -45,6 +45,7 @@ import { memberScope } from '../../lib/agents/scope.js';
 import type { SuperId, SuperState } from '../../lib/super/types.js';
 import { isOwnerProse, superKnownLanguage, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
 import { telegramHold } from '../../lib/super/owner-text-gate.js';
+import { noteUndelivered } from '../../lib/super/undelivered.js';
 import type { OwnerLanguage } from '../../lib/super/owner-language.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { msgRef } from '../../lib/super/types.js';
@@ -76,6 +77,9 @@ import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/tele
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
 
 type Obj = Record<string, unknown>;
+
+/** A Super answer Telegram refused, said back to the Super (undelivered.ts). */
+const LOST_TEXT = 'One of your answers did not reach his phone: Telegram refused the message. It is on the Mac only.';
 
 /**
  * What the owner himself typed or said in one Telegram message (learning loop C3): the cleaned
@@ -1447,13 +1451,18 @@ export class TelegramHub implements TelegramHubApi {
       tried = true;
       if (hold(s.text)) continue;
       // One section that does not land does not stop the next.
-      try { if (await this.sendAnswer(ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
+      try { if (await this.sendAnswer(ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { noteUndelivered(sessionId, 'text', LOST_TEXT); continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     if (!turns.length || inputs?.mac || !text.trim() || hold(text)) return false;
-    return this.sendAnswer(ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
+    try {
+      return await this.sendAnswer(ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
+    } catch (e) {
+      noteUndelivered(sessionId, 'text', LOST_TEXT);
+      throw e;
+    }
   }
 
   // ── Buttons (plan "Button integrity") ──

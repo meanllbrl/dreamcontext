@@ -94,7 +94,7 @@ describe('the Super is asked for the answer itself (turn end)', () => {
   const said = (text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text }] } });
 
   it('his turn ending on a pointer back gets one hidden note; the answer to it gets none', () => {
-    const t = new CardFeedbackTracker({ eventTurn: () => false, lang: () => 'Turkish', isOwnerProse });
+    const t = new CardFeedbackTracker({ eventTurn: () => false, lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
     t.noteFrame(said('<!-- re:abc123 -->\nDurumu bir önceki mesajda yazdım.'));
     const note = t.atResult(true)!;
     expect(note.startsWith(`<${CARD_FEEDBACK_TAG}>`)).toBe(true);
@@ -160,7 +160,7 @@ describe('his language, enforced (finding 2)', () => {
 
   it('the turn end asks for the same answer again, in Turkish; once', () => {
     const said = (text: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { model: 'opus', content: [{ type: 'text', text }] } });
-    const t = new CardFeedbackTracker({ eventTurn: () => true, lang: () => 'Turkish', isOwnerProse });
+    const t = new CardFeedbackTracker({ eventTurn: () => true, lang: () => 'Turkish', isOwnerProse, undelivered: () => [] });
     t.noteFrame(said(`<!-- re:abc123 -->\n${EN}`));
     const note = t.atResult(true)!;
     expect(note).toMatch(/not in Turkish/);

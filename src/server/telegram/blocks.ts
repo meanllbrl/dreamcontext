@@ -17,6 +17,7 @@
  *    `learned` → the rule's own receipt line (`learn`'s line 2) with a "Geri al" button for an
  *    active rule (learning loop C9); keeping or dropping a proposed one stays on the Mac.
  */
+import { noteUndelivered } from '../../lib/super/undelivered.js';
 import { escapeHtml, fenceTitle, imageName, markdownImages } from '../../lib/telegram/format.js';
 import { dreamHtmlPage, fenceBlocks } from '../../lib/telegram/render.js';
 import { agentUrlButton, cleanTitle } from '../../lib/telegram/urls.js';
@@ -140,13 +141,14 @@ export const MAX_TEXT_PICTURES = 10;
  * saying which and why (owner 2026-11-13: never a silent drop). Web pictures stay links in the
  * text. Returns how many went.
  */
-export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text: string, pictures: boolean, deps: Pick<BlocksDeps, 'mediaRoots' | 'isGitIgnored'> = {}): Promise<number> {
+export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text: string, pictures: boolean, deps: Pick<BlocksDeps, 'mediaRoots' | 'isGitIgnored'> = {}, sessionId: string | null = null): Promise<number> {
   const local = markdownImages(text).filter((i) => !i.web);
   const root = hub.rootOf(ab);
   if (!local.length) return 0;
   if (!root) {
     // Never a silent drop: the text already left the picture out ('hub' mode).
     await hub.notice(ab, 'file', `${local.length === 1 ? 'Resim' : `${local.length} resim`} gönderilemedi: bu botun projesi Mac'te bulunamadı.`);
+    noteUndelivered(sessionId, 'picture', `${local.length} picture(s) of your answer did not reach his phone: this bot's project was not found on the Mac.`);
     return 0;
   }
   const seen = new Set<string>();
@@ -171,6 +173,8 @@ export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text
     for (const m of r.unsent) lines.push(notSentLine('Resim: ', m.title, NOT_SENT.refused));
   }
   if (lines.length) await hub.send(ab, lines.map((l) => `📎 <i>${escapeHtml(l)}</i>`).join('\n')).catch(() => {});
+  // The Super hears it too (undelivered.ts): his note says what did not go, the Super must not say "sent".
+  if (lines.length) noteUndelivered(sessionId, 'picture', `${lines.length} of the ${wanted.length} picture(s) in your answer did not reach his phone (${lines.join('; ')}).`);
   return sent;
 }
 
@@ -180,7 +184,7 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
   // it, whatever made the text go (a Telegram turn, a routable Telegram ref, the owner on
   // Telegram, streaming). None while a secret card is pending (L3).
   const pictures = !secretPending(sessionId);
-  await sendTextPictures(hub, ab, text, pictures, deps).catch(() => 0);
+  await sendTextPictures(hub, ab, text, pictures, deps, sessionId).catch(() => 0);
   for (const b of fenceBlocks(text)) {
     if (b.lang === 'dream-html') {
       const title = cleanTitle(fenceTitle('dream-html', b.body));
@@ -189,10 +193,13 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
       if (pngs?.length) {
         const items = pngs.map((p, i) => ({ kind: 'photo' as const, file: pngFile(`kart-${i + 1}`, p), title }));
         const { sent } = await sendPictures(ab, items);
-        if (!sent.length) await hub.notice(ab, 'info', `Bu kart Telegram'a gitmedi, Mac'te: ${title}`);
-        else if (pngs.length > 3) await hub.notice(ab, 'info', "Kartın devamı Mac'te.");
+        if (!sent.length) {
+          await hub.notice(ab, 'info', `Bu kart Telegram'a gitmedi, Mac'te: ${title}`);
+          noteUndelivered(sessionId, 'card', `Your drawing "${title}" did not reach his phone (Telegram refused its picture); it is on the Mac only.`);
+        } else if (pngs.length > 3) await hub.notice(ab, 'info', "Kartın devamı Mac'te.");
       } else {
         await hub.notice(ab, 'info', `Bu kart Telegram'a gitmedi, Mac'te: ${title}`);
+        if (pictures) noteUndelivered(sessionId, 'card', `Your drawing "${title}" did not reach his phone (it could not be drawn as a picture); it is on the Mac only.`);
       }
     } else if (b.lang === 'dream-actions') {
       const m = actionsMessage(b.body, deps.tunnelHost?.() ?? null);

@@ -21,6 +21,7 @@
  */
 import { CARD_FEEDBACK_TAG, MAX_VIEWS_PER_MESSAGE, isCardFeedbackText, parseViewBlock } from '../lib/chat-view-spec.js';
 import { ownerTextFeedback } from '../lib/super/owner-text-gate.js';
+import { undeliveredNote } from '../lib/super/undelivered.js';
 import type { OwnerLanguage } from '../lib/super/owner-language.js';
 
 export { CARD_FEEDBACK_TAG };
@@ -82,6 +83,8 @@ export interface SuperTurnGate {
   lang(): OwnerLanguage | null;
   /** A text written for him (inbox.ts `isOwnerProse`), passed in so this module stays light. */
   isOwnerProse(text: string): boolean;
+  /** What of its answers did not reach him (undelivered.ts), taken. */
+  undelivered(): string[];
 }
 
 /** What the chat route knows at a main `result`, for `endedClean`. */
@@ -149,8 +152,15 @@ export class CardFeedbackTracker {
     this.answeringFeedback = false;
     if (!ok || wasFeedback) return null;
     const gate = this.gate ? ownerTextFeedback(texts, { lang: this.gate.lang(), eventTurn: this.gate.eventTurn(), isOwnerProse: (t) => this.gate!.isOwnerProse(t) }) : null;
-    const text = feedbackTurn([cardFeedback(texts.join('\n\n')), gate]);
+    const lost = this.gate ? undeliveredNote(this.gate.undelivered()) : null;
+    const text = feedbackTurn([cardFeedback(texts.join('\n\n')), gate, lost]);
     if (text) this.answeringFeedback = true;
     return text;
+  }
+
+  /** A hidden turn written outside a turn's end (an idle Super told what did not reach him): the
+   *  answer to it is never fed back either. */
+  noteFeedbackWritten(): void {
+    this.answeringFeedback = true;
   }
 }
