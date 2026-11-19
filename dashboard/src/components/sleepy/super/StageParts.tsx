@@ -61,7 +61,7 @@ export function OrbitPath({ plan }: { plan: StagePlan }) {
 /** Open overlays that own Esc and the arrows over a presentation. A PDF card draws the chat's
  *  PdfViewer embedded (`.pdf-viewer--embedded`): that is a card, not a window over the stage, so a
  *  presentation showing a PDF still leaves on Esc (owner 2026-10-28, "every kind of group"). */
-export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--embedded), .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu';
+export const PRESENT_KEY_OWNERS = '.image-viewer, .pdf-viewer:not(.pdf-viewer--embedded), .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu, .app-popup-scrim';
 
 /** The presentation frame's icons (outline, 16 px on a 32 px button; owner 2026-11-15, option C). */
 const PATHS: Record<string, string> = {
@@ -174,30 +174,43 @@ export function PresentFrame({ frame, strip, tabs, onNext }: { frame?: Rect; str
   );
 }
 
-/** A narrow sheet's tab row: one tab per presented card, the shown one pressed; arrows move. */
-export function SheetTabs({ rect, ids, selected, titleOf, onSelect }: {
-  rect: Rect; ids: readonly string[]; selected: string; titleOf: (id: string) => string; onSelect: (id: string) => void;
+/** A narrow stage's tab row over the chat (owner 2026-11-17): one tab per card the view shows.
+ *  Folded, every tab is closed and the chat runs full height under the row; the open one is
+ *  expanded, pressing it again or the row's × folds it. Arrows move between the tabs. */
+export function SheetTabs({ rect, ids, open, titleOf, onSelect, onFold }: {
+  rect: Rect; ids: readonly string[]; open: string | null; titleOf: (id: string) => string; onSelect: (id: string) => void; onFold: () => void;
 }) {
   const { t } = useI18n();
+  // ←/→ walk the tabs' focus while folded; Enter or a press opens one (the open one folds). Open,
+  // the stage's own arrow keys move the open card instead.
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    e.preventDefault();
-    const i = ids.indexOf(selected);
-    const next = ids[(i + (e.key === 'ArrowRight' ? 1 : ids.length - 1)) % ids.length];
-    onSelect(next);
-    // Focus follows the selected tab (the roving tabindex leaves the old one at -1).
     const row = e.currentTarget;
-    requestAnimationFrame(() => row.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next)}"]`)?.focus());
+    const tabs = [...row.querySelectorAll<HTMLElement>('[data-tab-id]')];
+    const i = tabs.findIndex((el) => el === document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]?.focus();
   };
   return (
-    <div className="super-sheet-tabs" role="tablist" aria-label={t('super.layout.tab')} data-testid="super-sheet-tabs" onKeyDown={onKey}
+    <div className="super-sheet-tabs" role="group" aria-label={t('super.layout.tab')} data-testid="super-sheet-tabs" data-folded={open ? undefined : 'true'} onKeyDown={onKey}
       style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
-      {ids.map((id) => (
-        <button key={id} type="button" role="tab" className="super-sheet-tab" aria-selected={id === selected} tabIndex={id === selected ? 0 : -1}
-          data-testid="super-sheet-tab" data-tab-id={id} onClick={() => onSelect(id)}>
-          {titleOf(id)}
-        </button>
-      ))}
+      {ids.map((id) => {
+        const title = titleOf(id);
+        const isOpen = id === open;
+        return (
+          <button key={id} type="button" className="super-sheet-tab" aria-expanded={isOpen}
+            aria-label={t(isOpen ? 'super.layout.foldTab' : 'super.layout.openTab').replace('{title}', title)}
+            data-testid="super-sheet-tab" data-tab-id={id} onClick={() => onSelect(id)}>
+            <span className="super-sheet-tab-name">{title}</span>
+            <span className="super-sheet-tab-chev" aria-hidden>{isOpen ? '▴' : '▾'}</span>
+          </button>
+        );
+      })}
+      {open && (
+        <button type="button" className="super-sheet-fold" data-testid="super-sheet-fold" aria-label={t('super.layout.fold')} title={t('super.layout.fold')} onClick={onFold}>×</button>
+      )}
     </div>
   );
 }

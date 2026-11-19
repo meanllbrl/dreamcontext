@@ -457,7 +457,7 @@ export function registerSuperCommand(program: Command): void {
     .action(() => run('queue-list', {}));
   q.command('ask <item> <text>')
     .description('Escalate a child\'s question to the owner in your words: a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him. A Bypass child\'s permission you will not decide goes to him too, shown as the child\'s own request (your words never caption it: say why in your turn)')
-    .option('--show <cards...>', 'The cards the stage presents with this question (default: the child\'s option-preview pictures, else the pictures shown for its job in the last 10 minutes); they go back after his answer')
+    .option('--show <cards...>', 'The cards the stage presents with this question (default: the child\'s option-preview pictures; nothing else is guessed); they go back after his answer')
     .option('--no-show', 'Present no cards with this question')
     .action((item: string, text: string, o: { show?: string[] | false }) => run('queue-ask', { item, text, ...showBody(o.show) }));
   q.command('done <item>')
@@ -519,7 +519,8 @@ export function registerSuperCommand(program: Command): void {
   n.command('add <section> <text...>')
     .description('Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)')
     .option('--for <child>', 'A Now line about one job: it moves to Done by itself when that child is done, ended or gone (and back while it works again)')
-    .action((section: string, text: string[], o: { for?: string }) => run('note-add', { section, text: text.join(' '), ...(o.for ? { for: o.for } : {}) }));
+    .option('--origin <ref>', 'The owner message this line is about, outside his turn (in his turn it is linked by itself): pressing the line shows its messages')
+    .action((section: string, text: string[], o: { for?: string; origin?: string }) => run('note-add', { section, text: text.join(' '), ...(o.for ? { for: o.for } : {}), ...(o.origin ? { origin: o.origin } : {}) }));
   n.command('done <id>')
     .description('Move a line to Done (it finished, or the owner gave what you waited for)')
     .action((id: string) => run('note-done', { id }));
@@ -545,7 +546,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--multi', 'He may pick several options')
     .option('--option <label::description>', 'One option (repeatable), its description after ::', collectOption)
     .option('--options <a|b>', 'Short answers separated by | (the old form; each at most 24 characters)')
-    .option('--show <cards...>', 'The cards the stage presents with the question (default: the pictures its option previews\' <img src> point at, else your last picture set within 10 minutes); the server presents them and puts them back after his answer')
+    .option('--show <cards...>', 'The cards the stage presents with the question (default: the pictures its option previews\' <img src> point at; nothing else is guessed, so name a picture you opened before with --show); the server presents them and puts them back after his answer')
     .option('--no-show', 'Present no cards with the question')
     .option('--for <item|owner>', FOR_HELP)
     .action((text: string | undefined, o: AskCliOpts & { for?: string }) => {

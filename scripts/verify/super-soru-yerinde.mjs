@@ -313,10 +313,11 @@ async function main() {
 
     if (!BUG) {
       // "Unclear? Ask again": the Super asks again; the one open card is the new one.
-      const unclear = page.locator(`${CARD} .chat-surveycard-unclear`).first();
+      const unclear = page.locator(`${CARD} .chat-surveycard-more-btn`).first();
       if (await unclear.count()) {
         await unclear.scrollIntoViewIfNeeded().catch(() => {});
         await unclear.click().catch(() => {});
+        await page.locator(`${CARD} [role="menuitem"]`).first().click().catch(() => {});
         const send = page.locator(`${CARD} button`, { hasText: /Send|Gönder/ }).first();
         if (await send.count()) await send.click().catch(() => {});
         ok('the Super asked again', await until(page, async () => reports().some((r) => r.kind === 'reasked' && r.status === 0), 30000), JSON.stringify(reports().slice(-4)));
@@ -331,7 +332,7 @@ async function main() {
         await page.mouse.move(5, 5);
         await shot(page, 'yeniden-sor-1440.png');
       } else {
-        ok('the card offers "Unclear? Ask again"', false, 'no .chat-surveycard-unclear');
+        ok('the card offers "Unclear? Ask again"', false, 'no .chat-surveycard-more-btn');
       }
     }
     log(`  failed requests: ${JSON.stringify(failed)}`);

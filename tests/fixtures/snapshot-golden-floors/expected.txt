@@ -135,7 +135,7 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 ## Automations
 
-- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` (never a hand-rolled cron/launchd job or external scheduler)
+- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug> --agent <member>` (never a hand-rolled cron/launchd job or external scheduler)
 
 ## Recent Changelog
 
@@ -195,7 +195,7 @@ Recall already spans these. To search one directly: `dreamcontext memory recall 
 
 
 ---
-_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (2173 tok vs 2000 tok).
+_Budget note: the demotion ladder is EXHAUSTED and the snapshot is still over budget (2177 tok vs 2000 tok).
 Demoted to their floors: people-roster, extended-core, tasks, bookmarks, changelog, releases, features, knowledge-index, connected-projects.
 Every demoted item keeps its file path above, and `dreamcontext memory recall "<keywords>"` surfaces the full content —
 but you are reading a thinner brain than this project has. FIX: slim the core files below their

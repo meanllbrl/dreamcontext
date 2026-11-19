@@ -811,7 +811,8 @@
       "valueFlags": [
         "--app-tools",
         "--condition",
-        "--wake-when"
+        "--wake-when",
+        "--agent"
       ]
     },
     {
@@ -855,7 +856,10 @@
     {
       "path": "automations list",
       "desc": "List automations with schedule, approval, and last-run status",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--agent"
+      ]
     },
     {
       "path": "automations logs",
@@ -4168,7 +4172,8 @@
         "<text...>"
       ],
       "valueFlags": [
-        "--for"
+        "--for",
+        "--origin"
       ]
     },
     {

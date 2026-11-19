@@ -144,7 +144,8 @@ export interface AutomationSummary {
  * its call targets are the `'call'` rows.
  */
 export function isAutomationRow(s: AutomationSummary): boolean {
-  return s.runKind !== 'agent' && s.mode === 'sched';
+  // A member's on-call routine (bound to another slug) is a job too; a file of its own you only call is the member.
+  return s.runKind !== 'agent' && (s.mode === 'sched' || (s.agent ?? s.slug) !== s.slug);
 }
 
 /**

@@ -168,6 +168,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/super/pad/add',
   'POST /api/super/pad/remove',
   'GET /api/super/agenda-day',
+  'GET /api/super/agenda-days',
   'POST /api/super/open',
   'POST /api/super/member',
   'POST /api/super/owner-answer',

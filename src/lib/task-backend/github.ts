@@ -379,6 +379,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     this.recordLocalMutation(slug, 'push');
   }
 
+  remoteLinked(slug: string): boolean {
+    return !!this.ledger.remoteIdFor(slug);
+  }
+
   /**
    * SOFT delete (the one divergence from ClickUp): drop every local trace now,
    * and enqueue a delete op carrying the remoteId. On replay the op closes the

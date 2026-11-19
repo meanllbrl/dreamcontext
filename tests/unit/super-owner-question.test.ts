@@ -113,8 +113,9 @@ describe('super queue ask reaches the owner off the Super stage', () => {
     const r = await verb('queue-ask', { item: 'q-ask1', text: 'Postgres or sqlite?' });
     expect(result(r)).toMatchObject({ escalated: true, shown: true, reached: false, via: [] });
     expect(String(result(r).note)).toMatch(/NOT seen/);
-    // Owner 2026-10-24: the text says in one line that a question waits; the choice is the card's.
-    expect(String(result(r).note)).toMatch(/say in one line that a question waits; the choice stays in the card/);
+    // Owner 2026-11-18: no line that a question waits; only an unseen card may get one short line.
+    expect(String(result(r).note)).toMatch(/One short line that a card waits is allowed here, never the choice itself/);
+    expect(String(result(r).note)).not.toMatch(/say in one line that a question waits/);
     expect(takeSuperEscalation(SUPER)).toBe(false);
   });
 
@@ -275,7 +276,8 @@ describe('the briefing sends every owner question down the non-blocking path', (
     expect(SUPER_SHOW_SECTION).not.toMatch(/ask with AskUserQuestion/);
     expect(SUPER_SHOW_SECTION).toMatch(/super ask/);
     expect(BATCH_LAST_LINE).toMatch(/never AskUserQuestion/);
-    expect(BATCH_LAST_LINE).toMatch(/in this turn say in one line that a question waits; the choice stays in the card, never only in your text/);
+    expect(BATCH_LAST_LINE).toMatch(/the card carries the choice, so write no line that a question waits and never repeat it in your text/);
+    expect(BATCH_LAST_LINE).not.toMatch(/say in one line that a question waits/);
   });
 
   it('a running super session is re-briefed (the revision moved)', () => {

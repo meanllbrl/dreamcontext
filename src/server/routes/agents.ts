@@ -41,7 +41,7 @@ import {
   type AgentPlacementPatch,
 } from '../../lib/agents/types.js';
 import { isSafeAutomationSlug, readManifestFrontmatter } from '../../lib/agents/slot.js';
-import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto, runChildAlive } from '../../lib/automations/store.js';
+import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveMemberPhoto, runChildAlive } from '../../lib/automations/store.js';
 import { readThread } from '../../lib/automations/threads.js';
 import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
 import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
@@ -71,7 +71,9 @@ import { loadStatuses } from '../../lib/overrides.js';
 import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
-  AGENT_AUTONOMY_LEVELS,
+  ASK_NOT_A_LEVEL,
+  CHOOSABLE_AGENT_AUTONOMY,
+  memberLevel,
   AutomationError,
   EFFORT_LEVELS,
   type AgentAutonomy,
@@ -221,7 +223,7 @@ export function summarizeAgent(
   return {
     slug: target.slug,
     title: target.agentTitle || target.title,
-    hasPhoto: resolveAutomationPhoto(contextRoot, target.photo) !== null,
+    hasPhoto: resolveMemberPhoto(contextRoot, target.slug, target.photo, home) !== null,
     description: target.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     soulExcerpt: soulExcerpt(target.soul ?? ''),
     roleLine: roleLineOf(target.prompt),
@@ -303,8 +305,9 @@ function readSoul(v: unknown): string | undefined {
  *  the owner's proof there (uye-bildirim K3 "Level"), which no agent holds. */
 function readAutonomy(v: unknown): AgentAutonomy | undefined {
   if (v === undefined) return undefined;
-  if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
-    throw new AutomationError(`Invalid autonomy: expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  if (v === 'ask') throw new AutomationError(ASK_NOT_A_LEVEL);
+  if (typeof v !== 'string' || !(CHOOSABLE_AGENT_AUTONOMY as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy: expected one of ${CHOOSABLE_AGENT_AUTONOMY.join(', ')}.`);
   }
   return v as AgentAutonomy;
 }
@@ -491,7 +494,7 @@ function globalAgentRow(agent: AgentManifest): GlobalAgentRow {
     roleLine: roleLineOf(agent.prompt),
     description: agent.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     face: faceOf(agent.slug, agent.face),
-    autonomy: agent.autonomy,
+    autonomy: memberLevel(agent.autonomy),
     model: agent.model,
     approvedToRun: checkApproval(GLOBAL_REGISTRY_KEY, target, undefined, 'run').approved,
   };
@@ -917,7 +920,7 @@ export async function handleAgentsAmendmentRevert(
   }
 }
 
-/** GET /api/agents/:slug/photo — through `resolveAutomationPhoto`, or 404. */
+/** GET /api/agents/:slug/photo — through `resolveMemberPhoto` (a global agent's from its home), or 404. */
 export async function handleAgentsPhotoGet(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -926,7 +929,7 @@ export async function handleAgentsPhotoGet(
 ): Promise<void> {
   try {
     const agent = isSafeAutomationSlug(params.slug) ? getAgent(contextRoot, params.slug) : null;
-    sendPhotoFile(res, agent ? resolveAutomationPhoto(contextRoot, agent.photo) : null);
+    sendPhotoFile(res, agent ? resolveMemberPhoto(contextRoot, agent.slug, agent.photo) : null);
   } catch {
     sendError(res, 404, 'no_photo', 'This agent has no photo.');
   }
@@ -1010,7 +1013,8 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
   const target = agentTarget(contextRoot, slug);
   if (!target) return null;
   const agent = getAgent(contextRoot, slug);
-  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && m.mode === 'sched' && (m.agent ?? m.slug) === slug);
+  // A file of its own you only call is the member itself; a member's on-call routine is a routine.
+  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && (m.agent ?? m.slug) === slug && (m.mode === 'sched' || m.slug !== slug));
   // Its own call target and every routine that runs as it: the slugs its work happens under.
   const slugs = [slug, ...routines.map((m) => m.slug).filter((s) => s !== slug)];
   const titleOf = (s: string): string => (s === slug ? target.agentTitle || target.title : routines.find((m) => m.slug === s)?.title ?? s);

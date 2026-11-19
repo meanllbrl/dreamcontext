@@ -72,13 +72,30 @@ export const REVIEW_MODES = ['off', 'agent', 'output'] as const;
 export type ReviewMode = (typeof REVIEW_MODES)[number];
 
 /**
- * How much an agent decides on its own (owner, 2026-10-24): `ask` asks before acting,
- * `balanced` (the default) acts and asks when unsure, `free` decides. It maps to the claude
- * permission mode of every session the agent runs in (`agents/permission.ts`).
+ * How much an agent decides on its own (owner, 2026-10-24): `balanced` (the default) acts and
+ * asks when unsure, `free` decides. It maps to the claude permission mode of every session the
+ * agent runs in (`agents/permission.ts`).
+ *
+ * `ask` is a STORED value only (owner 2026-11-18: "ai team üyeleri ask modunda açılamasın"): no
+ * member may run in Ask, so it is no longer choosable (`CHOOSABLE_AGENT_AUTONOMY`) and every
+ * reading that decides or shows a level goes through `memberLevel`, which runs it as Balanced.
+ * The file keeps its `ask` so its approval hash still matches: rewriting it would re-block every
+ * member that was approved at Ask.
  */
 export const AGENT_AUTONOMY_LEVELS = ['ask', 'balanced', 'free'] as const;
 export type AgentAutonomy = (typeof AGENT_AUTONOMY_LEVELS)[number];
 export const DEFAULT_AGENT_AUTONOMY: AgentAutonomy = 'balanced';
+/** The refusal for `--autonomy ask` / `autonomy: "ask"`: it explains, it does not just say "invalid". */
+export const ASK_NOT_A_LEVEL = 'Ask is not an AI Team level any more: a member runs at least Balanced (it still asks you before a risky step). Choose balanced or free.';
+/** The levels an owner can set on a member. Ask is not one: a member's floor is Balanced. */
+export const CHOOSABLE_AGENT_AUTONOMY = ['balanced', 'free'] as const;
+export type MemberLevel = (typeof CHOOSABLE_AGENT_AUTONOMY)[number];
+
+/** The level a member runs and shows at: `free` stays Free, anything else (a stored `ask`,
+ *  absent) is Balanced. The ONE floor every spawn path and every label reads through. */
+export function memberLevel(level: AgentAutonomy | null | undefined): MemberLevel {
+  return level === 'free' ? 'free' : 'balanced';
+}
 
 /** A stored `autonomy:` value, or the default for anything that is not one of the levels. */
 export function parseAutonomy(v: unknown): AgentAutonomy {

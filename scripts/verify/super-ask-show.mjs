@@ -13,10 +13,10 @@
  *      untouched, `show.state: skipped`;
  *  V4  a child raises AskUserQuestion with an `<img src>` preview, `super queue ask` presents it;
  *      the child's answer through the card puts it back;
- *  V4b a worktree child's preview is outside the project: `show.skipped`, `recent` from its
- *      `--for` pictures;
- *  V5  the Super forgets everything: `open image a b`, then a plain `super ask`: presented via
- *      `recent`;
+ *  V4b a worktree child's preview is outside the project: `show.skipped`, and its `--for`
+ *      pictures are no fallback (no time guess, owner 2026-11-17): nothing presented;
+ *  V5  `open image a b`, then a plain `super ask` presents nothing; the same ask with `--show`
+ *      of the two presents them;
  *  V6  a phone (390 px) watching the Super chat in Mac mode shows the pictures as its stage strip;
  *  V7  shape, at 1440x900 and 2000x1300: two wide pictures stack (picture area >= 1.4x 0.34.5's,
  *      fill >= 85 %), auto AND by plain `super present`; two portraits side by side (fill >= 90 %);
@@ -501,16 +501,22 @@ async function flow(pw, base) {
   const q2 = () => record().queue.find((q) => q.sessionId === c2 && q.kind === 'question');
   ok('its question reaches the queue', await until(page, async () => !!q2(), 40000));
   const v4b = await superVerb(page, `queue ask ${q2()?.id} Which-shot?`);
-  ok('show.skipped names its src, via recent (its --for pictures), presented', JSON.stringify(v4b.json.show?.skipped) === '["shot.png"]' && v4b.json.show?.via === 'recent' && v4b.json.show?.cards?.length === 2 && v4b.json.show?.state === 'presented', JSON.stringify(v4b.json.show));
+  // No time guess (owner 2026-11-17): its --for pictures are not taken; nothing is presented.
+  ok('show.skipped names its src; its --for pictures are no fallback, nothing presented', JSON.stringify(v4b.json.show?.skipped) === '["shot.png"]' && (v4b.json.show?.cards ?? []).length === 0 && v4b.json.show?.state === 'none', JSON.stringify(v4b.json.show));
+  ok('record: nothing presented for it', record().view.ask !== q2()?.id, JSON.stringify(record().view));
   await settle(page);
   await superVerb(page, `queue done ${q2()?.id}`);
-  ok('closed: floats again', await until(page, async () => record().view.mode === 'float', 15000));
+  ok('closed: floats', await until(page, async () => record().view.mode === 'float', 15000));
   await settle(page);
 
-  console.log('\n── V5: the Super forgets everything: recent');
+  console.log('\n── V5: pictures just opened are not a plain question\'s; --show names them');
   await superVerb(page, 'open image mockups/poster-a.png mockups/poster-b.png');
-  const v5 = await superVerb(page, 'ask Which-poster? --options Red|Blue');
-  ok('presented via recent, 2 cards', v5.json.show?.via === 'recent' && v5.json.show?.state === 'presented' && v5.json.show?.cards?.length === 2, JSON.stringify(v5.json.show));
+  const plain = await superVerb(page, 'ask Start-the-group-plan? --options Yes|No');
+  ok('a plain question presents nothing (no time guess)', (plain.json.show?.cards ?? []).length === 0 && plain.json.show?.state === 'none', JSON.stringify(plain.json.show));
+  await superVerb(page, `queue done ${plain.json.item}`);
+  const posters = [byRef('mockups/poster-a.png')?.id, byRef('mockups/poster-b.png')?.id];
+  const v5 = await superVerb(page, `ask Which-poster? --options Red|Blue --show ${posters.join(' ')}`);
+  ok('named with --show: presented, 2 cards', v5.json.show?.via === 'show' && v5.json.show?.state === 'presented' && v5.json.show?.cards?.length === 2, JSON.stringify(v5.json.show));
   await settle(page);
   ok('DOM: presenting the two', await until(page, async () => (await presenting(page)) && (await page.locator('[data-testid="super-container"][data-kind="image"][data-where="present"]').count()) === 2, 10000));
   await clickAnswer(page, 'Red');

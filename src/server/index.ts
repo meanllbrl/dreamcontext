@@ -40,7 +40,7 @@ import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
 import { setWindowControlBase } from '../lib/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperAgendaDays, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -694,6 +694,7 @@ export function buildRouter(): Router {
   router.post('/api/super/pad/add', handleSuperPadAdd);
   router.post('/api/super/pad/remove', handleSuperPadRemove);
   router.get('/api/super/agenda-day', handleSuperAgendaDay);
+  router.get('/api/super/agenda-days', handleSuperAgendaDays);
   router.post('/api/super/open', handleSuperOpen);
   router.post('/api/super/member', handleSuperMember);
   router.post('/api/assistant/look', handleAssistantLook);

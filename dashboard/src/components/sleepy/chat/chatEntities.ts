@@ -1546,7 +1546,26 @@ export function stepHistory(
  *  reload: the report's start 97 px down for a 64 px landing, or above the view). */
 export function contentTopOf(node: Element, scroller: HTMLElement): number {
   const box = scroller.getBoundingClientRect();
-  return (node.getBoundingClientRect().top - box.top) / screenScaleOf(scroller, box) + scroller.scrollTop;
+  return (node.getBoundingClientRect().top - box.top) / screenScaleOf(scroller, box) + scroller.scrollTop - settleShiftOf(node);
+}
+
+/**
+ * How far the agenda filter's settle motion (ChatPane.css, `data-thread-anim`) has moved this
+ * node's row down right now, in layout px; 0 outside it. Positions are read through it so a hold
+ * or a jump measured mid-motion lands where the row will rest, not where it is passing.
+ */
+export function settleShiftOf(node: Element): number {
+  // A measured stand-in (tests, a detached shape) has no `closest`: nothing moves it.
+  if (typeof node.closest !== 'function' || typeof getComputedStyle !== 'function') return 0;
+  const row = node.closest('.chat-scroll-inner[data-thread-anim] > *');
+  if (!row) return 0;
+  const t = getComputedStyle(row).transform;
+  if (!t || t === 'none') return 0;
+  const m = /matrix(3d)?\(([^)]+)\)/.exec(t);
+  if (!m) return 0;
+  const v = m[2].split(',').map(Number);
+  const ty = m[1] ? v[13] : v[5];
+  return Number.isFinite(ty) ? ty : 0;
 }
 
 /** Below this a measured scale is `offsetHeight`'s whole-pixel rounding (0.5 px of a 100 px pane). */

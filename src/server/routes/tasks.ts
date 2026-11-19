@@ -146,7 +146,22 @@ async function toApiTaskDetail(contextRoot: string, backend: TaskBackend, task: 
       readTaskJobs(dirname(contextRoot)).claims.find((c) => c.taskId === task.id && c.sessionId)?.sessionId ?? null,
     ),
     status_history: parseStatusHistory(task.changelog ?? ''),
+    // Where a delete would reach: null on the local backend; `linked` says whether THIS task
+    // exists on the remote yet (the delete dialog warns only then).
+    remote: await remoteOf(backend, task.slug),
   };
+}
+
+/**
+ * Where a delete of `slug` would reach: null on the local backend; `linked` = the task OR one
+ * of its subtasks (they go with it) is on the remote, so the delete dialog warns only then.
+ */
+async function remoteOf(backend: TaskBackend, slug: string): Promise<{ backend: string; linked: boolean } | null> {
+  if (backend.name === 'local') return null;
+  const linked = (s: string) => backend.remoteLinked?.(s) ?? false;
+  if (linked(slug)) return { backend: backend.name, linked: true };
+  const kids = childrenOf(await parentLinkTasks(backend), slug);
+  return { backend: backend.name, linked: kids.some((c) => linked(c.slug)) };
 }
 
 function backendFor(contextRoot: string): TaskBackend {
@@ -990,11 +1005,19 @@ export async function handleTasksSetToken(
   sendJson(res, 200, { ok: true, backend: backend.name });
 }
 
+/** The longest "why" a delete records on its tombstone. */
+const DELETE_REASON_MAX = 500;
+
 /**
- * DELETE /api/tasks/:slug — delete a task (remote deletion propagates on sync).
+ * DELETE /api/tasks/:slug {reason?} — delete a task through the same `backend.delete` the CLI's
+ * `tasks delete` calls: a remote backend queues the remote deletion for the next sync and every
+ * delete leaves a tombstone, so sleep never re-files it. A parent goes WITH its subtasks (owner,
+ * 2026-11-16: never orphaned, never moved): the children first, then the parent, stopping at
+ * the first failure, so a failed run leaves the parent in place and answers 500 with what was
+ * deleted and what remains. `reason` (optional) is recorded on every tombstone.
  */
 export async function handleTasksDelete(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
@@ -1002,30 +1025,81 @@ export async function handleTasksDelete(
   const { slug } = params;
   if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
+  // The body is optional (a bare DELETE stays valid); only a JSON one is read.
+  const isJson = String(req.headers?.['content-type'] ?? '').includes('application/json');
+  const body = isJson ? await parseJsonBody(req) : null;
+  let reason: string | undefined;
+  if (body && body.reason !== undefined && body.reason !== null) {
+    if (typeof body.reason !== 'string') { sendError(res, 400, 'invalid_reason', 'reason must be a string.'); return; }
+    const trimmed = body.reason.replace(/\s+/g, ' ').trim();
+    if (trimmed.length > DELETE_REASON_MAX) { sendError(res, 400, 'invalid_reason', `reason must be at most ${DELETE_REASON_MAX} characters.`); return; }
+    if (trimmed) reason = trimmed;
+  }
+
   const backend = backendFor(contextRoot);
   if ((await backend.get(slug)) === null) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
     return;
   }
 
-  // A parent's children are never deleted with it: their link is cleared first, so each
-  // becomes a top-level task.
-  for (const child of childrenOf(await parentLinkTasks(backend), slug)) {
-    await backend.updateFields(child.slug, { parent_task: null, updated_at: today() });
+  const children = childrenOf(await parentLinkTasks(backend), slug).map((c) => c.slug);
+  // A child whose name is not a safe slug cannot go through the delete; refuse the whole delete
+  // rather than leave it behind with a dangling parent link.
+  const unsafe = children.filter((c) => !isSafeTaskSlug(c));
+  if (unsafe.length) {
+    sendError(res, 409, 'unsafe_child', `Cannot delete ${slug}: subtask file names are not task slugs (${unsafe.join(', ')}). Rename or delete them first.`);
+    return;
+  }
+  // The owner confirmed a list of subtasks: delete exactly that set or nothing. A subtask added
+  // since the dialog read the list answers 409 with the live list, so the dialog can show it.
+  if (body && body.children !== undefined) {
+    const shown = Array.isArray(body.children) ? body.children.filter((x): x is string => typeof x === 'string') : null;
+    const same = shown !== null && shown.length === (body.children as unknown[]).length
+      && shown.length === children.length && children.every((c) => shown.includes(c));
+    if (!same) {
+      sendJson(res, 409, {
+        error: 'children_changed',
+        message: `The subtasks of ${slug} changed since this was asked. Nothing was deleted; check the list and confirm again.`,
+        children,
+      });
+      return;
+    }
+  }
+  const order = [...children, slug];
+  const deleted: string[] = [];
+  const pushRemote = () => {
+    // A remote backend queued the deletions: push them now (a background job, adopted when one
+    // is already running) so they leave the remote without waiting for the owner's next sync.
+    // A remote failure shows on the sync chip and the queued op stays for the next sync.
+    if (backend.name === 'local' || deleted.length === 0) return;
+    try { startSyncJob(contextRoot, 'sync', 'push'); } catch { /* the next sync replays the queue */ }
+  };
+  for (const s of order) {
+    try {
+      await backend.delete(s, reason ? { reason } : {});
+    } catch (err) {
+      pushRemote();
+      sendJson(res, 500, {
+        error: 'delete_failed',
+        message: `Could not delete ${s}: ${(err as Error)?.message ?? String(err)}`,
+        deleted,
+        remaining: order.filter((x) => !deleted.includes(x)),
+      });
+      return;
+    }
+    deleted.push(s);
+    // Consolidation must see deletions too — recorded into the sleep state's
+    // dashboard-changes ledger like every other dashboard mutation.
+    recordDashboardChange(contextRoot, {
+      entity: 'task',
+      action: 'delete',
+      target: `state/${s}.md`,
+      summary: s === slug ? `Deleted task '${s}'` : `Deleted task '${s}' with its parent '${slug}'`,
+    });
   }
 
-  await backend.delete(slug);
-
-  // Consolidation must see deletions too — recorded into the sleep state's
-  // dashboard-changes ledger like every other dashboard mutation.
-  recordDashboardChange(contextRoot, {
-    entity: 'task',
-    action: 'delete',
-    target: `state/${slug}.md`,
-    summary: `Deleted task '${slug}'`,
-  });
-
-  sendJson(res, 200, { success: true });
+  pushRemote();
+  sendJson(res, 200, { success: true, deleted, remote: backend.name === 'local' ? null : backend.name });
 }
 
 /**

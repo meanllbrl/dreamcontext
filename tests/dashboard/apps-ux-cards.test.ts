@@ -119,6 +119,21 @@ describe('the publish card folds the findings it waives', () => {
     expect(html.indexOf('yerde')).toBeLessThan(html.indexOf('Beyin listesi'));
   });
 
+  it('the grouped rows the server writes now: the count is the server\'s, every place under the toggle', () => {
+    STATE.lang = 'tr';
+    const d = publish();
+    d.card.lines = [
+      { label: 'Nereye', value: 'ornek/hava-notu-app' },
+      { label: 'Geçirilecek', value: 'an insight name "mrr" · 12 satır: lib/a.mjs:4, lib/b.mjs:2 +10 daha', tone: 'warn' },
+      { label: 'Beyin listesi', value: 'Listelenir' },
+    ];
+    STATE.data = d;
+    const html = draw();
+    expect(html).toContain('an insight name &quot;mrr&quot; · 12 yerde');
+    const inside = html.split('<details')[1];
+    for (const f of ['lib/a.mjs:4', 'lib/b.mjs:2 +10 daha']) expect(inside).toContain(f);
+  });
+
   it('a row that is not in the known shape stays as it came', () => {
     STATE.lang = 'tr';
     const d = publish();

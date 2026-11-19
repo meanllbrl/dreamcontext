@@ -192,7 +192,7 @@ describe('the Super\'s own run card names the folder the Mac draws', () => {
 });
 
 describe('the folder the message drew is the folder that runs (end review r2)', () => {
-  it('a Run press after the card\'s folder moved refuses and runs nothing; the matching folder runs', async () => {
+  it('a Run press after the card\'s folder moved runs nothing and asks "Emin misin?"; Vazgeç runs nothing; the matching folder runs', async () => {
     tg.push(TOKEN, textUpdate(OWNER, 'çalıştır?'));
     await vi.waitFor(() => expect(injected).toHaveLength(1), { timeout: 5000 });
     noteAssistantCards(SID, vault, 'm5', fence({ type: 'run', id: 'mv', command: 'gh auth status' }));
@@ -203,7 +203,14 @@ describe('the folder the message drew is the folder that runs (end review r2)', 
     try {
       tap(first, 0);
       const said = (line: string) => [...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(line));
-      await vi.waitFor(() => expect(said(RUN_LINES.folderChanged)).toBe(true));
+      await vi.waitFor(() => expect(said(RUN_LINES.folderAsked)).toBe(true));
+      expect(ptys).toBe(0);
+      // One question naming the folder it is now, with Çalıştır / Vazgeç.
+      await vi.waitFor(() => expect(msgWith('Vazgeç')).toBeTruthy());
+      const ask = msgWith('Vazgeç')!;
+      expect(String(ask.params.text)).toContain(RUN_LINES.folderAsk(basename(moved)));
+      tap(ask, 1);
+      await vi.waitFor(() => expect(said(RUN_LINES.cancelled)).toBe(true));
       expect(ptys).toBe(0);
     } finally {
       setCardRootResolverForTests(null);
@@ -214,6 +221,36 @@ describe('the folder the message drew is the folder that runs (end review r2)', 
     const second = [...tg.sent()].reverse().find((c) => String(c.params.text).includes('gh auth login') && JSON.stringify(c.params.reply_markup ?? {}).includes('Çalıştır'))!;
     tap(second, 0);
     await vi.waitFor(() => expect(ptys).toBe(1));
+  });
+});
+
+describe('the folder-change question runs in the folder it named', () => {
+  it('Çalıştır on "Emin misin?" runs once there; moved again, it asks again and runs nothing', async () => {
+    tg.push(TOKEN, textUpdate(OWNER, 'taşındı?'));
+    await vi.waitFor(() => expect(injected).toHaveLength(1), { timeout: 5000 });
+    noteAssistantCards(SID, vault, 'm9', fence({ type: 'run', id: 'mv2', command: 'gh auth status' }));
+    await vi.waitFor(() => expect(msgWith('Çalıştır, çıktıyı')).toBeTruthy());
+    const first = msgWith('Çalıştır, çıktıyı')!;
+    const moved = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-tg-moved-')));
+    const again = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-tg-again-')));
+    try {
+      setCardRootResolverForTests(async () => moved);
+      tap(first, 0);
+      await vi.waitFor(() => expect(msgWith('Vazgeç')).toBeTruthy());
+      const ask = msgWith('Vazgeç')!;
+      // Moved once more before the tap: the question is asked again, nothing runs.
+      setCardRootResolverForTests(async () => again);
+      tap(ask, 0);
+      await vi.waitFor(() => expect(tg.texts().some((t) => t.includes(RUN_LINES.folderAsk(basename(again))))).toBe(true));
+      expect(ptys).toBe(0);
+      const ask2 = [...tg.sent()].reverse().find((c) => String(c.params.text).includes(basename(again)) && JSON.stringify(c.params.reply_markup ?? {}).includes('Vazgeç'))!;
+      tap(ask2, 0);
+      await vi.waitFor(() => expect(ptys).toBe(1));
+    } finally {
+      setCardRootResolverForTests(null);
+      rmSync(moved, { recursive: true, force: true });
+      rmSync(again, { recursive: true, force: true });
+    }
   });
 });
 
@@ -232,7 +269,7 @@ describe('a Run button from before the folder was kept', () => {
     tap(old, 0);
     const said = (line: string) => [...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(line));
     await vi.waitFor(() => expect(said(RUN_LINES.oldButton)).toBe(true));
-    expect(said(RUN_LINES.folderChanged)).toBe(false);
+    expect(said(RUN_LINES.folderAsked)).toBe(false);
     expect(ptys).toBe(0);
   });
 });

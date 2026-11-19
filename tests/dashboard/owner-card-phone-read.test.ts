@@ -77,7 +77,7 @@ describe('the phone draws the folder from { session, cards, folders } and presse
     const url = cardTerminalUrl({ sessionId: SID, cardRef: RUN_REF, start: true, phone: true, root: phoneFolderOf(SID, RUN_REF)!.path }, 'dark');
     expect(new URL(url, 'http://x').searchParams.get('root')).toBe(FOLDER.path);
     const src = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/RunCard.tsx', import.meta.url), 'utf-8');
-    expect(src).toMatch(/rerun: closed, phone, \.\.\.\(phone && drawnRoot \? \{ root: drawnRoot \} : \{\}\) \}/);
+    expect(src).toMatch(/const root = confirmed \?\? drawnRoot;[\s\S]*rerun: closed, phone, \.\.\.\(phone && root \? \{ root \} : \{\}\) \}/);
   });
 
   it('the secret card draws the folder, offers Save, and its save carries root', () => {
