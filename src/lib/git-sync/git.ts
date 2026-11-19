@@ -341,7 +341,8 @@ export function clone(url: string, dest: string, env: NodeJS.ProcessEnv): void {
 }
 
 /** Safety ceiling for a full clone — big repos over slow links, not runaway hangs. */
-const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+/** A clone's ceiling (plan ilk-acilis D8: 30 min; after it the UI offers the latest version only). */
+export const CLONE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Grace period after SIGTERM before escalating to SIGKILL on a wedged git child. */
 const CLONE_HARD_KILL_GRACE_MS = 10_000;
 
@@ -364,15 +365,38 @@ export interface CloneHandle {
  * env. Cancelable: `cancel()` SIGTERMs the child — git removes the directory
  * it created when a clone is interrupted.
  */
+export interface CloneStreamingOptions {
+  /** `--depth 1 --single-branch`: the latest version only. */
+  shallow?: boolean;
+  /** Override of {@link CLONE_TIMEOUT_MS}. */
+  timeoutMs?: number;
+}
+
+/** How a clone ended when it did not succeed: read by the caller to name the reason. */
+export type CloneEnd = 'timeout' | 'cancelled' | 'failed';
+
+/** A clone's failure, with how it ended. */
+export class CloneError extends GitSyncError {
+  constructor(message: string, readonly end: CloneEnd, stderr?: string) {
+    super(message, stderr);
+  }
+}
+
 export function cloneStreaming(
   url: string,
   dest: string,
   env: NodeJS.ProcessEnv,
   onProgress?: (chunk: string) => void,
+  opts: CloneStreamingOptions = {},
 ): CloneHandle {
+  const timeoutMs = opts.timeoutMs ?? CLONE_TIMEOUT_MS;
   const child = spawn(
     'git',
-    [...CREDENTIAL_HELPER_DISABLE_ARGS, ...SAFE_TRANSPORT_ARGS, 'clone', '--progress', '--', url, dest],
+    [
+      ...CREDENTIAL_HELPER_DISABLE_ARGS, ...SAFE_TRANSPORT_ARGS, 'clone', '--progress',
+      ...(opts.shallow === true ? ['--depth', '1', '--single-branch'] : []),
+      '--', url, dest,
+    ],
     { env, stdio: ['ignore', 'pipe', 'pipe'] },
   );
 
@@ -409,7 +433,7 @@ export function cloneStreaming(
     const guard = setTimeout(() => {
       timedOut = true;
       terminate();
-    }, CLONE_TIMEOUT_MS);
+    }, timeoutMs);
     (guard as unknown as { unref?: () => void }).unref?.();
 
     child.on('error', (err) => {
@@ -427,11 +451,12 @@ export function cloneStreaming(
       // A user cancel and a timeout must read differently: the caller silently
       // resets on cancel but must SHOW a timeout.
       const detail = timedOut
-        ? `Clone timed out after ${Math.round(CLONE_TIMEOUT_MS / 60000)} minutes.`
+        ? `Clone timed out after ${Math.round(timeoutMs / 60000)} minutes.`
         : canceled
           ? 'Clone was canceled.'
           : stderrTail.trim() || `git clone exited with code ${code}`;
-      reject(new GitSyncError(`git clone failed: ${detail}`, stderrTail || undefined));
+      const end: CloneEnd = timedOut ? 'timeout' : canceled ? 'cancelled' : 'failed';
+      reject(new CloneError(`git clone failed: ${detail}`, end, stderrTail || undefined));
     });
   });
 

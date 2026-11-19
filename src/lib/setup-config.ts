@@ -6,6 +6,15 @@ import { KNOWN_SLEEP_MODEL_VALUES } from './model-facts.js';
 
 const CONFIG_REL_PATH = '_dream_context/state/.config.json';
 
+/** The first read of this project happened (plan ilk-acilis C13/D13): written once, never
+ *  edited or cleared; its presence means "never offer it again" on any Mac. */
+export interface FirstReadClaim {
+  /** The Super child id that did the read. */
+  job: string;
+  /** ISO time the child started. */
+  at: string;
+}
+
 export interface SetupConfig {
   platforms: PlatformId[];
   /**
@@ -115,6 +124,8 @@ export interface SetupConfig {
    * M0 fact in `~/.dreamcontext/local/`, never in this file).
    */
   agentSync?: true;
+  /** See {@link FirstReadClaim}. Only `src/lib/first-read.ts` writes it. */
+  firstRead?: FirstReadClaim;
 }
 
 /**
@@ -619,6 +630,13 @@ function sanitizeContextHandoff(raw: unknown): ContextHandoffConfig | undefined 
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function sanitizeFirstRead(raw: unknown): FirstReadClaim | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.job !== 'string' || !o.job.trim() || typeof o.at !== 'string') return undefined;
+  return { job: o.job, at: o.at };
+}
+
 export function readSetupConfig(projectRoot: string): SetupConfig | null {
   const path = configPath(projectRoot);
   if (!existsSync(path)) return null;
@@ -660,6 +678,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       sleep: sanitizeSleep(parsed.sleep),
       contextHandoff: sanitizeContextHandoff(parsed.contextHandoff),
       agentSync: (parsed as { agentSync?: unknown }).agentSync === true ? true : undefined,
+      firstRead: sanitizeFirstRead((parsed as { firstRead?: unknown }).firstRead),
     };
   } catch {
     return null;
@@ -724,6 +743,8 @@ export function updateSetupConfig(
     contextHandoff: patch.contextHandoff ?? existing.contextHandoff,
     // Never written false: once on, a rewrite keeps it on.
     agentSync: patch.agentSync ?? existing.agentSync,
+    // Written once: an existing claim is never replaced by a patch.
+    firstRead: existing.firstRead ?? patch.firstRead,
   };
   // Keys this CLI models come from `next` only: one it read as malformed is dropped, never
   // copied back raw (a rejected linkedRepos entry may carry a local path the shared file must not).

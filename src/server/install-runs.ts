@@ -35,6 +35,8 @@ export interface InstallRun {
   deviceCode?: { userCode: string; verificationUri: string; expiresAt: number };
   /** The fix this run belongs to, when it is an onboarding fix run. */
   fixId?: FixId;
+  /** `git-install`: why Apple's installer ended without Git. */
+  gitMissing?: FixOutcome['gitMissing'];
 }
 
 /** What `GET /api/agent/install/status` returns for a known run. */
@@ -46,6 +48,7 @@ export interface RunStatusView {
   awaiting?: 'browser' | 'system-dialog' | null;
   progress?: { received: number; total: number | null };
   deviceCode?: { userCode: string; verificationUri: string; expiresAt: number };
+  gitMissing?: FixOutcome['gitMissing'];
 }
 
 /**
@@ -131,6 +134,7 @@ export function runStatusView(run: InstallRun): RunStatusView {
     ...(run.awaiting !== undefined ? { awaiting: run.awaiting } : {}),
     ...(run.progress ? { progress: run.progress } : {}),
     ...(run.deviceCode && run.state === 'running' ? { deviceCode: run.deviceCode } : {}),
+    ...(run.gitMissing ? { gitMissing: run.gitMissing } : {}),
   };
 }
 
@@ -228,6 +232,7 @@ export function startFixRun(
     }
     clearTimeout(ceiling);
     if (!outcome.ok) run.outcome = outcome.reason ?? 'failed';
+    if (!outcome.ok && outcome.gitMissing) run.gitMissing = outcome.gitMissing;
     if (outcome.detail) appendOutput(run, `${run.output ? '\n' : ''}${outcome.detail}`);
     try {
       opts.onDone?.(outcome, run);

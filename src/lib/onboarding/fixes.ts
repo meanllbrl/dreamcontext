@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import runtimePins from '../../../assets/runtime-pins.json' with { type: 'json' };
@@ -43,11 +43,43 @@ export interface FixOutcome {
   ok: boolean;
   reason?: 'offline' | 'permission' | 'checksum' | 'timeout' | 'canceled' | 'refused' | 'failed';
   detail?: string;
+  /** `git-install` only: why Apple's installer ended without Git (C11). */
+  gitMissing?: GitMissingReason;
+}
+
+/** Apple's installer ended without Git: it could not download (update-server message in the
+ *  install log since the run began), or it was closed (any other end, or no readable log). */
+export type GitMissingReason = 'download-failed' | 'closed';
+
+/** The update-server line Apple's installer logs when it cannot fetch the tools. */
+const CLT_DOWNLOAD_FAILED_RE = /not (?:currently )?available from the Software Update server/i;
+
+/** Pure: classify the install-log text written since the run began. */
+export function gitMissingReason(logSinceStart: string | null): GitMissingReason {
+  return logSinceStart && CLT_DOWNLOAD_FAILED_RE.test(logSinceStart) ? 'download-failed' : 'closed';
+}
+
+/** Pure: the lines of `/var/log/install.log` stamped at or after `sinceMs` (lines start with a
+ *  `YYYY-MM-DD HH:MM:SS(+|-)ZZ` stamp; unstamped lines belong to the line before). */
+export function installLogSince(text: string, sinceMs: number): string {
+  const out: string[] = [];
+  let keep = false;
+  for (const line of text.split('\n')) {
+    const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})([+-]\d{2})(\d{2})?/.exec(line);
+    if (m) {
+      const t = Date.parse(`${m[1]}T${m[2]}${m[3]}:${m[4] ?? '00'}`);
+      keep = Number.isFinite(t) && t >= sinceMs - 1000;
+    }
+    if (keep) out.push(line);
+  }
+  return out.join('\n');
 }
 
 export interface FixOptions {
   /** Default true. False is the old `/api/agent/install` `git` behaviour: done once the macOS dialog opens. */
   waitForDialog?: boolean;
+  /** `github-signin` only: skip the `gh` import and run the device flow ("Use another account"). */
+  deviceOnly?: boolean;
 }
 
 /** The argv a TTY runs with inherited stdio for a sign-in (the CLI surface). */
@@ -104,6 +136,10 @@ export interface FixDeps {
   claudeLoggedIn(configDir: string): Promise<boolean>;
   cltInstalled(): boolean;
   gitUsable(): boolean;
+  /** Apple's "Install Command Line Developer Tools" window is still open. */
+  cltInstallerRunning(): Promise<boolean>;
+  /** `/var/log/install.log` since `sinceMs`, or null when missing or unreadable. */
+  readInstallLog(sinceMs: number): string | null;
   ptyInstallDir(): Promise<string | null>;
   /** Homebrew, from what the login shell found or its usual folders. */
   brewPath(facts: ShellFacts): string | null;
@@ -169,6 +205,9 @@ function defaultRun(file: string, args: string[], o: RunOptions, sink: RunSink, 
   });
 }
 
+/** A sink that drops everything: for the small probes a recipe's deps run on their own. */
+const NULL_SINK: RunSink = { output() {}, progress() {}, awaiting() {}, deviceCode() {}, onCancel() {} };
+
 const BREW_CANDIDATES = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew', '/home/linuxbrew/.linuxbrew/bin/brew'];
 
 function ghCandidates(home: string): string[] {
@@ -202,6 +241,26 @@ export const defaultFixDeps: FixDeps = {
   },
   cltInstalled: commandLineToolsInstalled,
   gitUsable: () => gitAvailable(),
+  async cltInstallerRunning() {
+    const r = await defaultRun('/usr/bin/pgrep', ['-f', 'Install Command Line Developer Tools'], { timeoutMs: 5_000 }, NULL_SINK, new AbortController().signal);
+    return r.ok && r.stdout.trim() !== '';
+  },
+  readInstallLog(sinceMs) {
+    try {
+      const fd = openSync('/var/log/install.log', 'r');
+      try {
+        const size = fstatSync(fd).size;
+        const len = Math.min(size, 512 * 1024);
+        const buf = Buffer.alloc(len);
+        readSync(fd, buf, 0, len, size - len);
+        return installLogSince(buf.toString('utf-8'), sinceMs);
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return null;
+    }
+  },
   async ptyInstallDir() {
     // Same folder the in-app installer has always used: the CLI's own package root, or
     // the user-level native-modules folder inside the .app (see agent-terminal.ts).
@@ -272,7 +331,7 @@ function withNpmLock<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-async function shellFacts(ctx: ProbeContext): Promise<ShellFacts> {
+export async function shellFacts(ctx: ProbeContext): Promise<ShellFacts> {
   const r = await ctx.runner.loginShell(SHELL_FACTS_SCRIPT, SHELL_LOOKUP_TIMEOUT_MS);
   return parseShellFacts(r.stdout, process.env.SHELL || '/bin/zsh');
 }
@@ -532,11 +591,25 @@ async function gitInstall({ ctx, sink, signal, o, deps }: RecipeEnv): Promise<Fi
   if (!r.ok && !/already installed/i.test(`${r.stdout}${r.stderr}`)) return runFailure(r, 'The macOS installer');
   if (o.waitForDialog === false) return { ok: true };
   sink.awaiting('system-dialog');
+  const startedAt = deps.now();
+  let seenInstaller = false;
   try {
     const deadline = deps.now() + DIALOG_WAIT_MS;
     while (deps.now() < deadline) {
       if (signal.aborted) return fail('canceled', 'Canceled.');
       if (deps.cltInstalled() || deps.gitUsable()) return { ok: true };
+      // Apple's window opened and is gone, and still no Git: it was closed or could not download.
+      const running = await deps.cltInstallerRunning();
+      if (running) seenInstaller = true;
+      else if (seenInstaller && !deps.cltInstalled() && !deps.gitUsable()) {
+        const why = gitMissingReason(deps.readInstallLog(startedAt));
+        return {
+          ok: false,
+          reason: 'failed',
+          gitMissing: why,
+          detail: why === 'download-failed' ? 'Apple could not download the developer tools.' : 'The developer tools window was closed before Git was installed.',
+        };
+      }
       await deps.sleep(DIALOG_POLL_MS, signal);
     }
     return fail('timeout', 'The macOS install did not finish in time.');
@@ -642,7 +715,7 @@ async function resolveGh(ctx: ProbeContext, deps: FixDeps): Promise<string | nul
 
 async function githubSignin(env: RecipeEnv): Promise<FixOutcome> {
   const ghPath = await resolveGh(env.ctx, env.deps);
-  const r = await runGithubSignin(ghPath ? ghExec(ghPath, env) : null, env.sink, env.signal, { ...env.deps.github, home: env.ctx.home });
+  const r = await runGithubSignin(ghPath ? ghExec(ghPath, env) : null, env.sink, env.signal, { ...env.deps.github, home: env.ctx.home }, { deviceOnly: env.o.deviceOnly === true });
   return r.ok ? { ok: true } : fail(r.reason, r.detail);
 }
 

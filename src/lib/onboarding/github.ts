@@ -1,5 +1,5 @@
 import {
-  BRAIN_OAUTH_CLIENT_ID, BRAIN_OAUTH_SCOPE, fetchAuthenticatedLogin, pollDeviceFlow, startDeviceFlow,
+  BRAIN_OAUTH_CLIENT_ID, fetchAuthenticatedLogin, pollDeviceFlow, startDeviceFlow,
   type FetchImpl,
 } from '../git-sync/oauth.js';
 import {
@@ -19,9 +19,16 @@ import type { ShellResult } from './types.js';
  *    flows (a token GitHub rejected, flagged needs-reconnect, is replaced).
  */
 
-/** What onboarding asks GitHub for when `gh` is present: the three scopes `gh` requires. */
-export const ONBOARDING_GITHUB_SCOPE = 'repo read:org gist';
+/**
+ * The ONE scope set onboarding asks GitHub for, with or without `gh` (D7): the three scopes
+ * `gh` requires. The permission line on screen is built from this list, never fixed text.
+ */
 export const GH_IMPORTABLE_SCOPES: readonly string[] = ['repo', 'read:org', 'gist'];
+export const ONBOARDING_GITHUB_SCOPE = GH_IMPORTABLE_SCOPES.join(' ');
+/** The scopes the clone flow's sign-in requests, as a list for the permission line. */
+export function requestedGithubScopes(): string[] {
+  return [...GH_IMPORTABLE_SCOPES];
+}
 
 /** Runs `gh` (no shell). `input` is written to stdin. */
 export type GhExec = (args: string[], o: { timeoutMs: number; input?: string }) => Promise<ShellResult>;
@@ -129,6 +136,19 @@ export async function importGhToken(gh: GhExec, home?: string): Promise<{ login:
   return { login };
 }
 
+/**
+ * The probe behind "Continue as <login>": does `gh` hold a sign-in this app would import?
+ * Reads the scopes and the login only; never reads or stores the token (the import happens
+ * only on the owner's click, through `github-signin`). Null when there is nothing to offer.
+ */
+export async function probeGhImport(gh: GhExec, home?: string): Promise<{ login: string | null } | null> {
+  if (hasValidStoredToken(home)) return null;
+  if (!(await ghIsAuthed(gh))) return null;
+  const api = await gh(['api', '-i', 'user'], { timeoutMs: 20_000 });
+  if (!api.ok || !scopesImportable(parseScopesHeader(api.stdout))) return null;
+  return { login: parseLoginFromApiOutput(api.stdout) };
+}
+
 /** Sign `gh` in with `token`, over stdin only. */
 export async function feedTokenToGh(gh: GhExec, token: string): Promise<boolean> {
   const r = await gh(['auth', 'login', '--with-token', '--hostname', 'github.com'], { timeoutMs: 30_000, input: `${token}\n` });
@@ -186,23 +206,23 @@ export async function deviceSignIn(
  *  1. A valid token already stored: nothing to do (and nothing is widened). A token
  *     GitHub rejected (needs reconnect) is replaced by steps 2 or 3.
  *  2. `gh` signed in with importable scopes: import it, no browser.
- *  3. Otherwise the device flow, asking for the `gh` scopes only when `gh` is installed
- *     (then `gh` is signed in with the same token); plain `repo` otherwise.
+ *  3. Otherwise (or with `deviceOnly`, the "Use another account" path) the device flow with
+ *     the one D7 scope set (`gh`, when installed and signed out, gets the same token).
  */
 export async function runGithubSignin(
   gh: GhExec | null,
   sink: DeviceCodeSink,
   signal: AbortSignal,
   deps: GithubDeps = defaultGithubDeps,
+  o: { deviceOnly?: boolean } = {},
 ): Promise<GithubResult> {
   if (hasValidStoredToken(deps.home)) return { ok: true, login: null };
   const ghAuthed = gh ? await ghIsAuthed(gh) : false;
-  if (gh && ghAuthed) {
+  if (gh && ghAuthed && o.deviceOnly !== true) {
     const imported = await importGhToken(gh, deps.home);
     if (imported) return { ok: true, login: imported.login };
   }
-  const scope = gh ? ONBOARDING_GITHUB_SCOPE : BRAIN_OAUTH_SCOPE;
-  const flow = await deviceSignIn(sink, signal, scope, deps);
+  const flow = await deviceSignIn(sink, signal, ONBOARDING_GITHUB_SCOPE, deps);
   if (!flow.ok) return flow;
   let login: string | null = null;
   try {

@@ -69,6 +69,10 @@ export async function enableSuper(
   const vault = superVaultName(contextRoot);
   const titles = body.titles && typeof body.titles === 'object' && !Array.isArray(body.titles) ? body.titles as Record<string, unknown> : {};
   const asked = cleanIds(body.adopt);
+  // C8a (plan ilk-acilis): an onboarding landing turns the Super on QUIETLY: everything below
+  // happens, except the new `handover` item, so it queues no new turn until the owner writes.
+  // Only the strict boolean `true` counts; anything else is a plain enable.
+  const quiet = body.quiet === true;
   const candidates = adoptableChats(asked, vault);
   const skipped: SkippedChat[] = [];
   const skip = (id: string, reason: SkippedChat['reason']) => {
@@ -125,7 +129,7 @@ export async function enableSuper(
     delete s.released;
     s.away = { since: null, events: 0 };
     s.queue = s.queue.filter((q) => !(q.kind === 'handover' && q.state === 'pending'));
-    s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
+    if (!quiet) s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
     for (const sid of adopt) queueWhatItAsks(s, sid, now);
   }, { onDemoted: (ids) => { for (const id of ids) skip(id, 'phone_held'); } });
   await reconcileRows(contextRoot);

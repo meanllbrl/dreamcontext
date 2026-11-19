@@ -40,7 +40,7 @@ import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
 import { setWindowControlBase } from '../lib/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer, handleSuperFirstReadGet, handleSuperFirstReadPost } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -243,7 +243,7 @@ import {
   handleAgentCouncilLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
-import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
+import { handleOnboardingAgents, handleOnboardingFix, handleOnboardingGithubProbe, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
 import { handleAgentStats, handleAgentStatsPrice } from './routes/agent-stats.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import { claimOwnedPort } from './owned-ports.js';
@@ -682,6 +682,8 @@ export function buildRouter(): Router {
   // The owner answers one item in place from his bar or the Super chat card (uye-bildirim K5, G4).
   router.post('/api/super/owner-answer', handleSuperOwnerAnswer);
   router.post('/api/super/enable', handleSuperEnable);
+  router.get('/api/super/first-read', handleSuperFirstReadGet);
+  router.post('/api/super/first-read', handleSuperFirstReadPost);
   router.post('/api/super/disable', handleSuperDisable);
   router.post('/api/super/layout', handleSuperLayout);
   router.post('/api/super/activity', handleSuperActivity);
@@ -863,6 +865,8 @@ export function buildRouter(): Router {
   router.get('/api/onboarding/readiness', handleOnboardingReadiness);
   router.post('/api/onboarding/fix', handleOnboardingFix);
   router.post('/api/onboarding/fix/cancel', handleOnboardingFixCancel);
+  router.post('/api/onboarding/agents', handleOnboardingAgents);
+  router.get('/api/onboarding/github-probe', handleOnboardingGithubProbe);
   // Hand off an initial prompt of ANY size to a terminal session about to be opened: POST the
   // text, get a token, put the token (not the text) in the WS upgrade URL. Names its own vault
   // in the body and validates it there, so it is vault-agnostic at the router level.

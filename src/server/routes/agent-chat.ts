@@ -134,7 +134,8 @@ import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_E
 import { levelChatMode, levelPermissionArgs, narrowerMode } from '../../lib/agents/permission.js';
 import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
-import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
+import { consumeCrewTicket, consumeFirstReadTicket, firstReadLockHeld, membersDelegating } from '../../lib/super/delegating.js';
+import { isFirstReadChild } from '../../lib/super/store.js';
 import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import { ordinaryWorkAllows, ordinaryWorkMode } from '../../lib/super/ordinary-work.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
@@ -1681,9 +1682,19 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     const url = appUpgrade?.url ?? parsedUrl;
     socket.once('close', () => appUpgrade?.hold?.());
 
-    const bypass = url.searchParams.get('bypass') === '1';
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
+    // The project's first read (plan ilk-acilis C15a): its spawn is decided HERE, before `bypass`
+    // or any MCP is read: the one-time ticket its delegate minted, or a record that marks the
+    // conversation, or (fail closed, a reconnect re-sends the URL) any lean child of this vault
+    // while a first read is in flight. Such a child runs `auto` with no MCP, whatever the URL says.
+    const firstReadCtx = join(projectRoot, '_dream_context');
+    const firstReadChild = !assistant && (
+      consumeFirstReadTicket(url.searchParams.get('crewTicket'), firstReadCtx)
+      || [resumeId, sessionId].some((id) => !!id && isFirstReadChild(id))
+      || (url.searchParams.get('lean') === '1' && firstReadLockHeld(firstReadCtx))
+    );
+    const bypass = !firstReadChild && url.searchParams.get('bypass') === '1';
     const model = sanitizeModel(url.searchParams.get('model'));
     const effort = sanitizeEffort(url.searchParams.get('effort'));
     // Selects a system-prompt append, not an argv element — an unknown value degrades to
@@ -1703,7 +1714,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       recorded: delegatedChildMcp, known: () => knownChildMcp(projectRoot).all,
     });
     if (lean === 'refuse') { rejectUpgrade(socket, 400); return; }
-    const leanMcp = lean ?? undefined;
+    const leanMcp = firstReadChild ? [] : lean ?? undefined;
     // A member Super's child (plan-r10 1, security r8-2): marked, and capped at the member's level.
     // Its crew: the record, else the one-time `crewTicket` its member's delegate minted, else fail
     // closed while any member delegates (the cap reads every member the mark could stand for).
@@ -1941,7 +1952,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
             if (outcome !== 'unadoptable') { releaseOpening(); return; }
             const child = childNow();
             if (child) { toWatch(ws, child); return; }
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(firstReadChild ? { firstRead: true } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
             releaseOpening();
           });
           return;
@@ -1952,7 +1963,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(firstReadChild ? { firstRead: true } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
           releaseOpening();
           return;
         }
@@ -1972,7 +1983,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           if (!stageAgent) return;
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(firstReadChild ? { firstRead: true } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
         appUpgrade?.hold?.();
         settleSupersede(accepted);
         releaseOpening();
@@ -2097,6 +2108,9 @@ interface ChatSpawnOpts {
   /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
    *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
   leanMcp?: string[];
+  /** The project's first read (plan ilk-acilis C15a): `auto`, `--strict-mcp-config` with no
+   *  project `.mcp.json`, no lean servers and no browser override; never switched to bypass. */
+  firstRead?: boolean;
   /** The Super's claude.ai connectors it already restarted for in this conversation (`followMcpDrift`):
    *  a successor that still lacks one never restarts for it again (end review r1: no restart loop). */
   mcpFollowed?: string[];
@@ -2537,7 +2551,7 @@ export function startChatSession(
   const noteLeanChildFailed = (why: string): void => {
     if (opts.leanMcp && pinId) void noteChildStartFailed(contextRoot, pinId, why).catch((err) => { console.warn(`[super] child ${pinId}: its start failure was not recorded: ${(err as Error).message}`); });
   };
-  const leanProjectMcp = opts.leanMcp ? projectMcpJson(projectRoot) : null;
+  const leanProjectMcp = opts.leanMcp && !opts.firstRead ? projectMcpJson(projectRoot) : null;
   const leanProjectMcpSafe = leanProjectMcp && tmpPathOk(leanProjectMcp) ? leanProjectMcp : null;
   /** The claude.ai connectors a lean Claude child was given (`--mcp notion`), each with the URL its
    *  allowlist entry needs (lean-mcp.ts `connectorRulesFor`). Never for a Codex or Antigravity child:
@@ -2562,7 +2576,7 @@ export function startChatSession(
       return;
     }
   }
-  const browserOverride = scopedCard || app?.own ? null : prepareBrowserOverride(projectRoot);
+  const browserOverride = scopedCard || app?.own || opts.firstRead ? null : prepareBrowserOverride(projectRoot);
   // The MCP stores every account shares (task mcp-management), by env reference.
   const storeMcp = chatStoreMcp({ scopedCard: scopedCard || !!app?.own, lean: !!opts.leanMcp, projectRoot });
   // A set-up server this chat was started without, asked for on its own `mcp` card, joins it on
@@ -6013,7 +6027,7 @@ export function startChatSession(
     // A card switches only within its agent's level: never past it (owner 2026-11-07).
     const cardCapped = !!card && (msg.mode === 'auto' || msg.mode === 'bypass')
       && narrowerMode(permissionModeFor(msg.mode === 'bypass'), card.levelMode) !== permissionModeFor(msg.mode === 'bypass');
-    if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && !cardCapped && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+    if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && !cardCapped && !(opts.firstRead && msg.mode === 'bypass') && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       // Off Bypass: its leftover asks are the owner's again, from this moment and for good
       // (a switch back never re-arms the Super's say: fail closed).
