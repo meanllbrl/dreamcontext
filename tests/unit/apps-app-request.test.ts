@@ -222,19 +222,48 @@ describe('publish: ask, Onayla, spend once', () => {
     expect(listProposals().filter((x) => x.app)).toHaveLength(0);
   });
 
-  it('gate findings the agent lets through are each a line on the card', async () => {
-    commitChange('public/app.js', 'export const account = 4815162342;\n');
-    const blocked = await ask({ action: 'publish', slug: 'tahmin' });
-    expect(blocked.status).toBe(409);
-    const report = blocked.body.report as { approvable: Array<{ id: string }>; blocks: unknown[] } | undefined;
-    expect(report?.blocks ?? []).toHaveLength(0);
-    const ids = (report?.approvable ?? []).map((a) => a.id);
-    expect(ids.length).toBeGreaterThan(0);
-    const r = await ask({ action: 'publish', slug: 'tahmin', approve: ids });
+  it('generic-word lines never stop an ask: the card groups them by word and one Onayla passes them all', async () => {
+    commitChange('public/app.js', 'export const account = 4815162342;\nexport const again = 4815162342;\nexport const other = 2718281828;\n');
+    const r = await ask({ action: 'publish', slug: 'tahmin' });
     expect(r.status).toBe(200);
-    const waived = card().app!.lines.filter((l) => l.label === 'Geçirilecek');
-    expect(waived).toHaveLength(ids.length);
+    const p = card();
+    const waived = p.app!.lines.filter((l) => l.label === 'Geçirilecek');
+    // One row per word, with its line count, never one row per line.
+    expect(waived).toHaveLength(2);
     expect(waived.every((l) => l.tone === 'warn')).toBe(true);
+    expect(waived[0].value).toContain('"4815162342" · 2 satır: public/app.js:1, public/app.js:2');
+    expect(waived[1].value).toContain('"2718281828" · 1 satır');
+    expect((await decide(p, 'approve')).body).toMatchObject({ ok: true, state: 'approved' });
+    const s = (await status(String(r.body.request))).body as { grant: { id: string } };
+    const go = await call(share.handlePublish, { params: { slug: 'tahmin' }, body: { grant: s.grant.id } });
+    expect(go.status).toBe(200);
+  });
+
+  it('no count cap: 60 approvable lines go on one card and pass with one Onayla', async () => {
+    commitChange('public/app.js', Array.from({ length: 60 }, (_, i) => `export const n${i} = 4815162342;`).join('\n') + '\n');
+    const g = await approvedGrant({ action: 'publish', slug: 'tahmin' });
+    const go = await call(share.handlePublish, { params: { slug: 'tahmin' }, body: { grant: g.grant } });
+    expect(go.status).toBe(200);
+  });
+
+  it('a hard finding still stops the ask: no card', async () => {
+    commitChange('public/app.js', 'export const who = "ali.kaya@sirket.co";\nexport const n = 4815162342;\n');
+    const r = await ask({ action: 'publish', slug: 'tahmin' });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('gate_blocked');
+    expect(listProposals().filter((x) => x.app)).toHaveLength(0);
+  });
+
+  it('a generic word found after the card is not among the lines his Onayla passed', async () => {
+    commitChange('public/app.js', 'export const panel = "kasaraporu";\nexport const n = 4815162342;\n');
+    const g = await approvedGrant({ action: 'publish', slug: 'tahmin' });
+    // Same files, but now a Lab insight bears that word: a new line the card never showed.
+    mkdirSync(join(ctxOf(pubProject), 'lab', 'insights'), { recursive: true });
+    writeFileSync(join(ctxOf(pubProject), 'lab', 'insights', 'kasaraporu.md'), '---\nname: kasaraporu\n---\n');
+    const go = await call(share.handlePublish, { params: { slug: 'tahmin' }, body: { grant: g.grant } });
+    expect(go.status).not.toBe(200);
+    const meta = JSON.parse(readFileSync(join(hostDir, 'yayinci', 'tahmin-app.json'), 'utf-8'));
+    expect(JSON.stringify(meta)).not.toContain('kasaraporu');
   });
 });
 

@@ -73,8 +73,11 @@ describe('skill-draw/references/whiteboards.md: the agent card', () => {
     }
   });
 
-  it('documents drag-to-ask and its reference token', () => {
-    expect(WHITEBOARDS_MD).toContain('**Drag to ask.**');
+  it('documents the retired drag-to-ask, the reference token and the Sync button', () => {
+    expect(WHITEBOARDS_MD).toContain('**Drag to ask** onto a card is retired');
+    expect(WHITEBOARDS_MD).toContain('## The Sync button');
+    expect(WHITEBOARDS_MD).not.toContain('**The agent panel.**');
+    expect(README_MD).toContain('The board\'s **Sync** button');
     expect(WHITEBOARDS_MD).toContain('**The card is its own conversation, never the agent\'s thread.**');
     expect(AUTOMATIONS_MD).toContain('**A card is its own conversation, not the thread:**');
     expect(WHITEBOARDS_MD).toContain('`dcref:wb/<board>/<id>`');
@@ -146,16 +149,10 @@ describe('dashboard I18nContext: the agent card speaks English and Turkish', () 
     'whiteboard.palette.agent',
     'whiteboard.palette.newAgent',
     'whiteboard.palette.noAgents',
-    'whiteboard.agent.placeholder',
-    'whiteboard.agent.inPanelMark',
-    'whiteboard.agent.openHint',
-    'whiteboard.agent.noLines',
-    'whiteboard.agentPanel.locate',
-    'whiteboard.drop.kind.image',
+    'whiteboard.agent.talkTo',
+    'whiteboard.agent.clickHint',
     'whiteboard.pictures.refused',
     'whiteboard.agent.missing',
-    'whiteboard.drop.kind.agent',
-    'whiteboard.drop.kind.shape',
     'agents.card.board',
   ];
   const trStart = I18N.indexOf('const TR_PARTIAL');

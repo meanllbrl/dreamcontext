@@ -18,7 +18,7 @@ import { wireTelegramW5 } from '../../src/server/telegram/w5.js';
 import * as reg from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { announceOwnerHead, ownerQuestionReach, settleOwnerReach, _resetOwnerQuestions } from '../../src/lib/super/owner-question.js';
+import { announceOwnerHead, ownerQuestionReach, setOwnerQuestionSinks, settleOwnerReach, _resetOwnerQuestions } from '../../src/lib/super/owner-question.js';
 import { ownerAbouts, superQueueHead } from '../../src/lib/super/inbox.js';
 import { aboutHeads } from '../../src/lib/super/types.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
@@ -183,7 +183,7 @@ describe('the Super\'s two-question card, one clean message per question', () =>
     expect(msgs[0]).toContain('Onay kartı bu çizimdeki gibi olsun mu? (1/2)');
     expect(msgs[0]).not.toContain('options:');
     expect(msgs[0]).not.toContain("ne zaman gitsin");
-    expect(msgs[0]).toContain('• <b>A · Bu taslak olur</b> (çizim A)');
+    expect(msgs[0]).not.toContain('Bu taslak olur');
     expect(tg.calls.find((c) => c.method === 'sendPhoto')!.params.caption).toBe('A · Bu taslak olur');
     expect(msgs[1]).not.toContain('App onay kartı');
     expect(msgs[1]).toContain("ne zaman gitsin? (2/2)");
@@ -231,7 +231,7 @@ describe('a drawing that did not go is never silent (owner 2026-11-10)', () => {
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
     expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
-    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain('• <b>A · Bu taslak olur</b> (çizim A): Çubukta');
+    expect(tg.texts().find((t) => t.startsWith('❓'))).toContain('• <b>A · Bu taslak olur</b>: Çubukta');
     await vi.waitFor(() => expect(askLog()).toMatch(/q-super pictures 1\/1(?! NOT)/));
   });
 
@@ -358,5 +358,125 @@ describe('only a tap or a reply to the card answers it', () => {
     await vi.waitFor(() => expect(injected).toHaveLength(1));
     expect(parseTelegramPrefix(injected[0]).body).toContain('"Hangi renk?"="Yeşil"');
     expect(answers(injected[0])).toEqual(['ask-1']);
+  });
+});
+
+describe('away, a Mac banner is not him seeing it (owner 2026-11-16)', () => {
+  it('Telegram refused the card and the Mac posted a banner: reached:false, the refusal named', async () => {
+    setOwnerQuestionSinks({ banner: () => true });
+    tg.failOnce.set('sendMessage', 400);
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await settleOwnerReach('ask-1', 3000);
+    const reach = ownerQuestionReach(await readSuperState(root), 'ask-1');
+    expect(reach).toMatchObject({ reached: false, telegram: 'failed' });
+    expect(reach.via).not.toContain('banner');
+    expect(reach.note).toMatch(/^NOT seen/);
+    expect(reach.why).toMatch(/Telegram refused/);
+  });
+
+  it('it landed on Telegram: reached, the banner still listed', async () => {
+    setOwnerQuestionSinks({ banner: () => true });
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await settleOwnerReach('ask-1', 3000);
+    const reach = ownerQuestionReach(await readSuperState(root), 'ask-1');
+    expect(reach).toMatchObject({ reached: true, telegram: 'sent' });
+    expect(reach.via).toEqual(expect.arrayContaining(['banner', 'telegram']));
+  });
+});
+
+describe('a card buried under a later turn comes back to the bottom (owner 2026-11-16)', () => {
+  let injected: string[];
+  /** The Super's chat, with its Telegram injector (his words from Telegram start its turns). */
+  function superChat() {
+    injected = [];
+    const h = reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { injected.push(t); return { ok: true }; }, interrupt: () => {} });
+    return h;
+  }
+  /** He writes on Telegram; the Super's turn answers with `text`, then ends. */
+  async function telegramTurn(h: ReturnType<typeof reg.registerChat>, said: string, text: string, before?: () => Promise<void>) {
+    const n = injected.length;
+    tg.push(TOKEN, textUpdate(OWNER, said));
+    await vi.waitFor(() => expect(injected).toHaveLength(n + 1), { timeout: 5000 });
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: `tu${n}`, name: 'Bash', input: { command: 'dreamcontext super state' } }] } });
+    if (before) await before();
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: text });
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes(text))).toBe(true), { timeout: 3000 });
+  }
+  const live = () => withButton('Yeşil').filter((c) => c.result);
+
+  it('a later turn wrote under it: the card is sent again below, the old copy says so and loses its buttons', async () => {
+    const h = superChat();
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(live()).toHaveLength(1));
+    const first = live()[0].result!.message_id;
+    await quiet();
+    await telegramTurn(h, 'durum ne?', 'Şu an çalışan bir iş yok. Telefonunda bir soru kartı açık.');
+    await vi.waitFor(() => expect(live()).toHaveLength(2), { timeout: 3000 });
+    const again = live()[1].result!.message_id;
+    // The new card is the newest message the bot posted.
+    expect(again).toBeGreaterThan(Math.max(...tg.sent('sendMessage').filter((c) => c.result && c !== live()[1]).map((c) => c.result!.message_id)));
+    await vi.waitFor(() => expect(tg.sent('editMessageText').some((c) => c.params.message_id === first)).toBe(true));
+    const edit = tg.sent('editMessageText').find((c) => c.params.message_id === first);
+    expect(String(edit?.params.text)).toContain('aşağıda yeniden soruldu');
+    expect(edit?.params.reply_markup).toBeUndefined();
+    const log = join(home, '.dreamcontext', 'logs', 'telegram-asks.log');
+    expect(readFileSync(log, 'utf8')).toMatch(/ask-1 ask resent below/);
+    // The new card answers: a tap on it is his answer.
+    const card = live()[1];
+    const kb = (card.params.reply_markup as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard.flat();
+    tg.push(TOKEN, { callback_query: { id: 'cb1', data: kb[1].callback_data, from: { id: OWNER }, message: { message_id: card.result!.message_id, chat: { id: OWNER, type: 'private' }, text: String(card.params.text).replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&') } } });
+    await vi.waitFor(() => expect(injected.some((t) => t.includes('"Hangi renk?"="Yeşil"'))).toBe(true), { timeout: 3000 });
+  });
+
+  it('two cards open: a turn that wrote resends both once; a quiet turn after it resends nothing (review r1)', async () => {
+    const h = superChat();
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1), superAsk('ask-2', 'Yayınlayalım mı?', ['Evet yayınla', 'Bekle'], 2)] });
+    await afterWrite();
+    await vi.waitFor(() => { expect(live()).toHaveLength(1); expect(withButton('Evet yayınla').filter((c) => c.result)).toHaveLength(1); });
+    await quiet();
+    await telegramTurn(h, 'durum ne?', 'İki soru açık.');
+    await vi.waitFor(() => { expect(live()).toHaveLength(2); expect(withButton('Evet yayınla').filter((c) => c.result)).toHaveLength(2); }, { timeout: 3000 });
+    // A turn that posts nothing on Telegram (a child's event the Super notes to itself).
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tq', name: 'Bash', input: { command: 'dreamcontext super state' } }] } });
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
+    await quiet(); await quiet();
+    expect(live()).toHaveLength(2);
+    expect(withButton('Evet yayınla').filter((c) => c.result)).toHaveLength(2);
+  });
+
+  it('a tap on the old card while it is sent again keeps his answer on it (review r1)', async () => {
+    const h = superChat();
+    await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+    await afterWrite();
+    await vi.waitFor(() => expect(live()).toHaveLength(1));
+    const old = live()[0];
+    await quiet();
+    tg.slowSends.set('Hangi renk?', 400);
+    await telegramTurn(h, 'durum ne?', 'Bir soru açık.');
+    await vi.waitFor(() => expect(withButton('Yeşil').length).toBe(2), { timeout: 3000 });
+    const kb = (old.params.reply_markup as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard.flat();
+    tg.push(TOKEN, { callback_query: { id: 'cbx', data: kb[1].callback_data, from: { id: OWNER }, message: { message_id: old.result!.message_id, chat: { id: OWNER, type: 'private' }, text: String(old.params.text).replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&') } } });
+    await vi.waitFor(() => expect(injected.some((t) => t.includes('"Hangi renk?"="Yeşil"'))).toBe(true), { timeout: 3000 });
+    await vi.waitFor(() => expect(live()).toHaveLength(2), { timeout: 3000 });
+    await quiet();
+    expect(tg.sent('editMessageText').some((c) => c.params.message_id === old.result!.message_id && String(c.params.text).includes('aşağıda yeniden soruldu'))).toBe(false);
+  });
+
+  it('the turn that asked it is not a later turn: its own line under the card sends nothing again', async () => {
+    const h = superChat();
+    await writeState({});
+    await telegramTurn(h, 'bir şey soracak mısın?', 'Telefonunda bir soru kartı bekliyor.', async () => {
+      await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
+      await afterWrite();
+      await vi.waitFor(() => expect(live()).toHaveLength(1));
+    });
+    await quiet(); await quiet();
+    expect(live()).toHaveLength(1);
+    expect(tg.sent('editMessageText')).toHaveLength(0);
   });
 });

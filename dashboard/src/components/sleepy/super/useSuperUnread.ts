@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { ApiClient } from '../../../api/client';
 import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
-  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, ownerCanRead, readMarksOf, sideOf, readSide, startSeen, unreadOf, unreadSinceRead, unreadUnits, withRead,
+  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, ownerCanRead, readMarksOf, readsAfterFilter, sideOf, readSide, startSeen, unreadOf, unreadSinceRead, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
 import { dropSuperUnread, noteMemberSeen, publishSuperUnread } from './superUnreadStore';
@@ -64,7 +64,7 @@ const spanOf = (el: HTMLElement): Span => {
  * Painting takes no layout room: a read never moves a row.
  * `enabled` false: nothing runs, no request, no timer.
  */
-export function useSuperUnread({ enabled, vault, superId = 'main', api, items, fold, ownerBatches, mainBatches, openQuestions, scrollRef, contentRef, dividerLabel, isPinned, isGliding }: {
+export function useSuperUnread({ enabled, vault, superId = 'main', api, items, fold, ownerBatches, mainBatches, openQuestions, scrollRef, contentRef, dividerLabel, isPinned, isGliding, hidden = null }: {
   enabled: boolean;
   /** The project the rail's count goes to; null = this pane publishes none. */
   vault: string | null;
@@ -83,6 +83,13 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   isPinned: () => boolean;
   /** A jump is under way: nothing counts as seen until it lands. */
   isGliding: () => boolean;
+  /**
+   * An agenda row's thread is shown (ajanda-filtre C4.3): which units it hides. While set, nothing
+   * is marked read; a unit it hides is never gone, never below, never the line's lead; what he saw
+   * is kept and, when the filter ends, read only where it cannot hide an older unread message
+   * (`readsAfterFilter`).
+   */
+  hidden?: ((u: UnreadUnit) => boolean) | null;
 }): SuperUnread {
   const [marks, setMarks] = useState<ReadMarks | null>(null);
   const [below, setBelow] = useState(0);
@@ -194,8 +201,18 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
     return onWindowActivity(() => send());
   }, [superId, enabled, marks, newestIsRead, lastItem, vault]);
 
+  // The filter's deferred reads (C4.3). A reload drops them: they stay unread, the safe side.
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  const seenWhile = useRef(new Map<string, UnreadUnit>());
+  const filtering = !!hidden;
+
   const markRead = useCallback((seen: readonly UnreadUnit[]) => {
     if (!seen.length) return;
+    if (hiddenRef.current) {
+      for (const u of seen) seenWhile.current.set(unitId(u), u);
+      return;
+    }
     const read = seen.map(({ key, ts }) => ({ key, ts }));
     pending.current.push(...read);
     setMarks((m) => (m ? withRead(m, read) : m));
@@ -206,6 +223,19 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
     const root = contentRef.current;
     return root ? rowOf(root, u) : null;
   }, [contentRef]);
+
+  // The filter ended: what he saw inside it is read, unless reading it would hide an older unread
+  // message the count includes (the count is "after the newest read"): those wait for the full
+  // chat's own reading.
+  const wasFiltering = useRef(false);
+  useEffect(() => {
+    if (filtering) { wasFiltering.current = true; return; }
+    if (!wasFiltering.current) return;
+    wasFiltering.current = false;
+    const saw = [...seenWhile.current.values()];
+    seenWhile.current = new Map();
+    if (saw.length) markRead(readsAfterFilter(units, unreadRef.current, saw));
+  }, [filtering, units, markRead]);
 
   // Painted after every commit: a row the window just mounted has to get its line before the
   // browser draws it. A streaming token that changed no row stops before it measures anything.
@@ -222,7 +252,8 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
     const root = contentRef.current;
     const scroller = scrollRef.current;
     if (!root || !scroller) return;
-    const rows = unreadRef.current.map((u) => rowOf(root, u));
+    const hides = hiddenRef.current;
+    const rows = unreadRef.current.filter((u) => !hides || !hides(u)).map((u) => rowOf(root, u));
     if (!force && rows.length === rowsThen.current.length && rows.every((el, i) => el === rowsThen.current[i])) return;
     rowsThen.current = rows;
 
@@ -280,7 +311,8 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
         focused: activity.focused,
         paneShown: !!onTop && scroller.contains(onTop),
       });
-      const units = unreadRef.current;
+      const hides = hiddenRef.current;
+      const units = hides ? unreadRef.current.filter((u) => !hides(u)) : unreadRef.current;
       const rows = units.map((u) => rowOf(root, u));
       const firstMounted = firstMountedRow(units, rows.map(Boolean));
       const visible: string[] = [];
@@ -295,7 +327,8 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
           // nothing to reveal (a block that drew nothing), and it must not hold a count for ever.
           if (firstMounted < 0 || i < firstMounted) return;
           const n = (missing.current.get(unitId(u)) ?? 0) + 1;
-          if (n >= GONE_TICKS && canRead) gone.push(u);
+          // Filtered: nothing is gone (its row may simply not be drawn here).
+          if (n >= GONE_TICKS && canRead && !hides) gone.push(u);
           else waiting.set(unitId(u), n);
           return;
         }
@@ -338,7 +371,7 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   // By what is unread, not by the array: `items` is a new list on every streamed token, and a
   // height it grew is already the ResizeObserver's above.
   const unreadKey = unread.map(unitId).join('\n');
-  useEffect(() => { tickRef.current(); }, [unreadKey]);
+  useEffect(() => { tickRef.current(); }, [unreadKey, filtering, hidden]);
   const look = useCallback(() => { tickRef.current(); }, []);
 
   return { count, units: unread, below, ready: enabled && !!marks, rowOf: rowOfUnit, look };

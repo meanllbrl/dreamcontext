@@ -75,7 +75,7 @@ describe('a level change needs the owner\'s proof', () => {
     expect(r.body.error).toBe('owner_page_only');
     expect(getAgent(contextRoot, 'scout')?.autonomy).toBe('balanced');
     // Nothing else in the same request was written either.
-    expect((await update(ORIGIN_ONLY, { autonomy: 'ask', title: 'Renamed' })).status).toBe(403);
+    expect((await update(ORIGIN_ONLY, { autonomy: 'free', title: 'Renamed' })).status).toBe(403);
     expect(getAgent(contextRoot, 'scout')?.title).toBe('Scout');
   });
 
@@ -87,17 +87,25 @@ describe('a level change needs the owner\'s proof', () => {
   });
 
   it('a narrower level holds now', async () => {
-    const r = await update(OWNER, { autonomy: 'ask' });
+    expect((await update(OWNER, { autonomy: 'free' })).status).toBe(200);
+    const r = await update(OWNER, { autonomy: 'balanced' });
     expect(r.status).toBe(200);
     expect(r.body.applies).toBe('now');
+  });
+
+  it('Ask is not a level any more (owner 2026-11-18): refused with the reason, even with the owner key', async () => {
+    const r = await update(OWNER, { autonomy: 'ask' });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(r.body)).toMatch(/Ask is not an AI Team level/);
+    expect(getAgent(contextRoot, 'scout')?.autonomy).toBe('balanced');
   });
 
   it('the phone\'s own session may change it, as that route accepts the phone today', async () => {
     const socket = { remoteAddress: '127.0.0.1', setTimeout() {} };
     markPhoneSocket(socket);
-    const r = await update(ORIGIN_ONLY, { autonomy: 'ask' }, socket);
+    const r = await update(ORIGIN_ONLY, { autonomy: 'free' }, socket);
     expect(r.status).toBe(200);
-    expect(getAgent(contextRoot, 'scout')?.autonomy).toBe('ask');
+    expect(getAgent(contextRoot, 'scout')?.autonomy).toBe('free');
   });
 });
 

@@ -341,7 +341,7 @@ export function clone(url: string, dest: string, env: NodeJS.ProcessEnv): void {
 }
 
 /** Safety ceiling for a full clone — big repos over slow links, not runaway hangs. */
-const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+const CLONE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Grace period after SIGTERM before escalating to SIGKILL on a wedged git child. */
 const CLONE_HARD_KILL_GRACE_MS = 10_000;
 

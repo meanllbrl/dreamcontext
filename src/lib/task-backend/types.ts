@@ -365,6 +365,11 @@ export interface TaskBackend {
    */
   delete(slug: string, opts?: { absorbedBy?: string; reason?: string }): Promise<void>;
   /**
+   * Is this task linked to a task on the remote (a delete would reach it on the next sync)?
+   * Absent on the local backend, which has no remote.
+   */
+  remoteLinked?(slug: string): boolean;
+  /**
    * Rename a task: rewrite its name, move its file to the new name-derived slug,
    * and (on remote backends) re-key the sync mapping by the stable dcId so the
    * SAME remote task is updated on the next sync — never duplicated (#77).

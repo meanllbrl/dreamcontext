@@ -7,8 +7,9 @@
  *   ```
  *
  * The answer path that already sends that answer to Telegram speaks each block as a voice bubble
- * (`server/telegram/voice-reply.ts`) and sends the rest as before. Nothing else reads it: at the
- * Mac the block is plain text in the chat, and no path but a Telegram answer ever speaks it.
+ * (`server/telegram/voice-reply.ts`) and sends the rest as before. At the Mac chat the block is a
+ * voice-message card (dashboard `VoiceCard`), spoken only when its play button is tapped
+ * (`POST /api/agent/voice/summary`).
  * Pure: no I/O.
  */
 
@@ -34,6 +35,15 @@ export function splitVoiceBlocks(md: string): { rest: string; voices: VoiceBlock
   });
   if (!voices.length && rest === md) return { rest: md, voices: [] };
   return { rest: rest.replace(/\n{3,}/g, '\n\n').trim(), voices };
+}
+
+/** His Telegram message asks for a spoken summary (any wording the briefing names: "sesli özetle",
+ *  "sesli olarak bana anlat", "okuyamıyorum", "voice summary"). Read only to say so when the turn
+ *  ends with no voice (hub `onChatChange`): a miss costs one line, never a send. */
+const VOICE_ASK_RE = /\bsesli\s+(?:olarak\s+)?(?:bana\s+)?(?:özet|anlat|söyl|oku|cevap|yanıt|gönder|yolla|at\b|mesaj)|\bsesle\s+(?:özet|anlat|söyl)|\bseslendir|okuyamıyorum|okuyamam\b|\b(?:voice|spoken|audio)\s+(?:summary|message|note|reply)|\bby\s+voice\b|\bread\s+(?:it\s+)?(?:to\s+me|aloud|out\s+loud)/iu;
+
+export function asksForVoice(text: string): boolean {
+  return !!text && VOICE_ASK_RE.test(text.normalize('NFC').replace(/İ/g, 'i'));
 }
 
 /** What one text sent to Telegram (an answer section, a member post) carries: its text, and the

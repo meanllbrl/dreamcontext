@@ -8,6 +8,7 @@ import { wireTelegramAsks } from './asks.js';
 import { wireTelegramW5 } from './w5.js';
 import { wireRunCards } from './runs.js';
 import { wireManager } from './manager.js';
+import { wireTelegramRooms } from './room-agent.js';
 import { handsfreeAdapter } from './handsfree.js';
 import { macSession } from '../routes/handsfree-mac.js';
 import { installDispatcher } from '../../lib/automations/launchd.js';
@@ -31,6 +32,9 @@ export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<Te
     transcribeVoice: (p) => transcribeVoiceNote(p),
     // Binding a bot makes sure the launchd tick exists (it answers while the app is quit).
     ensureDispatcher: () => { void installDispatcher().catch(() => { /* the bind sheet names it */ }); },
+    // A closed or slept Super (main's or a member's) is started by the server itself when his
+    // message comes, never only through a window that may not open (owner 2026-11-16).
+    wakeHeadless: async (o) => (await import('../headless-super.js')).wakeSuperHeadless(o),
     ...extra,
   });
   setTelegramHub(hub);
@@ -42,6 +46,8 @@ export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<Te
     streams: (ab) => handsfree.streamsTo(ab.scope, ab.target),
   });
   wireManager(hub);
+  // Permitted groups (tg-grup): each one's room agent, read-only, its changes asked privately.
+  wireTelegramRooms(hub);
   handsfree.wire(hub);
   await hub.start();
   return hub;

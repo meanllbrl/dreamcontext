@@ -37,7 +37,8 @@ import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
-import { CardFeedbackTracker, endedClean } from '../card-feedback.js';
+import { CardFeedbackTracker, endedClean, feedbackTurn } from '../card-feedback.js';
+import { onUndelivered, takeUndelivered, undeliveredNote } from '../../lib/super/undelivered.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
@@ -144,7 +145,7 @@ import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, 
 import { noteOwnerWords, waitingCards } from '../../lib/super/owner-consent.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, ownerEchoFrame, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigestFor, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, isOwnerProse, markSuperEventTurn, noteChatStarted, noteChildMcpGrant, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, ownerAbouts, superAnswerDigest, superAskStillOpen, superKnownLanguage, superOwedBlock, superOwnerMarksBlock, superOwnerMarksCarried, superOwnerMarksReturned, superOwnerLanguage, superOwnerOwes, superOwnerSpoke, superSaid, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
   childHasOpenCard, deliverHeldOwnerReceipts, lookupOwnerCard, noteChildParking, ownerCardLiveEdge, ownerItemRecord, retryHeldOwnerCards,
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
@@ -446,6 +447,24 @@ export function superUpgradeRefusal(o: {
       const call = memberCallState(o.contextRoot, o.chatAgent, o.home).state;
       if (call === 'off' || call === 'needs-approval' || call === 'not_owner') return 409;
     } catch { return 409; }
+  }
+  return null;
+}
+
+/**
+ * A desktop open that names a Super's OWN conversation (main's or a member's, while it is on) in
+ * any mode but `super`: refused (409). A Super's conversation runs only as that Super. Opened as a
+ * plain chat tab (a session link that landed before the window held the member's record, owner
+ * 2026-11-16, Ege), it ran with no injector, so his Telegram messages never reached it; it
+ * superseded the real Super, was parked like any idle tab, and left the member's stage blank.
+ * The phone is decided before this (`phoneSuperOpen`: a mirror or a refusal).
+ */
+export function plainOpenOfSuperRefusal(o: { mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string }): 409 | null {
+  if (o.mode === 'super' || o.phone) return null;
+  const ids = [o.resumeId, o.sessionId].filter(Boolean);
+  if (!ids.length) return null;
+  for (const e of superIndex(o.contextRoot).values()) {
+    if (e.enabled && e.session && ids.includes(e.session)) return 409;
   }
   return null;
 }
@@ -1760,6 +1779,8 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     }
     const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId, chatAgent: parseChatAgent(url.searchParams.get('chatAgent')) });
     if (superRefused) { rejectUpgrade(socket, superRefused); return; }
+    const plainSuper = plainOpenOfSuperRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId });
+    if (plainSuper) { rejectUpgrade(socket, plainSuper); return; }
     // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
     // preferred account (and, with no preferred account, to account #0 — the real HOME, i.e.
     // exactly today's behaviour). An id that is not in the register is REFUSED below rather
@@ -2934,7 +2955,7 @@ export function startChatSession(
   const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
   // One command, two spellings: win32 spawns it as an argv array, POSIX quotes it into the script.
   // A member's child on a bridge tool runs at the member's level (security, end review): Codex
-  // `default` for an Ask member, its row otherwise; a tool with no mode that narrow is refused.
+  // its row for the level (never `default`: no member runs at Ask); a tool with no such mode is refused.
   const crewBridge = opts.memberCrew && bridgeTool ? crewBridgeMode(bridgeTool, memberCrewPermissionMode(contextRoot, [opts.memberCrew, ...(opts.memberCrewCap ?? [])], bypass)) : undefined;
   if (crewBridge === null) {
     const why = crewToolRefusal(bridgeTool ?? undefined, 'default') ?? 'This child cannot run on that tool within its member\'s level.';
@@ -3592,7 +3613,21 @@ export function startChatSession(
    *  the record itself did not carry one. */
   let lastMainContext = 0;
   /** The main agent's words this turn, read for cards the chat skipped (card-feedback.ts). */
-  const cardFeedback = new CardFeedbackTracker();
+  // A Super chat's turn end also reads what the phone held of its text (owner-text-gate.ts).
+  const cardFeedback = new CardFeedbackTracker(isSuper ? { lang: () => superKnownLanguage(chatRegistryId), isOwnerProse, undelivered: () => takeUndelivered(chatRegistryId) } : null);
+  // What of its answers did not reach him (undelivered.ts) is said at the turn's end above; a
+  // failure noted while the Super is idle (a voice fails seconds after the turn ended) is said at
+  // once, as the same hidden turn. Busy or about to hand over: the next turn's end says it.
+  const unlistenUndelivered = isSuper && registry ? onUndelivered((sid) => {
+    if (sid !== chatRegistryId || !alive || stdinEnding() || handedOff || turnsInFlight > 0 || respawnTo !== null) return;
+    if (switchPending || heldTexts.length || (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed')) return;
+    const note = feedbackTurn([undeliveredNote(takeUndelivered(chatRegistryId))]);
+    if (!note) return;
+    openTurn();
+    // Marked only once it is really written: a failed write leaves the next real turn judged.
+    if (writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: withOwnerLanguage(note, superKnownLanguage(chatRegistryId)) }] } })) cardFeedback.noteFeedbackWritten();
+    else closeTurn();
+  }) : () => { /* not a Super */ };
   const setHandoffRun = (next: HandoffRun | null): void => {
     if (!next) return;
     handoffRun = next;
@@ -3923,7 +3958,7 @@ export function startChatSession(
     const tg = isSuper ? telegramRefs.take(chatRegistryId, raw) : { ref: null, entry: null, body: parseTelegramPrefix(raw).body };
     const text = tg.body;
     const tgRef = tg.ref;
-    const tgSource: InjectedSource | undefined = tg.entry ? (tg.entry.kind === 'run-report' || tg.entry.kind === 'schedule' ? tg.entry.kind : 'telegram-text') : undefined;
+    const tgSource: InjectedSource | undefined = tg.entry ? (tg.entry.kind === 'run-report' || tg.entry.kind === 'schedule' || tg.entry.kind === 'room-request' ? tg.entry.kind : 'telegram-text') : undefined;
     if (tgRef) turnTelegramRefs.add(tgRef);
     // Any owner message cancels a "continue at reset" (resume-at-reset.ts): he is here.
     ownerSeq += 1;
@@ -4259,6 +4294,7 @@ export function startChatSession(
     ownerReceiptTurns.clear();
     registry?.exited();
     unregisterInjector();
+    unlistenUndelivered();
     unlistenCards();
     // A respawn in place hands the notch's surface to its successor on the same socket.
     if (!handedOff) disposeSurface();

@@ -97,6 +97,13 @@ export function TeamPanel({
           <TeamIcon name="close" size={14} />
         </button>
       </div>
+      {tab === 'profile' && global && (
+        // Edited here, it changes in every project (owner 2026-11-17): said before anything is changed.
+        <div className="aiteam-tip aiteam-tip--global" data-testid="global-profile-note">
+          <TeamIcon name="globe" size={16} />
+          <span>{t('aiteam.panel.globalNote')}</span>
+        </div>
+      )}
       {tab === 'profile' && (
         <AgentProfilePanel slug={slug} onClose={onClose} onEdit={onEdit} onDeleted={onDeleted} onToast={onToast}
           placement={readOnly || global ? null : <PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
@@ -166,6 +173,8 @@ export function RoutineCard({
   const detail = useAutomation(open ? routine.slug : null, { fresh: true });
   const manifest = detail.isFetchedAfterMount ? detail.data?.automation ?? null : null;
   const bound = !!routine.agent && routine.agent !== routine.slug;
+  /** A member's on-call routine has no schedule: no time editor, and a save never sends slots. */
+  const onCall = routine.mode === 'call';
 
   const [title, setTitle] = useState(routine.title);
   const [job, setJob] = useState('');
@@ -196,13 +205,13 @@ export function RoutineCard({
     : t('aiteam.routine.paused');
 
   const save = () => {
-    if (!manifest || 'error' in parsed) return;
+    if (!manifest || (!onCall && 'error' in parsed)) return;
     update.mutate({
       slug: routine.slug,
       draft: {
         title: title.trim(),
         ...(bound ? { job: job.trim() } : { prompt: job.trim() }),
-        ...(JSON.stringify(parsed.slots) !== seededSlots.current ? { slots: parsed.slots } : {}),
+        ...(!onCall && !('error' in parsed) && JSON.stringify(parsed.slots) !== seededSlots.current ? { slots: parsed.slots } : {}),
         review: review ? (manifest.review === 'off' ? 'agent' : manifest.review) : 'off',
       },
     }, {
@@ -273,6 +282,12 @@ export function RoutineCard({
                 <textarea className="agent-textarea" value={job} onChange={(e) => setJob(e.target.value)} />
                 <span className="agent-note">{t('aiteam.routine.jobHint').replace('{name}', agentTitle)}</span>
               </label>
+              {onCall ? (
+                <div className="agent-field">
+                  <span className="agent-label">{t('aiteam.routine.when')}</span>
+                  <span className="agent-note" data-testid="routine-on-call">{t('aiteam.routine.onCall')}</span>
+                </div>
+              ) : (
               <div className="agent-field">
                 <span className="agent-label">{t('aiteam.routine.when')}</span>
                 {rows.map((r, i) => (
@@ -294,6 +309,7 @@ export function RoutineCard({
                   {t('aiteam.routine.addTime')}
                 </button>
               </div>
+              )}
               <div className="aiteam-check">
                 <span>
                   {t('aiteam.routine.review')}
@@ -317,7 +333,7 @@ export function RoutineCard({
                   type="button"
                   className="agent-btn agent-btn--primary"
                   /* A bound routine may ask nothing beyond who its agent is; a self-contained one needs its prompt. */
-                  disabled={update.isPending || !title.trim() || (!bound && !job.trim()) || 'error' in parsed}
+                  disabled={update.isPending || !title.trim() || (!bound && !job.trim()) || (!onCall && 'error' in parsed)}
                   onClick={save}
                 >
                   {t('aiteam.routine.save')}

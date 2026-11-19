@@ -126,22 +126,22 @@ describe('an idle member chat follows a level change at once', () => {
   it('from this server\'s route: respawns with --resume under the new mode, socket kept', async () => {
     const { ws, child: first } = memberChat();
     expect(flag(first, '--permission-mode')).toBe('bypassPermissions');
-    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
+    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'balanced'])).toBe(0);
     notifyAgentLevel(ctx(), 'desk');
     await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalledTimes(1));
     first.emit('close', 0);
     expect(spawned).toHaveLength(2);
-    expect(flag(spawned[1], '--permission-mode')).toBe('default');
+    expect(flag(spawned[1], '--permission-mode')).toBe('auto');
     expect(flag(spawned[1], '--resume')).toBe(CONV);
     expect(ws.close).not.toHaveBeenCalled();
   });
 
   it('from the CLI alone (no route said a word): the watch on its file catches it, no owner message needed', async () => {
     const { child: first } = memberChat();
-    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
+    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'balanced'])).toBe(0);
     await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalledTimes(1), { timeout: 6000, interval: 100 });
     first.emit('close', 0);
-    expect(flag(spawned[1], '--permission-mode')).toBe('default');
+    expect(flag(spawned[1], '--permission-mode')).toBe('auto');
   }, 10_000);
 
   it('another member\'s change, or no change at all, leaves it running', async () => {
@@ -158,7 +158,7 @@ describe('a member chat mid-turn', () => {
     const { ws, child: first } = memberChat();
     ws.emit('message', Buffer.from(JSON.stringify({ type: 'user', text: 'long job' })));
     await vi.waitFor(() => expect(first.stdin.write).toHaveBeenCalled());
-    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
+    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'balanced'])).toBe(0);
     notifyAgentLevel(ctx(), 'desk');
     // Settled (the respawn is scheduled behind the switch gate): still not ended mid-turn.
     await new Promise((r) => setTimeout(r, 50));
@@ -170,7 +170,7 @@ describe('a member chat mid-turn', () => {
     first.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'));
     await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalledTimes(1));
     first.emit('close', 0);
-    expect(flag(spawned[1], '--permission-mode')).toBe('default');
+    expect(flag(spawned[1], '--permission-mode')).toBe('auto');
     await vi.waitFor(() => expect(wrote(spawned[1])).toContain('after the switch'));
   });
 });
@@ -195,10 +195,10 @@ describe('a synced change waiting for the owner\'s card', () => {
     expect(levelOnRoster()).toBe('free');
 
     expect(await dc(['agents', 'approve', 'desk', '--yes'])).toBe(0);
-    expect(levelOnRoster()).toBe('ask');
+    expect(levelOnRoster()).toBe('balanced'); // a stored ask shows and runs as Balanced (owner 2026-11-18)
     await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalledTimes(1), { timeout: 6000, interval: 100 });
     first.emit('close', 0);
-    expect(flag(spawned[1], '--permission-mode')).toBe('default');
+    expect(flag(spawned[1], '--permission-mode')).toBe('auto');
   }, 10_000);
 });
 
@@ -225,7 +225,7 @@ describe('a member chat whose level changed while it was detached', () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(first.stdin.end).not.toHaveBeenCalled();
     expect(first.kill).not.toHaveBeenCalled();
-    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
+    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'balanced'])).toBe(0);
     notifyAgentLevel(ctx(), 'desk');
     await vi.waitFor(() => expect(first.stdin.end.mock.calls.length + first.kill.mock.calls.length).toBeGreaterThan(0), { timeout: 4000 });
   });
@@ -241,10 +241,10 @@ describe('a member Super\'s child (never wider than the member, r8-2)', () => {
     });
     const first = spawned[spawned.length - 1];
     expect(flag(first, '--permission-mode')).toBe('bypassPermissions');
-    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'ask'])).toBe(0);
+    expect(await dc(['agents', 'edit', 'desk', '--autonomy', 'balanced'])).toBe(0);
     notifyAgentLevel(ctx(), 'desk');
     await vi.waitFor(() => expect(first.stdin.end).toHaveBeenCalledTimes(1));
     first.emit('close', 0);
-    expect(flag(spawned[spawned.length - 1], '--permission-mode')).toBe('default');
+    expect(flag(spawned[spawned.length - 1], '--permission-mode')).toBe('auto');
   });
 });

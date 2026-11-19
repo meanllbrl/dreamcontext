@@ -10,14 +10,14 @@
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { executeClaudeDetached, type ClaudeExecution } from '../automations/runner.js';
 import { accountEnvFor, listClaudeAccounts, resolveConfigDir } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
 import { chatSpawnAccount, signedOutAccounts } from '../automations/account.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
-import { QUICK_RECALL_SCOPE, QUICK_RECALL_SCOPE_ENV, quickBrainRoot, quickCliShimDir, quickRecallBlock } from './quick-memory.js';
+import { QUICK_RECALL_SCOPE, QUICK_RECALL_SCOPE_ENV, quickBrainRoot, quickCliShimDir, quickRecallBlock, quickRunDir } from './quick-memory.js';
 import { cliAwarePath } from '../automations/cli-path.js';
 import { killPortable } from '../proc.js';
 import { identityKey, mutateWhiteboard, readWhiteboard } from './store.js';
@@ -317,13 +317,15 @@ async function run(job: Job): Promise<void> {
     const memory = await (deps.memory ?? quickRecallBlock)(job.root, job.req.text);
     const memoryMs = (deps.now ?? Date.now)() - tMemory;
     if (job.stopRequested) return;
-    const message = quickEditUserMessage(job.req.text, input, undefined, catalog, memory || undefined);
-    // A Claude run starts IN the brain folder, so `dreamcontext memory recall` finds this vault. Null:
-    // the folder cannot sit in a permission rule; the run then keeps the empty temp folder and no tools.
-    // Codex and Antigravity never search (quick-memory.ts): they keep the empty temp folder.
+    // A Claude run may search the brain (its real path in the rules). Null: the folder cannot sit in
+    // a permission rule; the run then gets no tools. Codex and Antigravity never search (quick-memory.ts).
     const pick: QuickPick = job.req.pick ?? { tool: 'claude', model: QUICK_MODEL };
     const onClaude = pick.tool === 'claude';
     const brain = !onClaude ? null : deps.brain ? deps.brain(job.root) : quickBrainRoot(job.root);
+    const message = quickEditUserMessage(job.req.text, input, undefined, catalog, memory || undefined, brain ?? undefined);
+    // Every run works in an EMPTY folder, never in the brain: under `dontAsk` the working folder is
+    // readable whatever the allow rules say (quick-memory.ts `quickRunDir`).
+    const runDir = onClaude ? quickRunDir(cwd) : cwd;
     let args: string[];
     let stdin: string | undefined;
     let command: { file: string; prefix: string[] } | undefined;
@@ -338,8 +340,8 @@ async function run(job: Job): Promise<void> {
         env = accountEnvFor(dir);
       }
       if (brain) {
-        // Its recall: this vault only, through the running CLI (quick-memory.ts).
-        const shim = quickCliShimDir(cwd);
+        // Its recall: this vault only, through the running CLI, started from the project (quick-memory.ts).
+        const shim = quickCliShimDir(cwd, undefined, undefined, dirname(job.root));
         env = {
           ...env,
           [QUICK_RECALL_SCOPE_ENV]: QUICK_RECALL_SCOPE,
@@ -364,8 +366,7 @@ async function run(job: Job): Promise<void> {
     const exec = deps.exec ?? executeClaudeDetached;
     const tModel = (deps.now ?? Date.now)();
     const r: ClaudeExecution = await exec(args, {
-      // A Claude run with its search works in the brain; everything else in the temp folder.
-      cwd: brain ?? cwd,
+      cwd: runDir,
       timeoutMs: onClaude ? QUICK_TIMEOUT_MS : QUICK_TOOL_TIMEOUT_MS,
       env,
       ...(command ? { command } : {}),

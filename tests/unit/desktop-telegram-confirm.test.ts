@@ -15,6 +15,7 @@ const COMMANDS: Record<string, { perm: string; toml: string }> = {
   confirm_telegram_binding: { perm: 'allow-confirm-telegram', toml: 'permissions/telegram-confirm.toml' },
   start_telegram_creation: { perm: 'allow-start-telegram-creation', toml: 'permissions/telegram-confirm.toml' },
   start_telegram_readopt: { perm: 'allow-start-telegram-readopt', toml: 'permissions/telegram-confirm.toml' },
+  confirm_telegram_group: { perm: 'allow-confirm-telegram-group', toml: 'permissions/telegram-confirm.toml' },
   confirm_telegram_forward: { perm: 'allow-confirm-telegram-forward', toml: 'permissions/telegram-forward.toml' },
   html_snapshot: { perm: 'allow-html-snapshot', toml: 'permissions/html-snapshot.toml' },
 };

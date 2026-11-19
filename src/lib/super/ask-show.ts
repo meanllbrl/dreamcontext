@@ -16,10 +16,9 @@
  * Pure: never imports inbox.js (inbox imports this).
  */
 import {
-  ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_ASK_PICTURES, dropAskItem, leaveGroups, presentCards, queuedCards,
+  MAX_ASK_SHOWS, MAX_ASK_PICTURES, dropAskItem, leaveGroups, presentCards, queuedCards,
   type AskShow, type SuperQueueItem, type SuperState,
 } from './types.js';
-import type { ImageChain } from './image-group.js';
 
 /** A question still open with the owner (or waiting to reach him). */
 function isOpen(q: SuperQueueItem | undefined): boolean {
@@ -104,23 +103,6 @@ export function askShowState(s: SuperState, item: string): 'presented' | 'queued
   // Handed to the stage: on his screen, or waiting its turn in the presentation queue.
   return s.view.mode === 'present' && s.view.ask === item ? 'presented'
     : (s.presentQueue?.items ?? []).some((x) => x.ask === item) ? 'queued' : 'presented';
-}
-
-/**
- * The recent pictures a question falls back on (D1.3): for a child's question, the pictures shown
- * for that child within ASK_SHOW_RECENT_MS; for the super's own, its last picture set (the image
- * chain: its group's pictures, or the lone one) within the same window. At most MAX_ASK_PICTURES.
- */
-export function recentAskCards(s: SuperState, from: { child: string } | { chain: ImageChain | undefined }, now: number): string[] {
-  const images = s.containers.filter((c) => c.kind === 'image');
-  if ('child' in from) {
-    return images.filter((c) => c.forChild === from.child && (c.forAt ?? 0) >= now - ASK_SHOW_RECENT_MS).map((c) => c.id).slice(0, MAX_ASK_PICTURES);
-  }
-  const chain = from.chain;
-  if (!chain || now - chain.at > ASK_SHOW_RECENT_MS) return [];
-  const g = chain.group ? s.groups.find((x) => x.id === chain.group) : undefined;
-  const ids = g ? g.cards : [chain.card];
-  return ids.filter((id) => images.some((c) => c.id === id)).slice(0, MAX_ASK_PICTURES);
 }
 
 /**

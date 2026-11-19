@@ -26,11 +26,11 @@
  *       owner-facing questions + approval cards, else a spinner while members work for the owner,
  *       else the grey unread count (from summary=1 `members`).
  *   (b) its list (`team-list`, opened in place under the row): Rota first, Mira before Pera, Pera
- *       "Super için" with no count, Kip dimmed, no global member, no switch (plan r4 R2); Kip's
+ *       "Super için" with no count, Kip dimmed, the global member Ada after every own member with
+ *       its globe (`team-member-global`), no switch (plan r4 R2); Kip's
  *       stage's Üye card switch (`member-card-switch`) turns it on through
  *       POST /api/agents/kip/enabled and back off.
- *   (c) the Global ekip row (`drawer-global-team-row`) below every project, Ada in it, its count
- *       taking Ada's card once; its list (`global-team-list`) names the project.
+ *   (c) no Global ekip row anywhere (owner 2026-11-17); Ada opens from the project's own list.
  *   (d) the New chat menu (`new-chat-menu` -> `new-chat-claude`, `new-chat-member`): Mira twice is
  *       the same session (one member Super process); Claude opens a plain new chat.
  *   (e) Mira's stage (`super-surface[data-super-id="m:mira"]`, `super-member-name`) with its two
@@ -39,9 +39,12 @@
  *   (f) the task's face (`task-agent-face[data-slug=rota]`) lands on Rota's stage with
  *       `super-task-strip[data-task=<slug>]`; a message sent there reaches Rota's Super with
  *       `[About task <slug>]` (read in the stand-in's stdin).
- *   (g) Ada's stage shows `member-approval-band` and `member-project-chip`.
+ *   (g) Ada's stage shows `member-approval-band`; its head starts with the project
+ *       (`super-member-project`, the side menu's project name) and carries the Global chip, no
+ *       project switcher (`member-project-chip` gone); the head stays one row at 1440 and keeps
+ *       the project name at 420.
  *   (h) "Üyeleri yönet" (`team-manage`, in the Team row's "⋯" menu) opens `manage-members-modal`, with no chat pane inside.
- *   (i) phone 390: `phone-team-row` and `phone-global-team-row`; the sheet (`phone-team-sheet`)
+ *   (i) phone 390: `phone-team-row` and no `phone-global-team-row`; the sheet (`phone-team-sheet`)
  *       opens Rota's conversation (the phone's mirror tab of her live Super), and her open question
  *       is answered there: the summary stops asking and her Super gets the answer.
  *   (j) main's stage unchanged: the Super Agent row still opens main.
@@ -180,7 +183,7 @@ async function shots(page, nn, what, prepare, sizes = SIZES, rest = [1440, 900])
 
 /** The drawer on screen (at 390 it is a toggle). */
 async function ensureDrawer(page) {
-  if (await page.locator('[data-testid="drawer-team-row"]:visible, [data-testid="drawer-global-team-row"]:visible').count()) return;
+  if (await page.locator('[data-testid="drawer-team-row"]:visible').count()) return;
   if (await page.getByTestId('ns-drawer-toggle').count()) await openDrawer(page).catch(() => {});
 }
 
@@ -307,16 +310,17 @@ async function run(engineName, base, port) {
   console.log(`── ${engineName}: (d) the New chat menu`);
   await toMainStage(page);
   await ensureDrawer(page);
-  const menu = page.locator('[data-testid="new-chat-menu"]:visible').first();
+  const menu = page.locator('[data-testid="drawer-project-more"]:visible').first();
   // The chevron sits beside the project row's "+" and shows on the row's hover (its box takes no
   // pointer until then): hover the row through the always-there "+", as a person does, then click.
   const openMenu = async () => {
     await ensureDrawer(page);
     if (await page.locator('[data-testid="new-chat-claude"]:visible').count()) return;
     await page.locator('[data-testid="drawer-project-add"]:visible').first().hover();
-    await page.locator('[data-testid="new-chat-menu"]:visible').first().click();
+    await page.locator('[data-testid="drawer-project-more"]:visible').first().click();
+    await page.locator('[data-testid="drawer-project-newchat-item"]:visible').first().click();
   };
-  ok(tag('(d) the New chat chevron is there'), await until(page, async () => (await menu.count()) === 1, 15000));
+  ok(tag('(d) the project menu is there'), await until(page, async () => (await menu.count()) === 1, 15000));
   await openMenu().catch(() => {});
   ok(tag('(d) it offers Claude and the members'), await until(page, async () =>
     (await page.locator('[data-testid="new-chat-claude"]:visible').count()) === 1
@@ -384,7 +388,8 @@ async function run(engineName, base, port) {
   let want = { kind: 'none', n: 0 };
   let shown = { kind: 'none', n: 0 };
   ok(tag('(a) its ONE mark: owner questions + approval cards in red, else a spinner while members work for the owner, else unread'), await until(page, async () => {
-    want = wantMark((await summaryMembers(page)).filter((m) => !m.global));
+    // Its own members and the global ones (the project in view counts Ada's approval card).
+    want = wantMark(await summaryMembers(page));
     shown = await drawnMark(row);
     return want.kind !== 'none' && shown.kind === want.kind && shown.n === want.n;
   }, 20000), `row ${JSON.stringify(shown)}, summary ${JSON.stringify(want)}: ${(await row.innerText().catch(() => '')).replace(/\s+/g, ' ')}`);
@@ -399,7 +404,9 @@ async function run(engineName, base, port) {
   const at = (s) => order.indexOf(s);
   ok(tag('(b) in the drawn order: Rota first, Mira, then Pera, then the idle and off ones'),
     at('rota') === 0 && at('mira') > 0 && at('pera') > at('mira') && at('kip') > at('pera') && at('gantt') > at('pera'), JSON.stringify(order));
-  ok(tag('(b) no global member in the project\'s list'), at('ada') === -1, JSON.stringify(order));
+  ok(tag('(b) the global member Ada is in the project\'s list, after every own member'),
+    at('ada') > 0 && ['rota', 'mira', 'pera', 'kip', 'gantt'].every((x) => at(x) < at('ada')), JSON.stringify(order));
+  ok(tag('(b) …with the globe on her row'), (await list.locator('[data-testid="team-list-member"][data-slug="ada"] [data-testid="team-member-global"]').count()) === 1);
   const peraRow = list.locator('[data-testid="team-list-member"][data-slug="pera"]');
   const peraText = (await peraRow.innerText().catch(() => '')).replace(/\s+/g, ' ');
   // "Super için" is a glyph on the face's corner (SuperBadge), its words in the aria-label and title.
@@ -439,35 +446,41 @@ async function run(engineName, base, port) {
   await page.keyboard.press('Escape');
   await toMainStage(page);
 
-  console.log(`── ${engineName}: (c) the Global ekip row, (g) Ada's stage`);
-  const grow = page.locator('[data-testid="drawer-global-team-row"]');
+  console.log(`── ${engineName}: (c) no Global ekip row, (g) Ada's stage`);
   await ensureDrawer(page);
-  ok(tag('(c) ONE Global ekip row'), await until(page, async () => (await grow.count()) === 1 && await grow.isVisible(), 15000));
-  const below = await page.evaluate((v) => {
-    const g = document.querySelector('[data-testid="drawer-global-team-row"]')?.getBoundingClientRect();
-    const others = [...document.querySelectorAll(`[data-drawer-project], [data-testid="drawer-team-row"][data-vault="${v}"]`)].map((e) => e.getBoundingClientRect().top);
-    return !!g && others.every((t) => g.top > t);
-  }, VAULT);
-  ok(tag('(c) at the bottom, below every project'), below);
-  let gWant = { kind: 'none', n: 0 };
-  let gShown = { kind: 'none', n: 0 };
-  ok(tag('(c) its one mark takes Ada\'s approval card once'), await until(page, async () => {
-    gWant = wantMark((await summaryMembers(page)).filter((m) => m.global));
-    gShown = await drawnMark(grow);
-    return gWant.kind === 'asking' && gShown.kind === gWant.kind && gShown.n === gWant.n;
-  }, 15000), `row ${JSON.stringify(gShown)}, summary ${JSON.stringify(gWant)}, members ${JSON.stringify((await summaryMembers(page)).filter((m) => m.global))}`);
-  await shots(page, '03', 'global-ekip-row', () => ensureDrawer(page));
-  const glist = page.locator('[data-testid="global-team-list"]:visible');
-  const openGlist = async () => { await ensureDrawer(page); if (!(await glist.count())) await grow.click(); };
-  await openGlist();
-  ok(tag('(c) its list opens with Ada'), await until(page, async () => /Ada/.test(await glist.innerText().catch(() => '')), 10000), await glist.innerText().catch(() => ''));
-  await shots(page, '03', 'global-ekip-list', () => openGlist());
-  await openGlist();
-  await glist.getByText('Ada', { exact: false }).first().click();
-  ok(tag('(c) Ada opens her stage in the project'), await until(page, async () => (await stage(page, 'm:ada').count()) > 0, 20000));
+  ok(tag('(c) no Global ekip row, no "Projelerden bağımsız"'), (await page.locator('[data-testid="drawer-global-team-row"], .ns-team-global-head').count()) === 0);
+  await openList();
+  await list.locator('[data-testid="team-list-member"][data-slug="ada"]').click();
+  ok(tag('(c) Ada opens her stage from the project\'s list'), await until(page, async () => (await stage(page, 'm:ada').count()) > 0, 20000));
   ok(tag('(g) her stage shows the approval band'), await until(page, async () => (await stage(page, 'm:ada').getByTestId('member-approval-band').isVisible().catch(() => false)), 15000));
-  ok(tag('(g) …and the project chip'), await until(page, async () => (await stage(page, 'm:ada').getByTestId('member-project-chip').isVisible().catch(() => false)), 15000));
+  const head = stage(page, 'm:ada').getByTestId('super-member-head');
+  const projectName = (await head.getByTestId('super-member-project').innerText().catch(() => '')).trim();
+  ok(tag('(g) her head starts with the project, named as the side menu names it'), projectName === VAULT, projectName);
+  ok(tag('(g) …with the Global chip and no project switcher'),
+    (await head.getByTestId('super-member-global').isVisible().catch(() => false)) && (await page.getByTestId('member-project-chip').count()) === 0 && (await head.locator('select').count()) === 0);
+  const headAt = async () => head.evaluate((el) => {
+    const r = (q) => el.querySelector(q)?.getBoundingClientRect() ?? null;
+    const p = r('[data-testid="super-member-project"]');
+    const n = r('[data-testid="super-member-name"]');
+    const tops = [...el.children].filter((c) => c.getBoundingClientRect().width > 0).map((c) => Math.round(c.getBoundingClientRect().top + c.getBoundingClientRect().height / 2));
+    const pn = el.querySelector('.super-member-project-name');
+    const cut = (x) => !!x && x.scrollWidth > x.clientWidth + 1;
+    const btns = [...el.closest('.super-centre-head, [data-testid="super-member-head"]').querySelectorAll('button')].filter((b) => b.getBoundingClientRect().width > 0);
+    return { project: p ? Math.round(p.width) : 0, name: n ? Math.round(n.width) : 0, oneRow: Math.max(...tops) - Math.min(...tops) <= 4,
+      projectCut: cut(pn), buttonCut: btns.some(cut), text: el.textContent };
+  });
+  const wide = await headAt();
+  ok(tag('(g) 1440: the head is one row, the project name whole, no button cut'), wide.oneRow && !wide.projectCut && !wide.buttonCut && wide.name > 30, JSON.stringify(wide));
+  const vp = page.viewportSize();
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.waitForTimeout(400);
+  const narrow = await headAt();
+  ok(tag('(g) 420: the project name still shows, the name keeps its first word'), narrow.oneRow && narrow.project > 24 && narrow.name > 24, JSON.stringify(narrow));
+  if (vp) await page.setViewportSize(vp);
+  await page.waitForTimeout(300);
   await shots(page, '07', 'global-member-approval-band', (w) => stageOnly(page, w));
+  // The head alone, wide and at a 420 centre (light): the owner reads these.
+  await shots(page, '07', 'global-member-head', (w) => stageOnly(page, w), [[1440, 900], [420, 900]], [1440, 900]);
 
   console.log(`── ${engineName}: (h) Üyeleri yönet`);
   await toMainStage(page);
@@ -485,6 +498,29 @@ async function run(engineName, base, port) {
   const chatInside = await modal.locator('.chat-cmp-input, .chat-pane, [data-testid="agent-conversation"], [data-testid="super-surface"]').count();
   ok(tag('(h) with no chat pane inside'), chatInside === 0, String(chatInside));
   await shots(page, '08', 'manage-members', () => openModal());
+  await page.keyboard.press('Escape');
+  await until(page, async () => (await modal.count()) === 0, 5000);
+  // The Ekip "⋯" menu offers "Tüm projelerde çalışan üye"; it opens the form with All projects picked.
+  const openMore = async () => {
+    await ensureDrawer(page);
+    if (await page.locator('[data-testid="team-more-menu"]:visible').count()) return;
+    await row.hover();
+    await page.locator('[data-testid="drawer-team-row-section"] [data-testid="team-more"]:visible').first().click();
+  };
+  await openMore();
+  ok(tag('(h) the "⋯" menu offers a member of all projects'), await until(page, async () => (await page.locator('[data-testid="team-new-global-member"]:visible').count()) === 1, 8000));
+  await shots(page, '08', 'team-more-menu', () => openMore(), [[1440, 900]]);
+  await openMore();
+  await page.locator('[data-testid="team-new-global-member"]:visible').first().click();
+  ok(tag('(h) …which opens the new-member form on "All projects"'), await until(page, async () => (await modal.locator('[data-new-scope="all"][aria-pressed="true"]').count()) === 1, 10000));
+  await page.keyboard.press('Escape');
+  await until(page, async () => (await modal.count()) === 0, 5000);
+  // A global member's profile says its edits apply in every project.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('dreamcontext-manage-members', { detail: { slug: 'ada' } })));
+  ok(tag('(h) Ada\'s profile says a change applies in every project'), await until(page, async () => (await modal.locator('[data-testid="global-profile-note"]').isVisible().catch(() => false)), 10000));
+  await shots(page, '08', 'global-profile-note', async () => {
+    if (!(await modal.count())) await page.evaluate(() => window.dispatchEvent(new CustomEvent('dreamcontext-manage-members', { detail: { slug: 'ada' } })));
+  }, [[1440, 900]]);
   await page.keyboard.press('Escape');
   await until(page, async () => (await modal.count()) === 0, 5000);
 
@@ -542,7 +578,7 @@ async function run(engineName, base, port) {
     await until(phone, () => drawerShown(phone), 20000);
     const prow = phone.locator(`[data-testid="phone-team-row"][data-vault="${VAULT}"]`);
     ok(tag('(i) the phone shows the project\'s Ekip row'), await until(phone, async () => (await prow.count()) === 1 && await prow.isVisible(), 20000));
-    ok(tag('(i) …and the Global ekip row'), await until(phone, async () => phone.locator('[data-testid="phone-global-team-row"]').isVisible(), 15000));
+    ok(tag('(i) …and no Global ekip row'), (await phone.locator('[data-testid="phone-global-team-row"]').count()) === 0);
     await shots(phone, '09', 'phone-rows', () => openDrawer(phone), [[390, 844]], null);
     const sheet = phone.locator('[data-testid="phone-team-sheet"]:visible');
     const openSheet = async () => { if (!(await sheet.count())) { await openDrawer(phone); await prow.click(); } };

@@ -67,11 +67,11 @@ describe('assigning (C1-2)', () => {
     expect(parseStatusHistory(taskText(f, 'fix-login'))[0]).toMatchObject({ to: 'in_progress', by: 'owner' });
   });
 
-  it('an Ask agent plans first; a future start is scheduled', () => {
+  it('a stored Ask agent does not plan first (no member runs at Ask); a future start is scheduled', () => {
     makeAgent(f, 'careful', 'ask');
     writeTask(f, 'later', { id: 'task_later' });
     const r = assign('later', 'careful', { source: 'dashboard', startAt: '2026-10-26T09:00:00+03:00' });
-    expect(r).toMatchObject({ state: 'scheduled', step: 'plan' });
+    expect(r).toMatchObject({ state: 'scheduled', step: 'work' });
     expect(taskData(f, 'later').agent_start_at).toBe('2026-10-26T06:00:00.000Z');
   });
 

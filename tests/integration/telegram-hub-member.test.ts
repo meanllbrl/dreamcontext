@@ -90,6 +90,33 @@ afterEach(async () => {
   rmSync(project, { recursive: true, force: true });
 });
 
+describe("a slept member Super wakes from its own bot with no window (owner 2026-11-16, Ege)", () => {
+  it("its Super is started by the server as the MEMBER's (its slug), the message delivered once, the answer back on the member's bot", async () => {
+    const h = reg.registerChat({ sessionId: MSID, conversationId: null, vault: 'acme', mode: 'super' });
+    const { inj, sent } = fakeInjector();
+    const wakes: Array<{ sessionId: string; member: string | null; contextRoot: string }> = [];
+    const opened: string[] = [];
+    Object.assign((hub as unknown as { deps: Record<string, unknown> }).deps, {
+      openLink: (u: string) => opened.push(u),
+      wakeHeadless: async (o: { sessionId: string; member: string | null; contextRoot: string }) => {
+        wakes.push(o);
+        setTimeout(() => reg.registerChatInjector(o.sessionId, inj), 20);
+        return 'started' as const;
+      },
+    });
+    tg.push(TOKEN, textUpdate(OWNER, 'Selam'));
+    tg.push(TOKEN, textUpdate(OWNER, 'hey'));
+    await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
+    expect(wakes).toEqual([expect.objectContaining({ sessionId: MSID, member: SLUG, contextRoot: root })]);
+    expect(sent.map((t) => parseTelegramPrefix(t).body)).toEqual(['Selam', 'hey']);
+    expect(opened).toEqual([]);
+    const { ref } = parseTelegramPrefix(sent[1]);
+    assistant(h, `<!-- re:${ref} -->\nBuradayım, Ege.`);
+    await vi.waitFor(() => expect(tg.texts()).toContain('Buradayım, Ege.'));
+    expect(tg.texts().some((t) => t.includes('bekliyor'))).toBe(false);
+  });
+});
+
 describe("a member's bot talks to the member's own Super", () => {
   it('a message births its Super, reaches its injector under a ref; the answer comes back whole', async () => {
     const h = reg.registerChat({ sessionId: MSID, conversationId: null, vault: 'acme', mode: 'super' });

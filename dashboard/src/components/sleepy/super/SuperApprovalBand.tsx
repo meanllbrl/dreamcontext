@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { RequestError } from '../../../api/client';
@@ -9,7 +9,9 @@ import { useApproveAgent } from '../../../hooks/useAgents';
 import { ConditionScript, conditionView } from '../../automations/ConditionScript';
 import { TeamIcon } from '../../aiteam/TeamIcons';
 import { superApprovalSentence, type SuperApproval } from './superApprovals';
-import { AppRequestCard } from '../chat/AppRequestCard';
+import { appRequestTitle, useTellShown } from '../chat/AppRequestCard';
+import type { AppCard } from '../../assistant/ProposalList';
+import { phoneAllows } from '../../../lib/phoneSurface';
 import '../../../pages/AiTeamPage.css';
 import './TaskStrip.css';
 
@@ -30,14 +32,17 @@ import './TaskStrip.css';
  *
  * APP CARDS (owner 2026-11-13: "onay kartı yok, onay kartına basman gerekir diyor"): every app
  * install, publish, update or logo waiting in this project, whoever asked (the Super, one of its
- * jobs, any chat), drawn as the very card a chat draws, with Onayla and Reddet. It is here because
- * the request exists, never because an agent remembered to paste a block. Its buttons are the
- * notch's owner-key decide route, so an agent cannot press them.
+ * jobs, any chat). It is here because the request exists, never because an agent remembered to
+ * paste a block. Since 2026-11-16 ("bu istek pop up olarak gelsin") the card itself opens as a
+ * pop-up (`AppRequestPopup`); here each one is ONE line that opens it again, so a pop-up he
+ * closed without deciding is never lost and the band no longer covers the chat.
  */
-export function SuperApprovalBand({ items, appCards = [], superId, toast, onToast }: {
+export function SuperApprovalBand({ items, appCards = [], onOpenApp, superId, toast, onToast }: {
   items: SuperApproval[];
   /** Proposal ids of this project's waiting app cards (`useWaitingAppCards`). */
   appCards?: readonly string[];
+  /** Opens a waiting app card's pop-up. */
+  onOpenApp?: (id: string) => void;
   superId: string | null;
   /** The last decision's answer. Held by the stage, so it outlives the last row it answers. */
   toast: string;
@@ -54,14 +59,7 @@ export function SuperApprovalBand({ items, appCards = [], superId, toast, onToas
       )}
       {appCards.length > 0 && (
         <div className="super-approvals-apps" data-testid="super-app-cards">
-          {appCards.map((id) => (
-            <AppRequestCard
-              key={id}
-              spec={{ type: 'app-request', id }}
-              where="super"
-              onDecided={(action, name) => onToast(t(action === 'approve' ? 'super.approvals.appApproved' : 'super.approvals.appDeclined').replace('{name}', name))}
-            />
-          ))}
+          {appCards.map((id) => <AppRequestRow key={id} id={id} onOpen={() => onOpenApp?.(id)} />)}
         </div>
       )}
       {items.length > 0 && (
@@ -79,6 +77,34 @@ export function SuperApprovalBand({ items, appCards = [], superId, toast, onToas
         </div>
       )}
       {toast && <p role="status" className="super-member-note" data-testid="super-approvals-toast">{toast}</p>}
+    </div>
+  );
+}
+
+/** One waiting app card as one line: what it asks, and Open (the pop-up). Reads the same cached
+ *  card the pop-up draws; it decides nothing itself. */
+function AppRequestRow({ id, onOpen }: { id: string; onOpen: () => void }) {
+  const { t } = useI18n();
+  const api = useApi();
+  const here = phoneAllows('GET', `/api/apps/requests/card/${encodeURIComponent(id)}`);
+  const q = useQuery({
+    enabled: here,
+    queryKey: ['apps', 'request-card', id],
+    queryFn: () => api.get<{ state: string; card: AppCard }>(`/apps/requests/card/${encodeURIComponent(id)}`),
+    retry: false,
+  });
+  const card = q.data?.card;
+  // The row is the card drawn on the Super's screen, pop-up or not: the agent hears it is here.
+  useTellShown(id, q.data?.state === 'pending', 'super');
+  return (
+    <div className="aiteam-approval-row super-approval-row super-app-row" data-testid="super-app-row" data-app-request={id}>
+      <div className="aiteam-approval-line">
+        <span className="aiteam-approval-mark" aria-hidden="true">✋</span>
+        <span className="aiteam-approval-text">{card ? appRequestTitle(card, t) : t('appreq.card')}</span>
+        <span className="super-approval-actions">
+          <button type="button" className="agent-btn agent-btn--primary" onClick={onOpen} data-testid="super-app-row-open">{t('super.approvals.appOpen')}</button>
+        </span>
+      </div>
     </div>
   );
 }

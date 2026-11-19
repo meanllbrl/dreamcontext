@@ -54,6 +54,15 @@ function ownWords(text: string): string {
 
 /** The language of one owner message, or null when the words do not tell. */
 export function detectOwnerLanguage(text: string): OwnerLanguage | null {
+  const { tr, en } = languageVotes(text);
+  if (tr > en && tr >= 1) return 'Turkish';
+  if (en > tr && en >= 2) return 'English';
+  return null;
+}
+
+/** Each language's word votes in a text (code, links, paths and quote headers left out): the one
+ *  count both his message's language and the Super's own text's (owner-text-gate.ts) are read by. */
+export function languageVotes(text: string): { tr: number; en: number } {
   const words = ownWords(text);
   // Every word votes: a word with a Turkish letter is one Turkish vote, never the whole verdict
   // ("ask Björn about the façade" stays English).
@@ -69,9 +78,7 @@ export function detectOwnerLanguage(text: string): OwnerLanguage | null {
     if (TURKISH_LETTERS.test(raw) || TURKISH_WORDS.has(w)) tr += 1;
     else if (ENGLISH_WORDS.has(w)) en += 1;
   }
-  if (tr > en && tr >= 1) return 'Turkish';
-  if (en > tr && en >= 2) return 'English';
-  return null;
+  return { tr, en };
 }
 
 /** A value read back from the record: one of ours, or nothing. */

@@ -168,7 +168,7 @@ describe('the wide stage (not narrow)', () => {
 
 describe('a narrow stage (1000 x 800)', () => {
   const narrow = STAGES[2];
-  it('any layout is the sheet over a composer bar; 2+ cards get a tab row, a filmstrip keeps its strip', () => {
+  it('open, any layout is a sheet under its tab row over a composer bar; a filmstrip keeps its strip', () => {
     for (const [layout, list] of CASES) {
       const p = plan(layout, list, narrow);
       expect(p.narrow).toBe(true);
@@ -177,12 +177,52 @@ describe('a narrow stage (1000 x 800)', () => {
       const sheet = drawn(p).filter((c) => c.where === 'sheet');
       expect(sheet).toHaveLength(1);
       for (const c of drawn(p)) expect(c.rect.y + c.rect.height).toBeLessThanOrEqual(p.centre.y + 0.5);
-      if (layout === 'filmstrip') { expect(p.strip).toBeDefined(); expect(p.tabs).toBeUndefined(); }
-      else if (list.length > 1) {
-        expect(p.tabs!.ids).toEqual(list.map((c) => c.id));
-        expect(Object.values(p.cards).filter((c) => c.where === 'tab')).toHaveLength(list.length - 1);
-      } else expect(p.tabs).toBeUndefined();
+      // Every card the view shows has its tab, the open one included (owner 2026-11-17).
+      expect(p.tabs!.ids).toEqual(list.map((c) => c.id));
+      expect(p.tabs!.folded).toBeUndefined();
+      for (const c of drawn(p)) expect(c.rect.y).toBeGreaterThanOrEqual(p.tabs!.rect.y + p.tabs!.rect.height);
+      if (layout === 'filmstrip') expect(p.strip).toBeDefined();
+      else expect(Object.values(p.cards).filter((c) => c.where === 'tab')).toHaveLength(list.length - 1);
     }
+  });
+
+  it('folded (the default for what the agent shows): the tab row over a full-height chat, nothing drawn over it', () => {
+    for (const [layout, list] of CASES) {
+      for (const asking of [false, true]) {
+        const p = plan(layout, list, narrow, {}, { folded: true, asking });
+        expect(p.mode).toBe('present');
+        expect(p.chat).toBe('column');
+        expect(drawn(p)).toHaveLength(0);
+        expect(p.tabs).toEqual({ rect: expect.any(Object), ids: list.map((c) => c.id), folded: true });
+        for (const c of list) expect(p.cards[c.id].where).toBe('tab');
+        // The chat runs from under the row to the content's foot: the screen is not split.
+        expect(p.centre.y).toBeGreaterThanOrEqual(p.tabs!.rect.y + p.tabs!.rect.height);
+        expect(p.centre.height).toBeGreaterThan(narrow.height / 2);
+        expect(p.centre.width).toBe(p.tabs!.rect.width);
+        // The switcher and exit stay in the top band, above the row, never over the chat.
+        expect(p.controls).toBeDefined();
+        expect(p.controls!.y + p.controls!.height).toBeLessThanOrEqual(p.tabs!.rect.y + 0.5);
+        expect(p.strip).toBeUndefined();
+      }
+    }
+  });
+
+  it('a page side by side folds to its one tab the same way, and opens under it', () => {
+    const view: SuperView = { mode: 'half', card: 'c0' };
+    const folded = planStage(items(2), view, narrow, { folded: true });
+    expect(folded.cards.c0.where).toBe('tab');
+    expect(folded.tabs).toMatchObject({ ids: ['c0'], folded: true });
+    expect(folded.centre.y).toBeGreaterThanOrEqual(folded.tabs!.rect.y + folded.tabs!.rect.height);
+    const open = planStage(items(2), view, narrow, {});
+    expect(open.cards.c0.where).toBe('sheet');
+    expect(open.tabs).toMatchObject({ ids: ['c0'] });
+    expect(open.cards.c0.rect.y).toBeGreaterThanOrEqual(open.tabs!.rect.y + open.tabs!.rect.height);
+  });
+
+  it('a wide stage ignores the fold: the cards are drawn beside the chat as before', () => {
+    const p = plan('compare', items(2), STAGES[0], {}, { folded: true });
+    expect(p.tabs).toBeUndefined();
+    expect(drawn(p).filter((c) => c.where === 'present')).toHaveLength(2);
   });
 
   it('a question of his open: the chat at the mini\'s height with its transcript, the sheet above it', () => {

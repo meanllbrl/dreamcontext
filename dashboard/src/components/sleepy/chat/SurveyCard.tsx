@@ -11,15 +11,15 @@ import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 import { agentFileUrl } from '../../../api/client';
 import { useVaultId } from '../../../context/VaultContext';
 import {
-  allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete, soloPreviewIndex,
+  allValues, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete, soloPreviewIndex,
   isSwipeDeck, numberValue, optionLetter, pickFor, resolveAnswers, resolveNotes, setText,
-  setValue, textRole, toggleOther, togglePick, unclearMessage, ALREADY_ANSWERED_MESSAGE, type SurveyPicks,
+  setValue, textRole, togglePick, unclearMessage, ALREADY_ANSWERED_MESSAGE, type SurveyPicks,
 } from './surveyAnswers';
 import { markSurveyDraftSent, readSurveyDraft, surveyDraftOwner, writeSurveyDraft } from './surveyDrafts';
 import { RECONNECT_CHIP_DELAY_MS } from './reconnectChip';
 import { recordPhoneEvent } from '../../../lib/phoneConnLog';
 import { noteOwnerWrote } from '../../../lib/ownerAtMac';
-import { useI18n } from '../../../context/I18nContext';
+import { useI18n, useOwnerCardT } from '../../../context/I18nContext';
 
 /**
  * AskUserQuestion, state 5 — a card built to be answered COLD.
@@ -83,16 +83,17 @@ export type SurveyHost = Pick<ChatSession, 'answer' | 'answerQuestion'>;
  *  unclear). Also what the Super Agent's chat draws where the owner's answer to its question
  *  sits in the transcript (super/SuperQuestionCard.tsx), so both read the same. */
 export function SurveyReceipt({ title, unclear, already, values }: { title?: string; unclear: boolean; already?: boolean; values: readonly string[] }) {
+  const t = useOwnerCardT();
   return (
     <div className="chat-surveycard" data-state="submitted">
-      {title && <div className="chat-surveycard-context"><span className="chat-surveycard-context-label">Context</span>{title}</div>}
+      {title && <div className="chat-surveycard-context"><span className="chat-surveycard-context-label">{t('chat.survey.context')}</span>{title}</div>}
       <div className="chat-surveycard-receipt">
         <span className="chat-surveycard-receipt-check" aria-hidden>{unclear || already ? '↺' : '✓'}</span>
         <span>{already
-          ? 'Already answered: sent Claude back to your earlier words.'
+          ? t('chat.survey.receiptAlready')
           : unclear
-          ? 'Asked Claude to ask again, more clearly.'
-          : `You chose: ${values.join(', ') || '—'}`}</span>
+          ? t('chat.survey.receiptUnclear')
+          : t('chat.survey.receiptChose').replace('{values}', values.join(', ') || '—')}</span>
       </div>
     </div>
   );
@@ -159,7 +160,6 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
   const current = Math.min(page, Math.max(0, total - 1));
   const onLastPage = current >= total - 1;
 
-  const answered = answeredCount(questions, picks);
   const complete = isComplete(questions, picks);
   const values = allValues(questions, picks);
   const nextGap = firstUnansweredIndex(questions, picks);   // -1 once nothing is left
@@ -181,9 +181,11 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
   useLayoutEffect(() => {
     const el = pageEls.current[current];
     if (!el) return;
-    setViewportH(el.offsetHeight);
+    // Rounded UP: a fractional page height (a 19.5px line) rounded down clips the last border.
+    const measure = () => setViewportH(Math.ceil(el.getBoundingClientRect().height));
+    measure();
     if (typeof ResizeObserver === 'undefined') return;    // jsdom / no-RO: height stays auto
-    const ro = new ResizeObserver(() => setViewportH(el.offsetHeight));
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [current, submitted]);
@@ -262,16 +264,6 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
   const picksRef = useRef(picks);
   picksRef.current = picks;
 
-  /** "Other" re-labels the field under it and puts the caret there — typing is the point. */
-  const pickOther = (q: QuestionSpec) => {
-    const turningOn = !pickFor(picksRef.current, q.question).other;
-    setPicks((prev) => toggleOther(prev, q));
-    if (turningOn) {
-      const page = pageEls.current[questions.indexOf(q)];
-      requestAnimationFrame(() => page?.querySelector<HTMLTextAreaElement>('.chat-surveycard-fieldinput')?.focus({ preventScroll: true }));
-    }
-  };
-
   /** A swipe decides the question and moves on to whatever is still open. */
   const decide = (q: QuestionSpec, label: string) => {
     const next = choose(picksRef.current, q, label);
@@ -288,6 +280,7 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
     if (!ownEvent(e)) return;   // a key pressed inside an open fullscreen preview
     const tag = (e.target as HTMLElement).tagName;
     if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+    if ((e.target as HTMLElement).closest('.chat-surveycard-menu')) return;   // the more menu's own keys
     const q = questions[current];
     if (swipe && q && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
       e.preventDefault();
@@ -301,9 +294,6 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
     if (n <= q.options.length) {
       e.preventDefault();
       setPicks((prev) => togglePick(prev, q, q.options[n - 1].label));
-    } else if (n === q.options.length + 1 && !swipe) {
-      e.preventDefault();
-      pickOther(q);
     }
   };
 
@@ -311,18 +301,17 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
 
   return (
     <div className={`chat-surveycard${swipe ? ' swipe' : ''}`} onKeyDown={onKeyDown}>
-      <div className="chat-surveycard-head">
-        <span className="chat-surveycard-pill"><span aria-hidden>❓</span> {swipe ? 'Swipe' : 'Question'}</span>
-        {total > 1 && (
-          <span className="chat-surveycard-progress">{answered} / {total}</span>
-        )}
-      </div>
+      {swipe && (
+        <div className="chat-surveycard-head">
+          <span className="chat-surveycard-pill"><span aria-hidden>❓</span> {t('chat.survey.swipe')}</span>
+        </div>
+      )}
 
       {previewsOff && <p className="chat-html-off" role="note" data-model-html-off="">{t('appChat.previewsOff')}</p>}
 
       {item.title && (
         <div className="chat-surveycard-context">
-          <span className="chat-surveycard-context-label">Context</span>
+          <span className="chat-surveycard-context-label">{t('chat.survey.context')}</span>
           {item.title}
         </div>
       )}
@@ -359,7 +348,6 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
                 swipe={swipe}
                 onPicks={setPicks}
                 onDecide={(label) => decide(q, label)}
-                onOther={() => pickOther(q)}
                 onCommit={commit}
                 complete={complete}
               />
@@ -369,24 +357,17 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
       </div>
 
       <div className="chat-surveycard-foot">
-        {/* The waiting line is drawn OVER the pager's own box (the pager stays in the flow,
-            hidden), so nothing in this row reflows: the card's height never changes. */}
+        {/* One progress signal: the dots (filled = answered, big = here), also the way to jump.
+            They hide while the waiting line is drawn beside the buttons, so nothing reflows. */}
         {total > 1 ? (
           <div className="chat-surveycard-pager" data-waiting={waiting || undefined}>
-            <button
-              type="button"
-              className="chat-surveycard-arrow"
-              onClick={() => go(current - 1)}
-              disabled={current === 0}
-              aria-label="Previous question"
-            >‹</button>
             <div className="chat-surveycard-dots">
               {questions.map((q, i) => (
                 <button
                   key={q.question}
                   type="button"
                   className={`chat-surveycard-dot${i === current ? ' on' : ''}${isAnswered(q, picks) ? ' done' : ''}`}
-                  aria-label={`Question ${i + 1} of ${total}${isAnswered(q, picks) ? ' — answered' : ''}`}
+                  aria-label={`${t('chat.survey.questionN').replace('{n}', String(i + 1)).replace('{total}', String(total))}${isAnswered(q, picks) ? ` — ${t('chat.survey.answered')}` : ''}`}
                   aria-current={i === current || undefined}
                   onClick={() => go(i)}
                 >
@@ -394,64 +375,72 @@ export function SurveyCard({ item, session, draftKey, connected, reads }: {
                 </button>
               ))}
             </div>
+          </div>
+        ) : <span />}
+
+        <div className="chat-surveycard-actions">
+          {waiting && <span className="chat-surveycard-waiting-beside">{waitingLine}</span>}
+          <MoreMenu onUnclear={unclear} onAlready={alreadyAnswered} />
+          {total > 1 && current > 0 && (
             <button
               type="button"
               className="chat-surveycard-arrow"
-              onClick={() => go(current + 1)}
-              disabled={onLastPage}
-              aria-label="Next question"
-            >›</button>
-            {waiting && waitingLine}
-          </div>
-        ) : (
-          <span className="chat-surveycard-side">
-            <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
-              Unclear? Ask again
-            </button>
-            <button type="button" className="chat-surveycard-unclear" onClick={alreadyAnswered}>
-              Already answered
-            </button>
-          </span>
-        )}
-
-        <div className="chat-surveycard-actions">
-          {/* One question has no pager: the line hangs in the free space left of the buttons. */}
-          {waiting && total <= 1 && <span className="chat-surveycard-waiting-beside">{waitingLine}</span>}
-          {total > 1 && (
-            <>
-              <button type="button" className="chat-surveycard-unclear" onClick={unclear}>
-                Unclear? Ask again
-              </button>
-              <button type="button" className="chat-surveycard-unclear" onClick={alreadyAnswered}>
-                Already answered
-              </button>
-            </>
+              onClick={() => go(current - 1)}
+              aria-label={t('chat.survey.prev')}
+              title={t('chat.survey.prev')}
+            >‹</button>
           )}
-          {/* What's left is only worth a JUMP when it is off screen. When the gap is the
-              page you are looking at, the same text stays as a plain readout — a button
-              that navigates to where you already are is a dead click. */}
-          {total > 1 && nextGap >= 0 && (
-            nextGap === current ? (
-              <span className="chat-surveycard-count">{total - answered} left</span>
-            ) : (
-              <button
-                type="button"
-                className="chat-surveycard-jump"
-                onClick={() => go(nextGap)}
-              >{total - answered} left</button>
-            )
-          )}
-          {complete || onLastPage || swipe ? (
-            <button type="button" className="chat-btn primary" disabled={!complete} onClick={submit}>
-              Submit <span aria-hidden>→</span>
+          {onLastPage || swipe ? (
+            <button type="button" className="chat-btn primary chat-surveycard-go" disabled={!complete} onClick={submit}>
+              {t('chat.survey.submit')} <span aria-hidden>→</span>
             </button>
           ) : (
-            <button type="button" className="chat-btn primary" onClick={() => go(current + 1)}>
-              Next <span aria-hidden>→</span>
+            <button type="button" className="chat-btn primary chat-surveycard-go" onClick={() => go(current + 1)}>
+              {t('chat.survey.next')} <span aria-hidden>→</span>
             </button>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** "Unclear, ask again" and "Already answered": rare, so one small menu instead of two links
+ *  that crowd the footer. Closes on a click elsewhere and on Escape. */
+function MoreMenu({ onUnclear, onAlready }: { onUnclear: () => void; onAlready: () => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [open]);
+  const pick = (fn: () => void) => () => { setOpen(false); fn(); };
+  return (
+    <div
+      className="chat-surveycard-more"
+      ref={box}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && open) { e.stopPropagation(); setOpen(false); box.current?.querySelector<HTMLButtonElement>('.chat-surveycard-more-btn')?.focus(); }
+      }}
+    >
+      <button
+        type="button"
+        className="chat-surveycard-arrow chat-surveycard-more-btn"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t('chat.survey.more')}
+        title={t('chat.survey.more')}
+        onClick={() => setOpen((o) => !o)}
+      ><span aria-hidden>⋯</span></button>
+      {open && (
+        <div className="chat-surveycard-menu" role="menu">
+          <button type="button" role="menuitem" className="chat-surveycard-menuitem" onClick={pick(onUnclear)}>{t('chat.survey.unclear')}</button>
+          <button type="button" role="menuitem" className="chat-surveycard-menuitem" onClick={pick(onAlready)}>{t('chat.survey.already')}</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -464,13 +453,12 @@ function ownEvent(e: React.SyntheticEvent<HTMLElement>): boolean {
   return e.currentTarget.contains(e.target as Node);
 }
 
-function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, complete }: {
+function QuestionBody({ q, picks, swipe, onPicks, onDecide, onCommit, complete }: {
   q: QuestionSpec;
   picks: SurveyPicks;
   swipe: boolean;
   onPicks: (update: (prev: SurveyPicks) => SurveyPicks) => void;
   onDecide: (label: string) => void;
-  onOther: () => void;
   onCommit: () => void;
   complete: boolean;
 }) {
@@ -533,7 +521,6 @@ function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, c
       onToggle={(label) => onPicks((prev) => togglePick(prev, q, label))}
     />
   );
-  const other = <OtherRow q={q} on={!!pick.other} keyHint={q.options.length + 1} onToggle={onOther} />;
   const plain = q.options.flatMap((o, i) => (o.preview ? [] : [i]));
 
   if (isBoard(q)) {
@@ -555,10 +542,7 @@ function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, c
             />
           ) : null))}
         </div>
-        <div className="chat-surveycard-options">
-          {plain.length > 0 && rows(plain, true)}
-          {other}
-        </div>
+        {plain.length > 0 && <div className="chat-surveycard-options">{rows(plain, true)}</div>}
         {field}
       </>
     );
@@ -572,7 +556,6 @@ function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, c
         <SoloPreview letter={optionLetter(solo)} label={o.label} preview={o.preview as string} />
         <div className="chat-surveycard-options">
           {rows(q.options.map((_, i) => i), true)}
-          {other}
         </div>
         {field}
       </>
@@ -583,7 +566,6 @@ function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, c
     <>
       <div className="chat-surveycard-options">
         {rows(q.options.map((_, i) => i), false)}
-        {other}
       </div>
       {field}
     </>
@@ -676,31 +658,6 @@ function SoloPreview({ letter, label, preview }: { letter: string; label: string
   );
 }
 
-function OtherRow({ q, on, keyHint, onToggle }: {
-  q: QuestionSpec;
-  on: boolean;
-  keyHint: number;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`chat-surveycard-opt other${on ? ' on' : ''}`}
-      aria-pressed={on}
-      onClick={onToggle}
-    >
-      <span className={`chat-surveycard-opt-mark${q.multiSelect ? ' box' : ' radio'}`} aria-hidden>
-        {on ? (q.multiSelect ? '✓' : '●') : ''}
-      </span>
-      <span className="chat-surveycard-opt-body">
-        <span className="chat-surveycard-opt-title">Other</span>
-        <span className="chat-surveycard-opt-desc">Write your own answer below</span>
-      </span>
-      <span className="chat-surveycard-opt-key" aria-hidden>{keyHint}</span>
-    </button>
-  );
-}
-
 /**
  * The always-on text field. Its placeholder says what the text will MEAN — a note on the
  * pick, or the answer itself — so the one field never reads as ambiguous. It grows only as
@@ -726,31 +683,31 @@ function FreeField({ q, value, role, other, pickedLabel, onChange, onCommit, com
     el.style.height = `${el.scrollHeight}px`;
   }, [value]);
 
+  const { t } = useI18n();
   const placeholder = role === 'note'
-    ? `Add a note to “${pickedLabel}” (optional)`
+    ? t('chat.survey.noteOn').replace('{pick}', pickedLabel)
     : (q.kind === 'text'
-      ? (q.placeholder ?? 'Type your answer…')
+      ? (q.placeholder ?? t('chat.survey.typeAnswer'))
       : other
-        ? (q.multiSelect && pickedLabel ? `Your own answer, next to “${pickedLabel}”…` : 'Write your own answer…')
-        : 'None of these? Write your own answer…');
+        ? (q.multiSelect && pickedLabel ? t('chat.survey.ownNextTo').replace('{pick}', pickedLabel) : t('chat.survey.own'))
+        : t('chat.survey.none'));
 
   return (
-    <div className={`chat-surveycard-field${role === 'note' ? ' note' : ''}`}>
-      <span className="chat-surveycard-field-tag" aria-hidden>{role === 'note' ? 'Note' : 'Answer'}</span>
+    <div className="chat-surveycard-field">
       <textarea
         ref={ref}
         className="chat-surveycard-fieldinput"
         rows={1}
         value={value}
         placeholder={placeholder}
-        aria-label={role === 'note' ? `Note on your answer — ${q.question}` : `Your own answer — ${q.question}`}
+        aria-label={(role === 'note' ? t('chat.survey.noteAria') : t('chat.survey.ownAria')).replace('{q}', q.question)}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); onCommit(); }
         }}
       />
       {value.trim() && (
-        <span className="chat-surveycard-fieldhint">⌘ / Ctrl + Enter to {complete ? 'submit' : 'continue'}</span>
+        <span className="chat-surveycard-fieldhint">{complete ? t('chat.survey.hintSubmit') : t('chat.survey.hintContinue')}</span>
       )}
     </div>
   );
@@ -764,13 +721,14 @@ function FreeField({ q, value, role, other, pickedLabel, onChange, onCommit, com
  * project pictures inlined.
  */
 function PreviewSurface({ preview }: { preview: string | undefined }) {
+  const { t } = useI18n();
   const { vault } = useVaultId();
   const media = loneMedia(preview);
   const html = usePreviewHtml(preview);
   if (media) return <MediaPreview kind={media.kind} path={media.src} src={agentFileUrl(vault, media.src, { raw: true })} />;
   return html
     ? <HtmlView html={html} />
-    : <span className="chat-surveycard-tile-empty">No preview</span>;
+    : <span className="chat-surveycard-tile-empty">{t('chat.survey.noPreview')}</span>;
 }
 
 /**
@@ -874,6 +832,7 @@ function SwipeFace({ q, chosen, onDecide }: {
   chosen: string | undefined;
   onDecide: (label: string) => void;
 }) {
+  const { t } = useI18n();
   const [yes, no] = q.options;
   const preview = q.options.find((o) => o.preview)?.preview;
   const [dx, setDx] = useState(0);
@@ -941,7 +900,7 @@ function SwipeFace({ q, chosen, onDecide }: {
           aria-pressed={settled === -1}
           onClick={() => throwTo(-1)}
         ><span aria-hidden>←</span> {no.label}</button>
-        <span className="chat-swipe-hint">drag or ← →</span>
+        <span className="chat-swipe-hint">{t('chat.survey.swipeHint')}</span>
         <button
           type="button"
           className={`chat-swipe-btn yes${settled === 1 ? ' on' : ''}`}

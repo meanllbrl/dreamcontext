@@ -86,26 +86,37 @@ describe('an option\'s drawing is named by its letter (owner 2026-11-11: "hangis
     expect(drawingCaption(1, '  Şu anki\n gibi kalsın ')).toBe('B · Şu anki gibi kalsın');
   });
 
-  it('a drawn option\'s line carries the same letter as its picture, even with no note', () => {
+  it('a drawn option\'s note carries the same letter as its picture; with no note it has no line (owner 2026-11-18)', () => {
     const html = formatAskQuestionHtml(withDrawingNotes(q, 0, new Set(['0:0', '0:1'])));
-    expect(html).toContain('• <b>A · Sade hâline geçsin</b> (çizim A): Tek başlık');
-    expect(html).toContain('• <b>B · Şu anki gibi kalsın</b> (çizim B)');
+    expect(html).toContain('• <b>A · Sade hâline geçsin</b>: Tek başlık');
+    // Its picture's caption and its button already say "B · Şu anki gibi kalsın": said once.
+    expect(html).not.toContain('Şu anki gibi kalsın');
+    expect(html).not.toContain('çizim');
     expect(html).toContain('• <b>Başka</b>: Notuna yaz');
     expect(html).not.toContain('yukarıda');
   });
 
+  it('a card whose options are only drawings (kitUP, 2026-11-18): the text is the question and its description, nothing else', () => {
+    const kit = { question: 'Raf hangi hâliyle kalsın?', description: 'Öneri B: rakam küçük ve okunur.', options: [
+      { label: 'B: küçük rakam kapağın solunda (öneri)', preview: '<img src="shots/b.png">' },
+      { label: 'A: bugünkü büyük soluk rakam', preview: '<img src="shots/a.png">' },
+      { label: 'C: numaralı liste sütunları', preview: '<img src="shots/c.png">' },
+    ] };
+    const html = formatAskQuestionHtml(withDrawingNotes(kit, 0, new Set(['0:0', '0:1', '0:2'])), { suffix: ' (1/3)' });
+    expect(html).toBe('❓ Raf hangi hâliyle kalsın? (1/3)\n\nÖneri B: rakam küçük ve okunur.');
+  });
+
   it('a drawing that did not go has no letter and says it is on the Mac', () => {
     const html = formatAskQuestionHtml(withDrawingNotes(q, 0, new Set(['0:0'])));
-    expect(html).toContain('• <b>A · Sade hâline geçsin</b> (çizim A)');
+    expect(html).toContain('• <b>A · Sade hâline geçsin</b>: Tek başlık');
     expect(html).toContain("• <b>Şu anki gibi kalsın</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
   });
 
-  it('a long message trims the notes but never a drawn option\'s letter line', () => {
+  it('a long message trims the notes and keeps the question, never over the limit', () => {
     const long = { ...q, description: 'x'.repeat(3000), options: q.options.map((o) => ({ ...o, description: 'y'.repeat(900) })) };
     const html = formatAskQuestionHtml(withDrawingNotes(long, 0, new Set(['0:0', '0:1'])), { max: 400 });
     expect(html.length).toBeLessThanOrEqual(400);
-    expect(html).toContain('<b>A · Sade hâline geçsin</b> (çizim A)');
-    expect(html).toContain('<b>B · Şu anki gibi kalsın</b> (çizim B)');
+    expect(html).toContain('Sade hâline mi geçsin?');
   });
 });
 
@@ -133,8 +144,8 @@ describe('two options with one label', () => {
     const q = { question: 'Hangisi?', options: [{ label: 'Kart', preview: '<p>1</p>' }, { label: 'Kart', preview: '<p>2</p>' }] };
     // The first did not draw, the second did: the line and the picture both say B.
     const html = formatAskQuestionHtml(withDrawingNotes(q, 0, new Set(['0:1'])));
-    expect(html).toContain('• <b>B · Kart</b> (çizim B)');
-    expect(html).not.toContain('çizim A');
+    expect(html).not.toContain('B · Kart');
+    expect(html).not.toContain('A · Kart');
     expect(html).toContain("• <b>Kart</b>: Çizimi Mac'te");
   });
 });
