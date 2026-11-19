@@ -81,11 +81,10 @@ const IMAGE_MIME: Record<string, string> = {
 /**
  * The page at project-relative `rel` with its OWN pictures and stylesheets written in, the way
  * the Mac card writes them (`html-local-assets.ts`, generated from the dashboard's
- * `htmlLocalAssets.ts`): only files in the page's folder or below, no `../`, no hidden segment,
+ * `htmlLocalAssets.ts`): only pictures and stylesheets inside the project (a `../` into a sibling folder is fine), no hidden segment,
  * no scheme. Each file is read through H (`readProjectFile`: inside the project, no symlink or
  * hardlink, no secret class, the git-ignore rule), capped per file and per page as the card caps
- * them. A file that cannot be read stays as written; the print layer draws it as a named
- * placeholder (`page-pdf.ts`), never a broken icon.
+ * them. A picture that cannot be read becomes a named marker picture, never a broken icon.
  */
 export function pageWithOwnAssets(ctx: Pick<CardContext, 'contextRoot' | 'isGitIgnored' | 'mediaRoots'>, html: string, rel: string): string {
   const { images, styles } = findLocalAssets(html, rel);
