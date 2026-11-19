@@ -114,6 +114,35 @@ describe('handleLauncherDefaults', () => {
     await handleLauncherDefaults({} as any, res, {}, null);
     expect(out.status).toBe(200);
     expect(typeof out.body.defaultParentExists).toBe('boolean');
-    expect(out.body.defaultParent).toMatch(/projects$/);
+    expect(out.body.defaultParent).toMatch(/projects$/i);
+  });
+});
+
+describe('defaultParent and ensureParentDir (D6, C9)', () => {
+  it('keeps an existing projects folder in any letter case', async () => {
+    const { defaultParent } = await import('../../src/lib/project-parent.js');
+    const home = mkTmp('dc-home');
+    mkdirSync(join(home, 'PROJECTS'));
+    expect(defaultParent(home)).toBe(join(home, 'PROJECTS'));
+  });
+
+  it('falls back to ~/Projects when home has none, or only a link named projects', async () => {
+    const { defaultParent } = await import('../../src/lib/project-parent.js');
+    const home = mkTmp('dc-home');
+    expect(defaultParent(home)).toBe(join(home, 'Projects'));
+    const elsewhere = mkTmp('dc-elsewhere');
+    symlinkSync(elsewhere, join(home, 'projects'));
+    expect(defaultParent(home)).toBe(join(home, 'Projects'));
+  });
+
+  it('creates a missing parent inside home, refuses one outside home or through a link', async () => {
+    const { ensureParentDir, ParentDirError } = await import('../../src/lib/project-parent.js');
+    const home = mkTmp('dc-home');
+    const made = ensureParentDir(join(home, 'Projects'), home);
+    expect(made).toBe(join(home, 'Projects'));
+    const outside = mkTmp('dc-outside');
+    expect(() => ensureParentDir(join(outside, 'new'), home)).toThrow(ParentDirError);
+    symlinkSync(outside, join(home, 'linked'));
+    expect(() => ensureParentDir(join(home, 'linked', 'new'), home)).toThrow(ParentDirError);
   });
 });
