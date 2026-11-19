@@ -823,6 +823,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'hf-lock-cut-',
   'hf-roster-gen-',
   'hf-win-gate-',
+  'hook-no-rules-home-',
   'lab-board-tabs-',
   'lab-data-',
   'lab-data-elsewhere-',

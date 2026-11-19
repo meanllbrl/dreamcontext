@@ -4,7 +4,7 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
-## [0.41.22] - 2026-11-18
+## [0.41.22] - 2026-11-19
 
 Patch on 0.41.21. Local build; not published.
 
@@ -32,6 +32,17 @@ Patch on 0.41.21. Local build; not published.
 - **Automations.** An automation's fire prompt no longer runs a judged memory recall.
 - **Agenda.** Pressing a line filters the Super chat to that line's conversation, and a search on the agenda card finds every day.
 - **Whiteboard security.** A board's quick edit now runs in an empty folder, so it can read only the pages its allow rules name.
+- **Member routines.** A routine made for an AI Team member runs as that member, instead of creating a second member for each routine.
+- **Fewer questions.** Agents ask far fewer question cards: a clear choice is taken and said in one line, work you asked for or approved starts without a start card, and a card comes only when the work is truly blocked.
+- **Super on Telegram.** An answer written in another language than yours never reaches your phone; a short note the Super writes between steps waits and goes only if it was its last word; a voice, picture, card or answer that did not reach you is told to the Super.
+- **Telegram questions.** Question pictures reach the phone, each option is said once, and no extra line follows the card.
+- **Nightly routines.** A nightly routine no longer sends a false "not approved" notice.
+- **AI Team.** A member never runs in Ask mode; an old stored Ask runs and shows as Balanced. A member's own question comes as the chat's own question card, calmer and fitting a narrow screen. A member's helper session no longer comes back as a chat tab after a reload.
+- **Super stage.** The question bar and a presentation's tab row no longer overlap; a presented or side-by-side card keeps To Others and full screen.
+- **Agenda card.** One header row (Agenda, search, list/board) that keeps every button at every size.
+- **Permissions.** No empty Allow card for a request the child already moved past.
+- **Memory.** A connected project's memory is read only when your message names it, and a sub-agent's message is never remembered as your words.
+- **Whiteboard export.** An exported picture looks exactly like the board on screen, split for the phone.
 
 ## [0.41.19] - 2026-11-12
 

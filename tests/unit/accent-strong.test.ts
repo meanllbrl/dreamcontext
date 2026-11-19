@@ -45,6 +45,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/super/SuperSurface.css::.super-present-tab-dot': 'shown presentation tab dot',
   'components/roadmap/Priority.css::.pv-map-dot.is-suggested': 'dot',
   'components/sleepy/chat/model-picker/model-picker.css::.mp-tool.is-on::after': 'rail marker',
+  'components/sleepy/super/SuperAgenda.css::.super-agenda-row::after': 'rail marker (the filtered row, ajanda-filtre-sade)',
   'components/sleepy/super/PhoneAgenda.css::.phone-jobs-row[data-state="working"] .phone-jobs-dot': 'dot',
   'pages/AiTeamPage.css::.aiteam-row-dot--working': 'dot',
   'pages/StatsPage.css::.st-tr .shr i[data-sleep]': 'bar',
