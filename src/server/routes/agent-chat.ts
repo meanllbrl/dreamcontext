@@ -617,6 +617,18 @@ export function mcpConfigArgs(paths: Array<string | null>): string[] {
  * never wider, never a refusal that locks the conversation out. Never the Assistant or a Super
  * Agent's own session. Null = not lean (every other chat, as before); 'refuse' = a malformed list.
  */
+/**
+ * Is this chat upgrade the project's first read (plan ilk-acilis C15a)? The one-time ticket its
+ * delegate minted (consumed here), a record that marks the conversation, or, failing closed
+ * because a reconnect re-sends the URL without a live ticket, any lean child of this vault while
+ * a first read is in flight. Exported for tests.
+ */
+export function firstReadUpgrade(params: URLSearchParams, contextRoot: string, ids: readonly string[]): boolean {
+  return consumeFirstReadTicket(params.get('crewTicket'), contextRoot)
+    || ids.some((id) => !!id && isFirstReadChild(id))
+    || (params.get('lean') === '1' && firstReadLockHeld(contextRoot));
+}
+
 export function leanMcpForUpgrade(o: {
   assistant: boolean; mode: string; conversation: string; lean: string | null; mcp: string | null;
   recorded: (conversation: string) => string[] | null; known: () => ReadonlyMap<string, unknown>;
@@ -1688,12 +1700,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // or any MCP is read: the one-time ticket its delegate minted, or a record that marks the
     // conversation, or (fail closed, a reconnect re-sends the URL) any lean child of this vault
     // while a first read is in flight. Such a child runs `auto` with no MCP, whatever the URL says.
-    const firstReadCtx = join(projectRoot, '_dream_context');
-    const firstReadChild = !assistant && (
-      consumeFirstReadTicket(url.searchParams.get('crewTicket'), firstReadCtx)
-      || [resumeId, sessionId].some((id) => !!id && isFirstReadChild(id))
-      || (url.searchParams.get('lean') === '1' && firstReadLockHeld(firstReadCtx))
-    );
+    const firstReadChild = !assistant && firstReadUpgrade(url.searchParams, join(projectRoot, '_dream_context'), [resumeId, sessionId]);
     const bypass = !firstReadChild && url.searchParams.get('bypass') === '1';
     const model = sanitizeModel(url.searchParams.get('model'));
     const effort = sanitizeEffort(url.searchParams.get('effort'));

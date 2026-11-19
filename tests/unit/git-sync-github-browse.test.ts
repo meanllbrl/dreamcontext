@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ApiAdapter } from '../../src/lib/task-backend/api-adapter.js';
@@ -160,7 +160,7 @@ describe('cloneGitHubRepo', () => {
 
   /** Fake git module: records the call, streams fake progress, fabricates the dest folder. */
   function fakeGit(opts: { withContext?: boolean } = {}) {
-    const calls: { url: string; dest: string; env: NodeJS.ProcessEnv }[] = [];
+    const calls: { url: string; dest: string; env: NodeJS.ProcessEnv; shallow: boolean }[] = [];
     return {
       calls,
       module: {
@@ -169,9 +169,10 @@ describe('cloneGitHubRepo', () => {
           dest: string,
           env: NodeJS.ProcessEnv,
           onProgress?: (chunk: string) => void,
+          o?: { shallow?: boolean },
         ) => ({
           promise: (async () => {
-            calls.push({ url, dest, env: { ...env } });
+            calls.push({ url, dest, env: { ...env }, shallow: o?.shallow === true });
             onProgress?.('Receiving objects: 100%\r');
             mkdirSync(opts.withContext ? join(dest, '_dream_context') : dest, { recursive: true });
           })(),
@@ -190,47 +191,46 @@ describe('cloneGitHubRepo', () => {
     rmSync(parent, { recursive: true, force: true });
   });
 
-  it('rejects a non-GitHub URL before any git call', async () => {
-    const git = fakeGit();
-    await expect(
-      cloneGitHubRepo({ url: 'ext::sh -c whoami', parentDir: parent, token: 't', gitModule: git.module }),
-    ).rejects.toBeInstanceOf(GitSyncError);
-    expect(git.calls).toHaveLength(0);
+  // The request is validated by planGitHubClone (no git call); cloneGitHubRepo only runs a plan.
+  it('planGitHubClone rejects a non-GitHub URL and option-shaped input (S2)', () => {
+    for (const bad of ['ext::sh -c whoami', '--upload-pack=x/y', '-x/y', 'owner/..', '../a/b', 'not a url at all !!!']) {
+      expect(() => planGitHubClone(bad, parent, parent), bad).toThrow(GitSyncError);
+    }
   });
 
-  it('rejects a relative parentDir', async () => {
-    const git = fakeGit();
-    await expect(
-      cloneGitHubRepo({ url: 'acme/api', parentDir: 'relative/dir', token: 't', gitModule: git.module }),
-    ).rejects.toThrow(/absolute/);
-    expect(git.calls).toHaveLength(0);
+  it('planGitHubClone rejects a relative parentDir', () => {
+    expect(() => planGitHubClone('acme/api', 'relative/dir', parent)).toThrow(/absolute/);
   });
 
-  it('rejects a missing parent directory', async () => {
-    const git = fakeGit();
-    await expect(
-      cloneGitHubRepo({ url: 'acme/api', parentDir: join(parent, 'nope'), token: 't', gitModule: git.module }),
-    ).rejects.toThrow(/does not exist/);
-    expect(git.calls).toHaveLength(0);
+  it('planGitHubClone refuses a missing parent outside home and creates one inside it', () => {
+    const home = join(parent, 'home');
+    mkdirSync(home);
+    expect(() => planGitHubClone('acme/api', join(parent, 'elsewhere', 'nope'), home)).toThrow(/does not exist/);
+    const plan = planGitHubClone('acme/api', join(home, 'Projects'), home);
+    expect(existsSync(join(home, 'Projects'))).toBe(true);
+    expect(plan.dest).toBe(join(home, 'Projects', 'api'));
   });
 
-  it('rejects when the destination folder already exists', async () => {
+  it('planGitHubClone refuses to create a parent through a symlinked folder', () => {
+    const home = join(parent, 'home');
+    mkdirSync(join(parent, 'outside'), { recursive: true });
+    mkdirSync(home);
+    symlinkSync(join(parent, 'outside'), join(home, 'link'));
+    expect(() => planGitHubClone('acme/api', join(home, 'link', 'Projects'), home)).toThrow(GitSyncError);
+    expect(existsSync(join(parent, 'outside', 'Projects'))).toBe(false);
+  });
+
+  it('planGitHubClone never writes into a taken folder: -2, -3', () => {
     mkdirSync(join(parent, 'api'));
-    const git = fakeGit();
-    await expect(
-      cloneGitHubRepo({ url: 'acme/api', parentDir: parent, token: 't', gitModule: git.module }),
-    ).rejects.toThrow(/already exists/);
-    expect(git.calls).toHaveLength(0);
+    expect(planGitHubClone('acme/api', parent, parent).name).toBe('api-2');
+    mkdirSync(join(parent, 'api-2'));
+    expect(planGitHubClone('acme/api', parent, parent).dest).toBe(join(parent, 'api-3'));
   });
 
   it('clones with the CANONICAL https URL and an askpass-credentialed env', async () => {
     const git = fakeGit();
-    const result = await cloneGitHubRepo({
-      url: 'git@github.com:acme/api.git',
-      parentDir: parent,
-      token: 'sekret',
-      gitModule: git.module,
-    });
+    const plan = planGitHubClone('git@github.com:acme/api.git', parent, parent);
+    const result = await cloneGitHubRepo({ plan, token: 'sekret', gitModule: git.module });
     expect(git.calls).toHaveLength(1);
     expect(git.calls[0].url).toBe('https://github.com/acme/api.git');
     expect(git.calls[0].dest).toBe(join(parent, 'api'));
@@ -245,34 +245,35 @@ describe('cloneGitHubRepo', () => {
 
   it('reports hasContext when the clone already carries _dream_context/', async () => {
     const git = fakeGit({ withContext: true });
-    const result = await cloneGitHubRepo({ url: 'acme/brainy', parentDir: parent, token: 't', gitModule: git.module });
+    const result = await cloneGitHubRepo({ plan: planGitHubClone('acme/brainy', parent, parent), token: 't', gitModule: git.module });
     expect(result.hasContext).toBe(true);
     expect(result.name).toBe('brainy');
   });
 
-  it('streams progress and exposes a cancel handle', async () => {
+  it('streams progress, passes shallow, and exposes a cancel handle', async () => {
     const git = fakeGit();
     const chunks: string[] = [];
     let cancel: (() => void) | null = null;
     await cloneGitHubRepo({
-      url: 'acme/api',
-      parentDir: parent,
+      plan: planGitHubClone('acme/api', parent, parent),
       token: 't',
       gitModule: git.module,
+      shallow: true,
       onProgress: (c) => chunks.push(c),
       registerCancel: (c) => { cancel = c; },
     });
     expect(chunks.join('')).toContain('Receiving objects');
     expect(typeof cancel).toBe('function');
+    expect(git.calls[0].shallow).toBe(true);
   });
 
   it('planGitHubClone validates without any git call and returns the canonical plan', () => {
-    const plan = planGitHubClone('git@github.com:acme/api.git', parent);
+    const plan = planGitHubClone('git@github.com:acme/api.git', parent, parent);
     expect(plan).toEqual({
       cloneUrl: 'https://github.com/acme/api.git',
+      slug: { owner: 'acme', repo: 'api' },
       dest: join(parent, 'api'),
       name: 'api',
     });
-    expect(() => planGitHubClone('not a url at all !!!', parent)).toThrow(GitSyncError);
   });
 });

@@ -86,6 +86,31 @@ describe('hand over', () => {
     expect(Object.keys(state.children)).toEqual(['mine']);
   });
 
+  // Plan ilk-acilis C8a: the onboarding landing's quiet enable queues no new Super turn.
+  it('a quiet enable leaves no pending handover item; a plain one still pushes one', async () => {
+    const pendingHandovers = async () => (await readSuperState(root)).queue.filter((q) => q.kind === 'handover' && q.state === 'pending');
+    const quiet = await enableSuper(root, { adopt: [], titles: {}, quiet: true });
+    expect(quiet.state.enabled).toBe(true);
+    expect(quiet.session).toBeTruthy();
+    expect(await pendingHandovers()).toEqual([]);
+    await disableSuper(root);
+    const plain = await enableSuper(root, { adopt: [], titles: {} });
+    expect(plain.session).toBe(quiet.session);
+    expect(await pendingHandovers()).toHaveLength(1);
+  });
+
+  it('a quiet enable still drops a stale pending handover item; "true" or 1 is a plain enable', async () => {
+    const pendingHandovers = async () => (await readSuperState(root)).queue.filter((q) => q.kind === 'handover' && q.state === 'pending');
+    await enableSuper(root, { adopt: [], titles: {} });
+    expect(await pendingHandovers()).toHaveLength(1);
+    await enableSuper(root, { adopt: [], titles: {}, quiet: true });
+    expect(await pendingHandovers()).toEqual([]);
+    await enableSuper(root, { adopt: [], titles: {}, quiet: 'true' });
+    expect(await pendingHandovers()).toHaveLength(1);
+    await enableSuper(root, { adopt: [], titles: {}, quiet: 1 });
+    expect(await pendingHandovers()).toHaveLength(1);
+  });
+
   it('a second hand-over resumes the same session and keeps the layout', async () => {
     reg('a');
     const one = await enableSuper(root, { adopt: ['a'], titles: {} });

@@ -7,7 +7,7 @@ import {
   setGlobalGitHubAuthValid, writeGlobalGitHubToken,
 } from '../../src/lib/git-sync/auth-store.js';
 import {
-  deviceSignIn, feedTokenToGh, importGhToken, ONBOARDING_GITHUB_SCOPE, parseLoginFromApiOutput, parseScopesHeader,
+  deviceSignIn, feedTokenToGh, importGhToken, probeGhImport, requestedGithubScopes, ONBOARDING_GITHUB_SCOPE, parseLoginFromApiOutput, parseScopesHeader,
   runGhSignin, runGithubSignin, scopesImportable, type GhExec, type GithubDeps,
 } from '../../src/lib/onboarding/github.js';
 import type { ShellResult } from '../../src/lib/onboarding/types.js';
@@ -176,10 +176,11 @@ describe('runGithubSignin', () => {
     expect(login?.input).toBe('gho_deviceToken\n');
   });
 
-  it('without gh it asks for repo only', async () => {
+  it('without gh it asks for the same one scope set (D7)', async () => {
     const { deps, scopes } = fakeGithub();
     await runGithubSignin(null, sink().s, new AbortController().signal, deps);
-    expect(scopes).toEqual(['repo']);
+    expect(scopes).toEqual([ONBOARDING_GITHUB_SCOPE]);
+    expect(ONBOARDING_GITHUB_SCOPE).toBe('repo read:org gist');
   });
 });
 
@@ -203,7 +204,7 @@ describe('runGithubSignin: reconnect', () => {
     const r = await runGithubSignin(null, s, new AbortController().signal, deps);
     expect(r).toEqual({ ok: true, login: 'device-user' });
     expect(codes).toEqual(['ABCD-1234']);
-    expect(scopes).toEqual(['repo']);
+    expect(scopes).toEqual([ONBOARDING_GITHUB_SCOPE]);
     expect(readGlobalGitHubToken(home)?.token).toBe('gho_deviceToken');
     expect(readGlobalGitHubNeedsReconnect(home)).toBe(false);
   });
@@ -239,5 +240,35 @@ describe('auth-store symlink refusal', () => {
     mkdirSync(join(home, '.dreamcontext'), { recursive: true });
     symlinkSync(target, globalSecretsPath(home));
     expect(() => writeGlobalGitHubToken('gho_x', home)).toThrow(SecretsPathError);
+  });
+});
+
+describe('probeGhImport and the permission line (C12, S3)', () => {
+  it('the permission line is built from the scopes actually requested', () => {
+    expect(requestedGithubScopes()).toEqual(ONBOARDING_GITHUB_SCOPE.split(' '));
+  });
+
+  it('a gh token with a wider scope is never imported, by the probe or the import', async () => {
+    for (const wide of ['repo, admin:org', 'repo, delete_repo', 'repo, workflow', 'repo, read:org, gist, workflow']) {
+      expect(scopesImportable(parseScopesHeader(apiOutput(wide)))).toBe(false);
+      const { gh, calls } = fakeGh({ authed: true, scopes: wide });
+      expect(await probeGhImport(gh, home)).toBeNull();
+      expect(await importGhToken(gh, home)).toBeNull();
+      expect(calls.some((c) => c.args[0] === 'auth' && c.args[1] === 'token')).toBe(false);
+      expect(readGlobalGitHubToken(home)).toBeNull();
+    }
+  });
+
+  it('the probe offers a narrow login and never reads or stores its token', async () => {
+    const { gh, calls } = fakeGh({ authed: true, scopes: 'repo, read:org' });
+    const r = await probeGhImport(gh, home);
+    expect(r).not.toBeNull();
+    expect(calls.some((c) => c.args[0] === 'auth' && c.args[1] === 'token')).toBe(false);
+    expect(readGlobalGitHubToken(home)).toBeNull();
+  });
+
+  it('nothing to offer when gh is signed out', async () => {
+    const { gh } = fakeGh({ authed: false, scopes: null });
+    expect(await probeGhImport(gh, home)).toBeNull();
   });
 });
