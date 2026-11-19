@@ -238,6 +238,7 @@ import { handleChatHtmlKitGet } from './routes/chat-html-kit.js';
 import {
   handleAgentCapabilities,
   handleOpenTerminal,
+  handleOpenFullDiskAccess,
   handleAgentInstall,
   handleAgentInstallStatus,
   handleAgentPromptToken,
@@ -871,6 +872,7 @@ export function buildRouter(): Router {
   router.get('/api/agent/task-progress', handleAgentTaskProgress);
   router.get('/api/agent/session-facts', handleAgentSessionFacts);
   router.post('/api/agent/open-terminal', handleOpenTerminal);
+  router.post('/api/agent/open-full-disk-access', handleOpenFullDiskAccess);
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);
   router.get('/api/agent/install/status', handleAgentInstallStatus);

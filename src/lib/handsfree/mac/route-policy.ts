@@ -410,6 +410,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/task-progress': allow(`${CHAT}: the shelf's task progress; side-effect free`),
   'GET /api/agent/session-facts': allow(`${CHAT}: the shelf's branch and checkout; side-effect free`),
   'POST /api/agent/open-terminal': deny(DESKTOP),
+  'POST /api/agent/open-full-disk-access': deny(DESKTOP),
   'POST /api/agent/install': deny(INSTALL),
   'GET /api/agent/install/status': deny(INSTALL),
   'GET /api/onboarding/readiness': deny(ONBOARDING),
