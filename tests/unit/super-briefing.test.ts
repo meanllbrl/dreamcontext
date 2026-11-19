@@ -266,6 +266,7 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   const LOCAL_CUT_2026_11_15 = 1850; // the 2026-11-15 local cut: sixteen branches each raised the briefing from the same base (measured 26,176; +52 filmstrip default, measured 26,228)
   const OWN_MESSAGES_ONLY_2026_11_15 = 480; // telegram-cevaplayan: a `shown=owner` question waits on his Mac bar only, never on Telegram; `queue ask` when he is away (measured 26,703, +475)
   const OWNER_WRITTEN_YES_2026_11_15 = 40; // sahip-yazili-izin: only his own yes or no passes a permission (`super queue allow`) (measured 26,734, +31)
+  const CUT_0_41_22_2026_11_18 = 60; // the 0.41.22 cut: uye-rutin-agent on top of the eight fix PRs (eski-sunum-soru, yerel-push), measured 26,889
   const ROUTINE_NOT_MEMBER_2026_11_18 = 20; // uye-rutin-agent: more work is the member's routine (--agent), not a new member (measured 26,863, +12)
   const VOICE_CLAIM_2026_11_16 = 60; // uye-sesli-ozet: only the `dream-voice` block speaks, never claim a voice without it (measured 26,804, +55)
   const PRESENT_QUEUE_2026_11_14 = 130; // sunum-sirasi: a present over his presentation answers `queued: {at, of}`; never claimed as shown (measured 23,521)
