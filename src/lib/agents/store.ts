@@ -523,13 +523,15 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
 
 /**
  * Create a GLOBAL agent (D1): `~/.dreamcontext/agents/<slug>.md` on this machine, listed in every
- * project, never in a brain. No photo and no home board (both are a project's); its memory is its
+ * project, never in a brain. No home board (a board is a project's); a photo is set after it exists
+ * (`agents edit --photo`) and lives in its home on this machine; its memory is its
  * own journal (`global-memory.ts`). `approve` grants it in the registry's `global` bucket, so one
  * approval covers every project.
  */
 export function createGlobalAgent(input: AgentInput, opts: CreateAgentOptions = {}): AgentManifest {
   const slug = input.slug.trim();
-  if (input.photo || input.whiteboard) throw new AutomationError('A global agent has no photo and no home board: both belong to one project.');
+  if (input.whiteboard) throw new AutomationError('A global agent has no home board: a board belongs to one project.');
+  if (input.photo) throw new AutomationError('Give a global agent its photo once it exists: agents edit <slug> --photo <file>.');
   const draft: AgentManifest = {
     ...placeholderAgent(slug),
     scope: 'global',
@@ -587,8 +589,8 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
   if (patch.boardOnly === true && !(patch.whiteboard === undefined ? agent.whiteboard : patch.whiteboard)) {
     throw new AutomationError(`"${slug}" has no home board to be limited to: give it one with --whiteboard <board> first.`);
   }
-  if (agent.scope === 'global' && (patch.photo || patch.whiteboard)) {
-    throw new AutomationError('A global agent has no photo and no home board: both belong to one project.');
+  if (agent.scope === 'global' && patch.whiteboard) {
+    throw new AutomationError('A global agent has no home board: a board belongs to one project.');
   }
   const next = applyIdentityPatch(agent, patch);
   validateIdentity(contextRoot, next);

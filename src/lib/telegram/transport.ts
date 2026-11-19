@@ -111,6 +111,24 @@ export class TelegramTransport {
   /** The bot id is the token's prefix: known without a request. */
   get botId(): number { return Number(this.token.split(':')[0]); }
 
+  /** chat id → the newest message id this bot posted there (any `send*`: text, voice, picture,
+   *  album). What sits below a question card (asks.ts: a card buried under later messages comes
+   *  back to the bottom). Memory only. */
+  private readonly lastSent = new Map<number, number>();
+
+  /** The newest message id this bot posted in `chatId` since it started, or 0. */
+  lastSentMessageId(chatId: number): number { return this.lastSent.get(chatId) ?? 0; }
+
+  private noteSent(method: string, params: Record<string, unknown>, result: unknown): void {
+    if (!method.startsWith('send')) return;
+    const chat = Number(params.chat_id);
+    if (!Number.isSafeInteger(chat)) return;
+    const ids = (Array.isArray(result) ? result : [result]).map((m) => Number((m as { message_id?: unknown } | null)?.message_id)).filter((n) => Number.isSafeInteger(n) && n > 0);
+    if (!ids.length) return;
+    const top = Math.max(...ids);
+    if (top > (this.lastSent.get(chat) ?? 0)) this.lastSent.set(chat, top);
+  }
+
   private url(method: string): string { return `${this.baseUrl}/bot${this.token}/${method}`; }
 
   private sanitize(text: string): string { return redactToken(text, this.token); }
@@ -140,8 +158,11 @@ export class TelegramTransport {
 
   /** One JSON call; every outbound fence applied. */
   async call<T = unknown>(method: string, params: Record<string, unknown> = {}, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<T> {
-    const send = (p: Record<string, unknown>): Promise<T> =>
-      this.request(method, { body: JSON.stringify(fenceOutbound(method, p)), headers: { 'content-type': 'application/json' } }, opts) as Promise<T>;
+    const send = async (p: Record<string, unknown>): Promise<T> => {
+      const r = await this.request(method, { body: JSON.stringify(fenceOutbound(method, p)), headers: { 'content-type': 'application/json' } }, opts) as T;
+      this.noteSent(method, p, r);
+      return r;
+    };
     try {
       return await send(params);
     } catch (err) {
@@ -157,7 +178,7 @@ export class TelegramTransport {
     let total = 0;
     for (const f of Object.values(files)) total += f.data.length;
     if (total > TG_UPLOAD_MAX_BYTES) throw new TelegramError(method, 413, 'file too large');
-    const send = (p: Record<string, unknown>): Promise<T> => {
+    const send = async (p: Record<string, unknown>): Promise<T> => {
       const form = new FormData();
       for (const [k, v] of Object.entries(fenceOutbound(method, p))) {
         if (v === undefined) continue;
@@ -166,7 +187,9 @@ export class TelegramTransport {
       for (const [field, f] of Object.entries(files)) {
         form.append(field, new Blob([new Uint8Array(f.data)], { type: f.contentType ?? 'application/octet-stream' }), f.name);
       }
-      return this.request(method, { body: form }, { timeoutMs: Math.max(this.timeoutMs, 60_000) }) as Promise<T>;
+      const r = await this.request(method, { body: form }, { timeoutMs: Math.max(this.timeoutMs, 60_000) }) as T;
+      this.noteSent(method, p, r);
+      return r;
     };
     try {
       return await send(params);

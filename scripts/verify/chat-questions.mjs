@@ -321,8 +321,8 @@ async function runTheme(chromium, base, theme, report) {
   ok('clicking an option does not move or resize the card (no jump)',
     before && after && Math.abs(before.y - after.y) < 1 && Math.abs(before.height - after.height) < 1,
     `before y=${before?.y} h=${before?.height} · after y=${after?.y} h=${after?.height}`);
-  const tag = (await vis('.chat-surveycard-field-tag').first().innerText()).trim();
-  ok('after a pick the free field is a NOTE on it', /note/i.test(tag), tag);
+  const tag = (await vis('.chat-surveycard-fieldinput').first().getAttribute('placeholder')) ?? '';
+  ok('after a pick the free field is a NOTE on it (its placeholder says so)', /note/i.test(tag), tag);
   await vis('.chat-surveycard-fieldinput').first().fill('the accountant uses a Mac');
   await shot('rows-note');
   await page.getByRole('button', { name: /^Next/ }).first().click().catch(() => page.keyboard.press('ArrowRight'));
@@ -359,23 +359,22 @@ async function runTheme(chromium, base, theme, report) {
   await idle();
 
   // ── S1b: "Other" after a pick ──
-  console.log('── S1b: "Other" — an own answer after picking something');
-  ok('the Other card opens', await ask('OTHER'));
-  ok('an "Other" row is on the card before anything is clicked', (await vis('.chat-surveycard-opt.other').count()) === 1);
+  console.log('── S1b: an own answer — the one free-text field, no separate "Other" row');
+  ok('the own-answer card opens', await ask('OTHER'));
+  ok('there is no "Other" row: the free field is the one way to write your own', (await vis('.chat-surveycard-opt.other').count()) === 0);
   await vis('.chat-surveycard-opt').first().click();
-  await vis('.chat-surveycard-fieldinput').first().fill('the team Slack');
   await page.waitForTimeout(200);
   const ob = await card().boundingBox();
-  await vis('.chat-surveycard-opt.other').first().click();
+  await vis('.chat-surveycard-opt').first().click();   // un-pick: the field turns from a note into the answer
   await page.waitForTimeout(400);
   const oa = await card().boundingBox();
-  ok('picking Other does not move or resize the card',
+  ok('un-picking does not move or resize the card',
     ob && oa && Math.abs(ob.y - oa.y) < 1 && Math.abs(ob.height - oa.height) < 1, `before h=${ob?.height} · after h=${oa?.height}`);
-  ok('Other replaces the pick (one radio group)', (await vis('.chat-surveycard-opt.on').count()) === 1
-    && (await vis('.chat-surveycard-opt.other.on').count()) === 1);
-  ok('the field turns into the ANSWER and takes the caret',
-    /answer/i.test(await vis('.chat-surveycard-field-tag').first().innerText())
-    && await vis('.chat-surveycard-fieldinput').first().evaluate((el) => el === document.activeElement));
+  ok('nothing is picked now', (await vis('.chat-surveycard-opt.on').count()) === 0);
+  await vis('.chat-surveycard-fieldinput').first().fill('the team Slack');
+  await page.waitForTimeout(200);
+  ok('with nothing picked the field is the ANSWER (its placeholder is not the note one)',
+    !/note/i.test((await vis('.chat-surveycard-fieldinput').first().getAttribute('placeholder')) ?? 'note'));
   await shot('other');
   await vis('.chat-surveycard .chat-btn.primary').first().click();
   const ro = await answerFor('OTHER');
@@ -499,7 +498,8 @@ async function runTheme(chromium, base, theme, report) {
   console.log('── S4: a card nobody can parse costs one click');
   ok('the unclear card opens', await ask('UNCLEAR'));
   await vis('.chat-surveycard-fieldinput').first().fill('which thing?');
-  await vis('.chat-surveycard-unclear').first().click();
+  await vis('.chat-surveycard-more-btn').first().click();
+  await vis('.chat-surveycard-menuitem').first().click();
   const r4 = await answerFor('UNCLEAR');
   ok('it answers with a DENY (the input schema has no free-response field)', r4?.behavior === 'deny', JSON.stringify(r4));
   ok('the message tells the agent how to re-ask, and carries what was typed',

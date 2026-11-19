@@ -235,8 +235,6 @@
   .ns-dr-acts { pointer-events: auto; }
   .ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0.85; }
   .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * 22px + var(--space-2)); }
-  .ns-dr-proj:has(.ns-dr-newchat-menu) .ns-dr-toggle { padding-right: calc(3 * 22px + var(--space-2)); }
-  .ns-dr-proj:has(.ns-dr-newchat-menu):has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(4 * 22px + var(--space-2)); }
   .ns-dr-proj:is(:hover, :focus-within) .ns-dr-end { visibility: visible; }
 }
 
@@ -432,8 +430,6 @@
     height: var(--touch-target);
   }
   .ns-dr-proj .ns-dr-toggle { padding-right: calc(2 * var(--touch-target)); }
-  .ns-dr-proj:has(.ns-dr-newchat-menu) .ns-dr-toggle { padding-right: calc(3 * var(--touch-target)); }
-  .ns-dr-proj:has(.ns-dr-newchat-menu):has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(4 * var(--touch-target)); }
 }
 
 /* A chat row in the air, and the line where it lands. */
@@ -814,9 +810,6 @@
 .ns-dr-hidden-row .ns-dr-end { margin-left: auto; }
 .ns-dr-hidden .ns-dr-project .ns-dr-proj .ns-dr-t { color: var(--color-text-secondary); font-weight: var(--font-weight-medium); }
 .ns-dr-hidden .ns-dr-project .ns-dr-pic { opacity: 0.8; }
-@media (hover: none), (max-width: 600px) {
-  .ns-dr-proj:has(.ns-dr-hide) .ns-dr-toggle { padding-right: calc(3 * 22px + var(--space-2)); }
-}
 /* While the member menu from the header chevron is open, the project buttons stay shown (owner 2026-11-15). */
 .ns-dr-project[data-menu-open="true"] .ns-dr-acts { background: inherit; pointer-events: auto; }
 .ns-dr-project[data-menu-open="true"] .ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0.85; }

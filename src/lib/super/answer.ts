@@ -12,7 +12,7 @@
  *    item on that request is closed.
  */
 import { createHash } from 'node:crypto';
-import { crewHandle, dropOwnerWait, getChat, pendingRequest, type PendingQuestion, type RegistryQuestion } from '../assistant/chat-registry.js';
+import { crewHandle, dropOwnerWait, getChat, markOwnerAllowed, pendingRequest, type PendingQuestion, type RegistryQuestion } from '../assistant/chat-registry.js';
 import { sendHubCommand, sendSuperCommand, superTokenOfSession, tokenOfSession } from '../window-control.js';
 import { isReservedId, okMember, readSuperState, superIdOfMember, superKey } from './store.js';
 import {
@@ -443,6 +443,9 @@ async function allowRefusal(root: string, superId: SuperId, state: SuperState, i
   if (!grant) return fail('not_offered', MSG.notOffered);
   writeGrant(grant);
   if (size === 'once') noteAllowedOnce(superKey(root, superId), item.id, grant.id, item.sessionId);
+  // The registry holds the wait for exactly this call now: the child running something else
+  // first must not close the item (that would prune this grant before its call ran).
+  if (item.wait) markOwnerAllowed(item.sessionId, item.wait.id);
   // Marked allowed BEFORE the turn goes in: every surface stops offering Allow at once, and the
   // turn's end finds the mark if the call comes back refused (inbox.ts `reofferStaleAllows`).
   const mark = async (waiting: boolean): Promise<void> => {

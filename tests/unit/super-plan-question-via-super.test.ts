@@ -7,8 +7,10 @@
  * only the child's chat ("the summary is open on the stage").
  *
  * Now a Plan child's question waits on the Super; only its `queue ask` puts it in front of him,
- * as a card in its own chat; without a report card that ask is refused, and a text that gave no
- * summary gets a warning.
+ * as a card in its own chat; without a report card that ask is refused.
+ *
+ * 2026-11-18 (owner: "aynı özet üç kez"): the summary stands on that report card only, so a text
+ * that points at it is right and draws no warning (the text warning of 2026-11-13 is gone).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -38,7 +40,7 @@ import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../s
 import { queueHead } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { openOwnerQuestions } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
 import { PLAN_QUESTION_LINE } from '../../src/lib/super/inbox.js';
-import { PLAN_REPORT_REFUSAL, PLAN_TEXT_WARNING, planReportRefusal, planTextWarning } from '../../src/lib/super/ask-summary.js';
+import { PLAN_REPORT_REFUSAL, planReportRefusal } from '../../src/lib/super/ask-summary.js';
 
 const SUPER = 'sup-plan-1';
 const C1 = 'child-0001-aaaa';
@@ -143,7 +145,6 @@ async function queueAsk(item: string, show?: string[]) {
 }
 /** What the Super wrote, in the shape it wrote it: three sentences, no summary. */
 const POINTER = 'The Pix twin plan is ready. The summary is open on the stage. A question card waits for your start.';
-const SUMMARY = 'The Pix twin plan is ready.\n- copy the 8315 prices\n- keep the coach box on 3 months\n- double upsell\nYour decision: the coach box.';
 const out = (r: { json: Record<string, unknown> }) => (r.json.result ?? r.json) as Record<string, unknown>;
 const superSays = (text: string) => handles.get(SUPER)!.observe({ type: 'assistant', message: { content: [{ type: 'text', text }] } } as never);
 
@@ -180,23 +181,14 @@ describe("a Plan child's question reaches the owner through the Super", { timeou
     expect(bare.status).toBe(400);
     expect(JSON.stringify(bare.json)).toContain('plan_report_missing');
     expect((await itemOf('req-plan'))?.state).toBe('pending');
-    // The Super wrote only a pointer before asking: the card goes, it is told to write the summary.
+    // The Super wrote only a pointer before asking: the report card carries the summary, so the
+    // card goes with no warning (owner 2026-11-18: the summary stands in ONE place).
     superSays(POINTER);
     const ok = await queueAsk(id, ['web-plan']);
     expect(ok.status).toBe(200);
-    expect(out(ok).warning).toBe(PLAN_TEXT_WARNING);
+    expect(out(ok).warning).toBeUndefined();
     const s = await readSuperState(root);
     expect(openOwnerQuestions(s.queue).map((q) => q.id)).toContain(id);
-  });
-
-  it('a Super text that carries the summary draws no warning', async () => {
-    planAsk(reg(C1, 'plan'), 'req-plan');
-    await vi.waitFor(async () => expect(await itemOf('req-plan')).toBeDefined(), W);
-    const id = (await itemOf('req-plan'))!.id;
-    superSays(SUMMARY);
-    const ok = await queueAsk(id, ['web-plan']);
-    expect(ok.status).toBe(200);
-    expect(out(ok).warning).toBeUndefined();
   });
 
   it('a chat he put in Plan himself (no plan in its record) goes through the Super too', async () => {
@@ -219,11 +211,9 @@ describe('the pure checks', () => {
     expect(planReportRefusal('develop', 0)).toBeNull();
     expect(planReportRefusal(undefined, 0)).toBeNull();
   });
-  it('a pointer is no summary; bullets or a long paragraph are', () => {
-    expect(planTextWarning('plan', POINTER)).toBe(PLAN_TEXT_WARNING);
-    expect(planTextWarning('plan', undefined)).toBe(PLAN_TEXT_WARNING);
-    expect(planTextWarning('plan', SUMMARY)).toBeNull();
-    expect(planTextWarning('plan', 'x'.repeat(400))).toBeNull();
-    expect(planTextWarning('develop', POINTER)).toBeNull();
+  it('the refusal says whose question it is and that the report alone carries the summary', () => {
+    expect(PLAN_REPORT_REFUSAL).toContain('A question that is yours (it changes no screen and stays on his machine) you answer yourself');
+    expect(PLAN_REPORT_REFUSAL).toContain('The report carries the summary: your text does not repeat it.');
+    expect(PLAN_REPORT_REFUSAL).not.toContain('same summary');
   });
 });

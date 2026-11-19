@@ -16,6 +16,7 @@
  * `hub_command answer_pending` with the P3 tagged union. Picks are built by
  * `buildQuestionPicks` (option order, multiSelect joined with ", ").
  */
+import { noteUndelivered } from '../../lib/super/undelivered.js';
 import { randomBytes } from 'node:crypto';
 import { getChat } from '../../lib/assistant/chat-registry.js';
 import { answerChildQuestion, superAnswerText, superUnclearText, superAlreadyText, unclearMessage, ALREADY_ANSWERED_MESSAGE } from '../../lib/super/answer.js';
@@ -28,15 +29,17 @@ import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { dreamHtmlPage, fitDrawing } from '../../lib/telegram/render.js';
 import { cleanTitle } from '../../lib/telegram/urls.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
-import { NOT_SENT, cardOut, notSentLine } from './cards.js';
+import { NOT_SENT, cardOut, fileMedia, notSentLine, pageWithOwnAssets, readProjectFile } from './cards.js';
+import { loneMedia } from '../../lib/telegram/preview-media.js';
+import { REFUSAL_WHY } from '../../lib/telegram/files.js';
 import { answerMemberPick } from './member-picks.js';
 import type { PreviewShooter } from './page-shot.js';
 import { caption as pictureCaption, fitsTelegram, pngFile, sendMedia, sendPictures, sendWhole, type MediaItem, type Snapshotter } from './pictures.js';
 import { cleanOwnerText } from '../../lib/telegram/inbound.js';
 import type { NextTextCapture } from './capture.js';
 import { secretPending } from './present.js';
+import { cardItemKey, claimThisTurn, release, turnOf } from './sent-once.js';
 import { superMediaRoots } from './media-roots.js';
-import { previewSource } from './preview-media.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 
 type Obj = Record<string, unknown>;
@@ -84,6 +87,12 @@ export interface RichAsksDeps {
   capture: NextTextCapture;
 }
 
+/** How an ask's previews reach the project's files (`previewFiles`). */
+interface PreviewFiles {
+  media(src: string, title: string): Promise<{ ok: true; item: MediaItem } | { ok: false; why: string }>;
+  inline(html: string): Promise<string>;
+}
+
 export interface SentRichAsk { askId: string; messages: { messageId: number; html: string }[] }
 
 /** Shared with every text sender (ask-format.ts): an option's drawing says where it is. */
@@ -126,21 +135,6 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     return pngs?.[0] ?? null;
   }
 
-  /** One option's picture as the Mac card shows it (preview-media.ts, owner 2026-11-18: blank
-   *  boxes): a lone project picture or clip is that file; any other preview is drawn with its
-   *  project pictures written in. A picture it names that cannot be read → nothing (the
-   *  question says the drawing is on the Mac), never a broken-image box. */
-  async function optionMedia(ab: ActiveBinding, sessionId: string, o: { label: string; preview?: string }, oi: number, tries: { headless: boolean }, roots: () => Promise<string[] | undefined>, misses: string[]): Promise<MediaItem | null> {
-    const preview = o.preview ?? '';
-    const name = `${drawingTag(oi)}-${o.label}`;
-    const src = previewSource(ab.contextRoot ? { contextRoot: ab.contextRoot, mediaRoots: await roots() } : null, preview, o.label);
-    if (src.kind === 'unreadable') { misses.push(`${o.label}: picture not readable (${src.refs.map((r) => cleanTitle(r, 60)).join(', ')})`); return null; }
-    if (src.kind === 'file') return src.item;
-    const png = await drawPreview(sessionId, src.html, tries);
-    if (!png) { misses.push(`${o.label}: not drawn`); return null; }
-    return { kind: 'photo', file: pngFile(name, png), title: o.label };
-  }
-
   /** The ask's `--show` cards (when pictures are allowed), BEFORE its drawings and never in one
    *  album with them: their own group, each picture with its own "N · name" caption and a
    *  numbered list (pictures.ts sendPictures). */
@@ -149,21 +143,37 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const s = await readSuperState(ab.contextRoot).catch(() => null);
     const show = s?.askShows?.find((x) => x.item === itemId);
     const items: MediaItem[] = [];
+    const keys = new Map<MediaItem, string>();
+    const keyOf = (m: MediaItem) => keys.get(m)!;
+    const turn = turnOf(sessionId);
     let roots: string[] | undefined;
+    // Pictures claimed but not yet sent are given back if a card fails midway.
+    try {
     for (const id of show?.cards ?? []) {
       const c = s!.containers.find((k) => k.id === id);
       if (!c || items.length >= 10) continue;
       const out = await cardOut({ contextRoot: ab.contextRoot, sessionId, pictures: true, snapshot: deps.snapshot, mediaRoots: roots ??= await superMediaRoots(ab.contextRoot) }, c);
       if (out.kind === 'media') {
-        items.push(...out.items.filter((m) => m.kind !== 'document').slice(0, 10 - items.length));
+        out.items.forEach((m, i) => keys.set(m, cardItemKey(c.id, c.ref, m, i)));
+        // A file this turn already sent (the same card on the stage, another ask) goes once
+        // (sent-once.ts): claimed now, before any upload; a failed or skipped one is given back.
+        const fresh = claimThisTurn(ab.key, sessionId, out.items, keyOf, turn);
+        const pics = fresh.filter((m) => m.kind !== 'document');
+        const take = pics.slice(0, 10 - items.length);
+        items.push(...take);
+        release(ab.key, sessionId, pics.slice(take.length), keyOf, turn);
         // A page printed to PDF (or a PDF card) goes as its document; a refused send is its line.
-        for (const d of out.items.filter((m) => m.kind === 'document')) {
-          if (!(await sendMedia(ab, d, pictureCaption(d.title)))) await hub.reply(ab, notSentLine('', cleanTitle(d.title, 80), NOT_SENT.refused));
+        for (const d of fresh.filter((m) => m.kind === 'document')) {
+          if (await sendMedia(ab, d, pictureCaption(d.title))) continue;
+          release(ab.key, sessionId, [d], keyOf, turn);
+          await hub.reply(ab, notSentLine('', cleanTitle(d.title, 80), NOT_SENT.refused));
         }
       } else await hub.reply(ab, out.line);
     }
+    } catch (err) { release(ab.key, sessionId, items, keyOf, turn); throw err; }
     if (!items.length) return;
-    const { unsent } = await sendPictures(ab, items, true);
+    const { unsent } = await sendPictures(ab, items, true).catch((err) => { release(ab.key, sessionId, items, keyOf, turn); throw err; });
+    release(ab.key, sessionId, unsent, keyOf, turn);
     if (unsent.length) await hub.notice(ab, 'file', `Bu önizlemeler Telegram'a gitmedi, Mac'te: ${unsent.map((m) => cleanTitle(m.title, 40)).join('; ')}`);
   }
 
@@ -172,14 +182,26 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
    *  names it (owner 2026-11-11: two drawings in one album with stage pictures, no way to tell
    *  which option is which). Adds the `qi:oi` keys (ask-format.ts drawingKey) that reached
    *  Telegram to `drawn`; `budget` caps the drawings of the whole ask (10, as one album held). */
-  async function sendDrawings(ab: ActiveBinding, sessionId: string, q: RichQuestion, qi: number, drawn: Set<string>, budget: { left: number }, misses: string[], tries: { headless: boolean }, roots: () => Promise<string[] | undefined>): Promise<void> {
+  async function sendDrawings(ab: ActiveBinding, sessionId: string, q: RichQuestion, qi: number, drawn: Set<string>, budget: { left: number }, misses: string[], tries: { headless: boolean }, files: PreviewFiles): Promise<void> {
     for (const [oi, o] of q.options.entries()) {
       if (!o.preview?.trim()) continue;
       const key = drawingKey(qi, oi);
       if (budget.left <= 0) { misses.push(`${o.label}: over 10 pictures`); continue; }
-      const it = await optionMedia(ab, sessionId, o, oi, tries, roots, misses);
-      if (!it) continue;
-      budget.left--;
+      let it: MediaItem;
+      const lone = loneMedia(o.preview);
+      if (lone) {
+        // A preview that is only one project picture or clip goes as that file, the way the
+        // card draws it natively (owner 2026-11-17: drawn as a page it was a broken image).
+        const got = await files.media(lone.src, o.label);
+        if (!got.ok) { misses.push(`${o.label}: ${got.why}`); continue; }
+        budget.left--;
+        it = got.item;
+      } else {
+        const png = await drawPreview(sessionId, await files.inline(o.preview), tries);
+        if (!png) { misses.push(`${o.label}: not drawn`); continue; }
+        budget.left--;
+        it = { kind: 'photo', file: pngFile(`${drawingTag(oi)}-${o.label}`, png), title: o.label };
+      }
       if (!fitsTelegram(it)) { misses.push(`${o.label}: too large for Telegram, not sent`); continue; }
       const cap = pictureCaption(drawingCaption(oi, o.label));
       const ok = it.kind === 'photo' ? await sendWhole(ab, it, cap) : !!(await sendMedia(ab, it, cap));
@@ -188,14 +210,39 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     }
   }
 
+  /** The project files an ask's previews name, read through H (cards.ts `readProjectFile`: inside
+   *  the project or a media root, no symlink, no secret class): a lone file as its own media item,
+   *  and every project picture inside a preview's markup written in as a `data:` URL, the way the
+   *  chat card inlines them (the drawing's page loads nothing else; an unread one stays as written). */
+  function previewFiles(ab: ActiveBinding): PreviewFiles {
+    let roots: Promise<string[]> | undefined;
+    const ctx = async () => ab.contextRoot ? { contextRoot: ab.contextRoot, mediaRoots: await (roots ??= superMediaRoots(ab.contextRoot).catch(() => [])) } : null;
+    return {
+      async media(src, title) {
+        const c = await ctx();
+        if (!c) return { ok: false, why: 'no project to read it from' };
+        const f = readProjectFile(c, src);
+        if (!f.ok) return { ok: false, why: REFUSAL_WHY[f.reason] ?? f.reason };
+        const item = fileMedia(f.file, f.ext, title);
+        return item ? { ok: true, item } : { ok: false, why: 'not a picture or clip' };
+      },
+      async inline(html) {
+        const c = await ctx();
+        return c ? pageWithOwnAssets(c, html, 'preview.html') : html;
+      },
+    };
+  }
+
   /** A question with drawings: one log line saying how many went and why the others did not
    *  (the message itself already says "Çizimi Mac'te" on each option that did not go). Counted
    *  by `qi:oi`, the key the notes use. */
-  function logPictures(id: string, questions: readonly RichQuestion[], drawn: ReadonlySet<string>, misses: readonly string[]): void {
+  function logPictures(id: string, questions: readonly RichQuestion[], drawn: ReadonlySet<string>, misses: readonly string[], sessionId: string, secret: boolean): void {
     const wanted = questions.reduce((n, q) => n + q.options.filter((o) => o.preview?.trim()).length, 0);
     if (!wanted) return;
     const why = drawn.size < wanted && misses.length ? ` (${misses.join('; ')})` : '';
     appendAskLog(hub.home, `${id} pictures ${drawn.size}/${wanted}${drawn.size < wanted ? ' NOT ALL SENT' : ''}${why}`);
+    // The asker hears it too (undelivered.ts): its card is on his phone without these drawings.
+    if (drawn.size < wanted && !secret) noteUndelivered(sessionId, 'picture', `${wanted - drawn.size} of the ${wanted} drawings of your question card did not reach his phone${why}; they are on the Mac only.`);
   }
 
   /** The drawings that reached Telegram for an ask (by its log id), kept so a text fallback after
@@ -229,16 +276,15 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
     const head = { title: opts.title ? cleanTitle(opts.title, 120) : undefined, lead: opts.lead };
     const budget = { left: 10 };
     const tries = { headless: true };
-    let rootsOnce: Promise<string[] | undefined> | undefined;
-    const roots = () => (rootsOnce ??= ab.contextRoot ? superMediaRoots(ab.contextRoot).catch(() => undefined) : Promise.resolve(undefined));
+    const files = previewFiles(ab);
     try {
       for (let i = 0; i < questions.length; i++) {
         // Its drawings always (they are part of the question), never while a secret is pending.
-        if (!secret) await sendDrawings(ab, opts.sessionId, questions[i], i, drawn, budget, misses, tries, roots).catch(fail);
+        if (!secret) await sendDrawings(ab, opts.sessionId, questions[i], i, drawn, budget, misses, tries, files).catch(fail);
         await sendQuestion(ab, a, i, i === 0 ? head : {}, drawn);
       }
     } finally {
-      logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses);
+      logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses, opts.sessionId, secret);
     }
     return { askId: a.id, messages: a.messages.slice() };
   }
