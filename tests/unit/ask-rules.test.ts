@@ -143,7 +143,7 @@ describe('the lines that pushed towards asking are gone', () => {
     expect(PLAN_DONE_LINE).toContain('never ask him to start it. Start its develop child now');
     // Only a READY plan is built: a stop card or a refused `plan link` stays his (end review r1).
     expect(PLAN_DONE_LINE).toContain('A plan that is ready (`dreamcontext tasks ready <slug>` passes; one stopped on its stop card, or with a refused `plan link`, is his card and never built past)');
-    expect(PLAN_DONE_LINE).toContain('(when `delegate` answers `held`: that it waits its turn)');
+    expect(PLAN_DONE_LINE).toContain('(when `delegate` answers `held` with `kept: true`: that it waits its turn; `not_kept` or `pool_full`: that it did NOT start, and why)');
     expect(superBriefing()).toContain('neither your text nor the card repeats it');
     for (const text of [SOURCES, GUIDE]) {
       expect(text).not.toContain('your text gives the same summary');

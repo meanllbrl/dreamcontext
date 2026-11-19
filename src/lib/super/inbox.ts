@@ -1576,11 +1576,21 @@ export function ownerAbouts(text: string, heads: readonly { kind: AgendaAbout['k
 
 export function asksAnswered(s: Pick<SuperState, 'queue'> | undefined, abouts: readonly AgendaAbout[], memberChat = false): string[] {
   const open = (s?.queue ?? []).filter((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin)).map((q) => q.id);
+  const named = open.filter((id) => abouts.some((a) => a.kind === 'item' && a.id === id));
   // A member's own chat is a normal chat (owner rules h7tjatns3j, 2026-11-15 "ben yaptım"): his
   // message there answers its open question to him, as any chat's question card is answered by
-  // what he writes next. The Super Agent's own card keeps the 2026-11-11 rule above.
-  if (memberChat) return open;
-  return open.filter((id) => abouts.some((a) => a.kind === 'item' && a.id === id));
+  // what he writes next. Except a message he wrote ABOUT something else (another agenda line, a
+  // card passage, a task, a note, an owed line: its header says so): that one leaves the card open,
+  // so the same decision never comes back as a new card (open note 2026-11-19). A reply to a
+  // message is no "else": in his own chat that is how he answers the card's message. The Super
+  // Agent's own card keeps the 2026-11-11 rule above.
+  if (memberChat) return aboutElse(abouts, open) ? named : open;
+  return named;
+}
+
+/** His message is written about something other than these open cards (its reference headers). */
+function aboutElse(abouts: readonly AgendaAbout[], open: readonly string[]): boolean {
+  return abouts.some((a) => (a.kind === 'item' ? !open.includes(a.id) : a.kind !== 'reply'));
 }
 
 /**
@@ -1715,8 +1725,14 @@ export function superAskStillOpen(sessionId: string, abouts: readonly AgendaAbou
   if (memberChat && ownWords) {
     // His message closes the member's open card (`asksAnswered`): said to the member in this very
     // message, so a card closed by words about something else is asked again, never lost silently.
-    const closing = s.queue.filter((q) => q.kind === 'ask' && q.state === 'escalated' && !isMainWork(q.workOrigin)
-      && !abouts.some((a) => a.kind === 'item' && a.id === q.id));
+    // The same reading that closes it (`asksAnswered`): a message about something else closes none.
+    const answered = asksAnswered(s, abouts, true);
+    const escalated = s.queue.filter((q) => q.kind === 'ask' && q.state === 'escalated' && !isMainWork(q.workOrigin));
+    const closing = escalated.filter((q) => answered.includes(q.id) && !abouts.some((a) => a.kind === 'item' && a.id === q.id));
+    const stays = escalated.filter((q) => !answered.includes(q.id));
+    if (stays.length && !closing.length) {
+      return `${ASK_STILL_OPEN} items=${stays.map((q) => q.id).join(',')} held=0>This message was written about something else, so your open question card stays open: answer this message, never ask that card again. If his words answer it anyway, or he says to drop it, close it with \`dreamcontext super queue done <id>\`.</super-ask-still-open>`;
+    }
     if (!closing.length) return null;
     return `${ASK_CLOSED} items=${closing.map((q) => q.id).join(',')}>This message closed your open question card to him: in your own chat his next words are its answer, as in any chat. If they answer it, go on. If they are about something else, or say he did not understand it, and the decision is still his by kind: answer this message first, in plain words, then ask ONE reworded \`dreamcontext super ask\` card, never the same one.</super-ask-closed>`;
   }
@@ -1973,7 +1989,7 @@ export const BATCH_LAST_LINE = [
 
 /** Added when an awaited=owner job that finished is a plan (owner 2026-10-29: "plan hazır,
  *  başlasın mı" came without the plan, and he had to ask for it). */
-export const PLAN_DONE_LINE = `An awaited=owner item whose child ran in plan mode finished a PLAN of work he asked for. A plan that is ready (\`dreamcontext tasks ready <slug>\` passes; one stopped on its stop card, or with a refused \`plan link\`, is his card and never built past): never ask him to start it. Start its develop child now and tell him in your text what will be built (the problem in one sentence, what will be done in 3-6 short bullets, cost or risk in money, never time), as long as it needs; the one or two sentences do not hold here; say that it started (when \`delegate\` answers \`held\`: that it waits its turn) and that he can say otherwise. A card only for what the plan left open and is his by kind (a screen whose drawing he has not approved, money, real data, an outward or irreversible step, a plan that grew past what he asked): then put that summary on a report card (a page, \`super open web <path>\`), and your own card shows it (\`--show <its card>\`), asks that one decision in one line and is the last act of the turn; your text does not repeat the report. Say a report is on his stage only when you opened it in this turn: the child's own chat is not the report. The same plan, unchanged, you already told him in an earlier turn: one line under its ref that it is the plan above, never the summary again.`;
+export const PLAN_DONE_LINE = `An awaited=owner item whose child ran in plan mode finished a PLAN of work he asked for. A plan that is ready (\`dreamcontext tasks ready <slug>\` passes; one stopped on its stop card, or with a refused \`plan link\`, is his card and never built past): never ask him to start it. Start its develop child now and tell him in your text what will be built (the problem in one sentence, what will be done in 3-6 short bullets, cost or risk in money, never time), as long as it needs; the one or two sentences do not hold here; say that it started (when \`delegate\` answers \`held\` with \`kept: true\`: that it waits its turn; \`not_kept\` or \`pool_full\`: that it did NOT start, and why) and that he can say otherwise. A card only for what the plan left open and is his by kind (a screen whose drawing he has not approved, money, real data, an outward or irreversible step, a plan that grew past what he asked): then put that summary on a report card (a page, \`super open web <path>\`), and your own card shows it (\`--show <its card>\`), asks that one decision in one line and is the last act of the turn; your text does not repeat the report. Say a report is on his stage only when you opened it in this turn: the child's own chat is not the report. The same plan, unchanged, you already told him in an earlier turn: one line under its ref that it is the plan above, never the summary again.`;
 
 /** The most of a child question card's own words (its description) an event line carries. */
 export const MAX_CARD_ABOUT = 1500;

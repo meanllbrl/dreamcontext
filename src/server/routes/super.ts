@@ -990,15 +990,19 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       refuse(res, 409, 'held', `${running}; the job stays in the pool as ${fromRow.id}`, { ...facts, pooled: fromRow.id });
       return;
     }
+    // A job that is NOT kept is never `held` (soru-azaltma open note, 2026-11-19): `held` reads
+    // "it waits its turn", and the Super told him so for a job that was gone. Its own code says
+    // it did not start and was not kept.
+    const notKept = { ...facts, held: false, kept: false };
     // A hand-over is not pooled: the pool keeps no successor, and the old child keeps the work.
     if (succeeds) {
-      refuse(res, 409, 'held', `${running}; the hand-over was NOT kept: delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
+      refuse(res, 409, 'not_kept', `${running}; the hand-over was NOT kept and did NOT start: delegate it again when a slot frees, or ask the owner`, notKept);
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
     const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
     if ('error' in kept) {
-      refuse(res, 409, kept.error === 'too_large' ? 'held' : 'pool_full', `${running}; the job was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
+      refuse(res, 409, kept.error === 'too_large' ? 'not_kept' : 'pool_full', `${running}; the job did NOT start and was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, notKept);
       return;
     }
     refuse(res, 409, 'held', `${running}; the job is kept in the pool as ${kept.id}: start it with \`dreamcontext super delegate --from ${kept.id}\` when a slot frees`, { ...facts, pooled: kept.id, reused: kept.reused, kept: true });

@@ -49,6 +49,11 @@ describe('askWarning', () => {
     // An approval of a drawing is his by kind: it shows its report and hears no note (end review r1).
     expect(askWarning(ask('Do you approve this drawing of the lesson screen?'), 1)).toBeNull();
     expect(askWarning(ask('Sıradaki dalgaya devam edeyim mi?'), 1)).toBe(START_ASK_NOTE);
+    // Every form of the verb, never a longer word that only begins the same (open note 2026-11-19).
+    for (const q of ['Starting the build now, OK?', 'Proceeding with wave 2?', 'Kicking off the merge?', 'Continuing with the next step?', 'Going ahead with it?'])
+      expect(askWarning(ask(q), 1)).toBe(START_ASK_NOTE);
+    for (const q of ['Which startup screen do you prefer?', 'Is the beginner mode the default?'])
+      expect(askWarning(ask(q), 1)).toBeNull();
     for (const w of [START_ASK_NOTE, START_ASK_WARNING]) expect(w).toContain(NO_START_CARD);
     expect(NO_START_CARD).toContain('Work he asked for or approved starts and goes on without a card');
     expect(NO_START_CARD).toContain('a plan that changes no screen is built without his yes');

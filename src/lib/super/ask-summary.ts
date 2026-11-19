@@ -21,8 +21,10 @@ import type { SuperAskSpec } from './types.js';
 
 /** Turkish stems (no `\b`: it does not see ş/ı/ç) and English words that mark a start/approve question. */
 const START_RE = /\b(?:start|begin|approve|proceed|go ahead|kick off|implement)|plan|başla|onay|geliştir/i;
-/** A question that only asks to start or go on (never "approve": a drawing's yes is his by kind). */
-const GO_ON_RE = /\b(?:start|begin|proceed|go ahead|kick off|continue|next wave)\b|başla|devam e|sıradaki dalga/i;
+/** A question that only asks to start or go on (never "approve": a drawing's yes is his by kind).
+ *  Every form of the verb ("Shall I start", "starting the build?", "OK to proceed with", "began"),
+ *  never a longer word that only begins the same ("startup", "beginner"): open note of 2026-11-19. */
+const GO_ON_RE = /\b(?:start(?:s|ed|ing)?|begin(?:s|ning)?|began|proceed(?:s|ed|ing)?|go(?:es|ing)? ahead|kick(?:s|ed|ing)? off|continu(?:e|es|ed|ing)|next wave)\b|başla|devam e|sıradaki dalga/i;
 /** A preview's text (tags dropped) past this is information to READ, not a look at an option:
  *  four short bullets measure ~150, a mockup's labels stay well under it. */
 export const MAX_PREVIEW_TEXT = 200;

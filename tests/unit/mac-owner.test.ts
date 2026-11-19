@@ -175,8 +175,8 @@ describe('every owner input on the Mac passes the one call; nothing released lat
     const card = read('dashboard/src/components/sleepy/chat/SurveyCard.tsx');
     expect(card).toMatch(/resolveNotes\(questions, picks\)\)\) \{ hold\(\); return; \}\n(?:\s*\/\/.*\n)*\s*noteOwnerWrote\(\);/);
     expect(card).toMatch(/unclearMessage\(questions, picks\) \}\)\) \{ hold\(\); return; \}\n\s*noteOwnerWrote\(\);/);
-    // The Super's own question, a child's question and a remote card are all drawn as SurveyCard.
-    expect(read('dashboard/src/components/sleepy/super/SuperQuestionCard.tsx').match(/<SurveyCard\b/g)?.length).toBe(3);
+    // The Super's own question, a child's question, a remote card and a member's own ask are all drawn as SurveyCard.
+    expect(read('dashboard/src/components/sleepy/super/SuperQuestionCard.tsx').match(/<SurveyCard\b/g)?.length).toBe(4);
   });
 
   it('must not count: the queue drain, an agent\'s send or card answer never pass the call', () => {
