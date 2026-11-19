@@ -1,0 +1,33 @@
+/* `whiteboard export`'s page: the board filling the window, no editor chrome at all. */
+html:has(.board-print), html:has(.board-print) body, html:has(.board-print) #root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.board-print,
+.board-print.excalidraw-preview {
+  position: fixed;
+  inset: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.board-print .excalidraw .layer-ui__wrapper,
+.board-print .excalidraw .App-bottom-bar,
+.board-print .excalidraw .scroll-back-to-content,
+.board-print .excalidraw .welcome-screen-center,
+.board-print .excalidraw .disable-zen-mode,
+.board-print .excalidraw .App-toolbar-content,
+.board-print .excalidraw .zoom-actions {
+  display: none !important;
+}
+
+.board-print-status {
+  padding: 24px;
+  font: 14px/1.4 system-ui, sans-serif;
+}

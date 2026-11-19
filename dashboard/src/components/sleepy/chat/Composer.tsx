@@ -58,6 +58,7 @@ import {
   addAttachments, armTypedSend, composeOutgoing, countsAsContent, disarmTypedSend, expandCardChips, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, ownWords, pendingUploads,
   readScratch, removeAttachment, repend, setQuote, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, wasSent, type Attachment,
 } from './composerScratch';
+import { noteThreadSend, withThreadAbout } from '../super/superThreadFilter';
 import {
   GLYPH_IMAGE, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, isChatReply, isMediaRef, isTokenRef, parseRefTokens, reconcileRefs, refLabel, refToken,
   refTokenId, sanitizePaste, snapSelection, stripTokens, tokensOnly,
@@ -800,7 +801,12 @@ export function Composer({
       // any history walk in progress is over — its stash describes a draft that no longer
       // exists, and ↓ restoring it would throw the new text away.
       setNavBoth(NO_HISTORY_NAV);
-      taRef.current?.focus();
+      const ta = taRef.current;
+      if (ta) {
+        ta.focus();
+        // The caret follows an external append to the end of the text.
+        requestAnimationFrame(() => { try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch { /* detached */ } });
+      }
     }
   }, [session, draftEpoch]);
 
@@ -2020,8 +2026,14 @@ export function Composer({
     // A `ref` chip's path is a token the server matches (`dcref:wb/<board>/<id>`), not a
     // filesystem path: it goes out as written, never shell-quoted.
     // A message about an agenda line opens with its block (the About chip), before the quote.
-    const { message, quoted, slash } = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
+    const out = composeOutgoing(text, readScratch(convId).attachments, liveQuote, quotePath, { superView });
+    const { quoted, slash } = out;
     if (!quoted.trim()) return;
+    // A Super chat filtered to an agenda row (ajanda-filtre, owner 2026-11-17): the message opens
+    // with the row's About block, with no chip in the box; an About he staged himself wins.
+    const message = superView
+      ? withThreadAbout(session.claudeId, out.message, { slash, ownAbout: readScratch(convId).attachments.some((a) => a.kind === 'about' && !isChatReply(a) && !!a.text && out.message.includes(a.text)) })
+      : out.message;
     // He wrote this, now, whatever happens to it next (sent, steered, queued by ⌥⏎ or behind an
     // open card, handed to a sleeping tab, a peer or a member): the one place the composer says
     // so (lib/ownerAtMac.ts). A slash command is not his words; a queue drain never passes here.
@@ -2133,6 +2145,9 @@ export function Composer({
       // carried no About block, so the About chip stays for the next message.
       dropSentAttachments(convId, { keepAbout: slash, keepInline: slash });
       onClearQuote();
+      // A Super chat filtered to an agenda row (ajanda-filtre C3): a message sent without the
+      // row's block (a slash command, his own About) still joins the row's thread.
+      if (superView) noteThreadSend(session.claudeId, message);
       // The kept draft follows the box NOW, not in the mirror effect: a send can unmount this
       // composer in the same commit (a parked tab's first message swaps it for the live chat's),
       // and the effect then never runs, so the live composer would restore the sent message.

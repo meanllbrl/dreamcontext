@@ -16,7 +16,7 @@ import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, r
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAgent, readGlobalAgent } from '../../lib/agents/store.js';
-import { resolveAutomationPhoto } from '../../lib/automations/store.js';
+import { resolveAutomationPhoto, resolveGlobalAgentPhoto } from '../../lib/automations/store.js';
 import { bindingDir, readTelegramJson, writeTelegramJson } from '../../lib/telegram/config.js';
 import type { TelegramScope, TelegramTarget } from '../../lib/telegram/contract.js';
 import type { TelegramTransport } from '../../lib/telegram/transport.js';
@@ -77,7 +77,9 @@ export function identityFor(
   const role = title.includes('·') ? title.slice(title.indexOf('·') + 1).trim() : '';
   const team = project ? `${project} projesinin AI Team üyesi` : 'AI Team üyesi';
   let photo: string | null = null;
-  if (where.contextRoot && agent.scope !== 'global') {
+  // A global agent's photo lives in its home on this machine, so its bot has one in every project.
+  if (agent.scope === 'global') photo = resolveGlobalAgentPhoto(where.target, agent.photo, home);
+  else if (where.contextRoot) {
     try { photo = resolveAutomationPhoto(where.contextRoot, agent.photo); } catch { photo = null; }
   }
   return {

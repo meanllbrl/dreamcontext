@@ -3,7 +3,7 @@ import { QUICK_RECALL_SCOPE, QUICK_RECALL_SCOPE_ENV, quickReadable } from '../..
 import { Command } from 'commander';
 import { request as httpRequest } from 'node:http';
 import { listVaults } from '../../lib/vaults.js';
-import { resolveDashboardPort } from './hook.js';
+import { resolveRecallServerPort } from './hook.js';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, dirname, resolve as resolvePath } from 'node:path';
 import chalk from 'chalk';
@@ -375,7 +375,7 @@ export function queryViaServer(
   tier: RecallTier,
   opts: { port?: number; timeoutMs?: number; home?: string } = {},
 ): Promise<{ hits: RecallHit[]; corpusSize: number; timing: RecallTiming } | null> {
-  const port = opts.port ?? resolveDashboardPort();
+  const port = opts.port ?? resolveRecallServerPort(process.env, opts.home);
   const timeoutMs = opts.timeoutMs ?? QUERY_VIA_SERVER_TIMEOUT_MS;
   let vault: string | null = null;
   try {

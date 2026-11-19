@@ -63,6 +63,7 @@ export function telegramRoutes(api: ReturnType<typeof useApi>) {
     creationRequest: (target: string) => api.post<{ creationId: string }>(`/telegram/${enc(target)}/creation/request`, {}),
     readoptInfo: (target: string) => api.get<TelegramReadopt>(`/telegram/${enc(target)}/readopt`),
     readoptRequest: (target: string) => api.post<{ readoptId: string }>(`/telegram/${enc(target)}/readopt/request`, {}),
+    groupRemove: (target: string, chatId: number) => api.del<{ ok: true }>(`/telegram/${enc(target)}/groups/${enc(String(chatId))}`),
     managerStatus: () => api.get<TelegramManagerStatus>('/telegram-manager/status'),
     managerBind: (token: string) => api.post<PairingStart>('/telegram-manager/bind', { token }),
     managerUnbind: () => api.del<{ ok: true }>('/telegram-manager'),
@@ -119,21 +120,24 @@ export const telegramShell = {
     shell<{ ok: true; link: string; projectName: string }>('start_telegram_creation', { creationId: checkedId(creationId) }),
   /** The native confirm that binds a bot made earlier again (AA2). */
   startReadopt: (readoptId: string) => shell<ShellConfirm>('start_telegram_readopt', { readoptId: checkedId(readoptId) }),
+  /** The native confirm that permits a group the owner wrote /bagla in (tg-grup D3). */
+  confirmGroup: (groupBindId: string) => shell<ShellConfirm>('confirm_telegram_group', { groupBindId: checkedId(groupBindId) }),
 };
 
 // ─── Status, polled while something waits on Telegram ───────────────────────
 
 export const TELEGRAM_STATUS_KEY = ['telegram', 'status'] as const;
 
-/** This vault's bindings. `waiting` polls every 2 s (a sheet waiting for /start or a creation). */
-export function useTelegramStatus(opts: { waiting?: boolean; enabled?: boolean } = {}) {
+/** This vault's bindings. `waiting` polls every 2 s (a sheet waiting for /start or a creation);
+ *  `watch` every 5 s (a group's /bagla can arrive while Settings is open). */
+export function useTelegramStatus(opts: { waiting?: boolean; watch?: boolean; enabled?: boolean } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: TELEGRAM_STATUS_KEY,
     queryFn: () => telegramRoutes(api).status(),
     retry: 0,
     enabled: opts.enabled ?? true,
-    refetchInterval: opts.waiting ? () => pollMs(2_000) : false,
+    refetchInterval: opts.waiting ? () => pollMs(2_000) : opts.watch ? () => pollMs(5_000) : false,
   });
 }
 

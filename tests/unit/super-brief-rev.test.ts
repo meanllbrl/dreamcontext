@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { superBriefState } from '../../src/server/chat-mode-drift.js';
 import { SUPER_BRIEF_TEXT, memberSlotOf, superBriefing } from '../../src/server/chat-modes.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_MARKER, SUPER_BRIEF_REV } from '../../src/lib/super/types.js';
+import { ASK_RULES } from '../../src/lib/ask-rules.js';
 
 const j = (...rows: unknown[]) => rows.map((r) => JSON.stringify(r)).join('\n');
 const snapshot = (text: string) => ({ type: 'attachment', attachment: { type: 'prompt_snapshot', systemPrompt: [text] } });
@@ -148,10 +149,14 @@ describe('superBriefState', () => {
     const summary = { type: 'user', isCompactSummary: true, message: { content: [{ type: 'text', text: `summary ${SUPER_BRIEF_MARKER}` }] } };
     expect(superBriefState(j(old, owner('x', SUPER_BRIEF_TEXT), compact, summary), SUPER_BRIEF_REV).due).toBe(true);
   });
-  it('rev 51 (2026-11-15): a child\'s question (`shown=owner`) waits on the Mac bar only, never Telegram; `queue ask` when he is away and must know', () => {
-    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(51);
+  it('rev 53 (2026-11-17): after `super ask`, the answer already given is never re-written', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(53);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('(a late line lands above the card; never re-say your answer in other words)');
+  });
+  it('rev 51 (2026-11-15): a child\'s question (`shown=owner`) waits on the Mac bar only, never Telegram; `queue ask` when it is his and he is away (rev 53: the Super answers it first)', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(53);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
-      expect(t).toContain('one marked `shown=owner` is already on his\n  Mac bar only, never on Telegram: if he is away and needs to know, put it to him with `queue ask`');
+      expect(t).toContain('One marked `shown=owner` is\n  already on his Mac bar only, never on Telegram: answer it the same way; his by kind and he is away:\n  put it to him with `queue ask` or in your own words.');
     }
   });
 
@@ -172,12 +177,23 @@ describe('superBriefState', () => {
     }
   });
 
-  it('rev 25 (2026-11-01): the one line comes FIRST, `super ask` is the last act of the turn', () => {
-    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(25);
+  it('rev 25 (2026-11-01): `super ask` is the last act of the turn; rev 53 (2026-11-18): no line before it that a question waits', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(53);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
-      expect(t).toContain('your one line FIRST');
+      expect(t).not.toContain('your one line FIRST');
       expect(t).toContain('as the LAST act of the turn, with no text after it');
-      expect(t).toContain('(but the line before');
+      expect(t).toContain('no line before it that a question waits');
+      expect(t).not.toContain('(but the line before');
+    }
+  });
+
+  it('rev 53 (2026-11-18, soru-azaltma): the ask rules reach a running session whole', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(53);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('## When you ask him');
+      expect(t).toContain(ASK_RULES);
+      expect(t).toContain('a finished plan that changes no screen is\nbuilt at once');
+      expect(t).toContain("A child's QUESTION is yours first");
     }
   });
 
@@ -202,7 +218,8 @@ describe('superBriefState', () => {
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('He sees your text, never your thinking');
       expect(t).toContain('never blame his screen.');
-      expect(t).toContain('ask a reworded card with what was missing, never the same card.');
+      expect(t).toContain('Its card still open (`<super-ask-still-open>`): it stays, never a second one.');
+      expect(t).toContain('is still his: ONE reworded card with what was missing, never the same card.');
     }
   });
   it('rev 46 (2026-11-14, sunum-sirasi): a present while he looks at another presentation is queued, never claimed as shown', () => {

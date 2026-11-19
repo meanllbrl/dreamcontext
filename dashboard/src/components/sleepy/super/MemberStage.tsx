@@ -4,9 +4,12 @@ import { findAgent, useAgents, type AgentSummary } from '../../../hooks/useAgent
 import { useStatusModel, useTaskList, type AgentJobDelivery } from '../../../hooks/useTasks';
 import { jobChip, reviewRounds } from '../../../lib/taskAgentJob';
 import { requestManageMembers } from '../../../lib/openAgents';
+import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { TeamApproval } from '../../aiteam/TeamApproval';
-import { MemberAutonomy } from '../../aiteam/AutonomyChip';
+import { TeamIcon } from '../../aiteam/TeamIcons';
+import { useLauncherStatus } from '../../../hooks/useLauncher';
+import { VaultLogo } from '../../layout/VaultLogo';
 import { pendingApprovals } from '../../aiteam/teamModel';
 import { JobChipView } from '../../tasks/JobChipView';
 import type { MemberCardRef } from '../../../lib/superTypes';
@@ -19,18 +22,15 @@ import './TaskStrip.css';
 /** Everything the stage shows of the member whose Super it is (plan-r10 1, mockup r8-08). */
 export interface MemberStageInfo {
   slug: string;
-  /** The vault the stage is in (a global member's chip names it). */
+  /** The vault the stage is in: a global member's head names it first, as the side menu does. */
   vault: string;
   /** The task strip on top (a task face's click, or a pick in "Görevleri"); null = none. */
   task: string | null;
   onTask: (slug: string | null) => void;
   onOpenTask: (slug: string) => void;
-  /** Other open projects a GLOBAL member can be opened in (its chip); empty for a project member. */
-  projects: readonly string[];
-  onSwitchProject?: (vault: string) => void;
   /** The summary says it waits for its one approval card (plan-r10 1e). */
   approval: boolean;
-  /** The summary says it is a global member (its project chip, plan-r10 1f). */
+  /** The summary says it is a global member (the project in front of its name, its Global chip). */
   global?: boolean;
   /** Why the open was refused (the stage says so instead of a chat), or null. */
   refusal: MemberRefusal | null;
@@ -53,40 +53,47 @@ export function memberModelLabel(agent: Pick<AgentSummary, 'model' | 'effort'> |
 }
 
 /**
- * The centre's head on a member's stage (mockup r8-08): its face, its name, "<job> · tek konuşma",
- * the model chip, a non-Claude member's note, the project chip of a global member, and "Profil"
- * (Üyeleri yönet on its profile). Main's head is unchanged (`SuperCentreHead`).
+ * The centre's head on a member's stage, one row (owner 2026-11-17, option A): a GLOBAL member's
+ * reads "<project logo> <project> › <face> <name> (Global)", so which project it works in is the
+ * first thing read; a project member's is just its face and name. Then the model chip, a
+ * non-Claude member's note and "Profil" (Üyeleri yönet on its profile). No project switch here
+ * (the member opens in another project from that project's Ekip list), no job line (it is on
+ * the profile) and no autonomy label (it is in the composer). Main's head is `SuperCentreHead`.
  */
 export function MemberStageHead({ info, spawn }: { info: MemberStageInfo; spawn: { model: string; effort: string } }) {
   const { t } = useI18n();
   const { data: agents } = useAgents();
   const agent = findAgent(agents, info.slug);
   const name = agent?.title || info.slug;
-  const job = agent?.roleLine || '';
   const tool = agent?.tool && agent.tool !== 'claude' ? agent.tool : null;
   // The manifest's scope, or the summary's word (a refused member's stage draws before its agent loads).
   const global = agent?.scope === 'global' || info.global === true;
+  // The project's logo as the side menu draws it (the launcher read; the tunnel refuses that
+  // route, so a phone draws the name alone).
+  const { data: launcher } = useLauncherStatus(global && !isMacPhoneSurface());
+  const project = global ? launcher?.vaults.find((v) => v.name === info.vault) : undefined;
   const toolName = tool === 'codex' ? 'Codex' : tool === 'antigravity' ? 'Antigravity' : '';
   return (
-    <div className="super-member-head" data-testid="super-member-head" data-slug={info.slug}>
-      <AgentAvatar of="agent" slug={info.slug} title={name} hasPhoto={!!agent?.hasPhoto} size={28} face={agent?.face} />
-      <span className="super-member-name" data-testid="super-member-name">{name}</span>
-      <span className="super-member-sub">{t('superStage.member.subtitle').replace('{job}', job || name)}</span>
-      <span className="super-member-model" data-testid="super-member-model">{memberModelLabel(tool ? null : agent, spawn)}</span>
-      <MemberAutonomy slug={info.slug} variant="head" />
-      {tool && <span className="super-member-note" data-testid="super-member-claude-only">{t('superStage.member.claudeOnly').replace('{tool}', toolName)}</span>}
-      {global && (
-        <label className="super-member-chip" data-testid="member-project-chip" title={t('superStage.member.projectChip')}>
-          <select
-            aria-label={t('superStage.member.projectChip')}
-            value={info.vault}
-            disabled={!info.onSwitchProject || info.projects.length === 0}
-            onChange={(e) => { if (e.target.value !== info.vault) info.onSwitchProject?.(e.target.value); }}
-          >
-            {[info.vault, ...info.projects.filter((p) => p !== info.vault)].map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </label>
+    <div className="super-member-head" data-testid="super-member-head" data-slug={info.slug} data-global={global ? 'true' : undefined}>
+      {global && info.vault && (
+        <>
+          <span className="super-member-project" data-testid="super-member-project" title={info.vault}>
+            <VaultLogo name={info.vault} hasLogo={!!project?.logo} stamp={project?.logoStamp ?? null} size={18} />
+            <span className="super-member-project-name">{info.vault}</span>
+          </span>
+          <span className="super-member-sep" aria-hidden="true">›</span>
+        </>
       )}
+      <AgentAvatar of="agent" slug={info.slug} title={name} hasPhoto={!!agent?.hasPhoto} size={28} face={agent?.face} />
+      <span className="super-member-name" data-testid="super-member-name" title={name}>{name}</span>
+      {global && (
+        <span className="super-member-global" data-testid="super-member-global" title={t('superStage.member.globalHint')}>
+          <TeamIcon name="globe" size={12} />{t('superStage.member.global')}
+        </span>
+      )}
+      <span className="super-member-gap" aria-hidden="true" />
+      <span className="super-member-model" data-testid="super-member-model">{memberModelLabel(tool ? null : agent, spawn)}</span>
+      {tool && <span className="super-member-note" data-testid="super-member-claude-only">{t('superStage.member.claudeOnly').replace('{tool}', toolName)}</span>}
       <button type="button" className="super-member-btn" data-testid="super-member-profile" onClick={() => requestManageMembers({ slug: info.slug })}>
         {t('superStage.member.profile')}
       </button>

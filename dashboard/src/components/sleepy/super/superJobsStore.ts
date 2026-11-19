@@ -1,4 +1,5 @@
 import type { PhonePermission } from './usePhoneSuperQuestions';
+import { revealHiddenCard } from './superThreadFilter';
 import { useSyncExternalStore } from 'react';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
@@ -220,7 +221,8 @@ export function useSlotRunRequest(itemId: string): SlotRun | undefined {
  *  False when it is not drawn (the chat not on screen). */
 export function showOwnerSlot(itemId: string, root: ParentNode = document): boolean {
   const card = [...root.querySelectorAll<HTMLElement>('[data-testid="super-owner-card"]')].find((el) => el.dataset.item === itemId);
-  if (!card || !card.isConnected) return false;
+  // Hidden by an agenda row's thread filter: the filter ends, then the door opens (C4 gate).
+  if (!card || !card.isConnected) return revealHiddenCard(itemId, () => { showOwnerSlot(itemId, root); });
   const detail: SuperQuestionDetail = { item: itemId };
   const handled = !card.dispatchEvent(new CustomEvent(SUPER_QUESTION_EVENT, { bubbles: true, cancelable: true, detail }));
   const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;

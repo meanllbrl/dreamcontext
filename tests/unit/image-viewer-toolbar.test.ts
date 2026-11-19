@@ -44,8 +44,16 @@ describe('ImageViewer toolbar under the picture', () => {
     expect(read('dashboard/src/components/sleepy/chat/Lightbox.tsx')).toMatch(/<FileActions path=\{path\} iconOnly \/>/);
   });
 
-  it('the page viewer keeps its own floating foot', () => {
+  it('the page viewer keeps its own foot, docked as a band under the page (owner 2026-11-16)', () => {
     expect(read('dashboard/src/components/layout/FrameViewer.tsx')).not.toMatch(/image-viewer-toolbar/);
+    const fcss = read('dashboard/src/components/layout/FrameViewer.css');
+    const fblock = (sel: string) => fcss.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+    expect(fblock('.frame-viewer')).toMatch(/flex-direction: column/);
+    expect(fblock('.frame-viewer > .frame-viewer-stage')).toMatch(/position: relative/);
+    const foot = fblock('.frame-viewer .image-viewer-foot');
+    expect(foot).toMatch(/position: relative/);
+    expect(foot).toMatch(/flex: none/);
+    expect(foot).toMatch(/background: rgb\(14, 14, 20\);/);
   });
 });
 

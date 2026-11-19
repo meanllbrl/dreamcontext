@@ -6,12 +6,12 @@ import { ProjectLogoPanel } from './ProjectLogoPanel';
 import { StatusMark, askRow, markWords, type MarkState } from './StatusMark';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import type { EkipMember } from '../../aiteam/teamModel';
-import { TeamList, TeamRowButton, type TeamListMember } from './TeamList';
+import { TeamList, TeamRowButton } from './TeamList';
 import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { filterProjectRows, hiddenGroupMark, ownMembersOf, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
+import { filterProjectRows, hiddenGroupMark, ownMembersOf, splitHiddenRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow } from './drawerModel';
 import './ChatDrawer.css';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
@@ -57,20 +57,17 @@ export interface ChatDrawerProps {
   /** Under the rows, outside the scroll: Mac mode's tunnel puts the notification opt-in and the
    *  connection-log button here (the Sohbetler list's foot before the phone joined the shell). */
   foot?: ReactNode;
-  /** The Global ekip row at the very bottom (plan-r10 1f), or null when no project has a member
-   *  of all projects. */
-  globalTeam?: GlobalTeamRow | null;
   /** A member's on/off switch in an Ekip list: `POST /api/agents/:slug/enabled` in `vault`. */
   onSwitchMember?(vault: string, slug: string, enabled: boolean): Promise<unknown>;
   /** "Üyeleri yönet" from a list (desktop only): the modal in `vault` (null: the project in view);
-   *  `create` opens it on New member. */
-  onManage?(vault: string | null, opts?: { create?: boolean }): void;
+   *  `create` opens it on New member, `global` with "All projects" picked. */
+  onManage?(vault: string | null, opts?: { create?: boolean; global?: boolean }): void;
 }
 
 interface Menu { kind: 'project' | 'new' | 'window' | 'new-chat'; name?: string; windowId?: string; x: number; y: number }
 
-/** Which Ekip list is open: a project's, or the Global ekip's. */
-type TeamOpen = { kind: 'project'; vault: string; x: number; y: number } | { kind: 'global'; x: number; y: number };
+/** Which Ekip list is open (the phone's sheet): a project's. */
+type TeamOpen = { kind: 'project'; vault: string; x: number; y: number };
 
 /** The stored name of a project's first window (agent-sessions.ts `DEFAULT_WINDOW`): drawn in the
  *  owner's language. */
@@ -111,9 +108,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
   // A menu takes focus on its first item, so the keyboard can use it (⌘N is often pressed from
   // the composer); ↑ ↓ Home End move between items.
   const menuOpen = !!menu;
+  const menuKind = menu?.kind;
   useEffect(() => {
     if (menuOpen) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
-  }, [menuOpen]);
+  }, [menuOpen, menuKind]); // the kind too: the project menu swaps to the member list in place
   const onMenuKey = (e: ReactKeyboardEvent) => {
     const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []);
     if (!items.length) return;
@@ -315,36 +313,11 @@ export function ChatDrawer(p: ChatDrawerProps) {
               {/* Over the row's end on hover or keyboard focus (always on a finger): "+" opens a new Claude
                   window at once (a member's window: the chevron on New chat, or the Team rows), "⋯" the project's menu. */}
               <span className="ns-dr-acts">
-                {/* The eye beside "+" (owner 2026-11-14): one click hides the project, or, in the
-                    Hidden group, shows it again. */}
-                {!p.device && (hiddenSet.has(row.name) ? p.onShowProject : p.onHideProject) && (
-                  hiddenSet.has(row.name) ? (
-                    <button type="button" className="ns-dr-act ns-dr-hide" aria-label={`${t('shell.drawer.showProject')}: ${row.name}`} title={t('shell.drawer.showProject')}
-                      data-testid="drawer-project-show" onClick={(e) => { e.stopPropagation(); p.onShowProject?.(row.name); }}>
-                      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /></svg>
-                    </button>
-                  ) : (
-                    <button type="button" className="ns-dr-act ns-dr-hide" aria-label={`${t('shell.drawer.hideProject')}: ${row.name}`} title={t('shell.drawer.hideProject')}
-                      data-testid="drawer-project-hide" onClick={(e) => { e.stopPropagation(); p.onHideProject?.(row.name); }}>
-                      <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8z" /><circle cx="8" cy="8" r="1.9" /><path d="M2.8 13.2L13.2 2.8" /></svg>
-                    </button>
-                  )
-                )}
                 <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`} title={t('shell.drawer.newWindow')}
                   data-testid="drawer-project-add"
                   onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>
                   <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
                 </button>
-                {/* A member's window (r8-07): the chevron beside "+", where the New window row used to sit.
-                    Gated on the members only: the model's `new-chat` child exists just while a project has no
-                    chat, and the picker must stay reachable once it has one. */}
-                {newChatMembers(row).length > 0 && (
-                  <button type="button" className="ns-dr-act ns-dr-newchat-menu" data-testid="new-chat-menu" aria-haspopup="menu"
-                    aria-label={`${t('drawer.newChat.menu')}: ${row.name}`} title={t('drawer.newChat.menu')}
-                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
-                    <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
-                  </button>
-                )}
                 <button type="button" className="ns-dr-act ns-dr-more" aria-label={`${t('shell.drawer.projectMore')}: ${row.name}`} title={t('shell.drawer.projectMore')}
                   data-testid="drawer-project-more" aria-haspopup="menu"
                   onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'project', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
@@ -362,34 +335,28 @@ export function ChatDrawer(p: ChatDrawerProps) {
     if (p.floating) p.onClose();
   };
 
-  /** The open member's slug when it is one of the global members. */
-  const globalOpenSlug = (() => {
-    const open = p.rows.flatMap((r) => r.children).find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team' && !!c.openSlug)?.openSlug;
-    return open && p.globalTeam?.members.some((m) => m.slug === open) ? open : null;
-  })();
-
   /** A project's Ekip row (r8-05). On the desktop it opens IN PLACE (plan r4 D1), and with no
    *  member yet it reads "Ekip · Ekip kur" and opens team setup (owner 2026-11-03, option A);
    *  a phone keeps its bottom sheet. */
   const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone ? (
-    <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
+    <TeamSection key="team" members={c.members} vault={c.vault} label={t('drawer.team.row')}
       openSlug={c.openSlug ?? null} className="ns-dr-child" testid="drawer-team-row"
       onOpen={(m) => openMember(c.vault, m)}
-      {...(p.onManage ? { onManage: () => p.onManage?.(c.vault), onNewMember: () => p.onManage?.(c.vault, { create: true }) } : {})} />
+      {...(p.onManage ? {
+        onManage: () => p.onManage?.(c.vault),
+        onNewMember: () => p.onManage?.(c.vault, { create: true }),
+        onNewGlobalMember: () => p.onManage?.(c.vault, { create: true, global: true }),
+      } : {})} />
   ) : (
     <TeamRowButton key="team" members={c.members} count={c.count} asking={c.asking} label={t('drawer.team.row')}
       selected={c.selected} className="ns-dr-child" testid={p.device ? 'phone-team-row' : 'drawer-team-row'} vault={c.vault}
-      expanded={teamOpen?.kind === 'project' && teamOpen.vault === c.vault}
+      expanded={teamOpen?.vault === c.vault}
       onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'project', vault: c.vault, x: r.right + 8, y: r.top }); }} />
   ));
 
-  /** A project's members for the New window menu: its own, then the members of all projects. */
-  const newChatMembers = (row: DrawerProjectRow): EkipMember[] => {
-    // Folded or open, the same members (a folded row keeps them beside its mark).
-    const own = ownMembersOf(row);
-    const global = (p.globalTeam?.members ?? []).filter((g) => !own.some((m) => m.slug === g.slug));
-    return [...own, ...global].filter((m) => m.enabled);
-  };
+  /** A project's members for the New window menu: its Ekip list (its own, then the members of
+   *  all projects), folded or open (a folded row keeps them beside its mark). */
+  const newChatMembers = (row: DrawerProjectRow): EkipMember[] => ownMembersOf(row).filter((m) => m.enabled);
 
   const teamOf = (vault: string): EkipMember[] => {
     const row = p.rows.find((r) => r.name === vault);
@@ -555,41 +522,13 @@ export function ChatDrawer(p: ChatDrawerProps) {
           </div>
         )}
       </div>
-      {p.globalTeam && (
-        // r8-12: outside every project, at the very bottom.
-        <div className="ns-team-global">
-          <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
-          {!phone ? (
-            <TeamSection members={p.globalTeam.members} kind="global" label={t('drawer.team.global')} testid="drawer-global-team-row" openSlug={globalOpenSlug}
-              onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
-              {...(p.onManage ? { onManage: () => p.onManage?.(null), onNewMember: () => p.onManage?.(null, { create: true }) } : {})} />
-          ) : (
-          <TeamRowButton members={p.globalTeam.members} count={p.globalTeam.count} asking={p.globalTeam.asking}
-            label={t('drawer.team.global')} testid={p.device ? 'phone-global-team-row' : 'drawer-global-team-row'}
-            expanded={teamOpen?.kind === 'global'}
-            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'global', x: r.right + 8, y: r.bottom }); }} />
-          )}
-        </div>
-      )}
       {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}
-      {teamOpen?.kind === 'project' && (
+      {teamOpen && (
         <TeamList title={t('drawer.team.listTitle').replace('{project}', () => teamOpen.vault)} members={teamOf(teamOpen.vault)}
           sheet={phone} testid="team-list" vault={teamOpen.vault} anchor={{ x: teamOpen.x, y: teamOpen.y }}
           onOpen={(m) => openMember(teamOpen.vault, m)}
           onSwitch={(m, enabled) => p.onSwitchMember?.(teamOpen.vault, m.slug, enabled) ?? Promise.resolve()}
           {...(!phone && p.onManage ? { onManage: () => p.onManage?.(teamOpen.vault) } : {})}
-          onClose={() => setTeamOpen(null)} />
-      )}
-      {teamOpen?.kind === 'global' && p.globalTeam && (
-        <TeamList title={`${t('drawer.team.global')} · ${t('drawer.team.globalAll')}`} members={p.globalTeam.members as TeamListMember[]}
-          sheet={phone} testid="global-team-list" anchor={{ x: teamOpen.x, y: teamOpen.y - 8 }}
-          onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
-          onSwitch={(m, enabled) => {
-            // A global member's switch writes its global manifest: any project it opens in will do.
-            const g = p.globalTeam?.members.find((x) => x.slug === m.slug);
-            return g?.openIn ? (p.onSwitchMember?.(g.openIn, m.slug, enabled) ?? Promise.resolve()) : Promise.reject(new Error('no project'));
-          }}
-          {...(!phone && p.onManage ? { onManage: () => p.onManage?.(null) } : {})}
           onClose={() => setTeamOpen(null)} />
       )}
 
@@ -655,6 +594,16 @@ export function ChatDrawer(p: ChatDrawerProps) {
               <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onMove(menu.name!, 1); }}>
                 {t('shell.drawer.moveDown')}<kbd>⌥↓</kbd>
               </button>
+              {/* The member picker (it was the chevron beside "+", owner 2026-11-16): one item, same list. */}
+              {(() => {
+                const r = p.rows.find((x) => x.name === menu.name);
+                return r && newChatMembers(r).length > 0 ? (
+                  <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-newchat-item" aria-haspopup="menu"
+                    onClick={() => { setMenu({ kind: 'new-chat', name: menu.name, x: menu.x, y: menu.y }); }}>
+                    {t('drawer.newChat.menu')}
+                  </button>
+                ) : null;
+              })()}
               {!p.device && (
               <>
               <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-edit"

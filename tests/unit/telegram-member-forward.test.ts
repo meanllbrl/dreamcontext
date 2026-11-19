@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { FakeTelegram } from '../helpers/fake-telegram.js';
-import { buildRoutineForward, mintRunPostKey, routineReachesPhone, runPostStamp, verifiedRunPosts, type ForwardInput } from '../../src/lib/telegram/member-forward.js';
+import { approvalNeededOf, approvalWhere, buildRoutineForward, mintRunPostKey, routineReachesPhone, runPostStamp, verifiedRunPosts, type ForwardInput } from '../../src/lib/telegram/member-forward.js';
 import { bindingDir, scopeOfContextRoot, writeBinding, writeTelegramJson } from '../../src/lib/telegram/config.js';
 import { appendThreadEntry, readThreadRun, threadEntryContentHash } from '../../src/lib/automations/threads.js';
 import { projectKey } from '../../src/lib/local-store.js';
@@ -108,6 +108,33 @@ describe('what a member bot sends', () => {
     optIn();
     await buildRoutineForward(input({ reviewPending: true }))!();
     expect(tg.texts().at(-1)).toBe("✋ <b>Günlük rapor</b>: Mac'te kararını bekliyor");
+  });
+
+  it('a refused fire says WHY (changed vs never approved), names the AI Team page and the way to Onayla on the phone (owner 2026-11-19)', async () => {
+    const cases: Array<[NonNullable<ForwardInput['approvalNeeded']>, string]> = [
+      ['not-approved', 'onaylanmadığı için çalışmadı'],
+      ['changed', 'onaydan sonra değişti, yeniden onaylayana kadar çalışmaz'],
+      ['awaiting-approval', 'talimatı değişti, çalışmadan önce onayını bekliyor'],
+    ];
+    for (const [approvalNeeded, why] of cases) {
+      await buildRoutineForward(input({ status: 'blocked', approvalNeeded }))!();
+      const last = tg.texts().at(-1)!;
+      expect(last).toContain(why);
+      expect(last).toContain('onay kartını gönder');
+      expect(last).toContain('AI Team sayfasında');
+      expect(last).not.toContain('Agents sayfası');
+      expect(last).not.toContain('hiç onaylanmadı');
+    }
+    // The member's own bot can send the card with buttons; the Super bot's notice points at the Mac.
+    expect(approvalWhere(true)).not.toContain('onay kartını gönder');
+    expect(approvalWhere(true)).toContain('AI Team sayfasında');
+  });
+
+  it('the refusal reason in the run error picks the notice: a changed manifest is never told as "not approved"', () => {
+    expect(approvalNeededOf('not approved (manifest-changed) — the owner approves it on its card')).toBe('changed');
+    expect(approvalNeededOf('not approved (payload-format-changed) — x')).toBe('changed');
+    expect(approvalNeededOf('not approved (never-approved) — the owner approves it on its card')).toBe('not-approved');
+    expect(approvalNeededOf(null)).toBe('not-approved');
   });
 
   it('a question goes without opt-in; a changed approval hash, an unscheduled run or no member send nothing', async () => {

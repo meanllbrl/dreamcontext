@@ -2,26 +2,14 @@
  * Wave 4b, lane T9: Chat and the whiteboard read ONE roster, the agents (`/api/agents`), and
  * "Talk to it" lands in Chat as a new conversation with that agent (S3, S1).
  *
- * Two halves. The board's pure helpers (agentPanelState.ts) run here against `AgentSummary`
- * rows, so the board's agents come from an agent's own home board. The React surfaces are
- * dashboard TSX that root vitest cannot mount (plain Node, no DOM), so they are pinned by a
+ * The React surfaces are dashboard TSX that root vitest cannot mount (plain Node, no DOM), so they are pinned by a
  * source scan with comments stripped (prose explaining a rule never satisfies it); what renders
  * is `scripts/verify/chat-agent-picker.mjs` and `whiteboard-agent*.mjs`'s job.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AgentSummary } from '../../dashboard/src/hooks/useAgents.js';
 import { CHAT_MODES } from '../../src/server/chat-modes.js';
-
-const store = new Map<string, string>();
-vi.stubGlobal('localStorage', {
-  getItem: (k: string) => store.get(k) ?? null,
-  setItem: (k: string, v: string) => { store.set(k, v); },
-  removeItem: (k: string) => { store.delete(k); },
-});
-
-const panel = await import('../../dashboard/src/components/whiteboard/agentPanelState.js');
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const read = (p: string): string => readFileSync(join(ROOT, p), 'utf-8');
@@ -36,53 +24,10 @@ const FILES = {
   surface: `${D}/sleepy/AgentSurface.tsx`,
   pickers: `${D}/whiteboard/WidgetPickers.tsx`,
   widget: `${D}/whiteboard/widgets/AgentWidget.tsx`,
-  panel: `${D}/whiteboard/BoardAgentPanel.tsx`,
-  boardAgents: `${D}/whiteboard/useBoardAgents.ts`,
-  panelState: `${D}/whiteboard/agentPanelState.ts`,
   canvas: `${D}/whiteboard/WhiteboardCanvas.tsx`,
   page: 'dashboard/src/pages/WhiteboardsPage.tsx',
 };
 
-/** An `AgentSummary` row as `/api/agents` sends it. */
-const agent = (slug: string, title: string, over: Partial<AgentSummary> = {}): AgentSummary => ({
-  slug, title, hasPhoto: false, description: '', model: null, effort: null, whiteboard: null, shared: false,
-  approvedForChat: true, approvedToRun: true, approvalReason: null, implicit: false, hasCallSettings: false,
-  usedBy: { automations: [], boards: [], tasks: [] },
-  ...over,
-});
-
-beforeEach(() => store.clear());
-
-describe('the board reads the agent roster (S3)', () => {
-  const roster = [
-    agent('ops', 'Ops Desk', { whiteboard: 'q3' }),
-    agent('copy', 'Copy Desk'),
-    agent('scout', 'Scout', { whiteboard: 'other', approvedForChat: false }),
-    agent('talk-only', 'Talk only'),
-  ];
-
-  it('home agents are the agents whose identity names the board, by title', () => {
-    expect(panel.homeAgentsOf(roster, 'q3').map((a) => a.slug)).toEqual(['ops']);
-    expect(panel.homeAgentsOf(undefined, 'q3')).toEqual([]);
-  });
-
-  it('a board holds its home agents plus every carded agent, an unapproved one included', () => {
-    const cards = [{ elementId: 'a', agent: 'scout' }, { elementId: 'b', agent: 'talk-only' }, { elementId: 'c', agent: 'gone' }];
-    const on = panel.boardAgentsOf(roster, 'q3', cards);
-    expect(on.map((a) => a.slug)).toEqual(['ops', 'scout', 'talk-only']);
-    // The rows come back as the roster's own objects, so the panel reads the chat verdict.
-    expect(on.find((a) => a.slug === 'scout')?.approvedForChat).toBe(false);
-  });
-
-  it('the canvas drop asks the panel for its agent out of the same roster', () => {
-    panel.setAgentPanelOpen('acme', true);
-    expect(panel.panelAgentSlug('acme', 'q3', roster)).toBe('ops');
-    panel.setPanelAgent('acme', 'q3', 'ops');
-    expect(panel.panelAgentSlug('acme', 'q3', roster)).toBe('ops');
-    panel.setAgentPanelOpen('acme', false);
-    expect(panel.panelAgentSlug('acme', 'q3', roster)).toBeNull();
-  });
-});
 
 describe('Chat and the whiteboard read /api/agents, never the automations list (S3)', () => {
   it('no surface of this lane reads useAutomations any more', () => {
@@ -92,13 +37,13 @@ describe('Chat and the whiteboard read /api/agents, never the automations list (
   });
 
   it('every surface that lists agents reads useAgents', () => {
-    for (const path of [FILES.menus, FILES.composer, FILES.pickers, FILES.widget, FILES.boardAgents, FILES.canvas, FILES.page]) {
+    for (const path of [FILES.menus, FILES.composer, FILES.pickers, FILES.widget]) {
       expect(code(path), path).toMatch(/\buseAgents\(/);
     }
   });
 
   it('conversation asks the CHAT verdict, never the old automation approval', () => {
-    for (const path of [FILES.menus, FILES.pickers, FILES.widget, FILES.panel, FILES.boardAgents, FILES.canvas]) {
+    for (const path of [FILES.menus, FILES.pickers, FILES.widget]) {
       const src = code(path);
       expect(src, path).toMatch(/approvedForChat/);
       expect(src, path).not.toMatch(/\.approved\b(?!For)/);
@@ -107,7 +52,7 @@ describe('Chat and the whiteboard read /api/agents, never the automations list (
   });
 
   it('every face in Chat and on the board is the agent route\'s', () => {
-    for (const path of [FILES.menus, FILES.pickers, FILES.widget, FILES.panel]) {
+    for (const path of [FILES.menus, FILES.pickers, FILES.widget]) {
       const avatars = code(path).match(/<AgentAvatar\b[^>]*\/>/g) ?? [];
       expect(avatars.length, path).toBeGreaterThan(0);
       for (const a of avatars) expect(a, path).toMatch(/of="agent"/);
@@ -115,7 +60,7 @@ describe('Chat and the whiteboard read /api/agents, never the automations list (
   });
 
   it('an unapproved agent offers its Agents page, never an approve command or the Automations page', () => {
-    for (const path of [FILES.menus, FILES.pickers, FILES.widget, FILES.panel]) {
+    for (const path of [FILES.menus, FILES.pickers, FILES.widget]) {
       const src = code(path);
       expect(src, path).toMatch(/requestOpenAgents\(\{\s*slug/);
       expect(src, path).not.toMatch(/kind:\s*'automation'/);

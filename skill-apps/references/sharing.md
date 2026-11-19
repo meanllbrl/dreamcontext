@@ -33,8 +33,11 @@ the app opens on that data.
 The gate stops a publish on: a key or token, an `.env` or setting value, an e-mail, a phone
 number, a person's name (people, git name, Mac user), a home path, an account id, image metadata.
 Nobody can pass those, not the owner and not you with `--approve`: fix the app. Generic words of the
-owner's own (project, insight, objective, AI Team, MCP, linked repo names, long numbers) are lines
-the owner lets go one by one: ask him in the chat, then pass their ids with `--approve`.
+owner's own (project, insight, objective, AI Team, MCP, linked repo names, long numbers) never stop
+an `--ask`: its card lists them by word ("a Lab insight's name "mrr" · 12 satır") and his one
+Onayla lets exactly those lines go. A line found after the card is not among them and stops the
+spend. Only a `--go` under his Share click (no card) still names them with `--approve <ids>`, after
+he let them go in the chat.
 
 ## Publishing (the owner pressed Share)
 
@@ -107,7 +110,7 @@ app's page.
 
 When the work needs one of these and no grant came with your prompt, ask; never hunt for another way.
 
-1. Ask: `dreamcontext apps publish <slug> --ask [--note "…"] [--approve <ids>] [--invite <logins>] [--public]`,
+1. Ask: `dreamcontext apps publish <slug> --ask [--note "…"] [--invite <logins>] [--public]` (generic-word lines go on its card; no `--approve`),
    `dreamcontext apps install <name|owner/repo> --ask [--set key=value]`,
    `dreamcontext apps update <slug> --ask [--how merge|set-aside]`, or
    `dreamcontext apps logo <slug> <absolute path to a PNG or JPG> --ask`. The server builds the

@@ -347,8 +347,13 @@ export const RECALL_QUERY_MIN_CHARS = 8;
 
 /** Lines the server writes into a child's first message (super.ts DEV_SERVER_LINE, worktreePreamble, outwardLine). */
 const SERVER_LINE_RE = /If you start a dev server, pin its url \(a `dream-view` pin\) so the owner sees the site\.|You work in your own git worktree: [^\n]{0,600}?(?:Never push and never merge into another branch\.|Never merge into another branch; push only as the next line says\.)|The server checked that ref [0-9a-z]{6} is the owner's own message; the Super passed on this outward step[^\n]{0,1800}?say so in your report\./g;
-/** Blocks a harness or the app writes into a turn: a finished background task, a dictation tag. */
-const MACHINE_BLOCK_RE = /<task-notification>[\s\S]*?(?:<\/task-notification>|$)|<voice-take\b[^>\n]{0,300}>|<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)/g;
+/**
+ * Blocks a harness or the app writes into a turn: a finished background task, a dictation tag, and
+ * a sub-agent's or teammate's message (`<agent-message>`, its lead line and the harness note after
+ * it). Searching on a sub-agent's report sent several KB of model text to the judge: those turns ran
+ * p50 5 s, p90 35 s, and some hit the hook's 120 s cutoff with nothing delivered.
+ */
+const MACHINE_BLOCK_RE = /<task-notification>[\s\S]*?(?:<\/task-notification>|$)|<voice-take\b[^>\n]{0,300}>|<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)|(?:Another Claude session sent a message:\s*)?<agent-message\b[\s\S]*?(?:<\/agent-message>|$)|That "other Claude session" is an agent[^\n]*/g;
 /** The dock's page header (`[On page tasks view="…"]`): where he stood, not what he asked. */
 const PAGE_HEADER_RE = /\[On page [^\]\n]*\]/g;
 /** An absolute or home path: a file name the turn carries, not a word he searched for. */

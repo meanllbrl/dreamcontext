@@ -313,6 +313,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     this.recordLocalMutation(slug, 'push');
   }
 
+  remoteLinked(slug: string): boolean {
+    return !!this.ledger.remoteIdFor(slug);
+  }
+
   async delete(slug: string, opts: { absorbedBy?: string; reason?: string } = {}): Promise<void> {
     const remoteId = this.ledger.remoteIdFor(slug);
     await super.delete(slug, opts);
