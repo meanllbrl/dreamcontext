@@ -2955,7 +2955,7 @@ export function startChatSession(
   const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
   // One command, two spellings: win32 spawns it as an argv array, POSIX quotes it into the script.
   // A member's child on a bridge tool runs at the member's level (security, end review): Codex
-  // `default` for an Ask member, its row otherwise; a tool with no mode that narrow is refused.
+  // its row for the level (never `default`: no member runs at Ask); a tool with no such mode is refused.
   const crewBridge = opts.memberCrew && bridgeTool ? crewBridgeMode(bridgeTool, memberCrewPermissionMode(contextRoot, [opts.memberCrew, ...(opts.memberCrewCap ?? [])], bypass)) : undefined;
   if (crewBridge === null) {
     const why = crewToolRefusal(bridgeTool ?? undefined, 'default') ?? 'This child cannot run on that tool within its member\'s level.';

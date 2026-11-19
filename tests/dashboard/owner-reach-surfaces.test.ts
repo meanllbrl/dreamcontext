@@ -458,7 +458,7 @@ describe("the profile's Permissions (C1, C2)", () => {
   });
 
   it('explains a level change: stricter now (or next session), freer at the next session', () => {
-    expect(levelChangeKey('balanced', 'ask', data.applies)).toBe('agents.permissions.narrowNow');
+    expect(levelChangeKey('free', 'balanced', data.applies)).toBe('agents.permissions.narrowNow');
     expect(levelChangeKey('free', 'balanced', { narrowing: 'next_session', widening: 'next_session' })).toBe('agents.permissions.narrowNext');
     expect(levelChangeKey('balanced', 'free', data.applies)).toBe('agents.permissions.widen');
     expect(levelChangeKey('balanced', 'balanced', data.applies)).toBeNull();
