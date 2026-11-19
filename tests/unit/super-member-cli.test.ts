@@ -168,8 +168,9 @@ describe('a member Super\'s children', () => {
     makeAgent('asker', 'ask');
     makeAgent('middle', 'balanced');
     makeAgent('roamer', 'free');
-    expect(memberCrewPermissionMode(contextRoot, 'asker', true)).toBe('default');
-    expect(memberCrewPermissionMode(contextRoot, 'asker', false)).toBe('default');
+    // A stored ask is Balanced (owner 2026-11-18): a member's child never drops to `default`.
+    expect(memberCrewPermissionMode(contextRoot, 'asker', true)).toBe('auto');
+    expect(memberCrewPermissionMode(contextRoot, 'asker', false)).toBe('auto');
     expect(memberCrewPermissionMode(contextRoot, 'middle', true)).toBe('auto');
     expect(memberCrewPermissionMode(contextRoot, 'middle', false)).toBe('auto');
     expect(memberCrewPermissionMode(contextRoot, 'roamer', true)).toBe('bypassPermissions');

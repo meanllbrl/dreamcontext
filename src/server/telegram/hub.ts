@@ -43,22 +43,28 @@ import { readSuperState, superIdOfMember } from '../../lib/super/store.js';
 import { ensureMemberSuper, type MemberBirth } from '../../lib/super/member-birth.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import type { SuperId, SuperState } from '../../lib/super/types.js';
-import { isOwnerProse, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
+import { isOwnerProse, OWNER_PROSE_MIN_CHARS, superKnownLanguage, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
+import { telegramHold } from '../../lib/super/owner-text-gate.js';
+import { noteUndelivered } from '../../lib/super/undelivered.js';
+import type { OwnerLanguage } from '../../lib/super/owner-language.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
 import { msgRef } from '../../lib/super/types.js';
 import {
   CALLBACK_DATA_RE, MEMBER_TELEGRAM_COMMANDS, PAIRING_TTL_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, telegramSideSource, withTelegramRef,
-  type BotBinding, type ButtonRecord, type JournalEntry, type PairingPreview, type PairingStart,
+  type BotBinding, type ButtonRecord, type GroupBindPreview, type JournalEntry, type PairingPreview, type PairingStart,
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
 } from '../../lib/telegram/contract.js';
 import {
   bindingDir, isValidScope, isValidTarget, isValidToken, listBindings, readBinding, readPollState, readTurns,
-  redactToken, removeBindingDir, scopeOfContextRoot, writeBinding, writePollState, writeTurns,
+  redactToken, removeBindingDir, scopeOfContextRoot, withKeptGroups, writeBinding, writePollState, writeTurns,
 } from '../../lib/telegram/config.js';
 import { writeAwayState } from '../../lib/telegram/away-state.js';
 import { onOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
-import { isAuthorized, PairingBook, StrangerCounter, type TgUpdateLike } from '../../lib/telegram/auth.js';
+import { actorOf, admit, cleanLabel, commandOf, isAuthorized, mintPairingSecret, PairingBook, senderOf, StrangerCounter, type TgUpdateLike } from '../../lib/telegram/auth.js';
+import { isGroupKind, oneLine, ownerName, ROOM_LINES, type GroupKind } from '../../lib/telegram/rooms.js';
+import type { RoomRunner } from './room-agent.js';
+import { identityFor } from './identity.js';
 import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
@@ -72,8 +78,16 @@ import type { SpeakSummaryResult } from '../voice-speak.js';
 import { cleanOwnerText, inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
+import { TextLedger, turnOf } from './sent-once.js';
 
 type Obj = Record<string, unknown>;
+
+/** A Super answer Telegram refused, said back to the Super (undelivered.ts). */
+const LOST_TEXT = 'One of your answers did not reach his phone: Telegram refused the message. It is on the Mac only.';
+/** A turn whose only text was held (owner-text-gate.ts) waits this long for the Super's corrected
+ *  answer before it says "ended silent": the correction turn may never be written (a turn that did
+ *  not end cleanly, the answer to a feedback turn), and then he must still hear something. */
+export const HELD_RETELL_GRACE_MS = 120_000;
 
 /**
  * What the owner himself typed or said in one Telegram message (learning loop C3): the cleaned
@@ -206,6 +220,8 @@ export interface HubDeps {
   toJpeg?: JpegConverter;
   /** A `dream-voice` block → OGG/Opus (voice-speak.ts; tests inject). */
   speakSummary?: (text: string) => Promise<SpeakSummaryResult>;
+  /** The owner's language for a Super session (default inbox.ts `superKnownLanguage`; tests inject). */
+  ownerLanguage?: (sessionId: string) => OwnerLanguage | null;
 }
 
 export type BindingKey = string; // `${scope}/${target}`
@@ -257,6 +273,9 @@ interface TgTurn {
   startedAt: number;
   typing: ReturnType<typeof setInterval> | null;
   answered: boolean;
+  /** A text of this turn was held from the phone (owner-text-gate.ts): its end waits
+   *  `HELD_RETELL_GRACE_MS` for the corrected answer before it calls the turn silent. */
+  held?: boolean;
   /** His message asked for a spoken summary (`asksForVoice`), and whether a `dream-voice` block
    *  of this turn reached the voice reply (spoken or its text fallback). */
   wantsVoice: boolean;
@@ -284,6 +303,18 @@ export class TelegramHub implements TelegramHubApi {
   /** Per Super chat: its texts still being sent, chained so they reach Telegram in the order the
    *  Super wrote them; a turn's end waits on it before it may call the turn silent. */
   private textChains = new Map<string, Promise<void>>();
+  /** The Super's own ask offered to Telegram in its running turn (`ownAskOffered`): cleared at
+   *  the turn's end; a text queued after it reads it as it is queued. */
+  private askInTurn = new Map<string, { landed: boolean }>();
+  /** When each Super session's running turn began (wall clock, as a queue item's `createdAt`). */
+  private turnStartedAt = new Map<string, number>();
+  /** Per Super chat: how many sends LANDED on Telegram so far, so a held turn's end can tell whether
+   *  any answer came after it. Born on a landed send, dies with the chat (`gone`). */
+  private landedCount = new Map<string, number>();
+  /** Per Super chat, its newest short unmarked text of his Telegram turn (finding 5): sent at the
+   *  turn's end only if nothing came after it; a later text means it was a step between tools.
+   *  Dies on the next text, the turn's end or the chat's death. */
+  private tails = new Map<string, { text: string; turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark: SuperTurnMark; turn: number; cards: number }>();
   /** Per Super binding: where the owner's LATEST message came from (`onTelegram`).
    *  DERIVED, never set by an agent: `injectText` (an authorized Telegram message or a button the
    *  hub turned into a turn) marks `telegram`; his own words typed on the Mac in ANY dreamcontext
@@ -479,10 +510,13 @@ export class TelegramHub implements TelegramHubApi {
   status(): TelegramStatusRow[] {
     const rows: TelegramStatusRow[] = [];
     for (const ab of this.active.values()) {
+      const asks = this.liveGroupAsks(ab).map((a) => ({ id: a.id, title: a.title }));
       rows.push({
         scope: ab.scope, target: ab.target, state: ab.disabled ? 'disabled' : 'active', botUsername: ab.binding.botUsername,
         ...(ab.binding.managed ? { managed: true } : {}), ...(ab.disabled ? { disabledReason: ab.disabled } : {}),
         ...(this.identityIssues.has(ab.key) ? { identityIssue: this.identityIssues.get(ab.key) } : {}),
+        ...(ab.binding.groups?.length ? { groups: ab.binding.groups.map((g) => ({ chatId: g.chatId, title: g.title, boundAt: g.boundAt })) } : {}),
+        ...(asks.length ? { groupAsks: asks } : {}),
       });
     }
     for (const p of this.pairings.values()) {
@@ -614,7 +648,7 @@ export class TelegramHub implements TelegramHubApi {
     if (old && (old.binding.botId !== live.botId || old.binding.chatId !== user.chatId || old.binding.userId !== user.userId)) {
       removeBindingDir(live.scope, live.target, this.home);
     }
-    const binding = writeBinding(live.scope, live.target, fields, this.home);
+    const binding = writeBinding(live.scope, live.target, withKeptGroups(live.scope, live.target, fields, this.home), this.home);
     const ab = this.activate(live.scope, live.target, binding);
     try { this.deps.ensureDispatcher?.(); } catch { /* the bind sheet names it; never fails the bind */ }
     void this.afterBound(ab, displayNameFor(ab, this.home));
@@ -682,7 +716,7 @@ export class TelegramHub implements TelegramHubApi {
     const sent = await (ab.transport.sendMessage(ab.binding.chatId, html, extra) as Promise<{ message_id: number; text?: string }>);
     // What a reaction to it quotes (reactions.ts): the first words Telegram shows, memory only.
     if (Number.isSafeInteger(sent?.message_id) && typeof sent.text === 'string' && sent.text.trim()) {
-      this.sentQuotes.set(`${ab.key}:${sent.message_id}`, shortQuote(sent.text));
+      this.sentQuotes.set(msgKey(ab, sent.message_id), shortQuote(sent.text));
       if (this.sentQuotes.size > 2000) this.sentQuotes.delete(this.sentQuotes.keys().next().value as string);
     }
     return sent;
@@ -784,7 +818,16 @@ export class TelegramHub implements TelegramHubApi {
   async onUpdate(key: BindingKey, u: Obj): Promise<UpdateDisposition> {
     const ab = this.active.get(key);
     if (!ab || ab.disabled) return 'accepted';
-    if (!isAuthorized(u as unknown as TgUpdateLike, ab.binding)) { this.strangers.note(u as unknown as TgUpdateLike); return 'accepted'; }
+    // A group's update takes its own branch, before anything private can see it (tg-grup G1): only
+    // the room runner and the bind / unbind / owner-command handlers ever read it.
+    if (obj(u.my_chat_member) || isGroupUpdate(u)) { await this.onGroupUpdate(ab, u); return 'accepted'; }
+    if (!isAuthorized(u as unknown as TgUpdateLike, ab.binding)) {
+      // G3: a press by anyone but the owner reaches no record and no handler; he sees one toast.
+      const cb = obj(u.callback_query);
+      if (cb) await ab.transport.answerCallbackQuery(String(cb.id ?? ''), ROOM_LINES.notYourButton(await this.ownerNameOf(ab))).catch(() => {});
+      this.strangers.note(u as unknown as TgUpdateLike);
+      return 'accepted';
+    }
     if (!this.intact(ab)) { await this.loseBinding(key, 'tamper'); return 'accepted'; }
     if (u.message_reaction) { await this.onReaction(ab, u); return 'accepted'; }
     const cb = obj(u.callback_query);
@@ -807,6 +850,210 @@ export class TelegramHub implements TelegramHubApi {
     return this.onOwnerMessage(ab, Number(u.update_id), msg);
   }
 
+  // ── Groups (tg-grup C1-C5, D1-D10) ──
+
+  /** The room runner (`room-agent.ts`, wired by start.ts). Null: groups are read by nobody. */
+  rooms: RoomRunner | null = null;
+
+  /** A `/bagla` the owner wrote in an unbound group, waiting for the Mac's native confirm (D3).
+   *  Memory only: a restart voids it (he writes /bagla again). */
+  private groupAsks = new Map<string, { id: string; key: BindingKey; chatId: number; title: string; at: number }>();
+
+  private liveGroupAsks(ab: ActiveBinding): { id: string; key: BindingKey; chatId: number; title: string; at: number }[] {
+    const out = [];
+    for (const [id, a] of [...this.groupAsks]) {
+      if (this.now() - a.at > PAIRING_TTL_MS) { this.groupAsks.delete(id); continue; }
+      if (a.key === ab.key) out.push(a);
+    }
+    return out;
+  }
+
+  /** The owner's first name, as Telegram shows his private chat (a group hears "Mehmet onayladı").
+   *  Asked once per binding; a neutral word when Telegram does not say. */
+  private ownerNames = new Map<BindingKey, string>();
+  async ownerNameOf(ab: ActiveBinding): Promise<string> {
+    const have = this.ownerNames.get(ab.key);
+    if (have) return have;
+    const chat = await ab.transport.call<{ first_name?: string; username?: string }>('getChat', { chat_id: ab.binding.chatId }).catch(() => null);
+    const name = ownerName(oneLine(chat?.first_name ?? chat?.username ?? '', 32));
+    if (chat) this.ownerNames.set(ab.key, name);
+    return name;
+  }
+
+  /** The session of the Super a binding talks to, or null (the owner was told why): main's when it
+   *  is on, a member's own (born on its first use). */
+  async sessionOfBound(ab: ActiveBinding): Promise<string | null> {
+    const root = this.rootOf(ab);
+    if (!root) return null;
+    if (ab.target === 'super') {
+      const state = await this.readBound(ab);
+      return state?.enabled && state.session ? state.session : null;
+    }
+    return this.memberSession(ab, root);
+  }
+
+  /**
+   * THE one way to a group (G4): only a {@link GroupKind}, only to a group this binding permits,
+   * never a button, a file or a picture (the call carries text and nothing else). Every other sender
+   * of the hub has no target and reaches the private chat only. True when Telegram took it.
+   */
+  async sendRoom(ab: ActiveBinding, chatId: number, kind: GroupKind, html: string): Promise<boolean> {
+    if (!isGroupKind(kind)) throw new Error('not a group kind');
+    if (!Number.isSafeInteger(chatId) || chatId >= 0 || !(ab.binding.groups ?? []).some((g) => g.chatId === chatId)) return false;
+    if (this.active.get(ab.key) !== ab || ab.disabled || ab.halted) return false;
+    if (kind === 'room-typing') return ab.transport.sendChatAction(chatId, 'typing').then(() => true, () => false);
+    if (!html.trim()) return false;
+    return ab.transport.sendMessage(chatId, html, {}).then(() => true, () => false);
+  }
+
+  /** Writes the binding's groups (hub only, C2) and makes the live binding the one written. */
+  private writeGroups(ab: ActiveBinding, groups: NonNullable<BotBinding['groups']>): void {
+    const { v: _v, bindingHash: _h, groups: _g, ...fields } = ab.binding;
+    ab.binding = writeBinding(ab.scope, ab.target, { ...fields, ...(groups.length ? { groups } : {}) }, this.home);
+  }
+
+  /** A group's update (G1): service messages first (D3), then the owner's bind and unbind, the
+   *  owner-only commands (D8), and an addressed message of a permitted group to its room (D5). */
+  private async onGroupUpdate(ab: ActiveBinding, u: Obj): Promise<void> {
+    const mcm = obj(u.my_chat_member);
+    if (mcm) {
+      const chatId = Number(obj(mcm.chat)?.id);
+      const member = obj(mcm.new_chat_member);
+      const left = member && Number(obj(member.user)?.id) === ab.binding.botId && (member.status === 'left' || member.status === 'kicked');
+      if (left && this.boundGroup(ab, chatId)) await this.removeGroup(ab, chatId, 'left');
+      return;
+    }
+    const cb = obj(u.callback_query);
+    if (cb) {
+      // No button is ever sent to a group (G4): a tap there reaches nothing.
+      const presser = obj(cb.from);
+      const own = Number(presser?.id) === ab.binding.userId && presser?.is_bot !== true;
+      await ab.transport.answerCallbackQuery(String(cb.id ?? ''), own ? LINES.stale : ROOM_LINES.notYourButton(await this.ownerNameOf(ab))).catch(() => {});
+      return;
+    }
+    const msg = obj(u.message);
+    const chat = obj(msg?.chat);
+    const chatId = Number(chat?.id);
+    if (!msg || !Number.isSafeInteger(chatId)) return;
+    const bound = this.boundGroup(ab, chatId);
+    // The old group became a supergroup: its binding moves, only from a message of the bound old id.
+    const to = Number(msg.migrate_to_chat_id);
+    if (msg.migrate_to_chat_id !== undefined) {
+      if (bound && Number.isSafeInteger(to) && to < 0 && !this.boundGroup(ab, to)) {
+        this.rooms?.stop(ab, chatId);
+        this.writeGroups(ab, (ab.binding.groups ?? []).map((g) => (g.chatId === chatId ? { ...g, chatId: to } : g)));
+      }
+      return;
+    }
+    if (Array.isArray(msg.new_chat_members)) {
+      const names = (msg.new_chat_members as Obj[]).filter((m) => m && m.is_bot !== true).map((m) => oneLine(String(m.first_name ?? m.username ?? ''), 40)).filter(Boolean);
+      if (bound && names.length) await this.notice(ab, 'info', ROOM_LINES.joined(bound.title, names.join(', ')));
+      return;
+    }
+    if (obj(msg.left_chat_member)) {
+      if (bound && Number(obj(msg.left_chat_member)?.id) === ab.binding.botId) await this.removeGroup(ab, chatId, 'left');
+      return;
+    }
+    const upd = u as unknown as TgUpdateLike;
+    const actor = actorOf(upd, ab.binding);
+    if (actor === 'stranger') { this.strangers.note(upd); return; }
+    const text = typeof msg.text === 'string' ? msg.text : '';
+    const c = commandOf(text);
+    const forMe = c && (c.bot === null || c.bot.toLowerCase() === ab.binding.botUsername.toLowerCase());
+    if (c && forMe && (c.cmd === 'bagla' || c.cmd === 'birak')) {
+      // Only the owner binds or unbinds; anyone else's word changes nothing and gets no answer.
+      if (actor !== 'owner' || !this.intact(ab)) return;
+      if (c.cmd === 'bagla') await this.askGroupBind(ab, chatId, cleanLabel(String(chat?.title ?? '')) || 'Grup');
+      else if (bound) await this.removeGroup(ab, chatId, 'owner');
+      return;
+    }
+    if (!bound) return;
+    const admitted = admit(upd, ab.binding);
+    // Not addressed to the bot: never read, stored or journaled (D4).
+    if (!admitted || admitted.room.kind !== 'group') return;
+    if (!this.intact(ab)) { await this.loseBinding(ab.key, 'tamper'); return; }
+    if (c && c.bot !== null && ['dur', 'durum', 'gundem', 'handsfree', 'start'].includes(c.cmd)) {
+      // D8: the owner's commands answer in his private chat; a member hears one fixed line.
+      if (actor !== 'owner') { await this.sendRoom(ab, chatId, 'room-line', escapeHtml(ROOM_LINES.ownerOnly(await this.ownerNameOf(ab)))); return; }
+      const priv = { ...u, message: { ...msg, chat: { id: ab.binding.chatId, type: 'private' }, text: `/${c.cmd}` } };
+      if (await this.deps.handsfree?.onCommand?.(this, ab.key, priv)) return;
+      if (this.commandHook && await this.commandHook(ab, priv)) return;
+      return;
+    }
+    this.rooms?.onMessage(ab, chatId, msg);
+  }
+
+  private boundGroup(ab: ActiveBinding, chatId: number): { chatId: number; title: string } | null {
+    return (ab.binding.groups ?? []).find((g) => g.chatId === chatId) ?? null;
+  }
+
+  /** D3: the owner's `/bagla` in a group opens the Mac's native confirm (Settings › Telegram). */
+  private async askGroupBind(ab: ActiveBinding, chatId: number, title: string): Promise<void> {
+    if (!Number.isSafeInteger(chatId) || chatId >= 0) return;
+    if (this.boundGroup(ab, chatId)) { await this.notice(ab, 'info', ROOM_LINES.alreadyBound(title)); return; }
+    for (const [id, a] of [...this.groupAsks]) if (a.key === ab.key && a.chatId === chatId) this.groupAsks.delete(id);
+    const id = mintPairingSecret();
+    this.groupAsks.set(id, { id, key: ab.key, chatId, title, at: this.now() });
+    await this.notice(ab, 'info', ROOM_LINES.bindAsked(title), true);
+    this.deps.banner?.('Telegram', `«${title}» grubu bağlanmak istiyor: Ayarlar › Telegram`);
+  }
+
+  /** What Rust shows for a group bind (D3); null when the id is wrong, expired or used. */
+  groupBindPreview(id: string): GroupBindPreview | null {
+    const a = this.groupAsks.get(id);
+    if (!a || this.now() - a.at > PAIRING_TTL_MS) return null;
+    const ab = this.active.get(a.key);
+    if (!ab || ab.disabled) return null;
+    const ident = ab.target === 'super' ? null : identityFor({ scope: ab.scope, target: ab.target, contextRoot: ab.contextRoot, projectName: ab.projectName }, this.home);
+    return {
+      projectName: ab.projectName, target: ab.target, targetLabel: ab.target === 'super' ? 'Super' : ident?.name ?? ab.target,
+      botUsername: ab.binding.botUsername, botId: ab.binding.botId, chatId: a.chatId, title: a.title,
+    };
+  }
+
+  /** The vault a group bind belongs to (the route checks it against the page's vault). */
+  groupBindContext(id: string): { contextRoot: string | null } | null {
+    const a = this.groupAsks.get(id);
+    const ab = a ? this.active.get(a.key) : undefined;
+    return ab ? { contextRoot: ab.contextRoot } : null;
+  }
+
+  /** The owner's click on the native confirm (D3): binds only if what he was shown still matches. */
+  async confirmGroupBind(id: string, shown: { botId: number; chatId: number }): Promise<'ok' | 'gone' | 'mismatch'> {
+    const a = this.groupAsks.get(id);
+    if (!a || this.now() - a.at > PAIRING_TTL_MS) return 'gone';
+    const ab = this.active.get(a.key);
+    if (!ab || ab.disabled || ab.halted) return 'gone';
+    if (shown.botId !== ab.binding.botId || shown.chatId !== a.chatId) return 'mismatch';
+    this.groupAsks.delete(id);
+    if (!this.intact(ab)) { await this.loseBinding(ab.key, 'tamper'); return 'gone'; }
+    if (!this.boundGroup(ab, a.chatId)) {
+      this.writeGroups(ab, [...(ab.binding.groups ?? []), { chatId: a.chatId, title: a.title, boundAt: new Date(this.now()).toISOString() }]);
+    }
+    await this.sendRoom(ab, a.chatId, 'room-line', escapeHtml(ROOM_LINES.bound(`@${ab.binding.botUsername}`)));
+    await this.notice(ab, 'info', ROOM_LINES.groupBound(a.title));
+    return 'ok';
+  }
+
+  /** A group stops: removed from the binding, its room stopped (a running turn killed, waiting
+   *  requests dropped), the owner told. `settings` and `owner` also make the bot leave the group. */
+  async removeGroup(ab: ActiveBinding, chatId: number, why: 'left' | 'owner' | 'settings'): Promise<boolean> {
+    const g = this.boundGroup(ab, chatId);
+    if (!g) return false;
+    this.rooms?.stop(ab, chatId);
+    this.writeGroups(ab, (ab.binding.groups ?? []).filter((x) => x.chatId !== chatId));
+    if (why !== 'left') await ab.transport.call('leaveChat', { chat_id: chatId }).catch(() => {});
+    await this.notice(ab, 'info', ROOM_LINES.groupLeft(g.title));
+    return true;
+  }
+
+  /** "Gruptan çıkar" (Settings): the vault's own page names the target and the group. */
+  async removeGroupOf(scope: TelegramScope, target: TelegramTarget, chatId: number): Promise<boolean> {
+    const ab = this.active.get(keyOf(scope, target));
+    if (!ab || ab.disabled) return false;
+    return this.removeGroup(ab, chatId, 'settings');
+  }
+
   /**
    * His reaction on one of the bot's messages (owner 2026-11-09): a NOTE for the agent's next
    * turn, never a turn of its own, never an answer, never an approval (reactions.ts). Reached
@@ -817,7 +1064,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!r || r.chatId !== ab.binding.chatId || r.userId !== ab.binding.userId) return;
     // Only what the bot sent: a reaction on his own message quotes nothing.
     const mapped = this.replyOf(ab, r.messageId);
-    const quote = this.sentQuotes.get(`${ab.key}:${r.messageId}`) ?? (mapped?.from === 'super' ? mapped.quote : null);
+    const quote = this.sentQuotes.get(msgKey(ab, r.messageId)) ?? (mapped?.from === 'super' ? mapped.quote : null);
     // The bound Super's next turn reads it (main's, or the member's own).
     const session = (await this.readBound(ab))?.session ?? null;
     if (session) telegramReactionNotes.add(`super:${session}`, r.messageId, r.emojis, quote, this.now());
@@ -1034,18 +1281,18 @@ export class TelegramHub implements TelegramHubApi {
   private replies = new Map<string, { ref: string; quote: string; from: 'super' | 'owner' }>();
 
   noteReply(ab: ActiveBinding, messageId: number, entry: { ref: string; quote: string; from: 'super' | 'owner' }): void {
-    this.replies.set(`${ab.key}:${messageId}`, entry);
+    this.replies.set(msgKey(ab, messageId), entry);
     if (this.replies.size > 2000) this.replies.delete(this.replies.keys().next().value as string);
   }
 
   replyOf(ab: ActiveBinding, messageId: number): { ref: string; quote: string; from: 'super' | 'owner' } | null {
-    return this.replies.get(`${ab.key}:${messageId}`) ?? null;
+    return this.replies.get(msgKey(ab, messageId)) ?? null;
   }
 
   /** The owner's own message under `ref` in this binding's chat (the newest), or null: what a
    *  spoken summary replies to. Read from this binding's entries only. */
   ownerMessageOf(ab: ActiveBinding, refs: readonly (string | null | undefined)[]): number | null {
-    const head = `${ab.key}:`;
+    const head = msgKey(ab, '');
     // In order: the first ref that names one of his messages wins (a part ref never does: it falls
     // through to the turn's own ref).
     for (const ref of refs) {
@@ -1128,7 +1375,7 @@ export class TelegramHub implements TelegramHubApi {
   /** Writes one owner turn into the project's Super under a fresh Telegram ref (B1, D1): the
    *  window reopened when needed; the ref put in the store BEFORE the text goes; turns.json,
    *  status and typing begun. False = it did not reach the Super (the owner was told). */
-  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | null = null, own = '', hold: { arrivedAt: number } | null = null): Promise<string | false> {
+  async injectText(ab: ActiveBinding, updateId: number, text: string, sessionId: string, as: { kind: 'run-report'; cardRef: string } | { kind: 'schedule' } | { kind: 'room-request'; requestId: string } | null = null, own = '', hold: { arrivedAt: number } | null = null): Promise<string | false> {
     const drop = () => this.journal(ab, (p) => p.filter((e) => e.updateId !== updateId));
     // Only a caller on `ab.chain` (his message, his voice tap) may wait for a closed Super: a button
     // handler runs inside the poll loop and keeps the 45 s fail-fast, as do run reports and schedules.
@@ -1143,7 +1390,7 @@ export class TelegramHub implements TelegramHubApi {
       if (!inj) { await this.notice(ab, 'warn', LINES.cannotOpen, true); return false; }
     }
     const ref = this.mintRef(ab);
-    telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as?.kind === 'run-report' ? { cardRef: as.cardRef } : {}) });
+    telegramRefs.put(inj.chatRegistryId, ref, { updateId, at: this.now(), written: false, kind: as?.kind ?? 'text', ...(as?.kind === 'run-report' ? { cardRef: as.cardRef } : {}), ...(as?.kind === 'room-request' ? { requestId: as.requestId } : {}) });
     // Handed to a Super now: his words leave the journal (a replay could only repeat them).
     this.journal(ab, (p) => p.map((e) => { if (e.updateId !== updateId) return e; const { msg: _m, ...rest } = e; return { ...rest, ref, chatRegistryId: inj.chatRegistryId }; }));
     const dir = bindingDir(ab.scope, ab.target, this.home);
@@ -1356,7 +1603,15 @@ export class TelegramHub implements TelegramHubApi {
     if (!key) return;
     const ab = this.active.get(key);
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
+    if (entry.status === 'gone') for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
+    if ((entry.status === 'working' || entry.status === 'starting') && !this.turnStartedAt.has(entry.sessionId)) this.turnStartedAt.set(entry.sessionId, Date.now());
+    if ((entry.status === 'idle' || entry.status === 'gone') && from !== entry.status) {
+      this.askInTurn.delete(entry.sessionId);
+      this.turnStartedAt.delete(entry.sessionId);
+    }
     if (entry.status === 'gone') {
+      this.tails.delete(entry.sessionId);
+      this.landedCount.delete(entry.sessionId);
       this.turnSpans.delete(entry.sessionId);
       for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
     }
@@ -1368,6 +1623,14 @@ export class TelegramHub implements TelegramHubApi {
     }
     if (entry.status === 'idle' && from !== 'idle') {
       this.turnInputs.delete(entry.sessionId);
+      // The turn's last short text, if it still is the last: his answer. Queued after every text
+      // of the turn, so it is read once they all went their way.
+      const sid = entry.sessionId;
+      this.queueSend(sid, async () => {
+        const tail = this.tails.get(sid);
+        this.tails.delete(sid);
+        return tail ? this.onAssistantText(sid, tail.text, { turns: tail.turns, inputs: tail.inputs, mark: tail.mark, turn: tail.turn, cards: tail.cards, tail: true }) : false;
+      });
       // After everything this turn sent (in line with its sends): a card it buried comes back.
       const span = this.turnSpans.get(entry.sessionId);
       this.turnSpans.delete(entry.sessionId);
@@ -1386,11 +1649,21 @@ export class TelegramHub implements TelegramHubApi {
         void (async () => {
           await sending;
           // No turn-end receipt: the answer is already there. Only a turn that ended with no text
-          // for the owner says one plain line (it failed or stopped while he waits).
-          if (!t.answered) await this.notice(ab, 'warn', LINES.endedSilent, true);
-          // He asked for a voice and the answer carried no block (owner 2026-11-16: a member said
-          // "sesli mesaj gidiyor" with none): say so, never let a claim stand for the voice.
-          else if (t.wantsVoice && !t.voiced) await this.notice(ab, 'warn', LINES.voiceMissing, true);
+          // for the owner says one plain line (it failed or stopped while he waits). A turn whose
+          // text was held first waits for the Super's corrected answer: nothing landed in the
+          // grace = he got nothing, so he hears that.
+          if (t.answered) {
+            // He asked for a voice and the answer carried no block (owner 2026-11-16: a member said
+            // "sesli mesaj gidiyor" with none): say so, never let a claim stand for the voice.
+            if (t.wantsVoice && !t.voiced) await this.notice(ab, 'warn', LINES.voiceMissing, true);
+            return;
+          }
+          if (t.held) {
+            const before = this.landedCount.get(sid) ?? 0;
+            await (this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => { const h = setTimeout(r, ms); h.unref?.(); })))(HELD_RETELL_GRACE_MS);
+            if ((this.landedCount.get(sid) ?? 0) > before) return;
+          }
+          await this.notice(ab, 'warn', LINES.endedSilent, true);
         })();
       }
     }
@@ -1493,22 +1766,65 @@ export class TelegramHub implements TelegramHubApi {
     const turns = this.turnsOf(sessionId);
     const next = (this.textChains.get(sessionId) ?? Promise.resolve())
       .then(() => send(turns))
-      .then((landed) => { if (landed) for (const t of turns) t.answered = true; })
+      .then((landed) => {
+        if (!landed) return;
+        for (const t of turns) t.answered = true;
+        this.landedCount.set(sessionId, (this.landedCount.get(sessionId) ?? 0) + 1);
+      })
       .catch(() => { /* best-effort: nothing landed, the turn stays silent */ });
     this.textChains.set(sessionId, next);
     void next.then(() => { if (this.textChains.get(sessionId) === next) this.textChains.delete(sessionId); });
+  }
+
+  /**
+   * The Super's own ask is being offered to Telegram (asks.ts): when the running turn wrote it,
+   * its texts queued after it see the returned mark, set `landed` once the card is on his phone.
+   * An ask from an earlier turn (a retry, the turn-away flush) or one offered outside a turn
+   * marks nothing: the running turn's texts are its own answer.
+   */
+  ownAskOffered(sessionId: string, createdAt: number): { landed: boolean } {
+    const status = getChat(sessionId)?.status;
+    const began = this.turnStartedAt.get(sessionId);
+    if ((status !== 'working' && status !== 'starting' && status !== 'asking') || began === undefined || !(createdAt >= began)) return { landed: false };
+    let m = this.askInTurn.get(sessionId);
+    if (!m) { m = { landed: false }; this.askInTurn.set(sessionId, m); }
+    return m;
+  }
+
+  /** The Super's own card is about to go (asks.ts `offerItem`, in line with its texts): a short
+   *  line it held before the card (`tails`) was its word to him, not a step between tools, so it
+   *  goes first and the phone reads line, then card (owner 2026-11-18, kitUP). */
+  async flushTail(sessionId: string): Promise<void> {
+    const tail = this.tails.get(sessionId);
+    if (!tail) return;
+    this.tails.delete(sessionId);
+    await this.onAssistantText(sessionId, tail.text, { turns: tail.turns, inputs: tail.inputs, mark: tail.mark, turn: tail.turn, cards: tail.cards, tail: true }).catch(() => false);
   }
 
   /** One Super text: its turn's inputs read now, as it is written, never after a send. */
   private queueAssistantText(sessionId: string, text: string): void {
     const inputs = this.turnInputs.get(sessionId);
     const mark = superTurnMark(sessionId);
-    this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs, mark }));
+    const ask = this.askInTurn.get(sessionId);
+    const turn = turnOf(sessionId);
+    const cards = this.textsSent.cardsOf(sessionId, turn);
+    this.queueSend(sessionId, (turns) => {
+      // Owner 2026-11-18 ("tekrara düşme"): on his phone the card IS the question. A short line
+      // the turn writes after its own ask landed ("seçimlerini bekliyorum") only says it again;
+      // the Super's prompt forbids it, and here it never reaches Telegram (the Mac still draws
+      // it). A real report after the card (owner-prose length) still goes.
+      if (ask?.landed && text.trim().length < OWNER_PROSE_MIN_CHARS) return Promise.resolve(false);
+      return this.onAssistantText(sessionId, text, { turns, inputs, mark, turn, cards });
+    });
   }
 
   /** True when a message of this text landed on Telegram. */
-  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark?: SuperTurnMark }): Promise<boolean> {
+  async onAssistantText(sessionId: string, text: string, at?: { turns: TgTurn[]; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark?: SuperTurnMark; turn?: number; cards?: number; tail?: boolean }): Promise<boolean> {
+    // A new text: the short one held before it was a step between tools, never his answer.
+    if (!at?.tail) this.tails.delete(sessionId);
     const turns = at?.turns ?? this.turnsOf(sessionId);
+    const turn = at?.turn ?? turnOf(sessionId);
+    const cards = at?.cards ?? this.textsSent.cardsOf(sessionId, turn);
     const inputs = at ? at.inputs : this.turnInputs.get(sessionId);
     let ab = this.bindingOfSession(sessionId);
     if (!ab) { await this.refreshSuperSessions(); ab = this.bindingOfSession(sessionId); }
@@ -1517,17 +1833,39 @@ export class TelegramHub implements TelegramHubApi {
     // note, row chatter) is not for the owner: nothing of it goes out. The same call the Mac
     // folds by; a result he waits on, a job waiting on him, an owed answer are owner batches.
     // A reply written for him (`isOwnerProse`) goes out whatever the turn: the Mac draws it too.
+    const mark = at?.mark ?? superTurnMark(sessionId);
     if (!isOwnerProse(text)) {
       const st = await this.readBound(ab);
-      if (st && superTurnFolds(at?.mark ?? superTurnMark(sessionId), st.ownerBatches)) return false;
+      if (st && superTurnFolds(mark, st.ownerBatches)) return false;
     }
+    // A text not in his language never reaches the phone (owner-text-gate.ts). The turn's end asks
+    // the Super to write it again (card-feedback.ts); a turn whose text was held waits for that
+    // answer before it calls itself silent.
+    const lang = (this.deps.ownerLanguage ?? superKnownLanguage)(sessionId);
+    const hold = (part: string): boolean => {
+      if (!telegramHold(part, { lang })) return false;
+      for (const t of turns) t.held = true;
+      return true;
+    };
     if (this.deps.handsfree?.streamsTo(ab.scope, ab.target)) {
       const all = stripReplyMarks(text);
-      if (!all.trim()) return false;
+      if (!all.trim() || hold(all)) return false;
       const refs = splitReplySections(text).flatMap((s) => s.refs);
-      return this.answerFor(turns, ab, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]);
+      try {
+        return await this.onceThisTurn(ab, sessionId, all, refs, turn, cards, () => this.answerFor(turns, ab!, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]));
+      } catch (e) {
+        noteUndelivered(sessionId, 'text', LOST_TEXT);
+        throw e;
+      }
     }
     const sections = splitReplySections(text);
+    // A short text with no reply mark is the Super talking to itself between tool calls ("No rm in
+    // the command ... Allowing.", Doc's report finding 5) until the turn proves it the last word:
+    // it waits for the turn's end and goes, by the rules below, only if nothing came after it.
+    if (!at?.tail && !isOwnerProse(text) && !sections.some((s) => s.refs.length)) {
+      if (text.trim()) this.tails.set(sessionId, { text, turns, inputs, mark, turn, cards });
+      return false;
+    }
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
     // under a Mac ref, an owed answer); each section once, through this one sender.
     const wide = this.onTelegram(ab);
@@ -1537,14 +1875,37 @@ export class TelegramHub implements TelegramHubApi {
       const hit = s.refs.find((r) => this.routable(ab!, r));
       if ((!hit && !wide) || !s.text.trim()) continue;
       tried = true;
+      if (hold(s.text)) continue;
       // One section that does not land does not stop the next.
-      try { if (await this.answerFor(turns, ab, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)])) sent = true; } catch { continue; }
+      try { if (await this.onceThisTurn(ab, sessionId, s.text, s.refs, turn, cards, () => this.answerFor(turns, ab!, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)]))) sent = true; } catch { noteUndelivered(sessionId, 'text', LOST_TEXT); continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
-    if (!turns.length || inputs?.mac || !text.trim()) return false;
-    return this.answerFor(turns, ab, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref));
+    if (!turns.length || inputs?.mac || !text.trim() || hold(text)) return false;
+    try {
+      return await this.onceThisTurn(ab, sessionId, text, [], turn, cards, () => this.answerFor(turns, ab!, text, sessionId, { ref: msgRef(text), answers: turns[0]?.ref }, this.extrasMode(), turns.map((t) => t.ref)));
+    } catch (e) {
+      noteUndelivered(sessionId, 'text', LOST_TEXT);
+      throw e;
+    }
+  }
+
+  /** A question card of the Super was queued for its chat (asks.ts `offerItem`): a text written
+   *  after it that only re-says what went before it is not sent (`onceThisTurn`). */
+  noteQuestionCard(sessionId: string): void { this.textsSent.noteCard(sessionId); }
+
+  /** One answer reaches the chat once per turn (sent-once.ts `TextLedger`): a text written after
+   *  a question card that re-says what went before the card is dropped, never sent; one that
+   *  fails to land is given back so a later one saying the same may still go. */
+  /** What this hub's answers already said, per turn (`onceThisTurn`). */
+  private readonly textsSent = new TextLedger();
+
+  private async onceThisTurn(ab: ActiveBinding, sessionId: string, text: string, refs: readonly string[], turn: number, cards: number, send: () => Promise<boolean>): Promise<boolean> {
+    const claim = this.textsSent.claim(ab.key, sessionId, text, refs, turn, cards);
+    if (!claim) return false;
+    let landed = false;
+    try { landed = await send(); return landed; } finally { if (!landed) this.textsSent.release(ab.key, sessionId, claim); }
   }
 
   // ── Buttons (plan "Button integrity") ──
@@ -1566,6 +1927,12 @@ export class TelegramHub implements TelegramHubApi {
   /** Does this message still carry live buttons of the hub (none used, none closed)? */
   buttonsLive(ab: ActiveBinding, messageId: number): boolean {
     for (const b of this.buttons.values()) if (b.key === ab.key && b.messageId === messageId) return true;
+    return false;
+  }
+
+  /** A live (unpressed, in-memory) card for this room request: records do not survive a restart. */
+  hasRequestCard(requestId: string): boolean {
+    for (const b of this.buttons.values()) if (b.kind === 'room-request' && b.requestId === requestId) return true;
     return false;
   }
 
@@ -1624,6 +1991,14 @@ export class TelegramHub implements TelegramHubApi {
     const rec = m ? this.buttons.get(m[1]) : undefined;
     const message = obj(cb.message);
     const idx = m ? Number(m[2]) : -1;
+    // G3: who pressed, and where, BEFORE any record or handler: only the owner, only in the chat
+    // the record was bound to. Anyone else gets a toast only; the message is not touched.
+    const presser = obj(cb.from);
+    const pressChat = Number(obj(message?.chat)?.id);
+    if (Number(presser?.id) !== ab.binding.userId || presser?.is_bot === true || (rec && pressChat !== rec.chatId) || pressChat !== ab.binding.chatId) {
+      await ab.transport.answerCallbackQuery(id, ROOM_LINES.notYourButton(await this.ownerNameOf(ab))).catch(() => {});
+      return;
+    }
     const ok = !!rec && rec.key === ab.key && rec.botId === ab.binding.botId && rec.chatId === ab.binding.chatId
       && Number(message?.message_id) === rec.messageId && (message?.edit_date === undefined || rec.hubEdited === true)
       && sha256(typeof message?.text === 'string' ? message.text : '') === rec.textHash && idx >= 0 && idx < rec.options;
@@ -1644,6 +2019,7 @@ export class TelegramHub implements TelegramHubApi {
   private async handleButton(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number): Promise<string | null> {
     if (rec.kind === 'handsfree') return this.deps.handsfree?.onCallback?.(this, ab.key, rec, idx) ?? LINES.stale;
     if (rec.kind === 'voice-retry') return this.voiceRetryTap(ab, rec);
+    if (rec.kind === 'room-request') return this.rooms ? this.rooms.onButton(ab, rec, idx) : LINES.stale;
     if ((rec.kind === 'permission' || rec.kind === 'question') && rec.data?.queue !== true) {
       const sessionId = rec.sessionId ?? '';
       const entry = getChat(sessionId);
@@ -1768,6 +2144,19 @@ export class HubError extends Error {
 
 function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
+}
+
+/** THE key of a message the hub remembers (G2): its binding, its CHAT and its id. Every message
+ *  these maps hold is in the private chat; a group's message id N can never resolve one. */
+export function msgKey(ab: Pick<ActiveBinding, 'key' | 'binding'>, messageId: number | string, chatId: number = ab.binding.chatId): string {
+  return `${ab.key}:${chatId}:${messageId}`;
+}
+
+/** Any update whose chat is not a private chat (a group, a supergroup, a channel): the group
+ *  branch takes it, whatever it is (G1). */
+export function isGroupUpdate(u: Obj): boolean {
+  const chat = senderOf(u as unknown as TgUpdateLike).chat;
+  return !!chat && chat.type !== 'private';
 }
 
 /** A pairing poll keeps no file (nothing is bound yet). */

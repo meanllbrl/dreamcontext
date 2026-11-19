@@ -29,6 +29,8 @@ export interface AgentsFocus {
   /** With `create`: the board the new agent calls home, preset in the create dialog, so "New
    *  agent" on a board makes that board's agent in one step. Ignored without `create`. */
   whiteboard?: string;
+  /** With `create`: "All projects" picked in the create step ("Tüm projelerde çalışan üye"). */
+  global?: boolean;
   /** With `slug`: the task the member's stage opens on (its task strip). */
   task?: string;
   nonce: number;
@@ -42,6 +44,7 @@ export interface ManageMembersDetail {
   slug?: string;
   create?: boolean;
   whiteboard?: string;
+  global?: boolean;
 }
 
 /** The agent slug shape the server accepts (`isSafeAutomationSlug`): lowercase words joined
@@ -61,7 +64,7 @@ export const OPEN_TASK_SLUG = /^[a-z0-9][a-z0-9-]{0,251}$/;
  */
 export function readOpenAgentsDetail(detail: unknown): OpenAgentsDetail {
   if (!detail || typeof detail !== 'object') return {};
-  const { slug, create, whiteboard, task } = detail as { slug?: unknown; create?: unknown; whiteboard?: unknown; task?: unknown };
+  const { slug, create, whiteboard, task, global } = detail as { slug?: unknown; create?: unknown; whiteboard?: unknown; task?: unknown; global?: unknown };
   const out: OpenAgentsDetail = {};
   if (typeof slug === 'string' && slug.length <= 100 && AGENT_SLUG_RE.test(slug)) {
     out.slug = slug;
@@ -70,6 +73,7 @@ export function readOpenAgentsDetail(detail: unknown): OpenAgentsDetail {
   if (create === true) {
     out.create = true;
     if (typeof whiteboard === 'string' && BOARD_SLUG_RE.test(whiteboard)) out.whiteboard = whiteboard;
+    if (global === true) out.global = true;
   }
   return out;
 }
@@ -95,6 +99,7 @@ export function routeOpenAgents(detail: OpenAgentsDetail): OpenAgentsRoute {
   if (detail.slug) manage.slug = detail.slug;
   if (detail.create) manage.create = true;
   if (detail.create && detail.whiteboard) manage.whiteboard = detail.whiteboard;
+  if (detail.create && detail.global) manage.global = true;
   return { to: 'manage', detail: manage };
 }
 
@@ -106,7 +111,7 @@ export function requestOpenAgents(focus: Omit<AgentsFocus, 'nonce'>): void {
 }
 
 /** Open "Üyeleri yönet" in the active project, on that member's profile when `slug` is given. */
-export function requestManageMembers(detail?: { slug?: string; create?: boolean; whiteboard?: string }): void {
+export function requestManageMembers(detail?: { slug?: string; create?: boolean; whiteboard?: string; global?: boolean }): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent<ManageMembersDetail>(MANAGE_MEMBERS_EVENT, { detail: readManageMembersDetail(detail ?? {}) }));
 }

@@ -15,6 +15,7 @@ import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import { getAgent } from '../../lib/agents/store.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import { listGrants, removeGrant, type StoreOpts } from '../../lib/grants/store.js';
+import { memberLevel } from '../../lib/automations/types.js';
 import type { Grant } from '../../lib/grants/types.js';
 import { redactSecrets } from '../../lib/telegram/format.js';
 import type { PermissionRuleView } from '../../lib/super/types.js';
@@ -62,7 +63,7 @@ export async function handleAgentPermissions(
     return;
   }
   sendJson(res, 200, {
-    level: agent.autonomy,
+    level: memberLevel(agent.autonomy),
     rules: memberRules(contextRoot, params.slug),
     // A narrower level reaches a running member at once (the live mode switch); a wider one waits
     // for its next session start (agents.ts `levelApplies`).

@@ -565,3 +565,57 @@
 .chat-secretcard-details > summary { cursor: pointer; padding: var(--space-1) 0; width: fit-content; }
 .chat-appreq-details > summary:focus-visible,
 .chat-secretcard-details > summary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ── Folder confirm: "Are you sure?" when a card's folder moved (FolderConfirm.tsx) ──────────
+   A question, not an error: accent, never red. Portaled to <body>, so it covers the window. */
+.chat-folderconfirm-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg) 45%, rgba(0, 0, 0, 0.6));
+}
+.chat-folderconfirm {
+  width: 100%;
+  max-width: 384px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 24px 20px;
+  border-radius: var(--radius-xl, 16px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 28px 70px -22px rgba(0, 0, 0, 0.7);
+}
+.chat-folderconfirm-title {
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+.chat-folderconfirm-msg {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  margin-bottom: 20px;
+  overflow-wrap: anywhere;
+}
+.chat-folderconfirm-actions { display: flex; gap: 8px; width: 100%; }
+.chat-folderconfirm-btn {
+  flex: 1;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+}
+.chat-folderconfirm-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
+.chat-folderconfirm-btn.ghost { background: var(--color-bg-tertiary); color: var(--color-text-secondary); border-color: var(--color-border); }
+.chat-folderconfirm-btn.ghost:hover { color: var(--color-text); border-color: var(--color-border-hover); }
+.chat-folderconfirm-btn.go { color: var(--color-accent-text); background: var(--gradient-brand-strong); }

@@ -1,8 +1,9 @@
 import { pollMs } from '../lib/windowActivity';
 import type { AgentFace } from '../../../src/lib/agents/figure.js';
 
-/** How much an agent decides alone; mirrors `AGENT_AUTONOMY_LEVELS` (src/lib/automations/types.ts). */
-export type AgentAutonomy = 'ask' | 'balanced' | 'free';
+/** How much an agent decides alone; mirrors `CHOOSABLE_AGENT_AUTONOMY` (src/lib/automations/types.ts).
+ *  Ask is not a member level (owner 2026-11-18): a stored `ask` reads as Balanced (lib/memberLevel.ts). */
+export type AgentAutonomy = 'balanced' | 'free';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import { isConditionUnseen } from './useAutomations';

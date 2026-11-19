@@ -1,5 +1,5 @@
-/* An agent on the board (AgentWidget.tsx): the agent's face, its last lines and a drop zone;
-   the conversation itself is in the panel (BoardAgentPanel.css). Design tokens only. */
+/* An agent on the board (AgentWidget.tsx): the agent's face and its last lines; a click opens
+   the member's own conversation. Design tokens only. */
 
 .wb-widget--agent .wb-widget-body {
   display: flex;
@@ -42,7 +42,7 @@
   font-weight: var(--font-weight-semibold, 600);
 }
 
-/* ── the agent's face: who, the last lines, the drop zone ──────────────────────────────────── */
+/* ── the agent's face: who, the last lines, the hint ──────────────────────────────────── */
 
 .wb-agent-face {
   display: flex;
@@ -91,29 +91,6 @@
   font-size: var(--font-size-xs);
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-/* The card the panel shows: a mark in words, and the frame outlined (below). */
-.wb-agent-in-panel {
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border-radius: 999px;
-  background: var(--color-accent-soft);
-  color: var(--color-accent-ink);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold, 600);
-  white-space: nowrap;
-}
-
-.wb-agent-in-panel::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
 }
 
 /* The last lines, oldest first; older ones fade (the inline opacity). */
@@ -180,119 +157,23 @@
   padding-top: var(--space-2);
 }
 
-.wb-agent--s .wb-agent-drop-veil {
-  justify-content: center;
-  padding: var(--space-2);
-}
-
 .wb-agent--s .wb-agent-line-text {
   -webkit-line-clamp: 2;
 }
 
-.wb-agent-dropzone {
+.wb-agent-hint {
   flex: none;
-  padding: var(--space-3);
-  border: 1px dashed var(--color-border-hover);
-  border-radius: var(--radius-md);
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   text-align: center;
-  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+  transition: color 120ms ease;
 }
 
-.wb-agent-face:hover .wb-agent-dropzone {
-  border-color: var(--color-border-focus);
+.wb-agent-face:hover .wb-agent-hint {
   color: var(--color-text-secondary);
 }
 
-/* The card the panel shows: its frame outlined in the accent. */
-.wb-widget--agent:has(.wb-agent.is-in-panel) {
-  box-shadow: 0 0 0 2px var(--color-accent), var(--shadow-md);
-}
-
-/* Something dragged over it: the whole card says where it goes. */
-.wb-widget--agent:has(.wb-agent.is-drop-target) {
-  box-shadow: 0 0 0 3px var(--color-accent), var(--shadow-lg);
-}
-
-.wb-agent-drop-veil {
-  position: absolute;
-  inset: calc(-1 * var(--space-1));
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-5) var(--space-4);
-  border: 2px dashed var(--color-accent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-bg) 78%, var(--color-accent) 22%);
-  pointer-events: none;
-  animation: wb-agent-veil-in 140ms ease-out;
-}
-
-.wb-agent-drop-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: 999px;
-  background: var(--color-accent-strong);
-  color: var(--color-accent-text);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold, 600);
-  text-align: center;
-  box-shadow: var(--shadow-md);
-}
-
-/* What would land, as its chip reads. */
-.wb-agent-drop-what {
-  max-width: 100%;
-  padding: var(--space-1) var(--space-3);
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  box-shadow: var(--shadow-md);
-}
-
-.wb-agent-drop-what::before {
-  content: '📌 ';
-}
-
-.wb-agent-drop-label::before {
-  content: '⤓';
-}
-
-@keyframes wb-agent-veil-in {
-  from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: none; }
-}
-
-/* Find its card: a short pulse of the accent around the frame. */
-.wb-widget--agent:has(.wb-agent.is-flashing) {
-  animation: wb-agent-flash 800ms ease-out 2;
-}
-
-@keyframes wb-agent-flash {
-  0% { box-shadow: 0 0 0 2px var(--color-accent), 0 0 0 2px var(--color-accent-soft); }
-  60% { box-shadow: 0 0 0 2px var(--color-accent), 0 0 0 16px transparent; }
-  100% { box-shadow: 0 0 0 2px var(--color-accent), 0 0 0 16px transparent; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .wb-agent-drop-veil,
-  .wb-widget--agent:has(.wb-agent.is-flashing) {
-    animation: none;
-  }
-}
-
-/* The panel's chat (CardChat): the reused ChatPane's containing block. `.chat-pane` is
+/* The card chat (CardChat, an app's chat frame): the reused ChatPane's containing block. `.chat-pane` is
    `position: absolute; inset: 0` (ChatPane.css), the notch's own arrangement. */
 .wb-agent-chat {
   position: relative;
@@ -335,26 +216,6 @@
   margin: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-}
-
-/* The chip a drop makes, flying to the panel (dropFlight.ts). On the page, not the card. */
-.wb-drop-flight {
-  position: fixed;
-  z-index: 1000;
-  max-width: 220px;
-  padding: var(--space-1) var(--space-3);
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--color-accent-strong);
-  color: var(--color-accent-text);
-  font-family: var(--font-family);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold, 600);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  box-shadow: var(--shadow-lg);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
 }
 
 /* ── the ⋯ menu ────────────────────────────────────────────────────────────────────────────── */

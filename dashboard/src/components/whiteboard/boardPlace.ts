@@ -1,7 +1,7 @@
 /**
  * Where the owner was on the Whiteboard page, remembered per machine so leaving the page and
  * coming back opens exactly there (owner, 2026-10-05): the board, each board's viewport (scroll
- * and zoom), and whether the board's agent panel was open.
+ * and zoom).
  *
  * Per project (vault), on this machine (whiteboardPrefs.ts: the server's gitignored copy, with
  * localStorage as the mirror); never the synced board file, since a viewport is one person's,
@@ -21,7 +21,6 @@ export interface BoardViewport {
 // [key in the project's prefs file, localStorage key]
 const lastBoardKey = (vault: string) => ['lastBoard', `dc.wbLastBoard.${vault}`] as const;
 const viewportKey = (vault: string, board: string) => [`viewport.${board}`, `dc.wbViewport.${vault}.${board}`] as const;
-const panelKey = (vault: string) => ['agentPanel', `dc.wbAgentPanel.${vault}`] as const;
 
 const BOARD_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
 
@@ -92,11 +91,3 @@ export function viewportShowsAny(vp: BoardViewport, width: number, height: numbe
   });
 }
 
-/** Whether the agent panel was open (default closed). */
-export function readPanelOpen(vault: string): boolean {
-  return read(vault, panelKey(vault)) === '1';
-}
-
-export function writePanelOpen(vault: string, open: boolean): void {
-  write(vault, panelKey(vault), open ? '1' : '0');
-}

@@ -73,7 +73,10 @@ export const RUN_LINES = {
   mcp: (names: string) => `🔌 Bağlanacak: ${names}`,
   notHere: "Bu kart buradan çalıştırılamaz; Mac'te çalıştır.",
   noFolder: "Kartın klasörü doğrulanamadı; Mac'ten çalıştır.",
-  folderChanged: "Kartın klasörü değişti; hiçbir şey çalışmadı. Mac'te karta yeniden bakıp oradan bas.",
+  /** The card's folder moved since the message: asked once more, in plain words, never as an error. */
+  folderAsk: (folder: string) => `Bu kart artık ${folder} klasöründe çalışacak. Emin misin?`,
+  folderAsked: 'Klasör değişti; onayını soruyorum.',
+  folderAskFailed: "Kartın klasörü değişti ama onay sorusu gönderilemedi; hiçbir şey çalışmadı. Kartı Mac'ten çalıştır.",
   oldButton: "Bu düğme eski bir sürümden; hiçbir şey çalışmadı. Kartı Mac'te çalıştır.",
   childChanged: "Kart değişti ya da kapandı; hiçbir şey çalışmadı. Mac'te karta bak.",
   childNotHere: "Bu kart bu Super'in açık bir işine ait değil; hiçbir şey çalışmadı.",
@@ -102,7 +105,8 @@ export function commandShowable(command: string): boolean {
 const sha = (t: string) => createHash('sha256').update(t).digest('hex');
 
 /** Why a press ran nothing: `changed` (the card is not the one the message drew), or a line. */
-type PressCheck = { ok: true; live: CardRecordEntry; root: string } | { ok: false; changed: true } | { ok: false; changed?: false; line: string };
+type PressCheck = { ok: true; live: CardRecordEntry; root: string } | { ok: false; changed: true } | { ok: false; changed?: false; line: string }
+  | { ok: false; changed?: false; moved: string; live: CardRecordEntry; spec: RunViewSpec };
 
 /**
  * THE press check of a Telegram Run button, the Super's own card and a child's alike: the card
@@ -119,7 +123,11 @@ async function checkPress(live: CardRecordEntry | null, cardRef: string, data: O
   // A button from before this release drew no folder: say so plainly, never "folder changed".
   if (typeof data?.root !== 'string' || !data.root) return { ok: false, line: RUN_LINES.oldButton };
   const press = await pressRoot(live, data.root);
-  if (!press.ok) return { ok: false, line: press.why === 'no_folder' ? RUN_LINES.noFolder : RUN_LINES.folderChanged };
+  if (!press.ok) {
+    if (press.why === 'no_folder' || !press.current) return { ok: false, line: RUN_LINES.noFolder };
+    // Moved: the caller asks once more with the folder it is now (dev 960fd4528), never runs.
+    return { ok: false, moved: press.current.path, live, spec };
+  }
   return { ok: true, live, root: press.root };
 }
 
@@ -270,6 +278,19 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     return true;
   };
 
+  /** "Bu kart artık X klasöründe çalışacak. Emin misin?" with Çalıştır / Vazgeç: the folder shown is
+   *  the button's root, so the folder he agrees to is the folder that runs (`pressRoot`). */
+  const askFolder = async (ab: ActiveBinding, rec: CardRecordEntry, spec: RunViewSpec, root: string, withheld: boolean): Promise<void> => {
+    const folder = `${basename(root)}${spec.cwd ? ` · ${spec.cwd}` : ''}`;
+    const parts = [
+      `<b>${escapeHtml(RUN_LINES.folderAsk(folder))}</b>`,
+      `<pre>${escapeHtml(redactSecrets(spec.command))}</pre>`,
+    ];
+    await hub.sendButtons(ab, parts.join('\n'), [['Çalıştır'], ['Vazgeç']], {
+      kind: 'run', sessionId: rec.sessionId, cardRef: rec.cardRef, singleUse: true,
+    }, { cmdHash: sha(spec.command), cardId: rec.id, root, withheld, confirm: true });
+  };
+
   const announceSecret = async (ab: ActiveBinding, rec: CardRecordEntry): Promise<void> => {
     const spec = rec.spec as SecretViewSpec;
     secretSessions.set(rec.sessionId, ab.key);
@@ -369,7 +390,10 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
       run.interrupt();
       return RUN_LINES.stopped;
     }
-    if (idx === 2) return RUN_LINES.cancelled;
+    // The folder-change ask (`confirm`) has two buttons: Çalıştır, Vazgeç; the card message three.
+    const confirm = rec.data?.confirm === true;
+    if (confirm ? idx === 1 : idx === 2) return RUN_LINES.cancelled;
+    const withheld = confirm ? rec.data?.withheld === true : idx === 1;
     // G1 (K4): Run only for the bound Super's OWN card (main's, or a member's own Super on its
     // bot), through this very binding; never a child's card
     // (an owner item stands for it: its own message carries its Run, `pressChildRun`).
@@ -378,15 +402,21 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     const live = getCard(sessionId, cardRef);
     const check = await checkPress(live, cardRef, rec.data);
     if (!check.ok) {
+      // Moved: ask once more with the folder it is now. Its Çalıştır runs THERE (that folder is
+      // its button's root) or, moved again, asks again; nothing runs from this tap.
+      if ('moved' in check) {
+        void askFolder(ab, check.live, check.spec, check.moved, withheld).catch(() => hub.notice(ab, 'info', RUN_LINES.folderAskFailed, true).catch(() => {}));
+        return RUN_LINES.folderAsked;
+      }
       if (!check.changed) return check.line;
       const fresh = live ? newestCard(sessionId, 'run', live.id) : null;
       if (fresh && fresh.state === 'open' && fresh.cardRef !== cardRef) void announceRun(ab, fresh).catch(() => {});
       return RUN_LINES.changed;
     }
-    const run = startRun(sessionId, cardRef, 'telegram', { withheld: idx === 1, root: check.root });
+    const run = startRun(sessionId, cardRef, 'telegram', { withheld, root: check.root });
     if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? LINES.stale : LINES.waitingOnMac;
     void followRun(ab, check.live, run).catch(() => { /* the run goes on; its report still arrives */ });
-    return RUN_LINES.started(idx === 1);
+    return RUN_LINES.started(withheld);
   };
 
   /**
@@ -403,7 +433,8 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     if (owned !== 'ok') return owned === 'closed' ? RUN_LINES.childChanged : RUN_LINES.childNotHere;
     const { rec: live } = resolveCardRecord(sessionId, cardRef);
     const check = await checkPress(live, cardRef, rec.data, true);
-    if (!check.ok) return check.changed ? RUN_LINES.childChanged : check.line;
+    // A child's card whose folder moved: its folder question is the Mac's (the confirm button serves the Super's own card only).
+    if (!check.ok) return 'moved' in check ? RUN_LINES.childMacOnly : check.changed ? RUN_LINES.childChanged : check.line;
     const run = startRun(sessionId, cardRef, 'telegram', { root: check.root });
     if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? RUN_LINES.childChanged : LINES.waitingOnMac;
     void followRun(ab, check.live, run).catch(() => { /* the run goes on; its report still arrives */ });

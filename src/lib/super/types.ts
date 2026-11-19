@@ -169,10 +169,14 @@ export interface SuperContainer {
 /**
  * A picture question's cards (task a-picture-question…, D2): the question `item` shows `cards`
  * on the stage while it is the owner's head question, and puts them back after his answer.
- * `opened` = the pictures THIS question created or brought back from Others (they go to Others
- * after it); `via` = where the cards came from (`--show`, the option previews, the recent set).
+ * `opened` = the pictures that go back with it (to Others after it): those it created from its
+ * previews, or every card `--show` named; `via` = where the cards came from (`--show`, the option
+ * previews; `recent` only on an entry an older server wrote).
  * Server-written by `super ask` / `super queue ask`, settled on every write (ask-show.ts).
  */
+/** How a question's cards were named. `recent` (the old time guess: pictures opened in the last
+ *  10 minutes) is no longer written (owner 2026-11-17: an unrelated old picture set opened beside
+ *  a question); it is still read, so an entry an older server wrote is put back on its close. */
 export const ASK_SHOW_VIAS = ['show', 'preview', 'recent'] as const;
 export type AskShowVia = typeof ASK_SHOW_VIAS[number];
 export interface AskShow {
@@ -186,8 +190,6 @@ export interface AskShow {
 /** One per question that can be open at once: each live child's and the Super's own (end review:
  *  a cap under that dropped the presented head's entry, and its pictures never went back). */
 export const MAX_ASK_SHOWS = MAX_LIVE_CHILDREN + 1;
-/** `recent`: pictures opened for the job (or the super's last set) at most this long ago. */
-export const ASK_SHOW_RECENT_MS = 10 * 60_000;
 
 /** A picture's aspect outside this is dropped, never clamped (a 1:30 strip is not a mockup). */
 export const ASPECT_MIN = 0.05;
@@ -311,7 +313,7 @@ export type PresentLayout = typeof PRESENT_LAYOUTS[number];
 /** A filmstrip shows at most this many cards (owner 2026-10-29: "the strip must not be limited":
  *  a group is presented whole, its strip scrolls); every other layout {@link MAX_PRESENT}. */
 export const MAX_FILMSTRIP = MAX_CONTAINERS;
-/** A picture question shows at most this many pictures (its previews, `--show`, the last set). */
+/** A picture question shows at most this many pictures (its previews or `--show`). */
 export const MAX_ASK_PICTURES = 8;
 /** A picture at least this much wider than tall is landscape (16:9 is 1.78, 4:3 1.33). */
 export const LANDSCAPE_ASPECT = 1.3;
@@ -842,7 +844,7 @@ export interface SuperChild {
    *  ms; `seenAt` is the finish key his window showed): the grace of the pictures that result
    *  turned down counts from here (`forChild`). */
   seenMarkedAt?: number;
-  /** Outward actions this child completed that the Super has not told yet (`outwardAction`:
+  /** Outward actions this child completed that the Super has not told yet (`sentOutwards`:
    *  a push, a publish, a PR, a deploy, an MCP send), written by the server from its frames.
    *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
    *  and clears this. At most MAX_SENT. */
@@ -1250,6 +1252,10 @@ export const MAX_REFUSAL_REASON = 300;
  *  call (2.1.325: a removal it cannot resolve, `circuitBreaker: dangerousRemoval`). Only a person at
  *  its own prompt may pass such a check; a PreToolUse allow (every grant) cannot. */
 export const SAFETY_CHECK_RE = /built-in Claude Code safety check/i;
+/** The words of Claude Code's auto-mode refusal that is NOT a judgment: its classifier gave no
+ *  verdict (a hook changed the input after the review, the classifier was unreachable). The model
+ *  already has the refusal and a plain retry is the way on: nothing for the owner to allow. */
+export const NO_VERDICT_RE = /^\s*(?:Error:\s*)?The server-side auto mode classifier gave no verdict for /;
 /** A refusal no grant can lift: born `safety`, or born before that source existed (`unknown`) with
  *  Claude Code's own safety-check words in its reason. */
 export function isSafetyRefusal(r: Pick<RefusalFact, 'source' | 'reason'> | null | undefined): boolean {
@@ -1630,6 +1636,10 @@ export interface SuperOwed {
   gist: string;
   /** The outward actions of that job (`SuperChild.sent`). */
   sent?: string[];
+  /** The start of each text the Super wrote while it was open (newest MAX_OWED_SAID): the
+   *  `[super owed]` turn quotes them, so "it is told above" is checked against what was really
+   *  written (2026-11-17: a plan summary composed only in its thinking was called "above"). */
+  said?: { at: number; head: string }[];
   /** `[super owed]` turns that named it. At OWED_NUDGES it shows on his agenda instead. */
   nudges: number;
   /** Left open by an end he stopped (`stop`) or a limit refused (`limit`): shown after OWED_PARK_MS. */
@@ -1648,6 +1658,9 @@ export const OWED_NUDGES = 2;
 export const OWED_PARK_MS = 10 * 60_000;
 export const MAX_OWED_MSG_GIST = 300;
 export const MAX_OWED_RESULT_GIST = 120;
+/** Texts a debt remembers (`SuperOwed.said`), newest kept, and how much of each. */
+export const MAX_OWED_SAID = 4;
+export const MAX_OWED_SAID_HEAD = 160;
 /** Outward actions one child or debt holds (`SuperChild.sent`, `SuperOwed.sent`). */
 export const MAX_SENT = 8;
 /** One outward action's label (`outwardAction`): fixed words or a sanitized MCP tool name. */
@@ -1692,7 +1705,18 @@ export interface SuperPadItem {
   /** `owner` = the owner wrote it himself (`POST /api/super/pad/add`): the server's automatic
    *  rules never act on it (pad.ts `ownerLine`). Absent = the Super's. */
   author?: 'owner';
+  /** The owner messages that moved this line's work (ajanda-filtre C1): each `ref` is his
+   *  `<owner-msg ref>`, `at` the time that message ARRIVED at the Super. Appended by `note add`,
+   *  `delegate --note` and `send`/`resume` in his turn (or with `--origin`), never by the server's
+   *  own lines. The dashboard filters the Super chat to these (lineThread.ts). Oldest first. */
+  refs?: PadRef[];
 }
+/** One owner message that moved a line's work (`SuperPadItem.refs`). */
+export interface PadRef { ref: string; at: number }
+/** A guard against a corrupt record, not a budget: the oldest go past it. */
+export const MAX_PAD_REFS = 200;
+/** What the phone digest carries per line: the newest ones. */
+export const MAX_DIGEST_PAD_REFS = 20;
 export const PAD_STAGES = ['todo', 'almost'] as const;
 export type PadStage = typeof PAD_STAGES[number];
 /** The five statuses a line shows; `section` (+ `stage`) stays the stored truth (pad.ts). */
@@ -2325,6 +2349,8 @@ export const SUPER_VERBS = [
   'team-done', 'team-answer',
   // The owner's scheduled jobs (super-rutin plan C4): main Super only.
   'schedule',
+  // A Telegram group's approved request (tg-grup C5): the Super that got it posts the result once.
+  'room-say',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 
@@ -2371,10 +2397,10 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-17, tg-cift-metin): after `super ask`, never re-say the answer already given before it in other words. Rev 54 (2026-11-18, soru-azaltma): a card only when the work is truly blocked, ruled by kind (`lib/ask-rules.ts`); a clear choice is taken and said in one line; no start card for work he asked for or approved, a plan that changes no screen is built without his yes; a child's question is the Super's first; no line that a question waits, the summary in one place, an open card never asked again.
 
  */
-export const SUPER_BRIEF_REV = 52;
+export const SUPER_BRIEF_REV = 54;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

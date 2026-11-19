@@ -173,14 +173,19 @@ describe('AC-A1-1 autonomy', () => {
     const session = process.env.CLAUDECODE;
     delete process.env.CLAUDECODE;
     onTestFinished(() => { if (session !== undefined) process.env.CLAUDECODE = session; });
-    expect((await runCli(['agents', 'edit', 'scout', '--autonomy', 'ask'])).code).toBe(0);
-    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('ask');
+    expect((await runCli(['agents', 'edit', 'scout', '--autonomy', 'free'])).code).toBe(0);
+    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('free');
     expect((await runCli(['agents', 'edit', 'scout', '--autonomy', 'loud'])).code).toBe(1);
+    // Ask is not a member level (owner 2026-11-18): refused with the reason, nothing written.
+    const ask = await runCli(['agents', 'edit', 'scout', '--autonomy', 'ask']);
+    expect(ask.code).toBe(1);
+    expect(ask.out).toMatch(/Ask is not an AI Team level/);
+    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('free');
     process.env[AGENT_SELF_ENV] = 'scout';
-    const refused = await runCli(['agents', 'edit', 'scout', '--autonomy', 'free']);
+    const refused = await runCli(['agents', 'edit', 'scout', '--autonomy', 'balanced']);
     expect(refused.code).toBe(1);
     expect(refused.out).toMatch(/agent cannot change an autonomy/);
-    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('ask');
+    expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('free');
   });
 
   it('the dashboard route sets it and refuses anything that is not a level', async () => {
@@ -218,15 +223,17 @@ describe('AC-A1-2 level → permission envelope', () => {
   const allowed = (args: string[]) => (args.includes('--allowedTools') ? args[args.indexOf('--allowedTools') + 1] : null);
 
   it('every level × step of the table', () => {
-    expect(mode(levelPermissionArgs('ask', 'chat'))).toBe('default');
+    // A stored `ask` runs as Balanced (owner 2026-11-18): no level yields `default` or a plan step.
+    expect(mode(levelPermissionArgs('ask', 'chat'))).toBe('auto');
     expect(mode(levelPermissionArgs('balanced', 'chat'))).toBe('auto');
     expect(mode(levelPermissionArgs('free', 'chat'))).toBe('bypassPermissions');
-    const plan = levelPermissionArgs('ask', 'plan');
-    expect(mode(plan)).toBe('plan');
-    expect(disallowed(plan)).toMatch(/\bTask\b/);
-    expect(disallowed(plan)).toMatch(/\bWorkflow\b/);
-    expect(() => levelPermissionArgs('balanced', 'plan')).toThrow(/Ask level/);
-    expect(() => levelPermissionArgs('free', 'plan')).toThrow(/Ask level/);
+    for (const level of ['ask', 'balanced', 'free'] as const) {
+      expect(() => levelPermissionArgs(level, 'plan')).toThrow(/no plan step/);
+      for (const step of ['chat', 'work', 'rework', 'review'] as const) {
+        expect(mode(levelPermissionArgs(level, step))).not.toBe('default');
+        expect(mode(levelPermissionArgs(level, step))).not.toBe('plan');
+      }
+    }
     for (const step of ['work', 'rework'] as const) {
       expect(mode(levelPermissionArgs('ask', step))).toBe('auto');
       expect(mode(levelPermissionArgs('balanced', step))).toBe('auto');
@@ -247,7 +254,7 @@ describe('AC-A1-2 level → permission envelope', () => {
     makeAgent('asker', { autonomy: 'ask' });
     makeAgent('middle');
     makeAgent('roamer', { autonomy: 'free' });
-    for (const [slug, expected, label] of [['asker', 'default', 'Ask'], ['middle', 'auto', 'Balanced'], ['roamer', 'bypassPermissions', 'Free']] as const) {
+    for (const [slug, expected, label] of [['asker', 'auto', 'Balanced'], ['middle', 'auto', 'Balanced'], ['roamer', 'bypassPermissions', 'Free']] as const) {
       const prep = prepareAgentChat(contextRoot, slug, home);
       expect(prep.ok).toBe(true);
       if (!prep.ok) continue;
@@ -259,10 +266,11 @@ describe('AC-A1-2 level → permission envelope', () => {
   });
 
   it('the brief says when to ask, and a headless brief says to stop on a denied step', () => {
-    expect(levelBrief('ask')).toMatch(/Ask the owner before you act/);
+    expect(levelBrief('ask')).toBe(levelBrief('balanced'));
+    expect(levelBrief('ask')).not.toMatch(/YOUR AUTONOMY: Ask|Ask the owner before you act/);
     expect(levelBrief('balanced')).toMatch(/before a push/);
     expect(levelBrief('free')).toMatch(/Decide for yourself/);
-    expect(levelBrief('ask')).not.toMatch(/Nobody is watching/);
+    expect(levelBrief('balanced')).not.toMatch(/Nobody is watching/);
     expect(levelBrief('balanced', true)).toMatch(/post your question and stop/);
   });
 
@@ -460,7 +468,8 @@ describe('AC-A1-4 the stage', () => {
       } as never);
     }
     const view = buildStageView(contextRoot, 'scout', NOW)!;
-    expect(view.autonomy).toBe('ask');
+    // A stored `ask` shows as Balanced: no member runs or shows at Ask (owner 2026-11-18).
+    expect(view.autonomy).toBe('balanced');
     expect(view.face).toEqual(getAgent(contextRoot, 'scout')!.face);
     expect(view.homeSessionId).toBe('sess-home');
     expect(view.owner).toBeNull();

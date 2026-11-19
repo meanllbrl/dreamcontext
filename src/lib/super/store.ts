@@ -7,7 +7,7 @@ import {
   AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, PAD_STAGES, cleanPadText, MAX_OWNER_MARKS_BYTES, OWNER_MARK_KEY_RE, OWNER_MARK_KINDS, type OwnerMark, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
-  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
+  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_SAID, MAX_OWED_SAID_HEAD, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
@@ -24,6 +24,7 @@ import { renameWithRetry } from '../fs-retry.js';
 import { asOwnerLanguage } from './owner-language.js';
 import { bindingVerdict, currentBinding, noteOwnWrite } from './record-binding.js';
 import { archiveDoneLines } from './pad-archive.js';
+import { cleanPadRefs } from './pad.js';
 
 /**
  * The Super Agent's state file — `state/.super-agent.json`, one per vault (plan-r7 D2).
@@ -753,6 +754,7 @@ export function sanitizePad(raw: unknown, max: number = MAX_PAD): SuperPadItem[]
     const toldAt = finite(p.toldAt);
     const by = p.by === 'auto' || p.by === 'owner' ? p.by : undefined;
     const born = finite(p.bornAt);
+    const refs = cleanPadRefs(p.refs);
     out.push({
       id: p.id, section: p.section, text, at,
       bornAt: born !== undefined && born >= 0 && born <= at ? born : at,
@@ -762,6 +764,7 @@ export function sanitizePad(raw: unknown, max: number = MAX_PAD): SuperPadItem[]
       ...(by ? { by } : {}),
       ...(by === 'auto' && oneOf(PAD_AUTO_WHY, p.why) ? { why: p.why } : {}),
       ...(toldAt !== undefined && toldAt >= 0 ? { toldAt } : {}),
+      ...(refs ? { refs } : {}),
     });
   }
   return out;
@@ -901,6 +904,15 @@ function sanitizeOwed(raw: unknown): SuperOwed[] {
     if (typeof d.team === 'string' && TEAM_JOB_ID_RE.test(d.team)) out.team = d.team;
     const sent = cleanSent(d.sent);
     if (sent.length) out.sent = sent;
+    if (Array.isArray(d.said)) {
+      const said = d.said.flatMap((x) => {
+        if (!isRecord(x) || typeof x.head !== 'string') return [];
+        const sat = finite(x.at);
+        const head = x.head.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, MAX_OWED_SAID_HEAD);
+        return sat === undefined || !head ? [] : [{ at: sat, head }];
+      }).slice(-MAX_OWED_SAID);
+      if (said.length) out.said = said;
+    }
     if (isRecord(d.closed)) {
       const cat = finite(d.closed.at);
       const by = d.closed.by;

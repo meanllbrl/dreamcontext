@@ -234,3 +234,48 @@ describe('the Super\'s side', () => {
   });
 });
 
+
+describe('the days that have a file (agenda search)', () => {
+  const saved = process.env.DREAMCONTEXT_DESKTOP;
+  beforeEach(() => { process.env.DREAMCONTEXT_DESKTOP = '1'; });
+  afterEach(() => { if (saved === undefined) delete process.env.DREAMCONTEXT_DESKTOP; else process.env.DREAMCONTEXT_DESKTOP = saved; });
+  it('lists every archived day, newest first', async () => {
+    seed();
+    const d1 = new Date(2026, 10, 10, 12).getTime(); const d2 = new Date(2026, 10, 12, 12).getTime();
+    await archiveDoneLines(root, 'main', [line('x1', { section: 'done', at: d1 }), line('x2', { section: 'done', at: d2 })]);
+    const { agendaDays } = await import('../../src/lib/super/pad-archive.js');
+    expect(await agendaDays(root, 'main')).toEqual(['2026-11-12', '2026-11-10']);
+  });
+  it('a days folder that is a link lists nothing', async () => {
+    seed();
+    mkdirSync(join(root, 'state', '.super'), { recursive: true });
+    mkdirSync(join(dir, 'away4'));
+    writeFileSync(join(dir, 'away4', '2026-11-12.json'), JSON.stringify({ lines: [] }));
+    symlinkSync(join(dir, 'away4'), superAgendaDaysDir(root));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { agendaDays } = await import('../../src/lib/super/pad-archive.js');
+    expect(await agendaDays(root, 'main')).toEqual([]);
+  });
+  it('the route is the owner window only: a page without the desktop shell is refused', async () => {
+    seed();
+    delete process.env.DREAMCONTEXT_DESKTOP;
+    const { handleSuperAgendaDays } = await import('../../src/server/routes/super.js');
+    const r = res();
+    await handleSuperAgendaDays({ headers: PAGE, url: '/api/super/agenda-days', method: 'GET', socket: { remoteAddress: '127.0.0.1' } } as unknown as IncomingMessage, r, {}, root);
+    expect([401, 403]).toContain(r.status);
+  });
+  it('the route answers the owner window with the days', async () => {
+    seed();
+    await archiveDoneLines(root, 'main', [line('y1', { section: 'done', at: new Date(2026, 10, 9, 12).getTime() })]);
+    const { handleSuperAgendaDays } = await import('../../src/server/routes/super.js');
+    const r = res();
+    await handleSuperAgendaDays({ headers: PAGE, url: '/api/super/agenda-days', method: 'GET', socket: { remoteAddress: '127.0.0.1' } } as unknown as IncomingMessage, r, {}, root);
+    expect(r.status).toBe(200);
+    expect(r.json.days).toEqual(['2026-11-09']);
+  });
+  it('no days folder is no days', async () => {
+    seed();
+    const { agendaDays } = await import('../../src/lib/super/pad-archive.js');
+    expect(await agendaDays(root, 'main')).toEqual([]);
+  });
+});

@@ -222,21 +222,21 @@ describe('a narrower level reaches the running member now; a wider one at its ne
     const setA = vi.fn(() => true);
     const setB = vi.fn(() => true);
     const setOther = vi.fn(() => true);
-    crew.openCrewSeat(facts({ pid: 601, pin: 'super-scout', isSuper: true, agent: 'scout', mode: 'auto', setMode: setA }));
+    crew.openCrewSeat(facts({ pid: 601, pin: 'super-scout', isSuper: true, agent: 'scout', mode: 'bypassPermissions', setMode: setA }));
     crew.openCrewSeat(facts({ pid: 602, pin: 'child-scout', memberCrew: 'scout', mode: 'bypassPermissions', setMode: setB }));
-    crew.openCrewSeat(facts({ pid: 603, pin: 'child-writer', memberCrew: 'writer', mode: 'auto', setMode: setOther }));
-    // Balanced → Ask: the chat mode narrows to `default`.
-    expect(levelApplies('scout', 'balanced', 'ask', project)).toBe('now');
-    expect(setA).toHaveBeenCalledWith('default');
-    expect(setB).toHaveBeenCalledWith('default');
+    crew.openCrewSeat(facts({ pid: 603, pin: 'child-writer', memberCrew: 'writer', mode: 'bypassPermissions', setMode: setOther }));
+    // Free → Balanced: the chat mode narrows to `auto`.
+    expect(levelApplies('scout', 'free', 'balanced', project)).toBe('now');
+    expect(setA).toHaveBeenCalledWith('auto');
+    expect(setB).toHaveBeenCalledWith('auto');
     expect(setOther).not.toHaveBeenCalled();
-    expect(crew.liveCrewSeats().filter((s) => s.member === 'scout').map((s) => s.mode)).toEqual(['default', 'default']);
+    expect(crew.liveCrewSeats().filter((s) => s.member === 'scout').map((s) => s.mode)).toEqual(['auto', 'auto']);
   });
 
   it('widening applies at the next session start and touches nothing running', () => {
     const set = vi.fn(() => true);
-    crew.openCrewSeat(facts({ memberCrew: 'scout', mode: 'default', setMode: set }));
-    expect(levelApplies('scout', 'ask', 'free', project)).toBe('next_session');
+    crew.openCrewSeat(facts({ memberCrew: 'scout', mode: 'auto', setMode: set }));
+    expect(levelApplies('scout', 'balanced', 'free', project)).toBe('next_session');
     expect(set).not.toHaveBeenCalled();
   });
 

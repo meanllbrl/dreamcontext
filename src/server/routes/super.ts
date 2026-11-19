@@ -22,7 +22,7 @@ import {
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
@@ -53,14 +53,14 @@ import { getAgent } from '../../lib/agents/store.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
-import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
-import { ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
+import { linkLineRef, ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus, withoutTwins } from '../../lib/super/pad.js';
 import { tryOwnerMark } from '../../lib/super/owner-marks.js';
-import { agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
+import { agendaDays, agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
 import { hasOwnerKey } from '../owner-key.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
@@ -69,8 +69,8 @@ import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
-import { askShowState, askStillOpen, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
-import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
+import { askShowState, askStillOpen, recordAskShow } from '../../lib/super/ask-show.js';
+import { askWarning, planReportRefusal } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
@@ -733,8 +733,8 @@ export function setAskShowFsForTest(fs: SrcFs | null): void { askShowFs = fs ?? 
 
 /**
  * A picture question's cards, read before its write (task a-picture-question…, D1): `--show`
- * named cards (any but the agenda), else the option previews' project pictures, else (inside the
- * write) the recent set. `off` = `--no-show`. Null: refused (the answer is sent).
+ * named cards (any but the agenda), else the option previews' project pictures, nothing else
+ * (owner 2026-11-17: no time guess). `off` = `--no-show`. Null: refused (the answer is sent).
  */
 interface AskShowPrep {
   off: boolean;
@@ -764,16 +764,15 @@ async function prepareAskShow(
     }
   }
   const { found, skipped } = show.length ? { found: [], skipped: [] } : await resolvePreviewImages(project, base, images, askShowFs);
-  // Every picture the question might show, its shape read now (image-aspect.ts).
-  const now = Date.now();
-  const recent = show.length || found.length ? [] : recentAskCards(c.state, child ? { child } : { chain: imageChains.get(imageChainKey(c.who.contextRoot)) }, now);
+  // Every picture the question shows, its shape read now (image-aspect.ts). Only what the
+  // question names (--show, its option previews): no time guess (owner 2026-11-17).
   const refs = [
     ...found.map((f) => f.ref),
-    ...c.state.containers.filter((k) => k.kind === 'image' && (show.includes(k.id) || recent.includes(k.id))).map((k) => k.ref),
+    ...c.state.containers.filter((k) => k.kind === 'image' && show.includes(k.id)).map((k) => k.ref),
   ];
   const aspects = refs.length ? await imageAspects(project, refs) : new Map<string, number | undefined>();
   // A tidy pass racing the write never moves what the question is about to show.
-  touchCards(c.who.contextRoot, [...show, ...recent]);
+  touchCards(c.who.contextRoot, show);
   return { off: false, show, previews: found, skipped, aspects };
 }
 
@@ -786,33 +785,32 @@ function applyAskShow(
     const k = s.containers.find((x) => x.id === id);
     return !!k && k.kind === 'image' && (k.place === 'others' || s.groups.some((g) => g.cards.includes(id) && g.place === 'others'));
   };
-  // Pictures the Super (or this child's job) opened in the last minutes are the question's own:
-  // they go back with it (D2a, the recent rule), whichever source named them.
-  const recent = recentAskCards(s, child ? { child } : { chain: imageChains.get(imageChainKey(root)) }, now);
+  // Only the cards the question itself names are its own (owner 2026-11-17: "eski alakasız bir
+  // sunum dosyası yanda açılıyor"): `--show`, else its option previews. No fallback on pictures
+  // opened in the last minutes: those may be another job's.
   let ids: string[];
   let via: AskShow['via'];
   let opened: string[] = [];
   let cut = 0;
   let chain: ImageChain | null = null;
+  let fresh: string[];
   if (prep.show.length) {
     via = 'show';
     ids = prep.show.filter((id) => s.containers.some((k) => k.id === id && k.kind !== 'agenda'));
-    opened = ids.filter(inOthers);
+    // What this write brings back from Others reaches the phone once (an `open` already sent
+    // the rest); every named picture goes back with the question (putBack keeps the owner's).
+    fresh = ids.filter(inOthers);
+    opened = ids;
   } else if (prep.previews.length) {
     via = 'preview';
     const r = openImageCards(s, prep.previews.map((p) => ({ ref: p.ref, ...(p.label ? { title: p.label } : {}), aspect: prep.aspects.get(p.ref) })),
       { ...(child ? { forChild: child } : {}), now, chain: imageChains.get(imageChainKey(root)) });
     ids = r.ids; opened = r.made; cut = r.cut; chain = r.chain;
+    fresh = [...opened];
   } else {
-    via = 'recent';
-    ids = recent;
-    opened = ids.filter(inOthers);
+    return { ids: [], via: 'show', opened: [], fresh: [], cut: 0, chain: null };
   }
   for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, prep.aspects);
-  // What this write itself put on the stage (made, or back from Others): the phone gets these
-  // once; a recent picture its own `open` already mirrored is not sent again (end review).
-  const fresh = [...opened];
-  opened = [...new Set([...opened, ...ids.filter((id) => recent.includes(id))])];
   if (ids.length) recordAskShow(s, item, ids, opened, via);
   return { ids, via, opened, fresh, cut, chain };
 }
@@ -992,15 +990,19 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       refuse(res, 409, 'held', `${running}; the job stays in the pool as ${fromRow.id}`, { ...facts, pooled: fromRow.id });
       return;
     }
+    // A job that is NOT kept is never `held` (soru-azaltma open note, 2026-11-19): `held` reads
+    // "it waits its turn", and the Super told him so for a job that was gone. Its own code says
+    // it did not start and was not kept.
+    const notKept = { ...facts, held: false, kept: false };
     // A hand-over is not pooled: the pool keeps no successor, and the old child keeps the work.
     if (succeeds) {
-      refuse(res, 409, 'held', `${running}; the hand-over was NOT kept: delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
+      refuse(res, 409, 'not_kept', `${running}; the hand-over was NOT kept and did NOT start: delegate it again when a slot frees, or ask the owner`, notKept);
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
     const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
     if ('error' in kept) {
-      refuse(res, 409, kept.error === 'too_large' ? 'held' : 'pool_full', `${running}; the job was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
+      refuse(res, 409, kept.error === 'too_large' ? 'not_kept' : 'pool_full', `${running}; the job did NOT start and was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, notKept);
       return;
     }
     refuse(res, 409, 'held', `${running}; the job is kept in the pool as ${kept.id}: start it with \`dreamcontext super delegate --from ${kept.id}\` when a slot frees`, { ...facts, pooled: kept.id, reused: kept.reused, kept: true });
@@ -1169,6 +1171,12 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       if (heir) s.pad = s.pad?.map((p) => (p.for === heir ? { ...p, for: sid } : p));
       // Its agenda line, in the same write: Now, and it follows this child from here on.
       if (noteText) noted = putPadNote(s, 'now', noteText, sid);
+      // ajanda-filtre C1: the owner message this job answers starts the line's thread.
+      const pair = noted && noted !== 'full' ? ownerPair(c, origin) : undefined;
+      if (pair && noted && noted !== 'full') {
+        linkLineRef(s, { note: noted.id }, pair);
+        noted = s.pad?.find((p) => p.id === (noted as SuperPadItem).id) ?? noted;
+      }
     }, {
       // A failing day archive on a full pad takes this line out again (store.ts): `noteRefused`.
       onPadRefused: (ids) => { if (noted && noted !== 'full' && ids.includes(noted.id)) noted = 'full'; },
@@ -1319,6 +1327,18 @@ function jobOrigin(c: SuperCaller, b: Record<string, unknown>): { ref?: string; 
   return ownersTurn(c) && c.state.session ? { ref: superOwnerMsgRef(c.state.session) } : {};
 }
 
+/** ajanda-filtre C1: the owner message `ref` as an agenda line links it: the ref plus when it
+ *  ARRIVED. His current turn's message carries its arrival (inbox.ts `superOwnerMsgAt`); a
+ *  `--origin` outside his turn takes the open debt's time for that message, else now. */
+function ownerPair(c: SuperCaller, ref: string | undefined): PadRef | undefined {
+  if (!ref || !MSG_REF_RE.test(ref)) return undefined;
+  const sid = c.state.session;
+  const turnAt = sid && superOwnerMsgRef(sid) === ref ? superOwnerMsgAt(sid) : undefined;
+  if (turnAt !== undefined) return { ref, at: turnAt };
+  const debt = (c.state.owed ?? []).find((o) => o.kind === 'msg' && !o.closed && (o.ref === ref || (o.parts ?? []).includes(ref)));
+  return { ref, at: debt?.at ?? Date.now() };
+}
+
 /** His word reached the child (`send`, `resume` in his turn): its next result is his again, and
  *  answers the message he wrote in this turn. */
 async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, unknown> = {}): Promise<void> {
@@ -1332,6 +1352,9 @@ async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, un
     if (!x) return;
     x.awaited = true;
     if (origin) x.origin = origin; else delete x.origin;
+    // ajanda-filtre C1: his message moved this job; every line about it links it.
+    const pair = ownerPair(c, origin);
+    if (pair) linkLineRef(s, { child }, pair);
   })
     // His message already went in: a record that could not be written must not refuse (and resend) it.
     .catch((err) => console.warn(`[super] could not mark ${child} as the owner's job: ${(err as Error).message}`));
@@ -1429,9 +1452,14 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
   return note;
 }
 
-export async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main'): Promise<SuperPadItem | 'full'> {
+export async function addPadNote(root: string, section: PadSection, text: string, forChild?: string, id: SuperId = 'main', pair?: PadRef): Promise<SuperPadItem | 'full'> {
   let out: SuperPadItem | 'full' = 'full';
-  await writeSuper(root, id, (s) => { out = putPadNote(s, section, text, forChild); }, {
+  await writeSuper(root, id, (s) => {
+    const put = putPadNote(s, section, text, forChild);
+    // ajanda-filtre C1: the owner message of this turn moved this line (new or the same line).
+    if (put !== 'full' && pair) linkLineRef(s, { note: put.id }, pair);
+    out = put === 'full' ? put : s.pad?.find((p) => p.id === put.id) ?? put;
+  }, {
     onPadRefused: (ids) => { if (out !== 'full' && ids.includes(out.id)) out = 'full'; },
   });
   return out;
@@ -2579,7 +2607,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const text = oneLine(typeof b.text === 'string' ? b.text : '').slice(0, MAX_OWNER_TEXT);
     if (!text) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
     // Its pictures (task a-picture-question…): `--show`, the child's own option previews (read
-    // against its worktree, or the project), else the pictures shown for its job lately.
+    // against its worktree, or the project); nothing else is guessed.
     const child = item.sessionId;
     const pq = pendingRequest(getChat(child), item.requestId);
     const images = pq && !pq.isPermission ? pq.images ?? [] : [];
@@ -2616,10 +2644,6 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
     });
     const show = finishAskShow(c, state, id as string, prep, shown);
-    // A plan child's question whose summary the Super's text never gave: sent, the Super is told
-    // to write it now (owner 2026-11-13: three sentences that pointed at a stage).
-    const superText = getChat(c.who.sessionId)?.lastAssistantText;
-    const warning = planTextWarning(childMode, superText?.[superText.length - 1]);
     // What reached the owner, told as it is (owner-question.ts): a Telegram copy counts only once
     // it LANDED, so its send is waited for (bounded). Only a question he has seen makes the
     // turn's end no second ping; one nobody saw keeps the reply's own notch row.
@@ -2627,7 +2651,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const reach = ownerQuestionReach(state, id as string);
     if (reach.reached) noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
-    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
+    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show });
   },
 
   'queue-done': async (c, b, res) => {
@@ -2713,6 +2737,17 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   // ── The owner's scheduled jobs (super-rutin C4): main only, its own record only ──
+  'room-say': async (c, b, res) => {
+    // tg-grup G8: only the Super the owner's Onayla went to posts, once, to a still-bound group.
+    const request = str(b.request);
+    const text = typeof b.text === 'string' ? b.text : '';
+    if (!request) { refuse(res, 400, 'invalid_args', 'name the group request (its id is in the turn that brought it)'); return; }
+    const rooms = (await import('../telegram/hub.js')).telegramHub()?.rooms;
+    if (!rooms) { refuse(res, 503, 'telegram_unavailable', 'Telegram works only in the Mac app'); return; }
+    const r = await rooms.say({ root: resolve(c.who.contextRoot), superId: c.superId }, request, text);
+    if (!r.ok) { refuse(res, r.status, r.error, r.message); return; }
+    ok(res, { group: r.group });
+  },
   schedule: async (c, b, res) => {
     if (c.superId !== 'main') { refuse(res, 403, 'main_only', 'only the project\'s Super Agent sets the owner\'s scheduled jobs'); return; }
     if (!callerOwnsSuper(c, b, res)) return;
@@ -2741,7 +2776,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const over = padJobOver(c.state, forChild);
       if (over) { refuse(res, 409, 'job_over', `that job is ${over}; a line about work that goes on: \`super note add now "<line>"\` without --for`); return; }
     }
-    const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild, c.superId);
+    const origin = jobOrigin(c, b);
+    if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
+    const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild, c.superId, ownerPair(c, origin.ref));
     if (added === 'full') { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
     ok(res, { note: added });
   },
@@ -2865,7 +2902,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (offCard.length) { refuse(res, 400, 'off_card', offCardRefusal(offCard)); return; }
     const { ownerText: raw, options } = askSummary(spec);
     if (toMain) { await askMainSuper(c, res, spec, raw, audience as `main:${string}`); return; }
-    // Its pictures (task a-picture-question…): `--show`, the option previews, else the last set.
+    // Its pictures (task a-picture-question…): `--show`, else the option previews; nothing else.
     const prep = await prepareAskShow(c, b, res, imagesInPreviews(spec.questions), dirname(c.who.contextRoot));
     if (!prep) return;
     const batch = superOpenBatch(session);
@@ -4502,6 +4539,13 @@ export async function handleSuperAgendaDay(req: IncomingMessage, res: ServerResp
     const open = pad.filter((p) => p.section !== 'done' && localDay(p.bornAt ?? p.at) === date);
     sendJson(res, 200, { date, done, open });
   } catch (err) { storeRefusal(res, err); }
+}
+/** GET /api/super/agenda-days: the days that have a file, newest first (the agenda's search). */
+export async function handleSuperAgendaDays(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireSuperOwner(req, res)) return;
+  const superId = ownerSuperId(req, res, contextRoot);
+  if (!superId) return;
+  try { sendJson(res, 200, { days: await agendaDays(contextRoot, superId) }); } catch (err) { storeRefusal(res, err); }
 }
 export const handleSuperOpen = ownerRoute('open');
 export const handleSuperMember = ownerRoute('member');

@@ -30,6 +30,7 @@
  */
 
 import type { AppUpdateOrigin } from '../lib/apps/assistant.js';
+import { ASK_RULES_SHORT } from '../lib/ask-rules.js';
 
 /**
  * Kept in lockstep with what the transcript actually renders:
@@ -89,12 +90,15 @@ nothing is lost, it was ceremony. A drawing to KEEP (board, Excalidraw file) is 
 rules. Never guess a class.
 `;
 
-/** How to ask — the AskUserQuestion card (`chat/SurveyCard.tsx`) and the CLI fields the
- *  spawn switches on for it (`CHAT_QUESTION_ENV` in `routes/agent-chat.ts`). */
+/** When to ask (`lib/ask-rules.ts`, owner 2026-11-18: fewer cards, by kind) and how — the
+ *  AskUserQuestion card (`chat/SurveyCard.tsx`) and the CLI fields the spawn switches on for
+ *  it (`CHAT_QUESTION_ENV` in `routes/agent-chat.ts`). */
 const BRIEFING_ASK = `## Asking — a card read cold
 
-The user runs several sessions and reaches your AskUserQuestion card from a notification,
-not from your last message. Every card must stand alone:
+${ASK_RULES_SHORT}
+
+When you do ask: the user runs several sessions and reaches your AskUserQuestion card from a
+notification, not from your last message. Every card must stand alone:
 
 - \`title\` — always: the work and the decision point, "Invoice export → date format".
 - \`question\` — the decision in plain words; no names only this conversation knows.
@@ -377,8 +381,10 @@ Sleep is not offered here: never suggest one.
  */
 export const SUPER_CHILD_BRIEFING = `## Reaching the Super Agent
 
-The Super Agent started you and reads what you write. To ask it something or tell it you are
-blocked, use AskUserQuestion: the card goes into the Super Agent's queue, it answers it or asks
+The Super Agent started you and reads what you write. What your brief, the project and the
+brain settle is never asked: take the call that is yours by the Asking rules above and name it
+in your last reply. Truly blocked, or the choice is the owner's by kind:
+use AskUserQuestion: the card goes into the Super Agent's queue, it answers it or asks
 the owner for you, and the answer comes back as the card's answer. When it asks the owner, he
 gets YOUR card itself, in the Super Agent's chat, so write it to be read cold, exactly as the
 Asking rules above say. Your last reply of a turn

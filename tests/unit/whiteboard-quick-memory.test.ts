@@ -3,10 +3,10 @@
  * the prompt hook's recall block for the request, and Claude's read-only search envelope.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { quickBrainRoot, quickBrainToolArgs, quickCliShimDir, quickRecallBlock, QUICK_RECALL_COMMAND, QUICK_SECRET_FILES } from '../../src/lib/whiteboards/quick-memory.js';
+import { quickBrainRoot, quickBrainToolArgs, quickCliShimDir, quickRecallBlock, quickRunDir, QUICK_RECALL_COMMAND, QUICK_SECRET_FILES } from '../../src/lib/whiteboards/quick-memory.js';
 import { APP_CREDENTIAL_FILES } from '../../src/lib/apps/assistant.js';
 import { quickEditArgs, quickEditSystemPrompt, quickEditUserMessage, QUICK_MEMORY_RULES, QUICK_MEMORY_RULES_NO_SEARCH } from '../../src/lib/whiteboards/quick-edit.js';
 import { quickReadable } from '../../src/lib/whiteboards/quick-readable.js';
@@ -122,6 +122,13 @@ describe('the words', () => {
     expect(quickEditUserMessage('x', '{}', 'n0nce')).not.toContain('<memory-');
   });
 
+  it('a run that may search is told the brain folder; its working folder is empty', () => {
+    expect(quickEditUserMessage('x', '{}', 'n0nce', undefined, undefined, '/b/_dream_context')).toContain('The brain folder (read its files by their full path under it): /b/_dream_context');
+    expect(quickEditUserMessage('x', '{}', 'n0nce')).not.toContain('The brain folder');
+    expect(QUICK_MEMORY_RULES).toContain('relative to the brain folder the message names');
+    expect(QUICK_MEMORY_RULES).not.toContain('relative to your working folder');
+  });
+
   it('every tool is told to search only when the request needs project knowledge', () => {
     expect(quickEditSystemPrompt('KIT')).toContain(QUICK_MEMORY_RULES);
     expect(QUICK_MEMORY_RULES).toContain('dreamcontext memory recall');
@@ -143,6 +150,27 @@ describe('mirrors and the CLI', () => {
     if (process.platform === 'win32') { expect(dir).toBeNull(); return; }
     expect(readFileSync(join(dir!, 'dreamcontext'), 'utf-8')).toContain("exec '/n/node' '/c/cli.js' \"$@\"");
     expect(statSync(join(dir!, 'dreamcontext')).mode & 0o111).not.toBe(0);
+  });
+
+  it('the shim steps into the project first, so recall finds this vault from the empty run folder', () => {
+    const t = mkdtempSync(join(tmpdir(), 'dc-quick-shim-'));
+    try {
+      const dir = quickCliShimDir(t, '/n/node', '/c/cli.js', "/p/it's here");
+      if (process.platform === 'win32') { expect(dir).toBeNull(); return; }
+      expect(readFileSync(join(dir!, 'dreamcontext'), 'utf-8')).toContain(`cd '/p/it'\\''s here' || exit 1\nexec '/n/node' '/c/cli.js' "$@"`);
+    } finally { rmSync(t, { recursive: true, force: true }); }
+  });
+
+  it('the run folder is empty and owner-only, beside (never holding) the run\'s own files', () => {
+    const t = mkdtempSync(join(tmpdir(), 'dc-quick-run-'));
+    try {
+      writeFileSync(join(t, 'system-prompt.md'), 'SYS');
+      quickCliShimDir(t, '/n/node', '/c/cli.js', '/p');
+      const run = quickRunDir(t);
+      expect(run).toBe(join(t, 'run'));
+      expect(readdirSync(run)).toEqual([]);
+      if (process.platform !== 'win32') expect(statSync(run).mode & 0o777).toBe(0o700);
+    } finally { rmSync(t, { recursive: true, force: true }); }
   });
 });
 
