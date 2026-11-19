@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PROJECT_CONCURRENCY, tickAll, tickProject as tickProjectReal } from '../../src/lib/automations/tick.js';
 import { createAutomation, setAutomationEnabled, writeAutomationCache } from '../../src/lib/automations/store.js';
 import { enqueueFire, queuedFire } from '../../src/lib/automations/queue.js';
-import { registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
+import { approveAutomation, listDistinctProjects, registerProject, readDispatcherHeartbeat } from '../../src/lib/automations/registry.js';
 import { automationsLogPath } from '../../src/lib/automations/launchd.js';
 import { LOG_ROTATE_BYTES, type AutomationCache, type RunOutcome } from '../../src/lib/automations/types.js';
 import type { runAutomation } from '../../src/lib/automations/runner.js';
@@ -449,6 +449,59 @@ describe('tickAll', () => {
       expect(slugsRan).toEqual(['alpha', 'beta']);
     } finally {
       rmSync(projectB, { recursive: true, force: true });
+    }
+  });
+
+  it('a code repo whose _dream_context links to a registered brain ticks that brain ONCE, from the root holding its approvals', async () => {
+    // Registered FIRST, so registry order alone would pick it: the link must still lose.
+    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
+    try {
+      symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
+      registerProject(codeRepo, home);
+      registerProject(projectRoot, home);
+      const m = makeDue('gece');
+      approveAutomation(projectRoot, m, NOW, home);
+      const calls: Array<{ slug: string; fireAt: Date | undefined }> = [];
+      const roots: string[] = [];
+      const runImpl = vi.fn(async (c: string, slug: string, o) => { roots.push(c); calls.push({ slug, fireAt: o?.fireAt }); return fakeOutcome(slug, 'ok'); }) as unknown as typeof runAutomation;
+      const lines: string[] = [];
+
+      const result = await tickAll({ now: NOW, home, runImpl, log: (l) => lines.push(l) });
+
+      expect(calls.map((c) => c.slug)).toEqual(['gece']);
+      expect(roots).toEqual([contextRoot]);
+      expect(result.projects.map((p) => p.projectRoot)).toEqual([projectRoot]);
+      expect(listDistinctProjects(home).aliases).toEqual([{ root: codeRepo, sameAs: projectRoot }]);
+    } finally {
+      rmSync(codeRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('a linked root that holds its OWN approvals keeps ticking (an older version approved through it): no approved routine stops', () => {
+    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
+    try {
+      symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
+      registerProject(codeRepo, home);
+      registerProject(projectRoot, home);
+      approveAutomation(projectRoot, makeDue('in-brain'), NOW, home);
+      approveAutomation(codeRepo, makeDue('via-code-repo'), NOW, home);
+      const d = listDistinctProjects(home);
+      expect(d.roots.sort()).toEqual([codeRepo, projectRoot].sort());
+      expect(d.aliases).toEqual([]);
+    } finally {
+      rmSync(codeRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('two linked roots with no approvals anywhere keep the real folder, not the link', () => {
+    const codeRepo = mkdtempSync(join(tmpdir(), 'dc-automations-tick-code-'));
+    try {
+      symlinkSync(contextRoot, join(codeRepo, '_dream_context'));
+      registerProject(codeRepo, home);
+      registerProject(projectRoot, home);
+      expect(listDistinctProjects(home).roots).toEqual([projectRoot]);
+    } finally {
+      rmSync(codeRepo, { recursive: true, force: true });
     }
   });
 

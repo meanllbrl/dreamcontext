@@ -59,11 +59,11 @@ describe('the side menu counts what main holds for a member', () => {
     ];
     const waits = memberWaitCounts(queue);
     const identities = [{ slug: 'turing', title: 'Turing', hasPhoto: false }];
-    const row = teamChildOf('acme', ekipOf({ members: [summary], identities, waits }), false);
+    const row = teamChildOf('acme', ekipOf({ members: [summary], identities, waits }), true, false);
     expect(row?.count).toBe(2);
     expect(row?.asking).toBe(true);
     // No counts read yet: the row is what the summary alone says.
-    expect(teamChildOf('acme', ekipOf({ members: [summary], identities }), false)?.count).toBe(0);
+    expect(teamChildOf('acme', ekipOf({ members: [summary], identities }), true, false)?.count).toBe(0);
   });
 
   it('the classic rail reads main record and feeds buildEkip', () => {

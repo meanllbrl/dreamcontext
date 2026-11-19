@@ -55,10 +55,10 @@ export function printGateReport(r: GateReport, changed?: readonly string[] | nul
     for (const b of r.blocks) console.log(`  ✗ ${b.file}${b.line ? `:${b.line}` : ''}  ${b.label}`);
   }
   if (r.approvable.length) {
-    console.log('Waits for the owner, line by line ("a generic word, let it go"):');
+    console.log('Waits for the owner (generic words; `--ask` lists them on his card by word and one Onayla lets them all go):');
     for (const a of r.approvable) console.log(`  ? ${a.file}${a.line ? `:${a.line}` : ''}  ${a.label}: "${a.term}"  [${a.id}]`);
   }
-  console.log(r.ok ? 'Gate: clear.' : `Gate: ${r.blocks.length} to fix, ${r.unapproved.length} to approve.`);
+  console.log(r.ok ? 'Gate: clear.' : r.blocks.length ? `Gate: ${r.blocks.length} to fix, ${r.unapproved.length} to approve.` : `Gate: ${r.unapproved.length} line(s) for the owner: \`--ask\` puts them on his card (his Onayla passes them); a --go under his Share click names them with --approve.`);
 }
 
 function suggestions(projectRoot: string, f: Pick<ConfigField, 'type' | 'choices'>): string[] {
@@ -267,7 +267,7 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
     .option('--fresh', "With --go: publish to a NEW repo with today's version only (when the old repo is gone, public, or has history a publish did not make); default name <slug>-public")
     .option('--grant <id>', "The one-hour grant from the owner's Publish click (in the prompt it handed you)")
     .option('--invite <logins...>', 'GitHub usernames to invite (a private app)')
-    .option('--approve <ids...>', 'Generic-word lines the owner let go in the chat (the [id] in the report)')
+    .option('--approve <ids...>', "With --go under the owner's Share click: generic-word lines he let go (the [id] in the report). Not needed with --ask: its card lists them and his Onayla passes them")
     .option('--note <text>', "What changed, one line (becomes the README's What's new entry and the commit)")
     .option('--tagline <text>', "The store page's one line (README tagline:)")
     .option('--confirm-name <name>', "Not needed with a grant (the owner's \"Share publicly\" click confirms a public app)")
@@ -284,7 +284,6 @@ export function registerAppsShareCommands(apps: Command, h: Helpers): void {
           await askOwner(p, {
             action: 'publish', slug, ...(opts.public ? { public: true } : {}),
             invite: (opts.invite ?? []).flatMap((x) => x.split(/[\s,]+/)).filter(Boolean),
-            approve: opts.approve ?? [],
             ...(opts.note !== undefined ? { note: opts.note } : {}),
             ...(opts.catalog === false ? { catalog: false } : {}),
           }, opts.wait, opts.json);

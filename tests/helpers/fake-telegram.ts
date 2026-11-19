@@ -14,6 +14,8 @@ export class FakeTelegram {
   bots = new Map<string, { id: number; username: string }>();
   webhook = '';
   files = new Map<string, Buffer>();
+  /** Every file uploaded in a multipart call: its method, form field, file name and bytes. */
+  uploads: { method: string; field: string; name: string; bytes: Buffer }[] = [];
   /** Methods that answer an error: method → error_code. */
   failing = new Map<string, number>();
   /** Methods that fail exactly once more each (method → error_code), then work. */
@@ -54,7 +56,12 @@ export class FakeTelegram {
     }
     let params: Record<string, unknown> = {};
     if (typeof init?.body === 'string') params = JSON.parse(init.body);
-    else if (init?.body instanceof FormData) for (const [k, v] of init.body.entries()) params[k] = typeof v === 'string' ? v : '[file]';
+    else if (init?.body instanceof FormData) {
+      for (const [k, v] of init.body.entries()) {
+        params[k] = typeof v === 'string' ? v : '[file]';
+        if (typeof v !== 'string') this.uploads.push({ method, field: k, name: (v as File).name ?? '', bytes: Buffer.from(await (v as Blob).arrayBuffer()) });
+      }
+    }
     if (method !== 'getUpdates') this.calls.push({ token, method, params });
     const slowMethod = method !== 'getUpdates' ? this.slowMethods.get(method) : undefined;
     if (slowMethod) await new Promise((r) => setTimeout(r, slowMethod));

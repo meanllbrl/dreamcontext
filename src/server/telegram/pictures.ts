@@ -13,10 +13,16 @@ import { RENDER_MAX_SLICES } from '../../lib/telegram/contract.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { sendHubCommand, superTokenOfSession, tokenOfSession } from '../../lib/window-control.js';
 import type { UploadFile } from '../../lib/telegram/transport.js';
+import { isLayoutRender } from '../../lib/whiteboards/render-mark.js';
 import type { ActiveBinding } from './hub.js';
 
 export type MediaKind = 'photo' | 'video' | 'document';
-export interface MediaItem { kind: MediaKind; file: UploadFile; title: string }
+export interface MediaItem {
+  kind: MediaKind; file: UploadFile; title: string;
+  /** What the file was made from when its own bytes vary run to run (a page printed to PDF
+   *  stamps its creation date): equal sources = the same file (sent-once.ts). */
+  source?: string;
+}
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -95,6 +101,15 @@ export function overPhotoDimensions(item: MediaItem): boolean {
   return !!s && s.w > 0 && s.h > 0 && (s.w + s.h > 10_000 || Math.max(s.w / s.h, s.h / s.w) > 20);
 }
 
+/**
+ * The name a picture from a file goes under. A `whiteboard render` layout check (its kind is in
+ * its own bytes) is named a draft: its pictures are empty boxes, and the owner must not take it
+ * for the board (owner, 2026-11-17). It still goes: a guard explains, never hides.
+ */
+export function pictureTitle(data: Buffer, name: string): string {
+  return isLayoutRender(data) ? `Yerleşim taslağı, panonun görüntüsü değil · ${name}` : name;
+}
+
 /** One picture's name on one line, at most 200 characters (a caption is never cut mid-line). */
 function pictureName(title: string): string {
   // Redacted whole BEFORE the cut: a secret cut short would slip under its pattern's length.
@@ -120,7 +135,7 @@ export function numberedCaption(n: number, title: string): string {
  * photo after the album, so it is seen whole; one beyond Telegram's photo dimensions as a document.
  * Without `named` (slices of one card): no captions, as before.
  */
-export async function sendPictures(ab: ActiveBinding, items: MediaItem[], named?: boolean): Promise<{ sent: MediaItem[]; unsent: MediaItem[] }> {
+export async function sendPictures(ab: ActiveBinding, items: MediaItem[], named?: boolean, numberFrom = 0): Promise<{ sent: MediaItem[]; unsent: MediaItem[] }> {
   const fit: MediaItem[] = [];
   const unsent: MediaItem[] = [];
   let total = 0;
@@ -138,7 +153,9 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], named?
   }
   if (fit.length === 1) {
     const one = fit[0];
-    const ok = !!(await sendMedia(ab, overPhotoDimensions(one) ? { ...one, kind: 'document' } : one, caption(pictureName(one.title))));
+    // One of a longer run (a later album of the same message) keeps its number.
+    const cap = numberFrom > 0 ? numberedCaption(numberFrom + 1, one.title) : caption(pictureName(one.title));
+    const ok = !!(await sendMedia(ab, overPhotoDimensions(one) ? { ...one, kind: 'document' } : one, cap));
     return ok ? { sent: fit, unsent } : { sent: [], unsent: [...fit, ...unsent] };
   }
   // Numbers follow the order he sees: the album first (grid order = sent order), then each
@@ -149,11 +166,11 @@ export async function sendPictures(ab: ActiveBinding, items: MediaItem[], named?
   const grid = fit.filter((m) => !apart(m));
   const alone = fit.filter(apart);
   const order = [...grid, ...alone];
-  const num = new Map(order.map((m, i) => [m, i + 1]));
+  const num = new Map(order.map((m, i) => [m, numberFrom + i + 1]));
   const sent = new Set<MediaItem>();
   if (grid.length >= 2) {
     if (await sendAlbum(ab, grid, (m) => numberedCaption(num.get(m)!, m.title))) for (const m of grid) sent.add(m);
-  } else if (grid.length === 1 && await sendMedia(ab, grid[0], numberedCaption(1, grid[0].title))) sent.add(grid[0]);
+  } else if (grid.length === 1 && await sendMedia(ab, grid[0], numberedCaption(num.get(grid[0])!, grid[0].title))) sent.add(grid[0]);
   for (const m of alone) {
     const asSent = overPhotoDimensions(m) ? { ...m, kind: 'document' as const } : m;
     if (await sendMedia(ab, asSent, numberedCaption(num.get(m)!, m.title))) sent.add(m);
@@ -179,12 +196,38 @@ export async function sendWhole(ab: ActiveBinding, item: MediaItem, captionHtml:
 
 const METHOD: Record<MediaKind, string> = { photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' };
 
+/** How long one upload may wait in all for Telegram's "too many requests" before it gives up. */
+export const UPLOAD_WAIT_MAX_MS = 90_000;
+/** The wait itself (a test makes it instant). */
+export const uploadTiming = { wait: (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms)) };
+
+/**
+ * One upload, waiting out Telegram's flood limit: a 429 carries `retry_after`, and the same
+ * upload goes again after it, while the waits stay within {@link UPLOAD_WAIT_MAX_MS}. Many albums
+ * in one answer (a board exported section by section) reach the chat instead of failing from
+ * the first refusal on. Any other failure is null at once, as before.
+ */
+async function uploadPatiently<T>(ab: ActiveBinding, method: string, params: Record<string, unknown>, files: Record<string, UploadFile>): Promise<T | null> {
+  let waited = 0;
+  for (;;) {
+    try {
+      return await ab.transport.upload<T>(method, params, files);
+    } catch (err) {
+      const after = (err as { retryAfter?: unknown }).retryAfter;
+      const ms = typeof after === 'number' && Number.isFinite(after) && after > 0 ? Math.ceil(after * 1000) : 0;
+      if (!ms || waited + ms > UPLOAD_WAIT_MAX_MS) return null;
+      waited += ms;
+      await uploadTiming.wait(ms);
+    }
+  }
+}
+
 /** One media message; `buttons` as an inline keyboard (callback or url buttons). */
 export async function sendMedia(ab: ActiveBinding, item: MediaItem, captionHtml?: string, keyboard?: unknown[][]): Promise<{ message_id: number } | null> {
   const params: Record<string, unknown> = { chat_id: ab.binding.chatId, parse_mode: 'HTML' };
   if (captionHtml) params.caption = captionHtml;
   if (keyboard?.length) params.reply_markup = { inline_keyboard: keyboard };
-  const r = await ab.transport.upload<{ message_id?: number }>(METHOD[item.kind], params, { [item.kind]: item.file }).catch(() => null);
+  const r = await uploadPatiently<{ message_id?: number }>(ab, METHOD[item.kind], params, { [item.kind]: item.file });
   return r && typeof r === 'object' && Number.isSafeInteger(r.message_id) ? { message_id: r.message_id! } : r ? { message_id: 0 } : null;
 }
 
@@ -198,7 +241,7 @@ export async function sendAlbum(ab: ActiveBinding, items: MediaItem[], captionOf
     const cap = captionOf?.(it);
     return { type: it.kind, media: `attach://f${i}`, ...(cap ? { caption: cap, parse_mode: 'HTML' } : {}) };
   });
-  const r = await ab.transport.upload('sendMediaGroup', { chat_id: ab.binding.chatId, media }, files).catch(() => null);
+  const r = await uploadPatiently(ab, 'sendMediaGroup', { chat_id: ab.binding.chatId, media }, files);
   return !!r;
 }
 

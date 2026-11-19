@@ -39,7 +39,8 @@ import { startSuperSchedule } from './super-schedule.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
+import { setWindowControlBase } from '../lib/window-control.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperPadAdd, handleSuperPadRemove, handleSuperAgendaDay, handleSuperAgendaDays, handleSuperOpen, handleSuperMember, handleSuperOwedDrop, handleSuperStateGet, handleSuperVerb, handleSuperOwnerAnswer } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksFilingApproval, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksAgentAction, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -693,6 +694,7 @@ export function buildRouter(): Router {
   router.post('/api/super/pad/add', handleSuperPadAdd);
   router.post('/api/super/pad/remove', handleSuperPadRemove);
   router.get('/api/super/agenda-day', handleSuperAgendaDay);
+  router.get('/api/super/agenda-days', handleSuperAgendaDays);
   router.post('/api/super/open', handleSuperOpen);
   router.post('/api/super/member', handleSuperMember);
   router.post('/api/assistant/look', handleAssistantLook);
@@ -1216,7 +1218,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-group', '/api/telegram-manager', '/api/mac-owner'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1334,7 +1336,8 @@ export function resolveRequestVault(req: IncomingMessage): string | null | 'INVA
   return join(v.path, '_dream_context');
 }
 
-function getDashboardDir(): string {
+/** Where the dashboard build this CLI ships lives (`dist/dashboard`). */
+export function getDashboardDir(): string {
   const __dirname = fileURLToPath(new URL('.', import.meta.url));
   // In dist: dist/dashboard/ is sibling to dist/index.js
   return resolve(__dirname, 'dashboard');
@@ -1631,7 +1634,13 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // The dashboard's own port: no web card may load it (T1). Released when it closes.
       {
         const a = server.address();
-        if (a && typeof a === 'object') server.once('close', claimOwnedPort(a.port));
+        if (a && typeof a === 'object') {
+          server.once('close', claimOwnedPort(a.port));
+          // Where a chat's CLI calls the window verbs: known from the listen on, not only from a
+          // window's first socket, so a Super the server starts with no window (headless-super.ts:
+          // Telegram while the app's window is hidden) gets its window token like any other.
+          setWindowControlBase(`http://127.0.0.1:${a.port}`);
+        }
       }
       const shownHost = host === '127.0.0.1' ? 'localhost' : host;
       const url = `http://${shownHost}:${port}`;

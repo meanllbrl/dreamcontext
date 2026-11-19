@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { Socket } from 'node:net';
 import { Readable } from 'node:stream';
 import {
-  recallViaDashboard, renderRecallBlock, toWirePromptHit,
+  recallViaDashboard, renderRecallBlock, toWirePromptHit, resolveRecallServerPort,
 } from '../../src/cli/commands/hook.js';
 import { handleRecallPromptPost } from '../../src/server/routes/recall.js';
 import type { RecallHit, CorpusDoc } from '../../src/lib/recall.js';
@@ -128,5 +128,47 @@ describe('POST /api/recall/prompt refuses what it must not serve', () => {
     const r = await call('127.0.0.1', { prompt: 'q', root: a }, a);
     expect(r.status).toBe(409);
     expect(r.body).toContain('not_ready');
+  });
+});
+
+/** A fake home whose `.dreamcontext/desktop-server.json` names `port` and `pid` (the desktop app's record). */
+function homeWithDesktopServer(port: number, pid: number): string {
+  const home = mkdtempSync(join(tmpdir(), 'dc-home-'));
+  dirs.push(home);
+  mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  writeFileSync(join(home, '.dreamcontext', 'desktop-server.json'), JSON.stringify({
+    schema: 1, pid, port, launchToken: 'synthetic-token', appBundleId: 'com.example.app',
+  }));
+  return home;
+}
+
+describe('resolveRecallServerPort: the desktop app server that holds the model warm', () => {
+  it('the env override wins over the app record', () => {
+    const home = homeWithDesktopServer(50123, process.pid);
+    expect(resolveRecallServerPort({ DREAMCONTEXT_DASHBOARD_PORT: '5000' }, home)).toBe(5000);
+  });
+
+  it('with no env, the port the desktop app recorded, while its pid is alive', () => {
+    const home = homeWithDesktopServer(50123, 4242);
+    expect(resolveRecallServerPort({}, home, (pid) => pid === 4242)).toBe(50123);
+  });
+
+  it('a record whose pid is gone, a malformed record or none at all fall back to 4173', () => {
+    expect(resolveRecallServerPort({}, homeWithDesktopServer(50123, 4242), () => false)).toBe(4173);
+    const bad = homeWithDesktopServer(50123, 4242);
+    writeFileSync(join(bad, '.dreamcontext', 'desktop-server.json'), '{"schema":1,"port":"x"}');
+    expect(resolveRecallServerPort({}, bad, () => true)).toBe(4173);
+    const none = mkdtempSync(join(tmpdir(), 'dc-home-'));
+    dirs.push(none);
+    expect(resolveRecallServerPort({}, none, () => true)).toBe(4173);
+    expect(resolveRecallServerPort({}, homeWithDesktopServer(70000, 4242), () => true)).toBe(4173);
+  });
+
+  it('recallViaDashboard with no port reaches the app server named in the record', async () => {
+    const fake = await fakeDashboard(() => ({ status: 200, json: { label: 'Hybrid · local', hits: [toWirePromptHit(hit('alpha', 'knowledge', 3))] } }));
+    const home = homeWithDesktopServer(fake.port, process.pid);
+    const r = await recallViaDashboard('what about alpha', '/v/_dream_context', { home });
+    expect(fake.seen).toHaveLength(1);
+    expect(r?.hits.map((h) => h.doc.slug)).toEqual(['alpha']);
   });
 });

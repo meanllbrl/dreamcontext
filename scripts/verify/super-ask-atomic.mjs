@@ -348,9 +348,10 @@ async function main() {
     await page.screenshot({ path: join(OUT, '05-super-legacy-card-1440.png') });
     ok('…drawn by the chat\'s own card (.chat-surveycard with its lettered options)', (await legacyCard.locator('.chat-surveycard .chat-surveycard-opt').count()) >= 2);
     // "Unclear — ask again" on it.
-    const unclear = legacyCard.locator('.chat-surveycard-unclear');
-    ok('…it offers "Unclear — ask again"', (await unclear.count()) === 1);
-    await unclear.click().catch(() => {});
+    const more = legacyCard.locator('.chat-surveycard-more-btn');
+    ok('…it offers "Unclear — ask again" (in its more menu)', (await more.count()) === 1);
+    await more.click().catch(() => {});
+    await legacyCard.locator('[role="menuitem"]').first().click().catch(() => {});
     ok('Unclear sends ONE `[super answer] … unclear` message to the super', await until(page, async () => reports().some((r) => r.kind === 'answer' && /^\[super answer\] item=\S+ unclear/.test(r.text)), 20000), JSON.stringify(reports().filter((r) => r.role === 'super').slice(-3)));
     ok('…the card goes, the transcript shows its receipt', await until(page, async () => (await legacyCard.count()) === 0 && (await centre.locator('[data-testid="super-answer-receipt"]').filter({ hasText: /ask again/ }).count()) === 1, 15000));
 

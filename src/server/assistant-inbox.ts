@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { listVaults } from '../lib/vaults.js';
-import { listAutomations, resolveAutomationPhoto } from '../lib/automations/store.js';
+import { listAutomations, resolveMemberPhoto } from '../lib/automations/store.js';
 import { buildFeed } from '../lib/automations/feed.js';
 import { superRunQuiet } from '../lib/automations/super-quiet.js';
 import { plainPostText } from '../lib/automations/threads.js';
@@ -105,7 +105,7 @@ export function runningAutomations(now = Date.now()): RunningAutomation[] {
       out.push({
         // Who is working: the teammate's name, the one the AI Team page lists it under.
         vault: p.vault, slug, title: m.agentTitle || m.title, since: a.since, runId: a.runId,
-        hasPhoto: resolveAutomationPhoto(p.contextRoot, m.photo) !== null,
+        hasPhoto: resolveMemberPhoto(p.contextRoot, m.agent || m.slug, m.photo) !== null,
         ...(a.runId && superRunQuiet(p.contextRoot, slug, a.runId) ? { superJob: true as const } : {}),
       });
     }

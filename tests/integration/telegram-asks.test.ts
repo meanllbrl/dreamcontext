@@ -104,6 +104,55 @@ describe('a Telegram turn that only asked (owner report 2026-11-09)', () => {
     expect(tg.texts().some((t) => t.includes('Bu tur cevap yazmadan bitti'))).toBe(false);
   });
 
+  it('a line after its own card in the same turn never reaches Telegram; the line before it and the next turn do (kitUP, owner 2026-11-18)', async () => {
+    const item = { id: 'ask-w', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 0, ownerText: 'Raf?', ask: { questions: [{ question: 'Raf hangi hâliyle kalsın?', options: [{ label: 'Küçük rakam' }, { label: 'Büyük rakam' }] }] } };
+    await writeState({});
+    const sent: string[] = [];
+    const h = reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { sent.push(t); h.userSent(t, { source: 'telegram-text' }); return { ok: true }; }, interrupt: () => {} });
+    const say = (text: string) => h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
+    tg.push(TOKEN, textUpdate(OWNER, 'rafı yeniden düşün'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    say('Raf için üç seçenek çizdim.');
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'dreamcontext super ask' } }] } });
+    item.createdAt = Date.now();
+    await writeState({ queue: [item] });
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    say('Raf için seçimini bekliyorum. Hepsi tek kartta.');
+    await vi.waitFor(() => expect(buttonMsg('Büyük rakam')).toBeTruthy());
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(tg.delivered.some((t) => t.includes('üç seçenek çizdim'))).toBe(true);
+    expect(tg.delivered.some((t) => t.includes('seçimini bekliyorum'))).toBe(false);
+    // The order on his phone: the line, then the card, nothing after it.
+    const lineAt = tg.calls.findIndex((c) => String(c.params.text ?? '').includes('üç seçenek'));
+    expect(lineAt).toBeLessThan(tg.calls.indexOf(buttonMsg('Büyük rakam')));
+    // His next message opens a new turn: its short answer goes.
+    tg.push(TOKEN, textUpdate(OWNER, 'bir de kitap detayı?'));
+    await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
+    say('Kitap detayı beyaz kaldı.');
+    // A short unmarked text waits for its turn's end (hub.ts `tails`): the turn ends.
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
+    await vi.waitFor(() => expect(tg.delivered.some((t) => t.includes('Kitap detayı beyaz kaldı'))).toBe(true), { timeout: 3000 });
+  });
+
+  it('an ask an earlier turn wrote, offered again mid-turn, never swallows this turn\'s short answer', async () => {
+    const item = { id: 'ask-old', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ownerText: 'Eski?', ask: { questions: [{ question: 'Eski soru?', options: [{ label: 'Evet' }, { label: 'Hayır' }] }] } };
+    await writeState({});
+    const sent: string[] = [];
+    const h = reg.registerChat({ sessionId: SID, conversationId: null, vault, mode: 'super' });
+    reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: async (t) => { sent.push(t); h.userSent(t, { source: 'telegram-text' }); return { ok: true }; }, interrupt: () => {} });
+    tg.push(TOKEN, textUpdate(OWNER, 'durum ne?'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    await writeState({ queue: [item] });
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'İki iş bitti, biri sürüyor.' }] } });
+    await vi.waitFor(() => expect(buttonMsg('Hayır')).toBeTruthy());
+    // A short unmarked text waits for its turn's end (hub.ts `tails`): the turn ends.
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
+    await vi.waitFor(() => expect(tg.delivered.some((t) => t.includes('İki iş bitti'))).toBe(true), { timeout: 3000 });
+  });
+
   it('an ask card whose send fails is not the turn speaking: the silent line still comes', async () => {
     const item = { id: 'ask-3', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ownerText: 'Ne düşünüyorsun?', ask: { questions: [{ question: 'Ne düşünüyorsun?', options: [] }] } };
     await writeState({});

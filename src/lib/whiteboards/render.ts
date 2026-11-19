@@ -3,6 +3,7 @@ import { boxesOverlap } from './layout.js';
 import { elementBBox, liveElements, unionBBox, type BBox } from './ops.js';
 import { FONT_ADVANCE, FONT_ROWS, lineRuns } from './pixel-font.js';
 import { Raster, ellipsePoly, roundRectPoly, strokePolys, type Pt, type RGB } from './raster.js';
+import { RENDER_KIND_KEY } from './render-mark.js';
 import { widgetPayloadOf, type WhiteboardElement } from './widgets.js';
 
 /**
@@ -14,6 +15,10 @@ import { widgetPayloadOf, type WhiteboardElement } from './widgets.js';
  * own size, alignment and line breaks. Widgets are cards with their title and kind, not
  * their live content; a picture is a placeholder box. Hachure fills are drawn as a light
  * solid fill. It is a layout proof: where things are, what covers what, what fits.
+ *
+ * The PNG says so in its bytes ({@link RENDER_KIND_KEY} = `layout`), so a layout check is never
+ * mistaken for the board's real look further down the line; `whiteboard export` (board-shots.ts)
+ * draws the real look in the app's own renderer.
  */
 
 export interface RenderOptions {
@@ -383,5 +388,9 @@ export function renderScene(elements: readonly WhiteboardElement[], opts: Render
     const fs = 14 / scale;
     drawText(ctx, [opts.outline.label], { x: o.x - pad, y: o.y - pad - fs * 1.5, w: Math.max(o.w, fs * 20), h: fs * 1.25 }, { fontSize: fs, color: HIGHLIGHT, map });
   }
-  return { png: ctx.r.toPng(), width, height, drawn };
+  const text = {
+    [RENDER_KIND_KEY]: 'layout',
+    Description: 'Layout check: pictures are placeholders, widgets are titled cards. Use whiteboard export for the real look.',
+  };
+  return { png: ctx.r.toPng(text), width, height, drawn };
 }

@@ -12,12 +12,14 @@ import {
   handleTasksChangelog,
   handleTasksInsert,
   handleTasksList,
+  handleTasksGet,
 } from '../../src/server/routes/tasks.js';
+import { readTombstones } from '../../src/lib/task-tombstones.js';
 
 /**
  * The sub-task link over the task routes (AC5): PATCH writes `parent_task` with the four
  * refusal codes, POST creates a subtask that inherits version + feature and may omit Why,
- * DELETE of a parent clears its children's link and deletes none of them. Plus the two small
+ * DELETE of a parent deletes its subtasks with it (a tombstone each). Plus the two small
  * route fixes (insert takes `workflow`; changelog creates a missing `## Changelog`) and the
  * list's `attachments` summary.
  */
@@ -154,17 +156,82 @@ describe('POST /api/tasks parent_task', () => {
   });
 });
 
+function tombstones(): Array<{ slug: string; reason?: string }> {
+  return readTombstones(contextRoot);
+}
+
 describe('DELETE /api/tasks/:slug of a parent', () => {
-  it('clears the children\'s link first and deletes none of them', async () => {
+  it('deletes the parent WITH its subtasks, each through backend.delete (a tombstone each)', async () => {
     writeTask('child-b', { parent_task: 'parent' });
     const r = makeRes();
-    await handleTasksDelete(delReq, r.res, { slug: 'parent' }, contextRoot);
+    await handleTasksDelete(jsonReq('DELETE', { reason: '  merged into   other ' }), r.res, { slug: 'parent' }, contextRoot);
     expect(r.status()).toBe(200);
-    expect(existsSync(join(contextRoot, 'state', 'parent.md'))).toBe(false);
-    for (const c of ['child-a', 'child-b']) {
-      expect(existsSync(join(contextRoot, 'state', `${c}.md`))).toBe(true);
-      expect(fmOf(c).parent_task).toBeNull();
+    expect(r.body().deleted.sort()).toEqual(['child-a', 'child-b', 'parent']);
+    for (const s of ['parent', 'child-a', 'child-b']) expect(existsSync(join(contextRoot, 'state', `${s}.md`))).toBe(false);
+    // Unrelated tasks stay.
+    expect(existsSync(join(contextRoot, 'state', 'loner.md'))).toBe(true);
+    const ts = tombstones();
+    expect(ts.map((t) => t.slug).sort()).toEqual(['child-a', 'child-b', 'parent']);
+    expect(ts.every((t) => t.reason === 'merged into other')).toBe(true);
+  });
+
+  it('a subtask deletes only itself, and a bare DELETE (no body) still works', async () => {
+    const r = makeRes();
+    await handleTasksDelete(delReq, r.res, { slug: 'child-a' }, contextRoot);
+    expect(r.status()).toBe(200);
+    expect(r.body().deleted).toEqual(['child-a']);
+    expect(existsSync(join(contextRoot, 'state', 'parent.md'))).toBe(true);
+    expect(tombstones().map((t) => t.slug)).toEqual(['child-a']);
+    expect(tombstones()[0].reason).toBeUndefined();
+  });
+
+  it('refuses a non-string or over-long reason and deletes nothing', async () => {
+    for (const reason of [42, 'x'.repeat(501)]) {
+      const r = makeRes();
+      await handleTasksDelete(jsonReq('DELETE', { reason }), r.res, { slug: 'parent' }, contextRoot);
+      expect(r.status()).toBe(400);
+      expect(r.body().error).toBe('invalid_reason');
     }
+    expect(existsSync(join(contextRoot, 'state', 'parent.md'))).toBe(true);
+    expect(existsSync(join(contextRoot, 'state', 'child-a.md'))).toBe(true);
+    expect(tombstones()).toEqual([]);
+  });
+
+  it('deletes exactly the subtasks the owner was shown, or nothing (409 with the live list)', async () => {
+    // The dialog showed only child-a; child-b was added since.
+    writeTask('child-b', { parent_task: 'parent' });
+    let r = makeRes();
+    await handleTasksDelete(jsonReq('DELETE', { children: ['child-a'] }), r.res, { slug: 'parent' }, contextRoot);
+    expect(r.status()).toBe(409);
+    expect(r.body().error).toBe('children_changed');
+    expect(r.body().children.sort()).toEqual(['child-a', 'child-b']);
+    for (const s of ['parent', 'child-a', 'child-b']) expect(existsSync(join(contextRoot, 'state', `${s}.md`))).toBe(true);
+    expect(tombstones()).toEqual([]);
+
+    // A malformed list is refused too.
+    r = makeRes();
+    await handleTasksDelete(jsonReq('DELETE', { children: 'child-a' }), r.res, { slug: 'parent' }, contextRoot);
+    expect(r.status()).toBe(409);
+
+    // The confirmed list matches (any order): all three go.
+    r = makeRes();
+    await handleTasksDelete(jsonReq('DELETE', { children: ['child-b', 'child-a'] }), r.res, { slug: 'parent' }, contextRoot);
+    expect(r.status()).toBe(200);
+    expect(r.body().deleted.sort()).toEqual(['child-a', 'child-b', 'parent']);
+  });
+
+  it('the task read carries no remote on the local backend', async () => {
+    const r = makeRes();
+    await handleTasksGet(getReq, r.res, { slug: 'parent' }, contextRoot);
+    expect(r.status()).toBe(200);
+    expect(r.body().task.remote).toBeNull();
+  });
+
+  it('404 for a missing task, nothing deleted', async () => {
+    const r = makeRes();
+    await handleTasksDelete(delReq, r.res, { slug: 'nope' }, contextRoot);
+    expect(r.status()).toBe(404);
+    expect(tombstones()).toEqual([]);
   });
 });
 

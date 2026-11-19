@@ -1,24 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { AgentAvatar } from '../../agents/AgentAvatar';
+import { TeamIcon } from '../../aiteam/TeamIcons';
 import { ekipFaces, ekipLine, ownerFacing, rosterTime, type EkipMember } from '../../aiteam/teamModel';
 import './TeamList.css';
 
 /**
- * The Ekip row and its list (plan-r10 1d, 1f; r8-05, r8-06, r8-12): ONE row per project (and one
- * Global ekip row at the very bottom), faces and ONE count, and the list it opens: a popover on
- * the desktop, a bottom sheet on a phone. The list is for SEEING, OPENING and TURNING ON/OFF only
+ * The Ekip row and its list (plan-r10 1d; r8-05, r8-06): ONE row per project, faces and ONE count,
+ * and the list it opens (the phone's bottom sheet). A member of all projects is in every project's
+ * list (owner 2026-11-17), with the globe. The list is for SEEING, OPENING and TURNING ON/OFF only
  * (`wqt363`): a member's row opens its stage, its switch is `POST /api/agents/:slug/enabled`,
  * "Üyeleri yönet" (desktop only) opens the modal. Nothing here edits a member.
  */
 
-/** A member's row in a list: a global one also names the project its newest owner-facing item
- *  is in ("Soru: ... · acme-storefront"). */
-export type TeamListMember = EkipMember & { project?: string | null };
+/** A member's row in a list. */
+export type TeamListMember = EkipMember;
 
-/** The project a member's photo is read from: the row's, else (the Global row) where it opens. */
-export const photoVaultOf = (m: EkipMember & { openIn?: string | null }, vault?: string | null): string | null =>
-  vault ?? m.openIn ?? null;
+/** The project a member's photo is read from: the list's own. */
+export const photoVaultOf = (_m: EkipMember, vault?: string | null): string | null => vault ?? null;
 
 /** Up to three faces, the ones at work first. `vault`: the project they belong to (the drawer
  *  sits outside every project's provider, so the photo must name it). */
@@ -62,13 +61,13 @@ export function TeamRowButton({ members, count, asking, label, selected = false,
 }
 
 export interface TeamListProps {
-  /** "acme-storefront · Ekip", or "Global ekip · Tüm projeler". */
+  /** "acme-storefront · Ekip". */
   title: string;
   members: readonly TeamListMember[];
   /** A phone: a bottom sheet, no "Üyeleri yönet". */
   sheet: boolean;
-  testid: 'team-list' | 'global-team-list';
-  /** The project the list is of (its photos are read there); a global list leaves it out. */
+  testid: 'team-list';
+  /** The project the list is of (its photos are read there). */
   vault?: string | null;
   /** Where the popover opens (the row's corner). */
   anchor: { x: number; y: number } | null;
@@ -151,7 +150,7 @@ export function TeamList(p: TeamListProps) {
       const when = l.when > 0 ? rosterTime(new Date(l.when).toISOString(), new Date(), t) : '';
       text = when ? t('drawer.member.idle').replace('{when}', () => when) : t('drawer.member.idle').replace(/\s*·\s*\{when\}/, '').replace('{when}', '');
     } else text = t(l.key);
-    return m.project ? `${text} · ${m.project}` : text;
+    return text;
   };
 
   const style = p.sheet ? undefined : { left: pos?.x ?? 0, top: pos?.y ?? 0 };
@@ -172,7 +171,15 @@ export function TeamList(p: TeamListProps) {
                   onClick={() => p.onOpen(m)}>
                   <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} face={m.face ?? null} size={24} vault={photoVaultOf(m, p.vault)} />
                   <span className="ns-team-text">
-                    <span className="ns-team-name">{m.title}</span>
+                    <span className="ns-team-name">
+                      {m.title}
+                      {m.global && (
+                        <span className="ns-team-global-mark" data-testid="team-member-global" role="img"
+                          aria-label={t('drawer.team.globalMember')} title={t('drawer.team.globalMember')}>
+                          <TeamIcon name="globe" size={13} />
+                        </span>
+                      )}
+                    </span>
                     <span className="ns-team-line">{lineOf(m)}</span>
                   </span>
                   {enabled && m.superOnly && !m.approval && <span className="ns-team-tag">{t('drawer.team.superOnly')}</span>}
@@ -180,12 +187,16 @@ export function TeamList(p: TeamListProps) {
                   {enabled && !m.superOnly && m.asking && <span className="ns-team-chip" data-kind="question" aria-hidden="true">?</span>}
                   {enabled && !m.superOnly && !m.asking && m.unread > 0 && <span className="ns-team-chip" data-kind="unread">{m.unread}</span>}
                 </button>
-                <button type="button" role="switch" aria-checked={enabled} className="ns-team-switch"
-                  data-testid="team-member-switch" data-slug={m.slug} disabled={!!busy[m.slug]}
-                  aria-label={`${t('drawer.team.toggle')}: ${m.title}`}
-                  onClick={() => flip(m, !enabled)}>
-                  <span className="ns-team-knob" aria-hidden="true" />
-                </button>
+                {/* A member of all projects is turned on/off on the Mac (its global manifest); a
+                    phone's switch would be refused, so the sheet offers none for it. */}
+                {!(p.sheet && m.global) && (
+                  <button type="button" role="switch" aria-checked={enabled} className="ns-team-switch"
+                    data-testid="team-member-switch" data-slug={m.slug} disabled={!!busy[m.slug]}
+                    aria-label={`${t('drawer.team.toggle')}: ${m.title}`}
+                    onClick={() => flip(m, !enabled)}>
+                    <span className="ns-team-knob" aria-hidden="true" />
+                  </button>
+                )}
               </li>
             );
           })}

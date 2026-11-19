@@ -87,6 +87,62 @@ describe('the app approval card (K4, K5)', () => {
   });
 });
 
+describe('the publish card folds the findings it waives', () => {
+  const w = (kind: string, file: string, no: number, term: string) => ({ label: 'Geçirilecek', value: `${kind}: ${file}:${no} "${term}"`, tone: 'warn' });
+  const publish = () => ({
+    state: 'pending',
+    card: {
+      action: 'publish', appName: 'Hava Notu', vault: 'acme', title: 'Yeni sürümü yayınla', hash: 'h',
+      lines: [
+        { label: 'Nereye', value: 'ornek/hava-notu-app' },
+        w('an AI Team member', 'lib/a.mjs', 4, 'ornek'), w('an AI Team member', 'lib/a.mjs', 9, 'ornek'),
+        w('an AI Team member', 'lib/b.mjs', 2, 'ornek'), w('a long number', 'lib/c.mjs', 7, '123456789'),
+        { label: 'Beyin listesi', value: 'Listelenir' },
+      ],
+    },
+  });
+
+  it('one summary row per kind and value, every file:line under ONE toggle, order kept', () => {
+    STATE.lang = 'tr';
+    STATE.data = publish();
+    const html = draw();
+    expect(html).toContain('an AI Team member &quot;ornek&quot; · 3 yerde');
+    expect(html).toContain('a long number &quot;123456789&quot; · 1 yerde');
+    expect(html.match(/<dt>Geçirilecek<\/dt>/g)?.length).toBe(2);
+    expect(html.match(/<details/g)?.length).toBe(1);
+    const [before, inside] = html.split('<details');
+    expect(before).not.toContain('lib/a.mjs');
+    for (const f of ['lib/a.mjs:4', 'lib/a.mjs:9', 'lib/b.mjs:2', 'lib/c.mjs:7']) expect(inside).toContain(f);
+    expect(inside).toContain('>Göster<');
+    // The folded rows sit where the first one was: between the target and the list row.
+    expect(html.indexOf('Nereye')).toBeLessThan(html.indexOf('yerde'));
+    expect(html.indexOf('yerde')).toBeLessThan(html.indexOf('Beyin listesi'));
+  });
+
+  it('the grouped rows the server writes now: the count is the server\'s, every place under the toggle', () => {
+    STATE.lang = 'tr';
+    const d = publish();
+    d.card.lines = [
+      { label: 'Nereye', value: 'ornek/hava-notu-app' },
+      { label: 'Geçirilecek', value: 'an insight name "mrr" · 12 satır: lib/a.mjs:4, lib/b.mjs:2 +10 daha', tone: 'warn' },
+      { label: 'Beyin listesi', value: 'Listelenir' },
+    ];
+    STATE.data = d;
+    const html = draw();
+    expect(html).toContain('an insight name &quot;mrr&quot; · 12 yerde');
+    const inside = html.split('<details')[1];
+    for (const f of ['lib/a.mjs:4', 'lib/b.mjs:2 +10 daha']) expect(inside).toContain(f);
+  });
+
+  it('a row that is not in the known shape stays as it came', () => {
+    STATE.lang = 'tr';
+    const d = publish();
+    d.card.lines.push({ label: 'Geçirilecek', value: 'bir şey', tone: 'warn' });
+    STATE.data = d;
+    expect(draw()).toContain('bir şey');
+  });
+});
+
 describe('Shared Apps (K1, K2, S2)', () => {
   beforeEach(() => { STATE.lang = 'tr'; });
   const list = {

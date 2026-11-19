@@ -38,6 +38,11 @@ describe('readOpenAgentsDetail', () => {
   it('keeps the create flow and its board', () => {
     expect(readOpenAgentsDetail({ create: true, whiteboard: 'growth-board' })).toEqual({ create: true, whiteboard: 'growth-board' });
     expect(readOpenAgentsDetail({ whiteboard: 'growth-board' })).toEqual({});
+    // "Tüm projelerde çalışan üye": `global` rides only with `create`, and only as true.
+    expect(readOpenAgentsDetail({ create: true, global: true })).toEqual({ create: true, global: true });
+    expect(readOpenAgentsDetail({ global: true })).toEqual({});
+    expect(readOpenAgentsDetail({ create: true, global: 'yes' })).toEqual({ create: true });
+    expect(routeOpenAgents({ create: true, global: true })).toEqual({ to: 'manage', detail: { create: true, global: true } });
   });
 });
 

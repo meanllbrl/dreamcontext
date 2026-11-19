@@ -12,24 +12,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { FakeTelegram, textUpdate } from '../helpers/fake-telegram.js';
 import { TelegramHub } from '../../src/server/telegram/hub.js';
 import { wireTelegramAsks, _resetTelegramAsks } from '../../src/server/telegram/asks.js';
-import { RUN_LINES, wireRunCards } from '../../src/server/telegram/runs.js';
+import { childCardOwnership, childRunOffer, RUN_LINES, wireRunCards } from '../../src/server/telegram/runs.js';
 import * as reg from '../../src/lib/assistant/chat-registry.js';
-import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
-import { emptySuperState, OWNER_CARD_TELEGRAM_LINE } from '../../src/lib/super/types.js';
+import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superIdOfMember, superRecordPath } from '../../src/lib/super/store.js';
+import { emptySuperState, OWNER_CARD_TELEGRAM_LINE, OWNER_CARD_TELEGRAM_RUN_MAC_LINE } from '../../src/lib/super/types.js';
 import { announceOwnerHead, _resetOwnerQuestions } from '../../src/lib/super/owner-question.js';
+import { afterSuperWrite } from '../../src/lib/super/inbox.js';
 import { scopeOfContextRoot } from '../../src/lib/telegram/config.js';
-import { OWNER_CARD_NOT_NEEDED_LABEL, OWNER_CARD_REMIND_LABEL, OWNER_CARD_REMIND_TITLE } from '../../src/lib/telegram/contract.js';
+import { OWNER_CARD_NOT_NEEDED_LABEL, OWNER_CARD_REMIND_LABEL, OWNER_CARD_REMIND_TITLE, OWNER_CARD_RUN_LABEL } from '../../src/lib/telegram/contract.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import { noteOwnerAtMac, setOwnerCardRemindBanner } from '../../src/lib/telegram/back-at-mac.js';
 import { _resetCardsForTests, cardHandleOf, listCards, noteAssistantCards, setCardsHomeForTests } from '../../src/lib/cards/records.js';
 import { _resetRunsForTests, configureRuns, type RunPty } from '../../src/server/runs/registry.js';
 import { runDelivery, setHeldHomeForTests } from '../../src/server/runs/delivery.js';
 import { setCardRootResolverForTests } from '../../src/server/routes/run-terminal.js';
-import { _resetOwnerReceiptsForTests, registerOwnerCardLookup, registerOwnerItemCloser, setOwnerReceiptsHomeForTests, type OwnerCardLookup } from '../../src/server/owner-receipts.js';
+import { _resetOwnerReceiptsForTests, readOwnerReceipts, registerOwnerCardLookup, registerOwnerItemCloser, setOwnerReceiptsHomeForTests, type OwnerCardLookup } from '../../src/server/owner-receipts.js';
 
 const TOKEN = '123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const OWNER = 777;
@@ -41,7 +42,7 @@ const CHECK = { type: 'checklist', id: 'store', title: 'Store setup', items: [{ 
 
 let vault = 'acme'; let home: string; let project: string; let root: string; let tg: FakeTelegram; let hub: TelegramHub;
 let unwireAsks: () => void; let unwireRuns: () => void;
-let ptys: number; let closer: string[]; let banners: Array<{ title: string; body: string; link: string | null }>;
+let ptys: number; let cwds: string[]; let closer: string[]; let banners: Array<{ title: string; body: string; link: string | null }>;
 let injected: string[];
 const drained = () => new Promise((r) => setTimeout(r, 40));
 
@@ -57,10 +58,10 @@ function tap(msg: NonNullable<ReturnType<typeof msgWith>>, idx: number, chatId =
   tg.push(TOKEN, { callback_query: { id: `cb${Math.random()}`, data: kb[idx].callback_data, from: { id: OWNER }, message: { message_id: msg.result!.message_id, chat: { id: chatId, type: 'private' }, text: msg.result!.text } } });
 }
 
-function childItem(): { item: Record<string, unknown>; lookup: OwnerCardLookup } {
-  const text = fence(RUN);
-  const card = cardHandleOf({ postingSession: CHILD, vault, postingConversationId: CHILD, messageUuid: 'c1', text, kind: 'run', id: 'login', childRecordId: 'main', childId: CHILD })!;
-  const item = { id: 'owner-1', kind: 'owner', sessionId: CHILD, state: 'escalated', createdAt: 1, ownerText: RUN.why, wait: { kind: 'run', id: 'login', line: RUN.why, key: RUN.command }, card };
+function childItem(spec: typeof RUN = RUN): { item: Record<string, unknown>; lookup: OwnerCardLookup } {
+  const text = fence(spec);
+  const card = cardHandleOf({ postingSession: CHILD, vault, postingConversationId: CHILD, messageUuid: 'c1', text, kind: 'run', id: spec.id, childRecordId: 'main', childId: CHILD })!;
+  const item = { id: 'owner-1', kind: 'owner', sessionId: CHILD, state: 'escalated', createdAt: 1, ownerText: spec.why, wait: { kind: 'run', id: spec.id, line: spec.why, key: spec.command }, card };
   const lookup: OwnerCardLookup = { handle: card, target: { childRecordId: 'main', childId: CHILD }, itemId: 'owner-1', itemOpen: true, superSession: SID };
   return { item, lookup };
 }
@@ -81,8 +82,8 @@ beforeEach(async () => {
   writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: vault, path: project }] }));
   reg._resetChatRegistry(); resetWindowControl(); _resetTelegramAsks(); _resetOwnerQuestions(); _resetCardsForTests(); _resetRunsForTests(); _resetOwnerReceiptsForTests();
   setCardsHomeForTests(home); setHeldHomeForTests(home); setOwnerReceiptsHomeForTests(home);
-  ptys = 0; closer = []; banners = []; injected = [];
-  configureRuns({ spawner: () => { ptys++; return new FakePty(); }, projectRootOf: () => project, resolveCwd: (r) => r, delivery: runDelivery, trackChild: () => () => {} });
+  ptys = 0; cwds = []; closer = []; banners = []; injected = [];
+  configureRuns({ spawner: (o) => { ptys++; cwds.push(o.cwd); return new FakePty(); }, projectRootOf: () => project, resolveCwd: (r) => r, delivery: runDelivery, trackChild: () => () => {} });
   setOwnerCardRemindBanner((title, body, link) => { banners.push({ title, body, link }); return true; });
   await writeState({});
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
@@ -106,8 +107,10 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true }); rmSync(project, { recursive: true, force: true });
 });
 
-async function sendChildCard(): Promise<{ lookup: OwnerCardLookup }> {
-  const { item, lookup } = childItem();
+async function sendChildCard(spec: typeof RUN = RUN, over: Partial<OwnerCardLookup> = {}): Promise<{ lookup: OwnerCardLookup }> {
+  const made = childItem(spec);
+  const item = made.item;
+  const lookup = { ...made.lookup, ...over };
   registerOwnerCardLookup((s, ref) => (s === CHILD && ref === lookup.handle.cardRef ? lookup : null));
   registerOwnerItemCloser(async (l) => { closer.push(l.itemId); return true; });
   await writeState({ queue: [item] });
@@ -117,13 +120,13 @@ async function sendChildCard(): Promise<{ lookup: OwnerCardLookup }> {
 }
 
 describe('a child\'s owner card on Telegram', () => {
-  it('one message: the job, the command, the kind sentence, Remind and Not needed; never Run', async () => {
+  it('a card whose record cannot be read: the job, the command, the Mac line, Remind and Not needed; no Run', async () => {
     await sendChildCard();
     const m = msgWith(OWNER_CARD_REMIND_LABEL)!;
     const html = String(m.params.text);
     expect(html).toContain('Deploy the API');
     expect(html).toContain(`<pre>${RUN.command}</pre>`);
-    expect(html).toContain(OWNER_CARD_TELEGRAM_LINE.run);
+    expect(html).toContain(RUN_LINES.childMacOnly);
     const labels = JSON.stringify(m.params.reply_markup);
     expect(labels).toContain(OWNER_CARD_REMIND_LABEL);
     expect(labels).toContain(OWNER_CARD_NOT_NEEDED_LABEL);
@@ -178,6 +181,131 @@ describe('a child\'s owner card on Telegram', () => {
   });
 });
 
+describe('a child\'s run card runs from Telegram (run-kart-telefon)', () => {
+  const said = (line: string) => [...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(line));
+  /** The child's card record is readable (its transcript), then its owner item goes out. */
+  async function sendRunnable(spec: typeof RUN = RUN, over: Partial<OwnerCardLookup> = {}) {
+    noteAssistantCards(CHILD, vault, 'c1', fence(spec));
+    const r = await sendChildCard(spec, over);
+    return { ...r, msg: msgWith(OWNER_CARD_REMIND_LABEL)! };
+  }
+
+  it('AC1: ▶ Çalıştır with its folder above Remind and Not needed; a press runs once in the child\'s folder and holds the result for the child', async () => {
+    const { msg, lookup } = await sendRunnable();
+    const html = String(msg.params.text);
+    expect(html).toContain(`<pre>${RUN.command}</pre>`);
+    expect(html).toContain(`Klasör: <code>${basename(project)}</code>`);
+    expect(html).toContain(OWNER_CARD_TELEGRAM_LINE.run);
+    const labels = (msg.params.reply_markup as { inline_keyboard: { text: string }[][] }).inline_keyboard.flat().map((b) => b.text);
+    expect(labels).toEqual([OWNER_CARD_RUN_LABEL, OWNER_CARD_REMIND_LABEL, OWNER_CARD_NOT_NEEDED_LABEL]);
+    tap(msg, 0);
+    await vi.waitFor(() => expect(ptys).toBe(1));
+    expect(cwds.map((c) => realpathSync(c))).toEqual([realpathSync(project)]);
+    await vi.waitFor(() => expect(said(RUN_LINES.started(false))).toBe(true));
+    // The result is held for the child that asked (delivered at the exit), never for the Super.
+    expect(readOwnerReceipts(lookup.target).some((e) => e.cardRef === lookup.handle.cardRef && e.kind === 'run')).toBe(true);
+    // Single use: a second tap runs nothing more.
+    tap(msg, 0);
+    await drained(); await drained();
+    expect(ptys).toBe(1);
+  });
+
+  it('AC2: the press is his answer: the owner item closes in the Super\'s queue', async () => {
+    const { msg } = await sendRunnable();
+    // The inbox's own view of the record (the server holds it from boot): its press closes there.
+    afterSuperWrite(root, await readSuperState(root));
+    tap(msg, 0);
+    await vi.waitFor(() => expect(ptys).toBe(1));
+    await vi.waitFor(async () => {
+      resetSuperIndex();
+      const s = await readSuperState(root);
+      expect(s.queue.find((q) => q.id === 'owner-1')?.state).toBe('done');
+    });
+  });
+
+  it('AC3: a command changed since the message runs nothing and says so', async () => {
+    const { msg } = await sendRunnable();
+    noteAssistantCards(CHILD, vault, 'c2', fence({ ...RUN, command: 'gcloud auth login --other' }));
+    tap(msg, 0);
+    await vi.waitFor(() => expect(said(RUN_LINES.childChanged)).toBe(true));
+    expect(ptys).toBe(0);
+  });
+
+  it('AC3: an item already closed runs nothing', async () => {
+    const { msg } = await sendRunnable();
+    const s = await readSuperState(root);
+    await writeState({ queue: s.queue.map((q) => ({ ...q, state: 'done' })) });
+    tap(msg, 0);
+    await vi.waitFor(() => expect(said(RUN_LINES.childChanged)).toBe(true));
+    expect(ptys).toBe(0);
+  });
+
+  it('AC3: a card of another Super\'s child gets no Run, and a forged Run press for it runs nothing and says so', async () => {
+    const { msg, lookup } = await sendRunnable(RUN, { superSession: '99999999-2222-4333-8444-555555555555' });
+    expect(JSON.stringify(msg.params.reply_markup)).not.toContain(OWNER_CARD_RUN_LABEL);
+    const ab = hub.superBindingOfVault(vault)!;
+    await hub.sendButtons(ab, 'sahte', [[OWNER_CARD_RUN_LABEL]], { kind: 'owner-card', sessionId: CHILD, cardRef: lookup.handle.cardRef, singleUse: true },
+      { item: 'owner-1', choices: ['run'], cmdHash: createHash('sha256').update(RUN.command).digest('hex'), root: project });
+    tap([...tg.sent()].reverse().find((c) => String(c.params.text) === 'sahte')!, 0);
+    await vi.waitFor(() => expect(said(RUN_LINES.childNotHere)).toBe(true));
+    expect(ptys).toBe(0);
+  });
+
+  it('the offer and the press share one gate: a member\'s own bot is offered no Run, and its press runs nothing', async () => {
+    const { lookup } = await sendRunnable();
+    const ref = lookup.handle.cardRef;
+    const memberBot = { target: 'member' as never, disabled: false, contextRoot: root };
+    expect(await childCardOwnership({ target: 'super', disabled: false, contextRoot: root }, 'owner-1', CHILD, ref)).toBe('ok');
+    expect(await childCardOwnership(memberBot, 'owner-1', CHILD, ref)).toBe('not_here');
+    expect('none' in await childRunOffer(memberBot, lookup.handle, 'owner-1')).toBe(true);
+    expect('none' in await childRunOffer({ target: 'super', disabled: false, contextRoot: root }, lookup.handle, 'owner-1')).toBe(false);
+  });
+
+  it('a team member\'s child card, mirrored into main\'s queue, gets Run on main\'s bot and the press runs it', async () => {
+    const MEMBER_SID = '99999999-aaaa-4bbb-8ccc-dddddddddddd';
+    noteAssistantCards(CHILD, vault, 'c1', fence(RUN));
+    const { item, lookup } = childItem();
+    const memberItem = { ...item, id: 'owner-m1' };
+    const mirror = { id: 'mirror-1', kind: 'member', of: 'owner', member: 'ege', answers: 'owner-m1', sessionId: CHILD, state: 'escalated', createdAt: 1, ownerText: RUN.why, card: item.card };
+    const memberPath = superRecordPath(root, superIdOfMember('ege'));
+    mkdirSync(dirname(memberPath), { recursive: true });
+    writeFileSync(memberPath, JSON.stringify({ ...emptySuperState(), session: MEMBER_SID, enabled: true, member: 'ege', children: { [CHILD]: { sessionId: CHILD, brief: 'Ege işi', adopted: false, startedAt: 1 } }, queue: [memberItem] }));
+    registerOwnerCardLookup((sid, ref) => (sid === CHILD && ref === lookup.handle.cardRef ? { ...lookup, itemId: 'owner-m1', superSession: MEMBER_SID } : null));
+    await writeState({ queue: [mirror] });
+    const s = await readSuperState(root);
+    expect(s.queue.find((q) => q.id === 'mirror-1')).toBeTruthy();
+    announceOwnerHead(() => vault, s, s.queue.find((q) => q.id === 'mirror-1') as never);
+    await vi.waitFor(() => expect(msgWith(OWNER_CARD_RUN_LABEL)).toBeTruthy());
+    tap(msgWith(OWNER_CARD_RUN_LABEL)!, 0);
+    await vi.waitFor(() => expect(ptys).toBe(1));
+  });
+
+  it('AC3: a folder that moved since the message runs nothing and says so', async () => {
+    const { msg } = await sendRunnable();
+    const moved = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-tg-moved-')));
+    setCardRootResolverForTests(async () => moved);
+    try {
+      tap(msg, 0);
+      await vi.waitFor(() => expect(said(RUN_LINES.childMacOnly)).toBe(true));
+      expect(ptys).toBe(0);
+    } finally {
+      setCardRootResolverForTests(null);
+      rmSync(moved, { recursive: true, force: true });
+    }
+  });
+
+  it('AC4: a command with a hidden character, or too long for the message, gets no Run and the Mac line', async () => {
+    await sendRunnable({ ...RUN, command: 'gcloud auth​ login' });
+    let m = msgWith(OWNER_CARD_REMIND_LABEL)!;
+    expect(JSON.stringify(m.params.reply_markup)).not.toContain(OWNER_CARD_RUN_LABEL);
+    expect(String(m.params.text)).toContain(OWNER_CARD_TELEGRAM_RUN_MAC_LINE);
+    _resetTelegramAsks(); _resetOwnerQuestions();
+    await sendRunnable({ ...RUN, command: `echo ${'x'.repeat(5000)}` });
+    m = msgWith(OWNER_CARD_REMIND_LABEL)!;
+    expect(JSON.stringify(m.params.reply_markup)).not.toContain(OWNER_CARD_RUN_LABEL);
+  });
+});
+
 describe('the Super\'s own run card names the folder the Mac draws', () => {
   it('Klasör is the card root\'s name, then · <cwd> when the card has one ', async () => {
     tg.push(TOKEN, textUpdate(OWNER, 'giriş?'));
@@ -192,7 +320,7 @@ describe('the Super\'s own run card names the folder the Mac draws', () => {
 });
 
 describe('the folder the message drew is the folder that runs (end review r2)', () => {
-  it('a Run press after the card\'s folder moved refuses and runs nothing; the matching folder runs', async () => {
+  it('a Run press after the card\'s folder moved runs nothing and asks "Emin misin?"; Vazgeç runs nothing; the matching folder runs', async () => {
     tg.push(TOKEN, textUpdate(OWNER, 'çalıştır?'));
     await vi.waitFor(() => expect(injected).toHaveLength(1), { timeout: 5000 });
     noteAssistantCards(SID, vault, 'm5', fence({ type: 'run', id: 'mv', command: 'gh auth status' }));
@@ -203,7 +331,14 @@ describe('the folder the message drew is the folder that runs (end review r2)', 
     try {
       tap(first, 0);
       const said = (line: string) => [...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(line));
-      await vi.waitFor(() => expect(said(RUN_LINES.folderChanged)).toBe(true));
+      await vi.waitFor(() => expect(said(RUN_LINES.folderAsked)).toBe(true));
+      expect(ptys).toBe(0);
+      // One question naming the folder it is now, with Çalıştır / Vazgeç.
+      await vi.waitFor(() => expect(msgWith('Vazgeç')).toBeTruthy());
+      const ask = msgWith('Vazgeç')!;
+      expect(String(ask.params.text)).toContain(RUN_LINES.folderAsk(basename(moved)));
+      tap(ask, 1);
+      await vi.waitFor(() => expect(said(RUN_LINES.cancelled)).toBe(true));
       expect(ptys).toBe(0);
     } finally {
       setCardRootResolverForTests(null);
@@ -214,6 +349,36 @@ describe('the folder the message drew is the folder that runs (end review r2)', 
     const second = [...tg.sent()].reverse().find((c) => String(c.params.text).includes('gh auth login') && JSON.stringify(c.params.reply_markup ?? {}).includes('Çalıştır'))!;
     tap(second, 0);
     await vi.waitFor(() => expect(ptys).toBe(1));
+  });
+});
+
+describe('the folder-change question runs in the folder it named', () => {
+  it('Çalıştır on "Emin misin?" runs once there; moved again, it asks again and runs nothing', async () => {
+    tg.push(TOKEN, textUpdate(OWNER, 'taşındı?'));
+    await vi.waitFor(() => expect(injected).toHaveLength(1), { timeout: 5000 });
+    noteAssistantCards(SID, vault, 'm9', fence({ type: 'run', id: 'mv2', command: 'gh auth status' }));
+    await vi.waitFor(() => expect(msgWith('Çalıştır, çıktıyı')).toBeTruthy());
+    const first = msgWith('Çalıştır, çıktıyı')!;
+    const moved = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-tg-moved-')));
+    const again = realpathSync(mkdtempSync(join(tmpdir(), 'owner-card-tg-again-')));
+    try {
+      setCardRootResolverForTests(async () => moved);
+      tap(first, 0);
+      await vi.waitFor(() => expect(msgWith('Vazgeç')).toBeTruthy());
+      const ask = msgWith('Vazgeç')!;
+      // Moved once more before the tap: the question is asked again, nothing runs.
+      setCardRootResolverForTests(async () => again);
+      tap(ask, 0);
+      await vi.waitFor(() => expect(tg.texts().some((t) => t.includes(RUN_LINES.folderAsk(basename(again))))).toBe(true));
+      expect(ptys).toBe(0);
+      const ask2 = [...tg.sent()].reverse().find((c) => String(c.params.text).includes(basename(again)) && JSON.stringify(c.params.reply_markup ?? {}).includes('Vazgeç'))!;
+      tap(ask2, 0);
+      await vi.waitFor(() => expect(ptys).toBe(1));
+    } finally {
+      setCardRootResolverForTests(null);
+      rmSync(moved, { recursive: true, force: true });
+      rmSync(again, { recursive: true, force: true });
+    }
   });
 });
 
@@ -232,7 +397,7 @@ describe('a Run button from before the folder was kept', () => {
     tap(old, 0);
     const said = (line: string) => [...tg.sent('answerCallbackQuery'), ...tg.sent('editMessageText')].some((c) => String(c.params.text ?? '').includes(line));
     await vi.waitFor(() => expect(said(RUN_LINES.oldButton)).toBe(true));
-    expect(said(RUN_LINES.folderChanged)).toBe(false);
+    expect(said(RUN_LINES.folderAsked)).toBe(false);
     expect(ptys).toBe(0);
   });
 });

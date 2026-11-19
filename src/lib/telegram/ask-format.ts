@@ -11,9 +11,12 @@
  *   question description
  *
  *   • label: option description   (only options that HAVE one)
- *   • A · label (çizim A): ...     (an option whose drawing went above, its caption "A · label")
+ *   • A · label: description       (a described option whose drawing went above, captioned "A · label")
  *
- * Buttons keep only the labels (the caller's keyboard). Every text is redacted and HTML-escaped
+ * Each thing is said once (owner 2026-11-18, "tekrara düşme"): a drawing carries its letter and
+ * label in its caption, the buttons carry the labels, and the text carries the question, its
+ * description and only the option notes nothing else says. An option with no note gets no line,
+ * drawn or not. Buttons keep only the labels (the caller's keyboard). Every text is redacted and HTML-escaped
  * here; the whole message stays under Telegram's 4096 characters by trimming the descriptions
  * (never the question, never a label).
  */
@@ -77,8 +80,9 @@ export function drawingCaption(oi: number, label: string): string {
 /**
  * An option that carries a drawing says where it is (owner 2026-11-09: an option with only a
  * preview showed nothing on Telegram). `drawn` holds the `drawingKey`s whose picture went:
- * such an option gets its letter (`tag`), drawn on its line as "A · label (çizim A)", the
- * caption its picture carries (owner 2026-11-11: "hangisi sade hangisi?"). Every other drawing
+ * such an option gets its letter (`tag`), drawn on its note's line as "A · label", the caption
+ * its picture carries (owner 2026-11-11: "hangisi sade hangisi?"); with no note it has no line
+ * (its picture and its button already say it, owner 2026-11-18). Every other drawing
  * is said to be on the Mac; that note goes FIRST, since the message trims option notes from
  * their end when it is long, and a cut note would hide a drawing that never came.
  */
@@ -112,12 +116,11 @@ export function formatAskQuestionHtml(q: AskCardQuestion, opts: AskCardOpts = {}
     const parts = [top];
     const d = descMax > 0 ? clip(q.description, descMax) : '';
     if (d) parts.push(escapeHtml(d));
-    // A drawn option keeps its line (its letter names its picture) even when its note is cut.
-    const rows = (q.options ?? [])
-      .filter((o) => o.tag || described.includes(o))
+    // Only a note gets a line: a label alone is already its button (and its picture's caption).
+    const rows = described
       .map((o) => ({ t: o.tag, l: clip(o.label, 60), d: optMax > 0 ? clip(o.description, optMax) : '' }))
-      .filter((r) => r.t || r.d)
-      .map((r) => `• <b>${r.t ? `${escapeHtml(r.t)} · ` : ''}${escapeHtml(r.l)}</b>${r.t ? ` (çizim ${escapeHtml(r.t)})` : ''}${r.d ? `: ${escapeHtml(r.d)}` : ''}`);
+      .filter((r) => r.d)
+      .map((r) => `• <b>${r.t ? `${escapeHtml(r.t)} · ` : ''}${escapeHtml(r.l)}</b>: ${escapeHtml(r.d)}`);
     if (rows.length) parts.push(rows.join('\n'));
     return `${parts.join('\n\n')}${foot}`;
   };

@@ -7,10 +7,10 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  buildDrawerRows, buildGlobalTeam, filterProjectRows, dropInOrder, ekipByProject, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, ownMembersOf, teamChildOf,
+  buildDrawerRows, filterProjectRows, dropInOrder, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, ownMembersOf, teamChildOf,
   teamRowsOf, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
-import { buildEkip, ekipFaces, ekipLine, ekipRank, ekipWorkingCount, globalOpenVault, ownerFacing, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
+import { buildEkip, ekipFaces, ekipLine, ekipRank, ekipWorkingCount, ownerFacing, projectEkip, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
 import type { SuperMemberSummary } from '../../dashboard/src/lib/superTypes.js';
 import { fanOutHistory, HISTORY_PARALLEL, HISTORY_PER_VAULT } from '../../dashboard/src/components/layout/newshell/historyFanout.js';
 import { chill, oldestEvictable } from '../../dashboard/src/components/layout/instanceCeiling.js';
@@ -309,12 +309,12 @@ describe('a folded project carries ONE mark (option A, owner 2026-11-09)', () =>
     // By kind: the Super's and the member's questions, the member's approval, the chat's plain waiting.
     expect(row.mark).toEqual({ asking: 4, questions: 2, approvals: 1, working: false, unread: 0 });
   });
-  it('folded, it keeps its own members: "+" offers the same picker as when it is open', () => {
+  it('folded, it keeps its Ekip members (its own, then the global ones): "+" offers the same picker as when it is open', () => {
     const f = { members: [summary('m'), summary('g', { global: true })], identities: [{ slug: 'm', title: 'M', hasPhoto: false }, { slug: 'g', title: 'G', hasPhoto: false }] };
     const row = folded(f);
     expect(row.children).toEqual([]);
     const [open] = buildDrawerRows({ projects: [project('acme', { mounted: true })], activeVault: 'acme', expanded: ['acme'], facts: { acme: facts(f) }, fanout: {} });
-    expect(ownMembersOf(row).map((m) => m.slug)).toEqual(['m']);
+    expect(ownMembersOf(row).map((m) => m.slug)).toEqual(['m', 'g']);
     expect(ownMembersOf(row)).toEqual(ownMembersOf(open));
     // A phone's folded project keeps them too.
     const live = { chats: [], draining: [], members: [{ vault: 'acme', members: [summary('rota')] }] };
@@ -372,17 +372,17 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
       summary('asker', { asking: true }), summary('reader', { unread: 3 }), summary('gate', { approval: true }),
       summary('busy', { ownerWorking: 2 }),
     ];
-    const t = teamChildOf('acme', buildEkip(members, []), false)!;
+    const t = teamChildOf('acme', buildEkip(members, []), true, false)!;
     expect(t.count).toBe(1 + 3 + 1);
     expect(t.asking).toBe(true);
-    expect(teamChildOf('acme', buildEkip([summary('reader', { unread: 3 })], []), false)!.asking).toBe(false);
-    expect(teamChildOf('acme', buildEkip([summary('reader')], []), true, false, 'reader')!.openSlug).toBe('reader');
-    expect(teamChildOf('acme', buildEkip([summary('reader')], []), false, false, 'reader')!.openSlug).toBeUndefined();
+    expect(teamChildOf('acme', buildEkip([summary('reader', { unread: 3 })], []), true, false)!.asking).toBe(false);
+    expect(teamChildOf('acme', buildEkip([summary('reader')], []), true, true, false, 'reader')!.openSlug).toBe('reader');
+    expect(teamChildOf('acme', buildEkip([summary('reader')], []), true, false, false, 'reader')!.openSlug).toBeUndefined();
   });
 
   it('a member working only for the Super is listed with its tag, never counted', () => {
     const members = buildEkip([summary('pera', { superOnly: true }), summary('rota', { asking: true })], []);
-    const t = teamChildOf('acme', members, false)!;
+    const t = teamChildOf('acme', members, true, false)!;
     expect(t.members.map((m) => m.slug)).toEqual(['rota', 'pera']);
     expect(t.members.find((m) => m.slug === 'pera')!.superOnly).toBe(true);
     expect(t.count).toBe(1);
@@ -409,17 +409,14 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(ekipRank(x)).toBe(1);
     expect(ekipLine(x)).toEqual({ key: 'drawer.team.superWorking' });
     expect(Object.keys(x)).not.toContain('queued');
-    expect(teamChildOf('acme', [x], false)).toMatchObject({ count: 0, asking: false });
+    expect(teamChildOf('acme', [x], true, false)).toMatchObject({ count: 0, asking: false });
     // A member with nothing of the owner's but main's pending is idle, not owner-facing.
     const [y] = buildEkip([summary('y', { pending: 2 } as any)], []);
     expect(ownerFacing(y)).toBe(false);
     expect(ekipRank(y)).toBe(2);
     // A global member's opening project is never picked by main's pending.
-    const per = [
-      { vault: 'a', members: buildEkip([summary('g', { global: true, pending: 4, lastAt: 90 } as any)], []) },
-      { vault: 'b', members: buildEkip([summary('g', { global: true, unread: 1, lastAt: 10 })], []) },
-    ];
-    expect(globalOpenVault('g', per, null)).toEqual({ project: 'b', openIn: 'b' });
+    // Nor a global member's: main's pending never counts in any project's Ekip row.
+    expect(teamChildOf('acme', buildEkip([summary('g', { global: true, pending: 4 } as any)], []), true, false)).toMatchObject({ count: 0, asking: false });
   });
 
   it('up to three faces, the ones at work first', () => {
@@ -455,7 +452,7 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(fold(true).superAsking).toBe(true);
   });
 
-  it('global members are only in the Global ekip row: summed over projects, approval card once, opening where they face the owner', () => {
+  it('a member of all projects is in EVERY project\'s Ekip row, after its own; its questions and unread are that project\'s, its approval card counted only in the project in view', () => {
     const acme = [summary('rota', { unread: 1 }), summary('atlas', { global: true, asking: true, approval: true, lastAt: 100 })];
     const globex = [summary('gantt', { global: true, lastAt: 50 }), summary('atlas', { global: true, unread: 2, approval: true, lastAt: 300 })];
     const rows = buildDrawerRows({
@@ -463,36 +460,24 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
       activeVault: 'acme', expanded: ['acme', 'globex'],
       facts: { acme: facts(acme) as any }, fanout: { globex: { tabs: 0, superOn: true, team: [], members: globex, identities: [] } },
     });
-    expect(teamOf(rows, 0)!.members.map((m) => m.slug)).toEqual(['rota']);
-    // globex has no member of its own: its Team row is there, empty (owner 2026-11-03), never a global one.
-    expect(teamOf(rows, 1)!.members).toEqual([]);
-    const global = buildGlobalTeam(ekipByProject({
-      projects: [project('acme', { mounted: true }), project('globex')],
-      facts: { acme: facts(acme) as any }, fanout: { globex: { tabs: 0, superOn: true, team: [], members: globex, identities: [] } },
-    }), 'acme')!;
-    expect(global.members.map((m) => m.slug)).toEqual(['atlas', 'gantt']);
-    // acme: one question; globex: two unread; the approval card ONCE.
-    expect(global.count).toBe(1 + 2 + 1);
-    expect(global.asking).toBe(true);
-    const atlas = global.members.find((m) => m.slug === 'atlas')!;
-    // Its newest owner-facing item is in globex (lastAt 300).
-    expect(atlas).toMatchObject({ project: 'globex', openIn: 'globex' });
-    // Nothing faces the owner: the project in view.
-    expect(global.members.find((m) => m.slug === 'gantt')).toMatchObject({ project: null, openIn: 'acme' });
+    const a = teamOf(rows, 0)!;
+    const g = teamOf(rows, 1)!;
+    // Own members first, then the global ones.
+    expect(a.members.map((m) => m.slug)).toEqual(['rota', 'atlas']);
+    expect(g.members.map((m) => m.slug).sort()).toEqual(['atlas', 'gantt']);
+    expect(g.members.every((m) => m.global)).toBe(true);
+    // acme (in view): rota's unread, atlas's question and its approval card.
+    expect(a.count).toBe(1 + 1 + 1);
+    // globex: atlas's two unread, its approval card NOT counted again.
+    expect(g.count).toBe(2);
+    expect(g.members.find((m) => m.slug === 'atlas')!.approval).toBe(false);
+    expect(a.members.find((m) => m.slug === 'atlas')!.approval).toBe(true);
   });
 
-  it('a global member with nothing for the owner and no project in view opens where it last worked, else the first project', () => {
-    const per = [
-      { vault: 'a', members: buildEkip([summary('g', { global: true, lastAt: 10 })], []) },
-      { vault: 'b', members: buildEkip([summary('g', { global: true, lastAt: 90 })], []) },
-    ];
-    expect(globalOpenVault('g', per, null)).toEqual({ project: null, openIn: 'b' });
-    const never = per.map((p) => ({ ...p, members: buildEkip([summary('g', { global: true })], []) }));
-    expect(globalOpenVault('g', never, null)).toEqual({ project: null, openIn: 'a' });
-  });
-
-  it('no Global ekip row when no project has a member of all projects', () => {
-    expect(buildGlobalTeam([{ vault: 'a', members: buildEkip([summary('rota')], []) }], 'a')).toBeNull();
+  it('projectEkip: own first, then the global ones; the approval card stays only where active', () => {
+    const all = buildEkip([summary('g', { global: true, approval: true }), summary('own')], []);
+    expect(projectEkip(all, true).map((m) => [m.slug, m.approval])).toEqual([['own', false], ['g', true]]);
+    expect(projectEkip(all, false).map((m) => [m.slug, m.approval])).toEqual([['own', false], ['g', false]]);
   });
 
   it('the switch calls POST /api/agents/:slug/enabled, a global member\'s too (it writes the global manifest)', async () => {
@@ -506,7 +491,7 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
   it('the drawer and the lists wire the pinned test ids, the switch and the member intent', () => {
     const drawer = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/layout/newshell/ChatDrawer.tsx', import.meta.url)), 'utf8');
     const list = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/layout/newshell/TeamList.tsx', import.meta.url)), 'utf8');
-    for (const id of ['drawer-team-row', 'phone-team-row', 'drawer-global-team-row', 'phone-global-team-row', 'new-chat-menu', 'new-chat-claude', 'new-chat-member', 'team-list', 'global-team-list']) {
+    for (const id of ['drawer-team-row', 'phone-team-row', 'drawer-project-newchat-item', 'new-chat-claude', 'new-chat-member', 'team-list']) {
       expect(drawer, id).toContain(`'${id}'`.replace(/'/g, drawer.includes(`"${id}"`) ? '"' : "'"));
     }
     for (const id of ['team-list-member', 'team-member-switch', 'team-manage', 'phone-team-sheet']) expect(list, id).toContain(id);

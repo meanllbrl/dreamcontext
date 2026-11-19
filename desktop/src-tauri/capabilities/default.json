@@ -28,6 +28,7 @@
     "allow-confirm-telegram-forward",
     "allow-start-telegram-creation",
     "allow-start-telegram-readopt",
+    "allow-confirm-telegram-group",
     "allow-html-snapshot",
     "allow-take-app-link",
     "allow-quit-app",

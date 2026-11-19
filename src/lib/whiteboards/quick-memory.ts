@@ -16,6 +16,8 @@
  *     recall command, and the run's env scopes that recall to this vault and the same pages
  *     ({@link QUICK_RECALL_SCOPE_ENV}), whatever flag it passes. The memory block is filtered
  *     by the same list. The `dreamcontext` it runs is the running CLI ({@link quickCliShimDir}).
+ *     The run works in an EMPTY folder outside the brain ({@link quickRunDir}): the working folder
+ *     is readable under `dontAsk` whatever the rules say, so the allowlist holds only from outside.
  *     Codex and Antigravity do not search: neither can deny a read by path (the S3 spike; the
  *     Antigravity gate guards writes only), so a run in the brain could read those secrets, and a
  *     Codex run started inside a project runs its hooks. They keep their empty temp folder.
@@ -107,18 +109,36 @@ export function quickBrainToolArgs(brainReal: string, home?: string): string[] {
 }
 
 /**
+ * The folder a Claude quick edit works in: EMPTY, owner-only, inside the run's temp folder and so
+ * outside the brain and any repo. Under `dontAsk`, Read, Grep and Glob are open on everything
+ * inside the working directory whatever the allow rules say (measured on Claude Code 2.1.326: a run
+ * started in the brain read `people/`, `tmp/` and `agents/`). Started here, the allow rules of
+ * {@link quickBrainToolArgs} are the only way in.
+ */
+export function quickRunDir(tempDir: string): string {
+  const dir = join(tempDir, 'run');
+  mkdirSync(dir, { mode: 0o700 });
+  return dir;
+}
+
+/**
  * A folder holding `dreamcontext` = THIS running CLI, for the run's PATH: a quick edit must search
  * with the CLI that knows {@link QUICK_RECALL_SCOPE_ENV}, not whichever older one a PATH
  * finds first, nor none (a Finder-started app's PATH). Written into the run's own temp folder;
  * null on Windows (no sh shim) or when the entry is unknown, and the run then uses its PATH.
+ * `projectDir`: the folder holding the brain. The run works in an empty folder ({@link quickRunDir}),
+ * so the shim steps into the project first and recall finds THIS vault; the run's tools never do.
  */
-export function quickCliShimDir(tempDir: string, execPath: string = process.execPath, entry: string | undefined = process.env.DREAMCONTEXT_CLI || process.argv[1]): string | null {
+export function quickCliShimDir(
+  tempDir: string, execPath: string = process.execPath,
+  entry: string | undefined = process.env.DREAMCONTEXT_CLI || process.argv[1], projectDir?: string,
+): string | null {
   if (process.platform === 'win32' || !entry) return null;
   try {
     const dir = join(tempDir, 'bin');
     mkdirSync(dir, { recursive: true });
     const shim = join(dir, 'dreamcontext');
-    writeFileSync(shim, renderCliShim(execPath, entry));
+    writeFileSync(shim, renderCliShim(execPath, entry, projectDir));
     chmodSync(shim, 0o755);
     return dir;
   } catch {

@@ -10,24 +10,24 @@ import { requestManageMembers, requestOpenAgents } from '../../lib/openAgents';
 import { buildEkip, ekipPulseKey, memberWaitCounts, projectEkip, type EkipSummary } from '../aiteam/teamModel';
 import { useVaultSuperRecords } from '../sleepy/super/superRecordStore';
 import { fetchSuperState } from '../sleepy/super/superApi';
-import { buildGlobalTeam, DRAWER_POLL_MS } from './newshell/drawerModel';
+import { DRAWER_POLL_MS } from './newshell/drawerModel';
 import { TeamSection } from './newshell/TeamSection';
 
 /**
- * The classic rail's Ekip row (under Chat) and its Global ekip row (in the footer): the same
- * row and list as the new shell's drawer (plan-r10 1d, 1f), for the ONE project this rail
- * belongs to. Members come from `GET /agent/sessions?summary=1` `members`; the row opens in
+ * The classic rail's Ekip row (under Chat): the same row and list as the new shell's drawer
+ * (plan-r10 1d), for the ONE project this rail belongs to: its own members, then the members of
+ * all projects (owner 2026-11-17: no separate Global row). Members come from `GET /agent/sessions?summary=1` `members`; the row opens in
  * place (plan r4 D5, `TeamSection`); a member click opens its stage (`requestOpenAgents({ slug })`,
  * the active instance routes it), "Üyeleri yönet" opens the modal. The switch is on the stage.
  */
-export function SidebarTeam({ kind }: { kind: 'project' | 'global' }) {
+export function SidebarTeam() {
   // Outside a query client (a bare render of the rail) there is nothing to read: no row, and the
   // rail renders exactly as it did before the Ekip row existed.
   const client = useContext(QueryClientContext);
-  return client ? <SidebarTeamRows kind={kind} /> : null;
+  return client ? <SidebarTeamRows /> : null;
 }
 
-function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
+function SidebarTeamRows() {
   const { t } = useI18n();
   const api = useApi();
   const { vault: vaultId } = useVaultId();
@@ -67,24 +67,14 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
   }, [pulse]);
 
   const all = useMemo(() => buildEkip(summaries, identitiesOf(agentsQ.data ?? []), [], waits), [summaries, agentsQ.data, waits]);
-  const own = useMemo(() => projectEkip(all), [all]);
-  const global = useMemo(() => buildGlobalTeam([{ vault: '', members: all }], ''), [all]);
+  // The rail is its project's own, always the one in view: it counts a global member's approval.
+  const members = useMemo(() => projectEkip(all, true), [all]);
 
-  if (kind === 'project') {
-    if (!own.length) return null;
-    return (
-      <li className="sidebar-team">
-        <TeamSection members={own} kind="project" vault={vaultId} label={t('drawer.team.row')} className="sidebar-item" testid="drawer-team-row"
-          onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} onNewMember={() => requestManageMembers({ create: true })} />
-      </li>
-    );
-  }
-  if (!global) return null;
+  if (!members.length) return null;
   return (
-    <div className="ns-team-global">
-      <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
-      <TeamSection members={global.members} kind="global" label={t('drawer.team.global')} className="sidebar-item" testid="drawer-global-team-row"
+    <li className="sidebar-team">
+      <TeamSection members={members} vault={vaultId} label={t('drawer.team.row')} className="sidebar-item" testid="drawer-team-row"
         onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} onNewMember={() => requestManageMembers({ create: true })} />
-    </div>
+    </li>
   );
 }

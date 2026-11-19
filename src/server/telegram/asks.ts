@@ -22,11 +22,12 @@
  *  - a child permission → `answerChildPermission` (the window's `super allow`, `by: 'owner'`).
  * Each through a single-use, message-bound button record (hub.sendButtons).
  *
- * A CHILD's owner card (sahip-karti-yerinde K7, D3: an `owner` item, or its `member` mirror, that
+ * A CHILD's owner card (sahip-karti-yerinde K7: an `owner` item, or its `member` mirror, that
  * carries a card handle) is one message: the job, the card's command or title (escaped, secrets
- * redacted), the kind's one sentence saying plainly it is a Mac step, and two buttons, "Mac'e
- * dönünce hatırlat" (marks the item; his next words on the Mac raise ONE desktop notification
- * naming the marked cards) and "Gerek yok" (closes the item). Never Run, never a field.
+ * redacted), the kind's one sentence, and "Mac'e dönünce hatırlat" (marks the item; his next
+ * words on the Mac raise ONE desktop notification naming the marked cards) and "Gerek yok"
+ * (closes the item). A run card it can show whole also gets its folder and ▶ Çalıştır
+ * (run-kart-telefon), pressed in runs.ts `pressChildRun`. Never a field.
  */
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { buildAppLink } from '../../lib/app-link.js';
@@ -40,18 +41,19 @@ import { readSuperState, superIdOfMember, updateSuperState } from '../../lib/sup
 import { answerChildQuestion, answerOwnerItem, memberMirrorTarget, superAnswerText, shownKeyOf } from '../../lib/super/answer.js';
 import { answerMemberPick, pickLine, sizeLine } from './member-picks.js';
 import { memberTitle, itemCall } from '../../lib/super/inbox.js';
-import { askSpecFromLegacy, OWNER_CARD_TELEGRAM_LINE, type GrantOffer, type GrantSize, type RefusalFact, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
+import { askSpecFromLegacy, OWNER_CARD_TELEGRAM_LINE, OWNER_CARD_TELEGRAM_RUN_MAC_LINE, type GrantOffer, type GrantSize, type RefusalFact, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
 import {
-  buildQuestionPicks, OWNER_CARD_NOT_NEEDED_DONE, OWNER_CARD_NOT_NEEDED_LABEL, OWNER_CARD_REMIND_DONE, OWNER_CARD_REMIND_LABEL,
+  buildQuestionPicks, OWNER_CARD_NOT_NEEDED_DONE, OWNER_CARD_NOT_NEEDED_LABEL, OWNER_CARD_REMIND_DONE, OWNER_CARD_REMIND_LABEL, OWNER_CARD_RUN_LABEL,
   OWNER_CARD_REMIND_TITLE, type ButtonRecord,
 } from '../../lib/telegram/contract.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes, type AskCardQuestion, type DrawnOption } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
 import { agendaItemBlock } from '../../lib/telegram/headers.js';
-import { LINES, NOT_SHOWN_WHOLE_LINE, shownWhole, visibleCommand, type ActiveBinding, type TelegramHub } from './hub.js';
+import { LINES, NOT_SHOWN_WHOLE_LINE, shownWhole, visibleCommand, type ActiveBinding, type SuperTurnSpan, type TelegramHub } from './hub.js';
 import { richQuestionsOf, type RichAsks } from './rich-asks.js';
 import { wireTelegramAppRequests } from './app-requests.js';
 import { appendAskLog } from './ask-log.js';
+import { childRunOffer, RUN_LINES } from './runs.js';
 
 /** W5 rich asks (multi-select, several questions, previews): set by `wireTelegramW5`. */
 let rich: RichAsks | null = null;
@@ -63,7 +65,7 @@ type Obj = Record<string, unknown>;
 const sentItems = new Set<string>();
 
 /** What an item's Telegram copy is: its messages, so an answer elsewhere can close them. */
-interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; kind?: SuperQueueItem['kind']; messages: { messageId: number; html: string; question?: string }[]; turn?: true }
+interface Copy { ab: ActiveBinding; sessionId?: string; requestId?: string; askId?: string; kind?: SuperQueueItem['kind']; messages: { messageId: number; html: string; question?: string }[]; turn?: true; sentAt?: number }
 
 /** A member's item or a refused call goes one at a time (K5): the next after his answer. */
 function oneAtATime(item: SuperQueueItem): boolean {
@@ -128,9 +130,15 @@ function failure(err: unknown): string {
 function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item: SuperQueueItem): boolean {
   if (sentItems.has(item.id)) return true;
   sentItems.add(item.id);
+  // A text after the Super's own question card that re-says its answer is not sent (sent-once.ts).
+  if (item.kind === 'ask' || item.superAsked === true) hub.noteQuestionCard(sessionId);
   // The Super's own ask that LANDS is its turn speaking (no "göndermeden bitti" after it); sent
   // in line with its texts. A child's item or an approval is not the Super's turn speaking.
+  // Marked before it is queued: the turn's texts queued after it know a card came first.
+  const own = item.kind === 'ask' ? hub.ownAskOffered(sessionId, item.createdAt) : null;
   hub.queueSend(sessionId, async () => {
+    // The Super's own card: a short line it held just before (hub.ts `tails`) goes first.
+    if (item.kind === 'ask') await hub.flushTail(sessionId);
     let outcome: SendOutcome;
     try { outcome = await sendItem(hub, ab, sessionId, item); } catch (err) {
       const retry = (err as { retryAfter?: unknown })?.retryAfter;
@@ -142,6 +150,7 @@ function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item:
     noteTelegramSend(item.id, outcome);
     // Answered while it was going: close it at once.
     if ('ok' in outcome && outcome.ok && !(await stillOpen(ab, item))) await closeCopy(hub, item.id, null);
+    if (own && 'ok' in outcome && outcome.ok) own.landed = true;
     return item.kind === 'ask' && 'ok' in outcome && outcome.ok;
   });
   return true;
@@ -165,6 +174,7 @@ async function stillOpen(ab: ActiveBinding, item: SuperQueueItem): Promise<boole
 function remember(itemId: string, copy: Copy, item?: SuperQueueItem): void {
   copies.delete(itemId);
   copy.kind ??= kindOf.get(itemId);
+  copy.sentAt ??= Date.now();
   copies.set(itemId, item && oneAtATime(item) ? { ...copy, turn: true } : copy);
   while (copies.size > COPIES_CAP) copies.delete(copies.keys().next().value as string);
 }
@@ -188,6 +198,57 @@ async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<strin
     if (!m.messageId) continue;
     const pick = answers && m.question ? answers[m.question] ?? '' : c.messages.length === 1 ? all : '';
     await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n${closedCopyLine(pick || null)}`);
+  }
+}
+
+/** What an old copy of a card ends with once the card was sent again at the bottom. */
+export const MOVED_COPY_LINE = '<i>↓ Bu soru aşağıda yeniden soruldu.</i>';
+
+/**
+ * A question card buried under later messages comes back to the bottom (owner 2026-11-16: "bana
+ * sorduğun soru kartı benim ekranıma gelmiyor"; the card landed at 23:33, the Super's next turn
+ * put its texts and a voice under it at 23:42 and said "a card is open" while none was in view).
+ * At the end of a Super turn OTHER than the one that sent it, an open question card (the Super's
+ * own ask, a child's question) with anything this bot posted below it is sent again; only once
+ * the new one landed does the old copy lose its buttons and say where it went. Its own turn's
+ * line after it ("a question waits") does not count: that turn speaks about the card in view.
+ */
+async function resurfaceBuried(hub: TelegramHub, ab: ActiveBinding, superSession: string, turn: SuperTurnSpan): Promise<void> {
+  if (turn.before < 0 || !hub.ownerAway()) return;
+  // Only what THIS turn posted buries a card: never another card's resend, never a turn that
+  // wrote nothing (review r1: two open cards took turns being resent on every quiet turn).
+  const last = ab.transport.lastSentMessageId(ab.binding.chatId);
+  if (last <= turn.before) return;
+  for (const [id, c] of [...copies]) {
+    if (c.ab.key !== ab.key || (c.kind !== 'ask' && c.kind !== 'question')) continue;
+    if ((c.sentAt ?? Infinity) >= turn.startedAt) continue;
+    const top = Math.max(0, ...c.messages.map((m) => m.messageId));
+    if (!top || top >= last) continue;
+    const s = ab.contextRoot ? await readSuperState(ab.contextRoot).catch(() => null) : null;
+    const item = s?.queue.find((q) => q.id === id);
+    if (!item) continue;
+    // Which of its messages carry buttons now: one tapped while it goes again keeps his answer.
+    const live = new Set(c.messages.filter((m) => m.messageId && hub.buttonsLive(c.ab, m.messageId)).map((m) => m.messageId));
+    let outcome: SendOutcome;
+    try { outcome = await sendItem(hub, ab, superSession, item); } catch (err) { outcome = { ok: false, why: failure(err) }; }
+    // Not sent again (refused, or closed meanwhile): the old copy stays as it is.
+    if (!('ok' in outcome) || !outcome.ok) {
+      if ('ok' in outcome) appendAskLog(hub.home, `${id} ${item.kind} resend below FAILED ${outcome.why}`);
+      continue;
+    }
+    // Answered while it went again (a tap on the old card, the Mac): the new copy closes, if it
+    // is still the one kept, and the old one keeps what the answer wrote on it.
+    if (!(await stillOpen(ab, item))) {
+      if (copies.get(id) !== c) await closeCopy(hub, id, null);
+      appendAskLog(hub.home, `${id} ${item.kind} answered while it was resent below`);
+      continue;
+    }
+    if (c.askId) rich?.close(c.askId);
+    for (const m of c.messages) {
+      if (!m.messageId || (live.has(m.messageId) && !hub.buttonsLive(c.ab, m.messageId))) continue;
+      await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n${MOVED_COPY_LINE}`).catch(() => false);
+    }
+    appendAskLog(hub.home, `${id} ${item.kind} resent below (later messages buried it)`);
   }
 }
 
@@ -249,6 +310,8 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
     }
   };
   hub.awayFlushers.add(flush);
+  const resurface = (ab: ActiveBinding, sessionId: string, turn: SuperTurnSpan): Promise<void> => resurfaceBuried(hub, ab, sessionId, turn);
+  hub.turnEnders.add(resurface);
   const prev = hub.extraButton;
   hub.extraButton = async (ab, rec, idx) => rec.kind === 'owner-card'
     ? onOwnerCardButton(ab, rec, idx)
@@ -269,7 +332,7 @@ export function wireTelegramAsks(hub: TelegramHub): () => void {
   // "Mac'e dönünce hatırlat" (K7): his next words on the Mac name every marked card, once.
   const offRemind = onOwnerAtMac(() => { void remindMarkedCards(hub).catch(() => {}); });
   return () => {
-    offRemind(); offApps(); off(); offAnswered(); hub.awayFlushers.delete(flush);
+    offRemind(); offApps(); off(); offAnswered(); hub.awayFlushers.delete(flush); hub.turnEnders.delete(resurface);
     setOwnerQuestionSinks({ telegram: () => false, telegramClosed: () => {} });
     hub.extraButton = prev;
     hub.turnPrefix = prevPrefix;
@@ -597,7 +660,8 @@ function ownerCardName(spec: CardSpec): string {
   }
 }
 
-/** One message per child card: the job, the card's line, the kind's sentence, Remind and Not needed. */
+/** One message per child card: the job, the card's line, the kind's sentence, Remind and Not
+ *  needed; a run card it can show whole adds its folder and ▶ Çalıştır first (run-kart-telefon). */
 async function sendOwnerCard(hub: TelegramHub, ab: ActiveBinding, item: SuperQueueItem, who: string | null): Promise<SendOutcome> {
   const h = item.card;
   if (!h) return { skipped: true };
@@ -607,9 +671,26 @@ async function sendOwnerCard(hub: TelegramHub, ab: ActiveBinding, item: SuperQue
     job = s?.children?.[h.childId]?.brief?.trim() ?? '';
   }
   const lead = `✋ ${escapeHtml(redactSecrets(job.slice(0, 80) || 'Bir iş'))} seni bekliyor`;
-  const html = [lead, ownerCardLineHtml(h.spec), escapeHtml(OWNER_CARD_TELEGRAM_LINE[h.spec.type])].join('\n');
-  const m = await buttons2(hub, ab, html, [[OWNER_CARD_REMIND_LABEL], [OWNER_CARD_NOT_NEEDED_LABEL]],
-    { kind: 'owner-card', sessionId: h.postingSession, cardRef: h.cardRef, singleUse: true }, { item: item.id });
+  // A run card: ▶ Çalıştır when it can be shown whole, as written, in a proven folder (the button
+  // keeps that folder and the command's hash: the press runs exactly them or nothing).
+  const got = h.spec.type === 'run'
+    ? await childRunOffer(ab, h, item.id).catch(() => ({ none: 'unavailable' as const }))
+    : null;
+  const offer = got && !('none' in got) ? got : null;
+  const none = got && 'none' in got ? got.none : null;
+  // Each card without Run says its own reason: a command it cannot show, a folder not proven, else the Mac.
+  const line = h.spec.type !== 'run' ? OWNER_CARD_TELEGRAM_LINE[h.spec.type]
+    : offer ? OWNER_CARD_TELEGRAM_LINE.run
+      : none === 'not_showable' ? OWNER_CARD_TELEGRAM_RUN_MAC_LINE : none === 'no_folder' ? RUN_LINES.noFolder : RUN_LINES.childMacOnly;
+  const html = [lead, ownerCardLineHtml(h.spec), ...(offer ? [`Klasör: <code>${escapeHtml(offer.folder)}</code>`] : []), escapeHtml(line)].join('\n');
+  const rows = offer
+    ? [[OWNER_CARD_RUN_LABEL], [OWNER_CARD_REMIND_LABEL], [OWNER_CARD_NOT_NEEDED_LABEL]]
+    : [[OWNER_CARD_REMIND_LABEL], [OWNER_CARD_NOT_NEEDED_LABEL]];
+  const data: Obj = offer
+    ? { item: item.id, choices: ['run', 'remind', 'not_needed'], cmdHash: offer.cmdHash, root: offer.root }
+    : { item: item.id, choices: ['remind', 'not_needed'] };
+  const m = await buttons2(hub, ab, html, rows,
+    { kind: 'owner-card', sessionId: h.postingSession, cardRef: h.cardRef, singleUse: true }, data);
   remember(item.id, { ab, messages: [m] }, item);
   return { ok: true };
 }
@@ -620,14 +701,18 @@ function openCardItem(queue: readonly SuperQueueItem[], itemId: string, rec: But
 }
 
 /** A tap on a child card's message (authorised and single use: the hub checked the binding, the
- *  chat, the message and its text). Remind marks the item; Not needed closes it. Never runs. */
+ *  chat, the message and its text). Remind marks the item; Not needed closes it. Its ▶ Çalıştır
+ *  is runs.ts's (`pressChildRun`, ahead of this handler): reaching here, it runs nothing. A
+ *  message from before `choices` reads its two buttons by index. */
 async function onOwnerCardButton(ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }, idx: number): Promise<string | null> {
   const root = ab.contextRoot;
   if (ab.target !== 'super' || ab.disabled || !root) return LINES.stale;
   const itemId = String(rec.data?.item ?? '');
+  const choices = Array.isArray(rec.data?.choices) ? rec.data.choices as string[] : ['remind', 'not_needed'];
+  const choice = choices[idx];
   const s = await readSuperState(root).catch(() => null);
   if (!s?.enabled || !openCardItem(s.queue, itemId, rec)) return LINES.stale;
-  if (idx === 0) {
+  if (choice === 'remind') {
     const got = { marked: false };
     await updateSuperState(root, (draft) => {
       const q = openCardItem(draft.queue, itemId, rec);
@@ -635,7 +720,7 @@ async function onOwnerCardButton(ab: ActiveBinding, rec: ButtonRecord & { data?:
     });
     return got.marked ? OWNER_CARD_REMIND_DONE : LINES.stale;
   }
-  if (idx === 1) {
+  if (choice === 'not_needed') {
     const l = ownerCardLookup(rec.sessionId ?? '', rec.cardRef ?? '');
     if (!l || !(await closeOwnerItemForCard(l, 'not_needed'))) return LINES.stale;
     dropOwnerReceipts(l.target, { cardRef: l.handle.cardRef });

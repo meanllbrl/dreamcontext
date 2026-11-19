@@ -4,6 +4,35 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.22] - 2026-11-18
+
+Patch on 0.41.21. Local build; not published.
+
+- **Telegram.** A Super that is asleep or whose window is closed now wakes when you write to it from Telegram.
+- **Telegram voice summary.** When you ask for a voice summary and the answer has no audio, a clear line now appears instead of silence.
+- **Memory.** The memory hint on each message now finds the running Mac app's recall server, so it answers faster.
+- **Agenda.** Every day in the agenda strip and both arrows can be clicked, including days still ahead.
+- **Publish approval.** The approval card folds the waived findings under one toggle, so the card stays short.
+- **Sidebar.** A project row keeps only its menu and the plus button; the eye and the arrow now live in the menu.
+- **Page viewer.** The bar now sits in a band under the page instead of covering it.
+- **Chat buttons.** Pressing several answer buttons adds numbered lines to the message box instead of gluing the text together.
+- **Floating cards.** A wide floating card slides its title out of the way of the hover lights, a narrow one fades it; both respect reduced motion.
+- **Agent photo.** A global agent can now have a profile photo. It shows in every project: team rows, the member card, the feed, the inbox and its Telegram bot.
+- **Tasks.** A task page can copy its slug and delete the task, with a clear confirmation.
+- **App approvals.** A waiting app install, publish, update or logo opens by itself as a pop-up with the same Approve and Reject buttons. Closing it decides nothing.
+- **Publish approval.** Lines the owner's own words trigger no longer stop a publish request: they are grouped by word on the card and one Approve passes exactly those.
+- **Telegram cards.** A question card buried under later messages comes back to the bottom of the chat. `super ask` no longer says it reached you when Telegram did not carry it while you are away.
+- **Telegram files.** The same card file reaches the chat once per turn, not twice.
+- **Super questions.** A line above the message box leads to an open question that scrolled out of view. A question shows only the cards it names.
+- **Telegram answers.** A Super answer repeated after its question card is not sent a second time, and option pictures now reach the phone.
+- **Push notices.** A push into a throwaway repo the same command created is no longer reported as sent.
+- **Narrow window.** A shown card folds to a tab over the chat when the stage is narrow.
+- **Clone.** A project clone may take up to 30 minutes instead of 10.
+- **Moved folder.** A moved project folder asks "Are you sure?" instead of showing a warning.
+- **Automations.** An automation's fire prompt no longer runs a judged memory recall.
+- **Agenda.** Pressing a line filters the Super chat to that line's conversation, and a search on the agenda card finds every day.
+- **Whiteboard security.** A board's quick edit now runs in an empty folder, so it can read only the pages its allow rules name.
+
 ## [0.41.19] - 2026-11-12
 
 Patch on 0.41.18, local build; not published.

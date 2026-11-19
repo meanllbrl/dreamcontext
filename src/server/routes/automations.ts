@@ -13,7 +13,7 @@ import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { approvalCardFacts, nextFireIso, staleApprovalBlock } from '../../lib/automations/approval-card.js';
 import { approveAsOwner, rejectAsOwner } from '../automation-decision.js';
 import { foreignOwner, ownerLabel } from '../../lib/agents/owner.js';
-import { globalAgentExists } from '../../lib/agents/scope.js';
+import { globalAgentExists, isGlobalAgentHere } from '../../lib/agents/scope.js';
 import { memberCallState } from '../../lib/agents/team-roster.js';
 import {
   getAutomation,
@@ -32,6 +32,7 @@ import {
   automationPhotosDir,
   photoRelPathFor,
   resolveAutomationPhoto,
+  resolveMemberPhoto,
   cadenceLabel,
   isSafeAutomationSlug,
   automationPath,
@@ -338,7 +339,7 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     // A fire still owed (its time passed, the run not done) is the next one, not tomorrow's.
     nextFireAt: nextFireIso(m, new Date(), { projectRoot }),
     mode: m.mode,
-    hasPhoto: resolveAutomationPhoto(contextRoot, m.photo) !== null,
+    hasPhoto: resolveMemberPhoto(contextRoot, m.agent || m.slug, m.photo) !== null,
     description: m.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     cadenceLabel: cadenceLabel(m),
     face: faceOf(m.slug, m.path ? parseFace(readManifestFrontmatter(m.path)?.data.face) : null),
@@ -1630,6 +1631,11 @@ export async function handleAutomationsPhotoUpload(
     return;
   }
   if (refuseNotOwner(res, target)) return;
+  // A global agent's photo shows in every project: changed on the Mac only, as its own route says.
+  if (isPhoneSocket(req) && isGlobalAgentHere(contextRoot, target.agent || slug)) {
+    sendError(res, 403, 'phone_unavailable', 'Teammates in all projects are changed on the Mac itself.');
+    return;
+  }
   const image = await receivePhoto(req, res);
   if (!image) return;
   try {
@@ -1691,7 +1697,7 @@ export async function handleAutomationsPhotoGet(
 ): Promise<void> {
   try {
     const manifest = isSafeAutomationSlug(params.slug) ? getAutomation(contextRoot, params.slug) : null;
-    sendPhotoFile(res, manifest ? resolveAutomationPhoto(contextRoot, manifest.photo) : null);
+    sendPhotoFile(res, manifest ? resolveMemberPhoto(contextRoot, manifest.agent || manifest.slug, manifest.photo) : null);
   } catch {
     sendError(res, 404, 'no_photo', 'This agent has no photo.');
   }

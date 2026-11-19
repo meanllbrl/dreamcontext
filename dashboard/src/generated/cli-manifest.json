@@ -811,7 +811,8 @@
       "valueFlags": [
         "--app-tools",
         "--condition",
-        "--wake-when"
+        "--wake-when",
+        "--agent"
       ]
     },
     {
@@ -855,7 +856,10 @@
     {
       "path": "automations list",
       "desc": "List automations with schedule, approval, and last-run status",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--agent"
+      ]
     },
     {
       "path": "automations logs",
@@ -4168,7 +4172,8 @@
         "<text...>"
       ],
       "valueFlags": [
-        "--for"
+        "--for",
+        "--origin"
       ]
     },
     {
@@ -4332,6 +4337,20 @@
         "--model",
         "--effort",
         "--origin"
+      ]
+    },
+    {
+      "path": "super room",
+      "desc": "A Telegram group the owner bound to your bot",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "super room say",
+      "desc": "Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`",
+      "args": [
+        "<request>",
+        "<text>"
       ]
     },
     {
@@ -5417,6 +5436,18 @@
       ]
     },
     {
+      "path": "whiteboard export",
+      "desc": "The board as it looks, for the owner: drawn by the app's own renderer in a headless browser (its fonts, its pictures, every widget with its content). --split cuts a long board into phone pictures, one per tagged group or named frame, each section whole",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--out",
+        "--split",
+        "--tag"
+      ]
+    },
+    {
       "path": "whiteboard group",
       "desc": "The folders boards sit in (frontmatter `group`), two levels deep: \"Folder\" or \"Folder/Sub-folder\". `folder` is the same command. A board the owner placed is refused without --force.",
       "args": [],
@@ -5575,7 +5606,7 @@
     },
     {
       "path": "whiteboard render",
-      "desc": "Draw a board, a tagged group or a region as a PNG, without a browser: shapes, arrows and text as laid out, widgets as titled cards, pictures as placeholders",
+      "desc": "LAYOUT CHECK, for your own eyes: a board, a tagged group or a region as a PNG, shapes, arrows and text as laid out, widgets as titled cards, pictures as empty crossed boxes. Never show it to the owner as the board: `whiteboard export` draws the real look",
       "args": [
         "[slug]"
       ],

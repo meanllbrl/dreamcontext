@@ -140,7 +140,7 @@ Current focus: proving the snapshot's section joins are byte-stable.
 
 ## Automations
 
-- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` (never a hand-rolled cron/launchd job or external scheduler)
+- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug> --agent <member>` (never a hand-rolled cron/launchd job or external scheduler)
 
 ## Recent Changelog
 
