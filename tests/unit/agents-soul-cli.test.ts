@@ -215,7 +215,7 @@ describe('agents edit from a session', () => {
 
   it('the crew\'s clean single-file automation is approved, its own agent too; no card', async () => {
     vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '1');
-    const r = await run(['automations', 'create', 'nightly', '--title', 'Nightly', '--days', 'daily', '--at', '22:00']);
+    const r = await run(['automations', 'create', 'nightly', '--title', 'Nightly', '--days', 'daily', '--at', '22:00', '--new-member']);
     expect(r.code).toBe(0);
     expect(r.out).not.toContain('{"type":"automation","slug":"nightly"}');
     expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'nightly', 'automation')!, undefined, 'run').approved).toBe(true);
