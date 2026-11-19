@@ -4432,7 +4432,7 @@
     },
     {
       "path": "super team",
-      "desc": "The project's AI Team: give a member a job in its own thread",
+      "desc": "The project's AI Team: give a member a job in its own thread; a member tells the Super Agent something (team tell)",
       "args": [],
       "group": true
     },
@@ -4479,6 +4479,16 @@
       "args": [
         "<item>",
         "<result>"
+      ]
+    },
+    {
+      "path": "super team tell",
+      "desc": "An AI Team member only (its own chat, which is its Super): tell the project's Super Agent something on your own, whether or not it gave you a job (the owner says \"tell the Super\"). It hears it as one event (event=member-note), as your words, never the owner's, and acts on it or tells the owner when it needs him; nothing goes to Telegram by itself. Refused: `member_only` (403, from the project's Super Agent), `super_off` (409, it is not running: tell the owner yourself), `unknown_item` (404, a --for that is not its request to you)",
+      "args": [
+        "<message>"
+      ],
+      "valueFlags": [
+        "--for"
       ]
     },
     {

@@ -540,6 +540,10 @@ export const MEMBER_ABOUT_TASK_LINE = 'On `[About task X]` read its file, `_drea
 /** The member slot's origin rule (owner `wnfvtj`), pinned by the drift tests. */
 export const MEMBER_ORIGIN_LINE = 'A request from the Super Agent is the Super Agent\'s work: ask it, not the owner; work the owner started, ask the owner.';
 
+/** The member slot's way to reach the Super Agent on its own (owner 2026-11-19: "git Super'e haber
+ *  ver" was answered "yazamıyorum"). Pinned by the drift tests. */
+export const MEMBER_TELL_LINE = 'To tell the Super Agent something on your own (he says "Super\'e haber ver", "Super\'e söyle", or you found what it must know): `dreamcontext super team tell "<message>"` (`--for <item>` when it is about its request), then tell him in one line that you did. You can always write to it this way; never say you cannot.';
+
 /** The member slot's new-routine rule (owner 2026-11-05): "+ New routine" on its stage is a chip,
  *  never a form; this Super sets the routine up. Pinned by the drift tests. */
 export function memberNewRoutineLine(slug: string): string {
@@ -565,6 +569,7 @@ You are ${slot.title} (\`${slot.slug}\`); your field: ${slot.field}. At most ${M
 You do not lead other members: never \`super team ask\` (it is refused); work outside your field, tell whoever gave it to you.
 A \`request\` from the Super Agent arrives as a server event naming its item: do it (through your children when it is real work, passing its model and effort to them), then close it with \`dreamcontext super team done <item> "<the result in a few lines>"\`. Never close one you did not finish.
 ${MEMBER_ORIGIN_LINE} (\`super ask --for <item|owner>\`, \`super delegate --for <item|owner>\` say whose it is.)
+${MEMBER_TELL_LINE}
 ${MEMBER_ABOUT_TASK_LINE}
 ${memberNewRoutineLine(slot.slug)}
 ${memberSelfAmendLine(slot.slug)}

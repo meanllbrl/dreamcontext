@@ -924,7 +924,7 @@ queue, never a `member` mirror: `routine` names it, `fact` the fact on disk it s
 is derived from both), `member` the routine's member only when it has one, `ownerText` its line,
 `shown` once it has rung (a coalesced fact never rings twice).
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -1064,6 +1064,16 @@ export interface SuperQueueItem {
   /** An `owner-result` item (K6): one per owner action on a child's card. Its `sessionId` is the
    *  child's. A `parked` item names the open card in `wait`. */
   ownerResult?: OwnerResultFact;
+  /** A `member-note` item (`super team tell`, owner 2026-11-19): the owner himself asked the member,
+   *  in a turn of HIS conversation with it, to pass this on. Server-written. */
+  ownerAsked?: true;
+  /** A `member-note` about a request of main's to that member (`--for <item>`): that request's id.
+   *  Never a `workOrigin`: the note sits in MAIN's own record, where `main:*` would read as a member's
+   *  work for main and fold the turn away from the owner. Server-written. */
+  forRequest?: string;
+  /** A `member-note` about a request of main's (`--for <item>`) whose team job answers an owner
+   *  message: that message's ref, so the Super's text about it stands under it. Server-written. */
+  origin?: string;
 }
 
 // ─── Owner cards a child leaves, done where the owner is (sahip-karti-yerinde K1-K7; MIRRORED in
@@ -2347,6 +2357,8 @@ export const SUPER_VERBS = [
   'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',
+  // A member tells the project's Super something on its own (owner 2026-11-19): member only.
+  'team-tell',
   // The owner's scheduled jobs (super-rutin plan C4): main Super only.
   'schedule',
   // A Telegram group's approved request (tg-grup C5): the Super that got it posts the result once.

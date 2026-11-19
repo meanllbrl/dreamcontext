@@ -53,7 +53,7 @@ import { getAgent } from '../../lib/agents/store.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
-import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteMemberToMain, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
@@ -1908,6 +1908,7 @@ const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: strin
 };
 const MEMBER_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
   'team-done': { error: 'member_only', message: 'only a member\'s Super closes the request it was given' },
+  'team-tell': { error: 'member_only', message: 'only an AI Team member tells the Super Agent something this way; you are the Super Agent' },
 };
 
 /** Why `superId` may not run `verb` (403), or null. */
@@ -1944,6 +1945,25 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const slug = memberOfSuperId(c.superId);
     if (slug) await noteRequestDone(c.who.contextRoot, slug, id, result.slice(0, MAX_REQUEST_RESULT)).catch(() => false);
     ok(res, { item: id, closed: true });
+  },
+  'team-tell': async (c, b, res) => {
+    // A member starts a message to the project's Super Agent (owner 2026-11-19): one event line on
+    // main, its text the member's (fenced there), never an instruction and never the owner's words.
+    const text = typeof b.text === 'string' ? b.text.trim() : '';
+    if (!text) { refuse(res, 400, 'invalid_args', 'write what the Super Agent should know'); return; }
+    const slug = memberOfSuperId(c.superId);
+    if (!slug) { refuse(res, 403, 'member_only', 'only an AI Team member tells the Super Agent something this way'); return; }
+    const forItem = b.for === undefined || b.for === null || b.for === '' ? undefined : str(b.for);
+    if (forItem !== undefined && (!forItem || !QUEUE_ID_RE.test(forItem) || !c.state.queue.some((q) => q.id === forItem && q.kind === 'request'))) {
+      refuse(res, 404, 'unknown_item', '--for names one of the Super Agent\'s requests to you (`dreamcontext super state`); leave it out for anything else');
+      return;
+    }
+    // The owner's own turn of his conversation with this member: he asked it to pass this on.
+    const ownerAsked = ownersTurn(c) && !!c.state.session && memberTurnOrigin(c.state.session) === 'owner';
+    const told = await noteMemberToMain(c.who.contextRoot, slug, text, { ...(forItem ? { forRequest: forItem } : {}), ownerAsked });
+    if (told === 'super_off') { refuse(res, 409, 'super_off', 'the project\'s Super Agent is not running: tell the owner yourself, in your own chat'); return; }
+    if (told === 'unknown_item') { refuse(res, 404, 'unknown_item', 'the Super Agent no longer holds that job; leave --for out'); return; }
+    ok(res, { told: true, ...(forItem ? { for: forItem } : {}), ...(ownerAsked ? { ownerAsked: true } : {}) });
   },
   'team-answer': async (c, b, res) => {
     // Main Super answers a member's question about a job it gave (plan-r10 1): the question lands in
