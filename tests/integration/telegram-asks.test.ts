@@ -131,6 +131,8 @@ describe('a Telegram turn that only asked (owner report 2026-11-09)', () => {
     tg.push(TOKEN, textUpdate(OWNER, 'bir de kitap detayı?'));
     await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
     say('Kitap detayı beyaz kaldı.');
+    // A short unmarked text waits for its turn's end (hub.ts `tails`): the turn ends.
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
     await vi.waitFor(() => expect(tg.delivered.some((t) => t.includes('Kitap detayı beyaz kaldı'))).toBe(true), { timeout: 3000 });
   });
 
@@ -146,6 +148,8 @@ describe('a Telegram turn that only asked (owner report 2026-11-09)', () => {
     announceOwnerHead(() => vault, await readSuperState(root), item as never);
     h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'İki iş bitti, biri sürüyor.' }] } });
     await vi.waitFor(() => expect(buttonMsg('Hayır')).toBeTruthy());
+    // A short unmarked text waits for its turn's end (hub.ts `tails`): the turn ends.
+    h.observe({ type: 'result', subtype: 'success', is_error: false, result: '' });
     await vi.waitFor(() => expect(tg.delivered.some((t) => t.includes('İki iş bitti'))).toBe(true), { timeout: 3000 });
   });
 

@@ -1572,6 +1572,16 @@ export class TelegramHub implements TelegramHubApi {
     return m;
   }
 
+  /** The Super's own card is about to go (asks.ts `offerItem`, in line with its texts): a short
+   *  line it held before the card (`tails`) was its word to him, not a step between tools, so it
+   *  goes first and the phone reads line, then card (owner 2026-11-18, kitUP). */
+  async flushTail(sessionId: string): Promise<void> {
+    const tail = this.tails.get(sessionId);
+    if (!tail) return;
+    this.tails.delete(sessionId);
+    await this.onAssistantText(sessionId, tail.text, { turns: tail.turns, inputs: tail.inputs, mark: tail.mark, turn: tail.turn, cards: tail.cards, tail: true }).catch(() => false);
+  }
+
   /** One Super text: its turn's inputs read now, as it is written, never after a send. */
   private queueAssistantText(sessionId: string, text: string): void {
     const inputs = this.turnInputs.get(sessionId);

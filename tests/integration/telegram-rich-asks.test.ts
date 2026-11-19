@@ -275,7 +275,8 @@ describe('the Super\'s own rich ask', () => {
     expect(page).not.toContain('src="_dream_context/tmp/super/header-b.png"');
     // The missing file is no broken picture: the question says that drawing is on the Mac, the log says why.
     const q = String(tg.calls.find((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))!.params.text);
-    expect(q).toContain('• <b>A · A ile yap</b> (çizim A)');
+    // Each option is said once (ask-format.ts): a drawing that went is its own captioned picture.
+    expect(q).not.toContain('A ile yap');
     expect(q).toContain("• <b>Yok</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
     const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
     expect(log).toMatch(/ask-6 pictures 2\/3 NOT ALL SENT \(Yok: /);
@@ -312,7 +313,7 @@ describe('an option preview that names project pictures (kitUP, owner 2026-11-18
     expect(q).toContain("• <b>C: liste</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
     expect(q).not.toContain('küçük rakam');
     const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
-    expect(log).toMatch(/ask-pic pictures 2\/3 NOT ALL SENT \(C: liste: picture not readable \(shots\/yok\.png\)\)/);
+    expect(log).toMatch(/ask-pic pictures 2\/3 NOT ALL SENT \(C: liste: dosya bulunamadı/);
   });
 });
 
