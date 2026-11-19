@@ -811,7 +811,8 @@
       "valueFlags": [
         "--app-tools",
         "--condition",
-        "--wake-when"
+        "--wake-when",
+        "--agent"
       ]
     },
     {
@@ -4171,7 +4172,8 @@
         "<text...>"
       ],
       "valueFlags": [
-        "--for"
+        "--for",
+        "--origin"
       ]
     },
     {

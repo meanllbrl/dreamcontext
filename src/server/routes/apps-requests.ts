@@ -111,7 +111,7 @@ export async function handleAppRequestCreate(req: IncomingMessage, res: ServerRe
       const ctx = { home, vault: rec.vault, contextRoot };
       if (action === 'publish') {
         built = await buildPublishPlan({ ...ctx, host: resolveAppHost(home) }, rec, {
-          public: b.public === true, invite: strings(b.invite, 20), approve: strings(b.approve),
+          public: b.public === true, invite: strings(b.invite, 20),
           note: typeof b.note === 'string' ? b.note : undefined,
           catalog: b.catalog === false ? false : b.catalog === true ? true : undefined,
         });

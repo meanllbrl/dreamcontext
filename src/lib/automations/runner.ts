@@ -1,5 +1,6 @@
 import { assertNotAppChat } from '../apps/chat-store.js';
 import { cliAwarePath } from './cli-path.js';
+import { AUTOMATION_FIRE_PREFIX } from './fire-prompt.js';
 import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -252,7 +253,7 @@ export function buildPreamble(
   home?: BoardScope | null,
 ): string {
   return (
-    `You are scheduled dreamcontext automation "${m.title}" in ${projectRoot}. ` +
+    `${AUTOMATION_FIRE_PREFIX}${m.title}" in ${projectRoot}. ` +
     'NO user available: never ask, finish autonomously. ' +
     `Fire time ${fireAt.toISOString()}. ` +
     buildFireSlotLine(m, fireAt) +
@@ -1019,7 +1020,8 @@ export function buildAskBlock(
     'If they ask for a voice or spoken summary ("sesli özetle"), put it in your post as a',
     '```dream-voice <short title> block, written for the ear in their language (about 150 words, never',
     'over 2500 characters; no ids, paths, links, tables or code): when they wrote from their phone it',
-    'reaches them there as a voice message.',
+    'reaches them there as a voice message. Only the block is spoken: never say a voice is on its',
+    'way unless the block is in that same post.',
     'This is a conversation, not an unattended run: no approval step runs after you, and the',
     'owner can reply in the thread. Do not end with "approve to continue" or wait for a sign-off.',
     ...(canPropose && m

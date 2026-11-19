@@ -307,16 +307,17 @@ async function run(engineName, base, port) {
   console.log(`── ${engineName}: (d) the New chat menu`);
   await toMainStage(page);
   await ensureDrawer(page);
-  const menu = page.locator('[data-testid="new-chat-menu"]:visible').first();
+  const menu = page.locator('[data-testid="drawer-project-more"]:visible').first();
   // The chevron sits beside the project row's "+" and shows on the row's hover (its box takes no
   // pointer until then): hover the row through the always-there "+", as a person does, then click.
   const openMenu = async () => {
     await ensureDrawer(page);
     if (await page.locator('[data-testid="new-chat-claude"]:visible').count()) return;
     await page.locator('[data-testid="drawer-project-add"]:visible').first().hover();
-    await page.locator('[data-testid="new-chat-menu"]:visible').first().click();
+    await page.locator('[data-testid="drawer-project-more"]:visible').first().click();
+    await page.locator('[data-testid="drawer-project-newchat-item"]:visible').first().click();
   };
-  ok(tag('(d) the New chat chevron is there'), await until(page, async () => (await menu.count()) === 1, 15000));
+  ok(tag('(d) the project menu is there'), await until(page, async () => (await menu.count()) === 1, 15000));
   await openMenu().catch(() => {});
   ok(tag('(d) it offers Claude and the members'), await until(page, async () =>
     (await page.locator('[data-testid="new-chat-claude"]:visible').count()) === 1

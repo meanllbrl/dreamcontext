@@ -1,5 +1,5 @@
 import {
-  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_RESULT_GIST, MAX_SENT, MSG_REF_RE, OWED_NUDGES, OWED_PARK_MS, SENT_RE,
+  MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_RESULT_GIST, MAX_OWED_SAID, MAX_OWED_SAID_HEAD, MAX_SENT, MSG_REF_RE, OWED_NUDGES, OWED_PARK_MS, SENT_RE,
   msgRef, partRefs,
   type SuperOwed, type SuperState,
 } from './types.js';
@@ -80,24 +80,176 @@ function commandText(cmd: string): string {
  * `|`, newlines), so `echo "git push"` is not a push.
  */
 export function outwardAction(name: unknown, input: unknown): string | null {
-  if (typeof name !== 'string' || !name) return null;
+  return outwardActions(name, input)[0] ?? null;
+}
+
+/** Every outward step of one tool call, in order, each label once (`git push && gh pr create`
+ *  is both: field 2026-11-17, the PR went untold). [] for anything else. */
+export function outwardActions(name: unknown, input: unknown): string[] {
+  if (typeof name !== 'string' || !name) return [];
   const inp = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   if (name === 'Bash' || name === 'shell' || name === 'exec_command') {
     const cmd = typeof inp.command === 'string' ? inp.command : Array.isArray(inp.command) ? inp.command.filter((x) => typeof x === 'string').join(' ') : '';
-    if (!cmd) return null;
+    const out: string[] = [];
+    if (!cmd) return out;
     for (const raw of commandText(cmd).split(/&&|\|\||[;|\n]/)) {
       const seg = bareSegment(raw);
-      for (const [re, label] of SHELL_OUTWARD) if (re.test(seg)) return label;
+      const hit = SHELL_OUTWARD.find(([re]) => re.test(seg));
+      if (hit && !out.includes(hit[1])) out.push(hit[1]);
     }
-    return null;
+    return out;
   }
   if (name.startsWith('mcp__')) {
     const words = toolWords((name.split('__').pop() ?? '').split(/[./]/).pop() ?? '');
-    if (!words.some((w) => MCP_SENDS.has(w)) || words.some((w) => MCP_LOOKS.has(w))) return null;
+    if (!words.some((w) => MCP_SENDS.has(w)) || words.some((w) => MCP_LOOKS.has(w))) return [];
     const label = `mcp ${name.slice(5).replace(/__/g, '/').replace(/[^A-Za-z0-9_./-]/g, '')}`.slice(0, 80);
-    return SENT_RE.test(label) ? label : 'mcp send';
+    return [SENT_RE.test(label) ? label : 'mcp send'];
   }
-  return null;
+  return [];
+}
+
+/** A git address that may be on another machine: a URL that is not `file://`, scp form
+ *  `[user@]host:path`, or anything unknown (an emptied quoted word, a `$VAR`, a backtick). */
+function remoteAddress(word: string): boolean {
+  if (word === "''" || word === '""' || /[$`]/.test(word)) return true;
+  if (word.includes('://')) return !/^file:\/\//i.test(word);
+  return /^[^\s/:]+:/.test(word);
+}
+/** A word that names another machine wherever it stands (a URL, `user@host:`, a `…url=` setting). */
+const plainlyRemote = (w: string): boolean => (w.includes('://') && !/^file:\/\//i.test(w)) || /^[^\s@/:]+@[^\s/:]+:/.test(w) || /url=|insteadof/i.test(w);
+const GIT_SUB = (sub: string) => new RegExp(`^git\\b(?:\\s+-[Cc]\\s+\\S+)*\\s+${sub}\\b`);
+const GIT_INIT = GIT_SUB('init');
+const GIT_CLONE = GIT_SUB('clone');
+/** Segments whose every word is about where a repo points. */
+const GIT_POINTS = GIT_SUB('(?:remote|config|submodule)');
+/** A temp folder of this machine. */
+const TEMP_ROOT = /^(?:\/private)?\/(?:tmp|var\/folders)(?=\/|$)/;
+/** `X=$(mktemp …)`: X names a fresh temp folder. */
+const MKTEMP_VAR = /^([A-Za-z_][A-Za-z0-9_]*)=\$\(mktemp\b[^)]*\)$/;
+/** Shell words that open a segment without being its command. */
+const SHELL_KEYWORD = /^(?:then|do|else|elif|if|while|until|!|\{|time|builtin|command)\s+/;
+const words = (seg: string): string[] => seg.split(/\s+/).filter(Boolean);
+/** Push options that take a value (the next word is no remote). */
+const PUSH_VALUE_OPTS = new Set(['-o', '--push-option', '--receive-pack', '--exec']);
+/** The non-flag words after a git subcommand, flags and redirections left out. */
+function gitArgs(seg: string, sub: RegExp, valueOpts: ReadonlySet<string> = new Set()): string[] {
+  const w = words(seg.replace(sub, ''));
+  const out: string[] = [];
+  for (let i = 0; i < w.length; i++) {
+    if (valueOpts.has(w[i])) { i++; continue; }
+    if (w[i].startsWith('-') || /^\d*>/.test(w[i])) continue;
+    out.push(w[i]);
+  }
+  return out;
+}
+
+/** A shell folder inside a temp root: the root (`$T` or `/tmp`) and the folders below it. */
+type TempDir = { root: string; parts: string[] } | null;
+const dirKey = (d: NonNullable<TempDir>): string => [d.root, ...d.parts].join('/');
+/** `base` moved by a relative path; null when it climbs above its temp root at any step. */
+function walk(base: NonNullable<TempDir>, path: string): TempDir {
+  const parts = [...base.parts];
+  for (const p of path.split('/')) {
+    if (!p || p === '.') continue;
+    if (p === '..') { if (!parts.length) return null; parts.pop(); } else parts.push(p);
+  }
+  return { root: base.root, parts };
+}
+/** Where `cd <target>` lands, when it is provably inside a temp folder (else null). */
+function cdTarget(at: TempDir, target: string, tempVars: ReadonlySet<string>): TempDir {
+  const v = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(\/[^\s]*)?$/.exec(target);
+  if (v) return tempVars.has(v[1]) ? walk({ root: `$${v[1]}`, parts: [] }, v[2] ?? '') : null;
+  const t = TEMP_ROOT.exec(target);
+  if (t) return walk({ root: '/tmp', parts: [] }, target.slice(t[0].length));
+  if (/^[/~$`'"-]/.test(target) || !at) return null;
+  return walk(at, target);
+}
+
+/**
+ * What a tool call that WENT THROUGH sent out of this machine, for telling the owner (`sent=`):
+ * {@link outwardActions}, except a `git push` made while the shell stands in a repo the SAME
+ * command made inside a temp folder (field 2026-11-17: a plan child's reviewers proved a merge
+ * in `mktemp -d` repos, `git init base` + `git clone base A` + `cd A` + `git push origin main`,
+ * and the Super told the owner a push went out). Unsure is told: a missed real push is the worse
+ * mistake. Only what is told reads this; grants and consent keep the strict {@link outwardAction}.
+ */
+export function sentOutwards(name: unknown, input: unknown): string[] {
+  const strict = outwardActions(name, input);
+  if (!strict.length || (name !== 'Bash' && name !== 'shell' && name !== 'exec_command')) return strict;
+  const inp = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const cmd = typeof inp.command === 'string' ? inp.command : Array.isArray(inp.command) ? inp.command.filter((x) => typeof x === 'string').join(' ') : '';
+  const segs = commandText(cmd).split(/&&|\|\||[;|\n]/).map((raw0) => {
+    let raw = raw0.trim();
+    for (let k = 0; k < 4; k++) raw = raw.replace(SHELL_KEYWORD, '');
+    return raw;
+  });
+  // Anything in the command that reaches or names another machine for a repo: every push is told.
+  const reaches = segs.some((raw) => {
+    if (/\bGIT_[A-Z_]+=/.test(raw)) return true;
+    const seg = bareSegment(raw.replace(/^\(+/, '').replace(/\)+\s*$/, ''));
+    if (!/^(?:git|gh)\b/.test(seg)) return false;
+    if (/^gh\s+repo\b/.test(seg) || words(seg).some(plainlyRemote)) return true;
+    if (GIT_CLONE.test(seg) || GIT_POINTS.test(seg)) return words(seg).slice(2).some(remoteAddress);
+    if (/^git\b.*\spush\b/.test(seg)) {
+      if (/\s-C\s|\s--(?:repo|git-dir|work-tree)\b/.test(seg)) return true;
+      const remote = gitArgs(seg, /^[\s\S]*?\bpush\b/, PUSH_VALUE_OPTS)[0];
+      return remote !== undefined && remoteAddress(remote);
+    }
+    return false;
+  });
+  if (reaches) return strict;
+  let at: TempDir = null;
+  const saved: TempDir[] = [];
+  const tempVars = new Set<string>();
+  const made = new Set<string>();
+  /** Folders this command created (`mkdir`, a `mktemp` root): only there does a bare init make a repo. */
+  const fresh = new Set<string>();
+  const isFresh = (d: NonNullable<TempDir>): boolean => d.root !== '/tmp' || d.parts.some((_, i) => fresh.has(dirKey({ root: d.root, parts: d.parts.slice(0, i + 1) })));
+  const told: string[] = [];
+  /** `$(` still open from earlier segments (a split cut it at a `|` or `;`): its `)` is not a subshell's. */
+  let dollarOpen = 0;
+  for (const raw of segs) {
+    // A subshell `( … )`: a cd inside it is undone when it closes.
+    const opens = (raw.match(/^\(+/) ?? [''])[0].length;
+    for (let k = 0; k < opens; k++) saved.push(at);
+    let closes = 0;
+    for (let i = opens; i < raw.length; i++) {
+      if (raw[i] === '$' && raw[i + 1] === '(') { dollarOpen++; i++; } else if (raw[i] === '(') dollarOpen++;
+      else if (raw[i] === ')') { if (dollarOpen > 0) dollarOpen--; else closes++; }
+    }
+    const body = raw.replace(/^\(+/, '');
+    const assign = /^(?:(?:export|declare|local|readonly|typeset)\s+(?:-\S+\s+)*)?([A-Za-z_][A-Za-z0-9_]*)=/.exec(body);
+    if (assign) { if (MKTEMP_VAR.test(body.slice(assign.index + assign[0].length - assign[1].length - 1))) tempVars.add(assign[1]); else tempVars.delete(assign[1]); }
+    const seg = bareSegment(body.replace(/\)+\s*$/, ''));
+    const w = words(seg);
+    if (/^(?:cd|pushd|popd)\b/.test(seg)) {
+      at = w.length === 2 && w[0] !== 'popd' ? cdTarget(at, w[1], tempVars) : null;
+    } else if (w[0] === 'mkdir' && !w.some((x) => x === '--parents' || /^-[a-z]*p/.test(x))) {
+      for (const d of w.slice(1)) {
+        if (d.startsWith('-')) continue;
+        const dir = /^[/~$`'"]/.test(d) ? cdTarget(at, d, tempVars) : at && walk(at, d);
+        if (dir) fresh.add(dirKey(dir));
+      }
+    } else if (GIT_INIT.test(seg)) {
+      const dir = gitArgs(seg, GIT_INIT, new Set(['-b', '--initial-branch', '--template', '--separate-git-dir', '--object-format']))[0];
+      const repo = at && (dir === undefined ? at : (/^[/~$`'"-]/.test(dir) ? null : walk(at, dir)));
+      if (repo && isFresh(repo)) made.add(dirKey(repo));
+    } else if (GIT_CLONE.test(seg)) {
+      const args = gitArgs(seg, GIT_CLONE, new Set(['-b', '--branch', '-o', '--origin', '--depth', '--reference', '--template', '-c', '--config', '--separate-git-dir', '-u', '--upload-pack', '-j', '--jobs', '--filter']));
+      const dst = args[1] ?? (args[0] ?? '').replace(/\/+$/, '').split('/').pop()?.replace(/\.git$/, '');
+      const repo = at && dst && !/^[/~$`'"-]/.test(dst) ? walk(at, dst) : null;
+      if (repo) made.add(dirKey(repo));
+    } else {
+      for (const [rx, label] of SHELL_OUTWARD) {
+        if (!rx.test(seg)) continue;
+        if (label === 'git push' && at && made.has(dirKey(at))) break;
+        if (!told.includes(label)) told.push(label);
+        break;
+      }
+    }
+    for (let k = 0; k < closes && saved.length; k++) at = saved.pop() ?? null;
+  }
+  return told;
 }
 
 // ─── Marks (a Super text) ───────────────────────────────────────────────────────
@@ -224,6 +376,31 @@ export function closeByMarks(s: SuperState, refs: readonly string[], ceiling: nu
   }
   if (closed) trimClosed(s);
   return closed;
+}
+
+/** A Super text as the owed turn quotes it: its marks out, one line, cut. Empty: nothing said. */
+export function saidHead(text: unknown): string {
+  if (typeof text !== 'string') return '';
+  const plain = text.split('\n').filter((l) => !MARK_AT_LINE.test(l)).join(' ')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return plain.length > MAX_OWED_SAID_HEAD ? `${plain.slice(0, MAX_OWED_SAID_HEAD - 1)}…` : plain;
+}
+
+/**
+ * A Super text landed: every debt still open that was opened before it remembers its start
+ * (newest MAX_OWED_SAID), so the `[super owed]` turn can show what was really written since the
+ * debt opened. Call after `closeByMarks`. Mutates `s`; true when anything was noted.
+ */
+export function noteSaid(s: SuperState, text: unknown, now = Date.now()): boolean {
+  const head = saidHead(text);
+  if (!head) return false;
+  let noted = false;
+  for (const d of openDebts(s)) {
+    if (d.at > now) continue;
+    d.said = [...(d.said ?? []), { at: now, head }].slice(-MAX_OWED_SAID);
+    noted = true;
+  }
+  return noted;
 }
 
 /** His drop ("Gerek yok") of one open debt. Mutates `s`; false when it is not open. */

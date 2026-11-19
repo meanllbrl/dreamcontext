@@ -163,8 +163,18 @@ describe('a capped delegate keeps its job', () => {
     expect((await verb('delegate', { prompt: 'one more' })).json).toMatchObject({ pooled, reused: true });
     expect((await readSuperState(root)).pool).toHaveLength(1);
     for (let i = 1; i < MAX_POOL; i += 1) await verb('pool-add', { prompt: `fill ${i}` });
-    expect((await verb('delegate', { prompt: 'no room' })).json).toMatchObject({ error: 'pool_full', kept: false });
+    // Not kept is never `held` ("it waits its turn"): soru-azaltma open note, 2026-11-19.
+    expect((await verb('delegate', { prompt: 'no room' })).json).toMatchObject({ error: 'pool_full', kept: false, held: false });
     expect(commands()).toHaveLength(0);
+  });
+
+  it('a job too large for the pool is not_kept, never held (soru-azaltma open note)', async () => {
+    fillCap();
+    const r = await verb('delegate', { prompt: 'x'.repeat(MAX_POOL_PROMPT + 1) });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ error: 'not_kept', held: false, kept: false });
+    expect(String(r.json.message ?? JSON.stringify(r.json))).toMatch(/did NOT start/);
+    expect((await readSuperState(root)).pool).toHaveLength(0);
   });
 });
 

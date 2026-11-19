@@ -484,15 +484,15 @@ export function canPressWith(root: string | null, check: FolderCheck): boolean {
 }
 
 /**
- * The card's folder line (both cards, Mac and phone): after a refusal, what the folder is now, or
- * that it is being read, or that it cannot be confirmed here (do it on the Mac); otherwise that no
- * folder is known, so nothing can be pressed. Null when there is nothing to say.
+ * The card's folder line (both cards, Mac and phone): after a refusal, that the folder is being
+ * read, or that it cannot be confirmed here (do it on the Mac); otherwise that no folder is known,
+ * so nothing can be pressed. Null when there is nothing to say. A folder read as `now` has no
+ * line: the card asks "Are you sure?" in a sheet instead (`FolderConfirm`, owner 2026-11-17).
  */
 export function folderLine(
   t: (key: string) => string,
   o: { check: FolderCheck; spec: { cwd?: string } | RecordSpec; unknown: boolean; reading?: boolean; cannot?: boolean },
 ): string | null {
-  if (o.check?.state === 'now') return t('ownerCard.folderChanged').replace('{name}', cardFolderText(o.check.folder, o.spec) ?? o.check.folder.name);
   if (o.check?.state === 'reading') return t('ownerCard.folderChangedReading');
   if (o.check?.state === 'cannot') return t('ownerCard.cannotConfirm');
   if (!o.unknown) return null;

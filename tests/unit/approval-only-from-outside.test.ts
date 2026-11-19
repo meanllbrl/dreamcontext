@@ -144,7 +144,7 @@ describe('two HOMEs, one brain: only what came by git asks', () => {
     vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '1');
     expect((await run(['agents', 'edit', 'gantt', '--prompt', `${PROMPT}\nName the owner of each item.\nKeep it short.`])).code).toBe(0);
     writeFileSync(join(ownerRepo, 'nightly.md'), 'Summarise the open tasks.\n');
-    const nightly = await run(['automations', 'create', 'nightly', '--title', 'Nightly', '--days', 'daily', '--at', '22:00', '--prompt-file', join(ownerRepo, 'nightly.md')]);
+    const nightly = await run(['automations', 'create', 'nightly', '--title', 'Nightly', '--days', 'daily', '--at', '22:00', '--new-member', '--prompt-file', join(ownerRepo, 'nightly.md')]);
     expect(nightly.code).toBe(0);
     expect(nightly.out).not.toMatch(/dream-view/);
     vi.unstubAllEnvs();

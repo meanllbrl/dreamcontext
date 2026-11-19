@@ -24,8 +24,6 @@ interface PropertiesPanelProps {
   allTasks: readonly TaskListItem[];
   /** Every edit goes through the task PATCH, via the drawer shell. */
   update: (updates: Updates, onError?: (err: Error) => void) => void;
-  onDelete: () => void;
-  deleting: boolean;
   /** The parent select's refusal (the server's parent_task code), shown under it. */
   parentError: string | null;
   setParentError: (msg: string | null) => void;
@@ -37,9 +35,9 @@ const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
  * The drawer's right column (approved v5). Status, Priority, Versions & Sprints and Feature are
  * always visible. "More" (closed by default, remembered per user) holds Prioritization (Urgency,
  * RICE, Objectives), Plan (Start, Due, Parent task, Assignees, Tags, Summary), Custom fields and
- * System (Created, Updated, ID, Delete task).
+ * System (Created, Updated, ID; Delete is in the header's ⋯ menu).
  */
-export function PropertiesPanel({ task, allTasks, update, onDelete, deleting, parentError, setParentError }: PropertiesPanelProps) {
+export function PropertiesPanel({ task, allTasks, update, parentError, setParentError }: PropertiesPanelProps) {
   const { t } = useI18n();
   const { data: agents } = useAgents();
   const nameOf = (slug: string) => findAgent(agents, slug)?.title ?? slug;
@@ -335,12 +333,6 @@ export function PropertiesPanel({ task, allTasks, update, onDelete, deleting, pa
               <TaskField label="Created"><span className="prop-date">{task.created_at}</span></TaskField>
               <TaskField label="Updated"><span className="prop-date">{task.updated_at}</span></TaskField>
               <TaskField label="ID"><code className="prop-id">{task.id}</code></TaskField>
-              <div className="props-danger">
-                <button type="button" className="btn btn--danger-ghost" data-testid="task-delete" onClick={onDelete} disabled={deleting}>
-                  {deleting ? 'Deleting…' : 'Delete task'}
-                </button>
-                <span className="detail-danger-hint">Removes the task locally and on the remote backend (next sync). Its subtasks stay, as top-level tasks.</span>
-              </div>
             </>
           ))}
         </>

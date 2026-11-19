@@ -7,8 +7,8 @@ import './AgentIdentityDialog.css';
 
 /**
  * The launcher's global agents (AI Team v2 D1): this Mac's agents that every project lists. The
- * list, and the same identity form a project's "New teammate" uses, in its global mode (no photo,
- * no home board). No project is open here, so everything goes through the launcher's routes.
+ * list, and the same identity form a project's "New teammate" uses, in its global mode (no home
+ * board; its photo is set later, from any project's AI Team). No project is open here, so everything goes through the launcher's routes.
  */
 export function GlobalAgentsDialog({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();

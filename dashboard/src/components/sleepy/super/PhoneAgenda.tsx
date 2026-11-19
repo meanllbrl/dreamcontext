@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
-import type { SuperDigestWire, SuperQueueItem, SuperState } from '../../../lib/superTypes';
+import type { SuperDigestWire, SuperState } from '../../../lib/superTypes';
 import { PhoneSheet, PhoneSheetClose } from './PhoneSheet';
-import { SuperAgenda } from './SuperAgenda';
-import { agendaWaitingCount, superNotepad, type AgendaRow, type JobLook } from './superHandover';
+import { SuperAgenda, type ThreadPress } from './SuperAgenda';
+import { agendaWaitingCount, superNotepad, type AgendaRow, type JobLook, type NotepadQueueItem } from './superHandover';
 import type { SuperEventContext } from './superJobsStore';
 import './PhoneAgenda.css';
 
@@ -22,14 +22,14 @@ import './PhoneAgenda.css';
 
 /** The digest as the desktop notepad's input. Pure: `text` is the item's `ownerText`, a name is
  *  the Mac's job card title (the short session id when the digest names none). */
-export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'queue' | 'pad' | 'owed'>; look: JobLook } {
+export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { state: Pick<SuperState, 'pad' | 'owed'> & { queue: NotepadQueueItem[] }; look: JobLook } {
   // What a newer Mac adds to a waiting row (contracts-w5b): the owner wait kind of an `owner`
   // item or its member mirror (a refused command says where it can be allowed), a routine's slug,
   // an own item, and the member's or routine's title. Read structurally: an older digest has none.
   type Row = (typeof d.waiting)[number] & { wait?: unknown; routine?: unknown; own?: unknown; title?: unknown };
   const memberTitles = new Map<string, string>();
   const routineTitles = new Map<string, string>();
-  const queue: SuperQueueItem[] = d.waiting.map((w) => {
+  const queue: NotepadQueueItem[] = d.waiting.map((w): NotepadQueueItem => {
     const extra = w as Row;
     const raw = typeof extra.wait === 'string' ? extra.wait : (extra.wait as { kind?: unknown } | undefined)?.kind;
     const waitKind = raw === 'refusal' || raw === 'stalled' ? raw : null;
@@ -45,6 +45,10 @@ export function digestToNotepadInput(d: SuperDigestWire, superTitle: string): { 
       ...(waitKind ? { wait: { kind: waitKind, id: w.id } } : {}),
       ...(routine ? { routine } : {}),
       ...(extra.own === true ? { own: true as const } : {}),
+      // A row's thread key reads these (ajanda-filtre C5): typed flags, never a placeholder handle.
+      ...(w.direct === true ? { direct: true as const } : {}),
+      ...(w.hasCard === true ? { hasCard: true as const } : {}),
+      ...(w.team === true ? { teamItem: true as const } : {}),
     };
   });
   return {
@@ -80,10 +84,15 @@ function questionCard(item: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-testid="super-question-card"][data-item="${CSS.escape(item)}"]`);
 }
 
-export function PhoneAgenda({ digest, onScreen }: {
+export function PhoneAgenda({ digest, onScreen, onThread, threadRowKey = null }: {
   digest: SuperDigestWire | null;
   /** Kept for its callers; the read-only sheet offers no Ask (C8). */
   onWriteAbout?: (row: AgendaRow) => void;
+  /** A thread row's press (ajanda-filtre C5): the sheet closes and the chat shows that row's
+   *  thread; the composer gets the row's chip without focus, so the keyboard stays down. */
+  onThread?: (press: ThreadPress) => boolean;
+  /** The row whose thread the chat shows (highlighted). */
+  threadRowKey?: string | null;
   /** The chat is on screen. Off (a link opened the drawer or another project): no sheet stays up. */
   onScreen: boolean;
 }) {
@@ -168,6 +177,13 @@ export function PhoneAgenda({ digest, onScreen }: {
               // A refused command is allowed on Telegram or the Mac, never from this web view.
               remote
               onShowChild={() => { /* the phone never shows a child */ }}
+              threadRowKey={threadRowKey}
+              onThread={onThread ? (p) => {
+                const on = onThread(p);
+                // The chat is the answer: the sheet goes, the bar's chip keeps no focus ring.
+                setOpen(false);
+                return on;
+              } : undefined}
               onShowQuestion={(item) => {
                 const card = questionCard(item);
                 if (!card) return;

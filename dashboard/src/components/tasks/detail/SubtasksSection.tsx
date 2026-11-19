@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Task, TaskListItem } from '../../../hooks/useTasks';
 import { useCreateTask, useStatusModel } from '../../../hooks/useTasks';
 import { criteriaCount, subtaskProgress, taskName } from '../boardModel';
+import { CopySlugButton } from '../CopySlugButton';
 
 /**
  * The drawer's Subtasks section: a progress bar (done / not-cancelled), one row per child
@@ -39,12 +40,15 @@ export function SubtasksSection({ task, children, onOpen }: { task: Task; childr
           const crit = criteriaCount(c);
           const done = sm.isDone(c.status);
           return (
-            <button key={c.slug} type="button" className="dsub-row" data-done={done || undefined} onClick={() => onOpen(c.slug)}>
+            <div key={c.slug} className="dsub-line">
+            <button type="button" className="dsub-row" data-done={done || undefined} onClick={() => onOpen(c.slug)}>
               <span className="dsub-dot" style={{ background: sm.colorOf(c.status) }} aria-hidden />
               <span className="dsub-name">{taskName(c)}</span>
               <span className="dsub-status">{sm.labelOf(c.status)}</span>
               <span className="dsub-crit">{crit.total ? `${crit.done}/${crit.total}` : ''}</span>
             </button>
+            <CopySlugButton slug={c.slug} className="task-copy-btn--hover" />
+            </div>
           );
         })}
         {adding ? (

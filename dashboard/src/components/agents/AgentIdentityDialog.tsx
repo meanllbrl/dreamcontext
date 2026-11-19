@@ -153,7 +153,7 @@ export function AgentIdentityDialog({
   /** Replaces the create button's words (AI Team: "Add to team"). */
   submitLabel?: string;
   /** Create only: `global` makes this machine's global agent from the launcher (D1), with no
-   *  project behind the form, so no photo and no home board. */
+   *  project behind the form, so no home board and no photo yet (one is set from any project). */
   scope?: 'global';
   /** Edit only: the field to land on once the agent has loaded (the autonomy label opens here). */
   focusField?: 'autonomy';
@@ -161,7 +161,8 @@ export function AgentIdentityDialog({
   const { t } = useI18n();
   const editing = slug !== null;
   const detail = useAgent(slug, { fresh: true });
-  // A global agent has neither: both belong to one project (an edit learns it from the read).
+  // A global agent has no home board: a board belongs to one project (an edit learns it from the
+  // read). Its photo lives in its home on this Mac, so editing one in a project can set it.
   const global = scope === 'global' || detail.data?.agent.scope === 'global';
   const boards = useWhiteboardList({ enabled: scope !== 'global' });
   const create = useCreateAgentIdentity();
@@ -369,7 +370,7 @@ export function AgentIdentityDialog({
 
         {editing && detail.isError && <p className="aid-error" role="alert">{t('agents.page.loadFailed')}</p>}
 
-        {!global && <div className="aid-photo">
+        {scope !== 'global' && <div className="aid-photo">
           {preview
             ? <span className="aid-photo-preview"><img src={preview} alt="" /></span>
             : (

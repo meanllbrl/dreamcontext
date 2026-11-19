@@ -141,6 +141,22 @@ export function unreadSinceRead(units: readonly UnreadUnit[], unread: readonly U
 }
 
 /**
+ * A thread filter ended (ajanda-filtre C4.3, D8): which units he saw inside it are read now. The
+ * count is "unread after the newest read", so reading a seen unit that lies AFTER an unread one
+ * he did not see would drop that one from the count: only seen units before the first unseen
+ * counted unread are read; the rest wait for the full chat's own reading. Pure.
+ */
+export function readsAfterFilter(units: readonly UnreadUnit[], unread: readonly UnreadUnit[], saw: readonly UnreadUnit[]): UnreadUnit[] {
+  const id = (u: UnreadUnit) => `${u.key}|${u.ts}`;
+  const sawIds = new Set(saw.map(id));
+  const still = new Set(unread.map(id));
+  const pos = new Map(units.map((u, i) => [id(u), i] as const));
+  const held = unreadSinceRead(units, unread).filter((u) => !sawIds.has(id(u)));
+  const floor = held.length ? Math.min(...held.map((u) => pos.get(id(u)) ?? Infinity)) : Infinity;
+  return saw.filter((u) => still.has(id(u)) && (pos.get(id(u)) ?? Infinity) < floor);
+}
+
+/**
  * A member's stage is read when its NEWEST message is (plan r4 D7): what tells the server `seen`.
  * The same rule as the row's count above: read means nothing unread past the newest read message.
  */

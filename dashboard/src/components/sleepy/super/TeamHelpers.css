@@ -96,14 +96,14 @@
 }
 .super-open-stage:hover { border-color: var(--color-border-hover); }
 .super-open-stage:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
-/* The head keeps room for "Open stage" + "ask about this" only where the button is drawn (never
+/* The head keeps room for "Open stage" + To Others + "ask about this" only where the button is drawn (never
    on the phone). Measured: the button at its longest label plus the ask button and their gap. */
-.super-card-frame[data-open-stage='true']:not([data-where='float']) :is(.super-card-head, .super-card-large-head) { padding-right: calc(150px * var(--zoom, 1) + var(--space-6)); }
+.super-card-frame[data-open-stage='true']:not([data-where='float']) :is(.super-card-head, .super-card-large-head) { padding-right: calc(180px * var(--zoom, 1) + var(--space-6)); }
 .super-team-head-title { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .super-team-helpers-wrap { display: contents; }
 .super-card-actions .super-open-stage { margin-right: var(--space-1); align-self: center; }
 @media (max-width: 640px) {
   .super-open-stage-label { display: none; }
   .super-open-stage { width: calc(28px * var(--zoom, 1)); padding: 0; justify-content: center; }
-  .super-card-frame[data-open-stage='true']:not([data-where='float']) :is(.super-card-head, .super-card-large-head) { padding-right: calc(64px * var(--zoom, 1) + var(--space-4)); }
+  .super-card-frame[data-open-stage='true']:not([data-where='float']) :is(.super-card-head, .super-card-large-head) { padding-right: calc(94px * var(--zoom, 1) + var(--space-4)); }
 }
