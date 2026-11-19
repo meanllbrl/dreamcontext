@@ -537,6 +537,9 @@ export function registerSuperCommand(program: Command): void {
   n.command('status <id> <status>')
     .description('Set a line\'s status: not-started | in-progress | almost-done | waiting | done (the owner\'s own lines too, when it helps him)')
     .action((id: string, status: string) => run('note-status', { id, status }));
+  n.command('link <id> <refs...>')
+    .description('Tie messages of his to a line (by their <owner-msg ref>): ones you judge are about it though no flag linked them, like a follow-up with a second example. Pressing the line then shows them and your answers to them')
+    .action((id: string, refs: string[]) => run('note-link', { id, refs }));
   n.command('keep <id>')
     .description('A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h')
     .action((id: string) => run('note-keep', { id }));

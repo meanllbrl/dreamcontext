@@ -2354,7 +2354,7 @@ export const SUPER_VERBS = [
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
-  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',
+  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status', 'note-link',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',
   // A member tells the project's Super something on its own (owner 2026-11-19): member only.

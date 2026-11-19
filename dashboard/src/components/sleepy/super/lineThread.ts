@@ -12,7 +12,9 @@
  *      its own arrival first, so an earlier identical "ok" never takes a later pair's place. A
  *      message with no time (`ts: 0`, a replay) matches by order only when the line holds as
  *      many of that ref's pairs as there are such messages; otherwise none (a wrong message is
- *      worse than a missing one). A `sent` pair was stamped by this window's own clock: 5 s;
+ *      worse than a missing one). A pair no message fits was linked after the fact (`--origin`
+ *      or `super note link` in a later turn, stamped when linked): it takes the newest message
+ *      with that ref that arrived before it. A `sent` pair was stamped by this window's own clock: 5 s;
  *  M3. an event turn naming the key's job, with the Super's text and step rows of that turn;
  *  M4. the Super group whose tool row asked the key's item;
  *  M5. every Super group (`replyGroups` over the FULL conversation) answering an M1/M2 message.
@@ -66,7 +68,7 @@ function namesKey(it: ChatUserItem, key: ThreadKey): boolean {
 }
 
 /** M2: each pair to ONE distinct owner message (see the module note). */
-function resolvePairs(owners: readonly ChatUserItem[], pairs: readonly PadRef[], taken: Set<string>, skew = CLOCK_SKEW_MS): string[] {
+function resolvePairs(owners: readonly ChatUserItem[], pairs: readonly PadRef[], taken: Set<string>, skew = CLOCK_SKEW_MS, late = true): string[] {
   const out: string[] = [];
   const byRef = new Map<string, PadRef[]>();
   for (const p of pairs) {
@@ -90,6 +92,18 @@ function resolvePairs(owners: readonly ChatUserItem[], pairs: readonly PadRef[],
       taken.add(f.id);
       out.push(f.id);
     }
+    // Linked late: a pair stamped when the link was MADE (`--origin` or `note link` outside his
+    // turn, his arrival no longer known) lies after its message. A link never precedes its
+    // message, so the newest one with that ref that arrived before the pair is the one meant.
+    if (late) sorted.forEach((pair, k) => {
+      if (done.has(k)) return;
+      let best: ChatUserItem | undefined;
+      for (const o of cands) if (o.ts && !taken.has(o.id) && o.ts < pair.at - skew && (!best || o.ts > (best.ts ?? 0))) best = o;
+      if (!best) return;
+      done.add(k);
+      taken.add(best.id);
+      out.push(best.id);
+    });
     // Untimed (a replay): by order, only when the counts say which is which.
     const left = sorted.filter((_, k) => !done.has(k));
     const untimed = cands.filter((o) => !o.ts && !taken.has(o.id));
@@ -121,7 +135,7 @@ export function lineThread(
   // M2: the messages its refs (and the sends made from the filter) resolve to.
   const taken = new Set<string>();
   for (const id of resolvePairs(owners, key.refs, taken)) ownerIds.add(id);
-  if (key.sent.length) for (const id of resolvePairs(owners, key.sent, taken, SENT_SKEW_MS)) ownerIds.add(id);
+  if (key.sent.length) for (const id of resolvePairs(owners, key.sent, taken, SENT_SKEW_MS, false)) ownerIds.add(id);
 
   const out = new Set<string>(ownerIds);
   const groupMembers = new Map<string, string[]>();

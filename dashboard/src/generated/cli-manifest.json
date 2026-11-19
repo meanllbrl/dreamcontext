@@ -4205,6 +4205,14 @@
       ]
     },
     {
+      "path": "super note link",
+      "desc": "Tie messages of his to a line (by their <owner-msg ref>): ones you judge are about it though no flag linked them, like a follow-up with a second example. Pressing the line then shows them and your answers to them",
+      "args": [
+        "<id>",
+        "<refs...>"
+      ]
+    },
+    {
       "path": "super note status",
       "desc": "Set a line's status: not-started | in-progress | almost-done | waiting | done (the owner's own lines too, when it helps him)",
       "args": [
