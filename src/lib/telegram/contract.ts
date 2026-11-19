@@ -653,7 +653,9 @@ export function isTunnelHost(hostname: string): boolean {
 
 // ─── A child's owner card on Telegram (sahip-karti-yerinde K7, D3) ─────────────────────────────
 
-/** The two buttons a child's card gets on Telegram: never Run (the Mac's terminal runs it). */
+/** The buttons a child's card gets on Telegram: ▶ Çalıştır on a run card it can show whole
+ *  (run-kart-telefon), then Remind and Not needed. */
+export const OWNER_CARD_RUN_LABEL = '▶ Çalıştır';
 export const OWNER_CARD_REMIND_LABEL = "Mac'e dönünce hatırlat";
 export const OWNER_CARD_NOT_NEEDED_LABEL = 'Gerek yok';
 /** What a tap answers. */

@@ -22,24 +22,30 @@
  * field: Telegram never takes a value. A checklist or an MCP card (sahip-karti-yerinde K1) is one
  * plain line, "Mac'te yapılır.": no phone link, no secret line.
  *
- * ONLY THE SUPER'S OWN cards are run from here (K4, D3): the Run callback refuses, on the
- * server, a card whose session is not this binding's Super chat, or that a child's owner item
- * stands for. A child's card gets Remind and Not needed instead (asks.ts). A run starts in the
- * card's working folder (K5).
+ * The generic Run callback runs ONLY THE SUPER'S OWN cards (K4): it refuses, on the server, a
+ * card whose session is not this binding's Super chat, or that a child's owner item stands for.
+ * A CHILD's run card (run-kart-telefon) gets its own ▶ Çalıştır on its owner-card message
+ * (asks.ts `sendOwnerCard`, offered by `childRunOffer`), pressed through `pressChildRun`: the same
+ * press check (`checkPress`: open, newest, the shown bytes, showable, the drawn folder), plus the
+ * item being open in THIS Super's queue. The run goes through the registry like any other, so its
+ * result reaches the child and his press closes what waited on it (delivery.ts). A run starts in
+ * the card's working folder (K5).
  */
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { buildAppLink } from '../../lib/app-link.js';
 import { getCard, newestCard, onCardsChange, openCards, type CardRecordEntry } from '../../lib/cards/records.js';
 import type { ChecklistViewSpec, McpViewSpec, RunViewSpec, SecretViewSpec } from '../../lib/chat-view-spec.js';
-import { OWNER_CARD_TELEGRAM_LINE } from '../../lib/super/types.js';
+import { OWNER_CARD_TELEGRAM_LINE, type OwnerCardHandle } from '../../lib/super/types.js';
+import { readSuperState } from '../../lib/super/store.js';
+import { memberMirrorTarget } from '../../lib/super/answer.js';
 import { ownerCardLookup } from '../owner-receipts.js';
-import { cardRootOf, pressRoot } from '../routes/run-terminal.js';
+import { cardRootOf, pressRoot, resolveCardRecord } from '../routes/run-terminal.js';
 import { escapeHtml, redactSecrets, showsAsWritten } from '../../lib/telegram/format.js';
 import type { ButtonRecord } from '../../lib/telegram/contract.js';
 import { lastLine, relayLine, runOfSession, SECRET_PROMPT_RE, startRun, type Run } from '../runs/registry.js';
 import { setTelegramRunSink } from '../runs/delivery.js';
-import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
+import { LINES, shownWhole, type ActiveBinding, type TelegramHub } from './hub.js';
 
 type Obj = Record<string, unknown>;
 
@@ -72,6 +78,9 @@ export const RUN_LINES = {
   folderAsked: 'Klasör değişti; onayını soruyorum.',
   folderAskFailed: "Kartın klasörü değişti ama onay sorusu gönderilemedi; hiçbir şey çalışmadı. Kartı Mac'ten çalıştır.",
   oldButton: "Bu düğme eski bir sürümden; hiçbir şey çalışmadı. Kartı Mac'te çalıştır.",
+  childChanged: "Kart değişti ya da kapandı; hiçbir şey çalışmadı. Mac'te karta bak.",
+  childNotHere: "Bu kart bu Super'in açık bir işine ait değil; hiçbir şey çalışmadı.",
+  childMacOnly: "Bu kartı Mac'te çalıştır.",
 } as const;
 
 /** Characters a shown command may not hold (H3, I5): C0/C1, bidi and zero-width, and their kin. */
@@ -94,6 +103,83 @@ export function commandShowable(command: string): boolean {
 }
 
 const sha = (t: string) => createHash('sha256').update(t).digest('hex');
+
+/** Why a press ran nothing: `changed` (the card is not the one the message drew), or a line. */
+type PressCheck = { ok: true; live: CardRecordEntry; root: string } | { ok: false; changed: true } | { ok: false; changed?: false; line: string }
+  | { ok: false; changed?: false; moved: string; live: CardRecordEntry; spec: RunViewSpec };
+
+/**
+ * THE press check of a Telegram Run button, the Super's own card and a child's alike: the card
+ * is still open and the newest of its id, its command is byte for byte the one the message drew
+ * (`cmdHash`) and still showable (`whole`: also short enough to show whole, for a child's card),
+ * and the folder the message drew is the folder now (`pressRoot`). Anything else runs nothing.
+ */
+async function checkPress(live: CardRecordEntry | null, cardRef: string, data: Obj | undefined, whole = false): Promise<PressCheck> {
+  const newest = live ? newestCard(live.sessionId, 'run', live.id) : null;
+  const spec = live?.kind === 'run' ? live.spec as RunViewSpec : undefined;
+  if (!live || live.state !== 'open' || newest?.cardRef !== cardRef || !spec || sha(spec.command) !== data?.cmdHash
+    || !commandShowable(spec.command) || (whole && !shownWhole(spec.command))) return { ok: false, changed: true };
+  // The folder this message drew is the folder now, or nothing runs (end review r2).
+  // A button from before this release drew no folder: say so plainly, never "folder changed".
+  if (typeof data?.root !== 'string' || !data.root) return { ok: false, line: RUN_LINES.oldButton };
+  const press = await pressRoot(live, data.root);
+  if (!press.ok) {
+    if (press.why === 'no_folder' || !press.current) return { ok: false, line: RUN_LINES.noFolder };
+    // Moved: the caller asks once more with the folder it is now (dev 960fd4528), never runs.
+    return { ok: false, moved: press.current.path, live, spec };
+  }
+  return { ok: true, live, root: press.root };
+}
+
+/**
+ * THE one gate of a child's Run on Telegram (run-kart-telefon): "may THIS binding run this
+ * message's item's crew card?", asked by the offer and by the press alike with the same binding,
+ * so a Run is never offered where its press would refuse (end review r1, r2). The binding is the
+ * main Super's own, enabled bot (a member's own bot gets no Run: its owner-card buttons are the
+ * Super's record's). `itemId` is the item the message was sent for in that binding's record: the
+ * Super's own `owner` item (the card's lookup names this very
+ * item and this Super's session), or a team member's `member` mirror of one (its member item is
+ * the lookup's item, under that member Super's session). `closed`: that item, or the card's newest
+ * item, is no longer open; `not_here`: it stands for no card of this Super or its team.
+ */
+export async function childCardOwnership(ab: Pick<ActiveBinding, 'target' | 'disabled' | 'contextRoot'>, itemId: string, postingSession: string, cardRef: string): Promise<'ok' | 'closed' | 'not_here'> {
+  const contextRoot = ab.contextRoot;
+  if (ab.target !== 'super' || ab.disabled || !contextRoot) return 'not_here';
+  const l = ownerCardLookup(postingSession, cardRef);
+  const s = await readSuperState(contextRoot).catch(() => null);
+  if (!l || !s?.enabled || !s.session) return 'not_here';
+  const mine = s.queue.find((q) => q.id === itemId && q.card?.cardRef === cardRef && q.card.postingSession === postingSession
+    && (q.kind === 'owner' || (q.kind === 'member' && q.of === 'owner')));
+  if (!mine) return 'not_here';
+  if (mine.state === 'done') return 'closed';
+  if (mine.kind === 'owner') {
+    if (l.superSession !== s.session) return 'not_here';
+    return l.itemId === itemId && l.itemOpen ? 'ok' : 'closed';
+  }
+  const t = await memberMirrorTarget(contextRoot, itemId).catch(() => null);
+  if (!t) return 'closed';
+  if (t.session !== l.superSession) return 'not_here';
+  return t.item.id === l.itemId && l.itemOpen ? 'ok' : 'closed';
+}
+
+/** Why a child's run card gets no Run on Telegram (each says its own line, asks.ts). */
+export type ChildRunNoOffer = 'not_showable' | 'no_folder' | 'unavailable';
+
+/** What a child's run card may offer on Telegram (run-kart-telefon K1): ▶ Çalıştır whenever its
+ *  item is this Super's open crew card (`childCardOwnership`), its command is shown whole and as
+ *  written, and its folder is proven, exactly as the Super's own card (no guess from the
+ *  command's words). Otherwise the reason: the Mac or the phone page runs it. */
+export async function childRunOffer(ab: Pick<ActiveBinding, 'target' | 'disabled' | 'contextRoot'>, h: OwnerCardHandle, itemId: string): Promise<{ root: string; folder: string; cmdHash: string } | { none: ChildRunNoOffer }> {
+  if (h.spec.type !== 'run') return { none: 'unavailable' };
+  if (await childCardOwnership(ab, itemId, h.postingSession, h.cardRef) !== 'ok') return { none: 'unavailable' };
+  const { rec } = resolveCardRecord(h.postingSession, h.cardRef);
+  if (!rec || rec.kind !== 'run' || rec.state !== 'open') return { none: 'unavailable' };
+  const spec = rec.spec as RunViewSpec;
+  if (!commandShowable(spec.command) || !shownWhole(spec.command)) return { none: 'not_showable' };
+  const root = await cardRootOf(rec).catch(() => null);
+  if (!root) return { none: 'no_folder' };
+  return { root, folder: `${basename(root)}${spec.cwd ? ` · ${spec.cwd}` : ''}`, cmdHash: sha(spec.command) };
+}
 const OUTPUT_EDIT_MS = 2000;
 const OUTPUT_CHARS = 3500;
 
@@ -293,6 +379,8 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
 
   const prevButton = hub.extraButton;
   hub.extraButton = async (ab, rec: ButtonRecord & { data?: Obj }, idx) => {
+    // A child's owner card names its Run among its `choices` (asks.ts); its other buttons are asks.ts's.
+    if (rec.kind === 'owner-card' && Array.isArray(rec.data?.choices) && rec.data.choices[idx] === 'run') return pressChildRun(ab, rec);
     if (rec.kind !== 'run') return prevButton ? prevButton(ab, rec, idx) : LINES.stale;
     const sessionId = rec.sessionId ?? '';
     const cardRef = rec.cardRef ?? '';
@@ -308,32 +396,49 @@ export function wireRunCards(hub: TelegramHub, deps: RunCardsDeps): () => void {
     const withheld = confirm ? rec.data?.withheld === true : idx === 1;
     // G1 (K4): Run only for the bound Super's OWN card (main's, or a member's own Super on its
     // bot), through this very binding; never a child's card
-    // (an owner item stands for it), whatever button record names it.
+    // (an owner item stands for it: its own message carries its Run, `pressChildRun`).
     const own = hub.bindingOfSession(sessionId);
     if (!own || own.key !== ab.key || ownerCardLookup(sessionId, cardRef)) return RUN_LINES.notHere;
     const live = getCard(sessionId, cardRef);
-    const newest = live ? newestCard(sessionId, 'run', live.id) : null;
-    const spec = live?.spec as RunViewSpec | undefined;
-    if (!live || live.state !== 'open' || newest?.cardRef !== cardRef || !spec || sha(spec.command) !== rec.data?.cmdHash || !commandShowable(spec.command)) {
+    const check = await checkPress(live, cardRef, rec.data);
+    if (!check.ok) {
+      // Moved: ask once more with the folder it is now. Its Çalıştır runs THERE (that folder is
+      // its button's root) or, moved again, asks again; nothing runs from this tap.
+      if ('moved' in check) {
+        void askFolder(ab, check.live, check.spec, check.moved, withheld).catch(() => hub.notice(ab, 'info', RUN_LINES.folderAskFailed, true).catch(() => {}));
+        return RUN_LINES.folderAsked;
+      }
+      if (!check.changed) return check.line;
       const fresh = live ? newestCard(sessionId, 'run', live.id) : null;
       if (fresh && fresh.state === 'open' && fresh.cardRef !== cardRef) void announceRun(ab, fresh).catch(() => {});
       return RUN_LINES.changed;
     }
-    // The folder this message drew is the folder now, or nothing runs (end review r2).
-    // A button from before this release drew no folder: say so plainly, never "folder changed".
-    if (typeof rec.data?.root !== 'string' || !rec.data.root) return RUN_LINES.oldButton;
-    const press = await pressRoot(live, rec.data.root);
-    if (!press.ok) {
-      if (press.why === 'no_folder' || !press.current) return RUN_LINES.noFolder;
-      // Moved: ask once more with the folder it is now. Its Çalıştır runs THERE (that folder is
-      // its button's root) or, moved again, asks again; nothing runs from this tap.
-      void askFolder(ab, live, spec, press.current.path, withheld).catch(() => hub.notice(ab, 'info', RUN_LINES.folderAskFailed, true).catch(() => {}));
-      return RUN_LINES.folderAsked;
-    }
-    const run = startRun(sessionId, cardRef, 'telegram', { withheld, root: press.root });
+    const run = startRun(sessionId, cardRef, 'telegram', { withheld, root: check.root });
     if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? LINES.stale : LINES.waitingOnMac;
-    void followRun(ab, live, run).catch(() => { /* the run goes on; its report still arrives */ });
+    void followRun(ab, check.live, run).catch(() => { /* the run goes on; its report still arrives */ });
     return RUN_LINES.started(withheld);
+  };
+
+  /**
+   * ▶ Çalıştır on a CHILD's owner-card message (run-kart-telefon): the hub already proved the
+   * owner, the chat, the message and its text, and spent the single-use record. Here: the item
+   * the message was sent for is still this Super's open crew card (`childCardOwnership`, the
+   * offer's own predicate), then the shared press check. The run is the registry's: its result is
+   * held for and delivered to the child, and the press closes the waits on it (delivery.ts `acted`).
+   */
+  const pressChildRun = async (ab: ActiveBinding, rec: ButtonRecord & { data?: Obj }): Promise<string> => {
+    const sessionId = rec.sessionId ?? '';
+    const cardRef = rec.cardRef ?? '';
+    const owned = await childCardOwnership(ab, String(rec.data?.item ?? ''), sessionId, cardRef);
+    if (owned !== 'ok') return owned === 'closed' ? RUN_LINES.childChanged : RUN_LINES.childNotHere;
+    const { rec: live } = resolveCardRecord(sessionId, cardRef);
+    const check = await checkPress(live, cardRef, rec.data, true);
+    // A child's card whose folder moved: its folder question is the Mac's (the confirm button serves the Super's own card only).
+    if (!check.ok) return 'moved' in check ? RUN_LINES.childMacOnly : check.changed ? RUN_LINES.childChanged : check.line;
+    const run = startRun(sessionId, cardRef, 'telegram', { root: check.root });
+    if ('refused' in run) return run.refused === 'busy' ? RUN_LINES.busy : run.refused === 'closed' ? RUN_LINES.childChanged : LINES.waitingOnMac;
+    void followRun(ab, check.live, run).catch(() => { /* the run goes on; its report still arrives */ });
+    return RUN_LINES.started(false);
   };
 
   const prevHook = hub.messageHook;

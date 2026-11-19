@@ -1169,14 +1169,17 @@ export interface CardTicketMintResponse { ticket: string; expiresAt: number }
 export const CARD_TICKET_REFUSALS = ['missing', 'unknown', 'spent', 'expired', 'wrong_project', 'wrong_card', 'wrong_action', 'shown_mismatch'] as const;
 export type CardTicketRefusal = typeof CARD_TICKET_REFUSALS[number];
 
-/** The kind sentence Telegram sends with a child's card (K7, D3): it says plainly it is a Mac
- *  step, with Remind and Not needed, never Run. */
+/** The kind sentence Telegram sends with a child's card (K7): a run card says what ▶ Çalıştır
+ *  does (run-kart-telefon K1); the others say plainly they are a Mac step. */
 export const OWNER_CARD_TELEGRAM_LINE: Record<OwnerCardKind, string> = {
-  run: "Bu komut Mac'te terminalde çalışır; telefondan çalıştırılamaz.",
+  run: "▶ Çalıştır'a basarsan komut işin klasöründe çalışır, sonucu işe gider. Şifre isterse telefon linkinden girersin; tarayıcı açarsa giriş Mac'te yapılır.",
   secret: "Şifre Telegram'a yazılmaz; Mac'te girilir.",
   checklist: "Mac'te yapılır.",
   mcp: "Mac'te yapılır.",
 };
+/** A child's run card Telegram cannot offer Run for (a hidden character, a secret the redactor
+ *  would rewrite, too long for the message, or a folder not proven): the Mac runs it. */
+export const OWNER_CARD_TELEGRAM_RUN_MAC_LINE = "Bu komut burada olduğu gibi gösterilemiyor; Mac'te çalıştır.";
 
 /**
  * Re-validate a stored card handle (the record store's sanitizer calls this for `card` on an
