@@ -13,6 +13,7 @@ import { jobChip } from '../../lib/taskAgentJob';
 import { useI18n } from '../../context/I18nContext';
 import { TaskFaceButton } from './detail/AgentJobRow';
 import { BoardSubtasks } from './BoardSubtasks';
+import { CopySlugButton } from './CopySlugButton';
 
 interface BoardCardProps {
   task: Task;
@@ -134,6 +135,7 @@ export function BoardCard({
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 5 }}>
         {cp.urgency && <span style={{ width: 3, height: 13, borderRadius: 2, background: urgColor(task.urgency), flex: '0 0 auto', marginTop: 3 }} />}
         <span className="bd-card-title" style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-family-text)', fontWeight: 600, fontSize: 13.5, color: 'var(--color-text)', letterSpacing: '-0.005em', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{name}</span>
+        <CopySlugButton slug={task.slug} className="task-copy-btn--hover" />
       </div>
 
       {parentName && <div className="bd-card-parent" title={`Subtask of ${parentName}`}>↑ {parentName}</div>}

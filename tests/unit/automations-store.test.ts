@@ -1287,13 +1287,14 @@ describe('bound automations through the automation store', () => {
     rmSync(boundProj, { recursive: true, force: true });
   });
 
-  it('createAutomation with an agent writes the agent key and no identity, and refuses on-call or an unknown agent', () => {
+  it('createAutomation with an agent writes the agent key and no identity; an on-call one has no schedule; an unknown agent is refused', () => {
     const text = readFileSync(join(boundCtx, 'automations', 'scout-daily.md'), 'utf-8');
     expect(text).toMatch(/^agent: scout$/m);
     expect(text).not.toContain('## Prompt');
-    expect(() =>
-      storeForBound.createAutomation(boundCtx, { slug: 'x', title: 'X', agent: 'scout', mode: 'call' }),
-    ).toThrow(/runs on a schedule/);
+    // A member's on-call routine (owner 2026-11-17): bound, no schedule, never a member of its own.
+    const onCall = storeForBound.createAutomation(boundCtx, { slug: 'x', title: 'X', agent: 'scout', mode: 'call' });
+    expect(onCall).toMatchObject({ agent: 'scout', mode: 'call', schedule: null });
+    expect(agentStoreForBound.getAgent(boundCtx, 'x')).toBeNull();
     expect(() =>
       storeForBound.createAutomation(boundCtx, { slug: 'y', title: 'Y', agent: 'nobody', days: 'daily', at: '09:00' }),
     ).toThrow(/No agent named/);
@@ -1324,7 +1325,9 @@ describe('bound automations through the automation store', () => {
     expect(t.runKind).toBe('agent');
     expect(agentStoreForBound.getAgent(boundCtx, 'scout')?.title).toBe('Market scout');
     expect(() => storeForBound.updateAutomation(boundCtx, 'scout', { days: 'daily', at: '10:00' })).toThrow(/only call/);
-    expect(() => storeForBound.updateAutomation(boundCtx, 'scout-daily', { mode: 'call' })).toThrow(/runs on a schedule/);
+    // A routine may switch to on call (its schedule is dropped) and back (a daily default).
+    expect(storeForBound.updateAutomation(boundCtx, 'scout-daily', { mode: 'call' })).toMatchObject({ mode: 'call', schedule: null, agent: 'scout' });
+    expect(storeForBound.updateAutomation(boundCtx, 'scout-daily', { mode: 'sched' }).schedule).not.toBeNull();
   });
 
   it('AI Team: a routine edit sets "ask me before it publishes" (review) on the job file only', () => {

@@ -85,7 +85,7 @@ export interface ForwardInput {
   /** The published document's headline, from the runner's memory (never the thread file). */
   resultText?: string | null;
   /** A fire refused until he approves (K7): a changed manifest, or one never approved. */
-  approvalNeeded?: 'awaiting-approval' | 'not-approved';
+  approvalNeeded?: ApprovalNeeded;
   /** A fire deferred for an account (runner Step 4.6). Sent like a failure: always, opted in or
    *  not (he must hear it did not run). `runsLater`: it is still owed when the wait ends. */
   accountWait?: { until: number; kind: 'full' | 'none-open' | 'unknown'; runsLater: boolean };
@@ -160,6 +160,24 @@ export function waitWhen(until: number): string {
   return `${day} ${hm}`;
 }
 
+/** Why a fire waits for his yes: a change it asks about (`awaiting-approval`), a change refused
+ *  until he approves it again (`changed`), or no approval at all (`not-approved`). */
+export type ApprovalNeeded = 'awaiting-approval' | 'changed' | 'not-approved';
+
+/** The reason a `not approved (<reason>)` refusal names, as the notice tells it. PURE. */
+export function approvalNeededOf(error: string | null): Exclude<ApprovalNeeded, 'awaiting-approval'> {
+  return /\((manifest-changed|payload-format-changed)\)/.test(error ?? '') ? 'changed' : 'not-approved';
+}
+
+/** Where he approves a routine that did not run (owner 2026-11-19). The notice itself is sent by the
+ *  scheduler, which cannot carry the hub's buttons: the member's own bot sends the card with Onayla
+ *  when asked (its `automation` block, automation-approvals.ts); through the Super bot, the Mac. */
+export function approvalWhere(viaSuper: boolean): string {
+  return viaSuper
+    ? "Mac'te AI Team sayfasında, rutinin kartından onaylarsın."
+    : "Bana \"onay kartını gönder\" yaz, Onayla düğmesiyle buradan onaylarsın; ya da Mac'te AI Team sayfasında.";
+}
+
 export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) | null {
   if (!input.scheduled) return null;
   const home = input.home ?? homedir();
@@ -194,8 +212,10 @@ export function buildRoutineForward(input: ForwardInput): (() => Promise<void>) 
         : `${head}, bütün hesaplar kullanım sınırına yakın. Bekleme bitişi: ${escapeHtml(waitWhen(wait.until))}. ${wait.runsLater ? 'Sonra kendiliğinden çalışır.' : 'Bu çalıştırma atlanır, sonraki saatinde çalışır.'}`);
   } else if (approval) {
     messages.push(approval === 'awaiting-approval'
-      ? `✋ <b>${escapeHtml(title)}</b>: talimatı değişti, çalışmadan önce onayını bekliyor. Değişikliği Mac'te görüp onaylarsın.`
-      : `✋ <b>${escapeHtml(title)}</b>: hiç onaylanmadığı için çalışmadı. Mac'te, Agents sayfasında onaylarsın.`);
+      ? `✋ <b>${escapeHtml(title)}</b>: talimatı değişti, çalışmadan önce onayını bekliyor. ${approvalWhere(viaSuper)}`
+      : approval === 'changed'
+        ? `✋ <b>${escapeHtml(title)}</b>: onaydan sonra değişti, yeniden onaylayana kadar çalışmaz. ${approvalWhere(viaSuper)}`
+        : `✋ <b>${escapeHtml(title)}</b>: onaylanmadığı için çalışmadı. ${approvalWhere(viaSuper)}`);
   } else if (failed) {
     messages.push(`⚠ <b>${escapeHtml(title)}</b>: Rutin çalışamadı: ${escapeHtml(line(input.error ?? input.status))}`);
   } else if (asked) {

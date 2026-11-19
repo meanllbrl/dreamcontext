@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Task, TaskListItem } from '../../hooks/useTasks';
-import { useUpdateTask, useDeleteTask, useFeatureOptions, useStatusModel, useTask, isOpenChildrenRefusal, type AgentJobDetail } from '../../hooks/useTasks';
+import { useUpdateTask, useFeatureOptions, useStatusModel, useTask, isOpenChildrenRefusal, type AgentJobDetail } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
 import { openChildrenMessage } from '../../lib/taskObjection';
-import { confirmAction } from '../../lib/desktop';
 import { useTheme } from '../../context/ThemeContext';
 import { DetailHeader } from './detail/DetailHeader';
 import { PropertiesPanel, type Updates } from './detail/PropertiesPanel';
@@ -18,6 +17,7 @@ import { ReviewRoundsSection } from './detail/ReviewRoundsSection';
 import { HistorySection } from './detail/HistorySection';
 import { toggleCriterion, type SectionKey } from './detail/sectionModel';
 import { subtaskProgress } from './boardModel';
+import { TaskDeleteDialog } from './TaskDeleteDialog';
 import './TaskDetailPanel.css';
 
 interface TaskDetailPanelProps {
@@ -27,6 +27,11 @@ interface TaskDetailPanelProps {
   /** Open another task in this drawer (a subtask, or the parent from the crumb). */
   onOpenTask?: (slug: string) => void;
   onClose: () => void;
+  /**
+   * After a confirmed delete: `next` is the parent to open (a subtask was deleted) or null (back
+   * to the list); `deleted` lists every slug that went. Without it the drawer opens the parent or closes.
+   */
+  onDeleted?: (next: string | null, deleted: string[]) => void;
 }
 
 /**
@@ -37,7 +42,7 @@ interface TaskDetailPanelProps {
  * task PATCH, and every body write is serialized on one pending body (below) so rapid ticks
  * never lose an update. The parts live in `detail/`.
  */
-export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose, onDeleted }: TaskDetailPanelProps) {
   const embed = useEmbed();
   const { resolved: theme } = useTheme();
   const { t } = useI18n();
@@ -46,7 +51,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
   // Body writes get their OWN mutation observer: a property edit through `updateTask` must never
   // detach the in-flight body write (TanStack keeps per-call callbacks for the latest call only).
   const bodyWrite = useUpdateTask();
-  const deleteTask = useDeleteTask();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const { data: featureOptions } = useFeatureOptions();
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [parentError, setParentError] = useState<string | null>(null);
@@ -127,18 +132,8 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
     : null;
   const open = (slug: string) => onOpenTask?.(slug);
 
-  const handleDelete = async () => {
-    const ok = await confirmAction({
-      title: `Delete task “${task.name}”?`,
-      body: children.length
-        ? `Its ${children.length} subtask${children.length === 1 ? '' : 's'} stay, as top-level tasks. This propagates to the remote backend on sync.`
-        : 'This propagates to the remote backend on sync.',
-      confirmLabel: 'Delete',
-      destructive: true,
-    });
-    if (!ok) return;
-    deleteTask.mutate(task.slug, { onError: onMutationError, onSuccess: () => onClose?.() });
-  };
+  // Delete opens the in-app confirmation; nothing is deleted before its red button.
+  const handleDelete = () => setConfirmingDelete(true);
 
   // Esc closes the drawer — but never an Esc meant for something inside it: a field being typed
   // in (its draft would be lost), an open picker or menu (they mark their Esc as handled).
@@ -173,7 +168,21 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
           onOpenTask={open}
           onRename={(name) => update({ name })}
           onError={(msg) => setMutationError(msg)}
+          onDelete={embed ? undefined : handleDelete}
         />
+        {confirmingDelete && (
+          <TaskDeleteDialog
+            task={task}
+            allTasks={allTasks}
+            onClose={() => setConfirmingDelete(false)}
+            onDeleted={(next, deleted) => {
+              setConfirmingDelete(false);
+              if (onDeleted) onDeleted(next, deleted);
+              else if (next && onOpenTask) onOpenTask(next);
+              else onClose();
+            }}
+          />
+        )}
         <div className="detail-grid">
           <div className="detail-main">
             {mutationError && <div className="error-state detail-error">{mutationError}</div>}
@@ -198,8 +207,6 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
             task={task}
             allTasks={allTasks}
             update={update}
-            onDelete={handleDelete}
-            deleting={deleteTask.isPending}
             parentError={parentError}
             setParentError={setParentError}
           />

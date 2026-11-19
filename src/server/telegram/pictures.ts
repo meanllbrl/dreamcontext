@@ -16,7 +16,12 @@ import type { UploadFile } from '../../lib/telegram/transport.js';
 import type { ActiveBinding } from './hub.js';
 
 export type MediaKind = 'photo' | 'video' | 'document';
-export interface MediaItem { kind: MediaKind; file: UploadFile; title: string }
+export interface MediaItem {
+  kind: MediaKind; file: UploadFile; title: string;
+  /** What the file was made from when its own bytes vary run to run (a page printed to PDF
+   *  stamps its creation date): equal sources = the same file (sent-once.ts). */
+  source?: string;
+}
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 

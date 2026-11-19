@@ -223,8 +223,8 @@ function FrameViewerLive({ subject, deviceKey, onClose }: { subject: FrameSubjec
         <div className="frame-viewer-page" style={wrapStyle}>{body}</div>
         {!interact && <div className="frame-viewer-shield" data-testid="frame-viewer-shield" {...pz.handlers} />}
       </div>
-      {note}
       <div className="image-viewer-foot">
+        {note}
         <div className="image-viewer-caption">{title}</div>
         <div className="image-viewer-bar">
           <button type="button" className="image-viewer-btn" onClick={() => zoomAround((s) => s / STEP)} disabled={view.scale <= Math.min(MIN_SCALE, fitScale) + 1e-6}

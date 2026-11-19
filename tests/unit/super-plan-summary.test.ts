@@ -10,7 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import { SUPER_BRIEF_TEXT, superBriefing } from '../../src/server/chat-modes.js';
 import { AWAITED_LINE, PLAN_DONE_LINE, superBatchText } from '../../src/lib/super/inbox.js';
-import { LONG_PREVIEW_WARNING, MAX_PREVIEW_TEXT, START_ASK_WARNING, askWarning } from '../../src/lib/super/ask-summary.js';
+import { LONG_PREVIEW_WARNING, MAX_PREVIEW_TEXT, NO_START_CARD, START_ASK_NOTE, START_ASK_WARNING, askWarning } from '../../src/lib/super/ask-summary.js';
+import { ASK_HIS_KINDS } from '../../src/lib/ask-rules.js';
 import { SUPER_BRIEF_REV, emptySuperState, type SuperAskSpec, type SuperState } from '../../src/lib/super/types.js';
 
 const SUMMARY = `<div class="dc-doc"><p class="dc-p">Teachers cannot block weekly hours.</p><ul class="dc-list">
@@ -42,7 +43,22 @@ describe('askWarning', () => {
   });
 
   it('a shown report card is the summary; a preview no longer is (owner 2026-10-30)', () => {
-    expect(askWarning(ask('The plan is ready. Shall it start?'), 1)).toBeNull();
+    // Owner 2026-11-18: a start card that shows its report still hears, once, that asked work starts without one.
+    expect(askWarning(ask('The plan is ready. Shall it start?'), 1)).toBe(START_ASK_NOTE);
+    expect(askWarning(ask('Which color for the header?'), 1)).toBeNull();
+    // An approval of a drawing is his by kind: it shows its report and hears no note (end review r1).
+    expect(askWarning(ask('Do you approve this drawing of the lesson screen?'), 1)).toBeNull();
+    expect(askWarning(ask('Sıradaki dalgaya devam edeyim mi?'), 1)).toBe(START_ASK_NOTE);
+    // Every form of the verb, never a longer word that only begins the same (open note 2026-11-19).
+    for (const q of ['Starting the build now, OK?', 'Proceeding with wave 2?', 'Kicking off the merge?', 'Continuing with the next step?', 'Going ahead with it?'])
+      expect(askWarning(ask(q), 1)).toBe(START_ASK_NOTE);
+    for (const q of ['Which startup screen do you prefer?', 'Is the beginner mode the default?'])
+      expect(askWarning(ask(q), 1)).toBeNull();
+    for (const w of [START_ASK_NOTE, START_ASK_WARNING]) expect(w).toContain(NO_START_CARD);
+    expect(NO_START_CARD).toContain('Work he asked for or approved starts and goes on without a card');
+    expect(NO_START_CARD).toContain('a plan that changes no screen is built without his yes');
+    expect(NO_START_CARD).toContain(ASK_HIS_KINDS);
+    expect(START_ASK_WARNING).toContain('your text does not repeat it');
     expect(askWarning(ask('The plan is ready. Shall it start?', { preview: SUMMARY }), 0)).toBe(START_ASK_WARNING);
   });
 
@@ -69,7 +85,7 @@ describe('askWarning', () => {
 });
 
 describe('the rule rides where the Super reads it', () => {
-  it(`the briefing (rev ${SUPER_BRIEF_REV}) puts the information on a report card, the decision in the question, the summary in the text`, () => {
+  it(`the briefing (rev ${SUPER_BRIEF_REV}) puts the information on a report card, the decision in the question, the summary in ONE place`, () => {
     expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(19);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('Information he must READ never rides\nin a question: it is a report card on his stage.');
@@ -77,7 +93,11 @@ describe('the rule rides where the Super reads it', () => {
       expect(t).toContain('the question is the decision in one short line');
       expect(t).toContain('the report stays after his answer');
       expect(t).toContain('3-6 short bullets of what will be done');
-      expect(t).toContain('(the exception to 2-4)');
+      // Owner 2026-11-18 (rev 53): the report carries the summary; the text and the card do not repeat it.
+      expect(t).toContain('neither your text nor the card repeats it');
+      expect(t).not.toContain('your text gives the same summary');
+      // A plan built without his yes is told in text, as long as it needs.
+      expect(t).toContain('(as long as it needs, the exception to 2-4)');
       expect(t).toContain('A `preview` is only a look at an option');
       expect(t).toContain('A report on a plan or on options is DRAWN, never written: screen\nmockups, options side by side, short headings');
       // 2026-11-03 (rev 29): the mockup is the product's real look, a sequence is a graph.
@@ -98,7 +118,10 @@ describe('the rule rides where the Super reads it', () => {
     expect(text).toContain(AWAITED_LINE);
     expect(text).toContain(PLAN_DONE_LINE);
     expect(text.split(PLAN_DONE_LINE).length).toBe(2);
-    expect(PLAN_DONE_LINE).toContain('Put that summary on a report card first');
+    // Owner 2026-11-18: a finished plan of asked work is started, never put to him as a start card.
+    expect(PLAN_DONE_LINE).toContain('never ask him to start it. Start its develop child now');
+    expect(PLAN_DONE_LINE).toContain('A card only for what the plan left open and is his by kind');
+    expect(PLAN_DONE_LINE).toContain('your text does not repeat the report');
     expect(PLAN_DONE_LINE).toContain('`--show <its card>`');
   });
 

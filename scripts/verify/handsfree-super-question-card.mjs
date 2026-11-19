@@ -280,7 +280,7 @@ async function main() {
     await goTo(0); await pageAt(0).locator('.chat-surveycard-opt').filter({ hasText: 'Grid' }).click();
     await goTo(1); await pageAt(1).locator('.chat-surveycard-opt').filter({ hasText: 'Red' }).click(); await pageAt(1).locator('.chat-surveycard-opt').filter({ hasText: 'Blue' }).click();
     await goTo(2); await pageAt(2).locator('.chat-surveycard-opt').filter({ hasText: 'Yes' }).click();
-    await goTo(3); await pageAt(3).locator('.chat-surveycard-opt.other').click();
+    await goTo(3);   // an own answer: nothing picked, the free field is the answer
     await pageAt(3).locator('input, textarea').last().fill('Ayşe from design');
     await phone.waitForTimeout(300);
     await phone.screenshot({ path: join(OUT, '02-phone-card-answered-390.png') });

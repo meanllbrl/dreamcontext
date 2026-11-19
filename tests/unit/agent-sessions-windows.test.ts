@@ -19,6 +19,7 @@ import {
   coerceWindows, withWindows, MAX_SESSIONS, MAX_WINDOW_NAME, DEFAULT_WINDOW, type SavedMeta,
 } from '../../src/server/routes/agent-sessions.js';
 import { parseJsonBody } from '../../src/server/middleware.js';
+import { writeSuper } from '../../src/lib/super/inbox.js';
 
 let scratch: string;
 let home: string;
@@ -221,6 +222,26 @@ describe('roster windows: the phone and the drawer', () => {
     const r = res();
     await handleAgentSessionsGet({ url: '/api/agent/sessions?summary=1' } as IncomingMessage, r.res, {}, contextRoot, home);
     expect(r.body()).toMatchObject({ windows: 2, tabs: 1, perWindow: [{ id: 'main', tabs: 0 }, { id: 'w2', name: 'Two', tabs: 1 }] });
+  });
+
+  // Field 2026-11-18: a member's helper (a global member's too) restored as a tab after a reload
+  // showed in a chat window; the window holds only main's record at load, so the summary names
+  // every session a member Super holds and the window homes them on the stage.
+  it('GET ?summary=1 names every session a member Super holds, and counts none of them', async () => {
+    const memberChat = uuid(21);
+    const helper = uuid(22);
+    const former = uuid(23);
+    await writeSuper(contextRoot, 'm:ada', (s) => {
+      s.session = memberChat;
+      s.enabled = true;
+      s.children[helper] = { sessionId: helper, brief: 'Helper of ada', adopted: false, startedAt: 1 };
+      s.formerChildren = [former];
+    });
+    await put({ windows: [{ id: 'main', name: 'Chat' }], sessions: [tab('Mine', { sessionId: uuid(20), window: 'main' }), tab('Helper of ada', { sessionId: helper, window: 'main' })], chatPermissionMode: 'auto' });
+    const r = res();
+    await handleAgentSessionsGet({ url: '/api/agent/sessions?summary=1' } as IncomingMessage, r.res, {}, contextRoot, home);
+    expect([...r.body().memberHeld].sort()).toEqual([memberChat, helper, former].sort());
+    expect(r.body()).toMatchObject({ tabs: 1, perWindow: [{ id: 'main', tabs: 1 }] });
   });
 });
 

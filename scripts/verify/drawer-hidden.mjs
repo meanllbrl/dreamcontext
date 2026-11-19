@@ -55,8 +55,7 @@ for (const theme of ['dark', 'light']) {
     const atlas = page.locator('[data-drawer-project="Atlas"] .ns-dr-proj');
     await atlas.hover();
     await page.waitForTimeout(250);
-    const eye = page.locator('[data-drawer-project="Atlas"] [data-testid="drawer-project-hide"]');
-    ok(`${theme}: hovering shows the eye beside +`, await eye.isVisible());
+    ok(`${theme}: no eye on the row, only the menu and +`, (await page.locator('[data-drawer-project="Atlas"] .ns-dr-hide, [data-drawer-project="Atlas"] .ns-dr-newchat-menu').count()) === 0);
     await page.screenshot({ path: `${app.shots}/${theme}-1-hover.png`, clip });
 
     // Open the group in place.
@@ -66,16 +65,20 @@ for (const theme of ['dark', 'light']) {
     ok(`${theme}: the group opens in place`, (await page.locator('[data-hidden-project="Meridian"]').count()) === 1);
     await page.locator('[data-hidden-project="Orbit"] .ns-dr-proj').hover();
     await page.waitForTimeout(250);
-    ok(`${theme}: a hidden project's eye says Show again`, await page.locator('[data-hidden-project="Orbit"] [data-testid="drawer-project-show"]').isVisible());
+    await page.locator('[data-hidden-project="Orbit"] [data-testid="drawer-project-more"]').click();
+    ok(`${theme}: a hidden project's menu says Show again`, await page.locator('[data-testid="drawer-project-show-item"]').isVisible());
+    await page.keyboard.press('Escape');
     await page.screenshot({ path: `${app.shots}/${theme}-3-open.png`, clip });
 
     // One click on the eye hides Atlas; Show again brings it back.
     await atlas.hover();
-    await eye.click();
+    await page.locator('[data-drawer-project="Atlas"] [data-testid="drawer-project-more"]').click();
+    await page.locator('[data-testid="drawer-project-hide-item"]').click();
     await page.waitForTimeout(300);
     ok(`${theme}: one click hides`, (await page.locator('[data-hidden-project="Atlas"]').count()) === 1);
     await page.locator('[data-hidden-project="Atlas"] .ns-dr-proj').hover();
-    await page.locator('[data-hidden-project="Atlas"] [data-testid="drawer-project-show"]').click();
+    await page.locator('[data-hidden-project="Atlas"] [data-testid="drawer-project-more"]').click();
+    await page.locator('[data-testid="drawer-project-show-item"]').click();
     await page.waitForTimeout(300);
     ok(`${theme}: Show again brings it back`, (await page.locator('[data-drawer-project="Atlas"]:not([data-hidden-project])').count()) === 1);
     await page.waitForTimeout(900); // the layout write is debounced (LAYOUT_WRITE_DEBOUNCE_MS)

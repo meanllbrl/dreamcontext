@@ -420,9 +420,13 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * asking; the denial sends you back to his words). Ceiling stays 12000; actual ~11,924.
    * 2026-11-15 (bekleyen-kapanmaz): the run card paragraph says a later card of the same kind
    * replaces the earlier open one, so what the agent needs now goes in ONE message. Actual 11,952.
+   * 2026-11-18 (soru-azaltma, owner "daha az soru kartı"): +1,162 for the short ask rules that open
+   * the Asking section (`ASK_RULES_SHORT`, lib/ask-rules.ts: a card only when the work is truly
+   * blocked, the two kind lists word for word). No briefing line said when NOT to ask, and plain
+   * chats asked half as many cards again as the Super. Ceiling 12,400 → 13,500; actual 13,443.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12400);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(13500);
   });
 
   /**
@@ -433,7 +437,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12281)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13443)).toBeLessThanOrEqual(20);
   });
 
   /**
