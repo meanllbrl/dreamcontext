@@ -219,13 +219,19 @@ describe("the stage's head is the member's (AC2)", () => {
     expect(stage).toMatch(/who=\{member \? <MemberStageHead info=\{member\} spawn=\{member\.spawn\} \/> : undefined\}/);
     expect(stage).toMatch(/\{who \?\? \(\s*<>\s*<BrandMark size=\{28\} \/>/);
   });
-  it('name, photo, model, subtitle, Profil, the Claude-only note and the project chip', () => {
+  it('name, photo, model, Profil, the Claude-only note; a global member: its project first and the Global chip, no switcher', () => {
     expect(parts).toContain('data-testid="super-member-name"');
     expect(parts).toMatch(/<AgentAvatar of="agent" slug=\{info\.slug\}/);
-    expect(parts).toMatch(/t\('superStage\.member\.subtitle'\)/);
     expect(parts).toMatch(/onClick=\{\(\) => requestManageMembers\(\{ slug: info\.slug \}\)\}/);
     expect(parts).toMatch(/t\('superStage\.member\.claudeOnly'\)/);
-    expect(parts).toContain('data-testid="member-project-chip"');
+    expect(parts).toContain('data-testid="super-member-project"');
+    expect(parts).toContain('data-testid="super-member-global"');
+    // The project name comes before the face; no select, no job line in the head.
+    expect(parts.indexOf('data-testid="super-member-project"')).toBeLessThan(parts.indexOf('<AgentAvatar of="agent" slug={info.slug}'));
+    const head = parts.slice(parts.indexOf('export function MemberStageHead'), parts.indexOf('export function MemberApprovalBand'));
+    expect(head).not.toContain('<select');
+    expect(head).not.toContain("superStage.member.subtitle");
+    expect(head).not.toContain('member-project-chip');
     expect(parts).toContain('data-testid="member-agenda-tasks"');
   });
   it('the member\'s composer asks "<name> ne yapsın?"', () => {
@@ -326,7 +332,12 @@ describe('observed run fixes (super-members.mjs)', () => {
     const css = src('dashboard/src/components/sleepy/super/TaskStrip.css');
     expect(css).toMatch(/\.super-member-head \{[^}]*flex: 1 1 0;[^}]*overflow: hidden;/);
     expect(css).toMatch(/\.super-centre-head:has\(\.super-member-head\) \.super-head-more,\s*\.super-centre-head:has\(\.super-member-head\) \.super-agenda-open \{ flex: none; \}/);
-    expect(css).toMatch(/@container super-centre \(max-width: 559px\) \{[^}]*\.super-member-model \{ display: none; \}/);
+    // The model chip gives way first (719), then the Global chip (559); the project name never.
+    expect(css).toMatch(/@container super-centre \(max-width: 719px\) \{[^}]*\.super-member-note,\s*\.super-member-head \.super-member-model \{ display: none; \}/);
+    expect(css).toMatch(/@container super-centre \(max-width: 559px\) \{[^}]*\.super-member-global \{ display: none; \}/);
+    // The project name never hides (owner 2026-11-17): capped and cut, never display:none.
+    expect(css).toMatch(/\.super-member-head > \.super-member-project \{ flex: 0 1 auto; max-width: 35%;/);
+    expect(css).not.toMatch(/\.super-member-project[^{]*\{[^}]*display: none/);
   });
 
   it('the phone opens a member\'s Super conversation as its mirror, or says why it cannot', async () => {
@@ -408,8 +419,8 @@ describe('end review fixes', () => {
     expect(src('dashboard/src/components/sleepy/super/useMemberSummaries.ts')).toMatch(/refetchIntervalInBackground: true,/);
   });
 
-  it('M4 (chip): switching project queues the member intent for that vault, no timer', () => {
-    expect(surface).toMatch(/windowChrome\.queueDrawerIntent\(to, \{ kind: 'member', slug: stageMember, title,/);
+  it('the head has no project switch (owner 2026-11-17): another project opens a member from its own Ekip list', () => {
+    expect(surface).not.toMatch(/onSwitchProject|otherProjects/);
     expect(surface).not.toMatch(/setTimeout\(\(\) => requestOpenAgents/);
   });
 

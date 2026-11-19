@@ -97,6 +97,13 @@ export function TeamPanel({
           <TeamIcon name="close" size={14} />
         </button>
       </div>
+      {tab === 'profile' && global && (
+        // Edited here, it changes in every project (owner 2026-11-17): said before anything is changed.
+        <div className="aiteam-tip aiteam-tip--global" data-testid="global-profile-note">
+          <TeamIcon name="globe" size={16} />
+          <span>{t('aiteam.panel.globalNote')}</span>
+        </div>
+      )}
       {tab === 'profile' && (
         <AgentProfilePanel slug={slug} onClose={onClose} onEdit={onEdit} onDeleted={onDeleted} onToast={onToast}
           placement={readOnly || global ? null : <PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
