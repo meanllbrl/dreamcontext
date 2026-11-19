@@ -137,7 +137,7 @@ export type DevicePollResult =
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
-const BRAIN_KEYS = {
+export const BRAIN_KEYS = {
   status: ['brain-status'] as const,
   settings: ['brain-settings'] as const,
   authStatus: ['brain-auth-status'] as const,

@@ -3351,8 +3351,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setSuperDockOpen(false);
     setSuperView('panes');
   });
+  // Which intent is parked: `initializer` starts the initializer chat; `super-landing` (plan
+  // ilk-acilis C8) turns the Super Agent on quietly and shows its stage, sending nothing.
+  const startIntentKindRef = useRef<StartChatIntentDetail['intent']>('initializer');
+  // `handOver` is declared further down; the landing reaches it through this ref.
+  const handOverRef = useRef<(opts?: unknown) => Promise<string | null>>(async () => null);
   useInstanceEvent<StartChatIntentDetail>(START_CHAT_INTENT_EVENT, (detail) => {
-    if (detail?.intent !== 'initializer') return;
+    if (detail?.intent !== 'initializer' && detail?.intent !== 'super-landing') return;
+    startIntentKindRef.current = detail.intent;
     setStartIntentAt(Date.now());
     detail.accepted = true;
   });
@@ -3366,6 +3372,22 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return () => window.clearTimeout(timer);
     }
     setStartIntentAt(null);
+    if (startIntentKindRef.current === 'super-landing') {
+      // D10: Claude cannot start here, so the project opens on today's panes (no refusal: the
+      // landing itself worked). Otherwise the stage, handed over quietly when not on yet: no
+      // `handover` item is queued, so the Super takes no turn until the owner writes (C8a).
+      if (!canSpawn) return undefined;
+      setExpanded(true);
+      if (superStateRef.current?.enabled) {
+        setActiveSuperId(MAIN_SUPER);
+        setSuperView('super');
+        return undefined;
+      }
+      void handOverRef.current({ adoptNone: true, quiet: true }).then((session) => {
+        if (!session) emitInstance(bus, START_CHAT_REFUSED_EVENT);
+      });
+      return undefined;
+    }
     const detail: DelegateAgentDetail = {
       title: t('onboarding.handoff.tabTitle'),
       prompt: initializerKickoffPrompt(),
@@ -5056,6 +5078,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return landed;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedApi, ensureSuperSession, panes, activePaneId, transportKind, t, instanceId]);
+  handOverRef.current = handOver;
 
   // Telegram's "Super'i aç" reaches this window as `hub_command super_handover` (N5, P4): the
   // same hand-over, adopting nothing; a full tab bar or a flight in progress says why.

@@ -1137,10 +1137,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     // It lands on its chat like any drawer click (its own start, the initializer, opens the chat
     // itself), so it comes up selected in the drawer, never on the page a project starts on.
     void queueDrawerIntentRef.current(name, how ? { kind: 'open-window' } : { kind: 'new-window' }).then((result) => {
-      if (how === 'initializer' && (result === 'added' || result === 'focused-tab')) {
+      if ((how === 'initializer' || how === 'super-landing') && (result === 'added' || result === 'focused-tab')) {
         startSeqRef.current += 1;
         const nonce = startSeqRef.current;
-        setPendingStarts((prev) => ({ ...prev, [name]: { intent: 'initializer', nonce } }));
+        setPendingStarts((prev) => ({ ...prev, [name]: { intent: how, nonce } }));
       }
     });
   }, []);

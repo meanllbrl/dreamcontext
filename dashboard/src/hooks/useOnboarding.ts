@@ -435,3 +435,113 @@ export function useAgentSettings() {
   );
   return { settings: query.data, isLoading: query.isLoading };
 }
+
+// ─── "Continue with Claude" (plan ilk-acilis C2, D4) ──────────────────────────
+
+export type GateAgent = 'claude' | 'codex' | 'antigravity';
+
+/**
+ * What the welcome button shows while it gets one agent ready. Each maps 1:1 to data the
+ * readiness report or a fix run already carries:
+ * - `preparing`: an install or sign-in run is going (or about to);
+ * - `browser`: the sign-in waits in the browser (`awaiting: 'browser'`);
+ * - `offline`: a step is needed and `report.online === false`;
+ * - `not-finished`: the sign-in ended `failed`, `timeout` or `canceled`;
+ * - `install-failed`: the install did not finish (its output behind "Show details");
+ * - `manual`: this platform installs by hand (Windows); the command is shown.
+ */
+export type GateState =
+  | { kind: 'idle' }
+  | { kind: 'preparing' }
+  | { kind: 'browser' }
+  | { kind: 'offline' }
+  | { kind: 'not-finished' }
+  | { kind: 'install-failed'; output: string }
+  | { kind: 'manual'; command: string };
+
+/**
+ * The fixes one agent needs, in order, read off the report. Pure, so it is unit-tested.
+ * Claude: `claude-path` (installed, not on PATH) or `claude-install` (missing), then
+ * `claude-signin` unless signed in (`ok` or `unknown`, as everywhere). Codex: `codex-install`
+ * then `codex-signin`. Antigravity: `antigravity-signin` alone (it installs first, a no-op when
+ * present). Never `git-install` or any other fix.
+ */
+export function gateSteps(report: ReadinessReport | undefined, agent: GateAgent): FixId[] {
+  if (agent === 'antigravity') return ['antigravity-signin'];
+  const find = (id: ReadinessCheck['id']) => report?.checks.find((c) => c.id === id);
+  const cli = find(agent === 'claude' ? 'claude' : 'codex');
+  const auth = find(agent === 'claude' ? 'claude-auth' : 'codex-auth');
+  const steps: FixId[] = [];
+  if (agent === 'claude') {
+    if (cli && cli.status !== 'ok' && cli.status !== 'unknown') {
+      steps.push(cli.status === 'needs-action' && cli.reason === 'not-on-path' ? 'claude-path' : 'claude-install');
+    }
+    if (!(auth && (auth.status === 'ok' || auth.status === 'unknown'))) steps.push('claude-signin');
+  } else {
+    if (cli && cli.status !== 'ok' && cli.status !== 'unknown') steps.push('codex-install');
+    if (!(auth && (auth.status === 'ok' || auth.status === 'unknown'))) steps.push('codex-signin');
+  }
+  return steps;
+}
+
+/** Store the pick through the one writer (`POST /api/onboarding/agents`, owner window only). */
+export async function postAgentPick(picked: GateAgent[]): Promise<void> {
+  await api.ownerPost<{ ok: true; picked: GateAgent[] }>('/onboarding/agents', { picked });
+}
+
+/**
+ * Get one agent ready from the welcome screen: at most its install then its sign-in, each
+ * through `useFixRuns().start` (the guarded fix route), never the whole plan. Writes the pick,
+ * then resolves true; any stop resolves false and leaves the state that says why.
+ */
+export function useAgentGate(report: ReadinessReport | undefined, fixRuns: FixRuns) {
+  const [state, setState] = useState<GateState>({ kind: 'idle' });
+  const busy = useRef(false);
+  const reportRef = useRef(report);
+  reportRef.current = report;
+
+  // A run waiting in the browser shows the browser card while it waits.
+  const live = Object.values(fixRuns.runs).find((r) => r && r.phase === 'running');
+  const awaitingBrowser = live?.status?.awaiting === 'browser';
+  const shown: GateState = state.kind === 'preparing' && awaitingBrowser ? { kind: 'browser' } : state;
+
+  const run = useCallback(async (agent: GateAgent): Promise<boolean> => {
+    if (busy.current) return false;
+    busy.current = true;
+    try {
+      const steps = gateSteps(reportRef.current, agent);
+      if (steps.length > 0 && reportRef.current?.online === false) {
+        setState({ kind: 'offline' });
+        return false;
+      }
+      for (const fix of steps) {
+        const check = checkForFix(reportRef.current, fix);
+        if (check?.fix?.kind === 'manual') {
+          setState({ kind: 'manual', command: check.fix.manual ?? '' });
+          return false;
+        }
+        setState({ kind: 'preparing' });
+        const end = await fixRuns.start(fix);
+        if (end.phase === 'abandoned') return false;
+        if (end.phase !== 'done') {
+          const signin = fix.endsWith('-signin');
+          if (end.startError?.code === 'network' || end.status?.outcome === 'offline') setState({ kind: 'offline' });
+          else if (signin) setState({ kind: 'not-finished' });
+          else setState({ kind: 'install-failed', output: end.status?.output ?? end.startError?.message ?? '' });
+          return false;
+        }
+      }
+      await postAgentPick([agent]);
+      setState({ kind: 'idle' });
+      return true;
+    } catch (err) {
+      setState({ kind: 'install-failed', output: err instanceof Error ? err.message : String(err) });
+      return false;
+    } finally {
+      busy.current = false;
+    }
+  }, [fixRuns]);
+
+  const reset = useCallback(() => setState({ kind: 'idle' }), []);
+  return { state: shown, run, reset };
+}

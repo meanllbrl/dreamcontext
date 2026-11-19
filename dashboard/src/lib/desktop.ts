@@ -511,7 +511,7 @@ export async function openVaultWindow(
   // `start` asks the new window to open a chat with a FIXED intent (the onboarding hand-off).
   // Only this function writes it; the OS link path never does. A `'focused'` answer means an
   // already-open window will not see it, so the caller follows up with `emitStartIntent`.
-  const startParam = opts.start === 'initializer' ? '&start=initializer' : '';
+  const startParam = opts.start && isStartIntent(opts.start) ? `&start=${opts.start}` : '';
   const url = `/?vault=${encodeURIComponent(name)}${openParam}${startParam}`;
   if (isDesktop()) {
     // Use the BUILT-IN WebviewWindow API (governed by the granted
@@ -549,8 +549,15 @@ export async function openVaultWindow(
   return 'browser';
 }
 
-/** The fixed intents a project window can be asked to start with. Closed on purpose. */
-export type StartIntent = 'initializer';
+/** The fixed intents a project window can be asked to start with. Closed on purpose.
+ *  `super-landing` (plan ilk-acilis C8): onboarding landed this project; turn its Super Agent on
+ *  quietly and show its stage. It carries no fields and starts no agent turn. */
+export type StartIntent = 'initializer' | 'super-landing';
+
+/** The closed set, as a guard for values read off a URL or an event. */
+export function isStartIntent(v: unknown): v is StartIntent {
+  return v === 'initializer' || v === 'super-landing';
+}
 
 /** Tauri event carrying a start intent to a project window that is already open. */
 export const START_INTENT_EVENT = 'dreamcontext-start-intent';
@@ -969,4 +976,67 @@ export async function openExternalUrl(url: string): Promise<void> {
     } catch { /* plugin/ACL unavailable — fall through to the web behaviour */ }
   }
   window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+// ─── First-run folder drop (plan ilk-acilis C7) ──────────────────────────────
+
+/** The shell built this window with the OS drop handler on (`?nativeDrop=1`): the app's first
+ *  run only, when the Launcher is onboarding. Read once; a reload keeps the same window. */
+const NATIVE_DROP = typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('nativeDrop') === '1';
+
+export function nativeDropWindow(): boolean {
+  return NATIVE_DROP && isDesktop();
+}
+
+export type NativeDropEvent =
+  | { type: 'over'; paths: string[] }
+  | { type: 'drop'; paths: string[] }
+  | { type: 'leave' };
+
+/**
+ * Follow folders dragged onto this window from Finder, with their real paths. Only in the
+ * native-drop window; elsewhere it resolves to a no-op unsubscribe. The caller keeps it only
+ * while the project step is mounted.
+ */
+export async function onNativeDrop(handler: (e: NativeDropEvent) => void): Promise<() => void> {
+  if (!nativeDropWindow()) return () => {};
+  try {
+    const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+    let paths: string[] = [];
+    return await getCurrentWebview().onDragDropEvent((event) => {
+      const p = event.payload as { type: string; paths?: string[] };
+      if (p.type === 'enter' || p.type === 'over') {
+        if (Array.isArray(p.paths) && p.paths.length > 0) paths = p.paths;
+        handler({ type: 'over', paths });
+      } else if (p.type === 'drop') {
+        handler({ type: 'drop', paths: Array.isArray(p.paths) ? p.paths : paths });
+        paths = [];
+      } else {
+        paths = [];
+        handler({ type: 'leave' });
+      }
+    });
+  } catch {
+    return () => {};
+  }
+}
+
+/**
+ * The native-drop window cannot host the project (its drop handler would swallow Kanban drag),
+ * so the first project opens in a fresh window of the same frame, built with the handler off,
+ * and this one closes (C7, option b). Carries the landing intent on its URL.
+ */
+export async function landInFreshWindow(name: string, start?: StartIntent): Promise<void> {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  const win = getCurrentWindow();
+  let at: { x: number; y: number; width: number; height: number } | undefined;
+  try {
+    const scale = await win.scaleFactor();
+    const pos = await win.outerPosition();
+    const size = await win.innerSize();
+    at = { x: pos.x / scale, y: pos.y / scale, width: size.width / scale, height: size.height / scale };
+  } catch { /* default frame */ }
+  await openVaultWindow(name, at, start ? { start } : {});
+  await win.close();
 }

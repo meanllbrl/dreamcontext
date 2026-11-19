@@ -7,13 +7,28 @@ import type { AgentSettingsLite, ReadinessCheck, ReadinessReport } from '../../l
  * `tests/unit/onboarding-handoff.test.ts` rather than by clicking through the app.
  */
 
-export type OnboardingStage = 'machine' | 'project' | 'handoff';
+export type OnboardingStage = 'welcome' | 'machine' | 'project';
+
+/** Who the flow is for (see `Onboarding`). */
+export type OnboardingPurpose = 'first-run' | 'new-project' | 'setup';
+
+/**
+ * The screens each purpose walks (plan ilk-acilis C1): the app's first project is Welcome then
+ * Project, then the landing; "+ Add Project" is Project then the landing; the "Finish setting up"
+ * bar keeps the Mac checklist. No purpose ever shows an "is ready" screen or the checklist on
+ * the way to a first project.
+ */
+export function onboardingSteps(purpose: OnboardingPurpose): OnboardingStage[] {
+  if (purpose === 'first-run') return ['welcome', 'project'];
+  if (purpose === 'new-project') return ['project'];
+  return ['machine'];
+}
 
 /** What `openVaultWindow` answered. */
 export type OpenWindowResult = 'focused' | 'created' | 'browser';
 
 /**
- * After opening the project window with `start=initializer`:
+ * After opening the project window with a `start` intent (`super-landing` from onboarding):
  * - `created` / `browser`: the new window read the intent off its URL, nothing more to do;
  * - `focused`: the window was ALREADY open and never sees a URL param, so the intent has to be
  *   sent to it as an event instead.
@@ -54,11 +69,18 @@ export function entryStage(report: ReadinessReport | undefined, readinessFailed:
   return report?.ready ? 'project' : 'machine';
 }
 
-/** Machine-scope checks still to do: required and recommended ones that are not ok. */
+/**
+ * The checks the "Finish setting up" bar counts (C5): the ones a first chat needs. The checks the
+ * first run deliberately skips (`git`, `gh`, `github`, `codex`, `terminal`: Git comes with a
+ * clone, the rest from Settings) never bring the bar back.
+ */
+export const BAR_CHECKS: readonly ReadinessCheck['id'][] = ['claude', 'claude-auth', 'cli', 'node'];
+
+/** Bar checks still to do: those of {@link BAR_CHECKS} that are not ok (or unknown). */
 export function remainingSetupCount(report: ReadinessReport | undefined): number {
   if (!report) return 0;
   return report.checks.filter(
-    (c) => c.scopes.includes('machine') && c.tier !== 'optional' && c.status !== 'ok' && c.status !== 'unknown',
+    (c) => BAR_CHECKS.includes(c.id) && c.status !== 'ok' && c.status !== 'unknown',
   ).length;
 }
 
@@ -71,7 +93,7 @@ export function launcherOnboardingMode(
   report: ReadinessReport | undefined,
 ): 'takeover' | 'bar' | 'none' {
   if (vaultCount === 0) return 'takeover';
-  if (report && !report.ready) return 'bar';
+  if (remainingSetupCount(report) > 0) return 'bar';
   return 'none';
 }
 
@@ -92,4 +114,25 @@ export function gitTrackState(report: ReadinessReport | undefined, isGitRepo: bo
   if (check(report, 'git')?.status === 'ok') return 'available';
   if (report.activeFixes.includes('git-install')) return 'pending';
   return 'need-install';
+}
+
+// ─── Small text helpers of the project and clone screens ─────────────────────
+
+/** `~/…` for a path inside home, else the path. */
+export function homeShort(path: string, home: string | undefined): string {
+  if (home && (path === home || path.startsWith(home.replace(/\/+$/, '') + '/'))) return '~' + path.slice(home.replace(/\/+$/, '').length);
+  return path;
+}
+
+/** `owner/name` from a pasted github.com link, else null. */
+export function repoFromLink(text: string): string | null {
+  const m = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(text.trim());
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/** "146 MB", "2.3 GB": GitHub's size (KB) or bytes, decimal units as Finder shows them. */
+export function sizeLabel(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 }
