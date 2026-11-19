@@ -114,6 +114,11 @@ describe('M2: refs resolve to distinct messages by arrival', () => {
   it('a late link takes the newest identical message before it, never one after it', () => {
     const conv = [user('a', 'ok', 1000), user('b', 'ok', 2_000_000), user('c', 'ok', 9_000_000)];
     expect(ids(lineThread(conv, key({ refs: [{ ref: msgRef('ok'), at: 5_000_000 }] }), [], SUPER))).toEqual(['b']);
+    // A second, late link to a message already taken names nothing more: never an older twin.
+    const twice = [user('old', 'devam', 1000), say('to', 'Old job.', 1100), user('new', 'devam', 2_000_000), say('tn', 'Going on.', 2_000_100)];
+    expect(ids(lineThread(twice, key({ refs: [{ ref: msgRef('devam'), at: 2_000_000 }, { ref: msgRef('devam'), at: 3_000_000 }] }), [], SUPER))).toEqual(['new', 'tn']);
+    // Two late links, one after each "devam": each its own.
+    expect(ids(lineThread(twice, key({ refs: [{ ref: msgRef('devam'), at: 500_000 }, { ref: msgRef('devam'), at: 3_000_000 }] }), [], SUPER))).toEqual(['new', 'old', 'tn', 'to']);
     // Nothing before it: nothing (a wrong message is worse than a missing one).
     expect(ids(lineThread([user('c', 'ok', 9_000_000)], key({ refs: [{ ref: msgRef('ok'), at: 5_000_000 }] }), [], SUPER))).toEqual([]);
   });

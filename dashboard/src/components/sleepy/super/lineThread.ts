@@ -95,12 +95,15 @@ function resolvePairs(owners: readonly ChatUserItem[], pairs: readonly PadRef[],
     // Linked late: a pair stamped when the link was MADE (`--origin` or `note link` outside his
     // turn, his arrival no longer known) lies after its message. A link never precedes its
     // message, so the newest one with that ref that arrived before the pair is the one meant.
+    // Already taken (a second link to the same message): the pair names nothing more, never an
+    // older identical "devam" (review r1).
     if (late) sorted.forEach((pair, k) => {
       if (done.has(k)) return;
       let best: ChatUserItem | undefined;
-      for (const o of cands) if (o.ts && !taken.has(o.id) && o.ts < pair.at - skew && (!best || o.ts > (best.ts ?? 0))) best = o;
+      for (const o of cands) if (o.ts && o.ts < pair.at - skew && (!best || o.ts > (best.ts ?? 0))) best = o;
       if (!best) return;
       done.add(k);
+      if (taken.has(best.id)) return;
       taken.add(best.id);
       out.push(best.id);
     });
