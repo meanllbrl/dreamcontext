@@ -280,11 +280,13 @@ function FullDiskAccessRow({ caps }: { caps: Capabilities }) {
   const { t } = useI18n();
   const api = useApi();
   const [failed, setFailed] = useState(false);
+  const [opening, setOpening] = useState(false);
   if (caps.fullDiskAccess === undefined || caps.fullDiskAccess === null) return null;
   const on = caps.fullDiskAccess;
   const open = async () => {
     setFailed(false);
-    try { await api.post('/agent/open-full-disk-access', {}); } catch { setFailed(true); }
+    setOpening(true);
+    try { await api.post('/agent/open-full-disk-access', {}); } catch { setFailed(true); } finally { setOpening(false); }
   };
 
   return (
@@ -294,9 +296,9 @@ function FullDiskAccessRow({ caps }: { caps: Capabilities }) {
       <span className={`sysdep-status${on ? ' sysdep-status--ok' : ' sysdep-status--missing'}`}>
         {on ? t('system.fda.on') : t('system.fda.off')}
       </span>
-      {!on && <button className="btn btn--primary btn--sm" onClick={open}>{t('system.fda.open')}</button>}
+      {!on && <button className="btn btn--primary btn--sm" onClick={open} disabled={opening}>{t('system.fda.open')}</button>}
       {!on && <p className="sysdep-note">{t('system.fda.desc')}</p>}
-      {failed && <p className="sysdep-error">{t('system.fda.openFailed')}</p>}
+      {!on && failed && <p className="sysdep-error">{t('system.fda.openFailed')}</p>}
     </div>
   );
 }

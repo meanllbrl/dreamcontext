@@ -10,9 +10,11 @@ import { FULL_DISK_PANE, hasFullDiskAccess } from '../../src/lib/full-disk-acces
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 
 let home = '';
+const homes: string[] = [];
 const tccDb = (h: string) => join(h, 'Library', 'Application Support', 'com.apple.TCC', 'TCC.db');
 const fakeHome = (mode: number | null): string => {
   home = mkdtempSync(join(tmpdir(), 'dc-fda-'));
+  homes.push(home);
   if (mode === null) return home;
   mkdirSync(join(home, 'Library', 'Application Support', 'com.apple.TCC'), { recursive: true });
   writeFileSync(tccDb(home), 'x');
@@ -20,8 +22,10 @@ const fakeHome = (mode: number | null): string => {
   return home;
 };
 afterEach(() => {
-  try { chmodSync(tccDb(home), 0o600); } catch { /* none */ }
-  rmSync(home, { recursive: true, force: true });
+  for (const h of homes.splice(0)) {
+    try { chmodSync(tccDb(h), 0o600); } catch { /* none */ }
+    rmSync(h, { recursive: true, force: true });
+  }
 });
 
 describe('Full Disk Access probe', () => {

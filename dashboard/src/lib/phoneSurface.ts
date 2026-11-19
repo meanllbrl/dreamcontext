@@ -212,6 +212,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agent/loopback-grant',
   'POST /api/agent/web-session',
   'POST /api/agent/open-terminal',
+  'POST /api/agent/open-full-disk-access',
   'POST /api/agent/install',
   'GET /api/agent/install/status',
   'GET /api/onboarding/readiness',

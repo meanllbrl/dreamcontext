@@ -365,8 +365,9 @@ export async function handleAgentCapabilities(
  * POST /api/agent/open-full-disk-access: opens System Settings › Privacy & Security › Full Disk
  * Access, where the owner turns the app on once. The app never changes the setting itself.
  */
-export async function handleOpenFullDiskAccess(_req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Only the desktop app opens System Settings.'); return; }
+export async function handleOpenFullDiskAccess(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // The owner's own window on this Mac only: a paired phone or a peer past the network gate never opens Settings here.
+  if (!requireLocalDesktop(req, res)) return;
   if (process.platform !== 'darwin') { sendError(res, 501, 'unsupported_platform', 'Full Disk Access is a macOS setting.'); return; }
   const opened = await openFullDiskAccessPane();
   if (opened) sendJson(res, 200, { opened: true });
