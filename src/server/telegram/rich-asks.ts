@@ -203,7 +203,9 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
         it = { kind: 'photo', file: pngFile(`${drawingTag(oi)}-${o.label}`, png), title: o.label };
       }
       if (!fitsTelegram(it)) { misses.push(`${o.label}: too large for Telegram, not sent`); continue; }
-      if (await sendWhole(ab, it, pictureCaption(drawingCaption(oi, o.label)))) drawn.add(key);
+      const cap = pictureCaption(drawingCaption(oi, o.label));
+      const ok = it.kind === 'photo' ? await sendWhole(ab, it, cap) : !!(await sendMedia(ab, it, cap));
+      if (ok) drawn.add(key);
       else misses.push(`${o.label}: Telegram refused the picture`);
     }
   }

@@ -198,8 +198,9 @@ describe('the Super\'s own rich ask', () => {
     const askAt = tg.calls.findIndex((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'));
     expect(lastPhotoAt).toBeLessThan(askAt);
     const q = String(tg.calls[askAt].params.text);
-    expect(q).toContain('• <b>A · A</b> (çizim A)');
-    expect(q).toContain('• <b>B · B</b> (çizim B)');
+    // Said once (owner 2026-11-18): the caption and the button carry each label, the text does not.
+    expect(q).not.toContain('• ');
+    expect(q).not.toContain('çizim');
   });
 
   it('the owner\'s case: stage pictures the question shows go as their own album first, never with the drawings, each drawing alone under its own letter', async () => {
@@ -235,8 +236,8 @@ describe('the Super\'s own rich ask', () => {
     expect(albumAt).toBeLessThan(firstPhotoAt);
     expect(tg.calls.indexOf(photos[1])).toBeLessThan(askAt);
     const q = String(tg.calls[askAt].params.text);
-    expect(q).toContain('• <b>A · Sade hâline geçsin</b> (çizim A): Tek başlık');
-    expect(q).toContain('• <b>B · Şu anki gibi kalsın</b> (çizim B)');
+    expect(q).toContain('• <b>A · Sade hâline geçsin</b>: Tek başlık');
+    expect(q).not.toContain('Şu anki gibi kalsın');
     expect(q).not.toContain('yukarıda');
     // No headless Chromium here: the Mac window draws them, at the chat's width (it cannot tell a cut).
     expect(frames.filter((f) => f.verb === 'html_snapshot').map((f) => (f.args as { width: number }).width)).toEqual([720, 720]);
@@ -274,10 +275,45 @@ describe('the Super\'s own rich ask', () => {
     expect(page).not.toContain('src="_dream_context/tmp/super/header-b.png"');
     // The missing file is no broken picture: the question says that drawing is on the Mac, the log says why.
     const q = String(tg.calls.find((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))!.params.text);
-    expect(q).toContain('• <b>A · A ile yap</b> (çizim A)');
+    // Each option is said once (ask-format.ts): a drawing that went is its own captioned picture.
+    expect(q).not.toContain('A ile yap');
     expect(q).toContain("• <b>Yok</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
     const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
     expect(log).toMatch(/ask-6 pictures 2\/3 NOT ALL SENT \(Yok: /);
+  });
+});
+
+describe('an option preview that names project pictures (kitUP, owner 2026-11-18: blank boxes)', () => {
+  it('a lone picture goes as the file itself, a drawing gets its pictures written in, an unreadable one sends nothing', async () => {
+    const { sent } = await superChat();
+    tg.push(TOKEN, textUpdate(OWNER, 'sor bakalım'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    execFileSync('git', ['init', '-q'], { cwd: project });
+    mkdirSync(join(project, 'shots'), { recursive: true });
+    const SHOT = Buffer.concat([PNG, Buffer.from('raf-b')]);
+    writeFileSync(join(project, 'shots', 'raf-a.png'), PNG);
+    writeFileSync(join(project, 'shots', 'raf-b.png'), SHOT);
+    const item = { id: 'ask-pic', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ask: { questions: [{ question: 'Raf hangi hâliyle kalsın?', description: 'Öneri B.', options: [
+      { label: 'B: küçük rakam', preview: '<img src="shots/raf-a.png">' },
+      { label: 'A: büyük rakam', preview: '<div class="dc-card"><img src="shots/raf-b.png" alt=""><p>Bugünkü</p></div>' },
+      { label: 'C: liste', preview: '<img src="shots/yok.png">' },
+    ] }] } };
+    await writeState({ queue: [item] });
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    await vi.waitFor(() => expect(tg.calls.some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))).toBe(true));
+    // A and B reach the phone; C names a file that is not there: no picture, never a blank box.
+    expect(tg.calls.filter((c) => c.method === 'sendPhoto').map((c) => c.params.caption)).toEqual(['A · B: küçük rakam', 'B · A: büyük rakam']);
+    // Only B was drawn (A is the file itself), and its picture rode IN the page, never as a path
+    // the sandbox (img-src data:) cannot load.
+    const shots = frames.filter((f) => f.verb === 'html_snapshot').map((f) => String((f.args as { html: string }).html));
+    expect(shots).toHaveLength(1);
+    expect(shots[0]).toContain(`data:image/png;base64,${SHOT.toString('base64')}`);
+    expect(shots[0]).not.toContain('shots/raf-b.png');
+    const q = String(tg.calls.find((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))!.params.text);
+    expect(q).toContain("• <b>C: liste</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
+    expect(q).not.toContain('küçük rakam');
+    const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
+    expect(log).toMatch(/ask-pic pictures 2\/3 NOT ALL SENT \(C: liste: dosya bulunamadı/);
   });
 });
 
@@ -310,10 +346,11 @@ describe('the Super chat\'s own AskUserQuestion (P3 through the window)', () => 
       { question: 'Hangi kart?', options: [{ label: 'Bu taslak', preview: '<div class="dc-card">Kart</div>' }, { label: 'Değişsin' }] },
       { question: 'Ne zaman?', options: [{ label: 'Bugün' }, { label: 'Yarın' }] },
     ] } } });
-    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>'))).toBe(true));
-    expect(tg.calls.some((c) => c.method === 'sendPhoto')).toBe(true);
-    const text = tg.texts().find((t) => t.includes('Hangi kart?') && t.includes('Bu taslak</b>'))!;
-    expect(text).toContain('• <b>A · Bu taslak</b> (çizim A)');
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Hangi kart?'))).toBe(true));
+    expect(tg.calls.filter((c) => c.method === 'sendPhoto').map((c) => c.params.caption)).toEqual(['A · Bu taslak']);
+    const text = tg.texts().find((t) => t.includes('Hangi kart?'))!;
+    // The picture above already says "A · Bu taslak": the text neither repeats it nor calls it missing.
+    expect(text).not.toContain('Bu taslak');
     expect(text).not.toContain("Çizimi Mac'te");
     const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
     expect(log).toMatch(/req-d pictures 1\/1(?! NOT)/);

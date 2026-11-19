@@ -43,7 +43,7 @@ import { readSuperState, superIdOfMember } from '../../lib/super/store.js';
 import { ensureMemberSuper, type MemberBirth } from '../../lib/super/member-birth.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import type { SuperId, SuperState } from '../../lib/super/types.js';
-import { isOwnerProse, superKnownLanguage, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
+import { isOwnerProse, OWNER_PROSE_MIN_CHARS, superKnownLanguage, superTurnFolds, superTurnMark, type SuperTurnMark } from '../../lib/super/inbox.js';
 import { telegramHold } from '../../lib/super/owner-text-gate.js';
 import { noteUndelivered } from '../../lib/super/undelivered.js';
 import type { OwnerLanguage } from '../../lib/super/owner-language.js';
@@ -300,6 +300,11 @@ export class TelegramHub implements TelegramHubApi {
   /** Per Super chat: its texts still being sent, chained so they reach Telegram in the order the
    *  Super wrote them; a turn's end waits on it before it may call the turn silent. */
   private textChains = new Map<string, Promise<void>>();
+  /** The Super's own ask offered to Telegram in its running turn (`ownAskOffered`): cleared at
+   *  the turn's end; a text queued after it reads it as it is queued. */
+  private askInTurn = new Map<string, { landed: boolean }>();
+  /** When each Super session's running turn began (wall clock, as a queue item's `createdAt`). */
+  private turnStartedAt = new Map<string, number>();
   /** Per Super chat: how many sends LANDED on Telegram so far, so a held turn's end can tell whether
    *  any answer came after it. Born on a landed send, dies with the chat (`gone`). */
   private landedCount = new Map<string, number>();
@@ -1379,6 +1384,12 @@ export class TelegramHub implements TelegramHubApi {
     if (!key) return;
     const ab = this.active.get(key);
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
+    if (entry.status === 'gone') for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
+    if ((entry.status === 'working' || entry.status === 'starting') && !this.turnStartedAt.has(entry.sessionId)) this.turnStartedAt.set(entry.sessionId, Date.now());
+    if ((entry.status === 'idle' || entry.status === 'gone') && from !== entry.status) {
+      this.askInTurn.delete(entry.sessionId);
+      this.turnStartedAt.delete(entry.sessionId);
+    }
     if (entry.status === 'gone') {
       this.tails.delete(entry.sessionId);
       this.landedCount.delete(entry.sessionId);
@@ -1546,13 +1557,46 @@ export class TelegramHub implements TelegramHubApi {
     void next.then(() => { if (this.textChains.get(sessionId) === next) this.textChains.delete(sessionId); });
   }
 
+  /**
+   * The Super's own ask is being offered to Telegram (asks.ts): when the running turn wrote it,
+   * its texts queued after it see the returned mark, set `landed` once the card is on his phone.
+   * An ask from an earlier turn (a retry, the turn-away flush) or one offered outside a turn
+   * marks nothing: the running turn's texts are its own answer.
+   */
+  ownAskOffered(sessionId: string, createdAt: number): { landed: boolean } {
+    const status = getChat(sessionId)?.status;
+    const began = this.turnStartedAt.get(sessionId);
+    if ((status !== 'working' && status !== 'starting' && status !== 'asking') || began === undefined || !(createdAt >= began)) return { landed: false };
+    let m = this.askInTurn.get(sessionId);
+    if (!m) { m = { landed: false }; this.askInTurn.set(sessionId, m); }
+    return m;
+  }
+
+  /** The Super's own card is about to go (asks.ts `offerItem`, in line with its texts): a short
+   *  line it held before the card (`tails`) was its word to him, not a step between tools, so it
+   *  goes first and the phone reads line, then card (owner 2026-11-18, kitUP). */
+  async flushTail(sessionId: string): Promise<void> {
+    const tail = this.tails.get(sessionId);
+    if (!tail) return;
+    this.tails.delete(sessionId);
+    await this.onAssistantText(sessionId, tail.text, { turns: tail.turns, inputs: tail.inputs, mark: tail.mark, turn: tail.turn, cards: tail.cards, tail: true }).catch(() => false);
+  }
+
   /** One Super text: its turn's inputs read now, as it is written, never after a send. */
   private queueAssistantText(sessionId: string, text: string): void {
     const inputs = this.turnInputs.get(sessionId);
     const mark = superTurnMark(sessionId);
+    const ask = this.askInTurn.get(sessionId);
     const turn = turnOf(sessionId);
     const cards = this.textsSent.cardsOf(sessionId, turn);
-    this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs, mark, turn, cards }));
+    this.queueSend(sessionId, (turns) => {
+      // Owner 2026-11-18 ("tekrara düşme"): on his phone the card IS the question. A short line
+      // the turn writes after its own ask landed ("seçimlerini bekliyorum") only says it again;
+      // the Super's prompt forbids it, and here it never reaches Telegram (the Mac still draws
+      // it). A real report after the card (owner-prose length) still goes.
+      if (ask?.landed && text.trim().length < OWNER_PROSE_MIN_CHARS) return Promise.resolve(false);
+      return this.onAssistantText(sessionId, text, { turns, inputs, mark, turn, cards });
+    });
   }
 
   /** True when a message of this text landed on Telegram. */
