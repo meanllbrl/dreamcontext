@@ -28,6 +28,7 @@ vi.mock('../../src/server/routes/agent-chat-live.js', async (orig) => {
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { START_ASK_NOTE } from '../../src/lib/super/ask-summary.js';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, readPendingQuestion, registerChat } from '../../src/lib/assistant/chat-registry.js';
@@ -511,8 +512,9 @@ describe('super ask presents its pictures and answers show', () => {
     // Only the readable card is pointed at; a picture stays the picture question's own.
     let s = await readSuperState(root);
     expect(s.queue.find((q) => q.id === r.json.item)?.read).toEqual(['web-plan']);
-    // A start question showing a report card has its summary: no warning.
-    expect(r.json.warning).toBeUndefined();
+    // A start question showing a report card has its summary: no missing-summary warning, only
+    // the soru-azaltma note that a start of asked work needs no card (ask-summary.ts START_ASK_NOTE).
+    expect(r.json.warning).toBe(START_ASK_NOTE);
     expect((await verb('queue-done', { item: r.json.item })).status).toBe(200);
     s = await readSuperState(root);
     expect(s.containers.find((c) => c.id === 'web-plan')).toMatchObject({ place: 'float' });

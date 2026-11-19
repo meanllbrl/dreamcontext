@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import matter from 'gray-matter';
 import { createProgram } from '../../src/cli/program.js';
-import { listAgents } from '../../src/lib/agents/store.js';
+import { listAgents, withRestamp } from '../../src/lib/agents/store.js';
 import { membersNamedIn } from '../../src/lib/agents/member-mention.js';
 import { getAutomation, readManifestParts, automationPath } from '../../src/lib/automations/store.js';
 import { checkApproval } from '../../src/lib/automations/registry.js';
@@ -279,7 +279,8 @@ describe('automations edit --agent: re-attach in place', () => {
     expect((await run(['automations', 'edit', 'ada-shop', '--no-agent'])).code).toBe(0);
     expect(getAutomation(contextRoot, 'ada-shop')).toMatchObject({ agent: 'ada-shop', model: 'sonnet', effort: 'low' });
 
-    expect((await run(['agents', 'edit', 'ada', '--autonomy', 'ask'])).code).toBe(0);
+    // `--autonomy ask` is refused since uye-ask-yok; an OLD stored ask (written before it) still is one.
+    withRestamp(contextRoot, projectRoot, 'ada', { autonomy: 'ask' }, fakeHome);
     expect((await run(['automations', 'create', 'ada-menu', '--agent', 'ada', '--title', 'Menu', '--slot', 'sun@09:00'])).code).toBe(0);
     const r = await run(['automations', 'edit', 'ada-menu', '--no-agent']);
     expect(r.code).toBe(1);
