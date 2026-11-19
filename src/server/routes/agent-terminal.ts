@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, chmodSync, rea
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { sendJson, sendError } from '../middleware.js';
+import { hasFullDiskAccess, openFullDiskAccessPane } from '../../lib/full-disk-access.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
@@ -354,7 +355,22 @@ export async function handleAgentCapabilities(
     // Can a take be transcribed (the chosen engine is ready)? A boolean only, never a path: the
     // hands-free phone reads it to draw its hold-to-talk mic (its takes are transcribed here).
     dictation: desktop && dictationState().installed,
+    // Full Disk Access for the app (full-disk-access.ts): the only grant macOS keeps for its
+    // children's reads of other apps' data. Desktop on macOS only; null = cannot tell.
+    ...(desktop && process.platform === 'darwin' ? { fullDiskAccess: hasFullDiskAccess(homedir()) } : {}),
   });
+}
+
+/**
+ * POST /api/agent/open-full-disk-access: opens System Settings › Privacy & Security › Full Disk
+ * Access, where the owner turns the app on once. The app never changes the setting itself.
+ */
+export async function handleOpenFullDiskAccess(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Only the desktop app opens System Settings.'); return; }
+  if (process.platform !== 'darwin') { sendError(res, 501, 'unsupported_platform', 'Full Disk Access is a macOS setting.'); return; }
+  const opened = await openFullDiskAccessPane();
+  if (opened) sendJson(res, 200, { opened: true });
+  else sendError(res, 500, 'open_failed', 'System Settings did not open.');
 }
 
 // ─── Open in external Terminal (macOS) ────────────────────────────────────────

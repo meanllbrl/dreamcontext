@@ -27,6 +27,9 @@ export interface Capabilities {
   desktop: boolean;
   /** Local dictation (whisper) is installed on the Mac: the hands-free phone draws its mic. */
   dictation?: boolean;
+  /** Full Disk Access is on for the app (macOS desktop only; null = cannot tell). The one grant
+   *  macOS keeps for its children's reads of other apps' data (src/lib/full-disk-access.ts). */
+  fullDiskAccess?: boolean | null;
   platform: string;
   embeddedTerminal: boolean;
   openTerminal: boolean;
