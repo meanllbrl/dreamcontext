@@ -37,7 +37,10 @@
 
 .wbp-sync-glyph { flex: none; }
 
-.wbp-sync-glyph--spin { animation: wbp-sync-spin 1s linear infinite; }
+.wbp-sync-glyph--spin {
+  animation: var(--dc-motion-status-name, wbp-sync-spin) 1s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 
 @keyframes wbp-sync-spin { to { transform: rotate(360deg); } }
 
