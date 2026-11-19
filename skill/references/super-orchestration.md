@@ -45,6 +45,11 @@ children that finish fast. Verbs are in
    A brief over a line goes in a file (`_dream_context/tmp/super-prompts/<slug>/brief.md`, Write tool)
    and `--prompt` is one plain line naming it: a heredoc or `$(cat …)` misses the pre-allowed
    `dreamcontext super` rule, and an auto-mode project refuses the call.
+   A brief names the project skill that covers the job (`/reel-generator` for a product video):
+   look in this project's skills (`.claude/skills`, your skill list) first. In the same field a
+   project skill comes before a user-level one (a KB or `~/.claude` skill): the user-level one only
+   adds its own rules (cost, render) and never replaces the project's line. The child's prompt hook
+   also names a project skill a turn falls in (`→ SKILL: <name>`); the brief must not rely on it.
    A Plan unit's prompt carries the premise question's answer, the Environment (repo, base branch
    + SHA, sync mode, tools), what is out of scope, the owner's decisions and the validation method
    (his, else "related tests + tsc": the full suite runs once per release cut, detached), so its "ask first" has little left to ask. Answer every child question

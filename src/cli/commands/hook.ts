@@ -75,8 +75,8 @@ import { bindingsByConversation, consumeOnce, listGrants } from '../../lib/grant
 import type { Grant } from '../../lib/grants/types.js';
 import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, docKey, loadSkillDocs, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
-import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
+import { bm25Search, docKey, loadSkillDocs, namedProjectSkills, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, recallTurn, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
 import {
   actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, promptSurface,
@@ -98,7 +98,8 @@ import {
 } from '../../lib/federation-recall.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
-import { dreamcontextVersion } from '../../lib/manifest.js';
+import { dreamcontextVersion, readManifest } from '../../lib/manifest.js';
+import { knownArtifactNames } from '../../lib/catalog.js';
 import { desktopAppPresent, maybeTriggerAppUpdate, readAppManifest } from './app.js';
 import { appUpdateNotice } from '../../lib/app-windows.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
@@ -815,7 +816,7 @@ export interface JudgedPromptRecall {
  */
 export async function judgedPromptRecall(
   prompt: string, prev: string | null, root: string, recallMode: RecallMode, judge: 'claude' | 'codex',
-  o: { env?: NodeJS.ProcessEnv; home?: string; seen?: SessionRecall } = {},
+  o: { env?: NodeJS.ProcessEnv; home?: string; seen?: SessionRecall; about?: string | null } = {},
 ): Promise<JudgedPromptRecall> {
   const env = o.env ?? process.env;
   const tier = recallMode === 'hybrid' ? resolvePromptTier(root, env, o.home).tier : 'local';
@@ -843,6 +844,7 @@ export async function judgedPromptRecall(
     inContext: o.seen?.inContext, passedOver: o.seen?.passedOver,
     whenLines: whenLinesLookup(root, o.home),
     judge: judgeOpts,
+    about: o.about ?? null,
   });
   const where = result.channel === 'voyage' ? 'cloud index' : result.channel === 'e5' ? 'local search' : 'keyword search';
   const label = `${judge === 'codex' ? 'Codex judge' : 'Haiku'} · ${where}`;
@@ -2076,9 +2078,32 @@ export const SUBAGENT_DISPATCH_REMINDER =
   'Pre-authorized by the user: sub-agents for sleep, curator, initializer, goal-skill, deep-research, '
   + 'council, multi-review, Plan/Develop judges; nothing ad-hoc.';
 
-/** The "Before you act" gate after its first full print in a session. */
+/** The "Before you act" gate after its first full print in a session: still names skills (owner 2026-11-20). */
 export const CONTEXT_GATE_REMINDER =
-  '⛔ Before acting: read the matching sections, recall more, check for a task.';
+  '⛔ Before acting: read the matching sections, load the skill that fits this turn, recall more, check for a task.';
+
+/** One project skill a turn falls in (`namedProjectSkills`), by name. A non-Claude tool has no Skill tool: it opens the file (by its folder). */
+export function skillNameLine(skill: { name: string; dir: string }, otherTool: boolean): string {
+  return otherTool
+    ? `→ SKILL: ${skill.name} (this project's skill fits this turn: open .claude/skills/${skill.dir}/SKILL.md before acting)`
+    : `→ SKILL: ${skill.name} (this project's skill fits this turn: load it with the Skill tool before acting)`;
+}
+
+/**
+ * Skill folders dreamcontext itself installs, never named as "this project's": the shipped names, and every
+ * folder under a skills root this project's install manifest records, whatever its kind (the installer
+ * writes its own skills as `core`, packs as `pack-skill`).
+ */
+export function dreamcontextSkillDirs(projectRoot: string): Set<string> {
+  const out = new Set(knownArtifactNames().skillDirs);
+  try {
+    for (const rel of Object.keys(readManifest(projectRoot)?.files ?? {})) {
+      const m = /^\.(?:claude|agents|codex)\/skills\/([^/]+)\//.exec(rel);
+      if (m) out.add(m[1]);
+    }
+  } catch { /* no manifest: the shipped names alone */ }
+  return out;
+}
 
 /** The pattern banner after its first full print in a session. */
 export const PATTERN_BANNER_REMINDER =
@@ -3654,6 +3679,9 @@ export function registerHookCommand(program: Command): void {
       const rawPrompt = String((input as Record<string, unknown>).prompt ?? '');
       const ownerText = promptOwnerText(rawPrompt);
       const query = recallQuery(rawPrompt);
+      // Recall and the skills check also read what the turn points at (an agenda line, a replied
+      // message, a card: `recallTurn`), so "videoya geçelim" under a line recalls on that line.
+      const turn = recallTurn(rawPrompt);
       // He asked for a rule to be remembered (learning loop C4): one must-print cue, on his own words
       // only. It writes nothing (the hook never writes the owner-words ledger) and makes no rule active.
       if (ownerText !== null && detectRememberIntent(ownerText)) console.log(REMEMBER_INTENT_LINE);
@@ -3808,6 +3836,9 @@ export function registerHookCommand(program: Command): void {
       // surfaced something; gatedSkills = a related skill surfaced.
       let hadRecallHits = false;
       let gatedSkills = false;
+      // The project skills this turn falls in, by name (`→ SKILL: <name>`): printed on every turn
+      // they match, never once per session (owner 2026-11-20).
+      let namedSkills: Array<{ name: string; dir: string }> = [];
 
       // Memory recall injection — single Haiku call sees corpus index + prompt,
       // returns only relevant docs. Falls back to raw BM25 if Haiku fails.
@@ -3815,10 +3846,10 @@ export function registerHookCommand(program: Command): void {
       // never disagree (env override, else persisted .sleep.json, else 'haiku').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
-          // The owner's words only (recallQuery: no Super roster or tools block, no notification,
-          // no wrapper line, no paths). Null: a machine turn, no recall at all.
-          const prompt = query;
-          if (prompt !== null) {
+          // The owner's words and the subject his turn points at (recallTurn: no Super roster or tools
+          // block, no notification, no wrapper line, no paths). Null: a machine turn, no recall at all.
+          if (turn !== null) {
+            const prompt = turn.search;
             const recallMode = resolveRecallMode(root);
 
             if (recallMode !== 'off') {
@@ -3827,8 +3858,9 @@ export function registerHookCommand(program: Command): void {
               const recallSid = hookTool() === null && promptSessionId ? promptSessionId : '';
               const seen = sessionRecall(recallSid);
               // The owner's previous turn (the judge reads it), then this turn becomes the previous one.
+              // His words only: a subject he pointed at never reaches the judge as his previous turn.
               const prevOwner = promptSessionId ? readPrevOwnerTurn(promptSessionId) : null;
-              if (promptSessionId && ownerText !== null) writePrevOwnerTurn(promptSessionId, prompt);
+              if (promptSessionId && turn.words) writePrevOwnerTurn(promptSessionId, turn.words);
 
               let hits: RecallHit[] = [];
               let haiku = false;
@@ -3836,7 +3868,7 @@ export function registerHookCommand(program: Command): void {
               const judge = judgeFor(recallMode);
               let judged: JudgedPromptRecall | null = null;
               if (judge !== null) {
-                judged = await judgedPromptRecall(prompt, prevOwner, root, recallMode, judge, { seen });
+                judged = await judgedPromptRecall(turn.words, prevOwner, root, recallMode, judge, { seen, about: turn.about });
                 const r = judged.result;
                 if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') {
                   console.error(JSON.stringify({ judged: r.outcome, channel: r.channel, shown: r.shown.length, picked: r.hits.length, searchMs: r.searchMs, judgeMs: r.judgeMs, usd: r.usd }));
@@ -4109,12 +4141,16 @@ export function registerHookCommand(program: Command): void {
       // Own try/catch so it can never throw out of the action.
       if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
         try {
-          const prompt = query;
+          const prompt = turn?.search ?? null;
           if (prompt !== null) {
             const skillsRoot = join(process.cwd(), '.claude', 'skills');
             const docs = loadSkillDocs(skillsRoot);
             if (docs.length > 0 && bm25Search(prompt, docs, 5).some(h => h.score >= SKILL_SCORE_THRESHOLD)) {
               gatedSkills = true;
+            }
+            if (docs.length > 0) {
+              namedSkills = namedProjectSkills(prompt, docs, dreamcontextSkillDirs(dirname(root)));
+              if (namedSkills.length > 0) gatedSkills = true;
             }
           }
         } catch (skillErr) {
@@ -4129,10 +4165,11 @@ export function registerHookCommand(program: Command): void {
       // depth, and check for an existing task. We never name specific files —
       // the recall block above lists candidates; the agent judges relevance.
       // Pure string ops over local state, so no try/catch needed.
+      const skillLines = namedSkills.map((n) => skillNameLine(n, hookTool() !== null));
       if ((hadRecallHits || gatedSkills) && !fullBlock('gate')) {
-        emitPromptBlock('gate', `\n${CONTEXT_GATE_REMINDER}`);
+        emitPromptBlock('gate', ['', ...skillLines, CONTEXT_GATE_REMINDER].join('\n'));
       } else if (hadRecallHits || gatedSkills) {
-        const g: string[] = ['', '⛔ Before you act, get the full picture from project memory — not optional:'];
+        const g: string[] = ['', ...skillLines, '⛔ Before you act, get the full picture from project memory — not optional:'];
         if (hadRecallHits) {
           // Any non-Claude turn (`--format codex`; hookTool() names the tool) has no Read or Skill tool: its words, not Claude's.
           g.push(hookTool() !== null

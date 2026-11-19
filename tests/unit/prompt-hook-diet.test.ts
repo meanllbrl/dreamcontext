@@ -82,11 +82,14 @@ describe('firstInSession: the long blocks once, then one line (MM-3)', () => {
 
   it('the one-line forms together stay under 300 chars and keep their meaning', () => {
     const fixed = [SUBAGENT_DISPATCH_REMINDER, CONTEXT_GATE_REMINDER, PATTERN_BANNER_REMINDER].join('\n');
-    expect(fixed.length).toBeLessThan(300);
+    // 300 → 340 (2026-11-20, hafiza-konu-skill): the gate's one line names skills again, so the skill
+    // reminder reaches every turn it fits, not only the session's first.
+    expect(fixed.length).toBeLessThan(340);
     expect(SUBAGENT_DISPATCH_REMINDER).toMatch(/pre-authorized by the user/i);
     expect(SUBAGENT_DISPATCH_REMINDER).toMatch(/nothing ad-hoc/);
     expect(PATTERN_BANNER_REMINDER).toMatch(/update that file/);
     expect(CONTEXT_GATE_REMINDER).toMatch(/matching sections/);
+    expect(CONTEXT_GATE_REMINDER).toMatch(/skill/);
   });
 });
 

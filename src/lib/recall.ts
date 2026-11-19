@@ -1066,6 +1066,39 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
   return out;
 }
 
+/**
+ * A project skill the prompt hook NAMES (`→ SKILL: <name>`, hook.ts) scores at least this on its
+ * own name, description and tags. The body is left out: a long SKILL.md matched every turn (a
+ * 40k-char reel skill scored 11.7 on "kurum paneline yeni bir filtre ekle"); the description is
+ * the trigger its author wrote. Measured on the Tilki skills 2026-11-20: true matches 3.8-8.6, the
+ * strongest false one 2.7.
+ */
+export const SKILL_NAME_MIN_SCORE = 3.5;
+/** ...and at least this share of the turn's best such score: what qualifies, never a count. */
+export const SKILL_NAME_NEAR_TOP = 0.75;
+
+/**
+ * The project skills a turn's words fall in, by name, strongest first: every skill whose name,
+ * description and tags clear {@link SKILL_NAME_MIN_SCORE} and come near the best one. Skills
+ * dreamcontext installs (`owned`, by folder name) are left out: the skill list and the gate's
+ * review line already carry them; this names the project's own (owner 2026-11-20: a Tilki
+ * video turn missed `reel-generator`, a bare phone number missed `whatsapp`).
+ */
+export function namedProjectSkills(query: string, docs: readonly CorpusDoc[], owned: ReadonlySet<string>): Array<{ name: string; dir: string }> {
+  const isOwned = (d: CorpusDoc): boolean => owned.has(basename(dirname(d.path))) || owned.has(d.slug);
+  if (!docs.some((d) => !isOwned(d))) return [];
+  // Scored over every installed skill (a steadier word weight), then dreamcontext's own are dropped.
+  const heads = docs.map((d) => {
+    const f = buildFields({ slug: d.slug, title: d.title, description: d.description, tags: d.tags, body: '' });
+    return { ...d, body: '', tokens: f.tokens, tokenSet: new Set(f.tokens), termFreq: f.termFreq, fieldFreq: f.fieldFreq, fieldLen: f.fieldLen, links: f.links, identityTokens: f.identityTokens };
+  });
+  const hits = bm25Search(query, heads, heads.length).filter((h) => !isOwned(h.doc) && h.score >= SKILL_NAME_MIN_SCORE);
+  if (hits.length === 0) return [];
+  const top = Math.max(...hits.map((h) => h.score));
+  return hits.filter((h) => h.score >= top * SKILL_NAME_NEAR_TOP).sort((a, b) => b.score - a.score)
+    .map((h) => ({ name: h.doc.slug, dir: basename(dirname(h.doc.path)) }));
+}
+
 /** One doc per installed app tool (`app:<slug>/<id>`), one per catalog app not installed here. */
 function loadAppDocs(contextRoot: string): CorpusDoc[] {
   try {
