@@ -495,6 +495,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-mcp-unloaded-',
   'dc-member-cli-',
   'dc-member-cli-home-',
+  'dc-member-routine-',
+  'dc-member-routine-home-',
   'dc-memo-',
   'dc-merge-people-',
   'dc-migrate-',

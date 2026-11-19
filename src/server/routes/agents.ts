@@ -1010,7 +1010,8 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
   const target = agentTarget(contextRoot, slug);
   if (!target) return null;
   const agent = getAgent(contextRoot, slug);
-  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && m.mode === 'sched' && (m.agent ?? m.slug) === slug);
+  // A file of its own you only call is the member itself; a member's on-call routine is a routine.
+  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && (m.agent ?? m.slug) === slug && (m.mode === 'sched' || m.slug !== slug));
   // Its own call target and every routine that runs as it: the slugs its work happens under.
   const slugs = [slug, ...routines.map((m) => m.slug).filter((s) => s !== slug)];
   const titleOf = (s: string): string => (s === slug ? target.agentTitle || target.title : routines.find((m) => m.slug === s)?.title ?? s);

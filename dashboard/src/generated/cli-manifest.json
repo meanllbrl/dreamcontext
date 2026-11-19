@@ -811,7 +811,8 @@
       "valueFlags": [
         "--app-tools",
         "--condition",
-        "--wake-when"
+        "--wake-when",
+        "--agent"
       ]
     },
     {
