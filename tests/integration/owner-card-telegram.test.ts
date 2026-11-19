@@ -286,7 +286,7 @@ describe('a child\'s run card runs from Telegram (run-kart-telefon)', () => {
     setCardRootResolverForTests(async () => moved);
     try {
       tap(msg, 0);
-      await vi.waitFor(() => expect(said(RUN_LINES.folderChanged)).toBe(true));
+      await vi.waitFor(() => expect(said(RUN_LINES.childMacOnly)).toBe(true));
       expect(ptys).toBe(0);
     } finally {
       setCardRootResolverForTests(null);
