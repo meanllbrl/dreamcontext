@@ -305,12 +305,15 @@ export class TelegramHub implements TelegramHubApi {
   private textChains = new Map<string, Promise<void>>();
   /** The Super's own ask offered to Telegram in its running turn (`ownAskOffered`): cleared at
    *  the turn's end; a text queued after it reads it as it is queued. */
-  private askInTurn = new Map<string, { landed: boolean }>();
+  private askInTurn = new Map<string, { landed: boolean; inTurn?: boolean }>();
   /** When each Super session's running turn began (wall clock, as a queue item's `createdAt`). */
   private turnStartedAt = new Map<string, number>();
   /** Per Super chat: how many sends LANDED on Telegram so far, so a held turn's end can tell whether
    *  any answer came after it. Born on a landed send, dies with the chat (`gone`). */
   private landedCount = new Map<string, number>();
+  /** Per Super chat: how many answers carrying a `dream-voice` block went (`answerFor`), so a held
+   *  turn's end can tell whether the corrected answer was spoken. Dies with the chat (`gone`). */
+  private voicedCount = new Map<string, number>();
   /** Per Super chat, its newest short unmarked text of his Telegram turn (finding 5): sent at the
    *  turn's end only if nothing came after it; a later text means it was a step between tools.
    *  Dies on the next text, the turn's end or the chat's death. */
@@ -1337,7 +1340,11 @@ export class TelegramHub implements TelegramHubApi {
    *  throws never reached it), read at turn end. */
   private async answerFor(turns: readonly TgTurn[], ...args: Parameters<TelegramHub['sendAnswer']>): Promise<boolean> {
     const landed = await this.sendAnswer(...args);
-    if (voiceAnswer(args[1]).voice) for (const t of turns) t.voiced = true;
+    if (voiceAnswer(args[1]).voice) {
+      for (const t of turns) t.voiced = true;
+      const sid = args[2];
+      if (landed && sid) this.voicedCount.set(sid, (this.voicedCount.get(sid) ?? 0) + 1);
+    }
     return landed;
   }
 
@@ -1603,7 +1610,6 @@ export class TelegramHub implements TelegramHubApi {
     if (!key) return;
     const ab = this.active.get(key);
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
-    if (entry.status === 'gone') for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
     if ((entry.status === 'working' || entry.status === 'starting') && !this.turnStartedAt.has(entry.sessionId)) this.turnStartedAt.set(entry.sessionId, Date.now());
     if ((entry.status === 'idle' || entry.status === 'gone') && from !== entry.status) {
       this.askInTurn.delete(entry.sessionId);
@@ -1612,6 +1618,7 @@ export class TelegramHub implements TelegramHubApi {
     if (entry.status === 'gone') {
       this.tails.delete(entry.sessionId);
       this.landedCount.delete(entry.sessionId);
+      this.voicedCount.delete(entry.sessionId);
       this.turnSpans.delete(entry.sessionId);
       for (const t of [...this.turns.values()]) if (t.sessionId === entry.sessionId) this.endTurn(t.ref);
     }
@@ -1660,8 +1667,13 @@ export class TelegramHub implements TelegramHubApi {
           }
           if (t.held) {
             const before = this.landedCount.get(sid) ?? 0;
+            const voicedBefore = this.voicedCount.get(sid) ?? 0;
             await (this.deps.sleep ?? ((ms: number) => new Promise<void>((r) => { const h = setTimeout(r, ms); h.unref?.(); })))(HELD_RETELL_GRACE_MS);
-            if ((this.landedCount.get(sid) ?? 0) > before) return;
+            if ((this.landedCount.get(sid) ?? 0) > before) {
+              // The corrected answer came (in a turn of its own): a voice he asked for that it did not carry is told.
+              if (t.wantsVoice && !t.voiced && (this.voicedCount.get(sid) ?? 0) === voicedBefore) await this.notice(ab, 'warn', LINES.voiceMissing, true);
+              return;
+            }
           }
           await this.notice(ab, 'warn', LINES.endedSilent, true);
         })();
@@ -1782,12 +1794,12 @@ export class TelegramHub implements TelegramHubApi {
    * An ask from an earlier turn (a retry, the turn-away flush) or one offered outside a turn
    * marks nothing: the running turn's texts are its own answer.
    */
-  ownAskOffered(sessionId: string, createdAt: number): { landed: boolean } {
+  ownAskOffered(sessionId: string, createdAt: number): { landed: boolean; inTurn?: boolean } {
     const status = getChat(sessionId)?.status;
     const began = this.turnStartedAt.get(sessionId);
     if ((status !== 'working' && status !== 'starting' && status !== 'asking') || began === undefined || !(createdAt >= began)) return { landed: false };
     let m = this.askInTurn.get(sessionId);
-    if (!m) { m = { landed: false }; this.askInTurn.set(sessionId, m); }
+    if (!m) { m = { landed: false, inTurn: true }; this.askInTurn.set(sessionId, m); }
     return m;
   }
 
@@ -1809,11 +1821,11 @@ export class TelegramHub implements TelegramHubApi {
     const turn = turnOf(sessionId);
     const cards = this.textsSent.cardsOf(sessionId, turn);
     this.queueSend(sessionId, (turns) => {
-      // Owner 2026-11-18 ("tekrara düşme"): on his phone the card IS the question. A short line
-      // the turn writes after its own ask landed ("seçimlerini bekliyorum") only says it again;
+      // Owner 2026-11-18 ("tekrara düşme"): on his phone the card IS the question. A short line,
+      // with no reply mark, the turn writes after its own ask landed ("seçimlerini bekliyorum") only says it again;
       // the Super's prompt forbids it, and here it never reaches Telegram (the Mac still draws
       // it). A real report after the card (owner-prose length) still goes.
-      if (ask?.landed && text.trim().length < OWNER_PROSE_MIN_CHARS) return Promise.resolve(false);
+      if (ask?.landed && text.trim().length < OWNER_PROSE_MIN_CHARS && !splitReplySections(text).some((s) => s.refs.length)) return Promise.resolve(false);
       return this.onAssistantText(sessionId, text, { turns, inputs, mark, turn, cards });
     });
   }
