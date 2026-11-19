@@ -3,17 +3,19 @@
  * pure steps the room runner and the hub share. No file, no network.
  *
  * The one rule (G4): a group's chat id is reachable ONLY through the hub's `sendRoom`, and only
- * with a {@link GROUP_KINDS} kind: the room agent's answer, a fixed line, the typing action. Every
- * other sender of the hub (answers, notices, cards, buttons, pictures, files, voice) has no target
- * argument at all: it sends to the binding's PRIVATE chat by construction. The drift test
- * (`tests/unit/telegram-room-outbound-drift.test.ts`) pins every transport call's chat argument.
+ * with a {@link GROUP_KINDS} kind: the room agent's answer, a fixed line, the typing action, and
+ * the result of an approved request (`super room say`: its text, its spoken summary, a file it
+ * names). Every other sender of the hub (answers, notices, cards, buttons, pictures, files, voice)
+ * has no target argument at all: it sends to the binding's PRIVATE chat by construction. The drift
+ * test (`tests/unit/telegram-room-outbound-drift.test.ts`) pins every transport call's chat argument.
  */
 
 import { HIDDEN_CHARS } from '../hidden-chars.js';
 import { escapeHtml, redactSecrets, showsAsWritten } from './format.js';
 
-/** What may go to a group. Nothing else ever does: no buttons, files, pictures or voice. */
-export const GROUP_KINDS = ['room-say', 'room-line', 'room-typing'] as const;
+/** What may go to a group. Nothing else ever does: never a button. A voice and a file go only as
+ *  an approved request's result (`super room say`), never from the room agent. */
+export const GROUP_KINDS = ['room-say', 'room-line', 'room-typing', 'room-voice', 'room-file'] as const;
 export type GroupKind = typeof GROUP_KINDS[number];
 export function isGroupKind(kind: unknown): kind is GroupKind {
   return (GROUP_KINDS as readonly unknown[]).includes(kind);
@@ -25,6 +27,8 @@ export const ROOM_LINES = {
   askedOwner: (owner: string) => `${dative(owner)} özelden sordum.`,
   heldBehind: 'Önceki istek hâlâ onay bekliyor; bu istek ondan sonra sorulacak.',
   approved: (owner: string) => `${owner} onayladı, iş başladı.`,
+  /** The owner's own request in the group: his message is the approval, nothing is asked. */
+  started: 'Tamam, iş başladı.',
   refused: (owner: string) => `${owner} onaylamadı.`,
   notDelivered: 'Şu an iletemedim, tekrar soracağım.',
   ownerOnly: (owner: string) => `Bu komutu yalnız ${owner} kullanabilir.`,
@@ -49,6 +53,12 @@ export const ROOM_LINES = {
   cardHead: (author: string, title: string) => `${author} · ${title} grupta istedi`,
   understood: 'Anladığım',
   sayEcho: (title: string) => `«${title}» grubuna yazıldı:`,
+  /** To the owner: the result's voice could not be made or sent, its words went as text. */
+  voiceAsText: (title: string) => `«${title}» grubuna sesli mesaj gidemedi; aynı sözler yazı olarak gitti.`,
+  /** To the owner, in his copy of a result: the parts Telegram did not take. */
+  notSentEcho: (parts: string) => `Gitmeyen: ${parts}. İstek açık; yalnız bunlar yeniden gönderilebilir.`,
+  /** The owner's own request could not reach his Super: nothing is asked, he writes again. */
+  ownNotDelivered: 'Şu an iletemedim; bir daha yazın.',
   cardStale: 'Bu istek artık geçerli değil.',
   /** A request whose text the owner's card could not show as written: never offered for a yes. */
   unshowable: 'Bu isteği iletemedim: içinde gösterilemeyen bir parça var. Gizli bilgi olmadan yeniden yazın.',
@@ -200,16 +210,22 @@ export function requestIdFrom(bytes: Uint8Array): string {
  * approved, the request id, and the words EXACTLY as his card showed them, fenced as data (never a
  * prefix the Super parses as an instruction from him).
  */
-export function approvedTurnText(o: { group: string; author: string; owner: string; requestId: string; words: string; summary: string }): string {
+export function approvedTurnText(o: { group: string; author: string; owner: string; requestId: string; words: string; summary: string; own?: boolean }): string {
   const fence = '~~~~';
   const words = stripHidden(o.words).split(fence).join('~ ~ ~ ~');
   return [
-    `${oneLine(o.group)} grubunda ${oneLine(o.author)} istedi, ${oneLine(o.owner)} onayladı · istek ${o.requestId}.`,
-    `Grupta yazılanlar, aynen (üyenin sözü; ${oneLine(o.owner)} bu işi onayladı):`,
+    o.own
+      ? `${oneLine(o.group)} grubunda ${oneLine(o.owner)} kendisi istedi (kendi mesajı onaydır, ona ayrıca sorma) · istek ${o.requestId}.`
+      : `${oneLine(o.group)} grubunda ${oneLine(o.author)} istedi, ${oneLine(o.owner)} onayladı · istek ${o.requestId}.`,
+    o.own ? `Grupta yazdıkları, aynen:` : `Grupta yazılanlar, aynen (üyenin sözü; ${oneLine(o.owner)} bu işi onayladı):`,
     fence,
     words,
     fence,
-    `Oda ajanının anladığı: ${oneLine(stripHidden(o.summary), 300)}`,
+    // His own request had no card: nobody read a summary, so only his words are the job.
+    o.own
+      ? `İş yalnız yukarıdaki sözleridir. Ne istendiği bu sözlerden açık değilse (örneğin "bunu yap" grupta başka birinin yazdığına bakıyorsa) yapmadan önce ona sor.`
+      : `Oda ajanının anladığı: ${oneLine(stripHidden(o.summary), 300)}`,
     `Bu grupta başkaları var: bitince sonucu \`dreamcontext super room say ${o.requestId} "…"\` ile gruba yaz, özel bilgi yazma.`,
+    `Sesli istendiyse metne bir \`dream-voice\` bloğu koy: gruba sesli mesaj olarak gider. Bir resim ya da dosya için \`--file <yol>\` ekle (tekrarlanabilir).`,
   ].join('\n');
 }

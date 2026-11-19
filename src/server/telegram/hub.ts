@@ -65,7 +65,7 @@ import { actorOf, admit, cleanLabel, commandOf, isAuthorized, mintPairingSecret,
 import { isGroupKind, oneLine, ownerName, ROOM_LINES, type GroupKind } from '../../lib/telegram/rooms.js';
 import type { RoomRunner } from './room-agent.js';
 import { identityFor } from './identity.js';
-import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.js';
+import { TelegramTransport, type FetchLike, type UploadFile } from '../../lib/telegram/transport.js';
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
 import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
@@ -79,6 +79,9 @@ import { cleanOwnerText, inboundTurnText, pickInboundMedia, saveInbound } from '
 import { parseReaction, shortQuote, telegramReactionNotes } from '../../lib/telegram/reactions.js';
 import { displayNameFor, syncBotIdentity, type IdentityIssue, type JpegConverter } from './identity.js';
 import { TextLedger, turnOf } from './sent-once.js';
+
+/** What a `room-voice` or `room-file` send carries (`sendRoom`). */
+export type RoomPayload = { kind: 'voice'; file: UploadFile; seconds: number } | { kind: 'file'; file: UploadFile; photo: boolean };
 
 type Obj = Record<string, unknown>;
 
@@ -897,16 +900,29 @@ export class TelegramHub implements TelegramHubApi {
 
   /**
    * THE one way to a group (G4): only a {@link GroupKind}, only to a group this binding permits,
-   * never a button, a file or a picture (the call carries text and nothing else). Every other sender
-   * of the hub has no target and reaches the private chat only. True when Telegram took it.
+   * never a button (no call here carries a keyboard). A voice (`room-voice`) and a file
+   * (`room-file`) ride only an approved request's result (`RoomRunner.say`); `html` is then their
+   * caption. Every other sender of the hub has no target and reaches the private chat only. True
+   * when Telegram took it.
    */
-  async sendRoom(ab: ActiveBinding, chatId: number, kind: GroupKind, html: string): Promise<boolean> {
+  async sendRoom(ab: ActiveBinding, chatId: number, kind: GroupKind, html: string, payload?: RoomPayload): Promise<boolean> {
     if (!isGroupKind(kind)) throw new Error('not a group kind');
     if (!Number.isSafeInteger(chatId) || chatId >= 0 || !(ab.binding.groups ?? []).some((g) => g.chatId === chatId)) return false;
     if (this.active.get(ab.key) !== ab || ab.disabled || ab.halted) return false;
-    if (kind === 'room-typing') return ab.transport.sendChatAction(chatId, 'typing').then(() => true, () => false);
+    const took = (p: Promise<unknown>): Promise<boolean> => p.then(() => true, () => false);
+    if (kind === 'room-typing') return took(ab.transport.sendChatAction(chatId, html === 'record_voice' ? 'record_voice' : 'typing'));
+    if (kind === 'room-voice') {
+      if (!payload || payload.kind !== 'voice') return false;
+      return took(ab.transport.sendVoice(chatId, payload.file, { ...(html ? { caption: html } : {}), duration: Math.max(1, Math.ceil(payload.seconds)) }));
+    }
+    if (kind === 'room-file') {
+      if (!payload || payload.kind !== 'file') return false;
+      // A picture Telegram will not take as a photo (too big, an odd shape) goes as a document.
+      if (payload.photo && await took(ab.transport.sendPhoto(chatId, payload.file, html || undefined))) return true;
+      return took(ab.transport.sendDocument(chatId, payload.file, html || undefined));
+    }
     if (!html.trim()) return false;
-    return ab.transport.sendMessage(chatId, html, {}).then(() => true, () => false);
+    return took(ab.transport.sendMessage(chatId, html, {}));
   }
 
   /** Writes the binding's groups (hub only, C2) and makes the live binding the one written. */

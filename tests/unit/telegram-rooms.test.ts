@@ -72,9 +72,9 @@ describe('the room gate (C1, D2, D4)', () => {
 });
 
 describe('what may reach a group (C4)', () => {
-  it('three kinds only: the answer, a fixed line, typing', () => {
-    expect([...GROUP_KINDS]).toEqual(['room-say', 'room-line', 'room-typing']);
-    for (const k of ['text', 'buttons', 'photo', 'document', 'voice', 'notice']) expect(isGroupKind(k)).toBe(false);
+  it('five kinds only: the answer, a fixed line, typing, a result\'s voice and file; never a button', () => {
+    expect([...GROUP_KINDS]).toEqual(['room-say', 'room-line', 'room-typing', 'room-voice', 'room-file']);
+    for (const k of ['text', 'buttons', 'photo', 'document', 'voice', 'notice', 'room-buttons']) expect(isGroupKind(k)).toBe(false);
   });
 
   it('the fixed lines speak Turkish with the right ending', () => {

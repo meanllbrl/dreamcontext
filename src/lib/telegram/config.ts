@@ -225,6 +225,8 @@ export interface RoomRequest {
   at: number;
   /** The owner's card for it (his private chat), once sent. */
   cardMessageId?: number;
+  /** The owner asked it himself in the group: his message was the approval, no card went. */
+  own?: true;
 }
 
 export interface RoomFile {
@@ -260,7 +262,8 @@ function isRoomFile(v: unknown, chatId: number): v is RoomFile {
       return !!x && typeof x.id === 'string' && ROOM_REQUEST_ID_RE.test(x.id)
         && ['open', 'held', 'approved', 'refused', 'done'].includes(String(x.status))
         && typeof x.superId === 'string' && Number.isSafeInteger(x.authorId) && typeof x.authorLabel === 'string'
-        && typeof x.words === 'string' && typeof x.summary === 'string' && typeof x.at === 'number';
+        && typeof x.words === 'string' && typeof x.summary === 'string' && typeof x.at === 'number'
+        && (x.own === undefined || x.own === true);
     });
 }
 

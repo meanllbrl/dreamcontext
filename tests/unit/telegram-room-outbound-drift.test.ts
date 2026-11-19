@@ -79,13 +79,33 @@ describe('a group is reached only through sendRoom (G4)', () => {
     for (const f of files) expect(SENDERS.has(f), f).toBe(true);
   });
 
-  it('sendRoom sends text or typing only: no buttons, no file, no picture', () => {
+  it('sendRoom never sends a button; a voice or a file only under its own kind', () => {
     const hub = readFileSync(join(REPO, 'src/server/telegram/hub.ts'), 'utf8');
     const { start, end } = bodyOf(hub, '  async sendRoom(');
     const body = hub.slice(start, end);
     expect(body).toContain('if (!isGroupKind(kind))');
     expect(body).toContain('ab.transport.sendMessage(chatId, html, {})');
-    expect(body).not.toMatch(/reply_markup|sendPhoto|sendDocument|sendMediaGroup|sendVoice|upload/);
+    expect(body).not.toMatch(/reply_markup|inline_keyboard|sendMediaGroup|\.upload\(|\.call\(/);
+    const voiceAt = body.indexOf("kind === 'room-voice'");
+    const fileAt = body.indexOf("kind === 'room-file'");
+    expect(voiceAt).toBeGreaterThan(-1);
+    expect(fileAt).toBeGreaterThan(voiceAt);
+    expect(body.indexOf('sendVoice')).toBeGreaterThan(voiceAt);
+    expect(body.indexOf('sendVoice')).toBeLessThan(fileAt);
+    expect(body.indexOf('sendPhoto')).toBeGreaterThan(fileAt);
+    expect(body.indexOf('sendDocument')).toBeGreaterThan(fileAt);
+    // A voice and a file reach a group only as an approved request's result (`say`), never from a
+    // room turn, a fixed line or the group branch.
+    const runner = readFileSync(join(REPO, 'src/server/telegram/room-agent.ts'), 'utf8');
+    const say = bodyOf(runner, '  async say(');
+    const speak = bodyOf(runner, '  private async speakTo(');
+    for (const kind of ["'room-voice'", "'room-file'"]) {
+      for (const m of runner.matchAll(new RegExp(kind, 'g'))) {
+        const at = m.index!;
+        expect((at > say.start && at < say.end) || (at > speak.start && at < speak.end), `${kind} at ${at}`).toBe(true);
+      }
+      expect(hub.slice(0, start).includes(kind) || hub.slice(end).includes(kind), kind).toBe(false);
+    }
     // Called from the group branch, the room runner and the bind confirm only.
     const callers = sources().filter((s) => s.text.includes('sendRoom(')).map((s) => relative(REPO, join(REPO, s.rel))).sort();
     expect(callers).toEqual(['src/server/telegram/hub.ts', 'src/server/telegram/room-agent.ts']);
