@@ -51,7 +51,7 @@ import {
   chatSpawnRoster, collectTeam, memberCallState, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
 import { refreshSuperTools, superOwnerToolsBlock, toolsBlockFingerprint, toolsBlockNow } from '../../lib/super/tools-block.js';
-import { SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
+import { FIRST_READ_LIVE_BLOCK, SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
 import { appChatBriefing } from '../chat-surface.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
@@ -135,7 +135,7 @@ import { levelChatMode, levelPermissionArgs, narrowerMode } from '../../lib/agen
 import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { consumeCrewTicket, consumeFirstReadTicket, firstReadLockHeld, membersDelegating } from '../../lib/super/delegating.js';
-import { isFirstReadChild } from '../../lib/super/store.js';
+import { isFirstReadChild, superFirstReadRunning } from '../../lib/super/store.js';
 import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import { ordinaryWorkAllows, ordinaryWorkMode } from '../../lib/super/ordinary-work.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
@@ -4038,6 +4038,8 @@ export function startChatSession(
       // never part of them, so it answers nothing and owes nothing.
       const reactions = takeSuperReactionBlock(chatRegistryId);
       if (reactions) content.push({ type: 'text', text: reactions });
+      // While the app's first read runs, his message says so (C16): derived, never stored.
+      if (superFirstReadRunning(chatRegistryId)) content.push({ type: 'text', text: FIRST_READ_LIVE_BLOCK });
     }
     // The Super Agent hand-over / take-back note (plan-r7 D17) rides on a CHILD's next owner
     // message, the same way: a second, fixed, server-written block starting with `<`, so the

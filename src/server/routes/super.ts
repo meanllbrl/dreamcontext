@@ -12,7 +12,7 @@ import {
 import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
 import type { OwnerWakeOutcome } from '../../lib/super/types.js';
-import { isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
+import { batchHasFirstReadDone, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
 import { firstReadLockHeld, mintCrewTicket, mintFirstReadTicket, noteDelegating, releaseFirstReadLock, takeFirstReadLock, vaultDelegating } from '../../lib/super/delegating.js';
 import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
@@ -3873,6 +3873,11 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
   // Main-only and member-only verbs (plan-r10 1): refused by WHO calls, before anything runs.
   const roleRefusal = superVerbRefusal(caller.superId, verb);
   if (roleRefusal) { refuse(res, 403, roleRefusal.error, roleRefusal.message); return; }
+  // The turn that tells the owner the first read's result writes one message and starts no work (C16).
+  if (FIRST_READ_BARRED_VERBS.has(verb) && batchHasFirstReadDone(caller.state, superOpenBatch(caller.who.sessionId))) {
+    refuse(res, 403, 'first_read_turn', 'This turn tells the owner the first read\'s result: write him one short message; starting work waits for his answer.');
+    return;
+  }
   // A child may be named by the first characters of its id (child-ref.ts); resolved once, here.
   const expanded = expandChildRefs(caller.state, verb, raw as Record<string, unknown>);
   if ('error' in expanded) {
@@ -3901,6 +3906,9 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
     noteStageVerb({ vault: caller.who.vault, contextRoot: caller.who.contextRoot, sessionId: caller.who.sessionId, superId: caller.superId, verb: verb as StageVerbEvent['verb'], ids: cueIds(body as Record<string, unknown>, staged()) });
   }
 }
+
+/** The verbs that start work, refused in the first read's result turn (C16). Exported for tests. */
+export const FIRST_READ_BARRED_VERBS = new Set<SuperVerb>(['delegate', 'pool-add', 'team-ask', 'schedule']);
 
 /** The verbs that change what the owner's window shows: each reply names `window`. */
 const SCREEN_VERBS = new Set<SuperVerb>(['open', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'shape']);

@@ -340,7 +340,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (child.row === 'stuck' && typeof c.startError === 'string') child.startError = c.startError.slice(0, MAX_START_ERROR);
     if (c.awaited === true) child.awaited = true;
     if (c.firstRead === true) child.firstRead = true;
-    if (c.firstReadAnnounced === true) child.firstReadAnnounced = true;
+    if (typeof c.firstReadAnnounced === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(c.firstReadAnnounced)) child.firstReadAnnounced = c.firstReadAnnounced;
     if (typeof c.origin === 'string' && MSG_REF_RE.test(c.origin)) child.origin = c.origin;
     const wo = parseWorkOrigin(c.workOrigin);
     if (wo) child.workOrigin = wo;
@@ -1366,6 +1366,8 @@ interface IndexEntry {
   worktrees: Map<string, string>;
   /** Children marked as the project's first read (live or ended): their spawn is the server's. */
   firstReads: Set<string>;
+  /** First-read children that run right now (not ended, row working/asking/waiting; C16). */
+  firstReadsRunning: Set<string>;
   notes: Map<string, SuperNote>;
 }
 
@@ -1404,6 +1406,10 @@ function indexState(key: string, state: SuperState): void {
     ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
     worktrees: new Map(Object.keys(state.children).flatMap((k) => { const w = state.children[k].worktree; return w ? [[k, w] as [string, string]] : []; })),
     firstReads: new Set(Object.keys(state.children).filter((k) => state.children[k].firstRead === true)),
+    firstReadsRunning: new Set(Object.keys(state.children).filter((k) => {
+      const c = state.children[k];
+      return c.firstRead === true && c.endedAt === undefined && (c.row === 'working' || c.row === 'asking' || c.row === 'waiting');
+    })),
     notes,
   });
 }
@@ -1531,6 +1537,14 @@ export function superOfChild(sessionId: string): SuperRef | null {
   if (!sessionId) return null;
   for (const e of index.values()) if (e.children.has(sessionId)) return { root: e.root, superId: e.superId };
   return null;
+}
+
+/** Does the Super whose session is `sessionId` have a first read running right now (C16)? From
+ *  the index only: what its record said at its last read or write. */
+export function superFirstReadRunning(sessionId: string): boolean {
+  if (!sessionId) return false;
+  for (const e of index.values()) if (e.session === sessionId && e.firstReadsRunning.size > 0) return true;
+  return false;
 }
 
 /** Is `sessionId` a child some super record marks as the first read (C15a)? Live or ended. */

@@ -3,6 +3,8 @@ import {
   type CSSProperties,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+import { BrandMark } from '../brand/BrandMark';
+import type { EmptyHero } from './chat/Banners';
 import './AgentTerminal.css';
 // The phone layer (`.agent-surface[data-mobile]`): the chat on a phone, in the new shell's frame.
 import './MobileChat.css';
@@ -4962,6 +4964,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const handOver = useCallback(async (opts?: unknown): Promise<string | null> => {
     // Telegram's "Super'i aç" (N5): the same hand-over, adopting none of the open chats.
     const adoptNone = !!opts && typeof opts === 'object' && (opts as { adoptNone?: unknown }).adoptNone === true;
+    // Only the onboarding landing (`super-landing`, C8a) asks for a quiet hand-over: no turn queued.
+    const quiet = !!opts && typeof opts === 'object' && (opts as { quiet?: unknown }).quiet === true;
     let landed: string | null = null;
     const live = flightRunRef.current;
     if (live?.run.active) { live.run.reverse(); return null; }
@@ -4991,7 +4995,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       });
       // New shell: every session has one home and there is no take-back, so opening the Super
       // Agent takes none of the owner's chats out of their windows.
-      const body = adoptionBody(windowed || adoptNone ? [] : tabs, before?.session);
+      const body = adoptionBody(windowed || adoptNone ? [] : tabs, before?.session, quiet);
       // FIRST rects, in ONE batch, before anything changes.
       const first = new Map<string, { role: FlightRole; rect: Rect }>();
       for (const cid of body.adopt) {
@@ -7095,9 +7099,24 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     </div>
   );
   /** A Super chat's composer line: main's as before, a member's "<name> ne yapsın?". */
+  // The main Super stage's empty state (plan ilk-acilis C13, v2-03j): the project's question,
+  // the gem in place of ">_" (owner 2026-11-20), three chips. ONE object per vault and language.
+  const superHero = useMemo<EmptyHero>(() => ({
+    title: t('super.empty.title').replace('{name}', vault ?? ''),
+    mark: <BrandMark size={76} className="chat-banner-empty-mark" title="" />,
+    chips: [
+      t('super.empty.chip.explain'),
+      t('super.empty.chip.first'),
+      t('super.empty.chip.morning').replace('{name}', vault ?? ''),
+    ],
+  }), [t, vault]);
+  /** Is this the MAIN project's Super stage on a computer (plan ilk-acilis D9)? Never a member
+   *  stage, a member's mirror or the phone: those keep today's empty state. */
+  const isMainSuperStage = (cs: ChatSession): boolean =>
+    cs.mode === 'super' && !isMobile && !chatAgentFor(cs.claudeId) && !memberMirrorsRef.current.has(cs.claudeId);
   const superPlaceholderFor = (cs: ChatSession): string => {
     const member = chatAgentFor(cs.claudeId) || memberMirrorsRef.current.get(cs.claudeId) || '';
-    if (!member) return t('super.centre.placeholder');
+    if (!member) return isMainSuperStage(cs) ? t('super.empty.placeholder') : t('super.centre.placeholder');
     const name = findAgent(memberRoster.data, member)?.title || member;
     return t('superStage.member.placeholder').replace('{name}', name);
   };
@@ -7799,6 +7818,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           // A member's phone mirror (an ordinary chat mode) asks "<name> ne yapsın?" too; main's
           // mirror and every other chat are unchanged.
           idlePlaceholder={cs.mode === 'super' || memberMirrorsRef.current.has(cs.claudeId) ? superPlaceholderFor(cs) : undefined}
+          // The main Super stage's own empty state (C13): one memoised object, so the memo holds.
+          emptyHero={isMainSuperStage(cs) ? superHero : undefined}
           // A member's phone mirror reads and marks the member's unread, never main's.
           superMember={memberMirrorsRef.current.get(cs.claudeId)}
           aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}
