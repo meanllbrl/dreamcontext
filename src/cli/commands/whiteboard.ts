@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chalk from 'chalk';
@@ -63,6 +63,8 @@ import {
 } from '../../lib/whiteboards/layout.js';
 import { foldOwnWrite, noteShow, type SinceLastShow } from '../../lib/whiteboards/seen.js';
 import { contentRegion, fitScale, MAX_SIDE, renderScene } from '../../lib/whiteboards/render.js';
+import { shootBoard } from '../../lib/whiteboards/board-shots.js';
+import { exportShots, SPLIT_MODES, splitBoard, type Section, type SplitMode } from '../../lib/whiteboards/split.js';
 import { auditWarning, buildSpecDrawing, loadBuilder, noteWarning, readKitReference } from '../../lib/whiteboards/spec-draw.js';
 import type { MutateResult } from '../../lib/whiteboards/store.js';
 import type { WhiteboardElement } from '../../lib/whiteboards/widgets.js';
@@ -495,6 +497,12 @@ function assertOutInScope(out: string): string {
   }
   const parent = realDir(dirname(target));
   if (!parent) throw new WhiteboardValidationError(`--out '${out}': its folder does not exist`);
+  assertAgentMayWrite(parent, out);
+  return join(parent, basename(target));
+}
+
+/** While a board agent runs, a picture is written only in its scratch folder or its own output folder. */
+function assertAgentMayWrite(parent: string, out: string): void {
   if (scopedBoard() !== null) {
     const self = process.env[AGENT_SELF_ENV]?.trim();
     const allowed = [
@@ -507,7 +515,35 @@ function assertOutInScope(out: string): string {
       );
     }
   }
-  return join(parent, basename(target));
+}
+
+/**
+ * The folder `export --split` writes into: an existing real folder (never a symlink), or a new
+ * one made in an existing parent; the same agent scope as a single `--out` file.
+ */
+function assertOutDirInScope(out: string): string {
+  const target = resolve(out);
+  if (/\.png$/i.test(target)) throw new WhiteboardValidationError(`--split writes several pictures: --out must name a folder (got '${out}')`);
+  let exists = false;
+  try {
+    const st = lstatSync(target);
+    if (st.isSymbolicLink() || !st.isDirectory()) throw new WhiteboardValidationError(`--out '${out}' exists and is not a plain folder`);
+    exists = true;
+  } catch (err) {
+    if (err instanceof WhiteboardValidationError) throw err;
+  }
+  const parent = realDir(dirname(target));
+  if (!parent) throw new WhiteboardValidationError(`--out '${out}': its parent folder does not exist`);
+  assertAgentMayWrite(parent, out);
+  const dir = join(parent, basename(target));
+  if (!exists) mkdirSync(dir);
+  return dir;
+}
+
+/** A file name piece from a section label: letters, digits and dashes. */
+function fileSlug(label: string): string {
+  const s = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ı/g, 'i').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return s.slice(0, 48) || 'part';
 }
 
 function registerPlaceAndRender(wb: Command): void {
@@ -538,7 +574,7 @@ function registerPlaceAndRender(wb: Command): void {
 
   // --- render ---
   wb.command('render [slug]')
-    .description('Draw a board, a tagged group or a region as a PNG, without a browser: shapes, arrows and text as laid out, widgets as titled cards, pictures as placeholders')
+    .description('LAYOUT CHECK, for your own eyes: a board, a tagged group or a region as a PNG, shapes, arrows and text as laid out, widgets as titled cards, pictures as empty crossed boxes. Never show it to the owner as the board: `whiteboard export` draws the real look')
     .requiredOption('--out <file.png>', 'Where to write the PNG')
     .option('--tag <tag>', 'Frame the group with this tag (outlined in red); everything around it is drawn too, so an overlap shows')
     .option('--region <x,y,w,h>', 'Draw exactly this board rectangle')
@@ -603,6 +639,93 @@ function registerPlaceAndRender(wb: Command): void {
         console.log(chalk.yellow('⚠') + ` ${foreign.length} element${foreign.length === 1 ? '' : 's'} not tagged ${opts.tag} sit inside its box (${list}); \`--json\` lists them.`);
       }
       if (scale < 0.75) console.log(chalk.dim(`  Text is small at scale ${rounded}; render a --band or --region to read it.`));
+      console.log(chalk.dim(`  This is a layout check (pictures are empty boxes, widgets only titles), never the board as it looks.`));
+      if (slug !== undefined) console.log(chalk.dim(`  To show the owner the board: dreamcontext whiteboard export ${slug} --split tags --out <folder>`));
+    }));
+
+  // --- export ---
+  wb.command('export <slug>')
+    .description('The board as it looks, for the owner: drawn by the app\'s own renderer in a headless browser (its fonts, its pictures, every widget with its content). --split cuts a long board into phone pictures, one per tagged group or named frame, each section whole')
+    .requiredOption('--out <file.png|folder>', 'A .png for one picture, or a folder (made when missing) for the pictures --split or a tall --tag makes')
+    .option('--split <tags|bands>', 'tags: one picture per tagged group (or named frame), each whole, the rest in bands; bands: the board in reading order, tile by tile')
+    .option('--tag <tag>', 'Only this tagged group')
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, opts: { out: string; split?: string; tag?: string; json?: boolean }) => {
+      if (opts.split !== undefined && !SPLIT_MODES.includes(opts.split as SplitMode)) {
+        throw new WhiteboardValidationError(`--split must be one of ${SPLIT_MODES.join(', ')} (got '${opts.split}')`);
+      }
+      if (opts.tag !== undefined && !isValidTag(opts.tag)) throw new WhiteboardValidationError(`invalid tag '${opts.tag}'`);
+      const root = ensureContextRoot();
+      const live = liveElements(readWhiteboard(root, slug).board.elements);
+      const split = opts.split as SplitMode | undefined;
+      let sections: Section[];
+      if (opts.tag !== undefined) {
+        tagBBox(live, opts.tag); // names the tags there are when this one is not
+        sections = splitBoard(live, 'tags', { wholeGroups: true }).filter((s) => s.tag === opts.tag);
+      } else if (split) {
+        sections = splitBoard(live, split, { wholeGroups: split === 'tags' });
+      } else {
+        sections = [{ label: slug, region: contentRegion(live, 20) }];
+      }
+      // No --split and no --tag: one overview picture of the board, shrunk to fit one photo.
+      const shots = exportShots(live, sections, { fit: opts.tag === undefined && !split });
+      if (shots.length === 0) throw new WhiteboardValidationError(`board '${slug}' has nothing to export`);
+      // A .png names one picture, anything else a folder; one picture that cannot hold the result says how many it needs.
+      const many = !/\.png$/i.test(opts.out);
+      if (!many && shots.length > 1) {
+        throw new WhiteboardValidationError(`this export is ${shots.length} pictures; give --out a folder instead of '${opts.out}'`);
+      }
+      const outDir = many ? assertOutDirInScope(opts.out) : null;
+      const outFile = many ? null : assertOutInScope(opts.out);
+      const digits = Math.max(2, String(shots.length).length);
+      const names = shots.map((s, i) => (outDir ? join(outDir, `${slug}-${String(i + 1).padStart(digits, '0')}-${fileSlug(s.label)}.png`) : outFile!));
+      if (outDir) {
+        for (const file of names) {
+          try {
+            const st = lstatSync(file);
+            if (st.isSymbolicLink() || !st.isFile()) throw new WhiteboardValidationError(`${file} exists and is not a plain file`);
+          } catch (err) {
+            if (err instanceof WhiteboardValidationError) throw err;
+          }
+        }
+      }
+      if (!opts.json) console.log(chalk.dim(`  Drawing ${shots.length} picture${shots.length === 1 ? '' : 's'} with the app's renderer…`));
+      const { shots: taken, missingPictures } = await shootBoard({
+        contextRoot: root,
+        slug,
+        plans: shots.map((s) => ({ region: s.region, ids: s.ids ?? null, width: s.width })),
+      });
+      const files = taken.map((t, i) => {
+        writeFileSync(names[i], t.png);
+        return { file: names[i], label: shots[i].label, width: t.width, height: t.height, region: shots[i].region };
+      });
+      // What this export is about: the board, or with --tag only what its sections draw.
+      const scoped = opts.tag === undefined ? live : live.filter((el) => sections.some((s) => !s.ids || s.ids.has(String(el.id))));
+      const pictureIds = new Set(scoped.filter((el) => el.type === 'image' && typeof el.fileId === 'string').map((el) => el.fileId as string));
+      const missing: { fileId: string; why: string }[] = [];
+      const unloaded = new Set(missingPictures);
+      const drawn = new Set<string>();
+      for (const el of scoped) {
+        if (el.type !== 'image' || typeof el.fileId !== 'string' || unloaded.has(el.fileId)) continue;
+        const b = elementBBox(el);
+        const placed = shots.some((s) => (!s.ids || s.ids.has(String(el.id)))
+          && b.x < s.region.x + s.region.w && b.x + b.w > s.region.x && b.y < s.region.y + s.region.h && b.y + b.h > s.region.y);
+        if (placed) drawn.add(el.fileId);
+      }
+      for (const id of pictureIds) {
+        if (unloaded.has(id)) missing.push({ fileId: id, why: 'its file could not be read from the board' });
+        else if (!drawn.has(id)) missing.push({ fileId: id, why: 'it falls in no exported picture' });
+      }
+      const widgets = scoped.filter((el) => el.type === 'embeddable').length;
+      if (opts.json) {
+        console.log(JSON.stringify({ slug, kind: 'export', renderer: 'app', files, pictures: { total: pictureIds.size, drawn: drawn.size, missing }, widgets }, null, 2));
+        return;
+      }
+      success(`Exported ${slug} → ${files.length === 1 ? files[0].file : `${files.length} pictures in ${outDir}`}`);
+      console.log(`  Pictures: ${drawn.size} of ${pictureIds.size} drawn; widgets: ${widgets}.`);
+      for (const m of missing) console.log(chalk.yellow('⚠') + ` picture ${m.fileId.slice(0, 12)} is not in the export: ${m.why}`);
+      if (files.length > 1) for (const f of files) console.log(chalk.dim(`  ${basename(f.file)}  ${f.label}  (${f.width}x${f.height}px)`));
+      console.log(chalk.dim(`  To show the owner: one ![label](path) per picture in your message; Telegram gets them as albums.`));
     }));
 }
 

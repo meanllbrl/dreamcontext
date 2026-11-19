@@ -361,12 +361,11 @@ try {
     await pickOpt(1);
     await typeField('daha koyu');
     await next();
-    await vis(`${pageSel} .chat-surveycard-opt.other`).click();
     await typeField('turuncu olsun');
-    const want = { page: 1, q1: ['Yeşil'], q1note: 'daha koyu', q2: ['Other'], q2text: 'turuncu olsun' };
+    const want = { page: 1, q1: ['Yeşil'], q1note: 'daha koyu', q2: [], q2text: 'turuncu olsun' };
     const intact = (c) => !!c && c.page === want.page && JSON.stringify(c.on[0]) === JSON.stringify(want.q1) && c.field[0] === want.q1note
       && JSON.stringify(c.on[1]) === JSON.stringify(want.q2) && c.field[1] === want.q2text;
-    report.check(`${W}: picked option 2 + a note, then "Other" + text on Q2`, intact(await card()), JSON.stringify(await card()));
+    report.check(`${W}: picked option 2 + a note, then an own typed answer (nothing picked) on Q2`, intact(await card()), JSON.stringify(await card()));
     await snap('picked');
     // Let the first open settle past the stable window so the ladder starts at its first rung.
     await phone.waitForTimeout(5500);
@@ -434,7 +433,7 @@ try {
     await submitBtn().click();
     report.check(`${W}: a Submit tap while down makes an attempt within ~1 s`, await until(() => attempts.length > n0, 1500, 20), `${attempts.length > n0 ? attempts[n0].at - tapAt : '-'} ms`);
     const kept = await card();
-    report.check(`${W}: …and keeps every pick (no receipt, no answer frame)`, !!kept && kept.on.every((o) => o.length > 0) && answerFrames.length === 0, JSON.stringify({ kept, answerFrames }));
+    report.check(`${W}: …and keeps every pick (no receipt, no answer frame)`, !!kept && kept.on[0].length > 0 && kept.field[1] === want.q2text && answerFrames.length === 0, JSON.stringify({ kept, answerFrames }));
     report.check(`${W}: no open was logged during the hold`, (await count('open')) === opensAtHold);
     mode = 'pass';
     await phone.waitForTimeout(1100);
@@ -442,7 +441,7 @@ try {
     report.check(`${W}: released, the socket opens again`, await waitOpen());
     report.check(`${W}: the same ask is back with every pick`, await until(async () => {
       const c = await card();
-      return !!c && c.on.every((o) => o.length > 0) && c.field[0] === want.q1note && c.field[1] === want.q2text && !c.waiting;
+      return !!c && c.on[0].length > 0 && c.field[0] === want.q1note && c.field[1] === want.q2text && !c.waiting;
     }, 10000), JSON.stringify(await card()));
     const answersBefore = lines(ANSWERS).length;
     await submitBtn().click();

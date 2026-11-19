@@ -59,6 +59,13 @@ function scaffold(root: string): string {
 }
 
 /** Run a CLI command with `stdin` piped in (tests/helpers/cli-stdin.ts); stderr folded in, as `2>&1` did. */
+/** A HOME with no owner rules: the Agent pass-through tests must not read the developer's own
+ *  `dreamcontext learn` rules (rules-delivery adds them to every Agent prompt). */
+function NO_RULES_ENV(): NodeJS.ProcessEnv {
+  const home = mkdtempSync(join(tmpdir(), 'hook-no-rules-home-'));
+  return { ...process.env, HOME: home, USERPROFILE: home };
+}
+
 function runWithStdin(cmd: string, stdin: string, cwd: string, env?: NodeJS.ProcessEnv): string {
   // No shell: the old `printf … | node …` through /bin/bash read an empty stdin on Windows.
   return runCliWithStdin(CLI, cmd.split(' '), stdin, { cwd, env: env ?? process.env, timeout: 10000, withStderr: true });
@@ -1203,7 +1210,7 @@ describe('hook pre-tool-use (integration)', () => {
       tool_name: 'Agent',
       tool_input: { subagent_type: 'Plan', prompt: 'Plan the auth feature' },
     });
-    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir, NO_RULES_ENV());
     expect(output.trim()).toBe('');
   });
 
@@ -1212,7 +1219,7 @@ describe('hook pre-tool-use (integration)', () => {
       tool_name: 'Agent',
       tool_input: { subagent_type: 'dreamcontext-rem-sleep', prompt: 'Consolidate' },
     });
-    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir, NO_RULES_ENV());
     expect(output.trim()).toBe('');
   });
 
@@ -1221,7 +1228,7 @@ describe('hook pre-tool-use (integration)', () => {
       tool_name: 'Agent',
       tool_input: { subagent_type: 'dreamcontext-explore', prompt: 'Find auth files' },
     });
-    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir, NO_RULES_ENV());
     expect(output.trim()).toBe('');
   });
 

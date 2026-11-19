@@ -228,7 +228,9 @@ export async function handlePublish(req: IncomingMessage, res: ServerResponse, p
       home: appsHomeDir(), host: resolveAppHost(appsHomeDir()),
       visibility,
       repoName: typeof b.repoName === 'string' && b.repoName.trim() ? b.repoName.trim() : undefined,
-      invite: strings(b.invite), approvals: strings(b.approvals),
+      invite: strings(b.invite),
+      // No count cap (owner rule): each id is still a bounded string.
+      approvals: Array.isArray(b.approvals) ? [...new Set(b.approvals.filter((x): x is string => typeof x === 'string' && x.length <= 200))] : [],
       note: typeof b.note === 'string' ? b.note : undefined,
       tagline: typeof b.tagline === 'string' ? b.tagline : undefined,
       // A public grant IS the owner's confirmation (his "Share publicly" click).

@@ -27,9 +27,11 @@ describe('superBriefing', () => {
     expect(brief).toContain('dreamcontext super brief <child>');
   });
 
-  it('names the queue rules: answer only when settled, ONE escalation, permissions never, batched events', () => {
+  it('names the queue rules: a child question is the Super\'s first, ONE escalation of what is his by kind, permissions never, batched events', () => {
     expect(brief).toContain('dreamcontext super answer <child> <question id>');
-    expect(brief).toContain('escalate ONE clear question');
+    expect(brief).toContain("A child's QUESTION is yours first");
+    expect(brief).toContain('Escalate only what is his by kind, as ONE\n  clear question');
+    expect(brief).not.toContain('only when the brief and the project settle it');
     expect(brief).toContain('dreamcontext super queue ask <item>');
     // A Bypass child's leftover permission comes as `event=permission` (its event line says how to
     // decide it, inbox.ts PERMISSION_LINE); every other permission stays the owner's: only HIS
@@ -38,7 +40,7 @@ describe('superBriefing', () => {
     expect(brief).toContain('permission is his: only his own yes or no passes it (`super queue allow`).');
     for (const prefix of ['[super events]', '[super handover]', '[super recap]']) expect(brief).toContain(prefix);
     expect(brief).toContain('only a question, done, gone, stuck or owner\nreaches you, batched, and nothing while a question is open with the owner');
-    expect(brief).toContain('He sees an event turn as one line: write no text there but a reply if he wrote to you, the\n  question you escalate, a job waiting on him, and, when an event says `awaited=owner` (a job he waits on), its result:\n  every one, the second and later too;');
+    expect(brief).toContain('He sees an event turn as one line: write no text there but a reply if he wrote to you, a job\n  waiting on him (a question you escalate is its card alone), and, when an event says `awaited=owner` (a job he waits on), its result:\n  every one, the second and later too;');
   });
 
   it('names the job list verbs: the row line, the pool, --from, --task, the own question (plan r4)', () => {
@@ -264,7 +266,11 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   const LOCAL_CUT_2026_11_15 = 1850; // the 2026-11-15 local cut: sixteen branches each raised the briefing from the same base (measured 26,176; +52 filmstrip default, measured 26,228)
   const OWN_MESSAGES_ONLY_2026_11_15 = 480; // telegram-cevaplayan: a `shown=owner` question waits on his Mac bar only, never on Telegram; `queue ask` when he is away (measured 26,703, +475)
   const OWNER_WRITTEN_YES_2026_11_15 = 40; // sahip-yazili-izin: only his own yes or no passes a permission (`super queue allow`) (measured 26,734, +31)
+  const CUT_0_41_22_2026_11_18 = 60; // the 0.41.22 cut: uye-rutin-agent on top of the eight fix PRs (eski-sunum-soru, yerel-push), measured 26,889
+  const ROUTINE_NOT_MEMBER_2026_11_18 = 20; // uye-rutin-agent: more work is the member's routine (--agent), not a new member (measured 26,863, +12)
+  const VOICE_CLAIM_2026_11_16 = 60; // uye-sesli-ozet: only the `dream-voice` block speaks, never claim a voice without it (measured 26,804, +55)
   const PRESENT_QUEUE_2026_11_14 = 130; // sunum-sirasi: a present over his presentation answers `queued: {at, of}`; never claimed as shown (measured 23,521)
+  const ASK_RULES_2026_11_18 = 3090; // (19 Nov merge with dev: rev 54 and the no re-say words; measured 29,954) (end review r1: a closed card that is still his gets one reworded card; measured 29,784) soru-azaltma (owner "daha az soru kartı"): the `## When you ask him` section (the ask rules by kind, lib/ask-rules.ts), a child's question is the Super's first, no start card for asked work, no line that a question waits (measured 29,169, +2,435)
   const APP_INSTALL_2026_11_13 = 320; // app-kurulum-claude: install asks at once, its one-tap card even after his yes in words, the card place from `Shown:`, Claude fills the settings (measured 23,145)
   it('files every task itself and carries the split rows, the guide being lookup only', () => {
     expect(brief).toContain('- Tasks: Open a task only for big work');
@@ -287,19 +293,22 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   });
   it('explains a question he did not understand in the last text and rewords the card, never the same one', () => {
     expect(brief).toContain("He did not understand a question: explain it\nin plain words in this turn's last text");
-    expect(brief).toContain('then ask a reworded card with what was missing, never the same card.');
+    expect(brief).toContain('Its card still open (`<super-ask-still-open>`): it stays, never a second one.');
+    expect(brief).toContain('is still his: ONE reworded card with what was missing, never the same card.');
   });
   it('weighs a new idea from the owner before agreeing, and just does a clear task', () => {
     expect(brief).toContain('weigh it before you agree or start');
     expect(brief).toContain('earlier decisions or a project pattern');
     expect(brief).toContain('Never agree by reflex, never argue by reflex');
     expect(brief).toContain('A clear task is not such a question: just do it.');
-    expect(brief).toContain('he decides in a `super ask`.');
+    expect(brief).toContain('in one line and why, and do it. Weak: say in one line where and what you do about it, and go on.');
+    expect(brief).toContain('only when it contradicts a decision HE made or is his by kind (below): it names both sides.');
+    expect(brief).not.toContain('he decides in a `super ask`.');
   });
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + SELECTED_PASSAGE_2026_10_31 + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + EFFORT_POLICY_2026_10_24 + MULTI_REF_2026_10_24 + HEAT_STEPS_2026_10_24 + PAGE_CONTEXT_2026_10_25 + PDF_VIDEO_2026_10_25 + MERGE_SLACK_2026_10_25 + MERGE_SLACK_2026_10_27 + SHOWN_OWNER_2026_10_27 + AGENDA_CURRENT_2026_10_28 + WHITEBOARD_NOT_BOARD_2026_10_29 + OPEN_PRESENT_2026_10_29 + AI_TEAM_ROUTING_2026_10_29 + PLAN_SUMMARY_2026_10_29 + GLOBAL_MEMBER_2026_10_30 + AWAITED_ORIGIN_2026_10_30 + REPORT_CARD_2026_10_30 + MEMBER_AMEND_2026_10_31 + SMALL_READ_RULE_2026_10_31 + DRAWN_REPORT_2026_10_31 + ASK_LINE_FIRST_2026_11_01 + TOOL_PICK_2026_11_02 + WEIGH_FIRST_2026_11_02 + APPROVAL_ON_SCREEN_2026_11_06 + OWED_SECTIONS_2026_11_06 + APP_TOOLS_2026_11_07 + TEXT_NOT_THOUGHT_2026_11_07 + MODEL_MAP_2026_11_08 + NOT_ON_SCREEN_2026_11_08 + TELEGRAM_TURN_2026_11_08 + MERGE_0_41_7_2026_11_08 + BOLD_EMPHASIS_2026_11_09 + REACTION_NOTE_2026_11_09 + REPORT_KIT_COLORS_2026_11_09 + SUPER_SCHEDULE_2026_11_09 + TELEGRAM_PHONE_2026_11_10 + CARD_CLOSE_2026_11_11 + BOARD_SELECTION_2026_11_11 + SPLIT_ROWS_2026_11_12 + TASK_STANDARD_2026_11_12 + BOARD_AREA_2026_11_12 + OUTWARD_GRANT_2026_11_12 + LEARN_2026_11_13 + PHONE_PICTURES_2026_11_13 + APP_INSTALL_2026_11_13 + PRESENT_QUEUE_2026_11_14 + CONDITION_2026_11_15 + LEARN_TRIGGER_2026_11_15 + LOCAL_CUT_2026_11_15 + OWN_MESSAGES_ONLY_2026_11_15 + OWNER_WRITTEN_YES_2026_11_15);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + SELECTED_PASSAGE_2026_10_31 + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + EFFORT_POLICY_2026_10_24 + MULTI_REF_2026_10_24 + HEAT_STEPS_2026_10_24 + PAGE_CONTEXT_2026_10_25 + PDF_VIDEO_2026_10_25 + MERGE_SLACK_2026_10_25 + MERGE_SLACK_2026_10_27 + SHOWN_OWNER_2026_10_27 + AGENDA_CURRENT_2026_10_28 + WHITEBOARD_NOT_BOARD_2026_10_29 + OPEN_PRESENT_2026_10_29 + AI_TEAM_ROUTING_2026_10_29 + PLAN_SUMMARY_2026_10_29 + GLOBAL_MEMBER_2026_10_30 + AWAITED_ORIGIN_2026_10_30 + REPORT_CARD_2026_10_30 + MEMBER_AMEND_2026_10_31 + SMALL_READ_RULE_2026_10_31 + DRAWN_REPORT_2026_10_31 + ASK_LINE_FIRST_2026_11_01 + TOOL_PICK_2026_11_02 + WEIGH_FIRST_2026_11_02 + APPROVAL_ON_SCREEN_2026_11_06 + OWED_SECTIONS_2026_11_06 + APP_TOOLS_2026_11_07 + TEXT_NOT_THOUGHT_2026_11_07 + MODEL_MAP_2026_11_08 + NOT_ON_SCREEN_2026_11_08 + TELEGRAM_TURN_2026_11_08 + MERGE_0_41_7_2026_11_08 + BOLD_EMPHASIS_2026_11_09 + REACTION_NOTE_2026_11_09 + REPORT_KIT_COLORS_2026_11_09 + SUPER_SCHEDULE_2026_11_09 + TELEGRAM_PHONE_2026_11_10 + CARD_CLOSE_2026_11_11 + BOARD_SELECTION_2026_11_11 + SPLIT_ROWS_2026_11_12 + TASK_STANDARD_2026_11_12 + BOARD_AREA_2026_11_12 + OUTWARD_GRANT_2026_11_12 + LEARN_2026_11_13 + PHONE_PICTURES_2026_11_13 + APP_INSTALL_2026_11_13 + PRESENT_QUEUE_2026_11_14 + CONDITION_2026_11_15 + LEARN_TRIGGER_2026_11_15 + LOCAL_CUT_2026_11_15 + OWN_MESSAGES_ONLY_2026_11_15 + OWNER_WRITTEN_YES_2026_11_15 + ASK_RULES_2026_11_18 + VOICE_CLAIM_2026_11_16 + ROUTINE_NOT_MEMBER_2026_11_18);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
       expect(b).toContain('`[About card @card:<id>]` to a card passage: `quote:` is a pointer');
@@ -326,10 +335,14 @@ describe('how the super agent talks to the owner', () => {
   it('a choice he must make lives in the question card, never only in the text (owner 2026-10-24)', () => {
     // "Questions that need an action must not be asked inside text; ask them with the ask
     // action, otherwise they slip by unseen." The old "at most one question, at the end" went.
-    expect(brief).toContain('a choice you\nneed from him goes in a `super ask` card, never only as a question in your text');
-    expect(brief).toContain('the text says in one line that a question waits');
-    // rev 25 (2026-11-01): the line comes first, `super ask` is the last act of the turn.
-    expect(brief).toContain('Write\n  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn');
+    expect(brief).toContain('a choice only\nhe can make goes in a `super ask` card, never only as a question in your text');
+    // Owner 2026-11-18 (rev 53): the card sits right under the text, so no line says a question waits.
+    expect(brief).toContain('and the text never says that a question waits');
+    expect(brief).not.toContain('the text says in one line that a question waits');
+    // rev 25 (2026-11-01): `super ask` is the last act of the turn.
+    expect(brief).toContain('Run\n  `super ask` as the LAST act of the turn, with no text after it');
+    expect(brief).toContain('no line before it that a question waits');
+    expect(brief).not.toContain('your one line FIRST');
     expect(brief).not.toContain('at most one\nquestion, at the end');
     expect(brief).not.toContain('Write\n  the question in that turn too');
   });

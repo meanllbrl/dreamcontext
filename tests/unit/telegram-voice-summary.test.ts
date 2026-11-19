@@ -8,7 +8,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { splitVoiceBlocks, voiceAnswer } from '../../src/lib/telegram/voice-block.js';
+import { asksForVoice, splitVoiceBlocks, voiceAnswer } from '../../src/lib/telegram/voice-block.js';
 import { voiceCaptionHtml } from '../../src/lib/telegram/system-lines.js';
 import { TelegramHub, type ActiveBinding } from '../../src/server/telegram/hub.js';
 import { SUPER_TELEGRAM_LINE, superBriefing } from '../../src/server/chat-modes.js';
@@ -139,12 +139,71 @@ describe("a member's bot (one path for every bot, owner 2026-11-14)", () => {
   });
 });
 
+describe('he asked for a voice and the answer carried no block (owner 2026-11-16, Atlas)', () => {
+  type Turn = { ref: string; key: string; chatId: number; sessionId: string; startedAt: number; typing: null; answered: boolean; wantsVoice?: boolean; voiced?: boolean };
+  type Inner = {
+    superSessions: Map<string, string>; presence: Map<string, unknown>; turns: Map<string, Turn>;
+    onChatChange(entry: { sessionId: string; status: string }, from: string): void;
+  };
+  /** A live Telegram turn for his message, the Super's text sent through the real answer path,
+   *  then the chat goes idle (the turn's end). Returns every sendMessage text. */
+  async function turnEnding(target: string, his: string, answer: string, contextRoot: string | null = null): Promise<{ texts: string[]; spoken: string[] }> {
+    const { hub, ab, log, spoken } = setup(target, OK, contextRoot);
+    const inner = hub as unknown as Inner;
+    const sid = `sess-${target}`;
+    inner.superSessions.set(sid, ab.key);
+    inner.presence.set(ab.key, { via: 'telegram', at: Date.now() });
+    hub.noteReply(ab, 42, { ref: 'pe23f1', quote: his, from: 'owner' });
+    // The turn as `injectText` opens it (`beginTurn`), without its typing timer.
+    const turn: Turn = { ref: 'pe23f1', key: ab.key, chatId: 777, sessionId: sid, startedAt: Date.now(), typing: null, answered: false, wantsVoice: asksForVoice(his), voiced: false };
+    inner.turns.set(turn.ref, turn);
+    hub.queueSend(sid, (turns) => hub.onAssistantText(sid, answer, { turns, inputs: undefined }));
+    inner.onChatChange({ sessionId: sid, status: 'idle' }, 'running');
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5));
+    return { texts: log.filter((l) => l.method === 'sendMessage').map((l) => l.text ?? ''), spoken };
+  }
+
+  it("a member's answer that only CLAIMS a voice gets the plain 'no voice' line", async () => {
+    const r = await turnEnding('strateji', 'Sesli olarak bana özetle', '<!-- re:pe23f1 -->\nSesli özetini yazdım; telefonuna sesli mesaj olarak gidiyor.', join(home, '_dream_context'));
+    expect(r.spoken).toEqual([]);
+    expect(r.texts.join('\n')).toContain('sesli mesaj olarak gidiyor');
+    expect(r.texts.some((t) => t.includes('ses kaydı yoktu'))).toBe(true);
+  });
+
+  it('the same on the main Super', async () => {
+    const r = await turnEnding('super', 'sesli özetler misin', '<!-- re:pe23f1 -->\nTamam.');
+    expect(r.texts.some((t) => t.includes('ses kaydı yoktu'))).toBe(true);
+  });
+
+  it('an answer WITH the block: spoken, no extra line', async () => {
+    const r = await turnEnding('strateji', 'Sesli olarak bana özetle', `<!-- re:pe23f1 -->\nTamam.\n\n${BLOCK}`, join(home, '_dream_context'));
+    expect(r.spoken).toHaveLength(1);
+    expect(r.texts.some((t) => t.includes('ses kaydı yoktu'))).toBe(false);
+  });
+
+  it('a message that asked for no voice: no line', async () => {
+    const r = await turnEnding('super', 'Bunu da çöz ve sürüme dahil et', '<!-- re:pe23f1 -->\nTamam.');
+    expect(r.texts.some((t) => t.includes('ses kaydı yoktu'))).toBe(false);
+  });
+
+  it.each([
+    ['Sesli olarak bana özetle', true], ['sesli özetle', true], ['SESLİ ANLAT', true], ['bunu seslendir', true],
+    ['okuyamıyorum, sesle anlat', true], ['send me a voice summary', true], ['read it to me', true],
+    ['sesli mesaj at', true], ['SESLİ ÖZETLE', true], ['VOICE SUMMARY please', true], ['READ IT TO ME', true],
+    ['Bunu da çöz', false], ['sesli not özelliği bozuk mu', false], ['voice özelliği nasıl çalışıyor', false], ['', false],
+  ] as const)('asksForVoice(%j) = %s', async (text, want) => {
+    expect(asksForVoice(text)).toBe(want);
+  });
+});
+
 describe('the briefings', () => {
   it('the Super line (main and member Supers, every tool) asks for the block, capped, only when asked', () => {
     expect(SUPER_TELEGRAM_LINE).toContain('dream-voice');
     expect(SUPER_TELEGRAM_LINE).toContain('2500 characters');
     expect(SUPER_TELEGRAM_LINE).toContain('Never send one unasked');
+    expect(SUPER_TELEGRAM_LINE).toContain('Only the block speaks');
     expect(superBriefing()).toContain(SUPER_TELEGRAM_LINE);
+    expect(superBriefing(null, { slug: 'strateji', title: 'Atlas', field: 'strateji' } as never)).toContain(SUPER_TELEGRAM_LINE);
   });
 
   it("a member's ask block names the block", () => {

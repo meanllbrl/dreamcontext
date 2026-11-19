@@ -1900,7 +1900,7 @@ export function measureSnapshot(
     parts.push(...automations.lines);
   } else if (automations.total === 0) {
     parts.push(
-      '- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug>` '
+      '- none yet — schedule recurring/unattended work with `dreamcontext automations create <slug> --agent <member>` '
       + '(never a hand-rolled cron/launchd job or external scheduler)',
     );
   } else {

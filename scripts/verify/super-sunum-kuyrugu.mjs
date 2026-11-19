@@ -8,7 +8,8 @@
  *
  *  Q1  the Super presents page 1, then pages 2 and 3 in later turns: page 1 stays on screen as the
  *      frame's open tab, "<page 2> next" beside it, left of the exit, which reads "Leave the queue" (AC1, AC2);
- *  Q2  a narrow window (1000 px): the tabs stay left of the icons (D10);
+ *  Q2  a narrow window (1000 px): the tabs stay left of the icons (D10); the page folds to its
+ *      tab over a full-height chat, a tab opens it as a sheet, × folds it (owner 2026-11-17);
  *  Q3  Next opens page 2 (2/3) and the chat scrolls to the answer that queued it, flashing it (AC3);
  *  Q4  Leave the queue floats the stage: "1 presentation waiting · Continue", the side menu's
  *      Super row says one waits (AC5); Continue opens page 3 (3/3, "Finish");
@@ -207,7 +208,22 @@ try {
   await page.setViewportSize({ width: 1000, height: 800 });
   ok('the tabs stay, left of the icons', await until(async () => { const a = await page.locator('[data-testid="super-present-tabs"]').boundingBox(); const b = await page.locator('[data-testid="super-stage-controls"]').boundingBox(); return !!a && !!b && a.x + a.width <= b.x + 1; }, 5000));
   ok('the exit is still there', await page.locator('[data-testid="super-stage-exit"]:visible').count() === 1);
+  // Owner 2026-11-17: on a narrow stage the card folds to its tab over a full-height chat.
+  const sheetTabs = page.locator('[data-testid="super-sheet-tabs"]');
+  ok('narrow: the page folds to its tab over the chat', await until(async () => (await sheetTabs.getAttribute('data-folded')) === 'true', 5000));
+  ok('…no card drawn over the chat, the chat a full column', (await page.locator('[data-testid="super-container"][data-where="sheet"]').count()) === 0
+    && (await page.locator('[data-testid="super-centre"]').getAttribute('data-chat')) === 'column');
+  const chatBox = await page.locator('[data-testid="super-centre"]').boundingBox();
+  const stageBox = await page.locator('[data-testid="super-surface"]:visible').first().boundingBox();
+  ok('…the chat takes most of the stage\'s height', !!chatBox && !!stageBox && chatBox.height > stageBox.height * 0.65, JSON.stringify({ chatBox, stageBox }));
+  await page.waitForTimeout(500);
+  await shot(page, '2-dar-1000-kapali');
+  await page.locator('[data-testid="super-sheet-tab"]').first().click();
+  ok('a tab press opens the card as a sheet', await until(async () => (await page.locator('[data-testid="super-container"][data-where="sheet"]').count()) === 1, 5000));
+  await page.waitForTimeout(700);
   await shot(page, '2-dar-1000');
+  await page.locator('[data-testid="super-sheet-fold"]').click();
+  ok('× folds it back', await until(async () => (await sheetTabs.getAttribute('data-folded')) === 'true', 5000));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(600);
 
