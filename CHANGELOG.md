@@ -4,6 +4,18 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.23] - 2026-11-19
+
+Beta on 0.41.22: everything in 0.41.22, plus new surfaces not yet tried by many people. Local build; not published.
+
+- **Global members.** A global member's header names its project first, and global members appear in every project's Team list.
+- **Run from the phone.** A child session's run card can be run from Telegram with ▶ Çalıştır.
+- **Telegram groups.** Your bot answers in a group you allowed when someone tags it; every change it would make is sent to you privately first.
+- **Member writes to the Super.** An AI Team member can write to the Super on its own, without being asked.
+- **Board Sync.** A Sync button on the board syncs it with the team in one press; on a conflict the drawings are merged item by item, so nobody's drawing is lost.
+- **Voice message card.** A voice block in the chat shows as a playable voice-message card.
+- **Test counts.** A test run no longer counts log lines printed by test fixtures as failures; only real failures are counted.
+
 ## [0.41.22] - 2026-11-19
 
 Patch on 0.41.21. Local build; not published.
