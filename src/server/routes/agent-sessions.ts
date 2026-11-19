@@ -779,7 +779,10 @@ export async function handleAgentSessionsGet(
     // A member's own Super and its children are never the owner's tabs; each member's Ekip facts ride along.
     const memberSessions = await memberSuperSessions(contextRoot, superSanitizeOpts()).catch(() => new Set<string>());
     const members = await memberSummaries(contextRoot, { ...superSanitizeOpts(), home }).catch(() => []);
-    sendJson(res, 200, { ...rosterSummary(saved, superUnread ? emptySuperState() : superState, childRunsNow, memberSessions), members });
+    // `memberHeld`: every session a member Super holds (its own, its children, its former ones).
+    // A window reads only main's record at load, so this is how a restored tab of a member's
+    // child stays out of its chat windows (field 2026-11-18: a member's helper became a tab).
+    sendJson(res, 200, { ...rosterSummary(saved, superUnread ? emptySuperState() : superState, childRunsNow, memberSessions), members, memberHeld: [...memberSessions] });
     return;
   }
   const body = surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null);
@@ -829,6 +832,8 @@ export interface RosterSummary {
   superWaiting: number;
   /** Each AI Team member's owner-facing facts (plan-r10 1; the route adds them). */
   members?: SuperMemberSummary[];
+  /** Every session a member Super holds (the route adds them): never an owner's tab. */
+  memberHeld?: string[];
 }
 
 /** Does a process run this child now? A row can outlive its process, so the record alone is not

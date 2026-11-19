@@ -34,7 +34,8 @@ export function AgendaFind({ open, query, onOpen, onClose, onQuery }: {
     const cap = capRef.current;
     if (!root || !cap) return undefined;
     if (!open) { cap.style.width = ''; return undefined; }
-    const row = root.parentElement;
+    // The agenda's own head row when the field sits in the card's head; else its parent row.
+    const row = root.closest<HTMLElement>('.super-card-head') ?? root.parentElement;
     if (!row) return undefined;
     const fit = () => { cap.style.width = `${Math.max(0, root.getBoundingClientRect().right - row.getBoundingClientRect().left)}px`; };
     fit();

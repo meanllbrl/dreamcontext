@@ -37,7 +37,7 @@
 import { sentOutwards } from '../super/owed.js';
 import { closeCardsById, noteAssistantCards } from '../cards/records.js';
 import { answeredBy, isOwnerCardKind, MAX_OWNER_WAITS, ownerCardsIn, refusalsOfCommand, refusalsSettledByRun, refusalWait, refusalWaitId, runReceiptCommand, supersedesCard, takeSuperSend, type OwnerCardKind, type OwnerWait, type OwnerWaitKind } from '../super/owner-wait.js';
-import { imagesInPreviews, SAFETY_CHECK_RE, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
+import { imagesInPreviews, NO_VERDICT_RE, SAFETY_CHECK_RE, stripReplyMark, type PreviewImage, type RefusalFact } from '../super/types.js';
 import { canonicalInput } from '../grants/canonical.js';
 import type { OpenRequest, RequestResponse } from '../super/request-answer.js';
 import {
@@ -164,6 +164,14 @@ export interface ChatEntry {
    *  closing it (`dropOwnerWait`). Only these close an owner item; a wait the registry merely
    *  does not hold (a respawn, a restart) is re-adopted from the record, never inferred answered. */
   ownerAnswered?: string[];
+  /** Refusal waits the owner ALLOWED (`kind:id`): his grant waits for exactly that call, so the
+   *  child running something else first never closes it (closing would prune his one-shot grant).
+   *  Such a wait closes only when its own call runs, or by the turn-end re-offer. */
+  ownerAllowed?: string[];
+  /** Of those, the ones another call ran past since his Allow turn went in (`kind:id`): if the
+   *  Allow turn ends without its call, the child moved on, and the item closes instead of being
+   *  offered again (a new card for a call nobody will run is the same ghost). */
+  ownerAllowedPassed?: string[];
   /** Set when the Assistant started this chat (a delegation). Rides the entry's own lifetime:
    *  a respawn of the same conversation inherits it via {@link isDelegatedConversation}. */
   origin?: 'assistant';
@@ -412,8 +420,43 @@ function answerWaits(e: ChatEntry, done: readonly OwnerWait[]): void {
   if (!done.length) return;
   const keys = new Set(done.map(waitKey));
   e.ownerAnswered = [...(e.ownerAnswered ?? []).filter((k) => !keys.has(k)), ...keys].slice(-MAX_ANSWERED);
+  forgetAllowed(e, keys);
   setOwnerWaits(e, (e.ownerWaits ?? []).filter((w) => !keys.has(waitKey(w))));
   // setOwnerWaits emits only on a change of waits; an answer always is one.
+}
+
+/** Forget his Allow (and what ran past it) for these wait keys. */
+function forgetAllowed(e: ChatEntry, keys: ReadonlySet<string>): void {
+  if (e.ownerAllowed) { e.ownerAllowed = e.ownerAllowed.filter((k) => !keys.has(k)); if (!e.ownerAllowed.length) delete e.ownerAllowed; }
+  if (e.ownerAllowedPassed) { e.ownerAllowedPassed = e.ownerAllowedPassed.filter((k) => !keys.has(k)); if (!e.ownerAllowedPassed.length) delete e.ownerAllowedPassed; }
+}
+
+/** His Allow turn went into the session: only calls from now on count as running past it. */
+export function startAllowTurn(sessionId: string): void {
+  const e = entries.get(sessionId);
+  if (e) delete e.ownerAllowedPassed;
+}
+
+/** Allowed refusal waits (ids) another call ran past since the Allow turn went in. */
+export function allowedPassedBy(sessionId: string): Set<string> {
+  const e = entries.get(sessionId);
+  return new Set((e?.ownerAllowedPassed ?? []).filter((k) => e?.ownerAllowed?.includes(k)).map((k) => k.slice('refusal:'.length)));
+}
+
+/** The owner allowed refusal wait `id` (his Allow wrote a grant for exactly that call): from now
+ *  until its call runs or it is offered again, the child moving on does not close it. */
+export function markOwnerAllowed(sessionId: string, id: string): void {
+  const e = entries.get(sessionId);
+  if (!e) return;
+  const k = waitKey({ kind: 'refusal', id });
+  e.ownerAllowed = [...(e.ownerAllowed ?? []).filter((x) => x !== k), k].slice(-MAX_ANSWERED);
+}
+
+/** His Allow no longer stands for these refusal waits (offered again as a new ask). */
+export function clearOwnerAllowed(sessionId: string, ids: readonly string[]): void {
+  const e = entries.get(sessionId);
+  if (!e || !ids.length) return;
+  forgetAllowed(e, new Set(ids.map((id) => waitKey({ kind: 'refusal', id }))));
 }
 
 /** Is this wait one the process saw answered? */
@@ -435,7 +478,7 @@ const UNHEARD_CHARS = 1000;
  * only by his words from after it was asked (`since`); a text that answered is used up. Quiet (no
  * emit): the record already says it.
  */
-export function adoptOwnerWaits(sessionId: string, waits: ReadonlyArray<{ wait: OwnerWait; since: number }>): Set<string> {
+export function adoptOwnerWaits(sessionId: string, waits: ReadonlyArray<{ wait: OwnerWait; since: number; allowed?: boolean }>): Set<string> {
   const answered = new Set<string>();
   const e = entries.get(sessionId);
   if (!e || e.status === 'gone') return answered;
@@ -457,6 +500,8 @@ export function adoptOwnerWaits(sessionId: string, waits: ReadonlyArray<{ wait: 
   if (newly.length) e.ownerAnswered = [...(e.ownerAnswered ?? []), ...newly].slice(-MAX_ANSWERED);
   const held = fresh.filter(({ wait }) => !answered.has(waitKey(wait))).map(({ wait }) => cloneWait(wait));
   if (held.length) e.ownerWaits = [...(e.ownerWaits ?? []), ...held].slice(-MAX_OWNER_WAITS);
+  // His Allow is in the record: held again WITH it, so the child moving on never spends it.
+  for (const { wait, allowed } of fresh) if (allowed && wait.kind === 'refusal' && !answered.has(waitKey(wait))) markOwnerAllowed(sessionId, wait.id);
   return answered;
 }
 
@@ -1229,7 +1274,11 @@ function resultText(b: Record<string, unknown>): string {
 }
 
 /** One frame of a crew chat: remember calls, refusals and what ran. A call that ran closes an
- *  open refusal of the same call at once, in this turn or any later one. */
+ *  open refusal of the same call at once, in this turn or any later one. Any call that ran closes
+ *  every refusal wait born at an EARLIER turn's end too: the child moved on, so it no longer
+ *  waits on him (a refusal is already the model's to handle; it either works around it or meets
+ *  it again, and a new refusal is a new ask). The same rule a stall follows (it closes when the
+ *  session works again, inbox.ts syncOwnDraft). */
 function noteRefusalFacts(e: ChatEntry, t: TurnRefusals, frame: Record<string, unknown>): void {
   if (frame.type === 'assistant') {
     const content = (frame.message as { content?: unknown } | undefined)?.content;
@@ -1270,7 +1319,14 @@ function noteRefusalFacts(e: ChatEntry, t: TurnRefusals, frame: Record<string, u
     const wid = refusalWaitId(call.tool, canonOf(call.tool, call.input));
     t.ran.push({ id: wid, seq: ++t.seq });
     if (t.ran.length > MAX_TURN_FACTS) t.ran.shift();
-    const held = (e.ownerWaits ?? []).filter((w) => w.kind === 'refusal' && w.id === wid);
+    // Waits are born only at a turn's `result` (settleTurnRefusals), so every refusal wait held
+    // now is from an earlier turn: this call running means the child is no longer stopped on it.
+    // One he ALLOWED waits for its own call (his grant is spent only by it, or re-offered).
+    const allowed = new Set(e.ownerAllowed ?? []);
+    const held = (e.ownerWaits ?? []).filter((w) => w.kind === 'refusal' && (w.id === wid || !allowed.has(waitKey(w))));
+    // ... and is noted as run past: its Allow turn's end closes it if its own call never came.
+    const passed = (e.ownerWaits ?? []).filter((w) => w.kind === 'refusal' && w.id !== wid && allowed.has(waitKey(w))).map(waitKey);
+    if (passed.length) e.ownerAllowedPassed = [...new Set([...(e.ownerAllowedPassed ?? []), ...passed])].slice(-MAX_ANSWERED);
     if (held.length) answerWaits(e, held);
   }
 }
@@ -1296,6 +1352,8 @@ function settleTurnRefusals(e: ChatEntry, t: TurnRefusals, result: Record<string
       if (!read) continue;
       // The tool_result's own words name a built-in safety check even when its meta does not.
       const source = read !== 'safety' && SAFETY_CHECK_RE.test(rej?.text ?? '') ? 'safety' : read;
+      // Auto mode's "no verdict" is no judgment and nothing he can allow: the model already has it.
+      if (NO_VERDICT_RE.test(rej?.text ?? '') || NO_VERDICT_RE.test(str(ev?.message))) continue;
       const fromEvent = ev && typeof ev.tool_name === 'string' ? { tool: ev.tool_name, input: ev.tool_input } : null;
       const call = t.calls.get(id) ?? fromEvent ?? backstop.get(id) ?? null;
       // The input from the call itself; an event or the result's list only when the call frame
@@ -1315,6 +1373,8 @@ function settleTurnRefusals(e: ChatEntry, t: TurnRefusals, result: Record<string
     const ids2 = new Set(fresh.map(waitKey));
     // Refused again: a new ask, even when he settled the same call before.
     if (e.ownerAnswered) e.ownerAnswered = e.ownerAnswered.filter((k) => !ids2.has(k));
+    // ... and a new ask is no longer one he allowed (the re-offer gives it a new item).
+    forgetAllowed(e, ids2);
     const keep = (e.ownerWaits ?? []).filter((w) => !ids2.has(waitKey(w)));
     setOwnerWaits(e, [...keep, ...fresh]);
   } finally {

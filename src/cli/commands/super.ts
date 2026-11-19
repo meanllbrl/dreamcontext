@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import { SUPER_CONDITION_HELP } from '../../lib/automations/condition.js';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, lstatSync, openSync, readFileSync, readSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { isLayoutRender, layoutRenderWarning } from '../../lib/whiteboards/render-mark.js';
 import { request } from 'node:http';
 import { windowEnv } from './window.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -138,6 +139,34 @@ function briefCallResult(r: CallResult): CallResult {
 
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
 
+/**
+ * Is the picture about to open a `whiteboard render` layout check? Read from the file's own
+ * head (where the render writes its kind), as the CLI finds it: absolute, from here, or from
+ * the project. A symlink or anything unreadable is simply not one: this only warns, it never
+ * stops the card.
+ */
+function isLayoutCheckFile(ref: string): boolean {
+  const tries = isAbsolute(ref) ? [ref] : [resolve(ref)];
+  if (!isAbsolute(ref)) {
+    try { tries.push(join(dirname(ensureContextRoot()), ref)); } catch { /* not in a project */ }
+  }
+  for (const p of tries) {
+    try {
+      const st = lstatSync(p);
+      if (!st.isFile()) continue;
+      const fd = openSync(p, 'r');
+      try {
+        const head = Buffer.alloc(Math.min(st.size, 64 * 1024));
+        readSync(fd, head, 0, head.length, 0);
+        return isLayoutRender(head);
+      } finally {
+        closeSync(fd);
+      }
+    } catch { /* try the next */ }
+  }
+  return false;
+}
+
 /** The running server's version, asked of the server; null when it cannot say. */
 function serverVersion(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   const e = windowEnv(env);
@@ -247,6 +276,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--for <child>', 'Images, PDFs and videos only: the child whose job these show; they go to Others once that job moves on (you send it new work, it is ended, or the owner saw a newer result)')
     .option('--present', 'Images, PDFs and videos only: open AND present them at once (their group whole, else the cards; the layout the cards pick; the owner\'s own layout for the same cards is kept). Pictures you show as a result: always')
     .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; titles?: string; group?: string | false; for?: string; present?: boolean }) => {
+      if (kind === 'image') for (const ref of refs) if (isLayoutCheckFile(ref)) process.stderr.write(`⚠ ${layoutRenderWarning(ref)}\n`);
       const present = o.present ? { present: true } : {};
       return kind !== 'agenda' && !refs.length ? usage('name at least one ref') : run('open', refs.length <= 1
         ? { kind, ref: refs[0] ?? '', shape: o.shape, size: o.size, title: o.title ?? o.titles?.split('|')[0], group: o.group, for: o.for, ...present }

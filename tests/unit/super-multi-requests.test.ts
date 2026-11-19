@@ -598,9 +598,10 @@ describe('window, sessions, summary', () => {
     const d = memberCrewDecision({ conversation: 'new-kid', contextRoot: root });
     expect(d.mark).toBe('*');
     expect([...d.cap].sort()).toEqual(['asker', 'rota']);
-    // Rota alone runs at its own (balanced: auto); with Asker in the tie the child gets ask (default).
+    // Rota alone runs at its own (balanced: auto); Asker's stored `ask` is Balanced too (owner
+    // 2026-11-18), so the tie never drops the child to `default`.
     expect(memberCrewPermissionMode(root, ['rota'], true)).toBe('auto');
-    expect(memberCrewPermissionMode(root, [d.mark as string, ...d.cap], true)).toBe('default');
+    expect(memberCrewPermissionMode(root, [d.mark as string, ...d.cap], true)).toBe('auto');
     noteDelegating(superKey(root, 'm:rota'), -1);
     noteDelegating(superKey(root, 'm:asker'), -1);
     // A hint alone, nothing in flight: it narrows (marked, capped at that member), never names it.

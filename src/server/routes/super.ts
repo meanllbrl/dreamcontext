@@ -70,7 +70,7 @@ import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, askStillOpen, recordAskShow } from '../../lib/super/ask-show.js';
-import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
+import { askWarning, planReportRefusal } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
@@ -990,15 +990,19 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       refuse(res, 409, 'held', `${running}; the job stays in the pool as ${fromRow.id}`, { ...facts, pooled: fromRow.id });
       return;
     }
+    // A job that is NOT kept is never `held` (soru-azaltma open note, 2026-11-19): `held` reads
+    // "it waits its turn", and the Super told him so for a job that was gone. Its own code says
+    // it did not start and was not kept.
+    const notKept = { ...facts, held: false, kept: false };
     // A hand-over is not pooled: the pool keeps no successor, and the old child keeps the work.
     if (succeeds) {
-      refuse(res, 409, 'held', `${running}; the hand-over was NOT kept: delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
+      refuse(res, 409, 'not_kept', `${running}; the hand-over was NOT kept and did NOT start: delegate it again when a slot frees, or ask the owner`, notKept);
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
     const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
     if ('error' in kept) {
-      refuse(res, 409, kept.error === 'too_large' ? 'held' : 'pool_full', `${running}; the job was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, { ...facts, kept: false });
+      refuse(res, 409, kept.error === 'too_large' ? 'not_kept' : 'pool_full', `${running}; the job did NOT start and was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, notKept);
       return;
     }
     refuse(res, 409, 'held', `${running}; the job is kept in the pool as ${kept.id}: start it with \`dreamcontext super delegate --from ${kept.id}\` when a slot frees`, { ...facts, pooled: kept.id, reused: kept.reused, kept: true });
@@ -2640,10 +2644,6 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
     });
     const show = finishAskShow(c, state, id as string, prep, shown);
-    // A plan child's question whose summary the Super's text never gave: sent, the Super is told
-    // to write it now (owner 2026-11-13: three sentences that pointed at a stage).
-    const superText = getChat(c.who.sessionId)?.lastAssistantText;
-    const warning = planTextWarning(childMode, superText?.[superText.length - 1]);
     // What reached the owner, told as it is (owner-question.ts): a Telegram copy counts only once
     // it LANDED, so its send is waited for (bounded). Only a question he has seen makes the
     // turn's end no second ping; one nobody saw keeps the reply's own notch row.
@@ -2651,7 +2651,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const reach = ownerQuestionReach(state, id as string);
     if (reach.reached) noteSuperEscalation(c.who.sessionId);
     const head = superQueueHead(state);
-    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
+    ok(res, { item: id, escalated: true, waiting: head?.id !== id, ...reach, show });
   },
 
   'queue-done': async (c, b, res) => {

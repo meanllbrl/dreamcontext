@@ -263,6 +263,10 @@ try {
       `tail=${JSON.stringify(s.briefing.trimEnd().slice(-120))}`);
     ok('basic: it carries the DECLARE sentence, so a move the shelf cannot see gets pinned',
       /pin the checkout as a tag/.test(s.briefing));
+    // 2026-11-18 (soru-azaltma): every chat is told when NOT to ask (lib/ask-rules.ts).
+    ok('basic: the spawned chat carries the short ask rules (a card only when the work is truly blocked)',
+      s.briefing.includes('**Ask less.** A card only when the work is truly blocked')
+      && s.briefing.includes('a message to a real person') && s.briefing.includes('Never a card: housekeeping'));
     ok('basic: exactly ONE --append-system-prompt-file on the command line',
       s.argv.filter((a) => a === '--append-system-prompt-file').length === 1,
       JSON.stringify(s.argv));
@@ -276,6 +280,11 @@ try {
       `has surface=${s.briefing.includes(SURFACE_HEAD)} has mode=${s.briefing.includes('# Mode: Plan')}`);
     ok('plan: it is the planning half — asks first, ends by creating a task',
       /ask/i.test(s.briefing) && s.briefing.includes('dreamcontext tasks create'));
+    // 2026-11-18 (soru-azaltma): no question quota, and a plan that changes no screen needs no yes.
+    ok('plan: it asks only what is left and is his, and a no-screen plan asks for no approval',
+      /Ask only what is left and is\s+his alone to say, in ONE card/.test(s.briefing)
+      && /A plan that changes no screen\s+asks for no approval/.test(s.briefing)
+      && !/ask 2-4 questions/.test(s.briefing));
     ok('plan: it ends by offering the develop handoff button',
       s.briefing.includes('dream-actions') && s.briefing.includes('"action": "develop"'));
     ok('plan: still exactly ONE briefing file (both parts share it)',

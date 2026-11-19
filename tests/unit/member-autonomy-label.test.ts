@@ -38,11 +38,18 @@ const html = (slug: string, variant: 'head' | 'composer' = 'head') => renderToSt
 const read = (rel: string) => readFileSync(join(__dirname, '..', '..', rel), 'utf-8');
 
 describe('the label shows the member\'s level', () => {
-  it.each([['ask', 'Ask'], ['balanced', 'Balanced'], ['free', 'Free']])('%s reads "Autonomy: %s"', (level, word) => {
+  it.each([['balanced', 'Balanced'], ['free', 'Free']])('%s reads "Autonomy: %s"', (level, word) => {
     roster.list = [{ slug: 'masa', autonomy: level }];
     const out = html('masa');
     expect(out).toContain(`data-level="${level}"`);
     expect(out).toContain(`Autonomy: ${word}`);
+  });
+  it('an old stored ask reads Balanced: no member runs or shows at Ask (owner 2026-11-18)', () => {
+    roster.list = [{ slug: 'masa', autonomy: 'ask' }];
+    const out = html('masa');
+    expect(out).toContain('data-level="balanced"');
+    expect(out).toContain('Autonomy: Balanced');
+    expect(out).not.toContain('Autonomy: Ask');
   });
   it('a member with no level on the roster reads Balanced (an older server)', () => {
     roster.list = [{ slug: 'masa' }];
@@ -55,12 +62,12 @@ describe('the label shows the member\'s level', () => {
     expect(html('masa')).toBe('');
   });
   it('is the member\'s own value: a second member keeps its own level', () => {
-    roster.list = [{ slug: 'a', autonomy: 'ask' }, { slug: 'b', autonomy: 'free' }];
-    expect(html('a')).toContain('Autonomy: Ask');
+    roster.list = [{ slug: 'a', autonomy: 'balanced' }, { slug: 'b', autonomy: 'free' }];
+    expect(html('a')).toContain('Autonomy: Balanced');
     expect(html('b')).toContain('Autonomy: Free');
   });
   it('is a button that opens the Edit dialog (a click), in both places', () => {
-    roster.list = [{ slug: 'masa', autonomy: 'ask' }];
+    roster.list = [{ slug: 'masa', autonomy: 'free' }];
     expect(html('masa', 'head')).toMatch(/^<button[^>]*aiteam-autonomy--head/);
     expect(html('masa', 'composer')).toMatch(/^<button[^>]*aiteam-autonomy--composer/);
   });
@@ -110,7 +117,8 @@ describe('an old member that cannot hold a level', () => {
     const dialog = read('dashboard/src/components/agents/AgentIdentityDialog.tsx');
     expect(dialog).not.toMatch(/editing && !detail\.data\?\.agent\.implicit &&/);
     expect(dialog).toMatch(/disabled=\{!ready \|\| !!detail\.data\?\.agent\.implicit\}/);
-    expect(dialog).toMatch(/autonomy: agent\.autonomy \?\? 'balanced'/);
+    expect(dialog).toMatch(/autonomy: memberLevel\(agent\.autonomy\)/);
+    expect(dialog).toMatch(/AUTONOMY_LEVELS: readonly AgentAutonomy\[\] = \['balanced', 'free'\]/);
     const i18n = read('dashboard/src/context/I18nContext.tsx');
     expect(i18n.match(/'aiteam\.autonomy\.implicit':/g)).toHaveLength(2);
   });

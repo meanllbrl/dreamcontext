@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { listRegisteredProjects } from '../lib/automations/registry.js';
+import { listDistinctProjects } from '../lib/automations/registry.js';
 import { reconcileTaskJobs, startDueTaskJobs } from '../lib/agents/task-starter.js';
 
 /**
@@ -13,7 +13,8 @@ import { reconcileTaskJobs, startDueTaskJobs } from '../lib/agents/task-starter.
 export const TASK_JOB_LOOP_MS = 60_000;
 
 export function drainTaskJobsOnce(log: (line: string) => void = () => {}): void {
-  for (const projectRoot of listRegisteredProjects()) {
+  // Each real brain once: a linked code repo is the same project (listDistinctProjects).
+  for (const projectRoot of listDistinctProjects().roots) {
     const contextRoot = join(projectRoot, '_dream_context');
     if (!existsSync(contextRoot)) continue;
     try {

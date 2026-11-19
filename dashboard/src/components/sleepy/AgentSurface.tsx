@@ -104,7 +104,7 @@ import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { MAX_FILMSTRIP, groupPresentCards, readSuperStateView, type MemberCardRef, type PadStatus, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
 import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, newRoutineCardId, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
-import { useMemberSummaries } from './super/useMemberSummaries';
+import { useMemberHeldSessions, useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
 import { MemberRoutineQuestions } from './super/MemberRoutineQuestions';
@@ -922,12 +922,17 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const [superDelegated, setSuperDelegated] = useState<ReadonlyMap<string, number>>(() => new Map());
   // Every session has ONE home (super/sessionHome.ts): in the new shell a chat window draws only
   // its own. A view: the roster, the panes and the transcripts keep every session.
-  // Every super's (main's and each member's): a member's child is homed in the stage too.
+  // Every super's (main's and each member's): a member's child is homed in the stage too. The
+  // window holds a member's record only once it opens that member, so the server's list of what
+  // every member Super holds joins in: a restored tab of a member's helper is never a chat-window
+  // tab (field 2026-11-18, a global member's helper after a reload).
+  const memberHeld = useMemberHeldSessions(scopedApi, vault, !!caps?.desktop && !isMacPhoneSurface());
   const superOwned = useMemo(() => {
     const ids = superOwnedIds(null, superDelegated);
     for (const r of vaultSupers) for (const id of superOwnedIds(r.record)) ids.add(id);
+    for (const id of memberHeld) ids.add(id);
     return ids;
-  }, [vaultSupers, superDelegated]);
+  }, [vaultSupers, superDelegated, memberHeld]);
   const superOwnedRef = useRef(superOwned);
   superOwnedRef.current = superOwned;
   const inChatWindow = useCallback((m: { mode?: string; claudeId?: string }) => (

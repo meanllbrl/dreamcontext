@@ -141,7 +141,7 @@ describe('the hub sends the re-worded repeat once (text, card, text)', () => {
     // The `super ask` card is queued (asks.ts offerItem), then the re-worded answer: dropped.
     hub.noteQuestionCard(sid);
     expect(await hub.onAssistantText(sid, REWORDED, { turns: [], inputs: undefined })).toBe(false);
-    expect(await hub.onAssistantText(sid, OTHER, { turns: [], inputs: undefined })).toBe(true);
+    expect(await hub.onAssistantText(sid, `<!-- re:gy910q -->\n${OTHER}`, { turns: [], inputs: undefined })).toBe(true);
     expect(sent.join('\n')).toContain('sürükleme kısmı gerekmiyor');
     expect(sent.join('\n')).not.toContain('Önerdiğim A yolunun');
     expect(sent.join('\n')).toContain('Yapım başladı');

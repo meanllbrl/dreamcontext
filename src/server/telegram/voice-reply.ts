@@ -19,6 +19,7 @@
  * same reach as a text reply. `speakSummary` has no `isDesktop()` gate of its own because its
  * only caller, the hub, starts only in the desktop server; a caller outside the hub needs one.
  */
+import { noteUndelivered } from '../../lib/super/undelivered.js';
 import { noticeHtml, voiceCaptionHtml, VOICE_SUMMARY_LINES, SILENT } from '../../lib/telegram/system-lines.js';
 import type { VoiceBlock } from '../../lib/telegram/voice-block.js';
 import { speakSummary, type SpeakSummaryResult } from '../voice-speak.js';
@@ -68,12 +69,16 @@ async function speakAndSend(
   opts: { replyTo?: number | null; sessionId?: string | null; deps?: VoiceReplyDeps },
 ): Promise<boolean> {
   const d = opts.deps ?? {};
-  const asText = async (line?: string): Promise<boolean> => {
+  const name = v.title ? `"${v.title}"` : 'summary';
+  // `why`: the voice failed (undelivered.ts tells the Super); none = text by design (a secret waits).
+  const asText = async (line?: string, why?: string): Promise<boolean> => {
     if (line) await hub.send(ab, noticeHtml('info', line), SILENT).catch(() => {});
     try {
       await hub.sendMarkdown(ab, v.title ? `**${v.title}**\n${v.text}` : v.text);
+      if (why) noteUndelivered(opts.sessionId, 'voice', `Your voice message ${name} did not reach his phone as a voice (${why}); its text went instead.`);
       return true;
     } catch {
+      noteUndelivered(opts.sessionId, 'voice', `Your voice message ${name} did not reach his phone at all (${why ?? 'Telegram refused its text'}).`);
       return false;
     }
   };
@@ -94,7 +99,7 @@ async function speakAndSend(
   }
   if (!r.ok) {
     if (r.reason === 'nothing_speakable') return asText();
-    return asText(VOICE_SUMMARY_LINES[r.reason]);
+    return asText(VOICE_SUMMARY_LINES[r.reason], r.reason);
   }
   try {
     await ab.transport.sendVoice(chatId, { name: 'ozet.ogg', data: r.ogg, contentType: 'audio/ogg' }, {
@@ -104,6 +109,6 @@ async function speakAndSend(
     });
     return true;
   } catch {
-    return asText(VOICE_SUMMARY_LINES.failed);
+    return asText(VOICE_SUMMARY_LINES.failed, 'Telegram refused the voice file');
   }
 }

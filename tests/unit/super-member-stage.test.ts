@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { RequestError } from '../../dashboard/src/api/client';
 import { memberIntent } from '../../dashboard/src/lib/drawerIntents';
 import {
-  coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberSummaries, superIdOfIntent, unionSuperView,
+  coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberHeld, readMemberSummaries, superIdOfIntent, unionSuperView,
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout';
@@ -126,6 +126,10 @@ describe('a cold member is started once when main\'s work waits (pending)', () =
       { slug: 'gantt', global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: false, lastAt: 0, pending: 0 },
     ]);
     expect(readMemberSummaries({})).toEqual([]);
+    // What every member Super holds (field 2026-11-18): strings only, an older server none.
+    expect(readMemberHeld({ memberHeld: ['a', '', 3, null, 'b'] })).toEqual(['a', 'b']);
+    expect(readMemberHeld({})).toEqual([]);
+    expect(readMemberHeld(null)).toEqual([]);
     expect(readMemberSummaries(null)).toEqual([]);
   });
   it('the surface starts it through the owner verb and ensures its chat, once per member', () => {
@@ -682,5 +686,12 @@ describe("main's member card shows the member's helpers for ITS job (owner 2026-
     expect(card).not.toContain('team-job-open-member');
     const frame = src('dashboard/src/components/sleepy/super/SuperContainer.tsx');
     expect(frame).toMatch(/c\.kind === 'team' && props\.team && !props\.remote && <OpenStageButton member=\{props\.team\.job\.member\} \/>/);
+  });
+});
+
+describe('a member\'s sessions are never a chat-window tab (field 2026-11-18)', () => {
+  it('the window homes every session the server says a member Super holds', () => {
+    expect(surface).toMatch(/const memberHeld = useMemberHeldSessions\(scopedApi, vault,/);
+    expect(surface).toMatch(/for \(const id of memberHeld\) ids\.add\(id\);/);
   });
 });

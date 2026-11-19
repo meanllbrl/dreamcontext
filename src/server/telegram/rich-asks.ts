@@ -16,6 +16,7 @@
  * `hub_command answer_pending` with the P3 tagged union. Picks are built by
  * `buildQuestionPicks` (option order, multiSelect joined with ", ").
  */
+import { noteUndelivered } from '../../lib/super/undelivered.js';
 import { randomBytes } from 'node:crypto';
 import { getChat } from '../../lib/assistant/chat-registry.js';
 import { answerChildQuestion, superAnswerText, superUnclearText, superAlreadyText, unclearMessage, ALREADY_ANSWERED_MESSAGE } from '../../lib/super/answer.js';
@@ -202,7 +203,9 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
         it = { kind: 'photo', file: pngFile(`${drawingTag(oi)}-${o.label}`, png), title: o.label };
       }
       if (!fitsTelegram(it)) { misses.push(`${o.label}: too large for Telegram, not sent`); continue; }
-      if (await sendWhole(ab, it, pictureCaption(drawingCaption(oi, o.label)))) drawn.add(key);
+      const cap = pictureCaption(drawingCaption(oi, o.label));
+      const ok = it.kind === 'photo' ? await sendWhole(ab, it, cap) : !!(await sendMedia(ab, it, cap));
+      if (ok) drawn.add(key);
       else misses.push(`${o.label}: Telegram refused the picture`);
     }
   }
@@ -233,11 +236,13 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
   /** A question with drawings: one log line saying how many went and why the others did not
    *  (the message itself already says "Çizimi Mac'te" on each option that did not go). Counted
    *  by `qi:oi`, the key the notes use. */
-  function logPictures(id: string, questions: readonly RichQuestion[], drawn: ReadonlySet<string>, misses: readonly string[]): void {
+  function logPictures(id: string, questions: readonly RichQuestion[], drawn: ReadonlySet<string>, misses: readonly string[], sessionId: string, secret: boolean): void {
     const wanted = questions.reduce((n, q) => n + q.options.filter((o) => o.preview?.trim()).length, 0);
     if (!wanted) return;
     const why = drawn.size < wanted && misses.length ? ` (${misses.join('; ')})` : '';
     appendAskLog(hub.home, `${id} pictures ${drawn.size}/${wanted}${drawn.size < wanted ? ' NOT ALL SENT' : ''}${why}`);
+    // The asker hears it too (undelivered.ts): its card is on his phone without these drawings.
+    if (drawn.size < wanted && !secret) noteUndelivered(sessionId, 'picture', `${wanted - drawn.size} of the ${wanted} drawings of your question card did not reach his phone${why}; they are on the Mac only.`);
   }
 
   /** The drawings that reached Telegram for an ask (by its log id), kept so a text fallback after
@@ -279,7 +284,7 @@ export function wireRichAsks(hub: TelegramHub, deps: RichAsksDeps) {
         await sendQuestion(ab, a, i, i === 0 ? head : {}, drawn);
       }
     } finally {
-      logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses);
+      logPictures(logId, questions, drawn, secret ? ['a secret is pending: no picture leaves'] : misses, opts.sessionId, secret);
     }
     return { askId: a.id, messages: a.messages.slice() };
   }
