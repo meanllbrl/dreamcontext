@@ -9,6 +9,8 @@ import { RailTip } from './RailTip';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
 import { useNavBadges } from './useNavBadges';
+import { usePlugins } from '../../hooks/usePlugins';
+import { pageHidden } from '../../lib/plugins';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
 import { useVault } from '../../context/VaultContext';
 import { openAgentSurface } from '../../lib/agentSettings';
@@ -16,7 +18,7 @@ import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
-export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'whiteboards' | 'stats' | 'apps';
+export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'hackathon' | 'settings' | 'whiteboards' | 'stats' | 'apps' | 'store';
 
 interface SidebarProps {
   activePage: Page;
@@ -95,11 +97,14 @@ export const NAV_GROUPS: NavGroup[] = [
       // dreamcontext Apps: this project's own local web apps, each in its own Mac window.
       // Beta, so it sits above the alpha rows (owner rule, 2026-10-02).
       { page: 'apps', labelKey: 'nav.apps', maturity: 'beta' },
+      // Mağaza (D1): where plugins (Roadmap, Hypotheses, Insights, Council, Marketing) are installed.
+      { page: 'store', labelKey: 'nav.store' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
       // "Whiteboard" opens the default board, "Control Panel", directly (A15). The page id
       // stays 'whiteboards': persisted nav state and the chat's appNav deep links carry it.
       { page: 'whiteboards', labelKey: 'nav.whiteboard', maturity: 'alpha' },
       { page: 'council', labelKey: 'nav.council', maturity: 'alpha' },
+      { page: 'hackathon', labelKey: 'nav.hackathon', maturity: 'alpha' },
     ],
   },
   {
@@ -146,7 +151,9 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
 
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
-  const { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting } = useNavBadges();
+  const { agentUnread, showChat, chatRollup, chatOpen, appsWaiting } = useNavBadges();
+  // A plugin page whose plugin is known to be not installed has no row (Mağaza D1 C7).
+  const { set: pluginSet } = usePlugins();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
   // `agents`/`automations` are deep-link aliases now (they open "Üyeleri yönet"): no row lights.
@@ -252,19 +259,16 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
               }
               const { page, labelKey, maturity, hero } = item as NavItem;
               if (tunnel && PHONE_HIDDEN_PAGES.includes(page)) return null;
+              if (pageHidden(pluginSet, page)) return null;
               staggerIndex += 1;
               const label = t(labelKey);
-              // An off layer replaces its maturity tag rather than adding a second
-              // one — two tags on one row is noise, and "off" is the more
-              // useful of the two to whoever is looking.
-              const off = page === 'hypotheses' && learningOff;
-              const level: MaturityLevel | undefined = off ? 'off' : maturity;
+              const level: MaturityLevel | undefined = maturity;
               const tag = level ? t(`maturity.${level}`) : null;
               const badgeCount = page === 'automations' ? agentUnread : page === 'apps' ? appsWaiting : 0;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
-                    className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}${off ? ' sidebar-item--off' : ''}`}
+                    className={`sidebar-item ${current === page ? 'sidebar-item--active' : ''}`}
                     onClick={() => onNavigate(page)}
                     {...named(tag ? `${label} (${tag})` : label)}
                     aria-current={current === page ? 'page' : undefined}

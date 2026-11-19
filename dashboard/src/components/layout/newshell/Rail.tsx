@@ -11,7 +11,9 @@ import { RailTip } from '../RailTip';
 import type { useNavBadges } from '../useNavBadges';
 import type { Page } from '../Sidebar';
 import { MoreMenu } from './MoreMenu';
-import { BOTTOM_BAR, DEVICE_HIDDEN_PAGES, MORE_PAGES, RAIL_ENTRIES, RAIL_FOOT, morePagesNarrow, railPageOf } from './railModel';
+import { BOTTOM_BAR, DEVICE_HIDDEN_PAGES, MORE_PAGES, RAIL_FOOT, morePagesNarrow, railEntries, railPageOf } from './railModel';
+import { usePlugins } from '../../../hooks/usePlugins';
+import { pageHidden, railPluginPages } from '../../../lib/plugins';
 import { readDeviceShell } from '../../../lib/uxMode';
 import { useChrome } from '../WindowChrome';
 
@@ -40,7 +42,12 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
   const { vault, bus } = useVault();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
-  const { agentUnread, learningOff, showChat, chatRollup, chatOpen, appsWaiting } = badges;
+  const { agentUnread, showChat, chatRollup, chatOpen, appsWaiting } = badges;
+  // Pinned installed plugin pages sit on the rail (Mağaza D1 C7); with no set known yet, every
+  // plugin page shows as before, so a failing route never hides one.
+  const { set: pluginSet } = usePlugins();
+  const pinned = railPluginPages(pluginSet);
+  const entries = railEntries(pinned);
   const narrow = useIsNarrowWindow(600);
   const railRef = useRef<HTMLElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -60,19 +67,20 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
   const device = readDeviceShell();
   // The phone's short More follows the phone LAYOUT, not the width: a phone held sideways is one.
   const phoneLayout = useIsMobile();
-  const morePages = (narrow || (device && phoneLayout) ? morePagesNarrow(device) : [...MORE_PAGES]).filter((p) => !device || !DEVICE_HIDDEN_PAGES.has(p));
+  const morePages = (narrow || (device && phoneLayout) ? morePagesNarrow(device, pinned) : [...MORE_PAGES])
+    .filter((p) => !device || !DEVICE_HIDDEN_PAGES.has(p))
+    .filter((p) => !pageHidden(pluginSet, p));
   const moreCurrent = current !== null && morePages.includes(current);
   const moreBadge = morePages.some((p) => badgeOf(p) !== null);
 
   const pageRow = (page: Page) => {
-    const name = learningOff && page === 'hypotheses' ? `${label(page)} (${t('maturity.off')})` : label(page);
+    const name = label(page);
     return (
       <button
         key={page}
         type="button"
         className="ns-rail-btn"
         data-on={current === page ? 'true' : undefined}
-        data-off={learningOff && page === 'hypotheses' ? 'true' : undefined}
         aria-current={current === page ? 'page' : undefined}
         aria-label={name}
         data-tip={name}
@@ -133,7 +141,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
         ? BOTTOM_BAR.map((e) => (e === 'chat' ? chatRow() : e === 'more' ? moreRow() : pageRow(e)))
         : (
           <>
-            {RAIL_ENTRIES.map((e, i) => (
+            {entries.map((e, i) => (
               e.kind === 'chat' ? chatRow()
                 : e.kind === 'more' ? moreRow()
                   : e.kind === 'sep' ? <hr key={`sep-${i}`} className="ns-rail-sep" />

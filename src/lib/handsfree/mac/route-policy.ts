@@ -71,6 +71,7 @@ const READ = 'read of this project\'s own data; side-effect free';
 const PROJECT_WRITE = 'a change to this project\'s own data, the same as the dashboard on the laptop';
 const CHAT = 'the chat surface the phone exists for';
 const QUICK_EDIT = 'a quick edit of this project\'s board by a no-tool Claude turn: the phone already runs bypass chats on this Mac, so it adds no capability';
+const HACKATHON = 'laptop-only: starts, stops, resumes or picks a hackathon run, which spends this Mac\'s agent budget and opens a PR on GitHub; the owner drives it from the laptop';
 const STAGE = 'the remote stage, read and arrange only; the Mac window stays the Super\'s bridge';
 
 export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
@@ -608,6 +609,25 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/theses/:slug': allow(READ),
   'PATCH /api/theses/:slug': allow(PROJECT_WRITE),
   'DELETE /api/theses/:slug': allow(PROJECT_WRITE),
+  'GET /api/plugins': allow('read: this project\'s installed plugins; side-effect free beyond seeding this Mac\'s own pin list once (machine-local, ignored by git)'),
+  'POST /api/plugins/:id/install': allow(PROJECT_WRITE),
+  'POST /api/plugins/:id/remove': allow(PROJECT_WRITE),
+  'PUT /api/plugins/pins': allow('this Mac\'s own rail pins for this project (machine-local, ignored by git)'),
+  'GET /api/hackathon': allow(READ),
+  'GET /api/hackathon/:run': allow(READ),
+  'GET /api/hackathon/:run/design': allow(READ),
+  'GET /api/hackathon/:run/frames': allow(READ),
+  'GET /api/hackathon/:run/rounds': allow(READ),
+  'GET /api/hackathon/:run/result': allow(READ),
+  'GET /api/hackathon/:run/pr-check': allow(READ),
+  'GET /api/hackathon/:run/teams/:team/files': allow(READ),
+  'GET /api/hackathon/:run/teams/:team/presentation': allow(READ),
+  'GET /api/hackathon/:run/teams/:team/media': allow('read of a file in this project (a hackathon team\'s screenshot or output), its type checked by magic bytes, sent with default-src none', 'media'),
+  'POST /api/hackathon/:run/start': deny(HACKATHON),
+  'POST /api/hackathon/:run/stop': deny(HACKATHON),
+  'POST /api/hackathon/:run/resume': deny(HACKATHON),
+  'POST /api/hackathon/:run/pick': deny(HACKATHON),
+  'POST /api/hackathon/:run/pr': deny(HACKATHON),
   'POST /api/learning/enable': allow(PROJECT_WRITE),
   'POST /api/learning/disable': allow(PROJECT_WRITE),
 

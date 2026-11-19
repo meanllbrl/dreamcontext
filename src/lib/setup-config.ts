@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import type { PlatformId } from './platforms.js';
 import { sanitizeModel } from './claude-args.js';
 import { KNOWN_SLEEP_MODEL_VALUES } from './model-facts.js';
+import { withFileLockSync } from './file-lock.js';
 
 const CONFIG_REL_PATH = '_dream_context/state/.config.json';
 
@@ -412,6 +413,13 @@ export interface BrainLocalState {
     approvedAt: string;
     approvedFingerprint: string;
   };
+  /**
+   * Mağaza D1: the plugin pages pinned to THIS Mac's rail (personal UI state, never synced).
+   * Absent = never seeded: `plugins/store.ts` seeds it once with the installed set. `[]` stays
+   * empty. Validated per element on read (a known-shaped id, anything else dropped); an older
+   * CLI that rewrites this file drops the field, which only re-seeds the pins.
+   */
+  pluginPins?: string[];
 }
 
 export interface ClickUpConfig {
@@ -830,6 +838,11 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
         approvedFingerprint: auto.approvedFingerprint,
       };
     }
+    if (Array.isArray(parsed.pluginPins)) {
+      out.pluginPins = parsed.pluginPins.filter(
+        (id, i, all): id is string => typeof id === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(id) && all.indexOf(id) === i,
+      );
+    }
     return out;
   } catch {
     return {};
@@ -843,19 +856,34 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
  * leave it half-written, which `readBrainLocal` would read as `{}`.
  */
 export function writeBrainLocal(projectRoot: string, patch: Partial<BrainLocalState>): BrainLocalState {
-  const existing = readBrainLocal(projectRoot);
-  const next: BrainLocalState = { ...existing, ...patch };
+  return updateBrainLocal(projectRoot, (existing) => ({ ...existing, ...patch }));
+}
+
+/**
+ * Read-modify-write `.brain-local.json` under one short lock in the ignored `state/.locks/`, so
+ * two writers (sync's `lastFetchAt`, Eco mode, the plugin pins) never drop each other's field.
+ * A lock that stays busy fails open (the write still happens): this file was never locked before
+ * and no caller may start blocking on it. `fn` must not call `writeBrainLocal` (not re-entrant).
+ */
+export function updateBrainLocal(
+  projectRoot: string,
+  fn: (existing: BrainLocalState) => BrainLocalState,
+): BrainLocalState {
   const path = brainLocalPath(projectRoot);
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', 'utf-8');
-    renameSync(tmp, path);
-  } catch (err) {
-    rmSync(tmp, { force: true });
-    throw err;
-  }
-  return next;
+  const lock = join(projectRoot, '_dream_context', 'state', '.locks', 'brain-local.lock');
+  return withFileLockSync(lock, () => {
+    const next = fn(readBrainLocal(projectRoot));
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', 'utf-8');
+      renameSync(tmp, path);
+    } catch (err) {
+      rmSync(tmp, { force: true });
+      throw err;
+    }
+    return next;
+  }, { waitMs: 1_000, staleMs: 10_000, failOpen: true });
 }
 
 /**

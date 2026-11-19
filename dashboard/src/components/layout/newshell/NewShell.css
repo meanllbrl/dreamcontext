@@ -348,10 +348,6 @@
   color: var(--color-accent-ink);
 }
 
-.ns-rail-btn[data-off="true"] {
-  opacity: 0.6;
-}
-
 .ns-rail-badge {
   position: absolute;
   top: var(--space-2);

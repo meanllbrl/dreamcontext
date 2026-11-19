@@ -23,6 +23,7 @@
  *
  * Read-only: building a packet writes nothing but the packet itself (see `writeSleepPacket`).
  */
+import { isPluginInstalled } from './plugins/store.js';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -126,9 +127,14 @@ export interface PacketFacts {
   git_authors: number;
   automation_outputs: number;
   app_findings: number;
+  /** Roadmap plugin installed AND objectives exist (Mağaza D1). */
   objectives: boolean;
+  /** Marketing plugin installed AND `marketing/` exists. */
   marketing: boolean;
+  /** Hypotheses plugin installed: sleep-learn may be dispatched. */
   learning: boolean;
+  /** Council plugin installed: `sleep done` counts unpromoted debates. */
+  council: boolean;
   depth: string | null;
 }
 
@@ -569,9 +575,10 @@ export function buildSleepPacket(i: PacketInputs): SleepPacket {
       git_authors: authors.size,
       automation_outputs: i.automationOutputs,
       app_findings: i.appFindings,
-      objectives: hasMarkdown(objectivesDir),
-      marketing: existsSync(join(i.contextRoot, 'marketing')),
+      objectives: isPluginInstalled(i.contextRoot, 'roadmap') && hasMarkdown(objectivesDir),
+      marketing: isPluginInstalled(i.contextRoot, 'marketing') && existsSync(join(i.contextRoot, 'marketing')),
       learning: i.learning,
+      council: isPluginInstalled(i.contextRoot, 'council'),
       depth: i.state.consolidation_depth ?? null,
     },
     ...(ownerWords ? { owner_words: ownerWords } : {}),
@@ -601,7 +608,8 @@ export function factSwitches(f: PacketFacts): string[] {
   else out.push(`${f.automation_outputs} automation output(s) pending: sleep-product runs B7.`);
   if (f.app_findings === 0) out.push('No app findings: sleep-product skips B8.');
   else out.push(`App findings waiting (${f.app_findings}): sleep-product runs B8.`);
-  out.push(f.objectives ? 'Objectives exist: sleep-tasks runs grooming (d).' : 'No objectives: sleep-tasks skips grooming (d).');
+  out.push(f.objectives ? 'Objectives exist: sleep-tasks runs grooming (d).' : 'No objectives (or the Roadmap plugin is not installed): sleep-tasks skips grooming (d).');
+  out.push(f.learning ? 'Hypotheses installed: dispatch sleep-learn when its theses are due.' : 'Hypotheses not installed: do not dispatch sleep-learn.');
   return out;
 }
 

@@ -57,6 +57,20 @@ export const SORT_LABEL: Record<SortKey, string> = {
   rice: 'RICE score', updated: 'Last updated', created: 'Created', name: 'Name',
 };
 
+/**
+ * RICE belongs to the Roadmap plugin. While it is not installed the board neither offers RICE
+ * nor applies a stored Min RICE filter or RICE sort; the stored values stay and return on install.
+ */
+export function sortKeysFor(roadmapShown: boolean): SortKey[] {
+  return (Object.keys(SORT_LABEL) as SortKey[]).filter((k) => roadmapShown || k !== 'rice');
+}
+export function effectiveFilters(f: BoardFilters, roadmapShown: boolean): BoardFilters {
+  return roadmapShown || !f.minRice ? f : { ...f, minRice: 0 };
+}
+export function effectiveSort(by: SortKey, roadmapShown: boolean): SortKey {
+  return !roadmapShown && by === 'rice' ? 'manual' : by;
+}
+
 // ─── Config shapes ───────────────────────────────────────────────────────────────
 
 export interface FieldFilter { inc: string[]; exc: string[]; }

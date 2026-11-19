@@ -238,6 +238,8 @@ export const GAP_SURFACE: Readonly<Record<string, GapSurface>> = {
   'headless:builder': 'settings-only',
   'headless:peer': 'settings-only',
   'headless:ask-write': 'settings-only',
+  // The designer already refuses an Antigravity team; Settings lists the gap.
+  'headless:hackathon-team': 'settings-only',
 };
 
 /** The gaps of the picked agents that a surface shows: a gap only when NO picked agent runs it. */

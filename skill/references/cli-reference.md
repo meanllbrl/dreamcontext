@@ -384,9 +384,26 @@ Refusals exit non-zero with the reason: an invalid slug, ref (including a page p
 
 ---
 
+## Plugins (Mağaza)
+
+Roadmap (`roadmap`, objectives and RICE), Hypotheses (`hypotheses`, theses), Lab (`lab`), Council (`council`), Hackathon (`hackathon`) and Marketing (`marketing`/`mk`) are **plugins**. Everything else is core and always on (Whiteboards included).
+
+```bash
+dreamcontext plugins list [--json]     # installed or not, and why (chosen by <who> <when> | has data | no data)
+dreamcontext plugins install <id>      # team data: writes overrides/plugins/<id>.json, travels with the brain
+dreamcontext plugins remove <id>       # hides: page, snapshot section, sleep step, writes. Data is never deleted
+```
+
+- **Installed** = an owner entry says so; with no entry, a plugin is installed iff its data exists (objectives, `learning.enabled`, insights or boards, debates, `marketing/`). An existing project keeps what it uses; a new one has only core. `init` and `update` write nothing under `overrides/plugins/`.
+- **Not installed:** every read runs (`lab show`, `roadmap objective list`, `theses list`, `council show`, `--help`); every write, sync or job start under its command exits **3** with `plugin_not_installed: <id> — … Ask the owner; on yes run: dreamcontext plugins install <id>`. The API answers 409 `plugin_not_installed`. `tasks objectives`/`tasks rice` and task flags stay writable (task data).
+- **Team:** one file per plugin, so two people installing different plugins never conflict. The same plugin chosen on two machines before a sync is a git conflict in that file: every reader takes the later `at` (a tie → installed; each machine's clock is trusted), installs/removes of it are refused naming the file until it is edited to one side and committed; `doctor` and `plugins list` name it.
+- **Pins** (the rail): this Mac only, `pluginPins` in the ignored `state/.brain-local.json`, seeded once with the installed set. An install from this Mac pins; a teammate's install shows in Launchpad and Mağaza, not on your rail. An older CLI rewriting that file drops the field, which only re-seeds pins.
+- `theses enable|disable` and `/api/learning/enable|disable` are Hypotheses' install/remove (they also write `learning.enabled` as a mirror for older CLIs).
+- An automation that runs a removed plugin's write fails with the exit-3 line; `plugins remove` (and the dashboard confirm) list such automations.
+
 ## Theses (Hypotheses)
 
-Opt-in proactive learning layer (`learning.enabled`, default OFF). Falsifiable claims validated/invalidated across sleep cycles in `_dream_context/theses/`; dashboard label is "Hypotheses", code/CLI say theses throughout. Commands stay callable when the layer is off (a dim hint prints first). See [learning.md](learning.md) for the full lifecycle, derived-confidence formula, and sleep-learn contract.
+The Hypotheses plugin (`dreamcontext plugins install hypotheses`, or `theses enable`). Falsifiable claims validated/invalidated across sleep cycles in `_dream_context/theses/`; dashboard label is "Hypotheses", code/CLI say theses throughout. Not installed, the reads (`list`, `show`, `candidates`) still run and every write exits 3 `plugin_not_installed`. See [learning.md](learning.md) for the full lifecycle, derived-confidence formula, and sleep-learn contract.
 
 | Command | Description |
 |---|---|
@@ -748,6 +765,19 @@ Persona helpers: `round-context` (now includes verdict landscape + injected fact
 The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-changing commands; the app's live chamber panel renders from it, in BOTH agent renderers — above the composer in Terminal view, on the live rail in Chat view (the panel is scoped to the conversation that started the debate, so it only appears in the orchestrator's own pane). No browser viewer.
 
 ---
+
+## Hackathon (see [hackathon.md](hackathon.md))
+
+```bash
+dreamcontext hackathon design --problem "<text>" [--kind screen|experiment|plan] [--target <repo>] [--json]   # stats-backed draft, no model call
+dreamcontext hackathon start --design <file>     # creates the run (awaiting-owner), prints the {"type":"hackathon","run":…} card
+dreamcontext hackathon status [run] | list [--json] | show <run> [--json]
+dreamcontext hackathon stop <run> [--why "<reason>"]   # open to anyone
+dreamcontext hackathon stats [--kind <kind>] [--json]  # derived from every result.json
+dreamcontext hackathon outcome <run> --pr merged|closed|none
+```
+
+Start, resume, pick and the winner's PR are owner-only page actions (`/api/hackathon/:run/start|resume|pick|pr` refuse an agent's window token and require the owner key). Read-only routes: `GET /api/hackathon`, `/api/hackathon/:run` and its `/design`, `/frames`, `/rounds`, `/result`, `/pr-check`, `/teams/:team/files|presentation|media`; `POST …/stop` is open.
 
 ## Notifications
 

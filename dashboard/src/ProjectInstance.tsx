@@ -19,9 +19,14 @@ import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
 import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
 import { CouncilPage } from './pages/CouncilPage';
+import { HackathonPage } from './pages/HackathonPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
 import { AppsPage } from './pages/AppsPage';
+import { PluginStorePage } from './pages/PluginStorePage';
+import { PluginNotice } from './components/plugins/PluginNotice';
+import { usePlugins } from './hooks/usePlugins';
+import { pluginForPage } from './lib/plugins';
 import { InstallFollower } from './components/apps/InstallFollower';
 import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
 import type { Page } from './components/layout/Sidebar';
@@ -90,7 +95,7 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     'dreamcontext-agent-open-page',
     (detail) => {
       const page = detail?.page;
-      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings' && page !== 'apps') return;
+      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings' && page !== 'apps' && page !== 'store') return;
       // A device shell has no Settings (Shell.navigate refuses it too): the agent cannot open them.
       if (page === 'settings' && readDeviceShell()) return;
       nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'chat');
@@ -479,6 +484,17 @@ const PageRouter = memo(function PageRouter({
   // when it's the same page or the same id. Without this, pages render their
   // default state and the navigated-to doc never opens.
   const focus = { id: nav.focusId, nonce: nav.nonce };
+  const go = (page: Page, id?: string | null) => nav.navigate(page, id ?? null);
+
+  // Mağaza D1 Decision 10, at one layer: every route to a plugin page (stored page, `?page=`,
+  // `/lab/<slug>`, a chat link, a recall hit, the palette) ends here, and a plugin known to be not
+  // installed shows its Mağaza page in place. No navigate(), no write of the remembered page: an
+  // install shows the original page again. Unknown (no set yet) renders the page as before.
+  const { pluginState } = usePlugins();
+  const owner = pluginForPage(nav.page);
+  if (owner && pluginState(owner.id) === 'not-installed') {
+    return <PluginStorePage key={`in-place:${owner.id}`} inPlaceOf={owner.id} onNavigate={go} />;
+  }
 
   switch (nav.page) {
     case 'brain':
@@ -514,12 +530,16 @@ const PageRouter = memo(function PageRouter({
       return <KnowledgePage focus={focus} />;
     case 'council':
       return <CouncilPage />;
+    case 'hackathon':
+      return <HackathonPage focus={focus} />;
     case 'settings':
       return <SettingsPage focus={focus} />;
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
     case 'apps':
-      return <AppsPage focus={focus} />;
+      return <AppsPage focus={focus} onNavigate={go} />;
+    case 'store':
+      return <PluginStorePage focus={focus} onNavigate={go} />;
     case 'relations':
       // New shell only: `Shell` never lands a classic window here.
       return <RelationsPage />;
@@ -683,6 +703,7 @@ export function ProjectInstance({
                       />
                     )}
                     <AgentPageNavBridge nav={nav} />
+                    <PluginNotice nav={nav} />
                     <OpenAgentsBridge onManage={openManage} />
                     <OpenStatsBridge nav={nav} />
                     <NavFocusAgentsBridge nav={nav} onAgentsFocus={focusAgents} />

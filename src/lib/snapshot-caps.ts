@@ -305,6 +305,9 @@ export type DemotableSectionId =
  * of other people is a different thing entirely and is demotable (rank 110): who
  * else exists is inventory, not constitution.
  *
+ * `plugins` is one short line (Mağaza D1): which plugins are installed and which the agent may
+ * offer. Without it the agent cannot tell "not installed" from "absent", so it never asks.
+ *
  * `peer-mail` is here for a reason none of the others share: it is the only
  * section someone is WAITING on. A peer addressed this project and is holding an
  * open thread; if the message is demoted away the agent never learns it exists
@@ -322,6 +325,7 @@ export type NeverEvictSectionId =
   | 'product-and-nudge'
   | 'awareness'
   | 'marketing'
+  | 'plugins'
   | 'peer-mail'
   | 'federation';
 

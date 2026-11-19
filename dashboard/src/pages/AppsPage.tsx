@@ -19,6 +19,8 @@ import { updateCheckDue } from '../components/apps/updateCheck';
 import { revealPath } from '../lib/reveal';
 import { isGitHubReconnectError } from '../hooks/useBrainStatus';
 import { GitHubReconnect } from '../components/brain/GitHubReconnect';
+import { LaunchpadPlugins } from '../components/plugins/LaunchpadPlugins';
+import type { Page } from '../components/layout/Sidebar';
 import './AppsPage.css';
 
 /**
@@ -36,7 +38,7 @@ type AppOther =
 type Tab = 'mine' | 'shared';
 
 
-export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
+export function AppsPage({ focus, onNavigate }: { focus?: FocusTarget; onNavigate?: (page: Page, id?: string | null) => void } = {}) {
   const api = useApi();
   const { vault, bus } = useVault();
   const { t } = useI18n();
@@ -74,6 +76,8 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   const [note, setNote] = useState<{ kind: 'notShared' | 'invited' | 'signIn' | 'macOnly' | 'installed' | 'failed' | 'installFailed'; repo: string; why?: string; retry?: string } | null>(null);
   const asked = useRef('');
   useFocusTarget(focus, (id) => {
+    // Mağaza's "Seninle paylaşılanlar ›" lands on the Shared Apps tab.
+    if (id === 'tab:shared') { setTab('shared'); return; }
     const repo = id.startsWith('install:') ? id.slice('install:'.length) : '';
     if (!APP_REPO_RE.test(repo)) return;
     asked.current = repo;
@@ -184,6 +188,8 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
           <p className="apps-page__lede">{t('apps.lede')}</p>
         </header>
       )}
+      {/* Launchpad (Mağaza D1): the installed plugins first, then the apps as before. */}
+      {onNavigate && <LaunchpadPlugins onNavigate={onNavigate} />}
       {canLaunch && (
         <div className="apps-tabs">
           <div className="agents-switch" role="tablist" aria-label={t('nav.apps')}>
@@ -261,6 +267,9 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
           onOpen={(slug) => openPage(slug)}
           onAccepted={() => { void refreshShared(); refresh(); }}
         />
+      )}
+      {onNavigate && (
+        <button type="button" className="plg-launch__more" onClick={() => onNavigate('store')} data-testid="launchpad-store-more">{t('plugin.launch.more')}</button>
       )}
       {pageApp && <AppPage key={pageApp.slug} app={pageApp} vault={vault ?? ''} canLaunch={canLaunch} initialSheet={pageSheet} onClose={() => { setPageSlug(null); setPageSheet(null); }} onChanged={refresh} />}
       {canLaunch && installRef !== null && (

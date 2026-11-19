@@ -91,6 +91,17 @@ function CouncilIcon() {
   );
 }
 
+/** Hackathon — a trophy: several teams, one problem, a winner. */
+function HackathonIcon() {
+  return (
+    <Svg>
+      <path d="M8 4h8v5a4 4 0 0 1-8 0z" />
+      <path d="M8 6H5.5a2.5 2.5 0 0 0 2.6 3.6M16 6h2.5a2.5 2.5 0 0 1-2.6 3.6" />
+      <path d="M12 13v4M8.5 20h7M10 17h4" />
+    </Svg>
+  );
+}
+
 /** Core — the brand gem: identity, soul, the project's faceted center. */
 function CoreIcon() {
   return (
@@ -201,6 +212,16 @@ function AppsIcon() {
   );
 }
 
+/** Mağaza — a shopping bag: where plugins are installed from (D1). */
+function StoreIcon() {
+  return (
+    <Svg>
+      <path d="M5.5 8h13l-1 12h-11z" />
+      <path d="M9 10V7a3 3 0 0 1 6 0v3" />
+    </Svg>
+  );
+}
+
 /** Chat — a speech bubble with a line of text in it: you, talking to the agent now.
  *  Not in {@link ICONS}: Chat is a launcher row, not a `Page`. */
 export function ChatIcon() {
@@ -246,7 +267,9 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   lab: LabIcon,
   whiteboards: WhiteboardsIcon,
   apps: AppsIcon,
+  store: StoreIcon,
   council: CouncilIcon,
+  hackathon: HackathonIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,
   brain: BrainIcon,

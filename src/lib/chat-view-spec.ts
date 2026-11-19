@@ -33,13 +33,13 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation', 'learned', 'app-request'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation', 'learned', 'app-request', 'hackathon'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec | McpViewSpec
   | PinViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec
-  | AutomationViewSpec | LearnedViewSpec | AppRequestViewSpec;
+  | AutomationViewSpec | LearnedViewSpec | AppRequestViewSpec | HackathonViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -306,6 +306,17 @@ export interface LearnedViewSpec {
 export interface AppRequestViewSpec {
   type: 'app-request';
   id: string;
+}
+
+/**
+ * `type: "hackathon"` — the owner's start card for a hackathon run (`hackathon start` prints the
+ * block). DERIVED, like `automation`: the block names the run id and nothing else; the card reads
+ * every team's tool, model, reach and the data tools from `GET /api/hackathon/:run/design` and
+ * Başlat is bound to the design hash it drew (plan C6).
+ */
+export interface HackathonViewSpec {
+  type: 'hackathon';
+  run: string;
 }
 
 export const MAX_VIEW_BYTES = 64 * 1024;
@@ -943,6 +954,27 @@ function validateAppRequest(obj: Record<string, unknown>, notices: string[]): { 
 }
 
 // ---------------------------------------------------------------------------------------
+// type: "hackathon"
+// ---------------------------------------------------------------------------------------
+
+/** MIRROR of `RUN_ID_RE` (`src/lib/hackathon/run-store.ts`). */
+const HACKATHON_RUN_RE = /^\d{8}-[a-z0-9-]{1,40}$/;
+/** Keys that would mean the agent is DESCRIBING the run instead of naming it. */
+const ASSERTED_HACKATHON_KEYS = ['teams', 'title', 'problem', 'rounds', 'limit', 'design', 'designHash'] as const;
+
+function validateHackathon(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const run = typeof obj.run === 'string' ? obj.run.trim() : '';
+  if (!HACKATHON_RUN_RE.test(run)) {
+    notices.push('A hackathon block was skipped — its "run" is missing or is not a run id (`hackathon start` prints it).');
+    return { view: null, notices };
+  }
+  if (ASSERTED_HACKATHON_KEYS.some((k) => obj[k] !== undefined)) {
+    notices.push('A hackathon block described the run itself — that was ignored. The card reads the design from the run.');
+  }
+  return { view: { type: 'hackathon', run }, notices };
+}
+
+// ---------------------------------------------------------------------------------------
 // type: "learned"
 // ---------------------------------------------------------------------------------------
 
@@ -1073,6 +1105,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'automation': return validateAutomation(parsed, notices);
       case 'learned': return validateLearned(parsed, notices);
       case 'app-request': return validateAppRequest(parsed, notices);
+      case 'hackathon': return validateHackathon(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

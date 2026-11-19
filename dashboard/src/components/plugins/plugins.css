@@ -1,0 +1,129 @@
+/* Plugin pieces shared by Mağaza and Launchpad (D1). Tokens only. */
+.plg-ic { display: inline-grid; place-items: center; flex: none; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+
+.plg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 34px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+.plg-btn:hover:not(:disabled) { border-color: var(--color-border-hover); }
+.plg-btn:disabled { opacity: 0.5; cursor: default; }
+.plg-btn--primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-text-on-brand); }
+.plg-btn--primary:hover:not(:disabled) { background: var(--color-accent-strong); border-color: var(--color-accent-strong); }
+.plg-btn--danger { background: var(--color-error); border-color: var(--color-error); color: #fff; }
+.plg-btn--icon { width: 34px; padding: 0; border-color: transparent; background: transparent; color: var(--color-text-secondary); font-size: var(--font-size-lg); }
+.plg-btn--icon:hover:not(:disabled) { background: var(--color-bg-secondary); }
+
+.plg-muted { color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.plg-error { color: var(--color-error-ink); background: var(--color-error-subtle); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); font-size: var(--font-size-xs); margin: var(--space-2) 0; }
+
+.plg-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+}
+.plg-menu__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.plg-menu__row:hover:not(:disabled), .plg-menu__row:focus-visible { background: var(--color-bg-secondary); outline: none; }
+.plg-menu__row:disabled { opacity: 0.5; cursor: default; }
+.plg-menu__row--danger { color: var(--color-error); }
+.plg-menu__lead { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+.plg-confirm { --cmd-modal-width: 440px; --cmd-modal-height: auto; }
+.plg-confirm__body { padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-3); }
+.plg-confirm__title { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); }
+.plg-confirm__text { margin: 0; font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.5; }
+.plg-confirm__autos { margin: 0; padding-left: var(--space-5); font-size: var(--font-size-sm); }
+.plg-confirm__acts { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+.plg-notice {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-6);
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: calc(100vw - 2 * var(--space-4));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.16);
+}
+.plg-notice__open { border: 0; background: none; padding: 0; color: var(--color-accent-ink); font: inherit; font-weight: var(--font-weight-semibold); cursor: pointer; white-space: nowrap; }
+.plg-notice__x { border: 0; background: none; color: var(--color-text-tertiary); font-size: var(--font-size-lg); line-height: 1; cursor: pointer; padding: 0 var(--space-1); }
+
+/* Launchpad's plugin grid */
+.plg-launch { margin-bottom: var(--space-8); }
+.plg-launch__h { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); margin: 0 0 var(--space-3); }
+.plg-launch__grid { display: grid; grid-template-columns: repeat(auto-fill, 104px); gap: var(--space-4) var(--space-3); }
+.plg-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.plg-tile:hover .plg-ic, .plg-tile:focus-visible .plg-ic { transform: translateY(-1px); box-shadow: 0 6px 16px rgb(0 0 0 / 0.14); }
+.plg-tile:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.plg-tile__name { text-align: center; line-height: 1.25; }
+.plg-tile__pin {
+  position: absolute;
+  top: 2px;
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  color: var(--color-accent-ink);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+.plg-tile__warn { font-size: var(--font-size-2xs); color: var(--color-error-ink); text-align: center; }
+.plg-launch__more { display: inline-block; margin-top: var(--space-2); border: 0; background: none; padding: 0; color: var(--color-accent-ink); font: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); cursor: pointer; }
+.plg-ctx { position: fixed; z-index: 70; right: auto; }

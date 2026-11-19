@@ -1,10 +1,10 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, success, error } from '../../lib/format.js';
-import { readSetupConfig, updateSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
+import { installPlugin, isPluginInstalled, removePlugin } from '../../lib/plugins/store.js';
 import { today } from '../../lib/id.js';
 import {
   createThesis,
@@ -38,15 +38,10 @@ import {
  * `dreamcontext theses` — the proactive learning layer CLI. Mirrors `lab`: a
  * thin renderer over the same store the dashboard's `/api/theses*` routes
  * call, so behaviour never drifts between CLI and UI. Gated end-to-end by the
- * `learning.enabled` config switch (default OFF) — commands stay callable
- * when disabled (a dim hint is printed), but sleep dispatch/snapshot/dashboard
- * nav all gate hard on the flag elsewhere.
+ * hypotheses plugin (Mağaza D1): when it is not installed, reads still run and every write
+ * is refused by the root hook (exit 3 `plugin_not_installed`); `theses enable|disable` are
+ * its switch and install/remove it.
  */
-
-/** Resolve the project root that holds `_dream_context/` (config file location). */
-function projectRootFor(contextRoot: string): string {
-  return dirname(contextRoot);
-}
 
 function handleThesesError(err: unknown): void {
   if (err instanceof ThesisError) {
@@ -60,9 +55,8 @@ function handleThesesError(err: unknown): void {
 
 /** Prints a one-line dim hint when the layer is off; the command still proceeds. */
 function learningHint(contextRoot: string): void {
-  const cfg = readSetupConfig(projectRootFor(contextRoot));
-  if (!isLearningEnabled(cfg)) {
-    console.log(chalk.dim('⚗ Learning layer is off — run `dreamcontext theses enable` to turn it on.'));
+  if (!isPluginInstalled(contextRoot, 'hypotheses')) {
+    console.log(chalk.dim('⚗ The Hypotheses plugin is not installed — run `dreamcontext plugins install hypotheses` (or `theses enable`).'));
   }
 }
 
@@ -557,22 +551,30 @@ export function registerThesesCommand(program: Command): void {
 
   theses
     .command('enable')
-    .description('Turn the proactive learning layer on (learning.enabled = true)')
+    .description('Install the Hypotheses plugin (same as `plugins install hypotheses`)')
     .action(() => {
       const root = ensureContextRoot();
-      const projectRoot = projectRootFor(root);
-      updateSetupConfig(projectRoot, { learning: { enabled: true } });
-      success('Learning layer enabled — theses CLI/snapshot/sleep-learn/dashboard board are now active.');
+      try {
+        const r = installPlugin(root, 'hypotheses');
+        if (r.mirrorError) error(`learning.enabled mirror not written: ${r.mirrorError}`);
+        success('Hypotheses installed — theses CLI/snapshot/sleep-learn/dashboard page are now active.');
+      } catch (err) {
+        handleThesesError(err);
+      }
     });
 
   theses
     .command('disable')
-    .description('Turn the proactive learning layer off (learning.enabled = false)')
+    .description('Remove the Hypotheses plugin (same as `plugins remove hypotheses`; theses stay)')
     .action(() => {
       const root = ensureContextRoot();
-      const projectRoot = projectRootFor(root);
-      updateSetupConfig(projectRoot, { learning: { enabled: false } });
-      success('Learning layer disabled — no sleep dispatch, CLI/snapshot noise, or dashboard page.');
+      try {
+        const r = removePlugin(root, 'hypotheses');
+        if (r.mirrorError) error(`learning.enabled mirror not written: ${r.mirrorError}`);
+        success('Hypotheses removed — no sleep dispatch, snapshot section or dashboard page; your theses stay.');
+      } catch (err) {
+        handleThesesError(err);
+      }
     });
 
   theses

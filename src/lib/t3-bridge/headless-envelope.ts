@@ -21,7 +21,8 @@
  */
 export type HeadlessSurface =
   | 'automation' | 'agent' | 'light' | 'verdict' | 'sleep' | 'super-child'
-  | 'board-agent' | 'task-step' | 'approval-question' | 'builder' | 'peer' | 'ask' | 'ask-write' | 'board-quick';
+  | 'board-agent' | 'task-step' | 'approval-question' | 'builder' | 'peer' | 'ask' | 'ask-write' | 'board-quick'
+  | 'hackathon-team';
 
 export interface HeadlessEnvelope {
   /** The rule this surface has on Claude. */
@@ -53,6 +54,7 @@ export const HEADLESS_ENVELOPES: Readonly<Record<HeadlessSurface, HeadlessEnvelo
   peer: { claude: 'auto, in the other project', codex: 'auto', antigravity: null, brain: true, antigravityWhy: 'Not built yet: Antigravity has no classifier-gated mode like Claude\'s auto, and its write bridge would let a peer\'s message run any command in another project.' },
   ask: { claude: 'read-only tools', codex: 'default', antigravity: 'read', brain: false, strict: true },
   'board-quick': { claude: 'dontAsk: read the brain\'s pages (not its secrets or private folders) and run `dreamcontext memory recall` on this vault only; no settings, no MCP, one JSON answer the server applies', codex: 'default', antigravity: 'read', brain: false, strict: true, why: 'Codex and Antigravity run it in their headless read-only mode, started in an empty temp folder; they get the same recalled memory in the message but do not search the brain, since neither can deny a read by path (the brain holds machine-local secrets) and a Codex run inside a project runs its hooks. The server applies the one JSON answer exactly as for Claude (owner, 2026-11-12: no sandbox beyond that).' },
+  'hackathon-team': { claude: 'acceptEdits in its own clone, OS sandbox with no network, --setting-sources \'\', strict MCP, --tools allowlist, read denies from the secrets inventory (src/lib/hackathon/team-session.ts)', codex: 'auto', antigravity: null, brain: false, strict: true, antigravityWhy: 'Antigravity has no OS sandbox: a team\'s writes and network could not be bounded.' },
   'ask-write': { claude: 'acceptEdits in the project', codex: 'auto', antigravity: null, brain: true, strict: true, antigravityWhy: 'Not built yet: Antigravity has no edits-only mode, and its write bridge would run any command, wider than Claude\'s acceptEdits.' },
 };
 

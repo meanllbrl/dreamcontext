@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { installPlugin } from '../../src/lib/plugins/store.js';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -75,6 +76,8 @@ beforeEach(() => {
   projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dc-lab-data-cli-')));
   root = join(projectRoot, '_dream_context');
   mkdirSync(join(root, 'core'), { recursive: true });
+  // Lab is a plugin (Mağaza D1): a new project must install it before \`lab create\`.
+  installPlugin(root, 'lab', 'test');
   process.chdir(projectRoot);
 });
 

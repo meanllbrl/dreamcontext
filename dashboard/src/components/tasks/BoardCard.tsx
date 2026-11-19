@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { usePlugins } from '../../hooks/usePlugins';
 import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { useStatusModel } from '../../hooks/useTasks';
 import { useVault } from '../../context/VaultContext';
@@ -96,6 +97,8 @@ export function BoardCard({
   const { vault } = useVault();
   const di = dueInfo(task, sm);
   const rice = taskRice(task);
+  // RICE belongs to the Roadmap plugin (Mağaza D1): hidden only when known to be not installed.
+  const roadmapShown = usePlugins().pluginState('roadmap') !== 'not-installed';
   const assignees = taskAssignees(task);
   const name = taskName(task);
   const agent = taskAgent(task);
@@ -110,7 +113,7 @@ export function BoardCard({
   const att = task.attachments;
 
   const showDue = cp.due && !!di;
-  const showRice = cp.rice && rice != null;
+  const showRice = cp.rice && rice != null && roadmapShown;
   const showVersion = cp.version && showVersionChip && !!task.version;
   const showAssignee = cp.assignee && assignees.length > 0;
   const showSubs = cp.subtasks && subtasks.length > 0;

@@ -41,8 +41,9 @@ describe('page headers', () => {
     }
   });
 
-  it('a page state with no toolbar row (off, empty) still carries the one title bar', () => {
-    expect(read('pages/HypothesesPage.tsx')).toMatch(/return newShell \? <div className="ns-empty-page"><PageBar title=\{t\('nav\.hypotheses'\)\} \/>\{off\}<\/div> : off;/);
+  it('a page state with no toolbar row (empty) still carries the one title bar', () => {
+    // Hypotheses has no off state any more: not installed shows its Mağaza page (Mağaza D1).
+    expect(read('pages/HypothesesPage.tsx')).not.toMatch(/hyp-off/);
     expect(read('components/lab/board/BoardPage.tsx')).toMatch(/board-page--empty">\s*\{newShell && <PageBar title=\{t\('nav\.labpage'\)\} \/>\}/);
     expect(read('components/council/CouncilHall.tsx')).toMatch(/if \(newShell\) return <><PageBar flush title=\{t\('nav\.council'\)\} \/><CouncilEmptyState/);
   });

@@ -7,6 +7,7 @@
  * insight's language while the rest of the dashboard stays English.
  * Synthetic names only.
  */
+import { installPlugin } from '../../src/lib/plugins/store.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -67,6 +68,8 @@ beforeEach(() => {
   projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dc-lab-explorer-locale-')));
   root = join(projectRoot, '_dream_context');
   mkdirSync(join(root, 'core'), { recursive: true });
+  // Lab is a plugin (Mağaza D1): a new project must install it before \`lab create\`.
+  installPlugin(root, 'lab', 'test');
   process.chdir(projectRoot);
 });
 
