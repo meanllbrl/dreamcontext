@@ -31,11 +31,19 @@ export const ROOM_LINES = {
   /** The toast a press by anyone but the owner gets (G3, ≤ 200 chars). */
   notYourButton: (owner: string) => `Bu düğmeye yalnız ${owner} basabilir.`,
   bound: (bot: string) => `Bu grup bağlandı. Bir şey sormak için ${bot} diye etiketleyin.`,
+  /** Bound, but Telegram's privacy mode keeps every @mention from the bot until it is an admin:
+   *  only a reply to one of its messages (or a command) reaches it. Said, never left silent. */
+  boundDeaf: 'Bu grup bağlandı, ama etiketleri henüz göremiyorum: Telegram onları bana ancak grup yöneticisiyken iletiyor. Beni yönetici yapın; o zamana kadar bir mesajıma yanıt vererek yazın.',
+  /** The bot became an admin of a bound group: mentions reach it now. */
+  nowHearing: (bot: string) => `Artık etiketleri görüyorum. Bir şey sormak için ${bot} diye etiketleyin.`,
+  /** The bot lost its admin role in a bound group: mentions stop reaching it again. */
+  deafAgain: 'Artık yönetici değilim: etiketleri göremiyorum. Bir mesajıma yanıt vererek yazın ya da beni yeniden yönetici yapın.',
   dropped: 'Bu grubun bağlantısı kaldırıldı; bekleyen istek iptal oldu.',
   // To the owner, in his private chat:
   bindAsked: (title: string) => `«${title}» grubunu bağlamak için Mac'te Ayarlar › Telegram'da «Bağla»ya bas.`,
   alreadyBound: (title: string) => `«${title}» zaten bağlı.`,
   groupBound: (title: string) => `«${title}» grubu bağlandı. Grupta beni etiketleyen herkes hafızadaki sayfaları sorabilir; değiştiren her iş önce sana özelden gelir.`,
+  groupDeaf: (title: string) => `«${title}» grubunda etiketleri göremiyorum (Telegram'ın gizlilik modu). Görebilmem için beni o grupta yönetici yap; o zamana kadar yalnız mesajlarıma verilen yanıtlar bana gelir.`,
   groupLeft: (title: string) => `«${title}» grubunun bağlantısı kaldırıldı.`,
   joined: (title: string, who: string) => `«${title}» grubuna ${who} katıldı.`,
   cardHead: (author: string, title: string) => `${author} · ${title} grupta istedi`,

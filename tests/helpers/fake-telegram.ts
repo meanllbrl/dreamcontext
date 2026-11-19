@@ -28,6 +28,10 @@ export class FakeTelegram {
   slowSends = new Map<string, number>();
   /** sendMessage texts in the order they ANSWERED (what the phone shows), not the order sent. */
   delivered: string[] = [];
+  /** Tokens whose bot reads every group message (privacy mode off). Default: privacy mode on. */
+  readsAll = new Set<string>();
+  /** The bot's status per group chat id for getChatMember (default 'member'). */
+  memberStatus = new Map<number, string>();
 
   addBot(token: string, username: string): void {
     this.bots.set(token, { id: Number(token.split(':')[0]), username });
@@ -72,7 +76,8 @@ export class FakeTelegram {
     const once = this.failOnce.get(method);
     if (once) { this.failOnce.delete(method); return res(once, { ok: false, error_code: once, description: 'failed once' }); }
     switch (method) {
-      case 'getMe': return ok({ id: bot.id, is_bot: true, username: bot.username, first_name: bot.username });
+      case 'getMe': return ok({ id: bot.id, is_bot: true, username: bot.username, first_name: bot.username, can_read_all_group_messages: this.readsAll.has(token) });
+      case 'getChatMember': return ok({ status: this.memberStatus.get(Number(params.chat_id)) ?? 'member', user: { id: Number(params.user_id) } });
       case 'getWebhookInfo': return ok({ url: this.webhook });
       case 'getUpdates': {
         const offset = Number(params.offset ?? 0);

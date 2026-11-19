@@ -66,7 +66,8 @@ function groupMsg(fromId: number, text: string, o: { at?: boolean; chatId?: numb
   };
 }
 const groupsOf = () => { const r = readBinding(scopeOfContextRoot(root), 'super', home); return r.ok ? r.binding.groups : null; };
-const groupSends = () => tg.calls.filter((c) => Number(c.params.chat_id) === GROUP);
+/** What went TO the group: reads about it (`getChatMember`, privacy-mode probe) are not sends. */
+const groupSends = () => tg.calls.filter((c) => Number(c.params.chat_id) === GROUP && c.method !== 'getChatMember');
 const groupTexts = () => groupSends().filter((c) => c.method === 'sendMessage').map((c) => String(c.params.text));
 const privateTexts = () => tg.calls.filter((c) => c.method === 'sendMessage' && Number(c.params.chat_id) === OWNER).map((c) => String(c.params.text));
 
@@ -158,6 +159,34 @@ describe('binding a group (D3, criterion 8)', () => {
     expect(groupsOf()).toEqual([expect.objectContaining({ chatId: GROUP, title: 'Ürün ekibi' })]);
     expect(hub.status()[0].groups).toEqual([expect.objectContaining({ chatId: GROUP, title: 'Ürün ekibi' })]);
     await vi.waitFor(() => expect(groupTexts().some((t) => t.includes('Bu grup bağlandı'))).toBe(true));
+  });
+
+  it('a bot in privacy mode that is not an admin says on bind that it cannot see mentions, and tells the owner privately (owner 2026-11-19)', async () => {
+    await bindGroup();
+    await vi.waitFor(() => expect(groupTexts().some((t) => t.includes('etiketleri henüz göremiyorum'))).toBe(true));
+    expect(groupTexts().some((t) => t.includes('diye etiketleyin'))).toBe(false);
+    await vi.waitFor(() => expect(privateTexts().some((t) => t.includes('yönetici yap'))).toBe(true));
+  });
+
+  it('an admin bot, or one with privacy mode off, gets the plain bind line', async () => {
+    tg.memberStatus.set(GROUP, 'administrator');
+    await bindGroup();
+    await vi.waitFor(() => expect(groupTexts().some((t) => t.includes('diye etiketleyin'))).toBe(true));
+    expect(groupTexts().some((t) => t.includes('göremiyorum'))).toBe(false);
+    tg.memberStatus.delete(GROUP);
+    tg.readsAll.add(TOKEN);
+    await bindGroup(-1009999);
+    await vi.waitFor(() => expect(tg.calls.some((c) => Number(c.params.chat_id) === -1009999 && String(c.params.text).includes('diye etiketleyin'))).toBe(true));
+  });
+
+  it('made admin in a bound group, the group hears that mentions work now; demoted, that they stop', async () => {
+    await bindGroup();
+    const mcm = (from: string, to: string) => ({ my_chat_member: { chat: { id: GROUP, type: 'supergroup' }, from: { id: OWNER }, old_chat_member: { status: from, user: { id: 123456 } }, new_chat_member: { status: to, user: { id: 123456 } } } });
+    tg.push(TOKEN, mcm('member', 'administrator'));
+    await vi.waitFor(() => expect(groupTexts().some((t) => t.includes('Artık etiketleri görüyorum'))).toBe(true));
+    tg.push(TOKEN, mcm('administrator', 'member'));
+    await vi.waitFor(() => expect(groupTexts().some((t) => t.includes('Artık yönetici değilim'))).toBe(true));
+    expect(groupsOf()).toEqual([expect.objectContaining({ chatId: GROUP })]);
   });
 
   it('a kick removes the group and its room; "Gruptan çıkar" makes the bot leave; a supergroup move keeps it', async () => {

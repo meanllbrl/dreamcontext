@@ -923,7 +923,18 @@ export class TelegramHub implements TelegramHubApi {
       const chatId = Number(obj(mcm.chat)?.id);
       const member = obj(mcm.new_chat_member);
       const left = member && Number(obj(member.user)?.id) === ab.binding.botId && (member.status === 'left' || member.status === 'kicked');
-      if (left && this.boundGroup(ab, chatId)) await this.removeGroup(ab, chatId, 'left');
+      if (left && this.boundGroup(ab, chatId)) { await this.removeGroup(ab, chatId, 'left'); return; }
+      // Made admin, or no longer admin, in a bound group: whether its mentions reach the bot
+      // changes with it (privacy mode). Said once, only when it truly changed.
+      const isSelf = member && Number(obj(member.user)?.id) === ab.binding.botId;
+      const was = String(obj(mcm.old_chat_member)?.status ?? '');
+      const now = String(member?.status ?? '');
+      const admin = (s: string) => s === 'administrator' || s === 'creator';
+      if (isSelf && this.boundGroup(ab, chatId) && admin(was) !== admin(now) && (now === 'member' || admin(now))) {
+        const me = await ab.transport.call<{ can_read_all_group_messages?: unknown }>('getMe').catch(() => null);
+        if (me && typeof me === 'object' && me.can_read_all_group_messages === true) return;
+        await this.sendRoom(ab, chatId, 'room-line', escapeHtml(admin(now) ? ROOM_LINES.nowHearing(`@${ab.binding.botUsername}`) : ROOM_LINES.deafAgain));
+      }
       return;
     }
     const cb = obj(u.callback_query);
@@ -1033,9 +1044,26 @@ export class TelegramHub implements TelegramHubApi {
     if (!this.boundGroup(ab, a.chatId)) {
       this.writeGroups(ab, [...(ab.binding.groups ?? []), { chatId: a.chatId, title: a.title, boundAt: new Date(this.now()).toISOString() }]);
     }
-    await this.sendRoom(ab, a.chatId, 'room-line', escapeHtml(ROOM_LINES.bound(`@${ab.binding.botUsername}`)));
+    // Privacy mode (every bot's default, managed ones too): a plain @mention never reaches a bot
+    // that is not an admin. The group and the owner are told how to reach it, never left silent.
+    const hears = await this.hearsMentions(ab, a.chatId);
+    await this.sendRoom(ab, a.chatId, 'room-line', escapeHtml(hears === false ? ROOM_LINES.boundDeaf : ROOM_LINES.bound(`@${ab.binding.botUsername}`)));
     await this.notice(ab, 'info', ROOM_LINES.groupBound(a.title));
+    if (hears === false) await this.notice(ab, 'warn', ROOM_LINES.groupDeaf(a.title), true);
     return 'ok';
+  }
+
+  /**
+   * Does Telegram hand this bot a plain @mention in this group? Yes when privacy mode is off for
+   * the bot (`getMe.can_read_all_group_messages`) or the bot is the group's admin (admins get every
+   * message). Null when Telegram does not say (a failed call): no claim either way.
+   */
+  async hearsMentions(ab: ActiveBinding, chatId: number): Promise<boolean | null> {
+    const me = await ab.transport.call<{ can_read_all_group_messages?: unknown }>('getMe').catch(() => null);
+    if (me && typeof me === 'object' && me.can_read_all_group_messages === true) return true;
+    const m = await ab.transport.call<{ status?: unknown }>('getChatMember', { chat_id: chatId, user_id: ab.binding.botId }).catch(() => null);
+    if (!m || typeof m !== 'object' || typeof m.status !== 'string') return null;
+    return m.status === 'administrator' || m.status === 'creator';
   }
 
   /** A group stops: removed from the binding, its room stopped (a running turn killed, waiting
