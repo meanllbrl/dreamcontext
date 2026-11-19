@@ -451,6 +451,24 @@ export function superUpgradeRefusal(o: {
   return null;
 }
 
+/**
+ * A desktop open that names a Super's OWN conversation (main's or a member's, while it is on) in
+ * any mode but `super`: refused (409). A Super's conversation runs only as that Super. Opened as a
+ * plain chat tab (a session link that landed before the window held the member's record, owner
+ * 2026-11-16, Ege), it ran with no injector, so his Telegram messages never reached it; it
+ * superseded the real Super, was parked like any idle tab, and left the member's stage blank.
+ * The phone is decided before this (`phoneSuperOpen`: a mirror or a refusal).
+ */
+export function plainOpenOfSuperRefusal(o: { mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string }): 409 | null {
+  if (o.mode === 'super' || o.phone) return null;
+  const ids = [o.resumeId, o.sessionId].filter(Boolean);
+  if (!ids.length) return null;
+  for (const e of superIndex(o.contextRoot).values()) {
+    if (e.enabled && e.session && ids.includes(e.session)) return 409;
+  }
+  return null;
+}
+
 /** The crew mark of a child no ticket or record ties to exactly ONE member (security, end review):
  *  never a slug, so no member's "own run" rule ever reads it as that member. */
 export const AMBIGUOUS_CREW = '*';
@@ -1761,6 +1779,8 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     }
     const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId, chatAgent: parseChatAgent(url.searchParams.get('chatAgent')) });
     if (superRefused) { rejectUpgrade(socket, superRefused); return; }
+    const plainSuper = plainOpenOfSuperRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId });
+    if (plainSuper) { rejectUpgrade(socket, plainSuper); return; }
     // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
     // preferred account (and, with no preferred account, to account #0 — the real HOME, i.e.
     // exactly today's behaviour). An id that is not in the register is REFUSED below rather

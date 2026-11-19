@@ -8,7 +8,7 @@ import { sessionCheckout } from '../session-cwd.js';
 import { cwdInRoots } from '../grants/binding.js';
 import { listGrants, pruneRecordGrants, removeGrant } from '../grants/store.js';
 import { readRoutineFacts, routineNeeds, type RoutineFacts, type RoutineNeed } from '../automations/needs.js';
-import { isOwnerCardKind, sameShellCommand, stalledWait, type OwnerWait, type OwnerWaitKind } from './owner-wait.js';
+import { isOwnerCardKind, refusalWaitId, sameShellCommand, stalledWait, type OwnerWait, type OwnerWaitKind } from './owner-wait.js';
 import { cardHandleOf, getCard } from '../cards/records.js';
 import { redactSecrets } from '../telegram/format.js';
 import {
@@ -36,7 +36,7 @@ import { REASK_TEXT, addToOutbox, firstPromptsLost, keepQuestionsAcrossRelaunch,
 import { liveTranscriptPath } from '../transcript-locate.js';
 import { settleAskShows } from './ask-show.js';
 import {
-  STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, crewHandle, dropOwnerWait, getChat, onChatChange, ownerActedOnCard, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, ownerWaitOrigin, pendingRequest, pendingRequestIds, setOutwardSink, superDecidesPermission,
+  STARTING_GRACE_MS, activityOf, adoptOwnerWaits, allowedPassedBy, chatTopic, clearOwnerAllowed, crewHandle, dropOwnerWait, getChat, onChatChange, ownerActedOnCard, onChatUserSent, onOwnerWaitChange, ownerWaitAnswered, ownerWaitOrigin, pendingRequest, pendingRequestIds, setOutwardSink, startAllowTurn, superDecidesPermission,
   type ChatActivity, type ChatChange, type ChatEntry, type PendingQuestion,
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokensOfSession } from '../window-control.js';
@@ -50,7 +50,7 @@ import { detectOwnerLanguage, withOwnerLanguage, type OwnerLanguage } from './ow
 import { isServerTurnText } from '../usage-readers.js';
 import { MAX_LEAN_MCP, MCP_NAME_RE } from './lean-mcp.js';
 import {
-  closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, stampOwedSince,
+  closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, noteSaid, saidHead, stampOwedSince,
   type OwedEnd,
 } from './owed.js';
 import {
@@ -1380,11 +1380,18 @@ export function isOwnerProse(text: string): boolean {
  *  every owner message and dropped when an event turn opens: a job the super starts in his turn
  *  records it (`origin`), so its results link under that message. In memory, like the above. */
 const ownerMsgRefs = new Map<string, string>();
+/** When that message ARRIVED (ms): an agenda line links his message by ref + arrival
+ *  (ajanda-filtre C1, `SuperPadItem.refs`), so two turns with the same words stay two. */
+const ownerMsgAts = new Map<string, number>();
 export function noteSuperOwnerMsg(sessionId: string, ref: string | null): void {
-  if (ref) ownerMsgRefs.set(sessionId, ref); else ownerMsgRefs.delete(sessionId);
+  if (ref) { ownerMsgRefs.set(sessionId, ref); ownerMsgAts.set(sessionId, Date.now()); }
+  else { ownerMsgRefs.delete(sessionId); ownerMsgAts.delete(sessionId); }
 }
 export function superOwnerMsgRef(sessionId: string): string | undefined {
   return ownerMsgRefs.get(sessionId);
+}
+export function superOwnerMsgAt(sessionId: string): number | undefined {
+  return ownerMsgAts.get(sessionId);
 }
 
 /** The owner's language per super (owner-language.ts), ahead of the record's write: a second
@@ -1816,12 +1823,19 @@ export function superOwnerOwes(sessionId: string, text: string, now = Date.now()
  */
 export function superSaid(sessionId: string, text: string): Promise<void> {
   const refs = replyMarkRefs(text);
-  if (!refs.length) return Promise.resolve();
+  const head = saidHead(text);
+  if (!refs.length && !head) return Promise.resolve();
   const root = superKeyOfSession(sessionId);
   if (!root) return Promise.resolve();
+  // A text with no mark only feeds the debts' `said` (what the owed turn quotes): no write
+  // when the cached record has no open debt.
+  const cached = lastStates.get(keyOf(root));
+  if (!refs.length && cached && !openDebts(cached).length) return Promise.resolve();
   return track(writeSuper(root, (s) => {
     if (!openDebts(s).length) return;
-    closeByMarks(s, refs, s.owedSeq ?? 0, Date.now());
+    const now = Date.now();
+    if (refs.length) closeByMarks(s, refs, s.owedSeq ?? 0, now);
+    noteSaid(s, text, now);
   }));
 }
 
@@ -1995,7 +2009,7 @@ export const SENT_LINE = `An item whose own server line says sent="…" is a job
 export const OWED_PREFIX = '[super owed]';
 
 /** The last line of a `[super owed]` turn. */
-export const OWED_LAST_LINE = `These are still owed to the owner: the server keeps each one open until a section of yours answers it. Answer each NOW, in the order listed, in its own section opening \`<!-- re:<ref> -->\` on its first line (its line's ref=): his message: answer it (one short line is enough when it needed none); a result: tell it; a send: say plainly what went out. One your text already told in an earlier turn without its mark: open the section and say in one line that it is told above, never tell it again. Nothing else in this turn: no summary, no other subject (${OWNER_VOICE}).`;
+export const OWED_LAST_LINE = `These are still owed to the owner: the server keeps each one open until a section of yours answers it. Answer each NOW, in the order listed, in its own section opening \`<!-- re:<ref> -->\` on its first line (its line's ref=): his message: answer it (one short line is enough when it needed none); a result: tell it; a send: say plainly what went out. Each line's \`said=\` is what really reached him from you since it opened: said=none means NOTHING you wrote did (what you only thought or planned to write never reaches him), so tell it now in full (a plan: its summary, as long as it needs); said=<n> quotes the start of each of your texts since then: only when one of those told it, open the section and say in one line that it is told above, never tell it again. Nothing else in this turn: no summary, no other subject (${OWNER_VOICE}).`;
 
 /** The text of a `[super owed]` turn: only the debts still open. Exported for tests. */
 export function owedTurnText(contextRoot: string, debts: readonly SuperOwed[]): string {
@@ -2003,8 +2017,9 @@ export function owedTurnText(contextRoot: string, debts: readonly SuperOwed[]): 
   return [
     `${OWED_PREFIX} items=${debts.length}`,
     ...debts.flatMap((d) => [
-      `- owed=${d.id} kind=${d.kind} ref=${d.ref} at=${owedClock(d.at)}${d.sent?.length ? ` sent="${d.sent.join(', ')}"` : ''}`,
+      `- owed=${d.id} kind=${d.kind} ref=${d.ref} at=${owedClock(d.at)}${d.sent?.length ? ` sent="${d.sent.join(', ')}"` : ''} said=${d.said?.length ?? 'none'}`,
       wrapUntrusted(vault, `${d.kind === 'msg' ? 'His message' : 'The result'}: ${d.gist}`),
+      ...(d.said?.length ? [wrapUntrusted(vault, `Your texts since it opened (start of each): ${d.said.map((x) => `[${owedClock(x.at)}] ${x.head}`).join(' | ')}`)] : []),
     ]),
     OWED_LAST_LINE,
   ].join('\n');
@@ -2982,6 +2997,7 @@ export function syncOwnerDraft(s: SuperState, sid: string, e: ChatEntry | null, 
     const answered = adoptOwnerWaits(sid, orphans.map((q) => ({
       wait: { kind: q.wait!.kind, id: q.wait!.id, line: q.ownerText ?? '', ...(q.wait!.key ? { key: q.wait!.key } : {}), ...(q.wait!.refusal ? { refusal: { ...q.wait!.refusal } } : {}) },
       since: q.createdAt,
+      ...(q.wait!.kind === 'refusal' && q.allowed !== undefined ? { allowed: true } : {}),
     })));
     for (const q of orphans) if (answered.has(`${q.wait!.kind}:${q.wait!.id}`)) { closeOwnerAnswered(q); changed = true; }
   }
@@ -3262,6 +3278,7 @@ export function syncOwnDraft(s: SuperState, superId: SuperId, sid: string, e: Ch
     const answered = adoptOwnerWaits(sid, orphans.map((q) => ({
       wait: { kind: q.wait!.kind, id: q.wait!.id, line: q.ownerText ?? '', ...(q.wait!.key ? { key: q.wait!.key } : {}), ...(q.wait!.refusal ? { refusal: { ...q.wait!.refusal } } : {}) },
       since: q.createdAt,
+      ...(q.wait!.kind === 'refusal' && q.allowed !== undefined ? { allowed: true } : {}),
     })));
     for (const q of orphans) if (answered.has(`${q.wait!.kind}:${q.wait!.id}`)) { closeOwnerAnswered(q); changed = true; }
   }
@@ -3414,14 +3431,21 @@ async function reofferStaleAllows(key: string, sid: string): Promise<void> {
   if (!held.size) return;
   let probe: SuperState;
   try { probe = await readSuperState(key, superSanitizeOpts()); } catch { return; }
-  if (!reofferDraft(structuredClone(probe), sid, held, Date.now()).length) return;
+  // An allowed call the Allow turn ran past and never took: the child moved on, so its item closes
+  // (the moot path: no new card, its grant goes) instead of being offered again.
+  const passed = allowedPassedBy(sid);
+  const moot = (tool: string, input: string): boolean => mootSuperCall(tool, input) || passed.has(refusalWaitId(tool, input));
+  if (!reofferDraft(structuredClone(probe), sid, held, Date.now(), undefined, moot).length) return;
   let moved: Array<{ old: string; next: string; moot?: true; rewrite?: true }> = [];
   let mootWaits: string[] = [];
+  let reoffered: string[] = [];
   const rewrites: RefusalFact[] = [];
   await writeSuper(key, (d) => {
-    moved = reofferDraft(d, sid, held, Date.now(), key);
+    moved = reofferDraft(d, sid, held, Date.now(), key, moot);
     const mootIds = new Set(moved.filter((m) => m.moot || m.rewrite).map((m) => m.old));
     mootWaits = d.queue.filter((q) => mootIds.has(q.id) && q.wait?.kind === 'refusal').map((q) => q.wait!.id);
+    const oldIds = new Set(moved.map((m) => m.old));
+    reoffered = d.queue.filter((q) => oldIds.has(q.id) && q.wait?.kind === 'refusal').map((q) => q.wait!.id);
     const rewriteIds = new Set(moved.filter((m) => m.rewrite).map((m) => m.old));
     for (const q of d.queue) if (rewriteIds.has(q.id) && q.wait?.refusal) rewrites.push(q.wait.refusal);
   });
@@ -3433,6 +3457,9 @@ async function reofferStaleAllows(key: string, sid: string): Promise<void> {
   for (const id of olds) allowedOnce.delete(id);
   // A moot call's refusal wait goes too, so no respawn or sync brings its item back.
   for (const w of mootWaits) dropOwnerWait(sid, 'refusal', w);
+  // Offered again as a NEW ask: his earlier Allow no longer holds the wait (the child moving on
+  // closes it like any other refusal until he allows the new item).
+  clearOwnerAllowed(sid, reoffered);
   if (moved.length) void pumpSuper(key);
 }
 
@@ -4991,6 +5018,7 @@ export function wireSuperInbox(): void {
   // The Allow's own server turn went into a session: its next turn end decides whether it ran.
   const offSent = onChatUserSent((sid, text) => {
     if (!text.startsWith(ALLOW_TURN_HEAD)) return;
+    startAllowTurn(sid);
     allowTurns.set(sid, Date.now());
     while (allowTurns.size > 200) allowTurns.delete(allowTurns.keys().next().value as string);
   });

@@ -77,12 +77,16 @@ try {
     await proj.locator('[data-testid="drawer-project-row"]').focus(); await page.keyboard.press('Tab'); await page.waitForTimeout(300);
     ok(`${theme}: + shown on keyboard focus`, await proj.locator('[data-testid="drawer-project-add"]').evaluate((e) => getComputedStyle(e.parentElement).opacity === '1'));
     await shot('focus');
-    const chev = proj.locator('[data-testid="new-chat-menu"]');
+    // The member picker is an item of the project's "..." menu (owner 2026-11-16), no chevron.
+    await proj.locator('.ns-dr-proj').first().hover();
+    ok(`${theme}: no chevron and no eye on the row`, (await proj.locator('.ns-dr-newchat-menu, .ns-dr-hide').count()) === 0);
+    await proj.locator('[data-testid="drawer-project-more"]').click();
+    const chev = page.locator('[data-testid="drawer-project-newchat-item"]');
     if (await chev.count()) {
       await chev.first().click(); await page.mouse.move(850, 700); await page.waitForTimeout(300);
       ok(`${theme}: + stays shown while member menu is open`, await proj.locator('[data-testid="drawer-project-add"]').evaluate((e) => getComputedStyle(e.parentElement).opacity === '1'));
       await shot('menu');
-    } else console.log('(no member chevron in this scenario)');
+    } else console.log('(no member picker in this scenario)');
     await ctx.close();
   }
 } catch (err) { findings.push(`could not finish: ${err instanceof Error ? err.message : err}`); }

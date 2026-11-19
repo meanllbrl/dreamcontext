@@ -28,6 +28,8 @@
 import { getAgent } from '../agents/store.js';
 import { getAutomation } from '../automations/store.js';
 import { OWNER_WAIT_KINDS } from './owner-wait.js';
+import { cleanPadRefs } from './pad.js';
+import { MAX_DIGEST_PAD_REFS } from './types.js';
 
 /** The socket surface a mirror needs (the `ws` package's WebSocket satisfies it). */
 export interface MirrorSocket {
@@ -423,9 +425,13 @@ export const DIGEST_MAX_OWED_GIST = 160;
 
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
-  pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner'; bornAt?: number; stage?: string; author?: 'owner' }>;
+  pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner'; bornAt?: number; stage?: string; author?: 'owner'; refs?: ReadonlyArray<{ ref: string; at: number }> }>;
   queue: ReadonlyArray<{
     id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true; member?: string; of?: string;
+    /** A team job's item: the job id (ajanda-filtre C5: a team row's key names no child). */
+    team?: string;
+    /** An `owner` item's card handle: only whether it has one travels (`hasCard`). */
+    card?: unknown;
     /** An `owner` item's wait (or a mirror's copy of it): only its kind travels. */
     wait?: { kind: string };
     /** A `routine` item's routine slug. */
@@ -439,7 +445,7 @@ export interface SuperDigestSource {
   containers: ReadonlyArray<{ kind: string; ref: string; title?: string }>;
   children: Readonly<Record<string, { brief: string; startedAt: number; workOrigin?: string }>>;
   /** What the Super still owes him (owed.ts); absent = none. */
-  owed?: ReadonlyArray<{ id: string; kind: string; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number; closed?: unknown }>;
+  owed?: ReadonlyArray<{ id: string; kind: string; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number; closed?: unknown; child?: string }>;
 }
 
 /**
@@ -452,7 +458,9 @@ export interface SuperDigestSource {
 export interface SuperDigest {
   /** `for` and `by` ride along so the phone's card rolls a day over and flags a stale line the
    *  way the desktop does (pad.ts: the owner's own move stays, a linked line is not stale). */
-  pad: Array<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner'; bornAt?: number; stage?: 'todo' | 'almost'; author?: 'owner' }>;
+  pad: Array<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner'; bornAt?: number; stage?: 'todo' | 'almost'; author?: 'owner';
+    /** The owner messages that moved the line (ajanda-filtre C1): the newest MAX_DIGEST_PAD_REFS. */
+    refs?: Array<{ ref: string; at: number }> }>;
   /** What waits on the owner (`needsOwner`) and the questions queued behind an open one. `text`
    *  is the item's `ownerText` (an `owner` item's is the child's card: untrusted plain text),
    *  '' on a permission. */
@@ -468,6 +476,11 @@ export interface SuperDigest {
     /** The member's title on a mirror, the routine's title on a routine item. Absent = the phone
      *  names the row by its slug. */
     title?: string;
+    /** ajanda-filtre C5 (`ThreadKeySource`): a child's question shown to him from birth (it lives
+     *  in the child's own chat), an `owner` item that has its card, a team job's item. */
+    direct?: true;
+    hasCard?: true;
+    team?: true;
   }>;
   ownerBatches: string[];
   /** A member Super's main-origin turns: the phone's unread skips them (plan-r10 1). */
@@ -475,7 +488,9 @@ export interface SuperDigest {
   names: Record<string, string>;
   /** The OPEN debts (owed.ts), so the phone draws "Cevaplanmadı" the way the desktop does. The
    *  phone only reads them: no drop door is there. */
-  owed: Array<{ id: string; kind: 'msg' | 'result'; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number }>;
+  owed: Array<{ id: string; kind: 'msg' | 'result'; ref: string; seq: number; at: number; gist: string; nudges: number; parked?: 'stop' | 'limit'; parkedAt?: number;
+    /** A result's job (ajanda-filtre C5: the owed row's thread). */
+    child?: string }>;
   /** Changes when (and only when) anything above changes. */
   key: string;
 }
@@ -512,6 +527,12 @@ export interface DigestTitles {
 const ownKey = (m: Readonly<Record<string, string>> | undefined, k: string): string | undefined =>
   m && Object.prototype.hasOwnProperty.call(m, k) && typeof m[k] === 'string' ? m[k] : undefined;
 
+/** A line's refs as the phone gets them: valid pairs, the newest MAX_DIGEST_PAD_REFS. */
+function digestRefs(raw: unknown): Array<{ ref: string; at: number }> | undefined {
+  const all = cleanPadRefs(raw);
+  return all ? all.slice(-MAX_DIGEST_PAD_REFS) : undefined;
+}
+
 /** The digest of `state`. Pure. */
 export function superDigest(state: SuperDigestSource, opts: { titles?: DigestTitles } = {}): SuperDigest {
   const pad = (state.pad ?? []).slice(-DIGEST_MAX_PAD)
@@ -523,6 +544,7 @@ export function superDigest(state: SuperDigestSource, opts: { titles?: DigestTit
       ...(typeof p.bornAt === 'number' && Number.isFinite(p.bornAt) ? { bornAt: p.bornAt } : {}),
       ...(p.stage === 'todo' || p.stage === 'almost' ? { stage: p.stage as 'todo' | 'almost' } : {}),
       ...(p.author === 'owner' ? { author: 'owner' as const } : {}),
+      ...(digestRefs(p.refs) ? { refs: digestRefs(p.refs) } : {}),
     }))
     .filter((p) => p.id && p.text);
   // Main Super's work in a member's Super (`main:*`, plan-r10 1) never waits on the owner.
@@ -554,6 +576,9 @@ export function superDigest(state: SuperDigestSource, opts: { titles?: DigestTit
       ...(routine ? { routine } : {}),
       ...(q.own === true && (q.kind === 'question' || q.kind === 'permission' || q.kind === 'owner') ? { own: true as const } : {}),
       ...(title ? { title } : {}),
+      ...(q.direct === true ? { direct: true as const } : {}),
+      ...(q.kind === 'owner' && q.card !== undefined && q.card !== null ? { hasCard: true as const } : {}),
+      ...(typeof q.team === 'string' && q.team ? { team: true as const } : {}),
     };
   });
   const ownerBatches = state.ownerBatches.filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
@@ -571,6 +596,7 @@ export function superDigest(state: SuperDigestSource, opts: { titles?: DigestTit
   const owed = (state.owed ?? []).filter((d) => d.closed === undefined && (d.kind === 'msg' || d.kind === 'result')).slice(-DIGEST_MAX_OWED).map((d) => ({
     id: digestText(d.id, 12), kind: d.kind as 'msg' | 'result', ref: digestText(d.ref, 6), seq: d.seq, at: d.at, gist: digestText(d.gist, DIGEST_MAX_OWED_GIST), nudges: d.nudges,
     ...(d.parked === 'stop' || d.parked === 'limit' ? { parked: d.parked, ...(typeof d.parkedAt === 'number' ? { parkedAt: d.parkedAt } : {}) } : {}),
+    ...(typeof d.child === 'string' && d.child ? { child: digestText(d.child, 80) } : {}),
   }));
   const body = { pad, waiting, ownerBatches, mainBatches, names, owed };
   return { ...body, key: fnv(JSON.stringify(body)) };

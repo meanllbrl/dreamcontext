@@ -1,0 +1,69 @@
+/* A waiting app card as a pop-up over the window (AppRequestPopup). The scrim is the same dim
+   every sibling dialog uses (ObjectiveDetailPanel, SaveScopeDialog). */
+.app-popup-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(8, 10, 14, 0.45);
+  animation: app-popup-fade 0.16s ease;
+}
+.app-popup {
+  width: 560px;
+  max-width: 100%;
+  max-height: calc(100vh - 2 * var(--space-4));
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  outline: none;
+  animation: app-popup-in 0.22s ease;
+}
+@keyframes app-popup-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes app-popup-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .app-popup-scrim, .app-popup { animation: none; }
+}
+.app-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+.app-popup-kicker {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.app-popup-x {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.app-popup-x:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.app-popup .chat-viewcard { margin: 0; }
+.app-popup-foot { display: flex; justify-content: flex-start; padding: 0 var(--space-1); }
+.app-popup-later {
+  border: 0;
+  background: transparent;
+  padding: var(--space-1) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.app-popup-later:hover { color: var(--color-text); text-decoration: underline; }

@@ -241,6 +241,44 @@ describe('the Super\'s own rich ask', () => {
     // No headless Chromium here: the Mac window draws them, at the chat's width (it cannot tell a cut).
     expect(frames.filter((f) => f.verb === 'html_snapshot').map((f) => (f.args as { width: number }).width)).toEqual([720, 720]);
   });
+  it('the owner\'s case (2026-11-17, "fotoğraflar gözükmüyor"): a preview that is one project picture goes as that file; a project picture inside markup is written into the drawing', async () => {
+    const { sent } = await superChat();
+    tg.push(TOKEN, textUpdate(OWNER, 'sor bakalım'));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    execFileSync('git', ['init', '-q'], { cwd: project });
+    mkdirSync(join(root, 'tmp', 'super'), { recursive: true });
+    const a = Buffer.concat([PNG, Buffer.from('header-a')]);
+    const b = Buffer.concat([PNG, Buffer.from('header-b')]);
+    writeFileSync(join(root, 'tmp', 'super', 'header-a.png'), a);
+    writeFileSync(join(root, 'tmp', 'super', 'header-b.png'), b);
+    const item = { id: 'ask-6', kind: 'ask', sessionId: SID, state: 'escalated', createdAt: 1, ask: { questions: [{ question: 'Hangi başlık?', options: [
+      { label: 'A ile yap', preview: '<img src="_dream_context/tmp/super/header-a.png">' },
+      { label: 'B ile yap', preview: '<div class="dc-card"><p>İki satır</p><img src="_dream_context/tmp/super/header-b.png"></div>' },
+      { label: 'Yok', preview: '<img src="_dream_context/tmp/super/missing.png">' },
+      { label: 'Bekle' },
+    ] }] } };
+    await writeState({ queue: [item] });
+    announceOwnerHead(() => vault, await readSuperState(root), item as never);
+    await vi.waitFor(() => expect(tg.calls.some((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))).toBe(true));
+    const photos = tg.calls.filter((c) => c.method === 'sendPhoto');
+    expect(photos.map((c) => c.params.caption)).toEqual(['A · A ile yap', 'B · B ile yap']);
+    // A: the file itself, byte for byte, never drawn.
+    const ups = tg.uploads.filter((u) => u.method === 'sendPhoto');
+    expect(ups[0].name).toBe('header-a.png');
+    expect(ups[0].bytes.equals(a)).toBe(true);
+    // B: drawn once, by the Mac window here, with its picture written in as data (the sealed page loads nothing).
+    const shots = frames.filter((f) => f.verb === 'html_snapshot');
+    expect(shots).toHaveLength(1);
+    const page = String((shots[0].args as { html: string }).html);
+    expect(page).toContain(`data:image/png;base64,${b.toString('base64')}`);
+    expect(page).not.toContain('src="_dream_context/tmp/super/header-b.png"');
+    // The missing file is no broken picture: the question says that drawing is on the Mac, the log says why.
+    const q = String(tg.calls.find((c) => JSON.stringify(c.params.reply_markup ?? {}).includes('Belirsiz'))!.params.text);
+    expect(q).toContain('• <b>A · A ile yap</b> (çizim A)');
+    expect(q).toContain("• <b>Yok</b>: Çizimi Mac'te (Telegram'a çizilemedi).");
+    const log = readFileSync(join(home, '.dreamcontext', 'logs', 'telegram-asks.log'), 'utf8');
+    expect(log).toMatch(/ask-6 pictures 2\/3 NOT ALL SENT \(Yok: /);
+  });
 });
 
 describe('the Super chat\'s own AskUserQuestion (P3 through the window)', () => {

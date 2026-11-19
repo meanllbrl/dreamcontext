@@ -1,15 +1,15 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import type { TaskListItem as Task } from '../../hooks/useTasks';
-import { useTask, useTaskList, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
+import { useTask, useTaskList, useUpdateTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
 import { useVault } from '../../context/VaultContext';
 import { publishPageDetail } from '../../lib/pageContext';
-import { openChildrenMessage } from '../../lib/taskObjection';
+import { fill, openChildrenMessage } from '../../lib/taskObjection';
+import { TaskDeleteDialog } from './TaskDeleteDialog';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
-import { confirmAction } from '../../lib/desktop';
 import {
   type SaveScope,
   PRIO_ORDER,
@@ -50,7 +50,6 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const { data: realVersions = [] } = useVersions();
   const { data: activeVersion = null } = useActiveVersion();
   const updateTask = useUpdateTask();
-  const deleteTask = useDeleteTask();
   // Desktop-only gate for "Author with agent": the in-app agent needs a real embedded
   // terminal + the claude CLI (so it's hidden on the web build / when prereqs are missing,
   // A6) AND the Agents surface must be enabled in Settings. Same readiness check the
@@ -75,6 +74,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Task | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showAuthor, setShowAuthor] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
@@ -229,18 +229,19 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       { onSuccess: () => flash('Sent to backlog'), onError: () => flash('Could not send to backlog', true) },
     );
   }, [updateTask, flash]);
-  const ctxDelete = useCallback(async (task: Task) => {
+  // The context menu's Delete opens the same confirmation as the task page.
+  const ctxDelete = useCallback((task: Task) => {
     setCtxMenu(null);
-    const ok = await confirmAction({
-      title: `Delete “${task.name || task.slug}”?`,
-      body: 'This cannot be undone.',
-      confirmLabel: 'Delete',
-      destructive: true,
-    });
-    if (!ok) return;
-    deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed', true) });
-    if (selectedSlug === task.slug) setSelectedSlug(null);
-  }, [deleteTask, flash, selectedSlug]);
+    setDeleting(task);
+  }, []);
+  // After a confirmed delete: an open drawer on a deleted task goes back to the list (a task) or
+  // to the parent (a subtask); a drawer on another task stays. And a short note.
+  const onDeleted = useCallback((next: string | null, deleted: string[]) => {
+    setDeleting(null);
+    setSelectedSlug((cur) => (cur && deleted.includes(cur) ? next : cur));
+    const count = deleted.length;
+    flash(count > 1 ? fill(t, 'tasks.delete.doneMany', { n: String(count) }) : t('tasks.delete.done'));
+  }, [flash, t]);
 
   // ── view actions ────────────────────────────────────────────────────────────────
   const handleRequestSave = useCallback(() => { setPendingSave({ mode: 'save' }); closeAllMenus(); }, [closeAllMenus]);
@@ -382,7 +383,11 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
           allTasks={tasks}
           onOpenTask={(slug) => setSelectedSlug(slug)}
           onClose={() => setSelectedSlug(null)}
+          onDeleted={onDeleted}
         />
+      )}
+      {deleting && (
+        <TaskDeleteDialog task={deleting} allTasks={tasks} onClose={() => setDeleting(null)} onDeleted={onDeleted} />
       )}
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
       {showAuthor && (
@@ -532,13 +537,14 @@ function EmptyState({ onClear }: { onClear: () => void }) {
  * board lists the light view, which carries no body (task: opening a project is slow). The panel
  * reads the same query itself, so this costs no second request; it appears once that read lands.
  */
-function FullTaskDetail({ slug, allTasks, onOpenTask, onClose }: {
+function FullTaskDetail({ slug, allTasks, onOpenTask, onClose, onDeleted }: {
   slug: string;
   allTasks: readonly Task[];
   onOpenTask: (slug: string) => void;
   onClose: () => void;
+  onDeleted: (next: string | null, deleted: string[]) => void;
 }) {
   const { data: full } = useTask(slug);
   if (!full) return null;
-  return <TaskDetailPanel task={full} allTasks={allTasks} onOpenTask={onOpenTask} onClose={onClose} />;
+  return <TaskDetailPanel task={full} allTasks={allTasks} onOpenTask={onOpenTask} onClose={onClose} onDeleted={onDeleted} />;
 }

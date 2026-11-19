@@ -399,8 +399,12 @@ export function ownerQuestionReach(state: Pick<SuperState, 'queue'>, itemId: str
   if (!item) return { shown: false, ahead: 0, via: [], reached: false, note: 'That item is no longer on the queue.', why: 'it is no longer on the queue' };
   const ahead = known ? 0 : aheadOf(state, item);
   const shown = !!known || ahead === 0;
-  const via: OwnerChannel[] = [...(known?.via ?? [])];
   const t = tgItems.get(itemId);
+  // He is away and Telegram was meant to carry it (`sending`, `failed`): what the Mac showed (its
+  // screen, banner, notch) is not him seeing it (owner 2026-11-16: `reached: true` came back while
+  // his phone showed no card). Only his phone counts then.
+  const away = t?.state === 'sending' || t?.state === 'failed';
+  const via: OwnerChannel[] = (known?.via ?? []).filter((x) => !away || x === 'phone');
   // Only a send that LANDED is a reach (review r1): one still on its way is said as such.
   if (t?.state === 'sent') via.push('telegram');
   const reached = via.some((x) => x !== 'notch');

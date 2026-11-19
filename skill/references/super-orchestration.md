@@ -396,8 +396,9 @@ Every verb that changes his screen (`open`, `half`, `present`, `stack`, `float`,
 his screen did not (no window holds you): never tell him it is on his screen, say it waits for his window.
 Pictures you show the owner as a result (a child's screenshots, a design): `open image … --present`
 opens and presents them in one call, so he sees them at once; a group card alone is not showing.
-A picture question presents itself: `super ask`/`queue ask` shows its pictures (`--show`, previews'
-`<img src>`, your last set) and puts them back after his answer; no `present`/`--off` around it.
+A picture question presents itself: `super ask`/`queue ask` shows its pictures (`--show`, else the
+previews' `<img src>`; nothing else, so name a picture you opened before with `--show`) and puts
+them back after his answer; no `present`/`--off` around it.
 
 | Situation | Layout | Command |
 |---|---|---|

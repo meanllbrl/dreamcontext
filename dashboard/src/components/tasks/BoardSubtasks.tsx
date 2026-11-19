@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { TaskListItem as Task } from '../../hooks/useTasks';
 import { useCreateTask, useStatusModel } from '../../hooks/useTasks';
 import { taskName } from './boardModel';
+import { CopySlugButton } from './CopySlugButton';
 
 /**
  * The thin subtask list that opens under a parent card's `n/m` chip: one line per child (status
@@ -37,8 +38,8 @@ export function BoardSubtasks({ parent, children, onOpen }: {
   return (
     <div className="bd-subs" onClick={(e) => e.stopPropagation()} data-testid="board-subtasks">
       {children.map((c) => (
+        <div key={c.slug} className="bd-sub-line">
         <button
-          key={c.slug}
           type="button"
           className="bd-btnreset bd-sub-row"
           data-done={sm.isDone(c.status) || undefined}
@@ -48,6 +49,8 @@ export function BoardSubtasks({ parent, children, onOpen }: {
           <span className="bd-sub-dot" style={{ background: sm.colorOf(c.status) }} aria-hidden />
           <span className="bd-sub-name">{taskName(c)}</span>
         </button>
+        <CopySlugButton slug={c.slug} className="task-copy-btn--hover" />
+        </div>
       ))}
       {adding ? (
         <div className="bd-sub-input">

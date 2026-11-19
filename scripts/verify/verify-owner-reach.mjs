@@ -82,6 +82,15 @@ const STANDIN = superStandin({
       report({ kind: 'ask', slug, step });
       return 'Sana bir soru sordum.';
     }
+    if (text.startsWith('GO-MULTI')) {
+      const spec = { questions: [
+        { question: 'Hangi liste once gitsin?', header: 'Liste', description: 'Yillik plan indirimi icin.', options: [{ label: 'Buyume', description: 'Mevcut abonelere' }, { label: 'Satis', description: 'Yeni deneme kullanicilarina' }, { label: 'Ikisi de' }] },
+        { question: 'Hangi kanallar kullanilsin?', header: 'Kanal', multiSelect: true, options: [{ label: 'E-posta', description: 'Haftalik ozet' }, { label: 'Uygulama ici' }, { label: 'SMS', description: 'Yalniz onayli numaralar' }] },
+      ] };
+      const step = cli('super', 'ask', '--json', JSON.stringify(spec), '--no-show');
+      report({ kind: 'ask-multi', slug, step });
+      return 'Iki soru sordum.';
+    }
     if (text.startsWith('GO-REFUSE')) {
       const tu = 'toolu_verify_refused_1';
       out({ type: 'assistant', parent_tool_use_id: null, session_id: sid, message: { id: 'msg_verify_refused', role: 'assistant', content: [{ type: 'tool_use', id: tu, name: 'Bash', input: { command: CMD, description: 'Write the weekly total' } }] } });
@@ -238,7 +247,7 @@ async function caseAsk(page) {
   step('the bar\'s data (GET /api/super/state) carries the mirror', st.status === 200 && (st.json?.queue ?? []).some((q) => q.id === mirrorId && q.state !== 'done'),
     JSON.stringify({ status: st.status, queue: st.json?.queue?.map((q) => [q.id, q.kind, q.state]) }).slice(0, 600));
 
-  if (SHOTS) { await toMain(page); await shots(page, '1-bar-member-question', bar); await backToRota(page); }
+  if (SHOTS) { await toMain(page); await shots(page, '1-bar-member-question', (pg) => pg.locator('[data-testid="super-member-card"]:visible')); await backToRota(page); }
   const body = { record: 'main', item: mirrorId, answer: { kind: 'ask', text: ANSWER }, via: 'bar' };
   const refused = await answer(page, body);
   step('the answer route without the owner key: 403 owner_page_only', refused.status === 403 && refused.json?.error === 'owner_page_only', JSON.stringify(refused));
@@ -253,6 +262,20 @@ async function caseAsk(page) {
   step('main\'s mirror closes', await until(page, async () => itemById(mainRecord(), mirrorId)?.state === 'done', 20000), JSON.stringify(itemById(mainRecord(), mirrorId)));
   const again = await answer(page, body);
   step('a second answer: 409 already_answered', again.status === 409 && again.json?.error === 'already_answered', JSON.stringify(again));
+
+  // The same card for a many-option, many-question ask (owner 2026-11-18: every form was ugly).
+  await sayOnStage(page, 'm:rota', 'GO-MULTI yillik plan');
+  step('Rota\'s Super runs a two-question `super ask --json` (exit 0)', await until(page, async () =>
+    reports().some((r) => r.kind === 'ask-multi' && r.step?.status === 0), 45000), JSON.stringify(reports().filter((r) => r.kind === 'ask-multi')).slice(0, 600));
+  const multi = () => openItem(memberRecord('rota'), (q) => q.kind === 'ask' && q.id !== askId);
+  step('a second open `ask` item', await until(page, async () => !!multi(), 15000));
+  const multiId = multi()?.id;
+  step('…mirrored into main', await until(page, async () => !!mirrorOf(multiId), 15000));
+  if (SHOTS) { await toMain(page); await shots(page, '5-member-multi-question', (pg) => pg.locator('[data-testid="super-member-card"]:visible')); await backToRota(page); }
+  const mb = { record: 'main', item: mirrorOf(multiId)?.id, answer: { kind: 'question', answers: { 'Hangi liste once gitsin?': 'Buyume', 'Hangi kanallar kullanilsin?': 'E-posta, SMS' } }, via: 'bar' };
+  const mAnswered = await answer(page, mb);
+  step('both answers go through the route: 200 answered', mAnswered.status === 200 && mAnswered.json?.outcome === 'answered', JSON.stringify(mAnswered));
+  step('…and the second item closes', await until(page, async () => itemById(memberRecord('rota'), multiId)?.state === 'done', 20000));
 }
 
 async function caseRefusal(page) {

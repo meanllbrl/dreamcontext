@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { RequestError } from '../../dashboard/src/api/client';
 import { memberIntent } from '../../dashboard/src/lib/drawerIntents';
 import {
-  coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberSummaries, superIdOfIntent, unionSuperView,
+  coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberHeld, readMemberSummaries, superIdOfIntent, unionSuperView,
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout';
@@ -76,6 +76,16 @@ describe('ensureSuperSession(session, superId)', () => {
     expect(member).toMatch(/mode: 'super', agent: member/);
     expect(member).not.toMatch(/setPanes/);
   });
+  it('a tab holding the Super\'s conversation that is no Super pane (a plain tab a link opened, parked or dormant) goes, and the Super pane opens: never a blank stage (owner 2026-11-16, Ege)', () => {
+    expect(ensure).toMatch(/if \(open\.mode === 'super' && live && live\.kind === 'chat'\) return live as ChatSession;/);
+    const heal = ensure.slice(ensure.indexOf("if (open.mode === 'super'"), ensure.indexOf('const member = memberOf(superId);'));
+    expect(heal).toMatch(/dropStrayTabOfSuper\(open\.id\);/);
+    // Falls through to the spawn below: the old "return null" for a non-live tab is gone.
+    expect(heal).not.toMatch(/return live && live\.kind === 'chat' \? live as ChatSession : null;/);
+    const drop = surface.slice(surface.indexOf('const dropStrayTabOfSuper'), surface.indexOf('const ensureSuperSession'));
+    expect(drop).toMatch(/setSessionList\(\(prev\) => prev\.filter\(\(m\) => m\.id !== sid\)\);/);
+    expect(drop).not.toMatch(/clearPins|closeSessionById/);
+  });
   it('main\'s spawn is byte-for-byte as before', () => {
     expect(ensure).toMatch(/spawn\(false, session, !fresh, 'chat', '', superModel, true, '', false, superEffort, false, 'super', '', '', superPaneReattach\(fresh, isMacPhoneSurface\(\)\)\)/);
     expect(ensure).toMatch(/const ensureSuperSession = useCallback\(\(session: string, superId: SuperId = MAIN_SUPER\)/);
@@ -116,6 +126,10 @@ describe('a cold member is started once when main\'s work waits (pending)', () =
       { slug: 'gantt', global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: false, lastAt: 0, pending: 0 },
     ]);
     expect(readMemberSummaries({})).toEqual([]);
+    // What every member Super holds (field 2026-11-18): strings only, an older server none.
+    expect(readMemberHeld({ memberHeld: ['a', '', 3, null, 'b'] })).toEqual(['a', 'b']);
+    expect(readMemberHeld({})).toEqual([]);
+    expect(readMemberHeld(null)).toEqual([]);
     expect(readMemberSummaries(null)).toEqual([]);
   });
   it('the surface starts it through the owner verb and ensures its chat, once per member', () => {
@@ -420,7 +434,7 @@ describe('end review fixes', () => {
   });
 
   it('M6: Esc closes "Üyeleri yönet", the Ekip list or an agent\'s Edit dialog, never the member\'s stage under it', () => {
-    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list, \.aid-scrim'\)\) return;/);
+    expect(surface).toMatch(/if \(document\.querySelector\('\.mm-scrim, \.ns-team-list, \.aid-scrim, \.app-popup-scrim'\)\) return;/);
   });
 });
 
@@ -672,5 +686,12 @@ describe("main's member card shows the member's helpers for ITS job (owner 2026-
     expect(card).not.toContain('team-job-open-member');
     const frame = src('dashboard/src/components/sleepy/super/SuperContainer.tsx');
     expect(frame).toMatch(/c\.kind === 'team' && props\.team && !props\.remote && <OpenStageButton member=\{props\.team\.job\.member\} \/>/);
+  });
+});
+
+describe('a member\'s sessions are never a chat-window tab (field 2026-11-18)', () => {
+  it('the window homes every session the server says a member Super holds', () => {
+    expect(surface).toMatch(/const memberHeld = useMemberHeldSessions\(scopedApi, vault,/);
+    expect(surface).toMatch(/for \(const id of memberHeld\) ids\.add\(id\);/);
   });
 });

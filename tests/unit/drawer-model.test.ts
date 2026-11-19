@@ -506,7 +506,7 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
   it('the drawer and the lists wire the pinned test ids, the switch and the member intent', () => {
     const drawer = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/layout/newshell/ChatDrawer.tsx', import.meta.url)), 'utf8');
     const list = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/layout/newshell/TeamList.tsx', import.meta.url)), 'utf8');
-    for (const id of ['drawer-team-row', 'phone-team-row', 'drawer-global-team-row', 'phone-global-team-row', 'new-chat-menu', 'new-chat-claude', 'new-chat-member', 'team-list', 'global-team-list']) {
+    for (const id of ['drawer-team-row', 'phone-team-row', 'drawer-global-team-row', 'phone-global-team-row', 'drawer-project-newchat-item', 'new-chat-claude', 'new-chat-member', 'team-list', 'global-team-list']) {
       expect(drawer, id).toContain(`'${id}'`.replace(/'/g, drawer.includes(`"${id}"`) ? '"' : "'"));
     }
     for (const id of ['team-list-member', 'team-member-switch', 'team-manage', 'phone-team-sheet']) expect(list, id).toContain(id);
