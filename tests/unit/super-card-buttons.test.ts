@@ -70,8 +70,18 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
     expect(CONTAINER).toMatch(/className=\{`super-light super-light--\$\{tone\}`\}[\s\S]*?aria-label=\{l\.label\}[\s\S]*?title=\{l\.label\}/);
     expect(CONTAINER).toContain("role=\"group\" aria-label={t('super.card.controls')}");
   });
-  it('a large card head starts after the lights and stops before the ask button', () => {
-    expect(CSS).toContain(":is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 44px; }");
+  it('a large card head starts after the lights and stops before its three trailing buttons', () => {
+    expect(CSS).toContain(":is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 112px; }");
+    expect(CSS).toContain(".super-card-frame:not([data-where='float']) .super-web-one-line > .wb-widget.wb-widget--web > .wb-widget-head.wb-widget-head { padding-inline-end: 112px; }");
+  });
+  it('side by side and presented, a card keeps the floating card\'s To Others, ask and full screen (owner 2026-11-19)', () => {
+    const large = CONTAINER.slice(CONTAINER.indexOf('{floating ? ('), CONTAINER.indexOf('{floating && !props.parked && menu && ('));
+    const rest = large.slice(large.indexOf(') : ('));
+    expect(rest).toContain("{!props.remote && <IconButton icon=\"others\" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} testId=\"super-card-to-others-btn\" />}");
+    expect(rest).toContain("<AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />");
+    // Every kind with a full screen view, not only the agenda.
+    expect(rest).toContain("{openFull && <IconButton icon=\"fullscreen\" label={t('super.card.fullscreen')} onClick={openFull} testId=\"super-card-fullscreen-btn\" />}");
+    expect(rest).not.toContain("c.kind === 'agenda' && openFull");
   });
   it('a floating card keeps its title at the left; wide it slides past the lights, narrow it fades, reduced motion skips both', () => {
     expect(CSS).not.toMatch(/\[data-where='float'\] :is\(\.super-card-head, \.super-card-large-head\) \{ padding-left: 88px/);

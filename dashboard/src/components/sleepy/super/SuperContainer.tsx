@@ -415,8 +415,12 @@ export function SuperContainer(props: SuperContainerProps) {
             {/* A member card's way to its member's own stage (owner 2026-11-15): in the head, not
                 at its foot. Not from the phone, which opens no stage here. */}
             {c.kind === 'team' && props.team && !props.remote && <OpenStageButton member={props.team.job.member} />}
-            {c.kind === 'agenda' && openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen-btn" />}
+            {/* The same card keeps the same buttons side by side and presented as floating (owner
+                2026-11-19, "no action buttons in the presentation"): To Others, ask, full screen.
+                Size stays a floating card's own (its yellow light already floats it). */}
+            {!props.remote && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} testId="super-card-to-others-btn" />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
+            {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen-btn" />}
           </>
         )}
       </div>}
