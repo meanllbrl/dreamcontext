@@ -2737,6 +2737,17 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   // ── The owner's scheduled jobs (super-rutin C4): main only, its own record only ──
+  'room-say': async (c, b, res) => {
+    // tg-grup G8: only the Super the owner's Onayla went to posts, once, to a still-bound group.
+    const request = str(b.request);
+    const text = typeof b.text === 'string' ? b.text : '';
+    if (!request) { refuse(res, 400, 'invalid_args', 'name the group request (its id is in the turn that brought it)'); return; }
+    const rooms = (await import('../telegram/hub.js')).telegramHub()?.rooms;
+    if (!rooms) { refuse(res, 503, 'telegram_unavailable', 'Telegram works only in the Mac app'); return; }
+    const r = await rooms.say({ root: resolve(c.who.contextRoot), superId: c.superId }, request, text);
+    if (!r.ok) { refuse(res, r.status, r.error, r.message); return; }
+    ok(res, { group: r.group });
+  },
   schedule: async (c, b, res) => {
     if (c.superId !== 'main') { refuse(res, 403, 'main_only', 'only the project\'s Super Agent sets the owner\'s scheduled jobs'); return; }
     if (!callerOwnsSuper(c, b, res)) return;

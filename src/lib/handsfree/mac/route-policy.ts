@@ -450,6 +450,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/telegram-forward/:id/confirm': deny(SECRET, 'cross:deny'),
   'POST /api/telegram-creation/:id/start': deny(SECRET, 'cross:deny'),
   'GET /api/telegram-readopt/:id/preview': deny(SECRET, 'cross:deny'),
+  'GET /api/telegram-group/:id': deny(SECRET, 'cross:deny'),
+  'POST /api/telegram-group/:id/confirm': deny(SECRET, 'cross:deny'),
+  'DELETE /api/telegram/:target/groups/:chatId': deny(SECRET),
   'POST /api/telegram-readopt/:id/start': deny(SECRET, 'cross:deny'),
   // The ONE voice route the phone reaches (task the-hands-free-phone-sends-a-voice-message…): its
   // take, recorded on the phone, transcribed by the engine the owner chose on this Mac (local

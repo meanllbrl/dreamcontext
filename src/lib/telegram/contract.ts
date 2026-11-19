@@ -29,8 +29,9 @@ export const TG_LONG_POLL_TIMEOUT_S = 50;
 /** A poll gap longer than this (wall clock vs monotonic) means the Mac slept: drain, never process (H10, I5). */
 export const TG_WAKE_GAP_MS = 2 * TG_LONG_POLL_TIMEOUT_S * 1000;
 /** Updates the hub asks for. The manager adds `managed_bot` (X2). `message_reaction` must be
- *  named explicitly or Telegram never sends it (owner 2026-11-09: a reaction is a note). */
-export const TG_ALLOWED_UPDATES = ['message', 'callback_query', 'message_reaction'] as const;
+ *  named explicitly or Telegram never sends it (owner 2026-11-09: a reaction is a note).
+ *  `my_chat_member`: the bot was added to, left or kicked from a group (tg-grup D3). */
+export const TG_ALLOWED_UPDATES = ['message', 'callback_query', 'message_reaction', 'my_chat_member'] as const;
 export const TG_MANAGER_ALLOWED_UPDATES = ['managed_bot', 'message'] as const;
 
 // ─── Identity, scope, target, token ─────────────────────────────────────────
@@ -63,9 +64,20 @@ export interface BotBinding {
   /** Created through the manager (X3); `managerBotId` names it. */
   managed?: boolean;
   managerBotId?: number;
+  /** The Telegram groups the owner permitted this bot in (tg-grup C2): written only by the hub,
+   *  after the Mac's native confirm or an unbind path. Absent = none (a file from before is valid). */
+  groups?: BoundGroup[];
   /** sha256 over the canonical binding without this field (config.ts `bindingHashOf`).
    *  A file whose hash does not match was not written by the hub: the binding is disabled. */
   bindingHash: string;
+}
+
+/** One permitted group (tg-grup C2): a negative safe integer id, unique in its binding; the title
+ *  through `cleanLabel`. */
+export interface BoundGroup {
+  chatId: number;
+  title: string;
+  boundAt: string;
 }
 
 /** The manager binding (`~/.dreamcontext/telegram/manager/bot.json`): its paired user is the OWNER
@@ -187,6 +199,23 @@ export interface TelegramStatusRow {
   disabledReason?: 'tamper' | 'conflict' | 'unauthorized';
   /** Telegram refused the member's name/short line (`name`) or its photo (`photo`); the bot works. */
   identityIssue?: 'name' | 'photo';
+  /** The groups this bot is permitted in (tg-grup): titles and dates only, never a message. */
+  groups?: { chatId: number; title: string; boundAt: string }[];
+  /** A `/bagla` the owner wrote in a group, waiting for the Mac's native confirm (its id is what the
+   *  shell confirms, `confirm_telegram_group`). */
+  groupAsks?: { id: string; title: string }[];
+}
+
+/** What `GET /api/telegram-group/<id>` returns to Rust for a group bind (tg-grup D3). Never a token. */
+export interface GroupBindPreview {
+  projectName: string;
+  target: TelegramTarget;
+  /** The member's public title, the Super's `Super`. */
+  targetLabel: string;
+  botUsername: string;
+  botId: number;
+  chatId: number;
+  title: string;
 }
 
 // ─── The hub API (W2 lane A implements it, W3 consumes it through routes) ────
@@ -252,8 +281,10 @@ export interface PendingTelegramRef {
   /** `run-report` clears exactly its cardRef's wait; `text` clears no run/secret wait (J1).
    *  `schedule` (super-rutin C5): a job the owner scheduled for his Super, answered on Telegram
    *  like his text, clearing no wait and moving no presence. */
-  kind: 'text' | 'run-report' | 'schedule';
+  kind: 'text' | 'run-report' | 'schedule' | 'room-request';
   cardRef?: string;
+  /** `room-request` (tg-grup C5): the group request the owner approved; it clears no wait. */
+  requestId?: string;
 }
 
 /**
@@ -276,10 +307,12 @@ export interface PendingTelegramRefStore {
 export type TelegramRefDropped = (chatRegistryId: string, ref: string, written: boolean) => void;
 
 /** Who wrote an injected turn (I4, J1). Read by `writeOwnerTurn` from the HONOURED entry only. */
-export type InjectedSource = 'telegram-text' | 'run-report' | 'schedule';
-/** A source whose answer goes back to Telegram and that answers no wait on the Mac. */
+export type InjectedSource = 'telegram-text' | 'run-report' | 'schedule' | 'room-request';
+/** A source whose answer goes back to Telegram and that answers no wait on the Mac. A
+ *  `room-request` (a group member's request the owner approved, tg-grup C5) answers him in his
+ *  private chat like a schedule; only `super room say` reaches the group. */
 export function telegramSideSource(source: InjectedSource | string | undefined): boolean {
-  return source === 'telegram-text' || source === 'schedule';
+  return source === 'telegram-text' || source === 'schedule' || source === 'room-request';
 }
 
 /**
@@ -488,7 +521,7 @@ export interface ButtonRecord {
   textHash: string;
   /** `owner-card`: a CHILD's owner card (sahip-karti-yerinde K7, D3): Remind and Not needed only,
    *  never Run. */
-  kind: 'permission' | 'question' | 'approval' | 'run' | 'secret' | 'handsfree' | 'agenda' | 'confirm' | 'owner-card' | 'voice-retry';
+  kind: 'permission' | 'question' | 'approval' | 'run' | 'secret' | 'handsfree' | 'agenda' | 'confirm' | 'owner-card' | 'voice-retry' | 'room-request';
   requestId?: string;
   sessionId?: string;
   cardRef?: string;
