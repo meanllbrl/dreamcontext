@@ -4,7 +4,10 @@
  * and never twice for the same nonce.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { acceptStartIntent } from '../../dashboard/src/lib/startChatIntent.js';
+import { isStartIntent } from '../../dashboard/src/lib/desktop.js';
 
 const OWN = ['acme-storefront', 'Öğretmen Notları'];
 
@@ -16,6 +19,22 @@ describe('acceptStartIntent', () => {
     expect(seen.has('n-1')).toBe(true);
     // The same broadcast delivered again starts nothing.
     expect(acceptStartIntent(p, OWN, seen)).toBeNull();
+  });
+
+  // Plan ilk-acilis C8: the landing from onboarding is the one other closed intent.
+  it('accepts the super-landing intent for a held project, once', () => {
+    const seen = new Set<string>();
+    const p = { vault: 'acme-storefront', intent: 'super-landing', nonce: 'n-sl' };
+    expect(acceptStartIntent(p, OWN, seen)).toEqual({ vault: 'acme-storefront', intent: 'super-landing' });
+    expect(acceptStartIntent(p, OWN, seen)).toBeNull();
+    expect(isStartIntent('super-landing')).toBe(true);
+    expect(isStartIntent('Super-Landing')).toBe(false);
+  });
+
+  it('a dreamcontext:// link never carries a start intent', () => {
+    const link = readFileSync(join(__dirname, '..', '..', 'dashboard/src/lib/appLink.ts'), 'utf-8');
+    expect(link).toContain('deps.openVaultWindow(link.vault, { open: raw })');
+    expect(link).not.toMatch(/start:/);
   });
 
   it('keeps a Turkish project name intact', () => {

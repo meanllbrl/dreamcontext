@@ -121,26 +121,31 @@ describe('one step to what was clicked', () => {
 
 describe('a project is a job, the first project is the only job', () => {
   const flow = src('dashboard/src/pages/onboarding/Onboarding.tsx');
+  // Plan ilk-acilis: both shells use the same first-run flow (welcome, then Open a project).
   it('no project yet: nothing to skip to', () => {
-    expect(flow).toMatch(/\{purpose !== 'first-run' && !\(task && stage === 'handoff'\) && \(\s*<button[^>]*ob-skip/);
+    expect(flow).toMatch(/\{purpose !== 'first-run' && \(\s*<button[^>]*ob-skip/);
     const launcher = src('dashboard/src/pages/LauncherPage.tsx');
-    expect(launcher).toContain("purpose={!newShell ? 'setup' : data && vaults.length === 0 ? 'first-run'");
+    expect(launcher).toContain("setOnboarding(data && vaults.length === 0 ? 'first-run' : adding ? 'new-project' : 'setup')");
   });
-  it('the Mac step never traps a first run', () => {
-    expect(flow).toMatch(/purpose === 'first-run' && stage === 'machine' && !welcoming[\s\S]*setStage\('project'\)/);
+  it('the Mac step never traps a first run: it has no Mac step', () => {
+    expect(src('dashboard/src/pages/onboarding/handoffPlan.ts')).toContain("if (purpose === 'first-run') return ['welcome', 'project'];");
   });
   it('a project another window holds comes forward there, by the window that holds it', () => {
-    expect(src('dashboard/src/pages/LauncherRoot.tsx')).toMatch(/const holder = findWindowForVault\(name\);\s*if \(holder && await focusWindow\(holder\)\) return;/);
+    expect(src('dashboard/src/pages/LauncherRoot.tsx')).toMatch(/const holder = findWindowForVault\(name\);\s*if \(holder && await focusWindow\(holder\)\) \{\s*if \(start\) await emitStartIntent\(name, start\);\s*return;/);
   });
   it('an unread roster is no answer', () => {
     expect(src('dashboard/src/components/sleepy/AgentSurface.tsx')).toContain('if (!rosterUnread) setRosterKnown(true)');
   });
-  it('an existing project opens as it is, never on a fresh chat', () => {
-    expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain("onLand(name, 'existing')");
+  // C5: + Add Project lands like the first run, on the project's Super stage; a Codex or
+  // Antigravity pick opens it as it is.
+  it('a project lands on its Super stage, never on a fresh chat', () => {
+    expect(flow).toContain("const start: StartIntent | undefined = agent === 'claude' ? 'super-landing' : undefined;");
+    expect(flow).toContain("landHere(name, start ?? 'existing');"),
     expect(src('dashboard/src/components/layout/WindowChrome.tsx')).toContain("how ? { kind: 'open-window' } : { kind: 'new-window' }");
   });
   it('from the drawer: a task, no steps, and Cancel', () => {
     expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain('purpose="new-project"');
-    expect(flow).toContain("welcoming || task ? <span aria-hidden=\"true\" /> : <StepDots stage={stage} />");
+    expect(src('dashboard/src/pages/onboarding/handoffPlan.ts')).toContain("if (purpose === 'new-project') return ['project'];");
+    expect(flow).toContain("{task ? t('onboarding.cancel') : t('onboarding.skip')}");
   });
 });

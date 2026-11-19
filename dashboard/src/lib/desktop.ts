@@ -981,12 +981,16 @@ export async function openExternalUrl(url: string): Promise<void> {
 // ─── First-run folder drop (plan ilk-acilis C7) ──────────────────────────────
 
 /** The shell built this window with the OS drop handler on (`?nativeDrop=1`): the app's first
- *  run only, when the Launcher is onboarding. Read once; a reload keeps the same window. */
-const NATIVE_DROP = typeof window !== 'undefined'
-  && new URLSearchParams(window.location.search).get('nativeDrop') === '1';
+ *  run only, when the Launcher is onboarding. Read once, on first ask (never at import: a page
+ *  without `location` must still load this module); a reload keeps the same window. */
+let nativeDrop: boolean | null = null;
 
 export function nativeDropWindow(): boolean {
-  return NATIVE_DROP && isDesktop();
+  if (nativeDrop === null) {
+    const search = typeof window !== 'undefined' ? window.location?.search ?? '' : '';
+    nativeDrop = new URLSearchParams(search).get('nativeDrop') === '1';
+  }
+  return nativeDrop && isDesktop();
 }
 
 export type NativeDropEvent =

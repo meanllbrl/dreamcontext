@@ -6,7 +6,10 @@ import {
   handoffAction,
   launcherOnboardingMode,
   remainingSetupCount,
+  onboardingSteps,
+  BAR_CHECKS,
 } from '../../dashboard/src/pages/onboarding/handoffPlan.js';
+import { gateSteps } from '../../dashboard/src/hooks/useOnboarding.js';
 import type { ReadinessCheck, ReadinessReport } from '../../dashboard/src/lib/onboardingTypes.js';
 
 /**
@@ -89,6 +92,31 @@ describe('canStartClaude', () => {
   });
 });
 
+describe('the first-run flow (plan ilk-acilis C1, C2, C5)', () => {
+  it('first run is welcome then Open a project; Add Project is the project screen alone', () => {
+    expect(onboardingSteps('first-run')).toEqual(['welcome', 'project']);
+    expect(onboardingSteps('new-project')).toEqual(['project']);
+    expect(onboardingSteps('setup')).toEqual(['machine']);
+  });
+
+  it('the bar counts what a first chat needs and nothing else', () => {
+    expect([...BAR_CHECKS].sort()).toEqual(['claude', 'claude-auth', 'cli', 'node']);
+    expect(BAR_CHECKS).not.toContain('git');
+  });
+
+  it('the Claude gate is install (or PATH) then sign-in, never Git', () => {
+    const missing = report([check('claude', 'missing'), check('claude-auth', 'missing'), check('git', 'missing')], { ready: false });
+    expect(gateSteps(missing, 'claude')).toEqual(['claude-install', 'claude-signin']);
+    const offPath = report([check('claude', 'needs-action', { reason: 'not-on-path' } as Partial<ReadinessCheck>), check('claude-auth', 'ok')], { ready: false });
+    expect(gateSteps(offPath, 'claude')).toEqual(['claude-path']);
+    expect(gateSteps(READY, 'claude')).toEqual([]);
+    for (const agent of ['claude', 'codex', 'antigravity'] as const) {
+      expect(gateSteps(missing, agent)).not.toContain('git-install');
+    }
+    expect(gateSteps(missing, 'antigravity')).toEqual(['antigravity-signin']);
+  });
+});
+
 describe('Launcher decisions', () => {
   const notReady = report([check('claude', 'missing'), check('git', 'missing', { tier: 'recommended' }), check('terminal', 'missing', { tier: 'optional', scopes: ['agent'] })], { ready: false });
 
@@ -100,8 +128,13 @@ describe('Launcher decisions', () => {
     expect(launcherOnboardingMode(3, undefined)).toBe('none');
   });
 
-  it('counts required and recommended machine checks still to do, never optional or agent-only ones', () => {
-    expect(remainingSetupCount(notReady)).toBe(2);
+  // Plan ilk-acilis C5: the bar counts only what blocks a first chat (Claude, its sign-in, the
+  // CLI, Node); Git is no longer a setup step, it comes with the first clone.
+  it('counts only the checks a first chat needs, never Git, optional or agent-only ones', () => {
+    expect(remainingSetupCount(notReady)).toBe(1);
+    const signedOut = report([check('claude', 'ok'), check('claude-auth', 'missing'), check('cli', 'missing'), check('git', 'missing', { tier: 'recommended' })], { ready: false });
+    expect(remainingSetupCount(signedOut)).toBe(2);
+    expect(remainingSetupCount(report([check('git', 'missing', { tier: 'recommended' })], { ready: false }))).toBe(0);
     expect(remainingSetupCount(READY)).toBe(0);
     expect(remainingSetupCount(undefined)).toBe(0);
   });

@@ -56,7 +56,7 @@ describe('note 1 and the one-home rule: a Super session never enters a chat wind
   });
 
   it('opening the Super in the new shell adopts no chat; classic still adopts', () => {
-    expect(src(SURFACE)).toContain('adoptionBody(windowed || adoptNone ? [] : tabs, before?.session)');
+    expect(src(SURFACE)).toContain('adoptionBody(windowed || adoptNone ? [] : tabs, before?.session, quiet)');
     expect(adoptionBody([{ id: 'a', claudeId: '11111111-1111-4111-8111-111111111111', title: 't', kind: 'chat' }], null).adopt).toHaveLength(1);
   });
 
@@ -173,7 +173,7 @@ describe('note 8: New project in the shell', () => {
     expect(src('dashboard/src/components/layout/newshell/ChatDrawer.tsx')).toContain('data-testid="drawer-new-project"');
     expect(src('dashboard/src/components/layout/newshell/ProjectPicker.tsx')).toContain('data-testid="ns-picker-new-project"');
     expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain('<Onboarding');
-    expect(src('dashboard/src/pages/onboarding/Handoff.tsx')).toContain('landHere(project.name');
+    expect(src('dashboard/src/pages/onboarding/Onboarding.tsx')).toContain("landHere(name, start ?? 'existing');");
   });
 });
 

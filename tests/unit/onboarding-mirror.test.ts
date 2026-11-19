@@ -104,7 +104,8 @@ describe('i18n copy', () => {
     expect(keys.get('onboarding.fix.gh-signin.scopesNote')).toMatch(/repositories.*organizations.*gists/);
   });
 
-  it('has the screen strings the checklist, the project step, the hand-off and the start notice use', () => {
+  // The hand-off screen is gone (plan ilk-acilis): only its tab title stays, for the initializer.
+  it('has the screen strings the checklist, the project step, the initializer tab and the start notice use', () => {
     for (const key of [
       'onboarding.stage.machine', 'onboarding.stage.project', 'onboarding.stage.start', 'onboarding.skip',
       'onboarding.machine.title', 'onboarding.machine.ready',
@@ -113,7 +114,7 @@ describe('i18n copy', () => {
       'onboarding.wait.browser.title', 'onboarding.wait.browser.openAgain', 'onboarding.wait.code.openGitHub',
       'onboarding.wait.dialog.title', 'onboarding.wait.cancel',
       'onboarding.project.git.pending', 'onboarding.project.git.needInstall', 'onboarding.project.docsFound',
-      'onboarding.handoff.start', 'onboarding.handoff.open', 'onboarding.handoff.tabTitle',
+      'onboarding.handoff.tabTitle',
       'onboarding.startIntent.refused', 'onboarding.startIntent.openSetup', 'onboarding.launcher.finishBar',
     ]) {
       expect({ key, present: (keys.get(key) ?? '').length > 0 }).toEqual({ key, present: true });
