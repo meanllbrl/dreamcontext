@@ -1,0 +1,103 @@
+/* The board's Sync button, in the canvas's top-right row beside the save state. */
+.wbp-sync {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.wbp-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--space-8);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.wbp-sync-btn:hover:not([aria-disabled='true']) { border-color: var(--color-border-hover); }
+
+.wbp-sync-btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.wbp-sync-btn[aria-disabled='true'] { cursor: progress; color: var(--color-text-secondary); }
+
+.wbp-sync-btn--bad { color: var(--color-error-ink); }
+
+.wbp-sync-glyph { flex: none; }
+
+.wbp-sync-glyph--spin { animation: wbp-sync-spin 1s linear infinite; }
+
+@keyframes wbp-sync-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .wbp-sync-glyph--spin { animation: none; }
+}
+
+/* The outcome, under the button; out of the row's flow so the row never re-measures for it. */
+.wbp-sync-note {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: max-content;
+  max-width: min(calc(20 * var(--space-4)), calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  white-space: normal;
+}
+
+.wbp-sync-note--warn { border-color: var(--color-warning); }
+
+.wbp-sync-note--bad { border-color: var(--color-error); color: var(--color-error-ink); }
+
+.wbp-sync-note-text { min-width: 0; }
+
+.wbp-sync-note-link,
+.wbp-sync-note-close {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wbp-sync-note-link { color: var(--color-accent); text-decoration: underline; }
+
+.wbp-sync-note-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-2)) calc(-1 * var(--space-1)) 0;
+  border-radius: var(--radius-sm);
+}
+
+.wbp-sync-note-link:focus-visible,
+.wbp-sync-note-close:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
