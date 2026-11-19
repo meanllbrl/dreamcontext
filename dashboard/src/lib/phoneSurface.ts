@@ -242,6 +242,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'DELETE /api/telegram/:target/groups/:chatId',
   'POST /api/telegram-readopt/:id/start',
   'POST /api/agent/voice/tts',
+  'POST /api/agent/voice/summary',
   'POST /api/agent/voice/warm',
   'POST /api/agent/voice/retranscribe',
   'POST /api/agent/voice/log',

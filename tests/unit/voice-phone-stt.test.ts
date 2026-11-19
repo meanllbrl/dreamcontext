@@ -190,7 +190,7 @@ describe('the route policy opens exactly one voice route (AC2)', () => {
     const others = Object.keys(ROUTE_POLICY).filter((k) => k.includes('/api/agent/voice/') && k !== 'POST /api/agent/voice/stt');
     expect(others.sort()).toEqual([
       'GET /api/agent/voice/dictation', 'GET /api/agent/voice/status', 'POST /api/agent/voice/dictation',
-      'POST /api/agent/voice/focus', 'POST /api/agent/voice/log', 'POST /api/agent/voice/retranscribe', 'POST /api/agent/voice/tts', 'POST /api/agent/voice/warm',
+      'POST /api/agent/voice/focus', 'POST /api/agent/voice/log', 'POST /api/agent/voice/retranscribe', 'POST /api/agent/voice/summary', 'POST /api/agent/voice/tts', 'POST /api/agent/voice/warm',
       'PUT /api/agent/voice/config',
     ]);
     for (const k of others) expect(ROUTE_POLICY[k].allow).toBe(false);
@@ -201,7 +201,7 @@ describe('the route policy opens exactly one voice route (AC2)', () => {
     try {
       expect(MAC_DENIED_API_ROUTES).not.toContain('POST /api/agent/voice/stt');
       expect(phoneAllows('POST', '/api/agent/voice/stt')).toBe(true);
-      for (const [m, p] of [['POST', '/api/agent/voice/tts'], ['POST', '/api/agent/voice/warm'], ['GET', '/api/agent/voice/status'], ['POST', '/api/agent/voice/focus'], ['GET', '/api/agent/voice/dictation']]) {
+      for (const [m, p] of [['POST', '/api/agent/voice/tts'], ['POST', '/api/agent/voice/summary'], ['POST', '/api/agent/voice/warm'], ['GET', '/api/agent/voice/status'], ['POST', '/api/agent/voice/focus'], ['GET', '/api/agent/voice/dictation']]) {
         expect(phoneAllows(m, p)).toBe(false);
       }
     } finally { setPhoneSurfaceForTests(null); }

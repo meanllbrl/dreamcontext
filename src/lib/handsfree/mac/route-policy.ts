@@ -461,6 +461,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // that primes whisper is the request project's. Read-aloud, warm, focus and setup stay here.
   'POST /api/agent/voice/stt': allow(`${CHAT}: a voice message from the phone, transcribed by this Mac's chosen dictation engine (phone caps: 4 MB, 2 min, 1 in flight, 12/min)`),
   'POST /api/agent/voice/tts': deny(VOICE),
+  'POST /api/agent/voice/summary': deny(VOICE),
   'POST /api/agent/voice/warm': deny(VOICE),
   // A chat's agent retranscribes its own take (`dreamcontext voice retry`): a CLI on this Mac,
   // never the phone. The handler refuses the phone socket too.
