@@ -66,6 +66,7 @@ export function fullscreenOf(c: Container, title: string, allowedHref: string | 
 }
 
 import { KIND_GLYPH } from '../../../lib/cardMention';
+import { AgendaCardActionsProvider, type AgendaCardAction } from './agendaCardActions';
 
 export { KIND_GLYPH };
 
@@ -288,6 +289,14 @@ export function SuperContainer(props: SuperContainerProps) {
     else v.webkitEnterFullscreen?.();
   };
   const small = drawnSize === 'small';
+  // A 344 px agenda holds the lights, its head tools (search, list/board) and the hover buttons in
+  // one row, so its To Others and side-by-side actions move into its ≡ menu there (nothing is
+  // dropped: the card stays fully usable at every size).
+  const agendaRoom = c.kind === 'agenda' && drawnSize === 'large';
+  const agendaActions: AgendaCardAction[] = agendaRoom ? [
+    ...(!props.remote ? [{ key: 'others', label: t('super.card.toOthers'), go: () => props.onToOthers(c.id) }] : []),
+    { key: 'side', label: t('super.card.sideBySide'), go: () => props.onSideBySide(c.id) },
+  ] : [];
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
   // A member's own card is never closed by anyone (plan r4 K3): no close control at all.
@@ -316,6 +325,7 @@ export function SuperContainer(props: SuperContainerProps) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (thumb) props.onSelectThumb?.(c.id); else if (c.kind === 'agenda') props.onSideBySide(c.id); else openCard(); }
   };
   return (
+    <AgendaCardActionsProvider value={agendaActions}>
     <div
       ref={frameRef}
       className={`super-card-frame${pending ? ' super-card-frame--pending' : ''}${props.parked ? ' super-card-frame--parked' : ''}`}
@@ -356,7 +366,7 @@ export function SuperContainer(props: SuperContainerProps) {
           // the card, its title bar, opens it side by side the way a click on the card did before
           // the Günlük agenda (owner 15 Nov). The head is pointer-inert on a floating card, so its
           // click lands on the frame: "outside the list", never "inside the head".
-          if (c.kind === 'agenda') { if (!el.closest('.super-agenda')) props.onSideBySide(c.id); return; }
+          if (c.kind === 'agenda') { if (!el.closest('.super-agenda, .agenda-head-tools, .agenda-glyph-btn')) props.onSideBySide(c.id); return; }
           openCard();
         } : undefined}
       onKeyDown={onKeyDown}
@@ -397,9 +407,9 @@ export function SuperContainer(props: SuperContainerProps) {
           <>
             {/* A 160 px tile holds the lights and two buttons: To Others joins size and full
                 screen in its ⋯ menu. */}
-            {!props.remote && !small && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
+            {!props.remote && !small && !agendaRoom && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} />}
             {/* The agenda's body takes every click: its way to side by side is a button of its own. */}
-            {c.kind === 'agenda' && <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} testId="super-agenda-side" />}
+            {c.kind === 'agenda' && !agendaRoom && !small && <IconButton icon="side" label={t('super.card.sideBySide')} onClick={() => props.onSideBySide(c.id)} testId="super-agenda-side" />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
             {small ? (
               <IconButton icon="more" label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')} onClick={() => setMenu((m) => (m ? null : 'more'))} testId="super-card-more" expanded={!!menu} />
@@ -438,6 +448,7 @@ export function SuperContainer(props: SuperContainerProps) {
             openFull();
           } : undefined}
           onToOthers={menu === 'more' && !props.remote ? () => { setMenu(null); props.onToOthers(c.id); } : undefined}
+          onSideBySide={menu === 'more' && c.kind === 'agenda' ? () => { setMenu(null); props.onSideBySide(c.id); } : undefined}
           onClose={() => setMenu(null)}
         />
       )}
@@ -480,6 +491,7 @@ export function SuperContainer(props: SuperContainerProps) {
         <span className="super-close-pending super-close-pending--failed" role="alert" data-testid="super-close-failed">{t('super.close.failed')}</span>
       )}
     </div>
+    </AgendaCardActionsProvider>
   );
 }
 
@@ -690,9 +702,9 @@ function FloatBody(p: BodyProps): ReactNode {
  * that cannot be drawn on this stage now is disabled and says why. Arrow keys move, Enter picks,
  * Esc closes. On a small tile it is the "more" menu and also holds Full screen.
  */
-function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onToOthers, onClose }: {
+function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onToOthers, onSideBySide, onClose }: {
   current: ContainerSize; drawn: ContainerSize; canFit: (size: ContainerSize) => boolean;
-  onPick: (size: ContainerSize) => void; onFullscreen?: () => void; onToOthers?: () => void; onClose: () => void;
+  onPick: (size: ContainerSize) => void; onFullscreen?: () => void; onToOthers?: () => void; onSideBySide?: () => void; onClose: () => void;
 }) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
@@ -734,6 +746,11 @@ function SizeMenu({ current, drawn, canFit, onPick, onFullscreen, onToOthers, on
       {onFullscreen && (
         <button type="button" role="menuitem" className="super-size-menu-item" data-testid="super-card-fullscreen" onClick={onFullscreen}>
           {t('super.card.fullscreen')}
+        </button>
+      )}
+      {onSideBySide && (
+        <button type="button" role="menuitem" className="super-size-menu-item" data-testid="super-card-side-by-side" onClick={onSideBySide}>
+          {t('super.card.sideBySide')}
         </button>
       )}
       {onToOthers && (
@@ -862,6 +879,17 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
 function CardHead({ kind, title, container, team }: { kind: Container['kind']; title: string; container?: Container; team?: TeamCard }) {
   // A member card: its member's face and name (owner 2026-11-15), never the glyph and slug.
   if (kind === 'team' && team) return <div className="super-card-head"><TeamHeadTitle member={team.job.member} /></div>;
+  // The agenda's head is ONE row (owner 19 Nov): its ≡ (day menu), the title, and a tools slot
+  // (search, list/board) that SuperAgenda fills; nothing else sits under it.
+  if (kind === 'agenda') {
+    return (
+      <div className="super-card-head" data-agenda-head>
+        <span className="super-card-glyph" data-agenda-slot="glyph" />
+        <span className="super-card-title" title={title}>{title}</span>
+        <span className="agenda-head-tools" data-agenda-slot="tools" />
+      </div>
+    );
+  }
   return (
     <div className="super-card-head">
       <span className="super-card-glyph" aria-hidden>{KIND_GLYPH[kind]}</span>

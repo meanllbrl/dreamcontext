@@ -604,3 +604,49 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 @media (prefers-reduced-motion: reduce) {
   .agenda-find-cap, :is(.agenda-head, .agenda-title-row, .agenda-main-head) > * { transition: none !important; }
 }
+
+/* ── One header row (owner 19 Nov: "çok kalabalık ve heavy") ─────────────────────────────
+   Inside a card the head is the card's own: ≡ Agenda on the left, search and list/board on the
+   right. No date, arrows, Today, count or bar row under it. */
+.agenda-head-tools { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-1); pointer-events: auto; }
+.agenda-head-tools:empty { display: none; }
+.agenda-head-tools .agenda-find { margin-left: 0; }
+.agenda-head-tools .agenda-viewswitch { margin-left: 0; }
+.super-card-frame:not([data-where='float']) .agenda-head-tools { margin-right: 0; }
+/* A floating card's hover buttons step LEFT of the tools (the tools keep their spot and take the
+   pointer); the title gives way to them as it already does to the lights. */
+.super-card-frame[data-where='float'][data-kind='agenda']:is(:hover, :focus-within):not([data-lifted]) .super-card-actions { right: calc(var(--agenda-tools-w, 0px) + 6px); }
+.agenda-head-tools, .agenda-glyph-btn { position: relative; z-index: 3; }
+.super-card-frame[data-where='float'][data-kind='agenda']:is(:hover, :focus-within):not([data-lifted]) .super-card-head[data-agenda-head] > .super-card-title { opacity: 0; }
+.super-card-head[data-find='open'] > :not(.agenda-head-tools) { opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s linear 180ms; }
+.super-card-head[data-agenda-head] { position: relative; }
+/* The ≡ is the day menu's button: the same glyph, now pressable. */
+.agenda-glyph-btn { pointer-events: auto; display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 24px; padding: 0 2px; border: 0; border-radius: var(--radius-sm, 4px); background: none; color: var(--color-text-tertiary); font: inherit; font-size: var(--font-size-xs); cursor: pointer; }
+.agenda-glyph-btn:hover, .agenda-glyph-btn[aria-expanded='true'] { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.agenda-glyph-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.agenda-daymenu {
+  position: absolute; z-index: 5; top: 0; left: var(--space-2); min-width: 128px; display: flex; flex-direction: column; padding: 4px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-elevated); box-shadow: var(--shadow-md, 0 4px 14px rgba(0, 0, 0, 0.22));
+}
+.agenda-daymenu-item { text-align: left; padding: 6px 10px; border: 0; border-radius: var(--radius-sm, 4px); background: none; color: var(--color-text); font: inherit; cursor: pointer; }
+.agenda-daymenu-item:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.agenda-daymenu-item:disabled { color: var(--color-text-tertiary); cursor: default; }
+.agenda-daymenu-item:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+/* Another day: a thin row, only while he is away from today. */
+.agenda-pastbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.agenda-today-btn { flex: none; padding: 2px 10px; border: 0; border-radius: var(--radius-full); background: var(--color-bg-tertiary); color: var(--color-text); font: inherit; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); cursor: pointer; }
+.agenda-today-btn:hover { background: color-mix(in srgb, var(--color-text) 12%, var(--color-bg-tertiary)); }
+.agenda-today-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+/* Small: the magnifier lives in the foot beside the +; open, it grows over the waiting line. */
+.agenda-foot { position: relative; }
+.agenda-foot .agenda-find { margin-left: auto; }
+.agenda-foot:has(.agenda-find) .agenda-fab { margin-left: 0; }
+.agenda-foot[data-find='open'] > .agenda-foot-waiting { opacity: 0; visibility: hidden; }
+/* While the search is open in the head, the lights and the hover buttons give way: the field
+   takes the whole head row and every click in it is the field's. */
+.super-card-frame:has(.super-card-head[data-find='open']) :is(.super-card-lights, .super-card-actions) { opacity: 0; pointer-events: none; }
+
+.agenda-daymenu-rule { height: 1px; margin: 4px 2px; background: var(--color-border); }
+/* A floating card's hover buttons sit over the head row and a little under it (6 px top + 34 px,
+   the head is 36): the lines start below them, and the last line ends above the resize corner. */
+.super-card-frame[data-where='float'] .super-agenda { padding-top: var(--space-2); padding-bottom: 20px; }
