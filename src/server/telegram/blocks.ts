@@ -22,7 +22,7 @@ import { escapeHtml, fenceTitle, imageName, markdownImages } from '../../lib/tel
 import { dreamHtmlPage, fenceBlocks } from '../../lib/telegram/render.js';
 import { agentUrlButton, cleanTitle } from '../../lib/telegram/urls.js';
 import { neutraliseHeaders } from '../../lib/telegram/inbound.js';
-import { pngFile, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { pictureTitle, pngFile, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { NOT_SENT, cardWhy, notSentLine, readProjectFile, type CardContext } from './cards.js';
 import { superMediaRoots } from './media-roots.js';
 import { secretPending } from './present.js';
@@ -132,6 +132,7 @@ export async function onLearnedButton(hub: TelegramHub, ab: ActiveBinding, data:
   }
 }
 
+/** Pictures per album: Telegram's own limit. More pictures in one text go as more albums. */
 export const MAX_TEXT_PICTURES = 10;
 
 /**
@@ -140,6 +141,10 @@ export const MAX_TEXT_PICTURES = 10;
  * one photo or album with "N · name" captions; every picture that does not go is one line
  * saying which and why (owner 2026-11-13: never a silent drop). Web pictures stay links in the
  * text. Returns how many went.
+ *
+ * Every picture goes (owner 2026-11-17: a board exported section by section is one picture per
+ * section): more than one album's worth goes as several albums in order, numbered on. A
+ * `whiteboard render` layout check is captioned as a draft, never passed off as the board.
  */
 export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text: string, pictures: boolean, deps: Pick<BlocksDeps, 'mediaRoots' | 'isGitIgnored'> = {}, sessionId: string | null = null): Promise<number> {
   const local = markdownImages(text).filter((i) => !i.web);
@@ -159,17 +164,16 @@ export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text
   for (const img of wanted) {
     const name = cleanTitle(imageName(img), 80);
     if (!pictures) { lines.push(notSentLine('Resim: ', name, NOT_SENT.secret)); continue; }
-    if (items.length >= MAX_TEXT_PICTURES) { lines.push(notSentLine('Resim: ', name, `bir mesajda en çok ${MAX_TEXT_PICTURES} resim gider, Mac'te açık`)); continue; }
     const f = readProjectFile({ contextRoot: root, mediaRoots: roots, ...(deps.isGitIgnored ? { isGitIgnored: deps.isGitIgnored } : {}) }, img.src);
     if (!f.ok) { lines.push(notSentLine('Resim: ', name, cardWhy(f.reason))); continue; }
     const kind = IMAGE_FILE.test(f.file.name) ? 'photo' : VIDEO_FILE.test(f.file.name) ? 'video' : null;
     if (!kind) { lines.push(notSentLine('Resim: ', name, NOT_SENT.format)); continue; }
-    items.push({ kind, file: f.file, title: name });
+    items.push({ kind, file: f.file, title: pictureTitle(f.file.data, name) });
   }
   let sent = 0;
-  if (items.length) {
-    const r = await sendPictures(ab, items, true);
-    sent = r.sent.length;
+  for (let i = 0; i < items.length; i += MAX_TEXT_PICTURES) {
+    const r = await sendPictures(ab, items.slice(i, i + MAX_TEXT_PICTURES), true, i);
+    sent += r.sent.length;
     for (const m of r.unsent) lines.push(notSentLine('Resim: ', m.title, NOT_SENT.refused));
   }
   if (lines.length) await hub.send(ab, lines.map((l) => `📎 <i>${escapeHtml(l)}</i>`).join('\n')).catch(() => {});

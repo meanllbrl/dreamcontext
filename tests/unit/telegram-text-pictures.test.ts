@@ -17,6 +17,10 @@ import { sendAnswerBlocks } from '../../src/server/telegram/blocks.js';
 import { cardOut, type CardContext } from '../../src/server/telegram/cards.js';
 import { superMediaRoots } from '../../src/server/telegram/media-roots.js';
 import type { SuperContainer } from '../../src/lib/super/types.js';
+import { renderScene } from '../../src/lib/whiteboards/render.js';
+import { withPngText } from '../../src/lib/whiteboards/raster.js';
+import { RENDER_KIND_KEY } from '../../src/lib/whiteboards/render-mark.js';
+import { uploadTiming } from '../../src/server/telegram/pictures.js';
 
 /** A real PNG header (signature + IHDR) of the given size. */
 function png(w = 800, h = 600): Buffer {
@@ -233,6 +237,95 @@ describe('end to end: the Super answer with pictures reaches the fake bot', () =
       expect(bot.hits.map((h) => h.method)).toEqual(['sendPhoto']);
       expect(bot.hits[0].files).toEqual(['tek.png']);
       expect(bot.hits[0].body).toContain('tek resim');
+    } finally { bot.server.close(); }
+  });
+});
+
+describe('a whiteboard exported section by section (owner 2026-11-17)', () => {
+  const setup = async () => {
+    const bot = await fakeBot();
+    const transport = new TelegramTransport({ token: '123:abc', baseUrl: bot.url, timeoutMs: 5000 });
+    const ab = { key: 'k', target: 'super', scope: 'p', contextRoot: ctxRoot, binding: { chatId: 42 }, transport } as never;
+    const hub = { send: (_a: unknown, html: string) => transport.sendMessage(42, html), notice: async () => {}, reply: async () => {}, sendButtons: async () => '', rootOf: (a: { contextRoot: string | null }) => a.contextRoot } as never;
+    return { bot, ab, hub };
+  };
+
+  it('every picture goes: more than one album goes as several albums, numbered on', async () => {
+    const { bot, ab, hub } = await setup();
+    try {
+      const lines = Array.from({ length: 12 }, (_, i) => `![bölüm ${i + 1}](${put(join(shots, `b${i + 1}.png`), png())})`);
+      await sendAnswerBlocks(hub, ab, lines.join('\n'), 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [shots] });
+      expect(bot.hits.map((h) => h.method)).toEqual(['sendMediaGroup', 'sendMediaGroup']);
+      expect(bot.hits[0].files).toHaveLength(10);
+      expect(bot.hits[1].files).toEqual(['b11.png', 'b12.png']);
+      expect(bot.hits[1].body).toContain('11 · bölüm 11');
+      expect(bot.hits.some((h) => h.body.includes('en çok'))).toBe(false);
+    } finally { bot.server.close(); }
+  });
+
+  it('a lone picture in a later album keeps its running number, a tall one too', async () => {
+    const { bot, ab, hub } = await setup();
+    try {
+      const lines = Array.from({ length: 11 }, (_, i) => `![bölüm ${i + 1}](${put(join(shots, `c${i + 1}.png`), png())})`);
+      lines.push(`![uzun](${put(join(shots, 'uzun.png'), png(300, 1700))})`);
+      await sendAnswerBlocks(hub, ab, lines.join('\n'), 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [shots] });
+      expect(bot.hits.map((h) => h.method)).toEqual(['sendMediaGroup', 'sendPhoto', 'sendPhoto']);
+      expect(bot.hits[1].body).toContain('11 · bölüm 11');
+      expect(bot.hits[2].body).toContain('12 · uzun');
+    } finally { bot.server.close(); }
+  });
+
+  it("Telegram's flood limit is waited out: the refused album goes again after retry_after", async () => {
+    const hits: string[] = [];
+    let refused = false;
+    const server = createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', () => {
+        const method = (req.url ?? '').split('/').pop() ?? '';
+        hits.push(method);
+        res.setHeader('content-type', 'application/json');
+        if (method === 'sendMediaGroup' && !refused) {
+          refused = true;
+          res.statusCode = 429;
+          res.end(JSON.stringify({ ok: false, error_code: 429, description: 'Too Many Requests: retry after 3', parameters: { retry_after: 3 } }));
+          return;
+        }
+        res.end(JSON.stringify({ ok: true, result: method === 'sendMediaGroup' ? [{ message_id: 1 }] : { message_id: 2 } }));
+      });
+    });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+    const waits: number[] = [];
+    const realWait = uploadTiming.wait;
+    uploadTiming.wait = async (ms) => { waits.push(ms); };
+    try {
+      const transport = new TelegramTransport({ token: '123:abc', baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, timeoutMs: 5000 });
+      const ab = { key: 'k', target: 'super', scope: 'p', contextRoot: ctxRoot, binding: { chatId: 42 }, transport } as never;
+      const sent: string[] = [];
+      const hub = { send: async (_a: unknown, html: string) => { sent.push(html); }, notice: async () => {}, reply: async () => {}, sendButtons: async () => '', rootOf: (a: { contextRoot: string | null }) => a.contextRoot } as never;
+      const text = [1, 2].map((i) => `![b${i}](${put(join(shots, `f${i}.png`), png())})`).join('\n');
+      const n = await sendAnswerBlocks(hub, ab, text, 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [shots] }).then(() => hits.length);
+      expect(n).toBe(2);
+      expect(hits).toEqual(['sendMediaGroup', 'sendMediaGroup']);
+      expect(waits).toEqual([3000]);
+      expect(sent.join('')).not.toContain('gönderilmedi');
+    } finally {
+      uploadTiming.wait = realWait;
+      server.close();
+    }
+  });
+
+  it('a layout check (whiteboard render) still goes, named a draft; an export goes under its own name', async () => {
+    const { bot, ab, hub } = await setup();
+    try {
+      const board = [{ id: 'r', type: 'rectangle', x: 0, y: 0, width: 40, height: 40, version: 1, isDeleted: false, opacity: 100, index: 'a0' }] as never;
+      const layout = put(join(shots, 'pano.png'), renderScene(board, { region: { x: 0, y: 0, w: 50, h: 50 }, scale: 1 }).png);
+      // An export is a browser shot marked `export` (board-shots.ts).
+      const real = put(join(shots, 'pano-export.png'), withPngText(png(), { [RENDER_KIND_KEY]: 'export' }));
+      await sendAnswerBlocks(hub, ab, `![pano](${layout})\n![bölüm 1](${real})`, 'no-such-session', { snapshot: async () => null, mediaRoots: async () => [shots] });
+      expect(bot.hits.map((h) => h.method)).toEqual(['sendMediaGroup']);
+      expect(bot.hits[0].body).toContain('1 · Yerleşim taslağı, panonun görüntüsü değil · pano');
+      expect(bot.hits[0].body).toContain('2 · bölüm 1');
+      expect(bot.hits[0].body).not.toContain('taslağı, panonun görüntüsü değil · bölüm 1');
     } finally { bot.server.close(); }
   });
 });

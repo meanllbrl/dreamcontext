@@ -37,7 +37,7 @@ interface BoardScene {
 /** One stored picture of a whiteboard, from the route the Whiteboards page reads it from
  *  (`GET /api/whiteboards/<slug>/files/<id>`, raw bytes, the vault header as the API client
  *  sends it), as a data URL. */
-async function downloadBoardPicture(slug: string, vault: string | null, id: string): Promise<BoardPictureFile> {
+export async function downloadBoardPicture(slug: string, vault: string | null, id: string): Promise<BoardPictureFile> {
   const res = await fetch(`/api/whiteboards/${encodeURIComponent(slug)}/files/${encodeURIComponent(id)}`, {
     headers: vault ? { 'X-Dreamcontext-Vault': vault } : {},
   });

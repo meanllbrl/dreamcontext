@@ -1336,7 +1336,8 @@ export function resolveRequestVault(req: IncomingMessage): string | null | 'INVA
   return join(v.path, '_dream_context');
 }
 
-function getDashboardDir(): string {
+/** Where the dashboard build this CLI ships lives (`dist/dashboard`). */
+export function getDashboardDir(): string {
   const __dirname = fileURLToPath(new URL('.', import.meta.url));
   // In dist: dist/dashboard/ is sibling to dist/index.js
   return resolve(__dirname, 'dashboard');
