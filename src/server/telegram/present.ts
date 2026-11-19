@@ -28,6 +28,7 @@ import { caption, sendMedia, sendPictures, type MediaItem, type Snapshotter } fr
 import { noticeHtml } from '../../lib/telegram/system-lines.js';
 import { LINES, type ActiveBinding, type TelegramHub } from './hub.js';
 import { superMediaRoots } from './media-roots.js';
+import { freshCardOuts, release, turnOf } from './sent-once.js';
 
 export const PRESENT_SETTLE_MS = 1_000;
 export const MAX_PRESENTED = 10;
@@ -49,7 +50,7 @@ export interface PresenterDeps {
   isGitIgnored?: CardContext['isGitIgnored'];
 }
 
-interface Pending { key: string; verbs: StageVerbEvent[]; telegram: boolean }
+interface Pending { key: string; verbs: StageVerbEvent[]; telegram: boolean; turn?: number }
 
 export type PhoneLink = { origin: string } | { why: 'telegram-only' | 'other' | 'starting' } | 'off';
 export const PHONE_LINES = {
@@ -110,7 +111,7 @@ export async function sendPhoneButton(hub: TelegramHub, ab: ActiveBinding, sessi
 }
 
 /** Sends one presentation. Returns what went (tests). */
-export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs: CardOut[], layout: string, more: number, sessionId: string, deps: Pick<PresenterDeps, 'phoneLink'>): Promise<{ photos: number; album: boolean; texts: number }> {
+export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs: CardOut[], layout: string, more: number, sessionId: string, deps: Pick<PresenterDeps, 'phoneLink'>, onSent?: (items: MediaItem[]) => void): Promise<{ photos: number; album: boolean; texts: number }> {
   const word = LAYOUT_WORD[layout] ?? 'Sunum';
   const moreLine = more > 0 ? [`Ve ${more} kart daha.`] : [];
   const media: MediaItem[] = [];
@@ -124,7 +125,9 @@ export async function sendPresentation(hub: TelegramHub, ab: ActiveBinding, outs
   // fail become text lines: the presentation is never just its footer.
   // Pictures carry their own "N · name" caption and no listing message follows (owner 2026-11-13).
   const { sent: pics, unsent } = await sendPictures(ab, media.slice(0, MAX_PRESENTED), true);
-  for (const d of docs) if (!(await sendMedia(ab, d, caption(d.title)))) unsent.push(d);
+  const docsSent: MediaItem[] = [];
+  for (const d of docs) if (!(await sendMedia(ab, d, caption(d.title)))) unsent.push(d); else docsSent.push(d);
+  onSent?.([...pics, ...docsSent]);
   const album = pics.length >= 2;
   const fallback = unsent.map((m) => notSentLine('', m.title, NOT_SENT.refused));
   if (lines.length || fallback.length || !pics.length || moreLine.length) {
@@ -176,6 +179,8 @@ export function wirePresenter(hub: TelegramHub, deps: PresenterDeps): () => void
     if (!p) return;
     pending.delete(entry.sessionId);
     if (!p.telegram) return;
+    // The turn it belongs to, read now: a new turn may begin during the settle.
+    p.turn = turnOf(entry.sessionId);
     const t = setTimeout(() => { void present(entry.sessionId, p).catch(() => {}); }, deps.settleMs ?? PRESENT_SETTLE_MS);
     t.unref?.();
   });
@@ -193,9 +198,19 @@ export function wirePresenter(hub: TelegramHub, deps: PresenterDeps): () => void
       snapshot: deps.snapshot, isGitIgnored: deps.isGitIgnored, mediaRoots: await superMediaRoots(b.root),
       ...(deps.renderInsight ? { renderInsight: (id: string) => deps.renderInsight!(ab, sessionId, id) } : {}),
     };
-    const outs: CardOut[] = [];
-    for (const c of shown) outs.push(await cardOut(ctx, c));
-    await sendPresentation(hub, ab, outs, picked.layout, picked.cards.length - shown.length, sessionId, deps);
+    const list: { card: SuperContainer; out: CardOut }[] = [];
+    for (const c of shown) list.push({ card: c, out: await cardOut(ctx, c) });
+    // A file this turn already sent (an ask's --show card) does not go again (sent-once.ts).
+    const { outs, claimed, keyOf } = freshCardOuts(ab.key, sessionId, list, p.turn);
+    if (!outs.length) return;
+    let went: MediaItem[] = [];
+    try {
+      await sendPresentation(hub, ab, outs, picked.layout, picked.cards.length - shown.length, sessionId, deps, (items) => { went = items; });
+    } finally {
+      // What did not reach the chat may still go by another door this turn.
+      const ok = new Set(went);
+      release(ab.key, sessionId, claimed.filter((m) => !ok.has(m)), keyOf, p.turn);
+    }
   }
 
   const prevButton = hub.extraButton;

@@ -149,6 +149,10 @@ describe('superBriefState', () => {
     const summary = { type: 'user', isCompactSummary: true, message: { content: [{ type: 'text', text: `summary ${SUPER_BRIEF_MARKER}` }] } };
     expect(superBriefState(j(old, owner('x', SUPER_BRIEF_TEXT), compact, summary), SUPER_BRIEF_REV).due).toBe(true);
   });
+  it('rev 53 (2026-11-17): after `super ask`, the answer already given is never re-written', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(53);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('(a late line lands above the card; never re-say your answer in other words)');
+  });
   it('rev 51 (2026-11-15): a child\'s question (`shown=owner`) waits on the Mac bar only, never Telegram; `queue ask` when it is his and he is away (rev 53: the Super answers it first)', () => {
     expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(53);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {

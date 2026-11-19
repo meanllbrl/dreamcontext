@@ -386,7 +386,8 @@ export function quickEditInput(elements: readonly WhiteboardElement[], scope: re
  * catalog (what a widget may name, quick-catalog.ts) inside another. Both change per call, so they
  * stay out of the cached system prompt.
  */
-export function quickEditUserMessage(request: string, input: string, nonce = randomBytes(8).toString('hex'), catalog?: string, memory?: string): string {
+/** `brain`: the brain's real path, for a run that may search it (it works in an empty folder, quick-memory.ts). */
+export function quickEditUserMessage(request: string, input: string, nonce = randomBytes(8).toString('hex'), catalog?: string, memory?: string, brain?: string): string {
   const words = request.replace(/\u0000/g, '').trim();
   return [
     `Request from the owner: ${words}`,
@@ -409,13 +410,14 @@ export function quickEditUserMessage(request: string, input: string, nonce = ran
       memory,
       `</memory-${nonce}>`,
     ] : []),
+    ...(brain ? ['', `The brain folder (read its files by their full path under it): ${brain}`] : []),
   ].join('\n');
 }
 
 /** What the run knows of the project and how it searches it (quick-memory.ts). Shared by every tool. */
 export const QUICK_MEMORY_RULES = `## The project's memory
 - The message may carry \`memory\`: what the project's brain recalled for this request. Use it when the request names project things (a task's steps, a decision, a flow, a person).
-- When the request needs project knowledge that neither \`memory\` nor the \`catalog\` holds, search the brain: run \`dreamcontext memory recall "<keywords>"\` and read the files it names (paths are relative to your working folder, the brain). Draw from what you found, never from a guess.
+- When the request needs project knowledge that neither \`memory\` nor the \`catalog\` holds, search the brain: run \`dreamcontext memory recall "<keywords>"\` and read the files it names: its paths are relative to the brain folder the message names, so read each by its full path under that folder (your working folder is empty). Draw from what you found, never from a guess.
 - Search ONLY when the request needs project knowledge. A plain drawing or edit ("elma ekle", "yeşil yap") needs no search: answer at once.
 - Searching and reading are all you may do: no tool writes, and nothing outside this board changes. When nothing tool-side is available, use what the message holds.`;
 

@@ -423,7 +423,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
       // rev 53: `super ask` is the last act of the turn and no line before it says a question waits.
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Run'),
-      '  `super ask` as the LAST act of the turn, with no text after it (a late line lands above the card) and',
+      '  `super ask` as the LAST act of the turn, with no text after it (a late line lands above the card; never re-say your answer in other words) and',
       expect.stringContaining('no line before it that a question waits; `reached: false` = unseen: one short line allowed.'),
       expect.stringContaining('child questions that waited meanwhile as'),
       // 2026-11-11 (telegram-resim-adlari): only a tap or a message written about the card closes it.
@@ -434,7 +434,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       '  members): check it first for every job. A diagnosis, draft, send, a change or several sources in',
       "  a member's field is that member's job (`super team ask <member> \"<job>\"`, in its own thread),",
-      '  never a sub-agent. A small read of ONE source, changing nothing, is yours; out of your reach,',
+      '  never a sub-agent; more work: its routine (`--agent <it>`), not a new member. A small read of ONE source, changing nothing, is yours; out of your reach,',
       '  add `--light` (read-only tools, cheap model). `--model`/`--effort` set one job, never the member.',
       '- A member got something wrong in work you saw: correct it yourself with',
       '  `super team amend <member> --why "<the mistake>" --prompt-file <file>`. It stays approved, no',

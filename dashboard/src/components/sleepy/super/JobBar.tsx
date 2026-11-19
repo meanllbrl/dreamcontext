@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import { revealHiddenCard } from './superThreadFilter';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { useAutomation } from '../../../hooks/useAutomations';
@@ -394,7 +395,8 @@ export function showQuestionCard(itemId: string, root?: ParentNode | null): bool
   const scope: ParentNode = root ?? document;
   const sel = root ? '[data-testid="super-question-card"]' : '[data-super-slot="centre"] [data-testid="super-question-card"]';
   const card = [...scope.querySelectorAll<HTMLElement>(sel)].find((el) => el.dataset.item === itemId);
-  if (!card || !card.isConnected) return false;
+  // Hidden by an agenda row's thread filter: the filter ends, then the door opens (C4 gate).
+  if (!card || !card.isConnected) return revealHiddenCard(itemId, () => { showQuestionCard(itemId, root); });
   // The Super pane takes the door: it goes straight to the card through its own scroll owner.
   const detail: SuperQuestionDetail = { item: itemId };
   const handled = !card.dispatchEvent(new CustomEvent(SUPER_QUESTION_EVENT, { bubbles: true, cancelable: true, detail }));
@@ -785,7 +787,7 @@ function AlwaysMenu({ choices, memberName, busy, onPick }: {
  *  False when no such card is drawn (the chat not on screen): the caller opens the member. */
 export function showMemberCard(itemId: string, root: ParentNode = document): boolean {
   const card = [...root.querySelectorAll<HTMLElement>('[data-testid="super-member-card"]')].find((el) => el.dataset.item === itemId);
-  if (!card || !card.isConnected) return false;
+  if (!card || !card.isConnected) return revealHiddenCard(itemId, () => { showMemberCard(itemId, root); });
   const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
   card.querySelector<HTMLElement>('textarea, button:not([disabled])')?.focus({ preventScroll: true });

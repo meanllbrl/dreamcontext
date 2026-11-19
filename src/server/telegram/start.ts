@@ -31,6 +31,9 @@ export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<Te
     transcribeVoice: (p) => transcribeVoiceNote(p),
     // Binding a bot makes sure the launchd tick exists (it answers while the app is quit).
     ensureDispatcher: () => { void installDispatcher().catch(() => { /* the bind sheet names it */ }); },
+    // A closed or slept Super (main's or a member's) is started by the server itself when his
+    // message comes, never only through a window that may not open (owner 2026-11-16).
+    wakeHeadless: async (o) => (await import('../headless-super.js')).wakeSuperHeadless(o),
     ...extra,
   });
   setTelegramHub(hub);

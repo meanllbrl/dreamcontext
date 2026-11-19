@@ -20,7 +20,7 @@
  * (`padNotice`), so it can reverse a wrong move (`note keep` / `note add`); the owner sees the
  * move on the card and can put it back with one press.
  */
-import { PAD_STALE_MS, type PadAutoWhy, type PadStatus, type SuperPadItem, type SuperState } from './types.js';
+import { MAX_PAD_REFS, MSG_REF_RE, PAD_STALE_MS, type PadAutoWhy, type PadRef, type PadStatus, type SuperPadItem, type SuperState } from './types.js';
 
 const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -29,6 +29,39 @@ const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
  *  note commands still change it. */
 export function ownerLine(p: Pick<SuperPadItem, 'author'>): boolean {
   return p.author === 'owner';
+}
+
+/** A line's `refs` as stored: valid pairs only (a six-character ref, a finite non-negative
+ *  time), oldest first, at most `max` (the oldest go). Undefined when none is left. */
+export function cleanPadRefs(raw: unknown, max: number = MAX_PAD_REFS): PadRef[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: PadRef[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const { ref, at } = r as Record<string, unknown>;
+    if (typeof ref !== 'string' || !MSG_REF_RE.test(ref)) continue;
+    if (typeof at !== 'number' || !Number.isFinite(at) || at < 0) continue;
+    out.push({ ref, at });
+  }
+  out.sort((a, b) => a.at - b.at);
+  const kept = out.length > max ? out.slice(out.length - max) : out;
+  return kept.length ? kept : undefined;
+}
+
+/**
+ * ajanda-filtre C1: the owner message `pair` moved the work of the line `note` (by id), or of
+ * every line `for` the child `child`. Appended inside the caller's write; an identical pair
+ * already on a line is skipped (a retried call), the same words in another turn are a new pair.
+ */
+export function linkLineRef(s: Pick<SuperState, 'pad'>, target: { note?: string; child?: string }, pair: PadRef): void {
+  if (!s.pad || !MSG_REF_RE.test(pair.ref) || !Number.isFinite(pair.at)) return;
+  const hit = (p: SuperPadItem) => (target.note !== undefined && p.id === target.note) || (target.child !== undefined && p.for === target.child);
+  s.pad = s.pad.map((p) => {
+    if (!hit(p)) return p;
+    const have = p.refs ?? [];
+    if (have.some((r) => r.ref === pair.ref && r.at === pair.at)) return p;
+    return { ...p, refs: cleanPadRefs([...have, pair]) };
+  });
 }
 
 /** A line's status, of five (types.ts PAD_STATUSES), from its stored section and stage. */

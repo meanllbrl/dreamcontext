@@ -22,7 +22,8 @@ import { assertOwned, currentLogin, parseOwner } from '../agents/owner.js';
 import { agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from '../agents/agent-sync.js';
 import { composeRun, legacyPair, withConditionValidity } from '../agents/compose.js';
 import { nextFreeFace } from '../agents/faces.js';
-import { globalAgentExists, globalProjectDir, isGlobalAgentHere, memberSidePath } from '../agents/scope.js';
+import { globalAgentExists, globalAgentHome, globalAgentsDir, globalProjectDir, isGlobalAgentHere, memberSidePath } from '../agents/scope.js';
+import { safeWriteTarget } from '../vault-read.js';
 import {
   agentCallTarget,
   agentPath,
@@ -602,6 +603,45 @@ export function resolveAutomationPhoto(contextRoot: string, raw: string | null):
     // fifo would hang the request thread.
     if (!statSync(real).isFile()) return null;
     return real;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The root a member's `photo` string is relative to: the project's brain, or, for the global agent
+ * of that name here, its home on this machine (`~/.dreamcontext/agents/<slug>/`). A global agent
+ * is listed in every project, so its photo cannot live in any one of them: it lives beside it, and
+ * the same `automations/photos/<slug><ext>` string resolves under that home in every project.
+ */
+export function memberPhotoRoot(contextRoot: string, agentSlug: string, home?: string): string {
+  return isGlobalAgentHere(contextRoot, agentSlug, home) ? globalAgentHome(agentSlug, home) : contextRoot;
+}
+
+/**
+ * {@link resolveAutomationPhoto} for member `agentSlug` (a routine passes the agent it runs as),
+ * wherever its photo lives. TOTAL: never throws. A global agent's photo is read only when no part
+ * of its path below the global agents folder is a link (lstat on every segment), on top of the
+ * realpath containment `resolveAutomationPhoto` already applies.
+ */
+export function resolveMemberPhoto(contextRoot: string, agentSlug: string, raw: string | null, home?: string): string | null {
+  try {
+    return isGlobalAgentHere(contextRoot, agentSlug, home)
+      ? resolveGlobalAgentPhoto(agentSlug, raw, home)
+      : resolveAutomationPhoto(contextRoot, raw);
+  } catch {
+    return null;
+  }
+}
+
+/** A global agent's photo from its home, with no project needed (its Telegram bot). TOTAL. */
+export function resolveGlobalAgentPhoto(slug: string, raw: string | null, home?: string): string | null {
+  try {
+    if (raw === null) return null;
+    const root = globalAgentHome(slug, home);
+    const real = resolveAutomationPhoto(root, raw);
+    if (!real) return null;
+    return safeWriteTarget(globalAgentsDir(home), resolve(root, normalize(raw.trim()))) ? real : null;
   } catch {
     return null;
   }
@@ -1821,8 +1861,13 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
   if (slug !== agentSlug && getAgent(contextRoot, slug)) {
     throw new AutomationError(`"${slug}" is already an agent's name; an automation may share a name only with its own agent.`);
   }
-  if ((i.mode ?? 'sched') !== 'sched') {
-    throw new AutomationError('An automation runs on a schedule. An agent you only call needs no automation.');
+  // A member's on-call routine (`--agent <m> --mode call`): one named job of THAT member that runs
+  // only when called (Run now, `automations run`), with no schedule at all, exactly like an on-call
+  // legacy file. Before it existed an on-call job had nowhere to go but a NEW member (owner
+  // 2026-11-17: a duplicate of his member on the AI Team).
+  const mode: AutomationMode = i.mode ?? 'sched';
+  if (mode === 'call' && slug === agentSlug) {
+    throw new AutomationError(`"${slug}" is the member itself: calling it needs no routine. Give the on-call routine its own name.`);
   }
   if (i.outputDir !== undefined && i.outputDir !== null) resolveOutputDir(contextRoot, i.outputDir, slug);
   ensureAutomationsGitignore(contextRoot, slug);
@@ -1835,9 +1880,9 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     face: nextFreeFace(contextRoot, slug),
     owner,
     updated: new Date().toISOString(),
-    mode: 'sched',
+    mode,
     enabled: i.enabled ?? true,
-    schedule: serializeSchedule(scheduleFromInput(i)),
+    schedule: serializeSchedule(mode === 'call' ? null : scheduleFromInput(i)),
     timeout_minutes: numberOrDefault(i.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES),
     catchup_hours: numberOrDefault(i.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS),
     output: { dir: i.outputDir ?? null },
@@ -2206,21 +2251,29 @@ function updateBoundAutomation(
   job: AutomationJob,
   patch: UpdateAutomationInput,
 ): AutomationManifest {
-  if (patch.mode === 'call') {
-    throw new AutomationError('An automation runs on a schedule. An agent you only call needs no automation.');
-  }
   const title = patch.title === undefined ? job.title : patch.title.trim();
   if (!title) throw new AutomationError('An automation title is required.');
-  const nextSchedule = nextScheduleFor(job, 'sched', patch);
+  // A member's routine may be on call too (no schedule): see `createBoundAutomation`. An edit ends in
+  // a state a create accepts: never on call under the member's own name, never on call with a condition.
+  const mode: AutomationMode = patch.mode ?? job.mode;
+  if (mode === 'call' && job.mode !== 'call') {
+    if (slug === job.agent) {
+      throw new AutomationError(`"${slug}" is the member's own routine: calling the member needs no routine. Turn the routine off instead.`);
+    }
+    if (job.condition !== undefined && patch.condition !== null) {
+      throw new AutomationError(`"${slug}" has a condition, and a routine you only call has no scheduled fire to check it on: remove the condition first.`);
+    }
+  }
+  const nextSchedule = nextScheduleFor(job, mode, patch);
   validateAutomationForWrite({
     slug,
     title,
-    mode: 'sched',
-    slots: (nextSchedule ?? job.schedule ?? { slots: [{ kind: 'weekly', days: 'daily', at: '09:00' }] }).slots,
+    mode,
+    ...(mode === 'call' ? {} : { slots: (nextSchedule ?? job.schedule ?? { slots: [{ kind: 'weekly', days: 'daily', at: '09:00' }] }).slots }),
     timeoutMinutes: patch.timeoutMinutes,
     catchupHours: patch.catchupHours,
   });
-  checkConditionPatch(patch, { mode: 'sched', boardOnly: getAgent(contextRoot, job.agent)?.boardOnly === true, condition: job.condition });
+  checkConditionPatch(patch, { mode, boardOnly: getAgent(contextRoot, job.agent)?.boardOnly === true, condition: job.condition });
 
   const identity: AgentIdentityPatchInput = {};
   if (patch.model !== undefined) identity.model = patch.model;
@@ -2229,7 +2282,7 @@ function updateBoundAutomation(
   if (patch.prompt !== undefined) identity.prompt = patch.prompt;
   if (Object.keys(identity).length > 0) updateAgent(contextRoot, job.agent, identity);
 
-  const fields: Record<string, unknown> = { title, mode: 'sched' };
+  const fields: Record<string, unknown> = { title, mode };
   if (nextSchedule !== undefined) fields.schedule = serializeSchedule(nextSchedule);
   if (patch.timeoutMinutes !== undefined) {
     fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);

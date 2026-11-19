@@ -119,6 +119,8 @@ import {
 import { CONDITION_HELP, conditionEnv, runCondition, visibleScript, conditionWakes } from '../../lib/automations/condition.js';
 import { withConditionValidity } from '../../lib/agents/compose.js';
 import { agentDriven } from '../../lib/agent-filing-guard.js';
+import { membersNamedIn } from '../../lib/agents/member-mention.js';
+import { attachRoutine, detachRoutine } from '../../lib/automations/attach.js';
 import { placement } from '../../lib/agents/active.js';
 import { runAutomation, killRunGroup, type RunOutcome, type KillRunResult } from '../../lib/automations/runner.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
@@ -322,15 +324,17 @@ function createBoundFromFlags(
     if (!checkApproval(projectRoot, agentTarget, undefined, 'identity').approved) {
       throw new AutomationError(`${agentTarget.agentTitle || agentTarget.title} is not approved on this machine. Approve it on the AI Team page first.`);
     }
-    if (opts.mode !== undefined && parseModeFlag(opts.mode) === 'call') {
-      throw new AutomationError('An automation runs on a schedule. An agent you only call needs no automation.');
-    }
+    // `--mode call`: the member's on-call routine (no schedule; Run now or `automations run`).
+    const onCall = opts.mode !== undefined && parseModeFlag(opts.mode) === 'call';
     const slotSpecs = opts.slot ?? [];
+    if (onCall && (slotSpecs.length > 0 || opts.days || opts.at)) {
+      throw new AutomationError('An on-call routine has no schedule: drop --slot/--days/--at, or drop --mode call.');
+    }
     if (slotSpecs.length > 0 && (opts.days || opts.at)) {
       throw new AutomationError('--slot and --days/--at both set the schedule — use --slot for every time, or --days/--at for one.');
     }
-    if (slotSpecs.length === 0 && (!opts.days || !opts.at)) {
-      throw new AutomationError('An automation needs --slot (repeatable) or --days and --at.');
+    if (!onCall && slotSpecs.length === 0 && (!opts.days || !opts.at)) {
+      throw new AutomationError('A routine needs --slot (repeatable) or --days and --at, or --mode call for one that runs only when called.');
     }
     // Made on this Mac, so approved as written (`localWriteStamps`, owner 2026-11-07): only a risky
     // job from a process that never talks to the owner (an agent run, the Super Agent's crew) waits.
@@ -343,10 +347,10 @@ function createBoundFromFlags(
       title: opts.title,
       agent: agentSlug,
       job: opts.job ?? '',
-      mode: 'sched',
+      mode: onCall ? 'call' : 'sched',
       days: parseDaysFlag(opts.days ?? 'daily'),
       at: opts.at ?? '09:00',
-      slots: slotSpecs.length > 0 ? parseSlotFlags(slotSpecs, new Date()) : undefined,
+      slots: !onCall && slotSpecs.length > 0 ? parseSlotFlags(slotSpecs, new Date()) : undefined,
       timeoutMinutes: opts.timeout ? Number(opts.timeout) : undefined,
       catchupHours: opts.catchup ? Number(opts.catchup) : undefined,
       enabled: !opts.disabled,
@@ -359,12 +363,12 @@ function createBoundFromFlags(
     }, approveNow ? { approve: { now: new Date(), witness: terminalWitness() } } : {});
     // What really happened: a condition nobody here witnessed waits (C2).
     const stampedNow = approveNow && checkApproval(projectRoot, manifest, undefined, 'run').approved;
-    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stampedNow ? ' (approved on this machine)' : ''}.`);
+    success(`Automation created: automations/${manifest.slug}.md, a ${onCall ? 'routine you call' : 'routine'} of the member "${agentSlug}"${stampedNow ? ' (approved on this machine)' : ''}.`);
     // Made by an agent, the crew or a session: traced like `agents create`, whether it stamped or
     // waits, with what it widened (it runs on a schedule), so the owner reads it on the member's page.
     if (!stamp) {
       traceMemberCreate(projectRoot, {
-        member: agentSlug, routine: manifest.slug, by: actor, risks, widened: opts.shared ? ['mode', 'shared'] : ['mode'], waits: !approveNow,
+        member: agentSlug, routine: manifest.slug, by: actor, risks, widened: onCall ? (opts.shared ? ['shared'] : []) : opts.shared ? ['mode', 'shared'] : ['mode'], waits: !approveNow,
       });
     }
     if (!approveNow) printOwnerApprovalCard(manifest.slug, risks);
@@ -407,6 +411,94 @@ function editCondition(root: string, slug: string, cond: { condition?: string | 
     : `"${slug}" has no condition now: every scheduled fire wakes its agent${approvedNow ? ' (approved on this machine)' : ''}.`);
   if (!approvedNow) {
     warn('  The change waits for the owner: he approves it on its card. Until then its schedule does not fire; Run now still runs its last approved version.');
+    console.log(approvalCardBlock(slug));
+  }
+}
+
+/** The schedule flags a create was given, as they would be typed again. */
+function scheduleFlagsOf(o: { slot?: string[]; days?: string; at?: string; mode?: string }): string {
+  if (o.mode !== undefined && o.mode.trim().toLowerCase() === 'call') return '--mode call';
+  if (o.slot?.length) return o.slot.map((s) => `--slot ${JSON.stringify(s)}`).join(' ');
+  if (o.days || o.at) return `--days ${o.days ?? 'daily'} --at ${o.at ?? '09:00'}`;
+  return '--slot mon-fri@09:00';
+}
+
+/**
+ * `automations create` WITHOUT `--agent` makes a NEW AI Team member (owner 2026-11-17: an agent
+ * that forgot `--agent` gave his member a duplicate). Refused, with the exact command to run
+ * instead, when the title or the prompt names an existing member (whoever runs it), and when an
+ * agent session (Claude, Codex, the brain MCP, a run, the Super's crew) did not ask for a member.
+ * `--new-member` is that ask, and passes both. The owner typing a create that names no member in
+ * his own terminal makes a member as before. True when it refused.
+ */
+function refuseUnmeantMember(
+  root: string,
+  slug: string,
+  opts: { title: string; promptFile?: string; slot?: string[]; days?: string; at?: string; mode?: string; newMember?: boolean },
+): boolean {
+  let prompt = '';
+  if (opts.promptFile && existsSync(opts.promptFile)) {
+    try { prompt = readFileSync(opts.promptFile, 'utf-8'); } catch { prompt = ''; }
+  }
+  const named = membersNamedIn(root, [opts.title ?? '', prompt]);
+  const sched = scheduleFlagsOf(opts);
+  const suggest = (member: string): string =>
+    `  dreamcontext automations create ${slug} --agent ${member} --title ${JSON.stringify(opts.title ?? '')} --job "<what this routine asks of it>" ${sched}`;
+  if (named.length > 0 && !opts.newMember) {
+    const m = named[0];
+    error(`This would make a NEW AI Team member, and its ${m.via === 'path' ? 'text names the file of' : 'text names'} the member "${m.slug}" (${m.title}). New work in an existing member's field is that member's routine:`);
+    console.error(suggest(m.slug));
+    console.error(chalk.dim(`  The job holds only what this routine asks; ${m.title}'s own prompt and soul come with it. Already made one by mistake? \`dreamcontext automations edit <slug> --agent ${m.slug}\`.`));
+    console.error(chalk.dim('  A genuinely separate member that merely mentions it: add --new-member.'));
+    process.exitCode = 1;
+    return true;
+  }
+  if (!opts.newMember && agentDriven()) {
+    error('Without --agent this makes a NEW AI Team member (its own face on the AI Team page). Say which you mean:');
+    console.error('  an existing member\'s work (see `dreamcontext agents list`):');
+    console.error(suggest('<member>'));
+    console.error(`  a genuinely new member: the same command with --new-member, or \`dreamcontext agents create ${slug} --title "…" --prompt "…"\` and then its routine.`);
+    process.exitCode = 1;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * `edit --agent <member>` / `edit --no-agent`: re-attach in place (`attachRoutine` / `detachRoutine`).
+ * The hash moves, so the routine waits for the owner's card, unless it was approved before, its
+ * member is approved here, and this is the owner's own chat or terminal (the rule a create
+ * follows: made here, by him). A Super turn or a Telegram outflow always waits for his card.
+ */
+function editMember(root: string, slug: string, agent: string | false, newMember: boolean): void {
+  const projectRoot = projectRootFor(root);
+  if (agent === false && !newMember && agentDriven()) {
+    throw new AutomationError(`Detaching makes "${slug}" a NEW AI Team member. Add --new-member if that is what the owner wants.`);
+  }
+  const target = typeof agent === 'string' ? agent.trim() : '';
+  if (agent !== false && !target) throw new AutomationError('--agent needs a member slug. See `dreamcontext agents list`.');
+  const before = getAutomation(root, slug);
+  const wasApproved = before ? checkApproval(projectRoot, before, undefined, 'run').approved : false;
+  const result = agent === false ? detachRoutine(root, slug) : attachRoutine(root, slug, target);
+  const after = result.after;
+  const memberTarget = agent === false ? null : getRunTarget(root, target, 'agent');
+  const memberOk = agent === false || (!!memberTarget && checkApproval(projectRoot, memberTarget, undefined, 'identity').approved);
+  if (wasApproved && memberOk && !createNeedsOwner() && !needsOwnerConsent(after)) {
+    approveMadeHere(root, after, new Date(), undefined, undefined, terminalWitness());
+  }
+  const approvedNow = checkApproval(projectRoot, after, undefined, 'run').approved;
+  success(agent === false
+    ? `"${slug}" is its own member now (its prompt: the member's prompt, then the job)${approvedNow ? ' (approved on this machine)' : ''}.`
+    : `"${slug}" is a routine of "${target}" now: same schedule, history and thread; its prompt is the job${approvedNow ? ' (approved on this machine)' : ''}.`);
+  if (result.dropped.length) {
+    info(agent === false
+      ? `  Not carried over from the member: ${result.dropped.join(', ')}.`
+      : `  Left behind with the old file (the member's own are used now): ${result.dropped.join(', ')}.`);
+  }
+  if (!approvedNow) {
+    warn(wasApproved
+      ? '  It waits for the owner: he approves it on its card. Until then its schedule does not fire.'
+      : '  It was not approved before and is not now: the owner approves it on its card.');
     console.log(approvalCardBlock(slug));
   }
 }
@@ -1041,8 +1133,9 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--board-only', 'With --whiteboard: limit it to that board (scope: board): no Bash, node, MCP or .env')
     .option('--app <slug>', 'This job belongs to an app of this project: its run carries the app\'s brief')
     .option('--app-tools <refs>', 'App tools this job may run to CHANGE something while nobody watches, comma-separated <app>/<tool> (approved with the job)')
-    .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
-    .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
+    .option('--agent <slug>', 'The member this routine belongs to (see `dreamcontext agents list`): the file holds only the job. New work in an existing member\'s field is ALWAYS its routine; with --mode call it runs only when called')
+    .option('--job <text>', 'With --agent: what this routine asks of the member, on top of its prompt')
+    .option('--new-member', 'Without --agent: yes, this makes a NEW AI Team member (an agent session must say so; refused anyway when the text names an existing member)')
     .option('--condition <script>', `A shell script each scheduled fire runs first, with no model. ${CONDITION_HELP} Combine checks inside the script (&&, ||, !). Its stdout reaches the agent as data. Approved by the owner on its card when an agent writes it`)
     .option('--wake-when <true|false>', 'With --condition: wake the agent when the script is true (exit 0, the default) or when it is NOT true (exit 1)')
     .option(
@@ -1054,9 +1147,10 @@ export function registerAutomationsCommand(program: Command): void {
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
       learning?: boolean; review?: string; whiteboard?: string; boardOnly?: boolean; agent?: string; job?: string; answer?: string; app?: string; appTools?: string;
-      condition?: string | false; wakeWhen?: string;
+      condition?: string | false; wakeWhen?: string; newMember?: boolean;
     }) => {
       const root = ensureContextRoot();
+      if (opts.agent === undefined && refuseUnmeantMember(root, slug, opts)) return;
       // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
       // anything is parsed or written; a person at a terminal passes straight through.
       const gate = checkRoutineCreate(root, { agent: opts.agent, answer: opts.answer });
@@ -2210,12 +2304,22 @@ export function registerAutomationsCommand(program: Command): void {
     .option('--condition <script>', `Set the routine's condition script. ${CONDITION_HELP}`)
     .option('--no-condition', 'Remove the condition: every scheduled fire wakes the agent again')
     .option('--wake-when <true|false>', 'Wake the agent when the condition is true (exit 0, the default) or when it is NOT true (exit 1)')
-    .action((slug: string, opts: { appTools?: string; condition?: string | false; wakeWhen?: string }) => {
+    .option('--agent <member>', 'Make this automation a routine of an existing member, in place: schedule, history and thread stay; its prompt becomes the job. It waits for the owner\'s card unless he approved it before and this is his own chat or terminal')
+    .option('--no-agent', 'Detach a routine from its member: it becomes its own AI Team member (an agent session adds --new-member)')
+    .option('--new-member', 'With --no-agent: yes, it becomes a new AI Team member')
+    .action((slug: string, opts: { appTools?: string; condition?: string | false; wakeWhen?: string; agent?: string | false; newMember?: boolean }) => {
       const root = ensureContextRoot();
       try {
         const cond = conditionFlags(opts);
+        if (opts.agent !== undefined) {
+          if (opts.appTools !== undefined || cond.condition !== undefined || cond.conditionWake !== undefined) {
+            throw new AutomationError('--agent / --no-agent is an edit of its own: change the condition or app tools in a second edit.');
+          }
+          editMember(root, slug, opts.agent, !!opts.newMember);
+          return;
+        }
         if (opts.appTools === undefined && cond.condition === undefined && cond.conditionWake === undefined) {
-          throw new AutomationError('Nothing to change: pass --app-tools, --condition, --no-condition or --wake-when.');
+          throw new AutomationError('Nothing to change: pass --agent, --no-agent, --app-tools, --condition, --no-condition or --wake-when.');
         }
         if (opts.appTools !== undefined) {
           const list = String(opts.appTools ?? '').split(',').map((x) => x.trim()).filter(Boolean);
