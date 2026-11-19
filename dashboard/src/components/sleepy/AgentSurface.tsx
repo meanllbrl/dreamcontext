@@ -1,6 +1,6 @@
 import {
   useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
-  type CSSProperties,
+  type CSSProperties, type ReactNode,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { BrandMark } from '../brand/BrandMark';
@@ -133,6 +133,8 @@ import type { HomeRow } from './phoneHome';
 import { arrivalCovers, DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 const NO_JOBS: readonly SuperJobWire[] = [];
+/** The first-read refusals the offer line words (C17); any other reads 'other'. */
+const FIRST_READ_REASONS = new Set(['limited', 'claude_not_ready', 'cap_full', 'super_off', 'in_flight']);
 
 /**
  * Per session, the open permission and refusal items its own chat card answers, with the record
@@ -4591,7 +4593,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // A member Super's child: the server's crew ticket rides on its connection (main's frames
       // carry none, so its child's URL is unchanged).
       bindCrewTicket(childId, args.crewTicket);
-      const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
+      // The project's first read (C15a): the server runs it `auto` whatever the URL says, so its
+      // tab never claims bypass (explicitBypass with bp = false); every other child follows the
+      // vault's switch as before.
+      const firstRead = args.firstRead === true;
+      const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, firstRead, d.mode) as ChatSession;
       s.setSuperChild(true);
       // …and it STAYS marked until the server's push names it (the mark effect would otherwise
       // unmark it on the next roster change, before the push lands).
@@ -7124,15 +7130,73 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   /** A Super chat's composer line: main's as before, a member's "<name> ne yapsın?". */
   // The main Super stage's empty state (plan ilk-acilis C13, v2-03j): the project's question,
   // the gem in place of ">_" (owner 2026-11-20), three chips. ONE object per vault and language.
+  // The first-read offer (C17): GET only asks whether it is up; POST goes out ONLY from the
+  // Start reading click (S6), never on mount, reconnect or a timer.
+  const [firstReadPending, setFirstReadPending] = useState(false);
+  const [firstReadOut, setFirstReadOut] = useState(false);
+  const [firstReadRefused, setFirstReadRefused] = useState<string | null>(null);
+  const [firstReadStarted, setFirstReadStarted] = useState(false);
+  useEffect(() => {
+    setFirstReadPending(false); setFirstReadRefused(null); setFirstReadStarted(false);
+    if (!vault || isMobile || !canSpawn) return undefined;
+    let live = true;
+    scopedApi.ownerGet<{ pending?: boolean }>('/super/first-read')
+      .then((r) => { if (live) setFirstReadPending(r?.pending === true); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [vault, isMobile, canSpawn, scopedApi]);
+  const firstReadLive = useMemo(() => Object.values(mainSuperState?.children ?? {}).some((c) =>
+    c.firstRead === true && c.endedAt === undefined && (c.row === 'working' || c.row === 'asking' || c.row === 'waiting')),
+  [mainSuperState?.children]);
+  // Started here and then seen running: once it stops running the line goes back to today's.
+  const firstReadSeenLive = useRef(false);
+  useEffect(() => {
+    if (firstReadLive) firstReadSeenLive.current = true;
+    else if (firstReadSeenLive.current) { firstReadSeenLive.current = false; setFirstReadStarted(false); }
+  }, [firstReadLive]);
+  const startFirstRead = useCallback(async () => {
+    if (firstReadOut) return;
+    setFirstReadOut(true);
+    setFirstReadRefused(null);
+    try {
+      const r = await scopedApi.ownerPost<{ ok?: boolean; error?: string }>('/super/first-read', {});
+      if (r?.ok === false) throw new RequestError('', 409, r.error ?? 'other');
+      setFirstReadPending(false);
+      setFirstReadStarted(true);
+    } catch (e) {
+      const code = e instanceof RequestError ? e.code : '';
+      if (code === 'not_eligible') setFirstReadPending(false);
+      else setFirstReadRefused(FIRST_READ_REASONS.has(code) ? code : 'other');
+    } finally {
+      setFirstReadOut(false);
+    }
+  }, [firstReadOut, scopedApi]);
+  const firstReadSub = useMemo<ReactNode | undefined>(() => {
+    const name = vault ?? '';
+    if (firstReadLive || firstReadStarted) {
+      return <span data-testid="first-read-started">{t('super.firstRead.started')}</span>;
+    }
+    if (!firstReadPending) return undefined;
+    return (
+      <span className="chat-banner-first-read" data-testid="first-read-offer">
+        <span>{t('super.firstRead.offer').replace('{name}', name)}</span>
+        <button type="button" className="chat-banner-chip" data-testid="first-read-start" disabled={firstReadOut} onClick={() => { void startFirstRead(); }}>
+          {t('super.firstRead.start')}
+        </button>
+        {firstReadRefused && <span className="chat-banner-first-read-why" role="status" data-testid="first-read-refused">{t(`super.firstRead.refused.${firstReadRefused}`)}</span>}
+      </span>
+    );
+  }, [t, vault, firstReadLive, firstReadStarted, firstReadPending, firstReadOut, firstReadRefused, startFirstRead]);
   const superHero = useMemo<EmptyHero>(() => ({
     title: t('super.empty.title').replace('{name}', vault ?? ''),
+    ...(firstReadSub ? { sub: firstReadSub } : {}),
     mark: <BrandMark size={76} className="chat-banner-empty-mark" title="" />,
     chips: [
       t('super.empty.chip.explain'),
       t('super.empty.chip.first'),
       t('super.empty.chip.morning').replace('{name}', vault ?? ''),
     ],
-  }), [t, vault]);
+  }), [t, vault, firstReadSub]);
   /** Is this the MAIN project's Super stage on a computer (plan ilk-acilis D9)? Never a member
    *  stage, a member's mirror or the phone: those keep today's empty state. */
   const isMainSuperStage = (cs: ChatSession): boolean =>

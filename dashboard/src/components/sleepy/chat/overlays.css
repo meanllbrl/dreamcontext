@@ -336,6 +336,16 @@
 .chat-banner-chip:hover { border-color: var(--color-border-hover); }
 .chat-banner-chip:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .chat-banner-chip:disabled { opacity: 0.6; cursor: default; }
+/* The first-read offer in the hero's sub-line (C17): the line, the Start reading pill, and one
+   short reason line under them when a start was refused. */
+.chat-banner-first-read {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2, 8px);
+}
+.chat-banner-first-read-why { flex-basis: 100%; color: var(--color-text-secondary); }
 
 /* ── Working indicator — the turn is alive with nothing to show for it yet ─────────────
    Left-aligned where the answer will appear, so it reads as the message that's coming
