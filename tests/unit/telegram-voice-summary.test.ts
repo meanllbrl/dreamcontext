@@ -212,7 +212,7 @@ describe('the briefings', () => {
 });
 
 describe('one door', () => {
-  it('sendVoice is called only by the voice reply', () => {
+  it('sendVoice is called only by the voice reply and the hub group result', () => {
     const hits: string[] = [];
     const walk = (dir: string): void => {
       for (const n of readdirSync(dir)) {
@@ -222,6 +222,6 @@ describe('one door', () => {
       }
     };
     walk(join(__dirname, '../../src'));
-    expect(hits.sort()).toEqual(['src/lib/telegram/transport.ts', 'src/server/telegram/voice-reply.ts']);
+    expect(hits.sort()).toEqual(['src/lib/telegram/transport.ts', 'src/server/telegram/hub.ts', 'src/server/telegram/voice-reply.ts']);
   });
 });
