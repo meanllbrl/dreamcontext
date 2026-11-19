@@ -135,8 +135,8 @@ function offerItem(hub: TelegramHub, ab: ActiveBinding, sessionId: string, item:
   // Marked before it is queued: the turn's texts queued after it know a card came first.
   const own = item.kind === 'ask' ? hub.ownAskOffered(sessionId, item.createdAt) : null;
   hub.queueSend(sessionId, async () => {
-    // The Super's own card: a short line it held just before (hub.ts `tails`) goes first.
-    if (item.kind === 'ask') await hub.flushTail(sessionId);
+    // The running turn's own card: a short line it held just before (hub.ts `tails`) goes first.
+    if (own?.inTurn) await hub.flushTail(sessionId);
     let outcome: SendOutcome;
     try { outcome = await sendItem(hub, ab, sessionId, item); } catch (err) {
       const retry = (err as { retryAfter?: unknown })?.retryAfter;
