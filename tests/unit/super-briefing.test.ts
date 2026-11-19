@@ -269,7 +269,7 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   const ROUTINE_NOT_MEMBER_2026_11_18 = 20; // uye-rutin-agent: more work is the member's routine (--agent), not a new member (measured 26,863, +12)
   const VOICE_CLAIM_2026_11_16 = 60; // uye-sesli-ozet: only the `dream-voice` block speaks, never claim a voice without it (measured 26,804, +55)
   const PRESENT_QUEUE_2026_11_14 = 130; // sunum-sirasi: a present over his presentation answers `queued: {at, of}`; never claimed as shown (measured 23,521)
-  const ASK_RULES_2026_11_18 = 3080; // (end review r1: a closed card that is still his gets one reworded card; measured 29,784) soru-azaltma (owner "daha az soru kartı"): the `## When you ask him` section (the ask rules by kind, lib/ask-rules.ts), a child's question is the Super's first, no start card for asked work, no line that a question waits (measured 29,169, +2,435)
+  const ASK_RULES_2026_11_18 = 3090; // (19 Nov merge with dev: rev 54 and the no re-say words; measured 29,954) (end review r1: a closed card that is still his gets one reworded card; measured 29,784) soru-azaltma (owner "daha az soru kartı"): the `## When you ask him` section (the ask rules by kind, lib/ask-rules.ts), a child's question is the Super's first, no start card for asked work, no line that a question waits (measured 29,169, +2,435)
   const APP_INSTALL_2026_11_13 = 320; // app-kurulum-claude: install asks at once, its one-tap card even after his yes in words, the card place from `Shown:`, Claude fills the settings (measured 23,145)
   it('files every task itself and carries the split rows, the guide being lookup only', () => {
     expect(brief).toContain('- Tasks: Open a task only for big work');
