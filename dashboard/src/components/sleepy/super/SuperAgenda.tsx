@@ -462,7 +462,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     const empty = TODAY_GROUPS.every((g) => groups[g].length === 0);
     return (
       <div className="agenda-groups" {...listHandlers}>
-        {empty && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+        {empty && <div className="super-agenda-empty">{t('super.agenda.emptyHint')}</div>}
         {TODAY_GROUPS.map((g) => {
           const rows = order(groups[g]);
           if (!rows.length) return null;
@@ -560,7 +560,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         </div>
         {bar}
         <div className="agenda-groups" {...listHandlers}>
-          {rows.length === 0 && <div className="super-agenda-empty">{t(past ? 'super.agenda.nothingDay' : 'super.agenda.nothing')}</div>}
+          {rows.length === 0 && <div className="super-agenda-empty">{t(past ? 'super.agenda.nothingDay' : 'super.agenda.emptyHint')}</div>}
           {order(rows).map(rowOf)}
         </div>
         <div className="agenda-foot">
@@ -600,7 +600,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
             {errorLine}
             {past ? groupList(false) : (
               <div className="agenda-groups" {...listHandlers}>
-                {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+                {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.emptyHint')}</div>}
                 {order(rows).map(rowOf)}
               </div>
             )}

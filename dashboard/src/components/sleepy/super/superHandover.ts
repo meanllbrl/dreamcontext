@@ -63,9 +63,10 @@ const MAX_TITLE = 120;
  * Agent itself, never the Assistant's own mode, never a dormant tab (nothing is running behind
  * it, so the server would drop it anyway), never twice.
  */
-export function adoptionBody(tabs: readonly HandoverTab[], superSession: string | null | undefined): {
+export function adoptionBody(tabs: readonly HandoverTab[], superSession: string | null | undefined, quiet = false): {
   adopt: string[];
   titles: Record<string, string>;
+  quiet?: true;
 } {
   const adopt: string[] = [];
   const titles: Record<string, string> = {};
@@ -77,7 +78,8 @@ export function adoptionBody(tabs: readonly HandoverTab[], superSession: string 
     // eslint-disable-next-line no-control-regex
     titles[t.claudeId] = (t.title || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, MAX_TITLE);
   }
-  return { adopt, titles };
+  // Quiet (plan ilk-acilis C8a): the onboarding landing's hand-over queues no new Super turn.
+  return quiet ? { adopt, titles, quiet: true } : { adopt, titles };
 }
 
 /** The tabs that cannot be adopted (terminals: a shell, a terminal Claude) — the Terminals row. */

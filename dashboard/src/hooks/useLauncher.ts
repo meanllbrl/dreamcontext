@@ -79,7 +79,7 @@ export function useRegisterVault() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: RegisterPayload) =>
-      api.post<RegisterResponse>('/launcher/register', payload),
+      api.ownerPost<RegisterResponse>('/launcher/register', payload),
     onSuccess: () => {
       invalidateLauncher(queryClient);
     },
@@ -149,7 +149,7 @@ export function useScaffoldProject() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: ScaffoldPayload) =>
-      api.post<ScaffoldResponse>('/launcher/scaffold', payload),
+      api.ownerPost<ScaffoldResponse>('/launcher/scaffold', payload),
     onSuccess: () => {
       invalidateLauncher(queryClient);
     },
@@ -170,6 +170,8 @@ export interface FolderProbe {
   /** Documents the initializer can read in. */
   docs?: { count: number; folders: string[] };
   writable?: boolean;
+  /** The folder is already a registered project: its name (land there, register nothing). */
+  registeredAs?: string;
 }
 
 /**
@@ -190,6 +192,11 @@ export interface GithubRepoSummary {
   description: string | null;
   defaultBranch?: string;
   pushedAt?: string;
+  /** GitHub's size of the repo, in KB (C10). */
+  sizeKb?: number;
+  /** A registered project on this Mac has this repo as its origin: its project name and folder
+   *  (Open lands on that project, never on a name guessed from the repo). */
+  onThisMac?: { vault: string; path: string };
 }
 
 /**
@@ -210,10 +217,12 @@ export function useGithubRepos(q: string, enabled: boolean) {
 }
 
 export interface ClonePayload {
-  /** `owner/repo` or a full GitHub URL. */
-  url: string;
-  /** Absolute parent directory the clone lands under. */
-  parentDir: string;
+  /** `owner/repo` or a github.com URL. */
+  repo: string;
+  /** Absolute parent folder the clone lands under (created inside home when missing). */
+  parent: string;
+  /** Latest version only (`--depth 1 --single-branch`). */
+  shallow?: boolean;
 }
 
 /** What a finished clone job hands back to the wizard. */
@@ -229,12 +238,24 @@ export interface CloneResult {
   cli?: CliInstallResult;
 }
 
+export type ClonePhase = 'waiting-git' | 'receiving' | 'resolving' | 'checkout' | 'done';
+export type CloneFailReason = 'network' | 'timeout' | 'cancelled' | 'no-space' | 'auth' | 'git-missing' | 'unknown';
+
 export interface CloneStatus {
   state: 'running' | 'done' | 'error' | 'unknown';
-  /** git's live progress tail ("Receiving objects: 42%…"). */
-  progress: string;
+  /** Parsed from git's own lines; `percent` only once git printed one. */
+  progress: { phase: ClonePhase; percent?: number; receivedBytes?: number };
+  /** git's raw output tail ("Show details"). */
+  tail?: string;
   result?: CloneResult;
   error?: string;
+  reason?: CloneFailReason;
+  /** `no-space`: what the clone needs and what the disk has, in bytes. */
+  space?: { neededBytes: number; freeBytes: number };
+  sizeKb?: number;
+  shallow?: boolean;
+  /** Offer "Get the latest version only" (big repo, or after the timeout). */
+  offerShallow?: boolean;
 }
 
 /** Start a background clone job; poll {@link getCloneStatus} with the returned id. */
@@ -242,7 +263,7 @@ export function useCloneGithubRepo() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: ClonePayload) =>
-      api.post<{ ok: true; cloneId: string }>('/launcher/clone', payload),
+      api.ownerPost<{ ok: true; cloneId: string }>('/launcher/clone', payload),
     onSuccess: () => {
       // A vault may appear when the job finishes; refetch once more from the
       // wizard's terminal poll, but refresh eagerly too so nothing goes stale.

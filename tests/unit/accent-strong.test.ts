@@ -95,6 +95,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'pages/AiTeamPage.css::.aiteam-face-dot--working': 'status dot on a face (non-text, 3:1 rule)',
   'pages/AiTeamPage.css::.chat-cmp-modeltrigger--temp .chat-cmp-modeltrigger-model::before': 'temporary-model dot (non-text, 3:1 rule)',
   'pages/AiTeamPage.css::.aiteam-temp-dot': 'temporary-model dot (non-text, 3:1 rule)',
+  'pages/onboarding/Onboarding.css::.ob-bar > i': 'clone progress bar fill (non-text, 3:1 rule)',
   'components/roadmap/InsightPicker.css::.inp-check--on': 'check mark (non-text, 3:1 rule)',
   'components/layout/newshell/ChatDrawer.css::.ns-dr-project[data-drop-before="true"]::before, .ns-dr-drop-end': 'drag drop marker line (non-text, 3:1 rule)',
   'components/layout/newshell/ChatDrawer.css::.ns-dr-handle:hover::after': 'resize handle line (non-text, 3:1 rule)',

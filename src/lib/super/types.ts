@@ -802,6 +802,13 @@ export interface SuperChild {
    *  not in an event turn. Its done/stuck/gone event asks the super to tell him; spent when that
    *  turn ends. */
   awaited?: true;
+  /** The app's one-time first read of this project (plan ilk-acilis C15a): set by the server's
+   *  delegate core only. Its spawn is decided by the server (auto, no MCP); its done item lets
+   *  the Super write one short message (C16). */
+  firstRead?: true;
+  /** The id of the first done item of that first read that was delivered: only THAT item carries
+   *  the one-message allowance (C16); a later done item of the same child carries none. */
+  firstReadAnnounced?: string;
   /** The owner message it answers (`msgRef`, the turn's `<owner-msg ref>`): its awaited=owner
    *  events carry `origin=<ref>`, so the result the super writes links under that message. */
   origin?: string;

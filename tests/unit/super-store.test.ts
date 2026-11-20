@@ -81,6 +81,22 @@ describe('read and write', () => {
     await expect(readSuperState(root)).rejects.toMatchObject({ reason: 'outside' });
   });
 
+  it('a brain with no state/ (a fresh brain cloned from GitHub) reads empty and a write makes the folder', async () => {
+    rmSync(join(root, 'state'), { recursive: true });
+    expect(await readSuperState(root)).toEqual(emptySuperState());
+    expect(() => statSync(join(root, 'state'))).toThrow();
+    await updateSuperState(root, (s) => { s.session = 'sess-super'; s.enabled = true; });
+    expect(statSync(join(root, 'state')).isDirectory()).toBe(true);
+    expect((await readSuperState(root)).enabled).toBe(true);
+  });
+
+  it('a dangling state/ link is refused, never followed into a new folder', async () => {
+    rmSync(join(root, 'state'), { recursive: true });
+    symlinkSync(join(dir, 'nowhere'), join(root, 'state'));
+    await expect(updateSuperState(root, () => undefined)).rejects.toMatchObject({ reason: 'outside' });
+    expect(() => statSync(join(dir, 'nowhere'))).toThrow();
+  });
+
   it('a garbled file reads as the empty state (never a crash)', async () => {
     writeFileSync(join(root, SUPER_STATE_REL), '{ not json');
     expect(await readSuperState(root)).toEqual(emptySuperState());

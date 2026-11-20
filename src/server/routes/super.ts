@@ -12,8 +12,8 @@ import {
 import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
 import type { OwnerWakeOutcome } from '../../lib/super/types.js';
-import { isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
-import { mintCrewTicket, noteDelegating, vaultDelegating } from '../../lib/super/delegating.js';
+import { batchHasFirstReadDone, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
+import { firstReadLockHeld, mintCrewTicket, mintFirstReadTicket, noteDelegating, releaseFirstReadLock, takeFirstReadLock, vaultDelegating } from '../../lib/super/delegating.js';
 import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
@@ -62,6 +62,12 @@ import { ownerLine, padJobOver, padRolledOff, padStale, padStatus, withPadStatus
 import { tryOwnerMark } from '../../lib/super/owner-marks.js';
 import { agendaDoneOn, okDay, localDay } from '../../lib/super/pad-archive.js';
 import { hasOwnerKey } from '../owner-key.js';
+import { clearPending, FIRST_READ_PROMPT, firstReadEligible, serverCanStartClaude, writeFirstReadClaim } from '../../lib/first-read.js';
+import { pickedAgents } from '../../lib/agent-pick.js';
+import { getReadiness } from '../../lib/onboarding/readiness.js';
+import { serverProbeContext } from '../install-runs.js';
+import { readUsageLimits, type UsageLimitsResponse } from '../../lib/claude-usage.js';
+import { resolveConfigDir } from '../../lib/claude-accounts.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
@@ -961,7 +967,19 @@ function safeCodexStartModel(): string {
   } catch { return ''; }
 }
 
-async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin, outward?: OutwardGrant): Promise<void> {
+/** What a server-started delegate adds (plan ilk-acilis C15): never set by an agent verb. */
+interface DelegateExtra {
+  /** Never pooled: the held branch refuses, and a start that never opens keeps nothing. */
+  noPool?: boolean;
+  /** The project's first read: its own ticket rides the frame, the child is marked. */
+  firstRead?: boolean;
+  /** Called once where the child's start is recorded (in time or late), with its start error. */
+  onRecorded?: (sid: string, startError: string | null) => void;
+  /** Called once when a late wait ends with no child. */
+  onLateEmpty?: () => void;
+}
+
+async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin, outward?: OutwardGrant, extra: DelegateExtra = {}): Promise<void> {
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
   // Antigravity names its effort in the model id (`-high`), so it gets none of ours.
@@ -984,6 +1002,10 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     const running = ownFull
       ? `${room.live + inFlight} children are running (at most ${room.max})`
       : `${room.vaultLive} children are running in this project across every Super (at most ${room.vaultMax} together)`;
+    if (extra.noPool) {
+      refuse(res, 409, 'held', `${running}; nothing was kept`, { ...facts, kept: false });
+      return;
+    }
     if (fromRow) {
       // A grant given with this start stays with the row, so the later start still has it.
       if (outward && fromRow.outward !== outward) {
@@ -1053,6 +1075,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // child's connection, which ties it to EXACTLY this super from its first spawn (the
       // `memberCrew` hint beside it only narrows). Main's frame carries neither, unchanged.
       ...(memberOfSuperId(c.superId) ? { memberCrew: memberOfSuperId(c.superId), crewTicket: mintCrewTicket(root, c.superId, sid0, Date.now(), deadline - Date.now() + delegateGraceMs) } : {}),
+      // The first read (C15a): its one-time ticket in the same field; the window binds it to the
+      // child, whose spawn the server then decides (auto, no MCP). `firstRead` only labels it.
+      ...(extra.firstRead && c.superId === 'main' ? { crewTicket: mintFirstReadTicket(root, Date.now(), deadline - Date.now() + delegateGraceMs), firstRead: true } : {}),
     }, { timeoutMs: delegateAnswerMs + delegateGraceMs, ...(lateMs > 0 ? { late: { lateMs: lateMs + delegateGraceMs, onLate: (lr) => { void landLate(lr); } } } : {}) });
     const sid = sessionIdOf(r);
     appendOpenLog('delegate_answer', { superId: c.superId, ms: Date.now() - sentAt, ok: r.ok, ...(r.ok ? { child: sid ?? null, ...windowTiming(r.result) } : { error: r.error, sent: r.sent }) });
@@ -1155,6 +1180,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(awaited && origin ? { origin } : {}),
         ...(workOrigin ? { workOrigin } : {}),
         ...(outward ? { outward } : {}),
+        ...(extra.firstRead ? { firstRead: true as const } : {}),
       };
       startError = takeStartError(sid);
       if (startError) startFailedDraft(s, sid, startError, now);
@@ -1173,6 +1199,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // A failing day archive on a full pad takes this line out again (store.ts): `noteRefused`.
       onPadRefused: (ids) => { if (noted && noted !== 'full' && ids.includes(noted.id)) noted = 'full'; },
     });
+    // The first read's claim is written exactly here (C15 step 4), by the caller's hook.
+    try { extra.onRecorded?.(sid, startError); } catch (err) { console.warn(`[super] ${sid}: after-start step failed: ${(err as Error).message}`); }
     // A member's child is tracked by its own super's inbox (Wave 2 step A2), never main's.
     if (startError) void pumpSuper(root, c.superId); else if (c.superId === 'main') expectChild(root, sid);
     // Its first prompt is kept until a turn of its own is on disk: a restart before then gives it
@@ -1227,7 +1255,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       const discarded = wt ? await discardFreshWorktree(wt).then(() => !existsSync(wt!.path)).catch(() => false) : false;
       const keptWt = wt && !discarded ? wt : null;
       const why = lateWhy(lr);
-      if (fromRow) {
+      if (extra.noPool) {
+        extra.onLateEmpty?.();
+      } else if (fromRow) {
         await writeSuper(root, c.superId, (s) => {
           const row = s.pool.find((x) => x.id === fromRow.id);
           if (!row) return;
@@ -3843,6 +3873,11 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
   // Main-only and member-only verbs (plan-r10 1): refused by WHO calls, before anything runs.
   const roleRefusal = superVerbRefusal(caller.superId, verb);
   if (roleRefusal) { refuse(res, 403, roleRefusal.error, roleRefusal.message); return; }
+  // The turn that tells the owner the first read's result writes one message and starts no work (C16).
+  if (FIRST_READ_BARRED_VERBS.has(verb) && batchHasFirstReadDone(caller.state, superOpenBatch(caller.who.sessionId))) {
+    refuse(res, 403, 'first_read_turn', 'This turn tells the owner the first read\'s result: write him one short message; starting work waits for his answer.');
+    return;
+  }
   // A child may be named by the first characters of its id (child-ref.ts); resolved once, here.
   const expanded = expandChildRefs(caller.state, verb, raw as Record<string, unknown>);
   if ('error' in expanded) {
@@ -3871,6 +3906,10 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
     noteStageVerb({ vault: caller.who.vault, contextRoot: caller.who.contextRoot, sessionId: caller.who.sessionId, superId: caller.superId, verb: verb as StageVerbEvent['verb'], ids: cueIds(body as Record<string, unknown>, staged()) });
   }
 }
+
+/** The verbs that start work, refused in the first read's result turn (C16). Exported for tests. */
+// `resume` and `send` restart or feed a child: a second read, the work C16 keeps for his answer.
+export const FIRST_READ_BARRED_VERBS = new Set<SuperVerb>(['delegate', 'pool-add', 'team-ask', 'schedule', 'resume', 'send']);
 
 /** The verbs that change what the owner's window shows: each reply names `window`. */
 const SCREEN_VERBS = new Set<SuperVerb>(['open', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'shape']);
@@ -4506,3 +4545,170 @@ export async function handleSuperAgendaDay(req: IncomingMessage, res: ServerResp
 export const handleSuperOpen = ownerRoute('open');
 export const handleSuperMember = ownerRoute('member');
 export const handleSuperOwedDrop = ownerRoute('owed');
+
+// ─── The first read (plan ilk-acilis C15) ─────────────────────────────────────────
+
+/** Why a first read did not start, as the window says it (C17). */
+export type FirstReadRefusal = 'not_eligible' | 'claude_not_ready' | 'super_off' | 'limited' | 'cap_full' | 'in_flight' | 'no_window' | 'failed';
+
+/** The 1 h ceiling past which a usage reading is too old to refuse on. */
+const USAGE_READ_CEILING_MS = 60 * 60_000;
+
+/** Pure: is the account limited now? Any fresh window at 100% or more that has not reset, or one
+ *  the CLI reports locked. No reading (or a stale one) = not limited. */
+export function usageLimitedNow(u: Pick<UsageLimitsResponse, 'limits' | 'fetchedAtMs'>, now: number): boolean {
+  if (u.fetchedAtMs === null || now - u.fetchedAtMs > USAGE_READ_CEILING_MS) return false;
+  return u.limits.some((l) => l.resetsAt > now && (l.percent >= 100 || !!l.lockedReason));
+}
+
+/** The world the first-read route reads, injectable for tests. */
+export interface FirstReadDeps {
+  eligible: (root: string) => boolean;
+  claudeReady: () => Promise<boolean>;
+  usage: () => Pick<UsageLimitsResponse, 'limits' | 'fetchedAtMs'>;
+  now: () => number;
+}
+
+const defaultFirstReadDeps: FirstReadDeps = {
+  eligible: (root) => firstReadEligible(root),
+  claudeReady: async () => {
+    const picked = pickedAgents();
+    if (picked && !picked.includes('claude')) return false;
+    const report = await getReadiness(serverProbeContext('desktop'));
+    return serverCanStartClaude(report);
+  },
+  usage: () => readUsageLimits(resolveConfigDir(null)),
+  now: Date.now,
+};
+let firstReadDeps: FirstReadDeps = defaultFirstReadDeps;
+/** Tests only. */
+export function setFirstReadDepsForTests(d: Partial<FirstReadDeps> | null): void {
+  firstReadDeps = d ? { ...defaultFirstReadDeps, ...d } : defaultFirstReadDeps;
+}
+
+/** The lock's length (C15 step 2): the whole window a late start may still land in. */
+function firstReadLockMs(): number {
+  return delegateAnswerMs + delegateLateMs + 2 * delegateGraceMs;
+}
+
+/** The project's name as the card says it. */
+function projectTitle(root: string): string {
+  return basename(root).slice(0, 60) || 'this project';
+}
+
+/** Owner window + the shell's key: a no-Origin `curl` passes the window check, never the key. */
+function requireFirstReadOwner(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!requireSuperOwner(req, res)) return false;
+  if (!hasOwnerKey(req)) {
+    sendJson(res, 403, { ok: false, error: 'owner_page_only', message: 'Only the app\'s own window can do this.' });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * GET /api/super/first-read: `{ pending }` only (is the offer up for this project?), never the
+ * marker's path. POST: start the read (C15), from the Start reading click only. No body field is
+ * read. Main's Super only; vault-scoped.
+ */
+export async function handleSuperFirstReadGet(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireFirstReadOwner(req, res)) return;
+  const root = dirname(contextRoot);
+  let pending = false;
+  try { pending = firstReadDeps.eligible(root); } catch { pending = false; }
+  // `starting`: a start is in flight (the lock), its child not recorded yet. A window that
+  // showed "Reading started" for a pending start falls back to the offer only when neither a
+  // claim nor a start in flight remains (review r1: a late start that never opened).
+  sendJson(res, 200, { pending, starting: firstReadLockHeld(contextRoot) });
+}
+
+export async function handleSuperFirstReadPost(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {
+  if (!requireFirstReadOwner(req, res)) return;
+  const r = await startFirstRead(contextRoot);
+  sendJson(res, r.ok ? 200 : 409, r);
+}
+
+export type FirstReadStart =
+  | { ok: true; child?: string; pending?: true }
+  | { ok: false; error: FirstReadRefusal; message: string };
+
+const FIRST_READ_WORDS: Record<FirstReadRefusal, string> = {
+  not_eligible: 'This project is not offered a first read.',
+  claude_not_ready: 'Claude is not ready on this Mac yet.',
+  super_off: 'The Super Agent is not running in this project yet.',
+  limited: 'Your plan\'s usage limit is reached for now.',
+  cap_full: 'Too many jobs are running right now.',
+  in_flight: 'A first read is already running.',
+  no_window: 'The app window did not open the reading.',
+  failed: 'The reading could not start.',
+};
+
+const refusal = (error: FirstReadRefusal): FirstReadStart => ({ ok: false, error, message: FIRST_READ_WORDS[error] });
+
+/** C15, in order: every refusal writes nothing; the claim is written where the start is recorded. */
+export async function startFirstRead(contextRoot: string): Promise<FirstReadStart> {
+  const root = dirname(contextRoot);
+  const d = firstReadDeps;
+  // 1. Refusals, each writing nothing.
+  let eligible = false;
+  try { eligible = d.eligible(root); } catch { eligible = false; }
+  if (!eligible) return refusal('not_eligible');
+  if (!(await d.claudeReady().catch(() => false))) return refusal('claude_not_ready');
+  let state: SuperState;
+  try { state = await readSuperState(contextRoot, 'main', superSanitizeOpts()); } catch { return refusal('super_off'); }
+  const token = state.enabled && state.session ? superTokenOfSession(state.session) : null;
+  const who = token ? identityOf(token) : null;
+  if (!token || !who) return refusal('super_off');
+  if (usageLimitedNow(d.usage(), d.now())) return refusal('limited');
+  const live = Object.values(state.children).some((ch) => ch.firstRead === true && ch.endedAt === undefined && ch.row !== 'done' && ch.row !== 'gone' && ch.row !== 'stuck');
+  if (live || firstReadLockHeld(contextRoot)) return refusal('in_flight');
+  // 2. The in-process lock.
+  if (!takeFirstReadLock(contextRoot, firstReadLockMs())) return refusal('in_flight');
+  // 3. The delegate core, captured (no HTTP reply of its own), never pooled.
+  let status = 0;
+  let json: Record<string, unknown> = {};
+  const sink = {
+    writeHead: (s: number) => { status = s; return sink; },
+    setHeader: () => sink,
+    setTimeout: () => sink,
+    end: (b?: string) => { try { json = JSON.parse(b ?? '{}') as Record<string, unknown>; } catch { json = {}; } },
+    headersSent: false,
+  } as unknown as ServerResponse;
+  const title = `Reading ${projectTitle(root)}`;
+  const job: Job = { prompt: FIRST_READ_PROMPT, title, brief: title, mode: 'basic', model: 'opus', effort: 'medium', mcp: [] };
+  let recorded = false;
+  const extra: DelegateExtra = {
+    noPool: true,
+    firstRead: true,
+    onRecorded: (sid, startError) => {
+      recorded = true;
+      // 4. The claim, once, only for a child that started; the marker's pending goes with it.
+      if (!startError) {
+        try { writeFirstReadClaim(root, sid); } catch (err) { console.warn(`[super] first read ${sid}: the claim was not written: ${(err as Error).message}`); }
+        clearPending(root);
+      }
+      releaseFirstReadLock(contextRoot);
+    },
+    onLateEmpty: () => releaseFirstReadLock(contextRoot),
+  };
+  try {
+    await delegateJob({ token, who, superId: 'main', state }, sink, contextRoot, job, undefined, undefined, undefined, undefined, undefined, undefined, extra);
+  } catch {
+    releaseFirstReadLock(contextRoot);
+    return refusal('failed');
+  }
+  if (status === 200 && json.ok === true) {
+    const result = (json.result ?? {}) as Record<string, unknown>;
+    if (result.pending === true) return { ok: true, pending: true };
+    const child = typeof result.sessionId === 'string' ? result.sessionId : undefined;
+    if (result.started === false) return refusal('failed');
+    return { ok: true, ...(child ? { child } : {}) };
+  }
+  const error = typeof json.error === 'string' ? json.error : '';
+  // 5. Every other outcome writes nothing and releases the lock; an unconfirmed start keeps it
+  //    until it expires (a child that lands late still writes the claim through step 4).
+  if (error !== 'delegate_unconfirmed' && !recorded) releaseFirstReadLock(contextRoot);
+  if (error === 'held' || error === 'pool_full') return refusal('cap_full');
+  if (error === 'no_window' || error === 'delegate_unconfirmed') return refusal('no_window');
+  return refusal('failed');
+}

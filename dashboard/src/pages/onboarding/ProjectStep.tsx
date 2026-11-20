@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { RequestError } from '../../api/client';
 import {
@@ -6,85 +6,116 @@ import {
   useLauncherDefaults,
   useRegisterVault,
   useScaffoldProject,
-  type CliInstallResult,
-  type FolderProbe,
   type ScaffoldPayload,
 } from '../../hooks/useLauncher';
-import { openFolderPicker, pickerError } from '../../lib/desktop';
+import { nativeDropWindow, onNativeDrop, openFolderPicker, pickerError } from '../../lib/desktop';
 import type { ReadinessReport } from '../../lib/onboardingTypes';
 import { GitHubMark } from '../../components/brain/GitHubLogin';
 import { CloneFlow, type BareFolder } from './CloneFlow';
-import { gitTrackState, type GitTrackState } from './handoffPlan';
-
-type Mode = 'new' | 'existing' | 'github';
-
-export interface CreatedProject {
-  name: string;
-  path: string;
-  cli?: CliInstallResult;
-}
+import { homeShort } from './handoffPlan';
 
 interface Props {
   report: ReadinessReport | undefined;
-  /** A project is being made or registered right now. */
+  /** A project is being made or registered right now (leaving is refused meanwhile). */
   onBusyChange?: (busy: boolean) => void;
-  /** The step's heading, when it is not the setup's "Add your project". */
-  title?: string;
-  subtitle?: string;
-  /** A project was created or set up: go on to the hand-off. */
-  onCreated: (project: CreatedProject) => void;
-  /** The folder is already a dreamcontext project: open it, no questions. */
-  onOpenExisting: (vaultName: string) => void;
+  /** The project exists and is registered: land in it (C8). */
+  onLand: (vaultName: string) => void;
 }
 
-/** The folder picked in "Open a folder" (or handed over by the clone), with what detect saw. */
-interface PickedFolder {
-  path: string;
-  probe: FolderProbe | null;
+const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent);
+
+function basename(p: string): string {
+  const parts = p.replace(/\/+$/, '').split('/');
+  return parts[parts.length - 1] || p;
 }
+
 
 /**
- * The Project step: three cards, then ONE details screen with name and location only. No quiz
- * and no skill-pack picker: the initializer chat "Start with Claude" opens asks what it cannot
- * detect. A GitHub description and a detected stack still
- * ride along silently, so the scaffold's `init` starts from them.
+ * Screen 2 of the first open, "Open a project" (plan ilk-acilis v2-02, C6, C7), one screen:
+ * a drop zone with "Open folder… ⌘O", then New project (a name and Enter) and Clone from GitHub.
+ * Any folder goes straight in: a brain is registered as is, a folder without one gets its brain
+ * (`scaffold` mode `existing`), and the project lands on its Super screen. No form, no "is ready".
  */
-export function ProjectStep({ report, onBusyChange, title, subtitle, onCreated, onOpenExisting }: Props) {
+export function ProjectStep({ report: _report, onBusyChange, onLand }: Props) {
   const { t } = useI18n();
   const defaults = useLauncherDefaults();
   const scaffold = useScaffoldProject();
   const register = useRegisterVault();
-  const busy = scaffold.isPending || register.isPending;
+  const [opening, setOpening] = useState(false);
+  const busy = scaffold.isPending || register.isPending || opening;
   useEffect(() => {
     onBusyChange?.(busy);
     return () => onBusyChange?.(false);
   }, [busy, onBusyChange]);
 
-  const [mode, setMode] = useState<Mode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cloning, setCloning] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
   const [name, setName] = useState('');
   const [parentDir, setParentDir] = useState('');
-  const [folder, setFolder] = useState<PickedFolder | null>(null);
-  const [detecting, setDetecting] = useState(false);
-  const [trackGit, setTrackGit] = useState(true);
-  /** Prefilled from a cloned repo's description or the detected stack; never asked for. */
-  const [details, setDetails] = useState({ description: '', stack: '' });
+  const [dragName, setDragName] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
 
+  const home = defaults.data?.home;
   const defaultParent = defaults.data?.defaultParent ?? '';
   useEffect(() => {
     if (!parentDir && defaultParent) setParentDir(defaultParent);
   }, [defaultParent, parentDir]);
 
-  const gitState: GitTrackState = gitTrackState(report, mode === 'new' ? false : folder?.probe?.isGitRepo);
-  const gitOffered = gitState === 'available' || gitState === 'pending';
+  const showError = useCallback((err: unknown) => {
+    if (err instanceof RequestError && err.code === 'symlink_refused') setError(t('onboarding.project.symlinkRefused'));
+    else setError(err instanceof Error ? err.message : String(err));
+  }, [t]);
 
-  function pickMode(m: Mode | null) {
-    setMode(m);
+  /** Any folder in: register a brain, give a bare folder its brain, then land. */
+  const openPath = useCallback(async (path: string, prefill?: Partial<BareFolder>) => {
+    if (busyRef.current) return;
     setError(null);
-    setFolder(null);
-  }
+    setOpening(true);
+    try {
+      const probe = await probeFolder(path.normalize('NFC'));
+      const at = probe.path ?? path;
+      if (probe.registeredAs) {
+        onLand(probe.registeredAs);
+        return;
+      }
+      if (probe.hasContext) {
+        // A brain not registered yet. Its folder name may already name ANOTHER project: register
+        // it under the next free name instead of landing on that other one (review r1).
+        for (const candidate of [probe.name, ...[2, 3, 4, 5, 6, 7, 8, 9].map((n) => `${probe.name}-${n}`)]) {
+          try {
+            await register.mutateAsync({ name: candidate, path: at });
+            onLand(candidate);
+            return;
+          } catch (regErr) {
+            const msg = regErr instanceof Error ? regErr.message : String(regErr);
+            if (!/named .* already registered/i.test(msg)) throw regErr;
+          }
+        }
+        throw new Error(t('onboarding.project.nameTaken'));
+      }
+      const payload: ScaffoldPayload = {
+        mode: 'existing',
+        name: (prefill?.name ?? probe.name).normalize('NFC'),
+        projectPath: at,
+        description: prefill?.description?.trim() || undefined,
+        stack: (prefill?.stack || probe.stack || '').trim() || undefined,
+      };
+      const res = await scaffold.mutateAsync(payload);
+      onLand(res.vault.name);
+    } catch (err) {
+      // A dropped file (not a folder) answers "does not exist" or "not a folder" from detect.
+      if (err instanceof RequestError && /not a (folder|directory)|does not exist/i.test(err.message)) setError(t('onboarding.open.dropFolderOnly'));
+      else showError(err);
+    } finally {
+      setOpening(false);
+    }
+  }, [onLand, register, scaffold, showError, t]);
 
-  async function chooseFolder() {
+  const chooseFolder = useCallback(async () => {
+    if (busyRef.current) return;
     setError(null);
     const picked = await openFolderPicker();
     if (!picked) {
@@ -92,233 +123,152 @@ export function ProjectStep({ report, onBusyChange, title, subtitle, onCreated, 
       if (failure) setError(failure);
       return;
     }
-    await detect(picked.normalize('NFC'));
-  }
+    await openPath(picked);
+  }, [openPath]);
 
-  /** Probe a folder; one that already has a brain is registered and opened straight away. */
-  async function detect(path: string, prefill?: Partial<BareFolder>) {
-    setDetecting(true);
-    try {
-      const probe = await probeFolder(path);
-      if (probe.hasContext) {
-        try {
-          await register.mutateAsync({ name: probe.name, path: probe.path ?? path });
-        } catch (regErr) {
-          const msg = regErr instanceof Error ? regErr.message : String(regErr);
-          if (!/already registered/i.test(msg)) throw regErr;
-        }
-        onOpenExisting(probe.name);
-        return;
+  // ⌘O (Ctrl+O off macOS), only while this step is on screen and no text field has the focus.
+  useEffect(() => {
+    if (cloning) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'o' || e.shiftKey || e.altKey || !(isMac ? e.metaKey : e.ctrlKey)) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      e.preventDefault();
+      void chooseFolder();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [chooseFolder, cloning]);
+
+  // C7: a folder dropped from Finder, with its real path, in the first-run window only.
+  useEffect(() => {
+    if (cloning || !nativeDropWindow()) return undefined;
+    let off: (() => void) | null = null;
+    let gone = false;
+    void onNativeDrop((e) => {
+      if (e.type === 'over') setDragName(e.paths[0] ? basename(e.paths[0]) : '');
+      else if (e.type === 'leave') setDragName(null);
+      else {
+        setDragName(null);
+        if (e.paths.length === 1) void openPath(e.paths[0]);
+        else if (e.paths.length > 1) setError(t('onboarding.open.dropFolderOnly'));
       }
-      setFolder({ path: probe.path ?? path, probe });
-      setName(prefill?.name ?? probe.name);
-      setDetails((d) => ({
-        ...d,
-        description: d.description || prefill?.description || '',
-        stack: d.stack || prefill?.stack || probe.stack || '',
-      }));
-    } catch (err) {
-      if (err instanceof RequestError && err.code === 'symlink_refused') setError(t('onboarding.project.symlinkRefused'));
-      else setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDetecting(false);
-    }
-  }
+    }).then((fn) => { if (gone) fn(); else off = fn; });
+    return () => { gone = true; off?.(); };
+  }, [cloning, openPath, t]);
 
-  function handleBareFolder(bare: BareFolder) {
-    setMode('existing');
-    void detect(bare.path, bare);
-  }
-
-  async function submit() {
+  async function createNew() {
+    const n = name.trim().normalize('NFC');
+    const parent = parentDir.trim().normalize('NFC');
+    if (!n || !parent || busyRef.current) return;
     setError(null);
-    const payload: ScaffoldPayload = mode === 'new'
-      ? { mode: 'new', name: name.trim().normalize('NFC'), parentDir: parentDir.trim().normalize('NFC') }
-      : { mode: 'existing', name: name.trim().normalize('NFC'), projectPath: folder?.path ?? '' };
-    payload.description = details.description.trim() || undefined;
-    payload.stack = details.stack.trim() || undefined;
-    payload.gitInit = gitOffered && trackGit;
     try {
-      const res = await scaffold.mutateAsync(payload);
-      onCreated({ name: res.vault.name, path: res.vault.path, cli: res.cli });
+      const res = await scaffold.mutateAsync({ mode: 'new', name: n, parentDir: parent });
+      onLand(res.vault.name);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showError(err);
     }
   }
 
-  // ─── Render pieces ──────────────────────────────────────────────────────────
-
-  function gitRow() {
-    if (gitState === 'already-repo') return <p className="ob-hint">{t('onboarding.project.git.alreadyRepo')}</p>;
-    const disabled = gitState === 'need-install';
-    return (
-      <label className={`ob-check${disabled ? ' ob-check--disabled' : ''}`}>
-        <input
-          type="checkbox"
-          checked={!disabled && trackGit}
-          disabled={disabled}
-          onChange={(e) => setTrackGit(e.target.checked)}
-        />
-        <span>
-          <span className="ob-check-label">{t('onboarding.project.git.track')}</span>
-          {gitState === 'pending' && <span className="ob-hint">{t('onboarding.project.git.pending')}</span>}
-          {disabled && <span className="ob-hint">{t('onboarding.project.git.needInstall')}</span>}
-        </span>
-      </label>
-    );
-  }
-
-  function choices() {
-    const cards: { mode: Mode; title: string; desc: string }[] = [
-      { mode: 'new', title: t('onboarding.project.create.title'), desc: t('onboarding.project.create.desc') },
-      { mode: 'existing', title: t('onboarding.project.open.title'), desc: t('onboarding.project.open.desc') },
-      { mode: 'github', title: t('onboarding.project.clone.title'), desc: t('onboarding.project.clone.desc') },
-    ];
-    return (
-      <>
-        <h2 className="ob-title">{title ?? t('onboarding.project.title')}</h2>
-        <p className="ob-subtitle">{subtitle ?? t('onboarding.project.subtitle')}</p>
-        <div className="ob-choices">
-          {cards.map((c) => (
-            <button key={c.mode} type="button" className="ob-choice" onClick={() => pickMode(c.mode)}>
-              <span className="ob-choice-title">
-                {c.mode === 'github' && <GitHubMark size={16} />}
-                {c.title}
-              </span>
-              <span className="ob-hint">{c.desc}</span>
-            </button>
-          ))}
-        </div>
-      </>
-    );
-  }
-
-  function newProject() {
-    const target = name.trim() && parentDir.trim() ? `${parentDir.trim().replace(/\/+$/, '')}/${name.trim()}` : '';
-    const parentMissing = defaults.data?.defaultParentExists === false && parentDir.trim() === defaultParent;
-    return (
-      <>
-        <h2 className="ob-title ob-title--sm">{t('onboarding.project.create.title')}</h2>
-        <label className="ob-field">
-          <span className="ob-field-label">{t('onboarding.project.name')}</span>
-          <input
-            className="ob-input"
-            type="text"
-            value={name}
-            placeholder={t('onboarding.project.namePlaceholder')}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && name.trim() && parentDir.trim()) void submit(); }}
-            autoFocus
-          />
-        </label>
-        <div className="ob-field">
-          <span className="ob-field-label">{t('onboarding.project.location')}</span>
-          <div className="ob-inline">
-            <input
-              className="ob-input"
-              type="text"
-              value={parentDir}
-              placeholder={defaultParent}
-              onChange={(e) => setParentDir(e.target.value)}
-              aria-label={t('onboarding.project.location')}
-            />
-            <button
-              type="button"
-              className="ob-btn ob-btn--secondary"
-              onClick={async () => {
-                const picked = await openFolderPicker();
-                if (picked) setParentDir(picked.normalize('NFC'));
-                else if (pickerError()) setError(pickerError());
-              }}
-            >
-              {t('onboarding.project.browse')}
-            </button>
-          </div>
-          {target && <span className="ob-hint ob-path">{t('onboarding.project.preview').replace('{path}', target)}</span>}
-          {parentMissing && <span className="ob-hint">{t('onboarding.project.parentWillBeCreated')}</span>}
-        </div>
-        {gitRow()}
-      </>
-    );
-  }
-
-  function existingFolder() {
-    if (!folder) {
-      return (
-        <>
-          <h2 className="ob-title ob-title--sm">{t('onboarding.project.open.title')}</h2>
-          <p className="ob-hint">{t('onboarding.project.open.desc')}</p>
-          <div className="ob-inline">
-            <input className="ob-input" type="text" readOnly value="" placeholder={t('onboarding.project.noFolder')} />
-            <button type="button" className="ob-btn ob-btn--secondary" onClick={() => void chooseFolder()} disabled={detecting}>
-              {t('onboarding.project.chooseFolder')}
-            </button>
-          </div>
-        </>
-      );
-    }
-    const docs = folder.probe?.docs?.count ?? 0;
-    return (
-      <>
-        <h2 className="ob-title ob-title--sm">{folder.probe?.name ?? name}</h2>
-        <p className="ob-hint ob-path">{folder.path}</p>
-        {docs > 0 && (
-          <p className="ob-found">
-            {docs === 1
-              ? t('onboarding.project.docsFoundOne')
-              : t('onboarding.project.docsFound').replace('{n}', String(docs))}
-          </p>
-        )}
-        <label className="ob-field">
-          <span className="ob-field-label">{t('onboarding.project.name')}</span>
-          <input className="ob-input" type="text" value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        {gitRow()}
-        <button type="button" className="ob-link" onClick={() => { setFolder(null); void chooseFolder(); }}>
-          {t('onboarding.project.changeFolder')}
-        </button>
-      </>
-    );
-  }
-
-  if (mode === 'github') {
+  if (cloning) {
     return (
       <CloneFlow
         defaultParent={defaultParent}
-        onBack={() => setMode(null)}
-        onExistingProject={onOpenExisting}
-        onBareFolder={handleBareFolder}
+        home={home}
+        onBack={() => setCloning(false)}
+        onExistingProject={onLand}
+        onBareFolder={(bare) => void openPath(bare.path, bare)}
       />
     );
   }
 
-  const canSubmit = mode === 'new'
-    ? !!name.trim() && !!parentDir.trim()
-    : !!folder && !!name.trim();
+  const over = dragName !== null || dragging;
+  const target = name.trim() && parentDir.trim() ? `${parentDir.trim().replace(/\/+$/, '')}/${name.trim()}` : `${parentDir.replace(/\/+$/, '')}/…`;
 
   return (
-    <div className="ob-panel-body">
-      {mode === null ? choices() : mode === 'new' ? newProject() : existingFolder()}
-      {error && <p className="ob-error" role="alert">{error}</p>}
-      {mode !== null && (
-        <div className="ob-actions">
-          <button type="button" className="ob-btn ob-btn--secondary" onClick={() => pickMode(null)} disabled={scaffold.isPending}>
-            {t('onboarding.back')}
-          </button>
-          {(mode === 'new' || folder) && (
-            <button
-              type="button"
-              className="ob-btn ob-btn--primary"
-              onClick={() => void submit()}
-              disabled={!canSubmit || scaffold.isPending}
-            >
-              {scaffold.isPending
-                ? t('onboarding.project.working')
-                : mode === 'new' ? t('onboarding.project.create') : t('onboarding.project.setUp')}
+    <div className="ob-panel-body ob-open">
+      <h2 className="ob-title">{t('onboarding.open.title')}</h2>
+      <p className="ob-subtitle">{t('onboarding.open.subtitle')}</p>
+      <div
+        className={`ob-drop${over ? ' ob-drop--over' : ''}`}
+        data-testid="ob-drop"
+        // In a window without the OS drop handler a dropped folder has no path: say so.
+        onDragOver={(e) => { if (!nativeDropWindow()) { e.preventDefault(); setDragging(true); } }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => { if (!nativeDropWindow()) { e.preventDefault(); setDragging(false); setError(t('onboarding.open.dropUnavailable')); } }}
+      >
+        <svg className="ob-drop-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2h8.8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" />
+        </svg>
+        {over ? (
+          <p className="ob-drop-text">{dragName ? t('onboarding.open.dropTo').replace('{name}', dragName) : t('onboarding.open.dropFolderOnly')}</p>
+        ) : (
+          <>
+            <p className="ob-drop-text">{t('onboarding.open.drop')}</p>
+            <button type="button" className="ob-btn ob-btn--primary" onClick={() => void chooseFolder()} disabled={busy} data-testid="ob-open-folder" autoFocus>
+              {opening ? t('onboarding.open.opening') : t('onboarding.open.button')}
+              <kbd className="ob-kbd">{isMac ? '⌘O' : 'Ctrl+O'}</kbd>
             </button>
+          </>
+        )}
+      </div>
+      {error && <p className="ob-error" role="alert">{error}</p>}
+      <div className="ob-rows">
+        <div className={`ob-row${newOpen ? ' ob-row--open' : ''}`}>
+          <button type="button" className="ob-row-head" onClick={() => setNewOpen((o) => !o)} aria-expanded={newOpen} data-testid="ob-new-project">
+            <span className="ob-row-icon" aria-hidden="true">+</span>
+            <span className="ob-row-text">
+              <span className="ob-row-title">{t('onboarding.open.newTitle')}</span>
+              <span className="ob-row-body">{t('onboarding.open.newBody')}</span>
+            </span>
+            <span className="ob-row-chev" aria-hidden="true">›</span>
+          </button>
+          {newOpen && (
+            <div className="ob-row-new">
+              <div className="ob-inline">
+                <input
+                  className="ob-input"
+                  type="text"
+                  value={name}
+                  placeholder={t('onboarding.open.newPlaceholder')}
+                  aria-label={t('onboarding.open.newPlaceholder')}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void createNew(); }}
+                  autoFocus
+                  data-testid="ob-new-name"
+                />
+                <button type="button" className="ob-btn ob-btn--primary" onClick={() => void createNew()} disabled={!name.trim() || !parentDir.trim() || busy}>
+                  {scaffold.isPending ? t('onboarding.project.working') : t('onboarding.open.create')} <span aria-hidden="true">↵</span>
+                </button>
+              </div>
+              <p className="ob-hint ob-path">
+                {t('onboarding.open.creates').replace('{path}', homeShort(target, home))}{' '}
+                <button
+                  type="button"
+                  className="ob-link"
+                  onClick={async () => {
+                    const picked = await openFolderPicker();
+                    if (picked) setParentDir(picked.normalize('NFC'));
+                    else if (pickerError()) setError(pickerError());
+                  }}
+                >
+                  {t('onboarding.open.change')}
+                </button>
+              </p>
+            </div>
           )}
         </div>
-      )}
+        <div className="ob-row">
+          <button type="button" className="ob-row-head" onClick={() => { setError(null); setCloning(true); }} data-testid="ob-clone">
+            <span className="ob-row-icon" aria-hidden="true"><GitHubMark size={14} /></span>
+            <span className="ob-row-text">
+              <span className="ob-row-title">{t('onboarding.open.cloneTitle')}</span>
+              <span className="ob-row-body">{t('onboarding.open.cloneBody')}</span>
+            </span>
+            <span className="ob-row-chev" aria-hidden="true">›</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

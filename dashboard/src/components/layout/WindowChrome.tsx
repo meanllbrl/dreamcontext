@@ -1125,7 +1125,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     });
   }, []);
   /** New project landed: its row open and selected at once, with no reload. */
-  const queueDrawerIntentRef = useRef<(vault: string, intent: DrawerIntent) => Promise<AddTabResult>>(async () => 'refused-ceiling');
+  const queueDrawerIntentRef = useRef<(vault: string, intent: DrawerIntent | null) => Promise<AddTabResult>>(async () => 'refused-ceiling');
   const landNewProject = useCallback<NewProjectLanding>((name, how) => {
     setNewProjectOpen(false);
     setDrawerExpanded((cur) => {
@@ -1136,11 +1136,14 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     });
     // It lands on its chat like any drawer click (its own start, the initializer, opens the chat
     // itself), so it comes up selected in the drawer, never on the page a project starts on.
-    void queueDrawerIntentRef.current(name, how ? { kind: 'open-window' } : { kind: 'new-window' }).then((result) => {
-      if (how === 'initializer' && (result === 'added' || result === 'focused-tab')) {
+    // A Super landing queues NO drawer intent, only brings the project forward: `open-window`
+    // shows the panes and raced the landing's stage (verify 2026-11-20, "No open chats").
+    const landing: DrawerIntent | null = how === 'super-landing' ? null : how ? { kind: 'open-window' } : { kind: 'new-window' };
+    void queueDrawerIntentRef.current(name, landing).then((result) => {
+      if ((how === 'initializer' || how === 'super-landing') && (result === 'added' || result === 'focused-tab')) {
         startSeqRef.current += 1;
         const nonce = startSeqRef.current;
-        setPendingStarts((prev) => ({ ...prev, [name]: { intent: 'initializer', nonce } }));
+        setPendingStarts((prev) => ({ ...prev, [name]: { intent: how, nonce } }));
       }
     });
   }, []);
@@ -1324,16 +1327,18 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     () => (initialIntent ? { [initialVault]: { intent: initialIntent, nonce: 1, at: Date.now() } } : {}),
   );
   const drawerSeqRef = useRef(1);
-  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent): Promise<AddTabResult> => {
+  /** `intent` null: only bring the project forward, on its chat area (a Super landing, whose
+   *  own start intent shows the stage). */
+  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent | null): Promise<AddTabResult> => {
     // Queued BEFORE the project comes forward, in the same commit: it is what the project's first
     // render lands on. Queued after, the project would first open on its own page.
     drawerSeqRef.current += 1;
     const nonce = drawerSeqRef.current;
-    setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
+    if (intent) setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
     // A drag or a chat row's close moves a row, never the owner: the caller sends either only to
     // a mounted project.
-    if (intent.kind === 'move-window' || intent.kind === 'close-chat') return 'focused-tab';
-    if (landsOnChat(intent)) setArrivingVault(vault);
+    if (intent && (intent.kind === 'move-window' || intent.kind === 'close-chat')) return 'focused-tab';
+    if (!intent || landsOnChat(intent)) setArrivingVault(vault);
     let result: AddTabResult;
     if (openRef.current.some((p) => p.vault === vault)) {
       activate(vault);

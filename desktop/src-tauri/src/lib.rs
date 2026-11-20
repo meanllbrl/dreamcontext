@@ -1120,11 +1120,18 @@ pub(crate) fn launcher_builder(
     app: &AppHandle,
     port: u16,
 ) -> Result<WebviewWindowBuilder<'_, tauri::Wry, AppHandle>, String> {
+    // C7 (plan ilk-acilis): on the app's first run (no registered project yet) the Launcher is
+    // onboarding, and a folder dragged from Finder must arrive with its real path, which only
+    // the OS drop handler gives. So that one window keeps the handler on and says so in its URL
+    // (`nativeDrop=1`); the first project then lands in a fresh window of the same frame, built
+    // with the handler off, so Kanban drag works there. Every other launch is unchanged.
+    let native_drop = first_run_no_projects();
+    let query = if native_drop { "?nativeDrop=1" } else { "" };
     let builder = WebviewWindowBuilder::new(
         app,
         "main",
         WebviewUrl::External(
-            format!("http://127.0.0.1:{port}/")
+            format!("http://127.0.0.1:{port}/{query}")
                 .parse()
                 .map_err(|e| format!("Bad URL: {e}"))?,
         ),
@@ -1136,11 +1143,29 @@ pub(crate) fn launcher_builder(
     // native title bar stays (the dashboard drops the traffic-light inset there).
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(TitleBarStyle::Overlay).hidden_title(true);
+    if native_drop {
+        return Ok(builder);
+    }
     Ok(builder
     // Disable Tauri's OS-level drag/drop handler so the webview's own HTML5
     // drag-and-drop (Kanban / Eisenhower task cards) fires. With this left on
     // (the default), the native handler swallows dragover/drop events.
     .disable_drag_drop_handler())
+}
+
+/// No project registered on this machine yet: `~/.dreamcontext/vaults.json` is missing or its
+/// `vaults` list is empty. An unreadable or malformed file, or no HOME, reads as "has projects"
+/// (the handler stays off, today's behaviour).
+fn first_run_no_projects() -> bool {
+    let Some(home) = std::env::var_os("HOME") else { return false };
+    let file = std::path::Path::new(&home).join(".dreamcontext").join("vaults.json");
+    match std::fs::read_to_string(&file) {
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(v) => v.get("vaults").and_then(|a| a.as_array()).map_or(false, |a| a.is_empty()),
+            Err(_) => false,
+        },
+    }
 }
 
 // ─── Error window (instead of crashing) ───────────────────────────────────────

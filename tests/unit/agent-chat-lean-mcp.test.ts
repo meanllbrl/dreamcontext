@@ -124,7 +124,8 @@ vi.mock('../../src/cli/commands/sleep.js', async (importOriginal) => {
   return { ...real, resolveRecallMode: () => state.vaultMode };
 });
 
-const { startChatSession, leanChildMcpArgs, leanMcpForUpgrade, mcpConfigArgs } = await import('../../src/server/routes/agent-chat.js');
+const { startChatSession, leanChildMcpArgs, leanMcpForUpgrade, mcpConfigArgs, firstReadUpgrade } = await import('../../src/server/routes/agent-chat.js');
+const { mintFirstReadTicket, mintCrewTicket, takeFirstReadLock, releaseFirstReadLock } = await import('../../src/lib/super/delegating.js');
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 const { setAutoSwitchEnabled } = await import('../../src/lib/claude-accounts.js');
 const {
@@ -607,4 +608,39 @@ describe('the Super follows the project\'s MCP set (owner 2026-11-12, a teammate
     expect(away.child!.stdin.end).not.toHaveBeenCalled();
     expect(basic.stdin.end).not.toHaveBeenCalled();
   }, 10_000);
+});
+
+// Plan ilk-acilis C15a: the first read's child spawn is the server's: auto, no MCP at all.
+describe('the first read\'s child spawn', () => {
+  it('a ticketed child is a first read once; a replay is not, unless a first read is in flight', () => {
+    const ctx = join(projectRoot, '_dream_context');
+    const ticket = mintFirstReadTicket(ctx);
+    const params = new URLSearchParams({ crewTicket: ticket, bypass: '1', lean: '1', mcp: 'whatsapp' });
+    expect(firstReadUpgrade(params, ctx, ['c1'])).toBe(true);
+    expect(firstReadUpgrade(params, ctx, ['c1'])).toBe(false);
+    // Fail closed while the read is in flight: a reconnect re-sends the URL with no live ticket.
+    expect(takeFirstReadLock(ctx, 60_000)).toBe(true);
+    expect(firstReadUpgrade(params, ctx, ['c1'])).toBe(true);
+    expect(firstReadUpgrade(new URLSearchParams({ bypass: '1' }), ctx, ['c1'])).toBe(false);
+    releaseFirstReadLock(ctx);
+    // A member's crew ticket is no first-read ticket, and a first-read ticket of another vault is none.
+    expect(firstReadUpgrade(new URLSearchParams({ crewTicket: mintCrewTicket(ctx, 'member:ege' as never, 'job-1') }), ctx, [])).toBe(false);
+    expect(firstReadUpgrade(new URLSearchParams({ crewTicket: mintFirstReadTicket('/elsewhere/_dream_context') }), ctx, [])).toBe(false);
+  });
+
+  it('spawns auto with --strict-mcp-config and no project .mcp.json, no lean servers', () => {
+    writeFileSync(join(projectRoot, '.mcp.json'), JSON.stringify({ mcpServers: { x: { command: 'x' } } }));
+    const ws = new FakeWs();
+    const before = spawned.length;
+    startChatSession(ws as unknown as import('ws').WebSocket, projectRoot, {
+      bypass: false, sessionId: '', resumeId: '', model: 'opus', effort: 'medium', mode: 'basic', account: '',
+      initialPrompt: '', deferPrompt: false, vault: 'demo-vault', leanMcp: [], firstRead: true,
+    });
+    const child = spawned.length > before ? spawned[spawned.length - 1] : undefined;
+    const a = argvOf(child!);
+    expect(a).toContain('--strict-mcp-config');
+    expect(a[a.indexOf('--permission-mode') + 1]).toBe('auto');
+    expect(mcpFiles(a).some((f) => f.endsWith('.mcp.json'))).toBe(false);
+    expect(child!.script).not.toContain('bypassPermissions');
+  });
 });

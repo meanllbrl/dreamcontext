@@ -352,6 +352,8 @@ export interface SuperChild {
   tool?: 'codex' | 'antigravity';
   /** `super end` closed it: no process, tab or card; `super resume` clears it. */
   endedAt?: number;
+  /** The project's first read (plan ilk-acilis C15; MIRROR of src/lib/super/types.ts). */
+  firstRead?: true;
   /** The agenda (server-written): when its job last finished, and what the owner saw. */
   finishedAt?: number;
   seenAt?: number;

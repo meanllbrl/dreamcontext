@@ -3,7 +3,8 @@ import { NewProjectLandContext, useShellMode } from '../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../lib/launcherPrefs';
 import { appLinksDrained } from '../lib/appLink';
 import { findWindowForVault } from '../lib/windowRegistry';
-import { focusWindow, isDesktop, openVaultWindow, vaultWindowLabel } from '../lib/desktop';
+import { emitStartIntent, focusWindow, isDesktop, landInFreshWindow, nativeDropWindow, openVaultWindow, vaultWindowLabel } from '../lib/desktop';
+import { handoffAction } from './onboarding/handoffPlan';
 import { useShellProjects, type ShellProject } from '../hooks/useShellProjects';
 import { UpgradeRelaunchBanner } from '../components/layout/UpgradeRelaunchBanner';
 import { ProjectSwitcher } from '../components/search/ProjectSwitcher';
@@ -71,10 +72,13 @@ export function LauncherRoot() {
 
   // A project made here (the app's first, most often) opens in THIS window, on its chat, with the
   // drawer beside it: never a second window over a launcher nobody needs any more.
-  const [landed, setLanded] = useState<{ name: string; how?: 'initializer' | 'existing' } | null>(null);
+  const [landed, setLanded] = useState<{ name: string; how?: 'initializer' | 'existing' | 'super-landing' } | null>(null);
   if (landed) {
-    return <WindowChrome initialVault={landed.name} initialStart={landed.how === 'initializer' ? 'initializer' : null}
-      initialIntent={landed.how ? { kind: 'open-window' } : { kind: 'new-window' }} />;
+    // A Super landing sends NO drawer intent: `open-window` shows the panes, and seeded beside the
+    // start it raced it (whichever ran last won; verify 2026-11-20: "No open chats" instead of
+    // the stage). The landing itself expands the surface and shows the stage.
+    return <WindowChrome initialVault={landed.name} initialStart={landed.how === 'initializer' || landed.how === 'super-landing' ? landed.how : null}
+      initialIntent={landed.how === 'super-landing' ? undefined : landed.how ? { kind: 'open-window' } : { kind: 'new-window' }} />;
   }
   if (!newShell) return <TodayLauncher />;
   if (pick === null) {
@@ -83,11 +87,24 @@ export function LauncherRoot() {
         void (async () => {
           // One project, one home: a project another window holds comes forward there.
           // The registry first: a project held as a chip sits under its window's label, not its own.
+          // A landing intent rides along on every path (C8): the holder hears it as a broadcast
+          // after it comes forward, a window built for it reads it off its URL.
+          const start = how === 'initializer' || how === 'super-landing' ? how : undefined;
           const holder = findWindowForVault(name);
-          if (holder && await focusWindow(holder)) return;
-          if (await heldElsewhere(name)) { await openVaultWindow(name); return; }
+          if (holder && await focusWindow(holder)) {
+            if (start) await emitStartIntent(name, start);
+            return;
+          }
+          if (await heldElsewhere(name)) {
+            const result = await openVaultWindow(name, undefined, start ? { start } : {});
+            if (start && handoffAction(result) === 'emit-start-intent') await emitStartIntent(name, start);
+            return;
+          }
           const expanded = readLayoutPrefs().drawerExpanded ?? [];
           if (!expanded.includes(name)) writeLayoutPrefs({ drawerExpanded: [...expanded, name] });
+          // The first-run window keeps the OS drop handler on (C7): the project gets a fresh
+          // window of the same frame instead, where Kanban drag works.
+          if (nativeDropWindow()) { await landInFreshWindow(name, start); return; }
           setLanded({ name, how });
         })().catch((err) => console.warn('[launcher] could not open the project:', err));
       }}>

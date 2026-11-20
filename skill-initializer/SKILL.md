@@ -29,7 +29,8 @@ placeholders**. Not when `dreamcontext init` finished. That's just the empty she
 - You detect **no `_dream_context/`**, or a **sparse** one (only template stubs, empty
   `knowledge/`, zero features) — and there is material worth ingesting.
 - "Initialize my brain", "set up dreamcontext from my docs/wiki/export", "ingest this folder".
-- **Onboarding hand-off**: the first message is the kickoff prompt ("Use the initializer skill to set up this project's brain from what is already here…"), sent by the desktop Launcher's **Start with Claude** or by `dreamcontext setup`'s "Start Claude now?". The project was just scaffolded, so treat the brain as sparse and start at Phase 0; if the folder is empty, ask what the project is about first. Onboarding asks the user nothing about the project: the Phase 0 questions are yours.
+- **Onboarding hand-off**: the first message is the kickoff prompt ("Use the initializer skill to set up this project's brain from what is already here…"), sent by `dreamcontext setup`'s "Start Claude now?". The project was just scaffolded, so treat the brain as sparse and start at Phase 0; if the folder is empty, ask what the project is about first. Onboarding asks the user nothing about the project: the Phase 0 questions are yours.
+- **First read (desktop)**: the desktop app's **Start reading** offer (first install's first project only) runs you UNATTENDED: ask no questions, take the defaults, write "not decided yet" where a fact is missing, write only inside `_dream_context/` through the CLI, and end with at most five lines (what the project is, one first job).
 
 **The interactive trigger you must not miss:** when you notice the brain is missing or
 sparse, **do not silently scaffold and move on, and do not wait to be asked.** Offer:

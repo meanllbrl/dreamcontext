@@ -18,7 +18,7 @@ import { Notch, ASSISTANT_VAULT } from './components/assistant/Notch';
 import { VaultProvider } from './context/VaultContext';
 import { ViewerWindow } from './components/appLink/ViewerWindow';
 import { InboxWindow } from './components/appLink/InboxWindow';
-import type { StartIntent } from './lib/desktop';
+import { isStartIntent, type StartIntent } from './lib/desktop';
 import { isMacPhoneSurface } from './lib/phoneSurface';
 import './styles/global.css';
 import './styles/tags.css';
@@ -118,7 +118,8 @@ if (initialLink !== null) {
  * On the phone (Mac mode) the intent is ignored: a link someone else sent must never start work on
  * the Mac (D9b). `open=` stays: it only navigates.
  */
-const initialStart: StartIntent | null = params.get('start') === 'initializer' && !isMacPhoneSurface() ? 'initializer' : null;
+const startParam = params.get('start');
+const initialStart: StartIntent | null = isStartIntent(startParam) && !isMacPhoneSurface() ? startParam : null;
 if (params.has('start')) {
   try {
     const url = new URL(window.location.href);

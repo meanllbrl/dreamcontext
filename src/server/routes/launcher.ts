@@ -2,7 +2,7 @@ import { reportGitHubAuthOutcome } from '../../lib/git-sync/auth-store.js';
 import { githubErrorPayload } from '../../lib/git-sync/failure.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -10,6 +10,7 @@ import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { discoverVaultsAsync } from '../../lib/vault-discovery.js';
 import {
   addVault,
+  vaultAtPath,
   listVaults,
   removeVault,
   resolveVaultContextRoot,
@@ -54,8 +55,21 @@ import {
   cloneGitHubRepo,
   planGitHubClone,
   resolveLauncherGitHubToken,
+  registeredOriginKeys,
+  foldCloneProgress,
+  cloneFailReason,
+  freeBytesAt,
+  cloneNeedsBytes,
+  BIG_REPO_KB,
+  type CloneFailReason,
   type CloneGitHubRepoResult,
+  type ClonePlan,
+  type CloneProgress,
 } from '../../lib/git-sync/github-browse.js';
+import { CloneError } from '../../lib/git-sync/git.js';
+import { clearPending, hadFiles, recordRegistration } from '../../lib/first-read.js';
+import { defaultParent as projectsParent, ensureParentDir as ensureProjectParent, ParentDirError } from '../../lib/project-parent.js';
+import { hasOwnerKey } from '../owner-key.js';
 import { GitSyncError, gitAvailable, initRepo } from '../../lib/git-sync/git.js';
 import { sanitizeModel, sanitizeEffort } from './agent-spawn-shared.js';
 import { ApiError } from '../../lib/task-backend/api-adapter.js';
@@ -64,7 +78,7 @@ import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
 import { fetchLatestRelease, readAppManifest, versionFromTag } from '../../cli/commands/app.js';
 import { isUpdateChannel, readUpdateChannel, setUpdateChannel } from '../../lib/update-channel.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
-import { requireLocalDesktop } from './agent-spawn-shared.js';
+import { requireLocalDesktop, requireOwnerWindow } from './agent-spawn-shared.js';
 import { getUpgradeRun, startUpgradeRun } from '../upgrade-job.js';
 import { acquireProjectUpdatesLock, readProjectUpdatesRecord, releaseProjectUpdatesLock, type ProjectIssue, type ProjectUpdatesRecord } from '../../lib/project-catch-up.js';
 import { readSelfUpdateRecord, selfUpdateDisabledBy, selfUpdateLogPath, selfUpdateMarkerOff, setSelfUpdateEnabled } from '../../lib/self-update.js';
@@ -74,7 +88,6 @@ import {
   isDestructiveAllowed,
   type ConsolidationDepth,
 } from '../../lib/sleep-consolidation.js';
-import { realPath } from '../../lib/real-path.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -159,6 +172,20 @@ export async function handleLauncherDiscover(
 }
 
 /**
+ * The three registration doors (register, scaffold, clone) also write the one-time first-run
+ * marker, so only the app's own window may call them: the owner window AND the shell's key (a
+ * no-Origin local `curl` passes the window check, never the key). Sends the 403.
+ */
+function requireOwnerRegistration(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!requireOwnerWindow(req, res)) return false;
+  if (!hasOwnerKey(req)) {
+    sendError(res, 403, 'owner_page_only', 'Only this app\'s own window can add a project.');
+    return false;
+  }
+  return true;
+}
+
+/**
  * POST /api/launcher/register — register a project directory as a vault (P1.2).
  *
  * Mutation; protected by the existing cross-site-Origin CSRF guard. STRICT-PICK:
@@ -172,6 +199,7 @@ export async function handleLauncherRegister(
   _params: Record<string, string>,
   _contextRoot: string | null,
 ): Promise<void> {
+  if (!requireOwnerRegistration(req, res)) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
@@ -191,7 +219,11 @@ export async function handleLauncherRegister(
   }
 
   try {
+    // C14a: the folder's "had files" fact and the registered count, before anything is written.
+    const had = hadFiles(path.trim());
+    const countBefore = listVaults().length;
     addVault(name.trim(), path.trim());
+    recordRegistration(path.trim(), had, countBefore);
     sendJson(res, 200, { vaults: listVaults() });
   } catch (err) {
     if (err instanceof VaultError) {
@@ -287,48 +319,17 @@ const defaultCliRunner: CliRunner = async (args, cwd) => {
 const SAFE_NAME_RE = /^[^/\\]+$/;
 
 /**
- * Is `dir` (absolute) inside `home`, judged on real paths? The comparison uses the realpath of
- * the nearest EXISTING ancestor, so a symlink anywhere in the existing part of the chain is
- * resolved before the check and cannot smuggle the new folder outside the home folder.
- */
-function nearestAncestorInsideHome(dir: string, home: string): boolean {
-  let realHome: string;
-  try {
-    realHome = realPath(home);
-  } catch {
-    return false;
-  }
-  let current = dir;
-  while (!existsSync(current)) {
-    const parent = dirname(current);
-    if (parent === current) return false;
-    current = parent;
-  }
-  let realAncestor: string;
-  try {
-    realAncestor = realPath(current);
-  } catch {
-    return false;
-  }
-  return realAncestor === realHome || realAncestor.startsWith(realHome + sep);
-}
-
-/**
  * Resolve the parent folder of a NEW project, creating it when it is missing but sits inside
- * the home folder (the default `~/projects` does not exist on a fresh Mac). Anywhere else a
- * missing parent stays an error: onboarding never creates folders outside the user's home.
+ * the home folder, never through a symlink (C9, `project-parent.ts`). Anywhere else a missing
+ * parent stays an error: onboarding never creates folders outside the user's home.
  */
 function ensureParentDir(resolvedParent: string, home: string): void {
-  if (existsSync(resolvedParent)) {
-    if (!statSync(resolvedParent).isDirectory()) {
-      throw new ScaffoldError(`Parent directory does not exist: ${resolvedParent}`);
-    }
-    return;
+  try {
+    ensureProjectParent(resolvedParent, home);
+  } catch (err) {
+    if (err instanceof ParentDirError) throw new ScaffoldError(err.message);
+    throw err;
   }
-  if (!nearestAncestorInsideHome(resolvedParent, home)) {
-    throw new ScaffoldError(`Parent directory does not exist: ${resolvedParent}`);
-  }
-  mkdirSync(resolvedParent, { recursive: true });
 }
 
 /**
@@ -378,6 +379,9 @@ export async function scaffoldProject(
   // panel must be the same folder and the same vault name.
   const name = (a.name ?? '').normalize('NFC').trim();
   if (!name) throw new ScaffoldError('name must be a non-empty string.');
+  // C14a: the registered count before this registration (the first one writes the marker).
+  const countBefore = listVaults(home).length;
+  let had = false;
 
   // Resolve the target platforms: filter to known ids, default to ['claude'].
   const platforms: PlatformId[] = ensurePlatformSelection(normalizePlatforms(a.platforms ?? []));
@@ -407,6 +411,8 @@ export async function scaffoldProject(
     if (isNonEmptyDir(target) && !existsSync(join(target, '_dream_context'))) {
       throw new ScaffoldError(`A non-empty folder already exists at ${target}.`);
     }
+    // "Had files" before dreamcontext writes anything (C14a): from the target when it exists.
+    had = existsSync(target) ? hadFiles(target) : false;
     mkdirSync(target, { recursive: true });
   } else if (a.mode === 'existing') {
     const projectPath = (a.projectPath ?? '').normalize('NFC').trim();
@@ -417,6 +423,7 @@ export async function scaffoldProject(
     if (!existsSync(target) || !statSync(target).isDirectory()) {
       throw new ScaffoldError(`Folder does not exist: ${target}`);
     }
+    had = hadFiles(target);
   } else {
     throw new ScaffoldError("mode must be 'new' or 'existing'.");
   }
@@ -444,6 +451,7 @@ export async function scaffoldProject(
 
   // addVault validates the path + _dream_context child and rejects dupes.
   const vault = addVault(name, target, home);
+  recordRegistration(target, had, countBefore, home);
   return { vault, vaults: listVaults(home), git };
 }
 
@@ -459,6 +467,7 @@ export async function handleLauncherScaffold(
   _params: Record<string, string>,
   _contextRoot: string | null,
 ): Promise<void> {
+  if (!requireOwnerRegistration(req, res)) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
@@ -540,6 +549,9 @@ export async function handleLauncherDetect(
     isGitRepo: folder.isGitRepo,
     docs: folder.docs,
     writable: folder.writable,
+    // Already a project here: its registered name (it may differ from the folder's), so the
+    // window lands on THAT project, never on a name guessed from the folder.
+    ...(() => { const v = vaultAtPath(folder.path); return v ? { registeredAs: v.name } : {}; })(),
   });
 }
 
@@ -605,7 +617,9 @@ export async function handleLauncherGithubRepos(
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const query = url.searchParams.get('q') ?? '';
   try {
-    const repos = await listGitHubRepos({ token: token.token, query });
+    // The registered projects' origins, read once for this list (never per repo, never git).
+    const onThisMac = registeredOriginKeys(listVaults());
+    const repos = await listGitHubRepos({ token: token.token, query, onThisMac });
     reportGitHubAuthOutcome({ source: token.source, fingerprint: token.fingerprint, kind: 'ok' });
     sendJson(res, 200, { repos });
   } catch (err) {
@@ -640,12 +654,21 @@ interface CloneRunResult extends CloneGitHubRepoResult {
 
 interface CloneRun {
   state: 'running' | 'done' | 'error';
-  /** git's live stderr progress tail ("Receiving objects: 42%…"), CR-normalized. */
-  progress: string;
+  /** Parsed from git's own lines ({@link foldCloneProgress}); never a made-up number. */
+  progress: CloneProgress;
+  /** git's raw output tail, CR-normalized ("Show details"). */
+  tail: string;
   result?: CloneRunResult;
-  /** User-facing failure reason when state === 'error'. */
+  /** User-facing failure text when state === 'error'. */
   error?: string;
-  /** Abort handle, present while the git child is alive. */
+  /** Why it failed (C10), when state === 'error'. */
+  reason?: CloneFailReason;
+  /** `no-space`: what the clone needs and what the disk has, in bytes. */
+  space?: { neededBytes: number; freeBytes: number };
+  /** GitHub's size of the repo (KB), when known. */
+  sizeKb?: number;
+  shallow: boolean;
+  /** Abort handle: the git child while it runs, or the Git wait. */
   cancel?: () => void;
   /** Set by the cancel route so the terminal state reads as canceled, not failed. */
   canceled?: boolean;
@@ -656,16 +679,48 @@ interface CloneRun {
 const cloneRuns = new Map<string, CloneRun>();
 const CLONE_RUN_TTL_MS = 10 * 60 * 1000; // forget a run 10 min after it ends
 const CLONE_RUNS_MAX = 20;
+/** How long a clone waits for Apple's developer tools before it gives up (`git-missing`). */
+const CLONE_GIT_WAIT_MS = 60 * 60 * 1000;
+const CLONE_GIT_POLL_MS = 2_000;
 /** Destinations with a clone in flight — a second clone into the same folder is a 409. */
 const cloneDestsInFlight = new Map<string, string>();
+
+/** Test seams: the clone job's outside world. */
+export interface CloneJobDeps {
+  gitAvailable: () => boolean;
+  freeBytesAt: (path: string) => Promise<number | null>;
+  repoSizeKb: (token: string, slug: { owner: string; repo: string }) => Promise<number | null>;
+  clone: typeof cloneGitHubRepo;
+  ensureCli: () => ReturnType<typeof ensureCliInstalled>;
+  sleep: (ms: number) => Promise<void>;
+}
+
+const defaultCloneJobDeps: CloneJobDeps = {
+  gitAvailable: () => gitAvailable(),
+  freeBytesAt,
+  repoSizeKb: async (token, slug) => {
+    try {
+      const repos = await listGitHubRepos({ token, query: `${slug.owner}/${slug.repo}` });
+      const hit = repos.find((r) => r.fullName.toLowerCase() === `${slug.owner}/${slug.repo}`.toLowerCase());
+      return hit?.sizeKb ?? null;
+    } catch {
+      return null;
+    }
+  },
+  clone: cloneGitHubRepo,
+  ensureCli: () => ensureCliInstalled(),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+let cloneJobDeps: CloneJobDeps = defaultCloneJobDeps;
+/** Tests only: replace parts of the clone job's world (null restores the real one). */
+export function setCloneJobDepsForTests(d: Partial<CloneJobDeps> | null): void {
+  cloneJobDeps = d ? { ...defaultCloneJobDeps, ...d } : defaultCloneJobDeps;
+}
 
 /**
  * Drop finished runs older than the TTL and cap the map size (oldest-first).
  * A still-`running` run is NEVER evicted, whatever the pressure: its entry backs
- * both status polling AND the `cloneDestsInFlight` guard — evicting it would let
- * a second clone start into the same destination while the first git process is
- * still writing there. The map therefore only truly caps FINISHED runs; running
- * jobs are naturally bounded by how many clones a user can start.
+ * both status polling AND the `cloneDestsInFlight` guard.
  */
 function pruneCloneRuns(): void {
   const now = Date.now();
@@ -680,11 +735,9 @@ function pruneCloneRuns(): void {
 }
 
 /**
- * Register a fresh clone as a vault. The dest folder is guaranteed fresh (the
- * clone guards reject an existing path), so the only possible VaultError is a
- * NAME collision with some other registered project — resolved by suffixing
- * rather than failing an otherwise-successful clone. Throws when even the
- * suffixed candidates are taken.
+ * Register a fresh clone as a vault. The dest folder is guaranteed fresh (the clone plan never
+ * picks an existing path), so the only possible VaultError is a NAME collision with some other
+ * registered project — resolved by suffixing. Throws when even the suffixed candidates are taken.
  */
 function registerClonedVault(name: string, path: string): string {
   let lastErr: unknown;
@@ -700,17 +753,120 @@ function registerClonedVault(name: string, path: string): string {
   throw lastErr instanceof Error ? lastErr : new Error('Could not register the cloned project.');
 }
 
+const CLONE_FAIL_TEXT: Record<CloneFailReason, string> = {
+  network: 'The connection dropped while downloading.',
+  timeout: 'The download took longer than 30 minutes.',
+  cancelled: 'Clone canceled.',
+  'no-space': 'There is not enough free space on this Mac.',
+  auth: 'GitHub refused access to this repository.',
+  'git-missing': 'Git is not installed yet.',
+  unknown: 'Failed to clone the repository.',
+};
+
+/** A dangling link answers false to existsSync; it still occupies the name. */
+function isLink(p: string): boolean {
+  try { return lstatSync(p).isSymbolicLink(); } catch { return false; }
+}
+
+/** Run one planned clone to its end: wait for Git, clone, register (a repo with a brain). */
+async function runCloneJob(run: CloneRun, plan: ClonePlan, token: string): Promise<void> {
+  const d = cloneJobDeps;
+  let clonedPath: string | undefined;
+  // True only once this job saw `plan.dest` absent right before git ran: the catch may delete
+  // the folder only then. Anything else there (a project made during the Git wait, a Finder
+  // folder) is the user's, and a destructive step never touches it (review r1).
+  let ownsDest = false;
+  let registeredAs: string | undefined;
+  const fail = (reason: CloneFailReason, detail?: string) => {
+    run.state = 'error';
+    run.reason = reason;
+    run.error = detail && reason === 'unknown' ? detail : CLONE_FAIL_TEXT[reason];
+  };
+  try {
+    // C11: the clone never starts an installer; it waits, queued, until the git check turns ok.
+    if (!d.gitAvailable()) {
+      run.progress = { phase: 'waiting-git' };
+      let stop = false;
+      run.cancel = () => { stop = true; };
+      const until = Date.now() + CLONE_GIT_WAIT_MS;
+      while (!d.gitAvailable()) {
+        if (stop || run.canceled) { fail('cancelled'); return; }
+        if (Date.now() > until) { fail('git-missing'); return; }
+        await d.sleep(CLONE_GIT_POLL_MS);
+      }
+      if (stop || run.canceled) { fail('cancelled'); return; }
+      run.cancel = undefined;
+    }
+    if (existsSync(plan.dest) || isLink(plan.dest)) {
+      fail('unknown', `A folder named ${basename(plan.dest)} appeared there while the clone waited. Pick another folder.`);
+      return;
+    }
+    ownsDest = true;
+    run.progress = { phase: 'receiving' };
+    const cloned = await d.clone({
+      plan,
+      token,
+      shallow: run.shallow,
+      onProgress: (chunk) => {
+        run.tail = (run.tail + chunk.replace(/\r/g, '\n')).slice(-4000);
+        run.progress = foldCloneProgress(run.progress, chunk);
+      },
+      registerCancel: (cancel) => { run.cancel = cancel; },
+    });
+    clonedPath = cloned.path;
+    const result: CloneRunResult = { ...cloned };
+    if (cloned.hasContext) {
+      // A repo with a brain registers now (C14a: the fact and the count before the write).
+      const had = hadFiles(cloned.path);
+      const countBefore = listVaults().length;
+      result.vaultName = registerClonedVault(cloned.name, cloned.path);
+      registeredAs = result.vaultName;
+      recordRegistration(cloned.path, had, countBefore);
+      result.cli = await d.ensureCli();
+    }
+    // Honor a cancel that landed ANY time during the async work above; undo all of it.
+    if (run.canceled) {
+      if (result.vaultName) {
+        try { removeVault(result.vaultName); } catch { /* best-effort */ }
+        clearPending(cloned.path);
+      }
+      try { rmSync(cloned.path, { recursive: true, force: true }); } catch { /* best-effort */ }
+      fail('cancelled');
+      return;
+    }
+    run.progress = { ...run.progress, phase: 'done', percent: 100 };
+    run.result = result;
+    run.state = 'done';
+  } catch (err) {
+    // A canceled or failed clone leaves no half folder (git cleans up on TERM; this is the net),
+    // and no registration pointing at it. Only a folder this job created is removed.
+    if (registeredAs) {
+      try { removeVault(registeredAs); } catch { /* best-effort */ }
+      clearPending(clonedPath ?? plan.dest);
+    }
+    if (ownsDest) {
+      try { rmSync(clonedPath ?? plan.dest, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+    if (run.canceled) { fail('cancelled'); return; }
+    if (err instanceof CloneError) {
+      fail(cloneFailReason(err.end, err.stderr ?? err.message));
+    } else {
+      fail('unknown', err instanceof Error ? err.message : undefined);
+    }
+    console.error('[launcher] clone failed:', err);
+  } finally {
+    run.cancel = undefined;
+    run.endedAt = Date.now();
+  }
+}
+
 /**
- * POST /api/launcher/clone — START a background clone of a GitHub repo under an
- * absolute local parent dir; the wizard polls `/clone/status` for live git
- * progress. Mutation; behind the CSRF guard. STRICT-PICK: only `url` and
- * `parentDir` are read. Every clone guard (canonical URL, direct-child dest,
- * dest-exists) runs SYNCHRONOUSLY here via `planGitHubClone` and maps to 400 —
- * a job only starts for a clone that can actually run. A concurrent clone into
- * the same destination is a 409. When the finished clone already contains
- * `_dream_context/`, the job registers it as a vault (name collisions
- * auto-suffixed) and runs a best-effort CLI install so its hooks work;
- * otherwise the wizard continues into the existing-folder setup quiz.
+ * POST /api/launcher/clone { repo, parent, shallow } — START a background clone of a GitHub repo
+ * (plan ilk-acilis C10). STRICT-PICK: only `repo` (owner/name, or a github.com URL), `parent`
+ * (absolute; created inside home when missing, C9) and `shallow` (boolean) are read; nothing
+ * else reaches git, and argv is an array. Every guard runs synchronously (`planGitHubClone`) and
+ * maps to 400. The free-space check runs before the job: short = a run that failed `no-space`
+ * with both numbers. Owner window + key (the job may write the first-run marker).
  */
 export async function handleLauncherClone(
   req: IncomingMessage,
@@ -719,15 +875,17 @@ export async function handleLauncherClone(
   _contextRoot: string | null,
 ): Promise<void> {
   if (!desktopGate(res)) return;
+  if (!requireOwnerRegistration(req, res)) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
     return;
   }
-  const repoUrl = typeof body.url === 'string' ? body.url.trim() : '';
-  const parentDir = typeof body.parentDir === 'string' ? body.parentDir.trim() : '';
-  if (!repoUrl || !parentDir) {
-    sendError(res, 400, 'invalid_body', 'url and parentDir must be non-empty strings.');
+  const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
+  const parent = typeof body.parent === 'string' ? body.parent.trim() : '';
+  const shallow = body.shallow === true;
+  if (!repo || !parent) {
+    sendError(res, 400, 'invalid_body', 'repo and parent must be non-empty strings.');
     return;
   }
   const token = resolveLauncherGitHubToken();
@@ -736,10 +894,9 @@ export async function handleLauncherClone(
     return;
   }
 
-  // Fail fast, BEFORE any job exists: invalid URL / parent / dest → 400 now.
-  let dest: string;
+  let plan: ClonePlan;
   try {
-    dest = planGitHubClone(repoUrl, parentDir).dest;
+    plan = planGitHubClone(repo, parent);
   } catch (err) {
     if (err instanceof GitSyncError) {
       sendError(res, 400, 'clone_failed', err.message);
@@ -747,7 +904,7 @@ export async function handleLauncherClone(
     }
     throw err;
   }
-  const inFlightId = cloneDestsInFlight.get(dest);
+  const inFlightId = cloneDestsInFlight.get(plan.dest);
   if (inFlightId && cloneRuns.get(inFlightId)?.state === 'running') {
     sendError(res, 409, 'clone_in_progress', 'A clone into that folder is already running.');
     return;
@@ -755,90 +912,38 @@ export async function handleLauncherClone(
 
   pruneCloneRuns();
   const cloneId = randomUUID();
-  const run: CloneRun = { state: 'running', progress: '', startedAt: Date.now() };
+  const run: CloneRun = { state: 'running', progress: { phase: 'receiving' }, tail: '', shallow, startedAt: Date.now() };
   cloneRuns.set(cloneId, run);
-  cloneDestsInFlight.set(dest, cloneId);
-  const releaseDest = () => {
-    if (cloneDestsInFlight.get(dest) === cloneId) cloneDestsInFlight.delete(dest);
-  };
+  cloneDestsInFlight.set(plan.dest, cloneId);
 
-  // Fire-and-forget job; the response returns immediately with the poll id.
-  void (async () => {
-    // Hoisted so the catch below can clean up a clone dir that made it to disk
-    // before a LATER step (e.g. registerClonedVault exhausting its name
-    // candidates) threw — otherwise a canceled job that fails post-clone would
-    // orphan the directory.
-    let clonedPath: string | undefined;
-    try {
-      const cloned = await cloneGitHubRepo({
-        url: repoUrl,
-        parentDir,
-        token: token.token,
-        // git writes progress with \r-updated lines; normalize so the UI can
-        // simply split on newlines and show the tail.
-        onProgress: (chunk) => {
-          run.progress = (run.progress + chunk.replace(/\r/g, '\n')).slice(-4000);
-        },
-        registerCancel: (cancel) => {
-          run.cancel = cancel;
-        },
-      });
-      clonedPath = cloned.path;
-      const result: CloneRunResult = { ...cloned };
-      if (cloned.hasContext) {
-        // Ready project → register it now so the wizard opens it straight away,
-        // and (same best-effort guarantee as scaffold) make sure a
-        // PATH-resolvable `dreamcontext` exists for the project's hooks.
-        result.vaultName = registerClonedVault(cloned.name, cloned.path);
-        result.cli = await ensureCliInstalled();
-      }
-      // Honor a cancel that landed ANY time during the async work above — while
-      // git ran (SIGTERM on an already-exited child is a no-op, so the promise
-      // still resolved) OR during the post-clone register/CLI-install window.
-      // This check sits after EVERY await and immediately before the synchronous
-      // done-assignment (no await in between), so no cancel can slip past it.
-      // Undo everything the job produced — unregister the vault if we created
-      // one, delete the cloned dir (matching git's own interrupted-clone
-      // cleanup, and freeing the dest for a retry) — and surface it as canceled
-      // rather than registering and auto-opening a project the user aborted.
-      if (run.canceled) {
-        if (result.vaultName) { try { removeVault(result.vaultName); } catch { /* best-effort */ } }
-        try { rmSync(cloned.path, { recursive: true, force: true }); } catch { /* best-effort */ }
-        run.state = 'error';
-        run.error = 'Clone canceled.';
-        return;
-      }
-      run.result = result;
-      run.state = 'done';
-    } catch (err) {
-      // If the user canceled and a clone dir already made it to disk before this
-      // failure (e.g. registration threw), discard it so a canceled job leaves
-      // no orphan — mirrors the success-path cancel cleanup above.
-      if (run.canceled && clonedPath) {
-        try { rmSync(clonedPath, { recursive: true, force: true }); } catch { /* best-effort */ }
-      }
+  const sizeKb = await cloneJobDeps.repoSizeKb(token.token, plan.slug);
+  if (sizeKb !== null) run.sizeKb = sizeKb;
+  if (sizeKb !== null && !shallow) {
+    const free = await cloneJobDeps.freeBytesAt(dirname(plan.dest));
+    const needed = cloneNeedsBytes(sizeKb);
+    if (free !== null && free < needed) {
       run.state = 'error';
-      run.error = run.canceled
-        ? 'Clone canceled.'
-        : err instanceof Error
-          ? err.message
-          : 'Failed to clone the repository.';
-      if (!run.canceled) console.error('[launcher] clone failed:', err);
-    } finally {
-      run.cancel = undefined;
+      run.reason = 'no-space';
+      run.error = CLONE_FAIL_TEXT['no-space'];
+      run.space = { neededBytes: needed, freeBytes: free };
       run.endedAt = Date.now();
-      releaseDest();
+      cloneDestsInFlight.delete(plan.dest);
+      sendJson(res, 200, { ok: true, cloneId });
+      return;
     }
-  })();
+  }
 
+  void runCloneJob(run, plan, token.token).finally(() => {
+    if (cloneDestsInFlight.get(plan.dest) === cloneId) cloneDestsInFlight.delete(plan.dest);
+  });
   sendJson(res, 200, { ok: true, cloneId });
 }
 
 /**
- * GET /api/launcher/clone/status?id=<cloneId> — poll a background clone.
- * Returns its state, git's live progress tail, and (when done) the result the
- * wizard needs (`path`/`name`/`hasContext`/`vaultName`). Read-only; an unknown
- * id returns `{ state: 'unknown' }` (the run may have expired).
+ * GET /api/launcher/clone/status?id=<cloneId> — poll a background clone: its state, the parsed
+ * progress, git's tail, and (when done) the result; on failure the reason code (and the space
+ * numbers for `no-space`); `offerShallow` when "Get the latest version only" should show (a
+ * repo over 1 GB by GitHub's size, or after the timeout). Unknown id: `{ state: 'unknown' }`.
  */
 export async function handleLauncherCloneStatus(
   req: IncomingMessage,
@@ -851,23 +956,27 @@ export async function handleLauncherCloneStatus(
   const id = url.searchParams.get('id') ?? '';
   const run = id ? cloneRuns.get(id) : undefined;
   if (!run) {
-    sendJson(res, 200, { state: 'unknown', progress: '' });
+    sendJson(res, 200, { state: 'unknown', progress: { phase: 'receiving' }, tail: '' });
     return;
   }
+  const big = run.sizeKb !== undefined && run.sizeKb > BIG_REPO_KB;
   sendJson(res, 200, {
     state: run.state,
-    progress: run.progress.trim(),
+    progress: run.progress,
+    tail: run.tail.trim(),
     result: run.result,
     error: run.error,
+    reason: run.reason,
+    space: run.space,
+    sizeKb: run.sizeKb,
+    shallow: run.shallow,
+    offerShallow: !run.shallow && (big || run.reason === 'timeout'),
   });
 }
 
 /**
- * POST /api/launcher/clone/cancel — abort a running background clone. Mutation;
- * behind the CSRF guard. STRICT-PICK: only `id` is read. Idempotent: canceling
- * a finished or unknown run still 200s (`canceled: false`). git removes the
- * directory it created when a clone is interrupted, so no partial folder is
- * left behind.
+ * POST /api/launcher/clone/cancel — abort a running clone, or stop its wait for Git ("Stop
+ * waiting" cancels the queue, never the installer). STRICT-PICK: only `id`. Idempotent.
  */
 export async function handleLauncherCloneCancel(
   req: IncomingMessage,
@@ -883,13 +992,13 @@ export async function handleLauncherCloneCancel(
     return;
   }
   const run = cloneRuns.get(id);
-  if (!run || run.state !== 'running' || !run.cancel) {
+  if (!run || run.state !== 'running') {
     sendJson(res, 200, { ok: true, canceled: false });
     return;
   }
   run.canceled = true;
   try {
-    run.cancel();
+    run.cancel?.();
   } catch {
     /* child already gone — the close handler settles the run */
   }
@@ -1448,7 +1557,8 @@ export async function handleLauncherDefaults(
   _contextRoot: string | null,
 ): Promise<void> {
   const home = homedir();
-  const defaultParent = join(home, 'projects');
+  // D6: an existing `projects` folder in any letter case, else `~/Projects` (created on use).
+  const defaultParent = projectsParent(home);
   let defaultParentExists = false;
   try {
     defaultParentExists = statSync(defaultParent).isDirectory();
@@ -1759,7 +1869,10 @@ export async function handleLauncherUnregister(
     sendError(res, 400, 'invalid_name', 'name must be a non-empty string.');
     return;
   }
+  const path = listVaults().find((v) => v.name === name)?.path ?? null;
   const removed = removeVault(name);
+  // D12: removing the first project turns the marker's `pending` null (the file stays).
+  if (removed && path) clearPending(path);
   sendJson(res, 200, { removed, vaults: listVaults() });
 }
 

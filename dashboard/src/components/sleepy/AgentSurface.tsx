@@ -1,8 +1,10 @@
 import {
   useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
-  type CSSProperties,
+  type CSSProperties, type ReactNode,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+import { BrandMark } from '../brand/BrandMark';
+import type { EmptyHero } from './chat/Banners';
 import './AgentTerminal.css';
 // The phone layer (`.agent-surface[data-mobile]`): the chat on a phone, in the new shell's frame.
 import './MobileChat.css';
@@ -131,6 +133,10 @@ import type { HomeRow } from './phoneHome';
 import { arrivalCovers, DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 const NO_JOBS: readonly SuperJobWire[] = [];
+/** The first-read refusals the offer line words (C17); any other reads 'other'. */
+const FIRST_READ_REASONS = new Set(['limited', 'claude_not_ready', 'cap_full', 'super_off', 'in_flight']);
+/** How often a "Reading started" with no child seen yet asks whether the start really opened. */
+const FIRST_READ_RECHECK_MS = 10_000;
 
 /**
  * Per session, the open permission and refusal items its own chat card answers, with the record
@@ -3349,8 +3355,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setSuperDockOpen(false);
     setSuperView('panes');
   });
+  // Which intent is parked: `initializer` starts the initializer chat; `super-landing` (plan
+  // ilk-acilis C8) turns the Super Agent on quietly and shows its stage, sending nothing.
+  const startIntentKindRef = useRef<StartChatIntentDetail['intent']>('initializer');
+  // `handOver` is declared further down; the landing reaches it through this ref.
+  const handOverRef = useRef<(opts?: unknown) => Promise<string | null>>(async () => null);
   useInstanceEvent<StartChatIntentDetail>(START_CHAT_INTENT_EVENT, (detail) => {
-    if (detail?.intent !== 'initializer') return;
+    if (detail?.intent !== 'initializer' && detail?.intent !== 'super-landing') return;
+    startIntentKindRef.current = detail.intent;
     setStartIntentAt(Date.now());
     detail.accepted = true;
   });
@@ -3364,6 +3376,22 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return () => window.clearTimeout(timer);
     }
     setStartIntentAt(null);
+    if (startIntentKindRef.current === 'super-landing') {
+      // D10: Claude cannot start here, so the project opens on today's panes (no refusal: the
+      // landing itself worked). Otherwise the stage, handed over quietly when not on yet: no
+      // `handover` item is queued, so the Super takes no turn until the owner writes (C8a).
+      if (!canSpawn) return undefined;
+      setExpanded(true);
+      if (superStateRef.current?.enabled) {
+        setActiveSuperId(MAIN_SUPER);
+        setSuperView('super');
+        return undefined;
+      }
+      void handOverRef.current({ adoptNone: true, quiet: true }).then((session) => {
+        if (!session) emitInstance(bus, START_CHAT_REFUSED_EVENT);
+      });
+      return undefined;
+    }
     const detail: DelegateAgentDetail = {
       title: t('onboarding.handoff.tabTitle'),
       prompt: initializerKickoffPrompt(),
@@ -4567,7 +4595,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // A member Super's child: the server's crew ticket rides on its connection (main's frames
       // carry none, so its child's URL is unchanged).
       bindCrewTicket(childId, args.crewTicket);
-      const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
+      // The project's first read (C15a): the server runs it `auto` whatever the URL says, so its
+      // tab never claims bypass (explicitBypass with bp = false); every other child follows the
+      // vault's switch as before.
+      const firstRead = args.firstRead === true;
+      const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, firstRead, d.mode) as ChatSession;
       s.setSuperChild(true);
       // …and it STAYS marked until the server's push names it (the mark effect would otherwise
       // unmark it on the next roster change, before the push lands).
@@ -4962,6 +4994,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const handOver = useCallback(async (opts?: unknown): Promise<string | null> => {
     // Telegram's "Super'i aç" (N5): the same hand-over, adopting none of the open chats.
     const adoptNone = !!opts && typeof opts === 'object' && (opts as { adoptNone?: unknown }).adoptNone === true;
+    // Only the onboarding landing (`super-landing`, C8a) asks for a quiet hand-over: no turn queued.
+    const quiet = !!opts && typeof opts === 'object' && (opts as { quiet?: unknown }).quiet === true;
     let landed: string | null = null;
     const live = flightRunRef.current;
     if (live?.run.active) { live.run.reverse(); return null; }
@@ -4991,7 +5025,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       });
       // New shell: every session has one home and there is no take-back, so opening the Super
       // Agent takes none of the owner's chats out of their windows.
-      const body = adoptionBody(windowed || adoptNone ? [] : tabs, before?.session);
+      const body = adoptionBody(windowed || adoptNone ? [] : tabs, before?.session, quiet);
       // FIRST rects, in ONE batch, before anything changes.
       const first = new Map<string, { role: FlightRole; rect: Rect }>();
       for (const cid of body.adopt) {
@@ -5052,6 +5086,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return landed;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedApi, ensureSuperSession, panes, activePaneId, transportKind, t, instanceId]);
+  handOverRef.current = handOver;
 
   // Telegram's "Super'i aç" reaches this window as `hub_command super_handover` (N5, P4): the
   // same hand-over, adopting nothing; a full tab bar or a flight in progress says why.
@@ -7095,9 +7130,101 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     </div>
   );
   /** A Super chat's composer line: main's as before, a member's "<name> ne yapsın?". */
+  // The main Super stage's empty state (plan ilk-acilis C13, v2-03j): the project's question,
+  // the gem in place of ">_" (owner 2026-11-20), three chips. ONE object per vault and language.
+  // The first-read offer (C17): GET only asks whether it is up; POST goes out ONLY from the
+  // Start reading click (S6), never on mount, reconnect or a timer.
+  const [firstReadPending, setFirstReadPending] = useState(false);
+  const [firstReadOut, setFirstReadOut] = useState(false);
+  const [firstReadRefused, setFirstReadRefused] = useState<string | null>(null);
+  const [firstReadStarted, setFirstReadStarted] = useState(false);
+  // A start shown here belongs to its project: only a project change clears it (a canSpawn
+  // flicker or a new api object must not drop "Reading started" back to the default).
+  useEffect(() => { setFirstReadStarted(false); }, [vault]);
+  useEffect(() => {
+    setFirstReadPending(false); setFirstReadRefused(null);
+    if (!vault || isMobile || !canSpawn) return undefined;
+    let live = true;
+    scopedApi.ownerGet<{ pending?: boolean }>('/super/first-read')
+      .then((r) => { if (live) setFirstReadPending(r?.pending === true); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [vault, isMobile, canSpawn, scopedApi]);
+  const firstReadLive = useMemo(() => Object.values(mainSuperState?.children ?? {}).some((c) =>
+    c.firstRead === true && c.endedAt === undefined && (c.row === 'working' || c.row === 'asking' || c.row === 'waiting')),
+  [mainSuperState?.children]);
+  // Started here and then seen running: once it stops running the line goes back to today's.
+  const firstReadSeenLive = useRef(false);
+  useEffect(() => {
+    if (firstReadLive) firstReadSeenLive.current = true;
+    else if (firstReadSeenLive.current) { firstReadSeenLive.current = false; setFirstReadStarted(false); }
+  }, [firstReadLive]);
+  // "Reading started" with no child seen yet (a start the window answered late): ask again now
+  // and then. No claim and no start in flight means it never opened: the offer comes back.
+  useEffect(() => {
+    if (!vault || !firstReadStarted || firstReadLive || firstReadSeenLive.current) return undefined;
+    let live = true;
+    const timer = setInterval(() => {
+      scopedApi.ownerGet<{ pending?: boolean; starting?: boolean }>('/super/first-read')
+        .then((r) => {
+          if (!live || firstReadSeenLive.current || r?.pending !== true || r.starting === true) return;
+          setFirstReadStarted(false);
+          setFirstReadPending(true);
+        })
+        .catch(() => undefined);
+    }, FIRST_READ_RECHECK_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, [vault, firstReadStarted, firstReadLive, scopedApi]);
+  const startFirstRead = useCallback(async () => {
+    if (firstReadOut) return;
+    setFirstReadOut(true);
+    setFirstReadRefused(null);
+    try {
+      const r = await scopedApi.ownerPost<{ ok?: boolean; error?: string }>('/super/first-read', {});
+      if (r?.ok === false) throw new RequestError('', 409, r.error ?? 'other');
+      setFirstReadPending(false);
+      setFirstReadStarted(true);
+    } catch (e) {
+      const code = e instanceof RequestError ? e.code : '';
+      if (code === 'not_eligible') setFirstReadPending(false);
+      else setFirstReadRefused(FIRST_READ_REASONS.has(code) ? code : 'other');
+    } finally {
+      setFirstReadOut(false);
+    }
+  }, [firstReadOut, scopedApi]);
+  const firstReadSub = useMemo<ReactNode | undefined>(() => {
+    const name = vault ?? '';
+    if (firstReadLive || firstReadStarted) {
+      return <span data-testid="first-read-started">{t('super.firstRead.started')}</span>;
+    }
+    if (!firstReadPending) return undefined;
+    return (
+      <span className="chat-banner-first-read" data-testid="first-read-offer">
+        <span>{t('super.firstRead.offer').replace('{name}', name)}</span>
+        <button type="button" className="chat-banner-chip" data-testid="first-read-start" disabled={firstReadOut} onClick={() => { void startFirstRead(); }}>
+          {t('super.firstRead.start')}
+        </button>
+        {firstReadRefused && <span className="chat-banner-first-read-why" role="status" data-testid="first-read-refused">{t(`super.firstRead.refused.${firstReadRefused}`)}</span>}
+      </span>
+    );
+  }, [t, vault, firstReadLive, firstReadStarted, firstReadPending, firstReadOut, firstReadRefused, startFirstRead]);
+  const superHero = useMemo<EmptyHero>(() => ({
+    title: t('super.empty.title').replace('{name}', vault ?? ''),
+    ...(firstReadSub ? { sub: firstReadSub } : {}),
+    mark: <BrandMark size={76} className="chat-banner-empty-mark" title="" />,
+    chips: [
+      t('super.empty.chip.explain'),
+      t('super.empty.chip.first'),
+      t('super.empty.chip.morning').replace('{name}', vault ?? ''),
+    ],
+  }), [t, vault, firstReadSub]);
+  /** Is this the MAIN project's Super stage on a computer (plan ilk-acilis D9)? Never a member
+   *  stage, a member's mirror or the phone: those keep today's empty state. */
+  const isMainSuperStage = (cs: ChatSession): boolean =>
+    cs.mode === 'super' && !isMobile && !chatAgentFor(cs.claudeId) && !memberMirrorsRef.current.has(cs.claudeId);
   const superPlaceholderFor = (cs: ChatSession): string => {
     const member = chatAgentFor(cs.claudeId) || memberMirrorsRef.current.get(cs.claudeId) || '';
-    if (!member) return t('super.centre.placeholder');
+    if (!member) return isMainSuperStage(cs) ? t('super.empty.placeholder') : t('super.centre.placeholder');
     const name = findAgent(memberRoster.data, member)?.title || member;
     return t('superStage.member.placeholder').replace('{name}', name);
   };
@@ -7799,6 +7926,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           // A member's phone mirror (an ordinary chat mode) asks "<name> ne yapsın?" too; main's
           // mirror and every other chat are unchanged.
           idlePlaceholder={cs.mode === 'super' || memberMirrorsRef.current.has(cs.claudeId) ? superPlaceholderFor(cs) : undefined}
+          // The main Super stage's own empty state (C13): one memoised object, so the memo holds.
+          emptyHero={isMainSuperStage(cs) ? superHero : undefined}
           // A member's phone mirror reads and marks the member's unread, never main's.
           superMember={memberMirrorsRef.current.get(cs.claudeId)}
           aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}

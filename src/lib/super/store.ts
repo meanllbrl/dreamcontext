@@ -339,6 +339,8 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
     if (child.row === 'stuck' && typeof c.startError === 'string') child.startError = c.startError.slice(0, MAX_START_ERROR);
     if (c.awaited === true) child.awaited = true;
+    if (c.firstRead === true) child.firstRead = true;
+    if (typeof c.firstReadAnnounced === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(c.firstReadAnnounced)) child.firstReadAnnounced = c.firstReadAnnounced;
     if (typeof c.origin === 'string' && MSG_REF_RE.test(c.origin)) child.origin = c.origin;
     const wo = parseWorkOrigin(c.workOrigin);
     if (wo) child.workOrigin = wo;
@@ -1034,9 +1036,24 @@ async function assertContained(contextRoot: string, id: SuperId = 'main', create
   let realDir: string;
   try {
     realRoot = await fsp.realpath(contextRoot);
-    realDir = await fsp.realpath(stateDir);
   } catch {
     throw new SuperStoreRefused('outside', 'the vault has no state directory');
+  }
+  // A brain cloned from GitHub may have no `state/` at all (git keeps no empty folder): a read
+  // finds no record, a write makes the folder. Only a truly absent path qualifies (lstat ENOENT);
+  // a dangling or outside link is still refused below.
+  const stateLstat = await fsp.lstat(stateDir).catch((e: NodeJS.ErrnoException) => {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  });
+  if (stateLstat === null) {
+    if (!create) return path;
+    await fsp.mkdir(stateDir).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'EEXIST') throw e; });
+  }
+  try {
+    realDir = await fsp.realpath(stateDir);
+  } catch {
+    throw new SuperStoreRefused('outside', 'state/ resolves outside the vault');
   }
   if (realDir !== join(realRoot, 'state')) throw new SuperStoreRefused('outside', 'state/ resolves outside the vault');
   if (id !== 'main') {
@@ -1362,6 +1379,10 @@ interface IndexEntry {
   ended: Set<string>;
   /** The worktree `super delegate --worktree` made for a child (live or ended), by its pin. */
   worktrees: Map<string, string>;
+  /** Children marked as the project's first read (live or ended): their spawn is the server's. */
+  firstReads: Set<string>;
+  /** First-read children that run right now (not ended, row working/asking/waiting; C16). */
+  firstReadsRunning: Set<string>;
   notes: Map<string, SuperNote>;
 }
 
@@ -1399,6 +1420,11 @@ function indexState(key: string, state: SuperState): void {
     leanMcp: new Map(Object.keys(state.children).filter((k) => !state.children[k].adopted).map((k) => [k, state.children[k].mcp ?? []])),
     ended: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt !== undefined)),
     worktrees: new Map(Object.keys(state.children).flatMap((k) => { const w = state.children[k].worktree; return w ? [[k, w] as [string, string]] : []; })),
+    firstReads: new Set(Object.keys(state.children).filter((k) => state.children[k].firstRead === true)),
+    firstReadsRunning: new Set(Object.keys(state.children).filter((k) => {
+      const c = state.children[k];
+      return c.firstRead === true && c.endedAt === undefined && (c.row === 'working' || c.row === 'asking' || c.row === 'waiting');
+    })),
     notes,
   });
 }
@@ -1526,6 +1552,21 @@ export function superOfChild(sessionId: string): SuperRef | null {
   if (!sessionId) return null;
   for (const e of index.values()) if (e.children.has(sessionId)) return { root: e.root, superId: e.superId };
   return null;
+}
+
+/** Does the Super whose session is `sessionId` have a first read running right now (C16)? From
+ *  the index only: what its record said at its last read or write. */
+export function superFirstReadRunning(sessionId: string): boolean {
+  if (!sessionId) return false;
+  for (const e of index.values()) if (e.session === sessionId && e.firstReadsRunning.size > 0) return true;
+  return false;
+}
+
+/** Is `sessionId` a child some super record marks as the first read (C15a)? Live or ended. */
+export function isFirstReadChild(sessionId: string): boolean {
+  if (!sessionId) return false;
+  for (const e of index.values()) if (e.firstReads.has(sessionId)) return true;
+  return false;
 }
 
 /**

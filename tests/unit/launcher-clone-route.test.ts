@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -9,7 +9,11 @@ import {
   handleLauncherClone,
   handleLauncherCloneStatus,
   handleLauncherCloneCancel,
+  setCloneJobDepsForTests,
 } from '../../src/server/routes/launcher.js';
+import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
+
+const KEY = 'test-owner-key-0123456789abcdefghijklmnop';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => any } {
   let statusCode = 0;
@@ -22,13 +26,14 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => any
   return { res, status: () => statusCode, body: () => responseBody as any };
 }
 
-function makeReq(method: string, url: string, bodyObj?: unknown): IncomingMessage {
+function makeReq(method: string, url: string, bodyObj?: unknown, extra: Record<string, string> = { [OWNER_KEY_HEADER]: KEY }): IncomingMessage {
   const chunks = bodyObj === undefined ? [] : [Buffer.from(JSON.stringify(bodyObj))];
   const readable = Readable.from(chunks);
   return Object.assign(readable, {
     method,
     url,
-    headers: { 'content-type': 'application/json', host: '127.0.0.1' },
+    headers: { 'content-type': 'application/json', host: '127.0.0.1', ...extra },
+    socket: { remoteAddress: '127.0.0.1' },
   }) as unknown as IncomingMessage;
 }
 
@@ -47,6 +52,7 @@ beforeEach(() => {
   process.env.DREAMCONTEXT_DESKTOP = '1';
   delete process.env.GITHUB_TOKEN;
   delete process.env.GH_TOKEN;
+  setOwnerKey(KEY);
 });
 
 afterEach(() => {
@@ -57,6 +63,7 @@ afterEach(() => {
   delete process.env.GH_TOKEN;
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(base, { recursive: true, force: true });
+  setOwnerKey(null);
 });
 
 // ─── Desktop gate ────────────────────────────────────────────────────────────────
@@ -74,7 +81,7 @@ describe('launcher clone routes — desktop gate', () => {
     delete process.env.DREAMCONTEXT_DESKTOP;
     const { res, status, body } = makeRes();
     await handleLauncherClone(
-      makeReq('POST', '/api/launcher/clone', { url: 'acme/api', parentDir: base }),
+      makeReq('POST', '/api/launcher/clone', { repo: 'acme/api', parent: base }),
       res,
       {},
       null,
@@ -97,7 +104,7 @@ describe('launcher clone routes — token gate', () => {
   it('401s no_token on POST /launcher/clone when nobody is signed in', async () => {
     const { res, status, body } = makeRes();
     await handleLauncherClone(
-      makeReq('POST', '/api/launcher/clone', { url: 'acme/api', parentDir: base }),
+      makeReq('POST', '/api/launcher/clone', { repo: 'acme/api', parent: base }),
       res,
       {},
       null,
@@ -110,10 +117,10 @@ describe('launcher clone routes — token gate', () => {
 // ─── Clone input validation (all BEFORE any network/git call) ─────────────────────
 
 describe('launcher clone routes — /clone validation', () => {
-  it('400s invalid_body when url or parentDir is missing', async () => {
+  it('400s invalid_body when repo or parent is missing', async () => {
     process.env.GH_TOKEN = 'ghp_test';
     const { res, status, body } = makeRes();
-    await handleLauncherClone(makeReq('POST', '/api/launcher/clone', { url: 'acme/api' }), res, {}, null);
+    await handleLauncherClone(makeReq('POST', '/api/launcher/clone', { repo: 'acme/api' }), res, {}, null);
     expect(status()).toBe(400);
     expect(body().error).toBe('invalid_body');
   });
@@ -122,7 +129,7 @@ describe('launcher clone routes — /clone validation', () => {
     process.env.GH_TOKEN = 'ghp_test';
     const { res, status, body } = makeRes();
     await handleLauncherClone(
-      makeReq('POST', '/api/launcher/clone', { url: 'ext::sh -c whoami', parentDir: base }),
+      makeReq('POST', '/api/launcher/clone', { repo: 'ext::sh -c whoami', parent: base }),
       res,
       {},
       null,
@@ -135,7 +142,7 @@ describe('launcher clone routes — /clone validation', () => {
     process.env.GH_TOKEN = 'ghp_test';
     const { res, status, body } = makeRes();
     await handleLauncherClone(
-      makeReq('POST', '/api/launcher/clone', { url: 'acme/api', parentDir: 'not/absolute' }),
+      makeReq('POST', '/api/launcher/clone', { repo: 'acme/api', parent: 'not/absolute' }),
       res,
       {},
       null,
@@ -145,19 +152,13 @@ describe('launcher clone routes — /clone validation', () => {
     expect(body().message).toMatch(/absolute/i);
   });
 
-  it('400s clone_failed when the destination folder already exists', async () => {
+  it('refuses without the owner key, and from another site (S1 build note: registration routes)', async () => {
     process.env.GH_TOKEN = 'ghp_test';
-    mkdirSync(join(base, 'api'));
-    const { res, status, body } = makeRes();
-    await handleLauncherClone(
-      makeReq('POST', '/api/launcher/clone', { url: 'acme/api', parentDir: base }),
-      res,
-      {},
-      null,
-    );
-    expect(status()).toBe(400);
-    expect(body().error).toBe('clone_failed');
-    expect(body().message).toMatch(/already exists/i);
+    for (const extra of [{}, { [OWNER_KEY_HEADER]: 'wrong' }, { [OWNER_KEY_HEADER]: KEY, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' }]) {
+      const { res, status } = makeRes();
+      await handleLauncherClone(makeReq('POST', '/api/launcher/clone', { repo: 'acme/api', parent: base }, extra), res, {}, null);
+      expect(status(), JSON.stringify(extra)).toBe(403);
+    }
   });
 });
 
@@ -193,5 +194,66 @@ describe('launcher clone routes — /clone/status and /clone/cancel', () => {
     await handleLauncherCloneCancel(makeReq('POST', '/api/launcher/clone/cancel', { id: 'ghost' }), res, {}, null);
     expect(status()).toBe(200);
     expect(body()).toEqual({ ok: true, canceled: false });
+  });
+});
+
+// ─── The clone job deletes only a folder it created (review r1) ──────────────────
+
+describe('launcher clone job — cleanup touches only its own folder', () => {
+  afterEach(() => setCloneJobDepsForTests(null));
+
+  async function startJob(): Promise<string> {
+    process.env.GH_TOKEN = 'ghp_test';
+    const { res, status, body } = makeRes();
+    await handleLauncherClone(makeReq('POST', '/api/launcher/clone', { repo: 'acme/api', parent: base }), res, {}, null);
+    expect(status()).toBe(200);
+    return body().cloneId as string;
+  }
+  async function statusOf(id: string): Promise<any> {
+    const { res, body } = makeRes();
+    await handleLauncherCloneStatus(makeReq('GET', `/api/launcher/clone/status?id=${id}`), res, {}, null);
+    return body();
+  }
+  async function ended(id: string): Promise<any> {
+    for (let i = 0; i < 200; i++) {
+      const s = await statusOf(id);
+      if (s.state !== 'running') return s;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error('the clone job never ended');
+  }
+
+  it('a folder that appears during the Git wait is left alone and git never runs', async () => {
+    let git = false;
+    let cloned = 0;
+    setCloneJobDepsForTests({
+      gitAvailable: () => git,
+      sleep: () => new Promise((r) => setTimeout(r, 2)),
+      repoSizeKb: async () => null,
+      freeBytesAt: async () => null,
+      clone: async () => { cloned += 1; throw new Error('must not run'); },
+    });
+    const id = await startJob();
+    const dest = join(base, 'api');
+    mkdirSync(dest, { recursive: true });
+    writeFileSync(join(dest, 'mine.txt'), 'the owner made this');
+    git = true;
+    const s = await ended(id);
+    expect(s.state).toBe('error');
+    expect(cloned).toBe(0);
+    expect(readFileSync(join(dest, 'mine.txt'), 'utf-8')).toBe('the owner made this');
+  });
+
+  it('a clone that fails after creating its folder removes that folder', async () => {
+    setCloneJobDepsForTests({
+      gitAvailable: () => true,
+      repoSizeKb: async () => null,
+      freeBytesAt: async () => null,
+      clone: async ({ plan }) => { mkdirSync(plan.dest, { recursive: true }); throw new Error('network dropped'); },
+    });
+    const id = await startJob();
+    const s = await ended(id);
+    expect(s.state).toBe('error');
+    expect(existsSync(join(base, 'api'))).toBe(false);
   });
 });

@@ -115,8 +115,9 @@ export const LauncherOpenContext = createContext<((name: string) => void) | null
  *  Null everywhere else: `Handoff` opens the project's window as ever. */
 export const NewProjectLandContext = createContext<NewProjectLanding | null>(null);
 /** `initializer`: made, and its first run starts. `existing`: it was already a project, so it opens
- *  as it is. Neither: just made, on a fresh chat. */
-export type NewProjectLanding = (name: string, how?: 'initializer' | 'existing') => void;
+ *  as it is. `super-landing` (onboarding, C8): it opens on its Super Agent's stage, turned on
+ *  quietly. Neither: just made, on a fresh chat. */
+export type NewProjectLanding = (name: string, how?: 'initializer' | 'existing' | 'super-landing') => void;
 
 /** A page's drawer toggle (⌘B / the title-bar button) on a page that has its own drawer
  *  (Whiteboards' explorer). Emitted on the instance bus by `PageDrawerToggleBridge`. */
