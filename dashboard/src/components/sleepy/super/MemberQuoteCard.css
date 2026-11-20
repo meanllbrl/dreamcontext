@@ -1,0 +1,47 @@
+/* A member's answer in the Super chat (super-v3 Ü3, frame T3-sonra): a card with the face, the
+   answer quoted (accent bar, two lines until opened) and two small buttons. */
+.super-quote {
+  margin: 0;
+  align-self: stretch;
+  max-width: var(--chat-card-width, min(680px, 100%));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+}
+.super-quote-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); font-size: var(--font-size-sm); }
+.super-quote-who { font-weight: 600; color: var(--color-text); }
+.super-quote-meta { color: var(--color-text-secondary); }
+.super-quote-text {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-accent);
+  color: var(--color-text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.super-quote[data-open] .super-quote-text { display: block; -webkit-line-clamp: unset; }
+.super-quote-cut { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.super-quote-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.super-quote-btn {
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.super-quote-btn:hover { background: var(--color-bg-tertiary); }
+.super-quote-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.super-event-with-quotes { display: flex; flex-direction: column; gap: var(--space-2); }

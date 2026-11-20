@@ -90,6 +90,8 @@ import { SuperAwayTiles } from './super/SuperAwayTiles';
 import { OwnerCardSlot } from './super/OwnerCardSlot';
 import { anchorOwnerCards, NOTHING_TIMED, ownerCardItemsOf, placedByTime, placeOwnerCards, tailHolds } from './super/cardPlacement';
 import { SuperEventLine } from './super/SuperEventLine';
+import { MemberQuoteCard } from './super/MemberQuoteCard';
+import { memberAnswersOf } from './super/memberQuote';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { RunLiveLine } from './super/RunLiveLine';
@@ -2311,7 +2313,16 @@ export function ChatPane({
       const request = requestTurnOf(item.text, superCtx?.requests);
       if (request) return <SuperRequestBlock key={item.id} turn={request} itemId={item.id} />;
       if (group && superCtx) {
-        const line = <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        const eventLine = <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        // A member's answer in this turn (super-v3 Ü3): its quote card under the line, from the
+        // server's own lines, so the Super only says what it means.
+        const answers = memberAnswersOf(item.text);
+        const line = answers.length ? (
+          <div key={item.id} className="super-event-with-quotes">
+            {eventLine}
+            {answers.map((a) => <MemberQuoteCard key={`${item.id}-${a.item}`} answer={a} at={item.ts ?? Date.now()} session={session} />)}
+          </div>
+        ) : eventLine;
         // A member's turn for main Super: marked "Super için" (never the owner's to answer).
         if (group.batch && superCtx.mainBatches?.includes(group.batch)) {
           return (
