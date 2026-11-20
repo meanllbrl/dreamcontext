@@ -206,9 +206,12 @@ function inline(raw: string): string {
   const codes: string[] = [];
   let s = raw.replace(/`([^`\n]+)`/g, (_m, c: string) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
   const links: string[] = [];
-  s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
+  s = s.replace(/\[([^\]\n]+)\]\((?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\)/g, (m, label: string, angled: string | undefined, plain: string | undefined) => {
+    const href = (angled ?? plain ?? '').trim();
     const safe = safeHref(href);
-    if (!safe) return m;
+    // A local target (a project path, `file:`, an anchor) means nothing on a phone and leaks an
+    // internal path: show the label alone. A scheme link we do not send (mailto:, tel:) stays as written.
+    if (!safe) return /^(?:mailto|tel|tg|sms):/i.test(href) ? m : label;
     links.push(`<a href="${escapeHtml(safe)}">${escapeHtml(label)}</a>`);
     return `\u0001${links.length - 1}\u0001`;
   });
