@@ -784,6 +784,8 @@ plain, high-level lines in his words. Keep it true as you work:
   never do it for him. About another line, your open question stays open; if his words answer
   it anyway, \`dreamcontext super queue done <ask id>\`. Several lines in one message: keep the
   pad right for each (\`note done|drop|add\` per line).
+- Answering a message of his that belongs to a line no flag tied it to (a follow-up, a second
+  example, a correction): \`super note link <id> <ref>…\` in that turn, so pressing the line shows it.
 
 ## Arrange the screen yourself
 \`super half <card>\` (side by side), \`present <card…>\` (1-8), \`stack <card>\` (Others),

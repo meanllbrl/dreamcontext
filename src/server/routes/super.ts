@@ -1359,7 +1359,9 @@ function jobOrigin(c: SuperCaller, b: Record<string, unknown>): { ref?: string; 
 
 /** ajanda-filtre C1: the owner message `ref` as an agenda line links it: the ref plus when it
  *  ARRIVED. His current turn's message carries its arrival (inbox.ts `superOwnerMsgAt`); a
- *  `--origin` outside his turn takes the open debt's time for that message, else now. */
+ *  `--origin` (or `note link`) outside his turn takes the open debt's time for that message,
+ *  else now: the filter reads a pair no message fits as "linked after it arrived" and takes the
+ *  newest message with that ref before it (lineThread.ts; field 2026-11-20). */
 function ownerPair(c: SuperCaller, ref: string | undefined): PadRef | undefined {
   if (!ref || !MSG_REF_RE.test(ref)) return undefined;
   const sid = c.state.session;
@@ -2831,6 +2833,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild, c.superId, ownerPair(c, origin.ref));
     if (added === 'full') { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
     ok(res, { note: added });
+  },
+
+  'note-link': async (c, b, res) => {
+    // The Super ties messages it judged to be about a line (his follow-up with a second example):
+    // each ref joins the line's thread, so pressing the line shows it and its answers.
+    const id = str(b.id);
+    const refs = Array.isArray(b.refs) ? b.refs : [];
+    if (!refs.length || !refs.every((r) => typeof r === 'string' && MSG_REF_RE.test(r))) {
+      refuse(res, 400, 'invalid_args', 'name his messages by ref: six characters each, from their <owner-msg ref="…">');
+      return;
+    }
+    if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    const pairs = [...new Set(refs as string[])].map((r) => ownerPair(c, r)).filter((p): p is PadRef => !!p);
+    let note: SuperPadItem | null = null;
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
+      for (const pair of pairs) linkLineRef(s, { note: id }, pair);
+      note = s.pad?.find((p) => p.id === id) ?? null;
+    });
+    if (!note) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    ok(res, { note });
   },
 
   'note-keep': async (c, b, res) => {

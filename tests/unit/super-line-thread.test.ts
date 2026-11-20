@@ -94,6 +94,35 @@ describe('M2: refs resolve to distinct messages by arrival', () => {
     expect(ids(lineThread(conv, key({ refs: [{ ref: msgRef('ok'), at: 31_000 }] }), [], SUPER))).toEqual(['b', 'tb']);
   });
 
+  it('a link made after his message arrived (an `--origin` or `note link` in a later turn) still finds it', () => {
+    // Field 2026-11-20: his message at 1000, the line noted with --origin twelve minutes later.
+    const first = 'The memory regression: the Orbit Super picked the wrong skill';
+    const follow = 'A second example: the Atlas skill was not found either';
+    const conv = [
+      user('u1', first, 1000), say('t1', '<!-- re:' + msgRef(first) + ' -->\nDoc is on it.', 1100, [msgRef(first)]),
+      user('u2', follow, 300_000), say('t2', '<!-- re:' + msgRef(follow) + ' -->\nAdded to the same job.', 300_100, [msgRef(follow)]),
+      user('u3', 'unrelated: the weekly numbers?', 400_000), say('t3', 'Here.', 400_100),
+    ];
+    const late = 1000 + 12 * 60_000 + 60_000;
+    expect(ids(lineThread(conv, key({ refs: [{ ref: msgRef(first), at: late }] }), [], SUPER))).toEqual(['t1', 'u1']);
+    // The Super tied his follow-up later still: both messages and both answers.
+    const both = lineThread(conv, key({ refs: [{ ref: msgRef(first), at: late }, { ref: msgRef(follow), at: 500_000 }] }), [], SUPER);
+    expect(ids(both)).toEqual(['t1', 't2', 'u1', 'u2']);
+    expect(both.count).toBe(4);
+  });
+
+  it('a late link takes the newest identical message before it, never one after it', () => {
+    const conv = [user('a', 'ok', 1000), user('b', 'ok', 2_000_000), user('c', 'ok', 9_000_000)];
+    expect(ids(lineThread(conv, key({ refs: [{ ref: msgRef('ok'), at: 5_000_000 }] }), [], SUPER))).toEqual(['b']);
+    // A second, late link to a message already taken names nothing more: never an older twin.
+    const twice = [user('old', 'devam', 1000), say('to', 'Old job.', 1100), user('new', 'devam', 2_000_000), say('tn', 'Going on.', 2_000_100)];
+    expect(ids(lineThread(twice, key({ refs: [{ ref: msgRef('devam'), at: 2_000_000 }, { ref: msgRef('devam'), at: 3_000_000 }] }), [], SUPER))).toEqual(['new', 'tn']);
+    // Two late links, one after each "devam": each its own.
+    expect(ids(lineThread(twice, key({ refs: [{ ref: msgRef('devam'), at: 500_000 }, { ref: msgRef('devam'), at: 3_000_000 }] }), [], SUPER))).toEqual(['new', 'old', 'tn', 'to']);
+    // Nothing before it: nothing (a wrong message is worse than a missing one).
+    expect(ids(lineThread([user('c', 'ok', 9_000_000)], key({ refs: [{ ref: msgRef('ok'), at: 5_000_000 }] }), [], SUPER))).toEqual([]);
+  });
+
   it('a replay with no times: a line holding only some of a ref\'s pairs matches none', () => {
     const conv = [user('hist-1', 'devam', 0), say('hist-2', 'Going on.', 0), user('hist-5', 'devam', 0), say('hist-6', 'Again.', 0)];
     expect(ids(lineThread(conv, key({ refs: [{ ref: msgRef('devam'), at: 500_000 }] }), [], SUPER))).toEqual([]);

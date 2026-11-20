@@ -117,3 +117,37 @@ describe('the Super\'s verbs', () => {
     expect(none.out.status).toBe(404);
   });
 });
+
+describe('`note link`: the Super ties messages it judged to be about a line (field 2026-11-20)', () => {
+  beforeEach(() => {
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SESSION, enabled: true }));
+  });
+
+  it('each ref joins the line once; a retried call adds nothing twice; an open debt gives its arrival', async () => {
+    await writeSuper(root, (s) => {
+      s.owed = [{ id: 'o1', kind: 'msg', ref: 'abc123', seq: 1, at: 4242, gist: 'second example', nudges: 0 }] as typeof s.owed;
+    });
+    await SUPER_VERB_HANDLERS['note-add'](await caller(), { section: 'now', text: 'Fix the Acme search' }, res().r);
+    const { r, out } = res();
+    await SUPER_VERB_HANDLERS['note-link'](await caller(), { id: 'n1', refs: ['abc123', 'def456', 'abc123'] }, r);
+    expect(out.status).toBe(200);
+    const refs = (await readSuperState(root)).pad![0].refs!;
+    expect(refs.map((p) => p.ref).sort()).toEqual(['abc123', 'def456']);
+    expect(refs.find((p) => p.ref === 'abc123')!.at).toBe(4242);
+    expect(refs.find((p) => p.ref === 'def456')!.at).toBeGreaterThan(4242);
+  });
+
+  it('refuses a bad ref, no ref and an unknown line', async () => {
+    await SUPER_VERB_HANDLERS['note-add'](await caller(), { section: 'now', text: 'Fix the Acme search' }, res().r);
+    for (const [body, status] of [
+      [{ id: 'n1', refs: ['not a ref'] }, 400],
+      [{ id: 'n1', refs: [] }, 400],
+      [{ id: 'n9', refs: ['abc123'] }, 404],
+    ] as const) {
+      const { r, out } = res();
+      await SUPER_VERB_HANDLERS['note-link'](await caller(), body as unknown as Record<string, unknown>, r);
+      expect(out.status).toBe(status);
+    }
+    expect((await readSuperState(root)).pad![0].refs).toBeUndefined();
+  });
+});
