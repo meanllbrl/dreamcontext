@@ -201,7 +201,7 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     const rows = Object.entries(ROUTE_POLICY).filter(([k]) => k.includes('/api/super/'));
     expect(rows.map(([k]) => k).sort()).toEqual([
       'GET /api/super/agenda-day', 'GET /api/super/state', 'POST /api/super/activity', 'POST /api/super/disable', 'POST /api/super/enable',
-      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/member', 'POST /api/super/open', 'POST /api/super/owed/drop', 'POST /api/super/owner-answer', 'POST /api/super/pad', 'POST /api/super/pad/add', 'POST /api/super/pad/remove', 'POST /api/super/recap', 'POST /api/super/seen', 'POST /api/super/v/:verb',
+      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/member', 'POST /api/super/open', 'POST /api/super/owed/drop', 'POST /api/super/owner-answer', 'POST /api/super/pad', 'POST /api/super/pad/add', 'POST /api/super/pad/remove', 'POST /api/super/recap', 'POST /api/super/resume', 'POST /api/super/seen', 'POST /api/super/v/:verb',
     ]);
     for (const [k, row] of rows) expect(row.allow, k).toBe(false);
     setPhoneSurfaceForTests('mac');
@@ -213,6 +213,7 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
       expect(phoneAllows('POST', '/api/super/member')).toBe(false);
       expect(phoneAllows('POST', '/api/super/seen')).toBe(false);
       expect(phoneAllows('POST', '/api/super/owed/drop')).toBe(false);
+      expect(phoneAllows('POST', '/api/super/resume')).toBe(false);
       expect(phoneAllows('POST', '/api/super/v/state')).toBe(false);
     } finally { setPhoneSurfaceForTests(null); }
   });

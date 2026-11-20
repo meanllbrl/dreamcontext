@@ -364,7 +364,7 @@ export interface SuperChild {
    *  MIRROR of src/lib/super/types.ts): the newest is the job it is talking about. */
   spokeAt?: number;
   /** The commands the Super allowed it (K5), newest last; the window shows "Claude allowed N". */
-  allows?: { at: number; summary: string }[];
+  allows?: { at: number; summary: string; inFolder?: boolean }[];
 }
 
 /** `waiting`: its turn ended on something only the owner can do (an `owner` item is open). */
@@ -804,7 +804,9 @@ export interface SuperState {
   children: Record<string, SuperChild>;
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
-  away: { since: number | null; events: number };
+  /** MIRROR of src/lib/super/types.ts SuperAway: `until` the newest event while away,
+   *  `viaTelegram` his answers from Telegram meanwhile (super-v3 D10). */
+  away: { since: number | null; events: number; until?: number; viaTelegram?: number };
   dismissed: SuperDismissed[];
   pool: SuperPoolItem[];
   /** Batch ids of event turns that render in full (the super agent asked the owner). */
@@ -1320,7 +1322,11 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     children,
     queue,
     notes,
-    away: { since: typeof since === 'number' ? since : null, events: typeof v.away.events === 'number' ? v.away.events : 0 },
+    away: {
+      since: typeof since === 'number' ? since : null, events: typeof v.away.events === 'number' ? v.away.events : 0,
+      ...(typeof v.away.until === 'number' && Number.isFinite(v.away.until) ? { until: v.away.until } : {}),
+      ...(typeof v.away.viaTelegram === 'number' && v.away.viaTelegram > 0 ? { viaTelegram: Math.floor(v.away.viaTelegram) } : {}),
+    },
     dismissed: Array.isArray(v.dismissed)
       ? v.dismissed.filter((d): d is SuperDismissed => isRecord(d) && oneOf(CONTAINER_KINDS, d.kind) && typeof d.ref === 'string' && typeof d.until === 'number')
       : [],

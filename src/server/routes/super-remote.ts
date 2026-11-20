@@ -11,7 +11,7 @@ import { superRemoteView } from '../../lib/super/remote-view.js';
 import { teamLiveRows } from '../../lib/super/team.js';
 import { CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, PRESENT_LAYOUTS, type SuperState } from '../../lib/super/types.js';
 import type { SuperRemoteView } from '../../lib/handsfree/mac/contract.js';
-import { applyOwnerLayout, applyOwnerSeen, ownerSeenMarks, readQueueStep } from './super.js';
+import { applyOwnerLayout, applyOwnerSeen, ownerSeenMarks, readQueueStep, refuseOwnerGroup } from './super.js';
 
 /**
  * The Super Agent's stage for a REMOTE screen (hands-free sekmeler W1, D5): the computer or
@@ -194,6 +194,8 @@ export async function handleSuperStageLayout(req: IncomingMessage, res: ServerRe
   if (!layoutSuper) return;
   const body = rec(await parseJsonBody(req));
   if (!body) { sendError(res, 400, 'invalid_body', 'a JSON object is expected'); return; }
+  // Only the Super makes groups (super-v3 K9): the same refusal as the window's, before the allowlist.
+  if (body.group !== undefined) { refuseOwnerGroup(res); return; }
   let checked: ReturnType<typeof checkRemoteLayout>;
   try { checked = checkRemoteLayout(body); } catch (err) { refusal(res, err); return; }
   await remoteWrite(res, contextRoot, (s) => {

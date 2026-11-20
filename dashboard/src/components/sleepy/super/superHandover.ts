@@ -217,6 +217,8 @@ export function needsOwner(item: SuperQueueItem): boolean {
   // Super's own question, permission or wait) are his from birth too; an `owner` item covers a
   // refused command and a stalled member as well (their waits, `refusal` and `stalled`).
   return item.kind === 'permission' || item.kind === 'owner' || item.kind === 'member' || item.kind === 'routine'
+    // A member's approval (identity or run power, super-v3 K6): his from birth, on the member's card.
+    || (item.kind === 'approval' && !!item.member)
     || item.own === true || item.state === 'escalated' || directChildQuestion(item);
 }
 

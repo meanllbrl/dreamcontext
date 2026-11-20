@@ -1022,8 +1022,20 @@ export async function noteChildMcpGrant(sessionId: string, names: readonly strin
 }
 
 export function countEvent(s: SuperState): void {
+  const now = Date.now();
   s.away.events += 1;
-  if (s.away.since === null) s.away.since = Date.now();
+  if (s.away.since === null) s.away.since = now;
+  // The span's end, for the window's "While you were away" (super-v3 D10).
+  s.away.until = now;
+}
+
+/** He answered one of his items from Telegram while away (super-v3 D10, K13): counted for the
+ *  window's "While you were away"; nothing while no absence is open. Best effort. */
+export async function noteAwayTelegramAnswer(contextRoot: string): Promise<void> {
+  await writeSuper(contextRoot, (s) => {
+    if (s.away.since === null) return;
+    s.away.viaTelegram = (s.away.viaTelegram ?? 0) + 1;
+  }).catch(() => undefined);
 }
 
 // ─── The super chat's inbox (agent-chat.ts attaches it) ─────────────────────────

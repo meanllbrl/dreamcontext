@@ -119,8 +119,9 @@ describe('a member stage\'s own cards', () => {
   it('a group close skips them; the owner\'s close is ignored; a missing one comes back at its default', async () => {
     makeMember();
     await writeSuper(root, M, () => {});
-    // The owner groups two of them.
-    expect((await layout({ group: { id: 'grp-mine', cards: [R, I] } })).status).toBe(200);
+    // Two of them in a group (only the Super makes groups, super-v3 D5; his drag is refused).
+    expect((await layout({ group: { id: 'grp-mine', cards: [R, I] } })).status).toBe(409);
+    await writeSuper(root, M, (s) => { s.groups.push({ id: 'grp-mine', name: 'Mine', cards: [R, I], place: 'float' }); });
     const closeAll = await verb('close', { allGroups: true });
     const out = closeAll.json.result as { closed: string[]; skipped: string[] };
     expect(out.closed).toEqual([]);

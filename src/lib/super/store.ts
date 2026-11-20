@@ -7,6 +7,7 @@ import {
   AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, PAD_STAGES, cleanPadText, MAX_OWNER_MARKS_BYTES, OWNER_MARK_KEY_RE, OWNER_MARK_KINDS, type OwnerMark, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
+  MAX_ALLOW_SUMMARY, boundAllows, type SuperAllowEntry, type SuperEndedLine,
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
@@ -357,6 +358,14 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (child.seenAt === undefined) delete child.seenMarkedAt;
     const sent = cleanSent(c.sent);
     if (sent.length) child.sent = sent;
+    const spokeAt = finite(c.spokeAt);
+    if (spokeAt !== undefined && spokeAt >= 0) child.spokeAt = spokeAt;
+    // K5: only a child that may still run keeps its allow log (cleared at its end).
+    const allows = endedAt === undefined ? cleanAllows(c.allows) : [];
+    if (allows.length) child.allows = allows;
+    // K4c: only an ended child holds the lines its Undo puts back.
+    const endedLines = endedAt !== undefined ? cleanEndedLines(c.endedLines) : [];
+    if (endedLines.length) child.endedLines = endedLines;
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
@@ -876,6 +885,35 @@ function cleanSent(raw: unknown): string[] {
   return out.slice(-MAX_SENT);
 }
 
+/** A child's allow log (K5): well-formed entries, summaries capped, bounded by bytes. */
+function cleanAllows(raw: unknown): SuperAllowEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperAllowEntry[] = [];
+  for (const a of raw) {
+    if (!isRecord(a) || typeof a.summary !== 'string' || !a.summary) continue;
+    const at = finite(a.at);
+    if (at === undefined || at < 0) continue;
+    out.push({ at, summary: a.summary.slice(0, MAX_ALLOW_SUMMARY), ...(a.inFolder === true ? { inFolder: true } : {}) });
+  }
+  return boundAllows(out);
+}
+
+/** The agenda lines an owner's end put aside for his Undo (K4c): ids and places to their shapes. */
+function cleanEndedLines(raw: unknown): SuperEndedLine[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SuperEndedLine[] = [];
+  for (const l of raw.slice(0, MAX_PAD)) {
+    if (!isRecord(l) || typeof l.id !== 'string' || !PAD_ID_RE.test(l.id) || !oneOf(PAD_SECTIONS, l.section)) continue;
+    out.push({
+      id: l.id, section: l.section,
+      ...(l.section === 'now' && oneOf(PAD_STAGES, l.stage) ? { stage: l.stage } : {}),
+      ...(l.by === 'auto' || l.by === 'owner' ? { by: l.by } : {}),
+      ...(l.by === 'auto' && oneOf(PAD_AUTO_WHY, l.why) ? { why: l.why } : {}),
+    });
+  }
+  return out;
+}
+
 /** The owed ledger (owed.ts): every well-formed open debt (up to MAX_OWED_OPEN, newest), the
  *  newest MAX_OWED_CLOSED closed ones; ids unique; refs, gists and stamps to their shapes. */
 function sanitizeOwed(raw: unknown): SuperOwed[] {
@@ -971,6 +1009,8 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   const padSeq = rawSeq !== undefined && rawSeq > 0 && rawSeq < 1e6 ? Math.floor(rawSeq) : 0;
   const since = finite(away.since);
   const events = finite(away.events);
+  const until = finite(away.until);
+  const viaTelegram = finite(away.viaTelegram);
   const mainBatches = sanitizeMainBatches(raw.mainBatches);
   const member = typeof raw.member === 'string' && okMember(raw.member) ? raw.member : undefined;
   const owed = sanitizeOwed(raw.owed);
@@ -994,7 +1034,12 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     children,
     queue,
     notes,
-    away: { since: since ?? null, events: events !== undefined && events > 0 ? Math.floor(events) : 0 },
+    away: {
+      since: since ?? null, events: events !== undefined && events > 0 ? Math.floor(events) : 0,
+      // The span's end and the Telegram answers count only while an absence is open.
+      ...(since !== undefined && until !== undefined && until >= since ? { until } : {}),
+      ...(since !== undefined && viaTelegram !== undefined && viaTelegram > 0 ? { viaTelegram: Math.min(Math.floor(viaTelegram), 1e6) } : {}),
+    },
     dismissed: sanitizeDismissed(raw.dismissed, opts.now ?? Date.now()),
     pool: sanitizePool(raw.pool, opts),
     ...(formerChildren.length ? { formerChildren } : {}),

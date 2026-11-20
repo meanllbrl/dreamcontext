@@ -847,7 +847,41 @@ export interface SuperChild {
    *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
    *  and clears this. At most MAX_SENT. */
   sent?: string[];
+  /** When the Super last spoke to it (`brief`, `send`, `answer`, `read`, `allow`; epoch ms, plan
+   *  super-v3 K3): the window's focus job is the newest. Server-written. */
+  spokeAt?: number;
+  /** What the Super allowed it (K5), newest last: `summary` = the redacted one-line command (or a
+   *  tool name and target), at most MAX_ALLOW_SUMMARY chars; bounded by MAX_ALLOWS_BYTES stored
+   *  bytes per child (oldest dropped); cleared when it ends; never in the remote view. */
+  allows?: SuperAllowEntry[];
+  /** The agenda lines linked to it as they stood when the OWNER ended it (K4c): Undo (the owner's
+   *  resume door) puts back exactly these, never a client value. Cleared on resume. */
+  endedLines?: SuperEndedLine[];
 }
+
+/** The owner's absence (D13 recap, super-v3 D10): `since` the first event while he was away,
+ *  `until` the newest, `viaTelegram` how many of his items he answered from Telegram meanwhile. */
+export interface SuperAway { since: number | null; events: number; until?: number; viaTelegram?: number }
+
+/** One command the Super allowed a child (K5). `inFolder` = it stayed inside the job's own folder. */
+export interface SuperAllowEntry { at: number; summary: string; inFolder?: boolean }
+export const MAX_ALLOW_SUMMARY = 300;
+export const MAX_ALLOWS_BYTES = 64 * 1024;
+/** An agenda line's place before the owner's end (K4c). */
+export interface SuperEndedLine { id: string; section: PadSection; stage?: PadStage; by?: 'auto' | 'owner'; why?: PadAutoWhy }
+/** The newest allow entries that fit MAX_ALLOWS_BYTES (K5: bounded by stored bytes, never by count). */
+export function boundAllows(list: readonly SuperAllowEntry[]): SuperAllowEntry[] {
+  const out: SuperAllowEntry[] = [];
+  let bytes = 0;
+  for (let i = list.length - 1; i >= 0; i--) {
+    bytes += Buffer.byteLength(JSON.stringify(list[i]), 'utf8') + 1;
+    if (bytes > MAX_ALLOWS_BYTES) break;
+    out.unshift(list[i]);
+  }
+  return out;
+}
+/** How long after the owner's end his Undo may relaunch the job (K4b). */
+export const OWNER_UNDO_MS = 15_000;
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
  *  still owns a worktree (it leaves when `super worktree remove` clears it). */
@@ -1555,7 +1589,7 @@ export interface SuperState {
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
   /** The owner's absence, for the return recap (D13). */
-  away: { since: number | null; events: number };
+  away: SuperAway;
   /** Automatic cards the owner closed, not reopened automatically for a while (G5). */
   dismissed: SuperDismissed[];
   /** Jobs kept for later (plan r4 D9). Absent in an older record = none. */
@@ -2368,10 +2402,10 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-20, super-v3): the stage verbs as his screen now draws them (Dock, tabbed presentation window, only the Super groups, his red light ends a job everywhere); a member's answer is already a card: one sentence on what it means.
 
  */
-export const SUPER_BRIEF_REV = 52;
+export const SUPER_BRIEF_REV = 53;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

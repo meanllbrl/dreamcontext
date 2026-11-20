@@ -258,7 +258,7 @@ export function registerSuperCommand(program: Command): void {
     .action((container: string, shape: string) => run('shape', { container, shape }));
 
   s.command('half [card]')
-    .description('Show one card side by side with you (half page); --off returns to the floating cards')
+    .description('Show one card side by side with you (half page; a child\'s chat opens as its session window beside you); --off returns to the floating cards')
     .option('--off', 'Back to the floating cards')
     .action((container: string | undefined, o: { off?: boolean }) => {
       if (!o.off && !container) return usage('name a card, or pass --off');
@@ -266,7 +266,7 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('present [cards...]')
-    .description('Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4, only when asked: side-by-side), filmstrip (2+, its strip scrolls; the default for 3+ cards and for 2+ pictures or clips), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards')
+    .description('Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4, only when asked: side-by-side), filmstrip (2+, its strip scrolls; the default for 3+ cards and for 2+ pictures or clips), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once (one tab, filmstrip); without --layout the cards pick it; drawn inside the tabbed presentation window, and a second present while one shows arrives as a background tab; --off returns to the floating cards')
     .option('--layout <name>', 'spotlight | compare | grid | filmstrip | review')
     .option('--off', 'Leave the presentation')
     .action((containers: string[], o: { off?: boolean; layout?: string }) => {
@@ -275,11 +275,11 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('stack <card>')
-    .description('Put a card or a group in Others (bottom right); a grouped card leaves its group')
+    .description('Minimize a card or a group to the Dock\'s right (the record still says Others); a grouped card leaves its group')
     .action((container: string) => run('stack', { container }));
 
   s.command('float <card>')
-    .description('Bring a card or a group from Others back to the stage (placed for you); a grouped card leaves its group')
+    .description('Bring a card or a group back from the Dock to the stage (placed for you); a grouped card leaves its group')
     .action((container: string) => run('float', { container }));
 
   s.command('close [card]')
@@ -297,7 +297,7 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('group <cards...>')
-    .description('Put cards together as one tile on the stage; a group id among them adds the rest to that group')
+    .description('Put cards together as one tile on the stage (only you make groups: the owner\'s drag never does; presented, a group is one tab); a group id among them adds the rest to that group')
     .option('--name <name>', 'Name the group (or rename it: `super group <group> --name <name>`)')
     .action((cards: string[], o: { name?: string }) => run('group', { containers: cards, name: o.name }));
 

@@ -89,15 +89,25 @@ export async function postSuperActivity(api: ApiClient, superId: SuperId = 'main
   await api.post<unknown>('/super/activity', {});
 }
 
-/** `POST /api/super/end` — the owner ended a child from its card (his window closed the tab). */
+/** `POST /api/super/end` — the owner ended a child (its red light, Stop job, the card's end): in
+ *  his name (super-v3 K4a), asked FIRST; the window closes the tab only on success. */
 export async function postSuperEnd(api: ApiClient, child: string, superId: SuperId = 'main'): Promise<SuperStateView | null> {
   api = forSuper(api, superId);
-  const r = await api.post<{ state?: unknown }>('/super/end', { child });
+  const r = await api.ownerPost<{ state?: unknown }>('/super/end', { child });
+  return readSuperStateView(r?.state);
+}
+
+/** `POST /api/super/resume` — his Undo on "Closed <name>" (K4b): the server relaunches a child he
+ *  ended in the last 15 s and puts its agenda lines back. A refusal throws (`cap`, `too_late`,
+ *  `not_handed_over`, `phone_held`, `no_transcript`) with the line the toast says. */
+export async function postSuperResume(api: ApiClient, child: string, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
+  const r = await api.ownerPost<{ state?: unknown }>('/super/resume', { child });
   return readSuperStateView(r?.state);
 }
 
 /** `POST /api/super/pad {id, status}` — his status change from the agenda (C6): in the owner's
- *  name, so it rides his next message as a mark; without the key it still moves, unmarked. */
+ *  name, so it rides his next message as a mark; without the key it is refused (super-v3 K4c). */
 export async function postSuperPadStatus(api: ApiClient, id: string, status: PadStatus, superId: SuperId = 'main'): Promise<SuperStateView | null> {
   api = forSuper(api, superId);
   const r = await api.ownerPost<{ state?: unknown }>('/super/pad', { id, status });
