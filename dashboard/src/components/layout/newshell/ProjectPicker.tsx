@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
+import { routeSwitcherKey } from '../../../lib/switcherKeys';
 
 export interface PickerRow {
   name: string;
@@ -28,11 +29,16 @@ interface ProjectPickerProps {
  * "All projects" row. A pick switches the project in THIS window, or brings forward the OS
  * window that already holds it. Arrow keys move, Enter picks, Esc closes.
  */
-export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: ProjectPickerProps) {
+export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewProject }: ProjectPickerProps) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const [focused, setFocused] = useState(() => Math.max(0, rows.findIndex((r) => r.active)));
+  const [q, setQ] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const needle = q.trim().toLowerCase();
+  // Typing filters; the keyboard hint (⌘N) stays the project's place in the FULL order.
+  const rows = needle ? allRows.filter((r) => r.name.toLowerCase().includes(needle)) : allRows;
+  const [focused, setFocused] = useState(() => Math.max(0, allRows.findIndex((r) => r.active)));
 
   useLayoutEffect(() => {
     const menu = ref.current;
@@ -45,7 +51,30 @@ export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: P
     setPos({ left, top });
   }, [anchor]);
 
-  useEffect(() => { ref.current?.focus(); }, []);
+  // Focus the filter in the commit that mounts it: a passive effect leaves a frame in which the
+  // first letters still land in the composer behind.
+  useLayoutEffect(() => { inputRef.current?.focus(); }, []);
+
+  // Keys aimed at the page behind (the Super/Chat/member composer, the whiteboard) are the
+  // picker's while it is open: routed in, never delivered there.
+  const live = useRef({ rows, focused, onPick });
+  live.current = { rows, focused, onPick };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const inside = e.target instanceof Element && !!e.target.closest('.ns-picker');
+      const r = routeSwitcherKey({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, inside, composing: e.isComposing,
+        otherModal: !inside && e.target instanceof Element && !!e.target.closest('[aria-modal="true"], .cmd-modal') });
+      if (r.kind === 'pass') return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      inputRef.current?.focus();
+      if (r.kind === 'type') { setQ((v) => v + r.text); setFocused(0); }
+      else if (r.kind === 'backspace') { setQ((v) => v.slice(0, -1)); setFocused(0); }
+      else if (r.kind === 'move') setFocused((i) => Math.max(0, Math.min(live.current.rows.length - 1, i + r.dir)));
+      else if (r.kind === 'enter') { const row = live.current.rows[live.current.focused]; if (row) live.current.onPick(row.name); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -79,9 +108,21 @@ export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: P
       onKeyDown={onKeyDown}
       data-testid="ns-picker"
       data-no-drag
-      style={pos ? { left: pos.left, top: pos.top } : { visibility: 'hidden' }}
+      style={pos ? { left: pos.left, top: pos.top } : { opacity: 0 }}
     >
       <div className="ns-menu-head">{t('shell.picker.label')}</div>
+      <input
+        ref={inputRef}
+        className="ns-picker-filter"
+        value={q}
+        onChange={(e) => { setQ(e.target.value); setFocused(0); }}
+        placeholder={t('shell.picker.label')}
+        aria-label={t('shell.picker.label')}
+        spellCheck={false}
+        autoComplete="off"
+        data-testid="ns-picker-filter"
+        style={{ margin: '0 8px 6px', padding: '6px 8px', border: '1px solid var(--color-border)', borderRadius: 6, background: 'transparent', color: 'inherit', font: 'inherit', width: 'calc(100% - 16px)' }}
+      />
       <div className="ns-picker-list">
         {rows.map((r, i) => (
           <button
@@ -100,7 +141,7 @@ export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: P
             <span className="ns-menu-label">{r.name}</span>
             {r.otherWindow && <span className="ns-menu-note">{t('shell.picker.otherWindow')}</span>}
             {!r.otherWindow && r.asleep && <span className="ns-menu-note">{t('shell.picker.asleep')}</span>}
-            {i < 9 && <kbd className="ns-menu-kbd">⌘{i + 1}</kbd>}
+            {allRows.indexOf(r) < 9 && <kbd className="ns-menu-kbd">⌘{allRows.indexOf(r) + 1}</kbd>}
           </button>
         ))}
       </div>

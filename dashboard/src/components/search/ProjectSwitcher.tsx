@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLauncherStatus, type VaultStatus } from '../../hooks/useLauncher';
 import { api } from '../../api/client';
@@ -8,6 +8,7 @@ import { useChrome } from '../layout/WindowChrome';
 import { CommandModal, useListKeyboardNav } from './CommandModal';
 import { VaultDot } from '../layout/VaultDot';
 import { markProjectSwitch } from '../../lib/projectSwitchPage';
+import { routeSwitcherKey } from '../../lib/switcherKeys';
 import './ProjectSwitcher.css';
 
 /**
@@ -146,10 +147,12 @@ export function ProjectSwitcher() {
     | { kind: 'vault'; vault: VaultStatus; quickIdx: number };
   const rows = useMemo<Row[]>(() => {
     const list: Row[] = [];
-    if (!inLauncher && !tunnel) list.push({ kind: 'home' });
+    // Home is a shortcut for the unfiltered list; once the user types, row 0 must be the best match
+    // so "po" + Enter opens pocket-ledger, not the Launcher.
+    if (!inLauncher && !tunnel && !q.trim()) list.push({ kind: 'home' });
     for (const v of filtered) list.push({ kind: 'vault', vault: v, quickIdx: quickTargets.indexOf(v.name) });
     return list;
-  }, [inLauncher, tunnel, filtered, quickTargets]);
+  }, [inLauncher, tunnel, filtered, quickTargets, q]);
 
   const activate = useCallback((i: number, opts?: { newWindow?: boolean }) => {
     const row = rows[i];
@@ -213,6 +216,40 @@ export function ProjectSwitcher() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [openable, active, inLauncher, chrome]);
+
+  // Keys aimed at the page behind while open (a composer, a terminal, the whiteboard that kept or
+  // regained focus) are the switcher's: route them in, never let them reach that surface. The
+  // handler reads the latest state through a ref so it registers once per open.
+  const routeRef = useRef({ activate, focused, setFocused });
+  routeRef.current = { activate, focused, setFocused };
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      const dlg = (e.target instanceof Element) ? e.target.closest('.psw-modal') : null;
+      const r = routeSwitcherKey({
+        key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey,
+        inside: !!dlg, composing: e.isComposing,
+        otherModal: !dlg && e.target instanceof Element && !!e.target.closest('[aria-modal="true"], .cmd-modal'),
+      });
+      if (r.kind === 'pass') return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      inputRef.current?.focus();
+      if (r.kind === 'type') { setQ((v) => v + r.text); routeRef.current.setFocused(0); setBlockedReason(null); }
+      else if (r.kind === 'backspace') { setQ((v) => v.slice(0, -1)); routeRef.current.setFocused(0); }
+      else if (r.kind === 'enter') routeRef.current.activate(routeRef.current.focused, { newWindow: e.shiftKey });
+      else if (r.kind === 'move') routeRef.current.setFocused((f) => Math.max(0, f + r.dir));
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [open]);
+
+  // Take focus in the same commit that mounts the input: a rAF alone leaves a frame in which the
+  // first typed letters still land in whatever held focus before.
+  useLayoutEffect(() => {
+    if (open) { try { inputRef.current?.focus(); } catch { /* ignore */ } }
+  }, [open]);
 
   // Reset + focus each time it opens.
   useEffect(() => {
