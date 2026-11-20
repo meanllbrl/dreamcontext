@@ -17,7 +17,7 @@ describe('the question lives in the chat once', () => {
     expect(strip).toContain('setHidden(!seen);');
     expect(pane).toContain("<QuestionStrip scrollRef={scrollRef} enabled={session.mode === 'super' && !session.superMirror} />");
   });
-  it('the stage band can leave permissions to the chat on the Mac (D8 seam)', () => {
-    expect(handover).toContain("bandItem(it) && (remote || it.kind !== 'permission')");
+  it('the stage band leaves permissions to the chat on the Mac (D8)', () => {
+    expect(handover).toContain("bandItem(it) && (remote || !isMacPermissionCard(it))");
   });
 });

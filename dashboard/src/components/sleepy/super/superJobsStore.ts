@@ -96,6 +96,20 @@ export interface SuperQuestionView {
   titleFor?: (claudeId: string) => string;
   /** A child parked to save memory (its tab kept dormant): the "Paused" chip. */
   pausedFor?: (claudeId: string) => boolean;
+  /** The Mac only (super-v3 D8): its children's permissions that wait on the owner, each a card in
+   *  this chat (`MacPermission`) instead of the stage's top band. Absent on a remote screen,
+   *  whose band keeps them (the Mac answers). */
+  permissions?: readonly SuperQueueItem[];
+  /** The record these items live in (`recordOf`): main's, or a member's on its own stage. */
+  record?: string;
+  /** What the Super allowed each job (`SuperChild.allows`, K5): one folded line per job. */
+  allows?: readonly SuperAllowsOf[];
+}
+
+/** One job's allow log as the chat's folded line draws it. */
+export interface SuperAllowsOf {
+  sessionId: string;
+  entries: readonly { at: number; summary: string; inFolder?: boolean }[];
 }
 
 /** An owner item that stands for a card the slot draws (K7): a crew child's card wait. */
@@ -133,6 +147,16 @@ export function slotCardItems(queue: readonly SuperQueueItem[]): SuperQueueItem[
 /** What a card item's slot redraws on (its handle, state and result line). */
 export function slotCardKey(items: readonly SuperQueueItem[]): string {
   return items.map((q) => [q.id, q.state, q.delivery ?? '', q.card?.cardRef ?? '', q.card?.deliverTo ?? '', q.sessionId].join('\u0003')).join('\u0001');
+}
+
+/** The publish key of the Mac's permission cards and allow lines (D8): a re-sent request (new
+ *  `requestId`), an allowed flag and every new allow re-render the memoised chat. */
+export function permAllowKeyOf(permissions: readonly SuperQueueItem[], allows: readonly SuperAllowsOf[], record: string): string {
+  return [
+    record,
+    permissions.map((q) => [q.id, q.requestId ?? '', q.state, q.allowed ?? '', q.sessionId, (q.offer?.sizes ?? []).join(',')].join('\u0003')).join('\u0001'),
+    allows.map((a) => `${a.sessionId}=${a.entries.length}=${a.entries[a.entries.length - 1]?.at ?? 0}`).join('\u0001'),
+  ].join('\u0002');
 }
 
 // ─── The bar's measured height (K7: a card row wraps) ────────────────────────────

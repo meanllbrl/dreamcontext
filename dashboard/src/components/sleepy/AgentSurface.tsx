@@ -14,7 +14,7 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
-import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
+import { permAllowKeyOf, publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openMemberMirrors, openOwnerQuestions, sendToSuper, trimOwnerAnswers } from './super/superQuestions';
@@ -179,7 +179,7 @@ import { SuperDock } from './super/SuperDock';
 import { SUPER_PAGE_OPEN_EVENT, SUPER_PAGE_SEND_EVENT, answerPageSend, publishSuperPresence, useFieldMounted, type SuperPageSendDetail } from '../../lib/superPageBridge';
 import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superPaneReattach, superRowMarks, busyChildren } from './super/sessionHome';
 import { JobBar } from './super/JobBar';
-import { ownerRowKind, publishSessionGrantItems, type SessionGrantItems } from './super/ownerAnswer';
+import { MAIN_RECORD as MAIN_RECORD_ID, ownerRowKind, publishSessionGrantItems, recordOf, type SessionGrantItems } from './super/ownerAnswer';
 import { memberWaitCounts } from '../aiteam/teamModel';
 import { IconButton, chatStatus } from './super/SuperContainer';
 import { DockChip } from './AgentDock';
@@ -194,6 +194,7 @@ import {
   linkOpensSuperStage, superStageOfLink, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
   cardSelectionBlock, selectionQuote, plainJobName,
+  macPermissionItems, allowLogsOf,
 } from './super/superHandover';
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
@@ -4080,6 +4081,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     .map((q) => [q.id, q.state, q.requestId ?? '', q.ownerText ?? '', (q.options ?? []).join('\u0002'), q.kind === 'question' ? chatByClaudeId(q.sessionId)?.id ?? '' : '',
       (q.read ?? []).map((id) => { const c = superContainers?.find((k) => k.id === id); return c ? `${id}=${c.place}=${readTitle(c)}` : ''; }).join('\u0002')].join('\u0003'))
     .join('\u0001');
+  // The Mac's own permission cards and allow lines (super-v3 D8): a remote screen keeps them in
+  // its band (the Mac answers), so it publishes none.
+  const superPermissions = useMemo(() => (remoteDesktop || isMobile ? [] : macPermissionItems(superQueue ?? [])), [remoteDesktop, isMobile, superQueue]);
+  const superAllows = useMemo(() => (remoteDesktop || isMobile ? [] : allowLogsOf(superState?.children)), [remoteDesktop, isMobile, superState?.children]);
+  const superRecord = recordOf(superState);
+  const permAllowKey = permAllowKeyOf(superPermissions, superAllows, superRecord);
   const publishedQuestionSid = useRef<string | null>(null);
   useEffect(() => {
     const prev = publishedQuestionSid.current;
@@ -4094,10 +4101,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       {
         open: openSuperQuestions, ...(isMain ? { members: mainMemberMirrors } : {}), superSession: superChatSession, sessionFor: chatByClaudeId, readsOf,
         cards: superSlotCards, titleFor: slotTitleFor, pausedFor: slotPausedFor,
+        permissions: superPermissions, allows: superAllows, record: superRecord,
       },
-      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}\u0007${slotCardKey(superSlotCards)}\u0007${slotPausedKey}`,
+      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}\u0007${slotCardKey(superSlotCards)}\u0007${slotPausedKey}\u0008${permAllowKey}`,
     );
-  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey, superSlotCards, slotTitleFor, slotPausedFor, slotPausedKey]);
+  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey, superSlotCards, slotTitleFor, slotPausedFor, slotPausedKey, superPermissions, superAllows, superRecord, permAllowKey]);
   // Withdrawn with this surface (a project going cold): no card keeps a dead session.
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
@@ -4171,6 +4179,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const mainQuestionSid = activeSuperId !== MAIN_SUPER && mainSuperState?.enabled ? mainSuperState.session : null;
   const mainOpenQuestions = useMemo(() => openOwnerQuestions(mainSuperState?.queue ?? []), [mainSuperState?.queue]);
   const mainQuestionKey = mainOpenQuestions.map((q) => [q.id, q.state, q.requestId ?? '', q.ownerText ?? '', (q.options ?? []).join('\u0002')].join('\u0003')).join('\u0001');
+  const mainPermissions = useMemo(() => (remoteDesktop || isMobile ? [] : macPermissionItems(mainSuperState?.queue ?? [])), [remoteDesktop, isMobile, mainSuperState?.queue]);
+  const mainAllows = useMemo(() => (remoteDesktop || isMobile ? [] : allowLogsOf(mainSuperState?.children)), [remoteDesktop, isMobile, mainSuperState?.children]);
+  const mainPermAllowKey = permAllowKeyOf(mainPermissions, mainAllows, MAIN_RECORD_ID);
   useEffect(() => {
     if (!mainQuestionSid) return;
     publishSuperQuestions(
@@ -4179,10 +4190,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       {
         open: mainOpenQuestions, members: mainMemberMirrors, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [],
         cards: mainSlotCards, titleFor: slotTitleFor, pausedFor: slotPausedFor,
+        permissions: mainPermissions, allows: mainAllows, record: MAIN_RECORD_ID,
       },
-      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}\u0007${slotCardKey(mainSlotCards)}\u0007${slotPausedKey}`,
+      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}\u0007${slotCardKey(mainSlotCards)}\u0007${slotPausedKey}\u0008${mainPermAllowKey}`,
     );
-  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey, mainSlotCards, slotTitleFor, slotPausedFor, slotPausedKey]);
+  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey, mainSlotCards, slotTitleFor, slotPausedFor, slotPausedKey, mainPermissions, mainAllows, mainPermAllowKey]);
   const mainPublishedRef = useRef<string | null>(null);
   mainPublishedRef.current = mainQuestionSid ?? mainPublishedRef.current;
   useEffect(() => () => {

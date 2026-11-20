@@ -279,7 +279,28 @@ export function bandCount(state: Pick<SuperState, 'queue'> | null | undefined): 
 /** The STAGE's top band (super-v3 D8): on the Mac a permission is a card in the Super chat
  *  (SuperQuestionTail, Allow once first), never this band; a remote screen keeps it in the band,
  *  where it says the Mac answers. The off-page dock keeps `bandHead`. */
-function stageBandItem(remote: boolean) { return (it: SuperQueueItem) => bandItem(it) && (remote || it.kind !== 'permission'); }
+function stageBandItem(remote: boolean) { return (it: SuperQueueItem) => bandItem(it) && (remote || !isMacPermissionCard(it)); }
+
+/** A child's permission the Mac draws as a card in the Super chat (D8). One he already allowed,
+ *  waiting for its call to run (`allowed`), stays the band's "allowed, waiting" line. */
+function isMacPermissionCard(it: SuperQueueItem): boolean {
+  return it.kind === 'permission' && !it.allowed;
+}
+
+/** The permissions the Mac's Super chat draws as cards (D8), oldest first. */
+export function macPermissionItems(queue: readonly SuperQueueItem[]): SuperQueueItem[] {
+  return queue.filter((it) => isMacPermissionCard(it) && needsOwner(it)).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** The jobs whose Super allowed commands on its own (K5), for the chat's folded line (D8). */
+export function allowLogsOf(children: Readonly<Record<string, Pick<SuperChild, 'allows' | 'endedAt'>>> | undefined): { sessionId: string; entries: NonNullable<SuperChild['allows']> }[] {
+  const out: { sessionId: string; entries: NonNullable<SuperChild['allows']> }[] = [];
+  for (const [sessionId, ch] of Object.entries(children ?? {})) {
+    if (ch.endedAt !== undefined || !ch.allows?.length) continue;
+    out.push({ sessionId, entries: ch.allows });
+  }
+  return out.sort((a, b) => (a.entries[a.entries.length - 1].at - b.entries[b.entries.length - 1].at));
+}
 export function stageBandHead(state: Pick<SuperState, 'queue'> | null | undefined, remote: boolean): SuperQueueItem | null {
   return queueHead(state ? { queue: state.queue.filter(stageBandItem(remote)) } : state);
 }

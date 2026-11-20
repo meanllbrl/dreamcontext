@@ -46,7 +46,7 @@ import { AppRequestPopup } from './AppRequestPopup';
 import { emitInstance, useVault, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
-import { bandCount, bandHead, freshPending, hasOwnKey, isPermission, needsOwner, ownerQueueCount, queueHead, rowOf, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
+import { stageBandCount, stageBandHead, freshPending, hasOwnKey, isPermission, needsOwner, ownerQueueCount, queueHead, rowOf, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { SuperHeadMenu } from './SuperHeadMenu';
 import { SuperAddMenu } from './SuperAddMenu';
 import { MENU_WIDTH } from './superAddMenuModel';
@@ -449,7 +449,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const shownGroup = useMemo(() => presentedGroup(presented, state.groups, state.containers)?.id ?? null, [presented, state.groups, state.containers]);
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
-  const queueUp = !!bandHead(state);
+  // On the Mac a permission is a card in the Super chat (D8), never this band; a remote screen keeps it.
+  const queueUp = !!stageBandHead(state, !!remote);
   // The presentation queue (task super-sahnesinde-sunum-sirasi): its control steps while a queued
   // presentation of 2+ is on screen, and says how many wait once he has left the queue (D2, D7).
   const pq = state.presentQueue;
@@ -1041,7 +1042,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   useLiveSession(superSession, () => { const s = chatStatus(superSession); return `${s.kind}|${s.mood}`; });
   const status = superCentreStatus(superSession, ownerAsk);
 
-  const head = bandHead(state);
+  const head = stageBandHead(state, !!remote);
   // What each child's card says it waits on the owner for: a question it asks, or something only he can do.
   const asking = useMemo(() => {
     const m = new Map<string, AsksOwner>();
@@ -1536,7 +1537,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {!props.queueElsewhere && <JobBar
         state={state}
         head={head}
-        waiting={bandCount(state)}
+        waiting={stageBandCount(state, !!remote)}
         vault={props.vault}
         rect={plan.queue}
         look={jobLook}

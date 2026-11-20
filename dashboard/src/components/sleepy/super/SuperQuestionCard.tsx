@@ -7,7 +7,7 @@ import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { OwnerCardSlot } from './OwnerCardSlot';
 import { ownerCardItemsOf, placeOwnerCards } from './cardPlacement';
 import { surveyDraftKey } from '../chat/surveyDrafts';
-import { RemotePermission } from './SuperPermissionCard';
+import { MacPermission, RemotePermission, SuperAllowsLine } from './SuperPermissionCard';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { requestOpenAgents } from '../../../lib/openAgents';
@@ -178,7 +178,10 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
   const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.filter((q) => !placedCards.has(q.id)).map((q) => q.id));
   const members = (view.members ?? []).filter((q) => (q.card ? waiting.has(q.id) : !placedCards.has(q.id)));
   const cards = (view.cards ?? []).filter((q) => waiting.has(q.id));
-  if (!rest.length && !members.length && !cards.length) return null;
+  // The Mac's own permissions (D8): a card each, under everything else that waits, Allow once first.
+  const permissions = view.permissions ?? [];
+  const allows = (view.allows ?? []).filter((a) => a.entries.length > 0);
+  if (!rest.length && !members.length && !cards.length && !permissions.length && !allows.length) return null;
   return (
     <>
       {rest.map((q) => (
@@ -197,6 +200,17 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
         />
       ))}
       {members.map((q) => <MemberWaitCard key={`member-${q.id}`} item={q} paused={!!view.pausedFor?.(q.sessionId)} />)}
+      {allows.map((a) => <SuperAllowsLine key={`allows-${a.sessionId}`} entries={a.entries} title={view.titleFor?.(a.sessionId) ?? ''} />)}
+      {permissions.map((q) => (
+        <MacPermission
+          key={`perm-${q.id}:${q.requestId ?? ''}`}
+          item={q}
+          child={view.sessionFor(q.sessionId)}
+          title={view.titleFor?.(q.sessionId) || ''}
+          scope={session.claudeId}
+          {...(view.record ? { record: view.record } : {})}
+        />
+      ))}
     </>
   );
 }
