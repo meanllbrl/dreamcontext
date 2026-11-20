@@ -421,6 +421,8 @@ export interface PresentItem {
   /** The picture question this item shows (ask-show.ts). */
   ask?: string;
   at: number;
+  /** It has been on screen once (W3 D14): a tab never shown carries the background dot. */
+  shown?: true;
 }
 
 export interface PresentQueue {
@@ -478,6 +480,7 @@ function showHead(s: Pick<SuperState, 'view' | 'presentQueue'>): void {
   if (!q || !head) { s.view = { mode: 'float' }; if (q) { delete q.showing; q.seen = 0; } return; }
   s.view = presentItemView(head);
   q.showing = head.id;
+  head.shown = true;
 }
 
 /** Is the owner looking at something a new presentation must not replace (D1, D6)? Any
@@ -567,6 +570,40 @@ export function presentCards(
 /** A picture question that is still open with the owner: its item waits instead of leaving (AC4). */
 export type AskStillOpen = (ask: string) => boolean;
 
+/** The owner's gestures on the presentation window's tabs (W3 D14). */
+export type QueueTabOp = 'show' | 'close';
+
+/**
+ * His tab gesture: `show` brings a waiting tab to the front (the one he looked at stays as a
+ * tab behind it); `close` takes the named tabs away, the front one included (then the next
+ * opens, or the stage floats). A closed tab is his: its picture question stays in the chat.
+ * Unknown ids are skipped. Returns whether anything changed. Mutates `s`.
+ */
+export function ownerQueueTabs(s: Pick<SuperState, 'view' | 'presentQueue'>, op: QueueTabOp, ids: readonly string[]): boolean {
+  const q = s.presentQueue;
+  if (!q || !q.items.length) return false;
+  if (op === 'show') {
+    const it = q.items.find((x) => x.id === ids[0]);
+    if (!it) return false;
+    if (it === q.items[0] && headShowing(s)) return false;
+    q.items = [it, ...q.items.filter((x) => x !== it)];
+    showHead(s);
+    return true;
+  }
+  const drop = new Set(ids);
+  const front = headShowing(s) ? q.items[0] : undefined;
+  const left = q.items.filter((x) => !drop.has(x.id));
+  if (left.length === q.items.length) return false;
+  q.seen += q.items.length - left.length;
+  q.items = left;
+  if (front && drop.has(front.id)) {
+    delete q.showing;
+    if (left.length) showHead(s);
+    else { s.view = { mode: 'float' }; q.seen = 0; }
+  } else if (!left.length) { delete q.showing; q.seen = 0; }
+  return true;
+}
+
 /**
  * The owner's queue gesture (D2, AC2, AC5), guarded by the item his window showed: `next` (also
  * closing the presentation) passes the head and opens the next, `leave` passes it and floats the
@@ -649,6 +686,7 @@ export function settlePresentQueue(
     items.push({
       id: r.id, cards, ...(layout ? { layout } : {}), ...(layout && r.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
       ...(typeof r.ask === 'string' && QUEUE_ID_RE.test(r.ask) ? { ask: r.ask } : {}), at,
+      ...(r.shown === true ? { shown: true as const } : {}),
     });
   }
   const num = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < max ? Math.floor(v) : 0);

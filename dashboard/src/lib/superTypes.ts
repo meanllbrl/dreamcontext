@@ -829,7 +829,7 @@ export interface SuperState {
 }
 
 /** One presentation on the stage's queue. MIRRORS `PresentItem` in src/lib/super/types.ts. */
-export interface PresentItem { id: string; cards: string[]; layout?: PresentLayout; layoutBy?: 'owner'; ask?: string; at: number }
+export interface PresentItem { id: string; cards: string[]; layout?: PresentLayout; layoutBy?: 'owner'; ask?: string; at: number; shown?: true }
 /** MIRRORS `PresentQueue` in src/lib/super/types.ts: unseen items, the head the next (or current). */
 export interface PresentQueue { items: PresentItem[]; seen: number; seq: number; showing?: string }
 export const PRESENT_ITEM_ID_RE = /^pq[0-9]{1,9}$/;

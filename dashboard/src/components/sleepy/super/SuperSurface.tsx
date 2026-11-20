@@ -10,6 +10,7 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
+import { PRESENT_TAB_DRAG, PresentWindow, type WindowTab } from './PresentWindow';
 import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, PresentFrame, SheetTabs, StageControls, StripMarks, stripStartFor, type PresentTab } from './StageParts';
 import { PresentQueue } from './PresentQueue';
 import { StageDock, type DockTileView } from './StageDock';
@@ -811,6 +812,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const backTo = useRef<{ id: string; at: number } | null>(null);
   // When the owner last stepped the queue: only his step scrolls the chat (AC3, D4).
   const queueGestureAt = useRef(0);
+  // The tab drop below names what to mention through the same door as Mention.
+  const askAboutRef = useRef<(id: string) => void>(() => {});
+  askAboutRef.current = actions.onAskAbout;
   const exitPresentation = () => {
     backTo.current = shownGroup ? { id: shownGroup, at: Date.now() } : null;
     // Closing a queued presentation opens the next (the server's rule): the chat follows it (AC3).
@@ -842,6 +846,41 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return c ? titleOf(c) : '';
   };
   // The frame's tabs (owner 2026-11-15, option C): the shown presentation, then the queue after it.
+  // The window's tabs (W3 D14): every presentation in the queue, the one on screen in front; a
+  // tab never shown yet carries the dot. Nothing queued: the one shown is the only tab.
+  const mentionOf = (cards: readonly string[]) => presentedGroup(cards, state.groups, state.containers)?.id ?? cards[0] ?? '';
+  const windowTabs: WindowTab[] = qc.showing && pq && pqHead
+    ? pq.items.map((it, i) => ({ key: it.id, name: itemName(it.cards), count: it.cards.length, front: i === 0, unseen: i > 0 && !it.shown, mention: mentionOf(it.cards) }))
+    : [{ key: 'shown', name: itemName(presented), count: presented.length, front: true, unseen: false, mention: mentionOf(presented) }];
+  const showTab = (key: string) => { if (key !== 'shown') onLayout({ tabs: { op: 'show', items: [key] } }); };
+  // A tab dragged onto the Super's chat lands as its mention chip (W3 D14): the app's own drag
+  // type only, its id resolved against the record (a file or an outside drag is never one).
+  // Native listeners: the chat inside is portaled, so a React drop handler would not see it.
+  const centreRef = useRef<HTMLDivElement>(null);
+  const [tabDrop, setTabDrop] = useState(false);
+  useEffect(() => {
+    const el = centreRef.current;
+    if (!el || remote) return undefined;
+    const ours = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes(PRESENT_TAB_DRAG);
+    const over = (e: DragEvent) => { if (!ours(e)) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'link'; setTabDrop(true); };
+    const leave = (e: DragEvent) => { if (!el.contains(e.relatedTarget as Node | null)) setTabDrop(false); };
+    const drop = (e: DragEvent) => {
+      setTabDrop(false);
+      if (!ours(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      askAboutRef.current(e.dataTransfer?.getData(PRESENT_TAB_DRAG) ?? '');
+    };
+    el.addEventListener('dragover', over);
+    el.addEventListener('dragleave', leave);
+    el.addEventListener('drop', drop);
+    return () => { el.removeEventListener('dragover', over); el.removeEventListener('dragleave', leave); el.removeEventListener('drop', drop); };
+  }, [remote]);
+  const closeTabs = (keys: string[]) => {
+    if (keys.includes('shown')) { exitPresentation(); return; }
+    // Every tab closed: the stage floats, as closing the presentation does.
+    onLayout({ tabs: { op: 'close', items: keys } });
+  };
   const presentTabs: PresentTab[] = qc.showing && pq && pqHead
     ? pq.items.map((it, i) => ({ key: it.id, name: itemName(it.cards), count: it.cards.length, kind: i === 0 ? 'current' as const : i === 1 ? 'next' as const : 'later' as const }))
     : [{ key: 'shown', name: itemName(presented), count: presented.length, kind: 'current' as const }];
@@ -1369,7 +1408,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {plan.mode === 'float' && !plan.narrow && plan.orbit.length > 0 && <OrbitPath plan={plan} />}
       <StageMotion plan={plan} dragId={drag?.id ?? null} animate={props.visible && motion === 'idle'} rootRef={rootRef} layerRef={layerRef} underRef={underRef}>
         <div
+          ref={centreRef}
           className={`super-centre${pending.has('centre') ? ' super-centre--pending' : ''}`}
+          data-tab-drop={tabDrop ? 'true' : undefined}
+          data-drop-label={tabDrop ? t('super.win.drop') : undefined}
           data-stage-key="centre"
           data-status={status.kind === 'asking' ? 'asking' : status.kind === 'working' ? 'working' : 'idle'}
           data-ask-target={hot === 'centre' ? 'true' : undefined}
@@ -1567,7 +1609,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
         <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout}
           onExit={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation} leaveQueue={queueBand === 'step' && !shownGroup} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
       )}
-      {plan.presentTabs && plan.layout && (
+      {plan.presentWindow && plan.layout && (
+        <PresentWindow win={plan.presentWindow} tabs={windowTabs} onShow={showTab} onClose={closeTabs}
+          onMinimize={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation}
+          onMention={(id) => { if (!remote) actions.onAskAbout(id); }} />
+      )}
+      {plan.presentTabs && plan.layout && !plan.presentWindow && (
         <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
       )}
       {plan.queueBand && pq && (

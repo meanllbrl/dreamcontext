@@ -1882,11 +1882,15 @@ export interface LayoutPatch extends OwnerViewFields {
    *  the item his window showed. The server answers with the next view; nothing is laid over the
    *  push meanwhile (the window does not know the next item's layout). */
   queue?: QueueStep;
+  /** His gesture on the presentation window's tabs (W3 D14): bring one to the front, close some. */
+  tabs?: QueueTabs;
 }
 
 /** A queue gesture: `next` passes the shown item and opens the next, `leave` passes it and floats
  *  the stage with the rest waiting, `resume` opens the first waiting one. */
 export interface QueueStep { op: 'next' | 'leave' | 'resume'; item: string }
+/** A tab gesture: `show` brings `items[0]` to the front, `close` takes `items` away. */
+export interface QueueTabs { op: 'show' | 'close'; items: string[] }
 
 /** How often the window reports the owner's look at an open group or a full-screen card, through
  *  `pollMs` and never slower than twice this (Light mode): inside the server's grace either way
@@ -1907,7 +1911,7 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
   // A look changes nothing on the stage: the state stays as the server sent it (its view's
   // `auto` mark too, which a rebuilt view would drop for the length of a request).
   // A queue step alone is the server's to answer: nothing to draw ahead of it.
-  if (Object.keys(patch).every((k) => k === 'touch' || k === 'queue')) return state;
+  if (Object.keys(patch).every((k) => k === 'touch' || k === 'queue' || k === 'tabs')) return state;
   const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
   // Cards that leave what the view shows (the server's rule): to Others, resized, grouped, closed.
   const unshown = new Set<string>();

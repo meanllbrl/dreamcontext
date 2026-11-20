@@ -21,7 +21,7 @@ import {
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
+  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, ownerQueueTabs, type QueueTabOp, withdrawPresent,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type SuperAskSpec, type SuperChild, type SuperEndedLine, OWNER_UNDO_MS, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
@@ -4118,7 +4118,20 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   if (ownerView.presentLayout) notePresentLayout(s);
   // His queue gesture, on the item his window showed (D2, AC2, AC5).
   if (step) ownerQueueStep(s, step.op, step.item, askStillOpen(s));
+  // His tab gesture in the presentation window (W3 D14).
+  const tabs = readQueueTabs(body);
+  if (tabs) ownerQueueTabs(s, tabs.op, tabs.items);
   return s;
+}
+
+/** The owner's tab gesture in a layout body: `{ tabs: { op: show|close, items: [pq…] } }` (W3 D14). */
+export function readQueueTabs(body: Record<string, unknown>): { op: QueueTabOp; items: string[] } | null {
+  const v = body.tabs;
+  const r = v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+  if (!r || (r.op !== 'show' && r.op !== 'close') || !Array.isArray(r.items)) return null;
+  const items = [...new Set(r.items.filter((x): x is string => typeof x === 'string' && PRESENT_ITEM_ID_RE.test(x)))].slice(0, 50);
+  if (!items.length || items.length !== r.items.length) return null;
+  return { op: r.op, items };
 }
 
 /** The owner's queue gesture in a layout body: `{ op: next|leave|resume, item: pq… }`. */
