@@ -278,7 +278,10 @@ describe('note 10: a tight presentation draws its live jobs on one line', () => 
         }
         expect(on.others.length).toBeLessThanOrEqual(off.others.length);
         expect(on.centre.width).toBeGreaterThanOrEqual(400);
-        if (off.cards.a?.where === 'float') expect(on.centre.width).toBeGreaterThan(off.centre.width);
+        // What the one-line rail saves goes to the presentation: the chat beside a filmstrip, the
+        // window (K14, up to its content's width) and the chat beside it otherwise.
+        const held = (q: typeof on) => q.centre.width + (q.presentWindow?.width ?? 0);
+        if (off.cards.a?.where === 'float') expect(held(on)).toBeGreaterThan(held(off));
       });
     }
   }

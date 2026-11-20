@@ -457,11 +457,11 @@ describe('half, present, narrow (O5, O8, §0 C2)', () => {
     expect(p.others).toEqual(['a', 'c']);
   });
 
-  it('present: the centre a left column, 1-4 cards on the right, the rest in Others', () => {
+  it('present: the centre a left column, 1-4 cards in the window on the right (K14), the rest in Others', () => {
     const p = planStage([card('a'), card('b'), card('c'), card('d'), card('e')], { mode: 'present', cards: ['a', 'b', 'c'], layout: 'grid' }, STAGES[3]);
     expect(p.centre.x).toBe(STAGE.MARGIN);
-    expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.PRESENT_MIN);
-    expect(p.centre.width).toBeLessThanOrEqual(STAGE.PRESENT_MAX);
+    expect(p.centre.width).toBeGreaterThanOrEqual(520);
+    expect(p.presentWindow!.width).toBe(820);
     for (const id of ['a', 'b', 'c']) {
       expect(p.cards[id].where).toBe('present');
       expect(p.cards[id].rect.x).toBeGreaterThanOrEqual(p.centre.x + p.centre.width + STAGE.GAP - EPS);

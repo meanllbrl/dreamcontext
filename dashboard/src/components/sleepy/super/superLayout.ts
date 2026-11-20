@@ -262,6 +262,9 @@ export interface StagePlan {
    *  the tab strip left of `controls` naming what is shown and what comes next. */
   presentFrame?: Rect;
   presentTabs?: Rect;
+  /** A wide stage's presentation window (K14, W3): as wide as what it shows, the chat's column at
+   *  its left; `presentFrame` is this window and `presentTabs` its title row. */
+  presentWindow?: Rect;
   /** The presentation queue's control in the top band (D7, D2): `step` left of `controls` while a
    *  queued presentation is on screen, `wait` at the band's right end while presentations wait
    *  off screen. `short`: the narrow band's form (D10). */
@@ -392,6 +395,9 @@ export interface PlanOptions {
   layoutChoices?: number;
   /** The presentation shows one group whole: its close and minimize buttons replace the exit. */
   groupExit?: boolean;
+  /** The presentation window's tab count (the shown presentation and those queued after it):
+   *  the window never draws narrower than its tabs (K14). Absent = 1. */
+  presentTabCount?: number;
   /** The presentation queue's control (superTypes `queueCounter`): `step` while a queued
    *  presentation of 2+ is on screen, `wait` while presentations wait off screen. */
   queueBand?: 'step' | 'wait';
@@ -962,7 +968,9 @@ export function controlsWidth(choices: number, group: boolean): number {
 }
 
 /** The frame around the presented cards and the tab strip from its left edge to the controls. */
-function presentFrameOf(f: Frame, controls: Rect, cards: Record<string, { rect: Rect; where: CardWhere }>, strip: StripPlan | undefined, sheetTabs: Rect | undefined): Pick<StagePlan, 'presentFrame' | 'presentTabs'> {
+function presentFrameOf(f: Frame, controls: Rect, cards: Record<string, { rect: Rect; where: CardWhere }>, strip: StripPlan | undefined, sheetTabs: Rect | undefined, win?: Rect): Pick<StagePlan, 'presentFrame' | 'presentTabs'> {
+  // The window (K14): its own rect is the frame, its title row the tabs.
+  if (win) return { presentFrame: win, presentTabs: { x: win.x, y: win.y, width: win.width, height: PRESENT_WIN.TITLE_H } };
   // Everything the presentation draws: its cards, a filmstrip's marked slot, a narrow sheet's tab row.
   const shown = Object.values(cards).filter((c) => c.where === 'present' || c.where === 'thumb' || c.where === 'sheet').map((c) => c.rect);
   if (strip?.current) shown.push(strip.current);
@@ -1268,11 +1276,11 @@ function planWith(
     others.push(c.id);
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
-    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
+    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls' | 'presentWindow'>> = {}): StagePlan => {
     // The waiting queue's control holds the band's right end off a presentation.
     const qb = queueBandRect(f, opts.queueBand, mode);
     const bandRight = qb ? qb.rect : extra.controls;
-    const framed = extra.controls && mode === 'present' ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
+    const framed = extra.controls && mode === 'present' ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect, extra.presentWindow) : {};
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
@@ -1458,96 +1466,69 @@ function planWith(
 
     // A wide stage keeps the live jobs beside the presentation; the layouts draw in what they leave.
     const content = besideRail(ordered, true);
-    if (layout === 'compare' || layout === 'grid') {
-      // The centre as a left column, the cards in a grid on the right (as before layouts); the
-      // centre's share is of what the rail leaves (the rail narrows the centre and the cards alike).
-      // The chat's floor gives way (down to REGION_MIN) only so two cards keep FIT_MIN side by side
-      // (a 968 px touch stage).
-      const share = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
-      const plainW = Math.max(STAGE.REGION_MIN, Math.min(share, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
-      // A one-line rail hands its width to the chat; two cards keep FIT_MIN side by side.
-      const w = railSaved ? Math.max(plainW, Math.min(Math.max(plainW + railSaved, STAGE.PRESENT_MIN), content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w)) : plainW;
-      const items = ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect }));
-      const regionAt = (cw: number): Rect => ({ x: content.x + cw + STAGE.GAP, y: content.y, width: content.width - cw - STAGE.GAP, height: content.height });
-      // Every card a measured page: the region is as wide as they need, the chat takes the rest.
-      const needs = ordered.map(pageWidth);
-      let chatW = w;
-      if (needs.every((n) => n !== undefined)) {
-        const cols = new Set(fitArrange(regionAt(w), items).slots.map((r) => r.x)).size;
-        const need = cols * Math.max(...(needs as number[])) + (cols - 1) * STAGE.GAP;
-        chatW = Math.max(w, content.width - STAGE.GAP - need);
+    if (layout !== 'filmstrip') {
+      // The window (K14, W3): as wide as what it shows, at the right; the chat keeps a full-height
+      // column at its left, never under CHAT_MIN. Its layout draws in the window's body, under the
+      // title row that holds the tabs.
+      const itemOf = (id: string) => list.find((x) => x.id === id);
+      const items = ordered.map(itemOf);
+      const pictures = items.filter((it) => it?.kind === 'image');
+      const shape: PresentContent = ordered.length === 1 ? contentShape(items[0])
+        : pictures.length === ordered.length
+          ? (pictures.every((p) => p?.aspect !== undefined && p.aspect < 1) ? { kind: 'album' } : { kind: 'albumdesk' })
+          : { kind: 'desk' };
+      const bodyH = Math.max(0, content.height - PRESENT_WIN.TITLE_H);
+      const room = content.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN;
+      // Two or more cards side by side keep their floor, as far as the chat's floor allows.
+      // The chat then gives way, down to REGION_MIN only, as it did beside the cards before (a 968 px touch stage).
+      const cardsFloor = (layout === 'compare' || layout === 'grid') && ordered.length > 1
+        ? Math.min(ordered.length, 2) * STAGE.FIT_MIN.w + STAGE.GAP : 0;
+      const pw = Math.max(presentWidth(shape, bodyH, opts.presentTabCount ?? 1, room), Math.min(cardsFloor, content.width - STAGE.GAP - STAGE.REGION_MIN));
+      const win: Rect = { x: content.x + content.width - pw, y: content.y, width: pw, height: content.height };
+      const body: Rect = { x: win.x, y: win.y + PRESENT_WIN.TITLE_H, width: pw, height: bodyH };
+      const centre: Rect = { x: content.x, y: content.y, width: Math.max(0, content.width - STAGE.GAP - pw), height: content.height };
+      const extra = { layout, chat: 'column' as const, controls, presentWindow: win };
+      if (layout === 'compare' || layout === 'grid') {
+        const { rects } = fitArrange(body, ordered.map((id) => ({ aspect: itemOf(id)?.aspect })));
+        ordered.forEach((id, k) => place(id, rects[k], 'present'));
+      } else if (layout === 'review') {
+        // The child's page big on top (its site, else its browser), its other cards in a row under it.
+        const page = ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0];
+        const rest = ordered.filter((id) => id !== page);
+        const rowH = rest.length ? Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * body.height)) : 0;
+        place(page, { x: body.x, y: body.y, width: body.width, height: Math.max(0, body.height - (rest.length ? rowH + STAGE.GAP : 0)) }, 'present');
+        const rw = rest.length ? (body.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
+        rest.forEach((id, k) => place(id, { x: body.x + k * (rw + STAGE.GAP), y: body.y + body.height - rowH, width: rw, height: rowH }, 'present'));
+      } else {
+        // Spotlight: the one card in the body, a picture or a device page keeping its shape (the
+        // window is already about its width; the height decides the rest).
+        const one = items[0];
+        const keep = one && one.sizeBy !== 'owner' && one.aspect && (one.kind === 'image' || one.kind === 'web') ? one.aspect : undefined;
+        place(ordered[0], keep ? fitCard(body, keep) : body, 'present');
       }
-      const centre: Rect = { x: content.x, y: content.y, width: chatW, height: content.height };
-      const { rects } = fitArrange(regionAt(chatW), items);
-      ordered.forEach((id, k) => place(id, rects[k], 'present'));
-      for (const c of list) if (!cards[c.id]) toOthers(c);
-      return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat: 'column', controls });
+      for (const k of list) if (!cards[k.id]) toOthers(k);
+      return finish(centre, centre.width, 'present', undefined, undefined, extra);
     }
 
-    // Spotlight, filmstrip, review: the agent is a mini square bottom-left (or its composer bar,
-    // when the owner folded it and no question of his is open), the cards take the rest.
+    // Filmstrip (the owner has not decided its chat yet, 2026-11-20 01:25: unchanged): the agent is
+    // a mini square bottom-left (or its composer bar, when he folded it and no question of his is
+    // open), the big card and its strip take the rest.
     const c = content;
     const chat: ChatDraw = view.chat === 'bar' && !opts.asking ? 'bar' : 'mini';
     const plainMiniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
     // With a one-line rail the chat reads at its comfortable width, and the cards keep their floor.
     const gain = railSaved ? STAGE.MINI_RAIL_W_WIDE - STAGE.MINI_RAIL_W : 0;
-    const roomyMiniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN - gain) + gain) : plainMiniW;
-    // The review's page, or the one big card: narrower than what the cards are left, a measured
-    // page gives the rest to the chat beside it (a chat folded to its bar has no use for it).
-    // A review's row keeps its cards at their floor under it.
-    const page = layout === 'review' ? ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0] : ordered[0];
-    const rowFloor = layout === 'review' && ordered.length > 1 ? (ordered.length - 1) * (STAGE.FIT_MIN.w + STAGE.GAP) - STAGE.GAP : 0;
-    const pageNeed = layout !== 'filmstrip' && chat === 'mini' ? pageWidth(page) : undefined;
-    const fitted = pageNeed !== undefined && c.width - roomyMiniW - STAGE.GAP > Math.max(pageNeed, rowFloor);
-    const reviewRowH = (h: number) => Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * h));
-    // A web page with a device width picked (owner 2026-10-31), as half does: the CARD takes the
-    // device's shape and the chat the width that leaves, down to its own floor. Its page has no
-    // measured width (stageItems), so this and `fitted` never meet. A folded chat wants no width:
-    // the card sits in the middle of what it leaves.
-    const pageItem = list.find((x) => x.id === page);
-    const device = layout !== 'filmstrip' && pageItem?.kind === 'web' ? pageItem.aspect : undefined;
-    // One portrait picture in the spotlight (owner 2026-11-07) hugs its shape the same way, but only
-    // ever GIVES width: the chat never drops under its own width.
-    const pic = layout === 'spotlight' && !device ? pictureAspect(page) : undefined;
-    const shape = device ?? pic;
-    const deviceW = shape && chat === 'mini'
-      ? Math.min(c.width - STAGE.GAP - (device ? STAGE.MINI_MIN_W : roomyMiniW), Math.max(
-        Math.min(STAGE.FIT_MIN.w, c.width / 2),
-        rowFloor,
-        ((layout === 'review' ? c.height - reviewRowH(c.height) - STAGE.GAP : c.height) - STAGE.CARD_CHROME.h) * shape + STAGE.CARD_CHROME.w,
-      ))
-      : undefined;
-    const pageRect = (r: Rect): Rect => (shape ? fitCard(r, shape) : r);
-    const miniW = deviceW !== undefined ? c.width - STAGE.GAP - deviceW : fitted ? c.width - STAGE.GAP - Math.max(pageNeed, rowFloor) : roomyMiniW;
+    const miniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN - gain) + gain) : plainMiniW;
     // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
-    const miniH = c.height;
     const centre: Rect = chat === 'bar'
       ? { x: c.x, y: c.y + c.height - STAGE.CHAT_BAR_H, width: miniW, height: STAGE.CHAT_BAR_H }
-      : { x: c.x, y: c.y + c.height - miniH, width: miniW, height: miniH };
+      : { x: c.x, y: c.y, width: miniW, height: c.height };
     const main: Rect = chat === 'bar'
       ? { x: c.x, y: c.y, width: c.width, height: Math.max(0, c.height - STAGE.CHAT_BAR_H - STAGE.GAP) }
       : { x: c.x + miniW + STAGE.GAP, y: c.y, width: Math.max(0, c.width - miniW - STAGE.GAP), height: c.height };
-    const extra = { layout, chat, controls };
-    if (layout === 'filmstrip') {
-      const st = strip(main);
-      for (const k of list) if (!cards[k.id]) toOthers(k);
-      return finish(centre, centre.width, 'present', undefined, undefined, { ...extra, strip: st });
-    }
-    if (layout === 'review') {
-      // The child's page big on top (its site, else its browser), its other cards in a row under it.
-      const rest = ordered.filter((id) => id !== page);
-      const rowH = reviewRowH(main.height);
-      place(page, pageRect({ x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - rowH - STAGE.GAP) }), 'present');
-      const rw = rest.length ? (main.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
-      rest.forEach((id, k) => place(id, { x: main.x + k * (rw + STAGE.GAP), y: main.y + main.height - rowH, width: rw, height: rowH }, 'present'));
-      if (fitted) cards[page] = { ...cards[page], fitted };
-      for (const k of list) if (!cards[k.id]) toOthers(k);
-      return finish(centre, centre.width, 'present', undefined, undefined, extra);
-    }
-    place(ordered[0], pageRect(main), 'present');
-    if (fitted) cards[page] = { ...cards[page], fitted };
+    const st = strip(main);
     for (const k of list) if (!cards[k.id]) toOthers(k);
-    return finish(centre, centre.width, 'present', undefined, undefined, extra);
+    return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat, controls, strip: st });
   }
 
   // ── narrow: the centre takes the width, every card is in Others ──
@@ -2129,7 +2110,9 @@ export function dockDecision(prev: boolean, fit: { need: number; room: number; c
 export type PresentContent =
   | { kind: 'phone'; aspect: number }
   | { kind: 'pdf'; aspect: number }
-  | { kind: 'session' | 'album' | 'albumdesk' | 'desk' };
+  | { kind: 'session' | 'album' | 'albumdesk' }
+  /** `width`: a project page's own measured width (its card's), else desktop width. */
+  | { kind: 'desk'; width?: number };
 
 export const PRESENT_WIN = {
   /** The window's title row (lights, tabs, Mention): the body is the window less this. */
@@ -2147,8 +2130,11 @@ export const PRESENT_WIN = {
 } as const;
 
 /** What one presented card shows, for K14 (a card the layout knows nothing about reads as desktop). */
-export function contentShape(item: Pick<StageItem, 'kind' | 'aspect'> | undefined, pictures = 0): PresentContent {
+export function contentShape(item: Pick<StageItem, 'kind' | 'aspect' | 'fit' | 'sizeBy'> | undefined, pictures = 0): PresentContent {
   if (!item) return { kind: 'desk' };
+  // A card the owner sized keeps no shape of its own: its window is desktop width.
+  if (item.sizeBy === 'owner') return { kind: 'desk' };
+  if (item.kind === 'web' && !item.aspect && item.fit) return { kind: 'desk', width: Math.min(PRESENT_WIN.DESK_W, Math.round(item.fit + STAGE.CARD_CHROME.w)) };
   if (item.kind === 'group') return pictures > 0 ? { kind: 'album' } : { kind: 'desk' };
   if (item.kind === 'chat' || item.kind === 'team' || item.kind === 'member') return { kind: 'session' };
   if (item.kind === 'pdf') return { kind: 'pdf', aspect: item.aspect && item.aspect > 0 ? item.aspect : PRESENT_WIN.A4 };
@@ -2168,7 +2154,7 @@ export function presentWidth(content: PresentContent, bodyH: number, tabs: numbe
       : content.kind === 'albumdesk' ? W.ALBUM_DESK_W
         : content.kind === 'pdf' ? Math.round(Math.max(0, bodyH - W.PDF_PAD_H) * content.aspect) + W.PDF_CHROME_W
           : content.kind === 'phone' ? Math.round(Math.max(0, bodyH - W.PHONE_PAD_H) * content.aspect) + W.PHONE_CHROME_W
-            : W.DESK_W;
+            : content.width ?? W.DESK_W;
   const floor = W.TABS_BASE + Math.max(1, tabs) * W.TAB_W;
   return Math.max(0, Math.min(Math.max(want, floor), room));
 }
