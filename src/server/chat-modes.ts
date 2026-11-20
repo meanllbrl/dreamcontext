@@ -670,6 +670,9 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 - His decision goes into a child's brief as his own words, quoted, under an \`Owner:\` line. Your
   reading goes on its own line under it and never narrows, softens or contradicts his. Your research
   says otherwise: the brief says both, and that his word decides.
+- The project skill that covers the job goes into the brief by name (\`/reel-generator\`): look for it in
+  this project's skills first. In the same field a project skill comes before a user-level one (a KB or
+  \`~/.claude\` skill), which only adds its own rules (cost, render), never replaces the project's line.
 - Tasks: ${TASK_FILING_STANDARD} You file it: \`dreamcontext tasks create\`, then \`--task <slug>\` on
   its plan child and later its develop child.
 - Several asks: number each, never drop or silently merge one; asks sharing a file are one unit. Start

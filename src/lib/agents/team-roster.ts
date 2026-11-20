@@ -327,7 +327,8 @@ export function teamRouteOf(raw: string | undefined): TeamRoute | null {
  *  (context-watch.ts `handoffContinuePrompt`): server-written, never the owner's words. */
 export const HANDOFF_TURN_PREFIX = 'Handoff: ';
 
-export function ownerWords(prompt: string): string | null {
+/** The owner's part of a prompt (before the first server-written block), or null for a server-written turn. */
+function ownerPart(prompt: string): string | null {
   if (SUPER_EVENT_PREFIXES.some((p) => prompt.startsWith(p)) || prompt.startsWith(HANDOFF_TURN_PREFIX)) return null;
   let text = prompt;
   const cut = /(^|\n)(<super-|<owner-|\[super )/.exec(text);
@@ -337,9 +338,42 @@ export function ownerWords(prompt: string): string | null {
     const at = text.indexOf('<owner-msg');
     if (at >= 0) text = text.slice(0, at);
   }
+  return text;
+}
+
+export function ownerWords(prompt: string): string | null {
+  let text = ownerPart(prompt);
+  if (text === null) return null;
   const heads = aboutHeads(text);
   for (const h of [...heads].reverse()) text = text.slice(0, h.at) + text.slice(h.end);
   return text.trim();
+}
+
+/**
+ * What the owner's turn POINTS AT, from its reference headers (`aboutHeads`): an agenda line's
+ * `line:`, a replied message's or a card's `quote:`, a task header's slug as words. Null when there
+ * is none or the turn is server-written. The subject of the turn, for recall only (owner 2026-11-20:
+ * "bunun testi yapıldı mı hazır mı videoya geçelim" under an agenda line recalled nothing once the
+ * line was cut). It is what the page showed him, never his instruction: {@link ownerWords} still
+ * leaves it out, and the recall judge reads it fenced as data (`<about>`, recall-judge.ts).
+ */
+export function promptAbout(prompt: string): string | null {
+  const part = ownerPart(prompt);
+  if (part === null) return null;
+  // A header inside a block a machine wrote (a task notification's result) is not one he pointed at.
+  const text = part.replace(MACHINE_BLOCK_RE, '');
+  const out: string[] = [];
+  for (const h of aboutHeads(text)) {
+    const block = text.slice(h.at, h.end);
+    if (h.kind === 'task') { out.push(h.id.replace(/-/g, ' ')); continue; }
+    const m = /\n(?:line|quote): ([^\n]*)/.exec(block);
+    if (!m) continue;
+    try {
+      const v: unknown = JSON.parse(m[1]);
+      if (typeof v === 'string' && v.trim()) out.push(v.trim());
+    } catch { /* aboutHeads already checked the JSON; a bad one is skipped */ }
+  }
+  return out.length ? out.join('\n') : null;
 }
 
 /** A recall, pattern or offer needs at least this much of the owner's text to search on. */
@@ -382,8 +416,43 @@ export function promptOwnerText(prompt: string): string | null {
 export function recallQuery(prompt: string): string | null {
   const text = promptOwnerText(prompt);
   if (text === null) return null;
-  const q = text.replace(ABS_PATH_RE, '$1 ').replace(/\s+/g, ' ').trim();
+  const q = fold(text);
   return q.length >= RECALL_QUERY_MIN_CHARS ? q : null;
+}
+
+/** Paths out, whitespace folded: the form every recall query takes. */
+function fold(text: string): string {
+  return text.replace(ABS_PATH_RE, '$1 ').replace(/\s+/g, ' ').trim();
+}
+
+/** At most this much of what a turn points at joins its recall search (a bound on bytes, not on references). */
+export const RECALL_ABOUT_MAX_CHARS = 1500;
+
+/** One turn as memory recall reads it (the prompt hook, `judgedPromptRecall`). */
+export interface RecallTurn {
+  /** His own words, folded ('' when he wrote none beside a reference). The judge's `<turn>`. */
+  words: string;
+  /** What the turn points at ({@link promptAbout}, folded and bounded), or null. The judge's `<about>`. */
+  about: string | null;
+  /** What the local search runs on: his words first (a dense query keeps its start), then the about-text. */
+  search: string;
+}
+
+/**
+ * The recall side of a turn: {@link recallQuery}'s words plus the subject the turn points at. Null when
+ * the two together are under {@link RECALL_QUERY_MIN_CHARS} or the turn has nothing of his. A short
+ * "bu ne" under an agenda line still recalls on that line; patterns, offers and the team line keep
+ * reading {@link recallQuery}, his words alone.
+ */
+export function recallTurn(prompt: string): RecallTurn | null {
+  const text = promptOwnerText(prompt);
+  const words = text === null ? '' : fold(text);
+  const rawAbout = promptAbout(prompt);
+  const aboutFull = rawAbout === null ? '' : fold(rawAbout);
+  const about = aboutFull ? aboutFull.slice(0, RECALL_ABOUT_MAX_CHARS) : null;
+  const search = about ? (words ? `${words}\n${about}` : about) : words;
+  if (search.length < RECALL_QUERY_MIN_CHARS) return null;
+  return { words, about, search };
 }
 
 /** A title in a directive line: one line, no control characters, at most 60 characters. */

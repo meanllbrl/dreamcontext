@@ -205,6 +205,8 @@ export interface JudgedRecallOpts extends ShortlistOpts {
   judge?: RunJudgeOpts & { run?: typeof runJudge };
   /** Run the judge even when the skip rule holds (the eval measures what a skip would lose). */
   forceJudge?: boolean;
+  /** What the turn points at (team-roster.ts `recallTurn`): searched with the turn, shown to the judge as `<about>`. */
+  about?: string | null;
 }
 
 /**
@@ -220,7 +222,10 @@ export function nothingNew(strong: readonly string[], inContext: ReadonlySet<str
 export async function judgedRecall(query: string, prev: string | null, corpus: CorpusDoc[], root: string, o: JudgedRecallOpts = {}): Promise<JudgedRecall> {
   const inContext = o.inContext ?? new Set<string>();
   const passedOver = o.passedOver ?? new Set<string>();
-  const sl = await judgeShortlist(query, prev, corpus, root, o);
+  // The local search runs on his words, then the subject the turn points at; the judge reads them apart.
+  const about = o.about && o.about.trim() ? o.about.trim() : null;
+  const search = about ? (query.trim() ? `${query}\n${about}` : about) : query;
+  const sl = await judgeShortlist(search, prev, corpus, root, o);
   const base = { channel: sl.channel, usd: 0, searchMs: sl.ms, judgeMs: 0 };
   const wouldSkip = nothingNew(sl.strong, inContext, passedOver);
   const keys = sl.keys.filter((k) => !inContext.has(k));
@@ -232,9 +237,9 @@ export async function judgedRecall(query: string, prev: string | null, corpus: C
   for (const k of keys) {
     const doc = byKey.get(k);
     if (!doc) continue;
-    cands.push({ key: k, relPath: doc.relPath, title: doc.title, description: doc.description ?? '', section: passageOf(doc, query, sl.seq.get(k) ?? null) });
+    cands.push({ key: k, relPath: doc.relPath, title: doc.title, description: doc.description ?? '', section: passageOf(doc, search, sl.seq.get(k) ?? null) });
   }
-  const prompt = pickPrompt({ text: query, prev }, cands, o.whenLines ?? (() => null));
+  const prompt = pickPrompt({ text: query, prev, about }, cands, o.whenLines ?? (() => null));
   const d = await decide(prompt, cands, o.deadlineAt ?? Date.now() + JUDGE_TIMEOUT_MS, o.judge ?? {});
   const order = new Map(cands.map((c, i) => [c.key, i]));
   const hits: JudgedHit[] = Object.entries(d.picks)
