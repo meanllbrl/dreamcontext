@@ -420,9 +420,11 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * asking; the denial sends you back to his words). Ceiling stays 12000; actual ~11,924.
    * 2026-11-15 (bekleyen-kapanmaz): the run card paragraph says a later card of the same kind
    * replaces the earlier open one, so what the agent needs now goes in ONE message. Actual 11,952.
+   * 2026-11-20 (super-v3 K7): the `jobs` view a Super Agent answers status with, one line and its
+   * example (+141). Ceiling -> 12500; actual 12,422.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12400);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(12500);
   });
 
   /**
@@ -433,7 +435,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12281)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 12422)).toBeLessThanOrEqual(20);
   });
 
   /**

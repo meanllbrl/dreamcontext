@@ -33,13 +33,13 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation', 'learned', 'app-request'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation', 'learned', 'app-request', 'jobs'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec | McpViewSpec
   | PinViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec
-  | AutomationViewSpec | LearnedViewSpec | AppRequestViewSpec;
+  | AutomationViewSpec | LearnedViewSpec | AppRequestViewSpec | JobsViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -294,6 +294,17 @@ export interface AutomationViewSpec {
 export interface LearnedViewSpec {
   type: 'learned';
   id: string;
+}
+
+/**
+ * `type: "jobs"` — the Super Agent's answer to "where are we" (plan super-v3 K7, D6): one row per
+ * job drawn from the LIVE record (name, state, what it waits on, when), never numbers the agent
+ * typed. DERIVED like `insight`: the block names at most which jobs (`ids`, child session or team
+ * job ids); with none it shows every job. The Super writes only the one sentence above it.
+ */
+export interface JobsViewSpec {
+  type: 'jobs';
+  ids?: string[];
 }
 
 /**
@@ -951,6 +962,26 @@ const LEARNED_ID_RE = /^[a-z2-7]{10}$/;
 /** Keys that would mean the agent is DESCRIBING the rule instead of naming it. */
 const ASSERTED_LEARNED_KEYS = ['headline', 'text', 'title', 'quote', 'status', 'scope'] as const;
 
+/** A job id the `jobs` view may name: a child session id or a team job id (SESSION_ID_RE of
+ *  src/lib/super/types.ts), at most MAX_CONTAINERS of them (this file imports nothing). */
+const JOB_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
+const MAX_JOB_IDS = 48;
+const ASSERTED_JOBS_KEYS = ['rows', 'jobs', 'counts', 'items', 'status'] as const;
+
+function validateJobs(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  if (ASSERTED_JOBS_KEYS.some((k) => obj[k] !== undefined)) {
+    notices.push('A jobs block described the jobs itself: that was ignored. The card reads every job from the Super record.');
+  }
+  const view: JobsViewSpec = { type: 'jobs' };
+  if (obj.ids !== undefined) {
+    const raw = Array.isArray(obj.ids) ? obj.ids : [];
+    const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string' && JOB_ID_RE.test(x)))].slice(0, MAX_JOB_IDS);
+    if (!Array.isArray(obj.ids) || ids.length !== raw.length) notices.push('A jobs block named an "ids" entry that is not a job id: it was left out.');
+    if (ids.length) view.ids = ids;
+  }
+  return { view, notices };
+}
+
 function validateLearned(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
   const id = typeof obj.id === 'string' ? obj.id.trim() : '';
   if (!LEARNED_ID_RE.test(id)) {
@@ -1073,6 +1104,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'automation': return validateAutomation(parsed, notices);
       case 'learned': return validateLearned(parsed, notices);
       case 'app-request': return validateAppRequest(parsed, notices);
+      case 'jobs': return validateJobs(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };
