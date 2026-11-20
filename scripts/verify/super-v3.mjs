@@ -83,6 +83,16 @@ function seed(f) {
   });
   for (const [i, j] of team.entries()) containers.push({ id: `t${i}`, kind: 'team', ref: j.id, shape: 'square', place: 'float', by: 'super', title: MEMBERS[j.member].title });
   if (f.approval) queue.push({ id: 'qa', sessionId: superSession, kind: 'approval', member: f.approval, state: 'escalated', createdAt: now - 500 });
+  // The member must really wait on him: `agents create` approves it, and the server settles an
+  // approval question about an approved member (super.ts settleApprovals). Drop its grant.
+  if (f.approval) {
+    const reg = join(app.home, '.dreamcontext', 'automations.json');
+    try {
+      const r = JSON.parse(readFileSync(reg, 'utf-8'));
+      for (const p of Object.values(r.projects ?? {})) { if (p.agentApprovals) delete p.agentApprovals[f.approval]; if (p.approvals) delete p.approvals[f.approval]; }
+      writeFileSync(reg, JSON.stringify(r, null, 2));
+    } catch (e) { fail(`unapprove ${f.approval}: ${e.message}`); }
+  }
   const sessions = kids.map((k, i) => ({ title: k.title, kind: 'chat', sessionId: k.id, pane: i, active: i === 0, window: 'main', size: 1 }));
   const state = join(app.proj, '_dream_context', 'state');
   mkdirSync(join(app.proj, 'docs'), { recursive: true });

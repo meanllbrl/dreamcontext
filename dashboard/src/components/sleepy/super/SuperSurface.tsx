@@ -1226,6 +1226,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const id = window.setTimeout(() => setUndoEnd(null), Math.max(0, UNDO_MS - (Date.now() - undoEnd.at)));
     return () => window.clearTimeout(id);
   }, [undoEnd]);
+  // The toast says "Closed" only once the job really ended: hidden while the end is on its way,
+  // dropped when the server refused it (the card then says "Not ended").
+  const undoFailed = !!undoEnd && props.endFailed.has(undoEnd.child);
+  useEffect(() => { if (undoFailed) setUndoEnd(null); }, [undoFailed]);
+  const undoShown = !!undoEnd && !undoFailed && !props.endPending.has(undoEnd.child);
   const undoNow = () => {
     const u = undoEnd;
     if (!u || !props.onUndoEnd) return;
@@ -1585,8 +1590,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
             return waiting > 0 ? t('superDock.todayNeeds').replace('{n}', String(waiting)) : t('superDock.todayRunning').replace('{n}', String(docked));
           })()} />
       )}
-      {stageNote && !undoEnd && <p role="status" className="super-stage-note" data-testid="super-stage-note">{stageNote}</p>}
-      {undoEnd && (
+      {stageNote && !undoShown && <p role="status" className="super-stage-note" data-testid="super-stage-note">{stageNote}</p>}
+      {undoEnd && undoShown && (
         <p role="status" className="super-stage-note super-stage-note--undo" data-testid="super-undo-end">
           {t('super.close.closed').replace('{name}', undoEnd.name)}
           <button type="button" className="super-stage-note-btn" data-testid="super-undo-end-btn" onClick={undoNow}>{t('super.close.undo')}</button>

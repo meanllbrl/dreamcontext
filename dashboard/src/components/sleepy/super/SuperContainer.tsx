@@ -351,7 +351,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-side={floating ? props.side : undefined}
       data-owner={plan.owner ? 'true' : undefined}
       data-status={status ? glowOf(status) : undefined}
-      data-super-tone={status ? toneOfStatus(status.kind) : props.team ? toneOfStatus(teamRingKind(teamStatusOf(props.team))) : undefined}
+      data-super-tone={status ? toneOfStatus(status.kind) : props.team ? toneOfStatus(props.team.approval ? 'asking' : teamRingKind(teamStatusOf(props.team))) : undefined}
       data-drop-target={props.dropTarget ? 'card' : undefined}
       data-cue={props.cue?.kind}
       inert={props.cue?.kind === 'close' || props.parked || plan.hidden ? true : undefined}

@@ -66,6 +66,14 @@ describe('the red light (D2) and Undo', () => {
     expect(SURFACE).toContain('if (undoable && props.onUndoEnd) setUndoEnd(');
     expect(SRC('components/sleepy/AgentSurface.tsx')).toMatch(/postSuperResume/);
   });
+  it('"Closed · Undo" shows only once the end landed: hidden while pending, gone when refused', () => {
+    expect(SURFACE).toContain('const undoShown = !!undoEnd && !undoFailed && !props.endPending.has(undoEnd.child);');
+    expect(SURFACE).toContain('useEffect(() => { if (undoFailed) setUndoEnd(null); }, [undoFailed]);');
+    expect(SURFACE).toContain('{undoEnd && undoShown && (');
+  });
+  it('a member waiting on approval frames its card pink, not by its run status', () => {
+    expect(CONTAINER).toContain("toneOfStatus(props.team.approval ? 'asking' : teamRingKind(teamStatusOf(props.team)))");
+  });
   it('the agenda\'s Stop runs the same red light on that job', () => {
     expect(CONTAINER).toContain("stopRef.current = () => (childBusy ? setCloseAsk(true) : props.onEndSession(c.id, false, true));");
     expect(SURFACE).toContain('onStop={remote ? undefined : stopJob}');
