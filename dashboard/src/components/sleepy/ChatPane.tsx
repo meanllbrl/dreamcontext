@@ -3095,16 +3095,16 @@ export function ChatPane({
           team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn, inView: teamInView }}
         />
       )}
+      {jobFilter && (
+        <div className="chat-job-filter" role="status" data-testid="super-job-filter-bar">
+          <span className="chat-job-filter-text">{t('super.filter.showing').replace('{name}', superCtx?.titleFor(jobFilter) || t('super.filter.thisJob'))}</span>
+          <button type="button" className="chat-job-filter-all" onClick={() => setJobFilter(null)}>{t('super.filter.showAll')}</button>
+        </div>
+      )}
       <BrowserHostProvider value={browserHost}>
       <SelectionScope handler={selectionHandler}>
       <div className={superView ? 'chat-transcript chat-transcript--super' : 'chat-transcript'}>
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
-        {jobFilter && (
-          <div className="chat-job-filter" role="status" data-testid="super-job-filter-bar">
-            <span className="chat-job-filter-text">{t('super.filter.showing').replace('{name}', superCtx?.titleFor(jobFilter) || t('super.filter.thisJob'))}</span>
-            <button type="button" className="chat-job-filter-all" onClick={() => setJobFilter(null)}>{t('super.filter.showAll')}</button>
-          </div>
-        )}
                 <div
           className="chat-scroll"
           ref={scrollRef}

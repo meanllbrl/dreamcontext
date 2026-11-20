@@ -38,6 +38,14 @@ const FRAMES = {
   'T1-sonra': { needs: 1, jobs: 2, minis: 0, members: ['sage', 'mira'], mock: 'super-ux-denetim/kareler/T1-sonra.png', sizes: [[1440, 900]], light: true },
   'T5-sonra': { needs: 1, jobs: 2, minis: 0, members: ['sage'], approval: 'sage', mock: 'super-ux-denetim/kareler/T5-sonra.png', sizes: [[1440, 900]] },
   '09a-kapat-2': { needs: 0, jobs: 4, minis: 0, redLight: true, mock: 'super-jakob-v3/v3/09a-kapat-2.png', sizes: [[1440, 900]] },
+  // W2: the Super chat frames (D7-D10, K7, Ü3). `chat` = the Super's own transcript, seeded as the
+  // CLI writes it; `cards: false` = no card on stage (the chat alone, as frame E).
+  'E-bos': { needs: 1, jobs: 4, done: 3, minis: 0, cards: false, perms: 1, away: true, mock: 'super-ux-denetim/kareler/E-bos.png', sizes: [[1440, 900], [1180, 800]], light: true },
+  'I-durum': { needs: 2, jobs: 3, done: 2, minis: 0, chat: 'jobs', mock: 'super-ux-denetim/kareler/I-durum.png', sizes: [[1440, 900]], light: true },
+  'C-soru': { needs: 1, jobs: 3, minis: 0, chat: 'ask', mock: 'super-ux-denetim/kareler/C-soru.png', sizes: [[1440, 900]], light: true },
+  'H-ajanda': { needs: 1, jobs: 3, minis: 0, chat: 'ask', pad: true, agendaTap: true, mock: 'super-ux-denetim/kareler/H-ajanda.png', sizes: [[1440, 900]], light: true },
+  'A-izin': { needs: 1, jobs: 3, minis: 0, perms: 1, allows: true, chat: 'allow', mock: 'super-ux-denetim/kareler/A-izin.png', sizes: [[1440, 900], [1180, 800]], light: true },
+  'T3-sonra': { needs: 0, jobs: 2, minis: 0, members: ['sage'], memberDone: 'sage', chat: 'member', mock: 'super-ux-denetim/kareler/T3-sonra.png', sizes: [[1440, 900]], light: true },
 };
 /** The fictional AI Team the member frames seed through the real CLI (`agents create`). */
 const MEMBERS = {
@@ -67,16 +75,25 @@ writeFileSync(join(app.home, '.dreamcontext', 'launcher-ui.json'), JSON.stringif
 
 function seed(f) {
   const now = Date.now();
-  const titles = [...NEEDS.slice(0, f.needs), ...JOBS.slice(0, f.jobs)];
+  const done = f.done ?? 0;
+  const titles = [...NEEDS.slice(0, f.needs), ...JOBS.slice(0, f.jobs + done)];
   const kids = titles.map((title) => ({ id: randomUUID(), title }));
-  const children = Object.fromEntries(kids.map((k, i) => [k.id, { sessionId: k.id, brief: k.title, adopted: false, startedAt: now - 60_000 * (i + 1), row: i < f.needs ? 'asking' : 'working', rowAt: now }]));
+  const rowOf = (i) => (i < f.needs ? 'asking' : i >= f.needs + f.jobs ? 'done' : 'working');
+  const children = Object.fromEntries(kids.map((k, i) => [k.id, { sessionId: k.id, brief: k.title, adopted: false, startedAt: now - 60_000 * (i + 1), row: rowOf(i), rowAt: now - (rowOf(i) === 'done' ? 60_000 * (20 + i) : 60_000 * (i + 1)), ...(rowOf(i) === 'done' ? { finishedAt: now - 60_000 * (20 + i) } : {}) }]));
+  // The Super's own allows on the first running job (D8's folded line).
+  if (f.allows) children[kids[f.needs].id].allows = [{ at: now - 90_000, summary: 'npm run lint' }, { at: now - 60_000, summary: 'git status' }];
   const containers = [
     { id: 'ag', kind: 'agenda', ref: 'agenda', shape: 'square', place: 'float', by: 'super', size: 'large' },
-    ...kids.map((k, i) => ({ id: `c${i}`, kind: 'chat', ref: k.id, shape: 'portrait', place: 'float', by: 'super', title: k.title })),
+    ...kids.filter((_, i) => f.cards !== false && rowOf(i) !== 'done').map((k, i) => ({ id: `c${i}`, kind: 'chat', ref: k.id, shape: 'portrait', place: 'float', by: 'super', title: k.title })),
     ...Array.from({ length: f.minis }, (_, i) => ({ id: `m${i}`, kind: 'web', ref: 'docs/panel.html', shape: 'square', place: 'others', by: 'super', title: 'Panel · aylık özet' })),
   ];
   const queue = kids.slice(0, f.needs).map((k, i) => ({ id: `q${i}`, sessionId: k.id, kind: 'question', state: 'escalated', createdAt: now - 1000 * (i + 1), ownerText: 'Yıllık plan fiyatı ne olsun? 990 ₺, 1.190 ₺ ya da 790 ₺' }));
   const superSession = randomUUID();
+  // A permission a running job waits on (the band's line, the card's waiting line).
+  for (let i = 0; i < (f.perms ?? 0); i++) {
+    const k = kids[f.needs + i];
+    if (k) { children[k.id].row = 'asking'; queue.push({ id: `p${i}`, sessionId: k.id, kind: 'permission', state: 'escalated', createdAt: now - 2000, requestId: `req-${i}`, toolName: 'Bash', text: 'npm test -- checkout' }); }
+  }
   const team = (f.members ?? []).map((slug, i) => {
     makeMember(slug);
     return { id: `team-${slug}`, member: slug, runId: new Date(now - 60_000 * (3 + 3 * i)).toISOString(), jobKind: 'run', queued: false, brief: MEMBERS[slug].brief, startedAt: now - 60_000 * (3 + 3 * i), open: true };
@@ -93,6 +110,13 @@ function seed(f) {
       writeFileSync(reg, JSON.stringify(r, null, 2));
     } catch (e) { fail(`unapprove ${f.approval}: ${e.message}`); }
   }
+  if (f.memberDone) {
+    const j = team.find((x) => x.member === f.memberDone);
+    if (j) { j.open = undefined; j.outcome = 'done'; j.endedAt = undefined; }
+  }
+  const pad = f.pad ? kids.map((k, i) => ({ id: `n${i + 1}`, section: rowOf(i) === 'done' ? 'done' : rowOf(i) === 'asking' ? 'waiting' : 'now', text: k.title, at: now - 60_000 * (i + 1), for: k.id })) : undefined;
+  const away = f.away ? { since: now - 150 * 60_000, events: 4, until: now - 5 * 60_000, viaTelegram: 2 } : { since: null, events: 0 };
+  if (f.chat) writeTranscript(superSession, f, kids, team, now);
   const sessions = kids.map((k, i) => ({ title: k.title, kind: 'chat', sessionId: k.id, pane: i, active: i === 0, window: 'main', size: 1 }));
   const state = join(app.proj, '_dream_context', 'state');
   mkdirSync(join(app.proj, 'docs'), { recursive: true });
@@ -100,8 +124,32 @@ function seed(f) {
   writeFileSync(join(state, '.agent-sessions.json'), JSON.stringify({ sessions, activePane: 0, chatPermissionMode: 'auto', windows: [{ id: 'main', name: 'Chat', activePane: 0 }], generation: Date.now() }));
   writeFileSync(join(state, '.super-agent.json'), JSON.stringify({
     v: 1, session: superSession, enabled: true, containers, groups: [], view: { mode: 'float' }, children, queue,
-    notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team,
+    notes: {}, away, dismissed: [], pool: [], ownerBatches: [], team, ...(pad ? { pad, padSeq: pad.length } : {}),
   }));
+}
+
+/** The Super's transcript, rows as the CLI writes them (`~/.claude/projects/<dir>/<session>.jsonl`). */
+function writeTranscript(session, f, kids, team, now) {
+  const dir = join(app.home, '.claude', 'projects', 'verify-super-v3');
+  mkdirSync(dir, { recursive: true });
+  const rows = [];
+  let t = now - 10 * 60_000;
+  const add = (role, content) => rows.push({ type: role, message: { role, content }, sessionId: session, uuid: randomUUID(), timestamp: new Date(t += 20_000).toISOString(), cwd: app.proj });
+  const fence = (body) => `<untrusted-project-output vault="proj">${body}</untrusted-project-output>`;
+  if (f.chat === 'jobs') {
+    add('user', 'ne durumdayız?');
+    add('assistant', [{ type: 'text', text: 'İşlerin durumu bu, iki iş senden cevap bekliyor.\n\n```dream-view\n{"type":"jobs"}\n```' }]);
+  } else if (f.chat === 'ask' || f.chat === 'allow') {
+    add('user', 'Ödeme ekranı üç adım sürüyor, tek adıma indir.');
+    add('assistant', [{ type: 'text', text: f.chat === 'allow' ? 'Ödeme ekranını tek adıma indirdim. Şimdi testleri çalıştırmam lazım.' : 'Başlattım. Fiyat için senden bir karar lazım, soruyu aşağıya koydum.' }]);
+  } else if (f.chat === 'member') {
+    const j = team[0];
+    add('user', 'Sage fiyat sayfası için rakipleri karşılaştırsın.');
+    add('assistant', [{ type: 'text', text: "Sage'e verdim, cevabı gelince sana getiririm." }]);
+    add('user', [`[super events] batch=b1 items=1`, `- item=q9 team=${j.id} member=${j.member} event=done status=done`, fence(`Brief: ${j.brief}`), fence('Answer: Three competitors charge 990 to 1.290 a year; 1.190 sits in the middle and keeps the monthly plan 20% dearer. Suggest 1.190 yearly with a 7 day trial.')].join('\n'));
+    add('assistant', [{ type: 'text', text: 'Sage karşılaştırmayı bitirdi: yıllık 1.190 öneriyor.' }]);
+  }
+  writeFileSync(join(dir, `${session}.jsonl`), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
 }
 
 const browser = await chromium.launch();
@@ -122,6 +170,13 @@ async function shoot(name, f, [w, h], dark) {
     await p.locator('[data-testid="super-view-list"]').click({ timeout: 10_000 }).catch(() => fail(`${where}: no List switch`));
     await p.waitForTimeout(1200);
   }
+  if (f.agendaTap) {
+    await p.locator('[data-testid="super-agenda-row"][data-live="true"][data-state="now"]').first().click({ timeout: 10_000, position: { x: 60, y: 12 } }).catch(() => fail(`${where}: no live agenda line to tap`));
+    await p.waitForTimeout(800);
+    if (!(await p.locator('[data-testid="super-job-filter-bar"]').count())) fail(`${where}: the agenda tap did not narrow the chat`);
+  }
+  if (f.chat === 'member' && !(await p.locator('.super-event-with-quotes').count())) fail(`${where}: no member quote card`);
+  if (f.away && !(await p.locator('[data-testid="super-away"]').count())) fail(`${where}: no away tiles`);
   if (f.redLight) {
     const card = p.locator('[data-testid="super-container"][data-where="float"][data-kind="chat"]').first();
     await card.hover().catch(() => {});
@@ -171,7 +226,7 @@ try {
         results[`${name}@${size[0]}-${dark ? 'dark' : 'light'}`] = r;
         console.log(`  shot ${r.file}${r.montage ? `\n  montage ${r.montage}` : ''}`);
         const total = f.needs + f.jobs;
-        if (f.list || f.members || f.redLight) { ok(`${name}: shot`); continue; }
+        if (f.list || f.members || f.redLight || f.chat || f.away) { ok(`${name}: shot`); continue; }
         if (name === '03-bes-mesaj') {
           if (r.dock && r.dock.tiles.some((t) => t.kind === 'job')) fail(`${name}: 5 jobs fit, yet jobs docked`); else ok(`${name}: 5 jobs float (${r.floats} floating cards)`);
           continue;

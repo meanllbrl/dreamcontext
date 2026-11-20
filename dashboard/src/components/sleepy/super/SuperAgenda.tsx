@@ -384,14 +384,18 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         time={e.group === 'earlier' ? '' : fmtTime(e.at ?? r.at)}
         selected={selected === e.key || (!!jobSelected && r.for === jobSelected)}
         onPress={a.press === 'detail' ? () => {
-          setMenu(null); setSelected((k) => (k === e.key ? null : e.key));
+          setMenu(null);
           // A line of a job: the tap narrows the Super chat to that job and puts its About chip in
-          // the composer; a second tap clears it (super-v3 D9, K11).
+          // the composer; a second tap clears it (super-v3 D9, K11). It opens no detail over the
+          // chat it just narrowed (frame H): the row stays purple from the job filter.
           if (onSelect && r.for && e.live) {
             const next = jobSelected === r.for ? null : r.for;
+            setSelected(null);
             onSelect(next);
             if (next && ask) ask();
+            return;
           }
+          setSelected((k) => (k === e.key ? null : e.key));
         } : undefined}
         onMenu={a.menu && onPadStatus ? (anchor) => setMenu({ key: e.key, anchor }) : undefined}
         onHover={{ done: onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined, ask, stop: onStop && r.for && e.live && jobRuns(r.for) ? () => onStop(r.for as string) : undefined }}
