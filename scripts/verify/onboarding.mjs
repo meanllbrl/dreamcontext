@@ -684,7 +684,7 @@ const ROWS = {
     const ev = [];
     const checks = [];
     const now = Date.now();
-    const stub = { connected: false, probe: { login: 'verify-user', scopes: ['repo', 'read:org', 'gist'] }, signin: null, git: null, repos: [], clone: null };
+    const stub = { connected: false, probe: { login: 'verify-user', scopes: ['repo', 'read:org', 'gist'] }, signin: null, git: null, repos: [], clone: null, posts: 0 };
     const REPOS = [
       { fullName: 'verify-user/orbit', private: true, description: 'Habit tracker', pushedAt: new Date(now - 3_600_000).toISOString(), sizeKb: 2400 },
       { fullName: 'verify-user/atlas', private: false, description: 'Docs site', pushedAt: new Date(now - 86_400_000).toISOString(), sizeKb: 1_600_000 },
@@ -708,7 +708,7 @@ const ROWS = {
         if (id === 'git-install-run' && stub.git) return json(route, stub.git);
       }
       if (p === '/api/launcher/github/repos') return json(route, { repos: stub.repos });
-      if (p === '/api/launcher/clone' && method === 'POST' && stub.clone) return json(route, { ok: true, cloneId: 'clone-1' });
+      if (p === '/api/launcher/clone' && method === 'POST' && stub.clone) { stub.posts += 1; return json(route, { ok: true, cloneId: `clone-${stub.posts}` }); }
       if (p === '/api/launcher/clone/status' && stub.clone) return json(route, stub.clone);
       if (p === '/api/launcher/clone/cancel') return json(route, { ok: true, canceled: true });
       return route.continue();
@@ -779,6 +779,34 @@ const ROWS = {
         await page.getByTestId('clone-go').click();
         await see(page, label, locator, id, 20_000);
       }
+      // "Get the latest version only" is ONE restart: Cancel while it waits starts no clone, and a
+      // double click starts one (review r2).
+      const bigRunning = { state: 'running', progress: { phase: 'receiving', percent: 3 }, sizeKb: 1_600_000, offerShallow: true };
+      const shallowBtn = () => page.getByRole('button', { name: 'Get the latest version only' });
+      stub.clone = bigRunning;
+      await toClone(page);
+      await page.getByTestId('clone-repos').getByText('atlas').click();
+      let before = stub.posts;
+      await page.getByTestId('clone-go').click();
+      await shallowBtn().waitFor({ timeout: 15_000 });
+      await shallowBtn().click();
+      await page.getByTestId('clone-cancel').click();
+      stub.clone = { state: 'error', progress: { phase: 'receiving' }, reason: 'cancelled' };
+      await sleep(2_500);
+      checks.push(['Cancel during a restart starts no clone', stub.posts === before + 1]);
+      stub.clone = bigRunning;
+      await toClone(page);
+      await page.getByTestId('clone-repos').getByText('atlas').click();
+      before = stub.posts;
+      await page.getByTestId('clone-go').click();
+      await shallowBtn().waitFor({ timeout: 15_000 });
+      await shallowBtn().click();
+      await shallowBtn().click({ force: true, timeout: 2_000 }).catch(() => undefined);
+      stub.clone = { state: 'error', progress: { phase: 'receiving' }, reason: 'cancelled' };
+      await sleep(2_500);
+      stub.clone = bigRunning;
+      await sleep(1_500);
+      checks.push(['a double click on the restart starts one clone', stub.posts === before + 2]);
       // A repo already on this Mac under another name: the line names its real folder and Open
       // lands on that registered project (review r1).
       const shopDir = join(m.base, 'Work', 'shop');

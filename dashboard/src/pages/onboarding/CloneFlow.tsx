@@ -84,6 +84,12 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
   const [error, setError] = useState<string | null>(null);
   const stoppedRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
+  // The owner's latest clone action. Every start, restart, Cancel and Back takes a new one; work
+  // begun for an older action never POSTs a clone (review r2: a pending restart started a clone
+  // after Cancel or Back, and a second click started two).
+  const actionRef = useRef(0);
+  const restartingRef = useRef(false);
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     stoppedRef.current = false;
@@ -150,10 +156,13 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
     onBareFolder({ path: result.path, name: result.name, description: selected?.description ?? '', stack: '' });
   }
 
-  async function startClone(repo: string, shallow = false) {
+  async function startClone(repo: string, shallow = false, action = ++actionRef.current) {
+    const current = () => action === actionRef.current && !stoppedRef.current;
+    if (!current()) return;
     setError(null);
     try {
       const { cloneId } = await cloneRepo.mutateAsync({ repo, parent: parentClean, shallow });
+      if (!current()) { void cancelClone(cloneId).catch(() => undefined); return; }
       runIdRef.current = cloneId;
       setRun({ id: cloneId, repo, status: null });
       for (;;) {
@@ -177,10 +186,26 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
   }
 
   function stop() {
+    actionRef.current += 1;
     const id = runIdRef.current;
     runIdRef.current = null;
     if (id) void cancelClone(id).catch(() => undefined);
     setRun(null);
+  }
+
+  /** One restart at a time; Cancel or Back while it waits means no clone starts. */
+  async function restart(repo: string, shallow: boolean) {
+    if (restartingRef.current) return;
+    const action = ++actionRef.current;
+    restartingRef.current = true;
+    setRestarting(true);
+    try {
+      await cancelAndSettle();
+    } finally {
+      restartingRef.current = false;
+      setRestarting(false);
+    }
+    void startClone(repo, shallow, action);
   }
 
   /**
@@ -217,10 +242,11 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
           gitInstalling={gitInstalling}
           gitMissing={gitRun?.status?.gitMissing}
           onCancel={stop}
+          restarting={restarting}
           onRetry={(shallow) => {
             if (run.status?.reason === 'git-missing') void fixRuns.start('git-install', { settleOnBackgroundWait: true });
             // A restart while the clone still runs ("Get the latest version only"): end it first.
-            void cancelAndSettle().then(() => startClone(run.repo, shallow));
+            void restart(run.repo, shallow);
           }}
           onInstallGit={() => { void fixRuns.start('git-install', { settleOnBackgroundWait: true }); void startClone(run.repo); }}
           onPickAnother={() => setRun(null)}

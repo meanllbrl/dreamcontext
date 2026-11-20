@@ -522,13 +522,16 @@ export function createAgentGate(deps: AgentGateDeps) {
   async function run(agent: GateAgent): Promise<boolean> {
     const prior = inflight;
     if (prior && prior.gen === gen) return false; // a live run: a second click is not a restart
-    if (prior) await prior.done;
+    // Claim the gate BEFORE waiting for a reset run to settle, so a second click meanwhile is
+    // ignored like any double click (review r2: two waiters both started a sign-in).
     const mine = ++gen;
     const current = () => gen === mine;
     const put = (next: GateState) => { if (current()) deps.set(next); };
     let finish: () => void = () => undefined;
     inflight = { gen: mine, done: new Promise<void>((r) => { finish = r; }) };
     try {
+      if (prior) await prior.done;
+      if (!current()) return false;
       // No readiness answer yet: wait for it. Read without one, every check counts as missing and
       // a click on a signed-in Mac would open a browser sign-in for nothing (verify 2026-11-20).
       if (!deps.report()) {

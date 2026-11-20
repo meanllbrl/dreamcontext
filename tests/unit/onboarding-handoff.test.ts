@@ -186,6 +186,33 @@ describe('the first-run flow (plan ilk-acilis C1, C2, C5)', () => {
     expect(await second).toBe(true);
     expect(states.at(-1)).toBe('idle');
   });
+
+  it('two clicks while a reset run settles start ONE new sign-in', async () => {
+    const report = signedOut();
+    const releases: Array<() => void> = [];
+    const started: string[] = [];
+    const gate = createAgentGate({
+      report: () => report,
+      start: (fix) => new Promise((resolve) => {
+        started.push(fix);
+        const n = started.length;
+        releases.push(() => resolve({ fix, runId: `r${n}`, phase: n === 1 ? 'error' : 'done', status: null }));
+      }),
+      pick: async () => undefined, set: () => undefined,
+    });
+    const first = gate.run('claude');
+    await new Promise((r) => setTimeout(r, 0));
+    gate.reset();
+    const a = gate.run('claude');
+    const b = gate.run('claude');
+    releases[0]();
+    expect(await first).toBe(false);
+    expect(await b).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started).toEqual(['claude-signin', 'claude-signin']);
+    releases[1]();
+    expect(await a).toBe(true);
+  });
 });
 
 describe('Launcher decisions', () => {

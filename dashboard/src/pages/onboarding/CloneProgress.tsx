@@ -14,6 +14,8 @@ interface Props {
   gitMissing?: 'download-failed' | 'closed';
   onCancel: () => void;
   onRetry: (shallow: boolean) => void;
+  /** A restart is ending the current run: its button waits (one restart at a time). */
+  restarting?: boolean;
   onInstallGit: () => void;
   onPickAnother: () => void;
 }
@@ -23,7 +25,7 @@ interface Props {
  * lines (never a made-up number), the steps, and each way it can end with the one thing to do
  * next. A big repository and a clone that ran out of time offer "Get the latest version only".
  */
-export function CloneProgress({ name, into, status, gitInstalling, gitMissing, onCancel, onRetry, onInstallGit, onPickAnother }: Props) {
+export function CloneProgress({ name, into, status, gitInstalling, gitMissing, onCancel, onRetry, restarting = false, onInstallGit, onPickAnother }: Props) {
   const { t } = useI18n();
   const [details, setDetails] = useState(false);
   const phase = status?.progress.phase ?? 'receiving';
@@ -97,7 +99,7 @@ export function CloneProgress({ name, into, status, gitInstalling, gitMissing, o
       </ol>
       <div className="ob-gate-actions">
         {status?.offerShallow && !waitingGit && (
-          <button type="button" className="ob-btn ob-btn--secondary" onClick={() => onRetry(true)}>{t('clone.fail.shallow')}</button>
+          <button type="button" className="ob-btn ob-btn--secondary" disabled={restarting} aria-busy={restarting} onClick={() => onRetry(true)}>{t('clone.fail.shallow')}</button>
         )}
         <button type="button" className="ob-btn ob-btn--secondary" onClick={onCancel} data-testid="clone-cancel">
           {waitingGit ? t('clone.git.stopWaiting') : t('onboarding.gate.cancel')}
