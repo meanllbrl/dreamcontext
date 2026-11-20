@@ -26,7 +26,7 @@ import { resolveContextRoot } from '../../lib/context-path.js';
 import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../../lib/draw-intent.js';
 import {
   enterHookProject, firstActInSession, firstInSession, fitPromptContext, markShownBlocks, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
-  resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
+  resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync, readStdinSync,
   markSessionRecall, readPrevOwnerTurn, sessionRecall, writePrevOwnerTurn, markSessionWork, sessionWork,
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind, type SessionRecall,
 } from '../../lib/hook-delivery.js';
@@ -270,9 +270,9 @@ export function dispatchModelPin(input: Record<string, unknown>, toolInput: Reco
 }
 
 function readStdin(): Record<string, unknown> | null {
-  if (process.stdin.isTTY) return null;
   try {
-    const raw = readFileSync(0, 'utf-8');
+    const raw = readStdinSync();
+    if (raw === null) return null;
     if (!raw.trim()) return null;
     const parsed = JSON.parse(raw);
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;

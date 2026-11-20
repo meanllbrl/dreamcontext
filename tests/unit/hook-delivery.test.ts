@@ -13,7 +13,7 @@ import {
 } from '../../src/lib/snapshot-budget.js';
 import {
   fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput, takeSessionStartPart,
-  writePromptOverflow, writeSessionStartParts, writeStdoutSync, type PromptBlock,
+  writePromptOverflow, writeSessionStartParts, writeStdoutSync, readStdinSync, type PromptBlock,
 } from '../../src/lib/hook-delivery.js';
 import { HOOK_SPECS, hookCommand } from '../../src/cli/commands/install-skill.js';
 
@@ -291,5 +291,27 @@ describe('writeStdoutSync', () => {
     let calls = 0;
     writeStdoutSync('hello', () => { calls++; throw Object.assign(new Error('EPIPE'), { code: 'EPIPE' }); });
     expect(calls).toBe(1);
+  });
+});
+
+describe('readStdinSync', () => {
+  const eagain = (): never => { throw Object.assign(new Error('EAGAIN'), { code: 'EAGAIN' }); };
+
+  it('reads an input past the 8 KB a non-blocking pipe holds at first (a plain read lost every prompt over ~8.6 KB)', () => {
+    const input = Buffer.from(JSON.stringify({ prompt: 'ö'.repeat(20_000) }));
+    let off = 0;
+    const lateUntil = Date.now() + 40;
+    const text = readStdinSync((buf) => {
+      if (off >= 8192 && off < input.length && Date.now() < lateUntil) eagain();
+      const n = input.copy(buf, 0, off, Math.min(input.length, off + (off < 8192 ? 8192 : buf.length)));
+      off += n;
+      return n;
+    }, () => false);
+    expect(text).toBe(input.toString());
+  });
+
+  it('is null on a terminal and empty on an empty pipe', () => {
+    expect(readStdinSync(() => { throw new Error('must not read'); }, () => true)).toBeNull();
+    expect(readStdinSync(() => 0, () => false)).toBe('');
   });
 });
