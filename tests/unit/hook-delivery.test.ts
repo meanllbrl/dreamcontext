@@ -13,7 +13,7 @@ import {
 } from '../../src/lib/snapshot-budget.js';
 import {
   fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput, takeSessionStartPart,
-  writePromptOverflow, writeSessionStartParts, type PromptBlock,
+  writePromptOverflow, writeSessionStartParts, writeStdoutSync, type PromptBlock,
 } from '../../src/lib/hook-delivery.js';
 import { HOOK_SPECS, hookCommand } from '../../src/cli/commands/install-skill.js';
 
@@ -269,5 +269,27 @@ describe('fitPromptContext', () => {
     expect(out.startsWith('parked message')).toBe(true);
     expect(out).toContain(path);
     expect(readFileSync(path, 'utf-8')).toContain('- line 299 ');
+  });
+});
+
+describe('writeStdoutSync', () => {
+  const eagain = (): never => { throw Object.assign(new Error('EAGAIN'), { code: 'EAGAIN' }); };
+
+  it('waits for a reader that is behind and delivers every byte (a busy retry gave up in microseconds)', () => {
+    const got: Buffer[] = [];
+    const busyUntil = Date.now() + 60;
+    writeStdoutSync('x'.repeat(30_000), (buf, off) => {
+      if (Date.now() < busyUntil) eagain();
+      const end = Math.min(buf.length, off + 8192);
+      got.push(buf.subarray(off, end));
+      return end - off;
+    });
+    expect(Buffer.concat(got).toString()).toBe('x'.repeat(30_000));
+  });
+
+  it('stops at once on an error other than a full pipe', () => {
+    let calls = 0;
+    writeStdoutSync('hello', () => { calls++; throw Object.assign(new Error('EPIPE'), { code: 'EPIPE' }); });
+    expect(calls).toBe(1);
   });
 });
