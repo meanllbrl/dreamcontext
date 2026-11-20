@@ -42,7 +42,9 @@ const FRAMES = {
   // CLI writes it; `cards: false` = no card on stage (the chat alone, as frame E).
   'E-bos': { needs: 1, jobs: 4, done: 3, minis: 0, cards: false, perms: 1, away: true, mock: 'super-ux-denetim/kareler/E-bos.png', sizes: [[1440, 900], [1180, 800]], light: true },
   'I-durum': { needs: 2, jobs: 3, done: 2, minis: 0, chat: 'jobs', mock: 'super-ux-denetim/kareler/I-durum.png', sizes: [[1440, 900]], light: true },
-  'C-soru': { needs: 1, jobs: 3, minis: 0, chat: 'ask', mock: 'super-ux-denetim/kareler/C-soru.png', sizes: [[1440, 900]], light: true },
+  // C: the asking job's card stays off stage: a mounted child with no live claude holds no pending
+  // question, and its card then draws nothing (SuperQuestionCard); off stage the record's text draws.
+  'C-soru': { needs: 1, jobs: 3, minis: 0, chat: 'ask', cards: 'noAsking', mock: 'super-ux-denetim/kareler/C-soru.png', sizes: [[1440, 900]], light: true },
   'H-ajanda': { needs: 1, jobs: 3, minis: 0, chat: 'ask', pad: true, agendaTap: true, mock: 'super-ux-denetim/kareler/H-ajanda.png', sizes: [[1440, 900]], light: true },
   'A-izin': { needs: 1, jobs: 3, minis: 0, perms: 1, allows: true, chat: 'allow', mock: 'super-ux-denetim/kareler/A-izin.png', sizes: [[1440, 900], [1180, 800]], light: true },
   'T3-sonra': { needs: 0, jobs: 2, minis: 0, members: ['sage'], memberDone: 'sage', chat: 'member', mock: 'super-ux-denetim/kareler/T3-sonra.png', sizes: [[1440, 900]], light: true },
@@ -84,7 +86,7 @@ function seed(f) {
   if (f.allows) children[kids[f.needs].id].allows = [{ at: now - 90_000, summary: 'npm run lint' }, { at: now - 60_000, summary: 'git status' }];
   const containers = [
     { id: 'ag', kind: 'agenda', ref: 'agenda', shape: 'square', place: 'float', by: 'super', size: 'large' },
-    ...kids.filter((_, i) => f.cards !== false && rowOf(i) !== 'done').map((k, i) => ({ id: `c${i}`, kind: 'chat', ref: k.id, shape: 'portrait', place: 'float', by: 'super', title: k.title })),
+    ...kids.filter((_, i) => f.cards !== false && rowOf(i) !== 'done' && !(f.cards === 'noAsking' && rowOf(i) === 'asking')).map((k, i) => ({ id: `c${i}`, kind: 'chat', ref: k.id, shape: 'portrait', place: 'float', by: 'super', title: k.title })),
     ...Array.from({ length: f.minis }, (_, i) => ({ id: `m${i}`, kind: 'web', ref: 'docs/panel.html', shape: 'square', place: 'others', by: 'super', title: 'Panel · aylık özet' })),
   ];
   const queue = kids.slice(0, f.needs).map((k, i) => ({ id: `q${i}`, sessionId: k.id, kind: 'question', state: 'escalated', createdAt: now - 1000 * (i + 1), ownerText: 'Yıllık plan fiyatı ne olsun? 990 ₺, 1.190 ₺ ya da 790 ₺' }));
