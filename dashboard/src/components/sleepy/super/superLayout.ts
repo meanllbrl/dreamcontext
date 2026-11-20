@@ -2171,7 +2171,7 @@ export function presentWidth(content: PresentContent, bodyH: number, tabs: numbe
       : content.kind === 'albumdesk' ? W.ALBUM_DESK_W
         : content.kind === 'pdf' ? Math.round(Math.max(0, bodyH - W.PDF_PAD_H) * content.aspect) + W.PDF_CHROME_W
           : content.kind === 'phone' ? Math.round(Math.max(0, bodyH - W.PHONE_PAD_H) * content.aspect) + W.PHONE_CHROME_W
-            : content.width ?? W.DESK_W;
+            : content.kind === 'desk' ? content.width ?? W.DESK_W : W.DESK_W;
   const floor = W.TABS_BASE + Math.max(1, tabs) * W.TAB_W;
   return Math.max(0, Math.min(Math.max(want, floor), room));
 }

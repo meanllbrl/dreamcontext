@@ -589,9 +589,11 @@ export { RECONNECT_CHIP_DELAY_MS, reconnectChipDue } from './reconnectChip';
 /** Floats over the transcript (`.chat-transcript` is its positioning context) and takes no
  *  layout: as a flex child above the transcript it shrank the viewport by its own height on
  *  every drop, and the chat jumped with each reconnect (2026-10-23). */
-export function ReconnectingChip() {
+/** `inRow`: in the composer's bottom row (in the flow, beside the `+`), else floated over the
+ *  transcript's top edge (a pane with no composer). */
+export function ReconnectingChip({ inRow = false }: { inRow?: boolean } = {}) {
   return (
-    <div className="chat-banner-reconnecting" role="status">
+    <div className={inRow ? 'chat-banner-reconnecting chat-banner-reconnecting--row' : 'chat-banner-reconnecting'} role="status">
       <span className="chat-banner-reconnecting-dot" aria-hidden />
       Reconnecting…
     </div>

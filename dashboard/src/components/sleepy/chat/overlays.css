@@ -365,6 +365,14 @@
   animation: var(--dc-motion-status-name, chat-pulse-soft) 1.1s ease-in-out infinite;
   animation-play-state: var(--dc-motion-play, running);
 }
+/* In the composer's bottom row: in its flow, so it never covers the transcript (the row's
+   height does not change, the chip is shorter than its buttons). */
+.chat-banner-reconnecting--row {
+  position: static;
+  transform: none;
+  flex: none;
+  white-space: nowrap;
+}
 @keyframes chat-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .chat-banner-reconnecting-dot { animation: none; } }
 

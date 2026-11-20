@@ -615,7 +615,7 @@ function AutomationQuestionComposerLock() {
  */
 /** "Reconnecting…" only once the session has been connecting for {@link RECONNECT_CHIP_DELAY_MS}:
  *  a drop that heals in a second never flashes it. A flap back to open hides it at once. */
-function ReconnectingChipWhenDue({ connecting, claudeId }: { connecting: boolean; claudeId: string }) {
+function ReconnectingChipWhenDue({ connecting, claudeId, inRow = false }: { connecting: boolean; claudeId: string; inRow?: boolean }) {
   const [due, setDue] = useState(false);
   useEffect(() => {
     if (!connecting) { setDue(false); return; }
@@ -630,7 +630,7 @@ function ReconnectingChipWhenDue({ connecting, claudeId }: { connecting: boolean
     wasShown.current = shown;
     recordPhoneEvent('chip', claudeId, { reason: shown ? 'shown' : 'hidden' });
   }, [shown, claudeId]);
-  return shown ? <ReconnectingChip /> : null;
+  return shown ? <ReconnectingChip inRow={inRow} /> : null;
 }
 
 function SuperReadOnlyLine({ finished }: { finished: boolean }) {
@@ -3104,7 +3104,9 @@ export function ChatPane({
       <BrowserHostProvider value={browserHost}>
       <SelectionScope handler={selectionHandler}>
       <div className={superView ? 'chat-transcript chat-transcript--super' : 'chat-transcript'}>
-        <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
+        {/* The connection's state stands in the composer's bottom row when there is a composer:
+            floated over the transcript it covered the first thing in it (a heading, a message). */}
+        {!composerDrawn && <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />}
                 <div
           className="chat-scroll"
           ref={scrollRef}
@@ -3505,7 +3507,10 @@ export function ChatPane({
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
-          checkoutChip={bare ? undefined : <CheckoutChips shelf={shelf} onOpenUrl={openExternalUrl} />}
+          checkoutChip={<>
+            <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} inRow />
+            {bare ? null : <CheckoutChips shelf={shelf} onOpenUrl={openExternalUrl} />}
+          </>}
           // The Super view: a ↩ drops a reference chip into the text (several per message); a
           // reply chip's "Go to message" lands on the message it names.
           superView={superView}
