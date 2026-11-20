@@ -1146,7 +1146,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // A child's name in an event line: that child side by side.
   const showChildRef = useRef(actions.onSideBySide);
   showChildRef.current = actions.onSideBySide;
+  // The away screen's "Open the stage" (super-v3 D10): the agenda open, the cards floating
+  // around the chat (a presentation is left the way its own exit leaves it).
+  const openStage = () => onLayout(viewMode === 'present' ? { agenda: 'open', ...exitPatch() } : { agenda: 'open', view: { mode: 'float' } });
+  const openStageRef = useRef(openStage);
+  openStageRef.current = openStage;
   useEffect(() => onOpenJobRow((row) => {
+    if (row === 'stage') { openStageRef.current(); return; }
     if (!row.startsWith('c:')) return;
     const c = stateRef.current.containers.find((k) => k.kind === 'chat' && k.ref === row.slice(2));
     if (c) showChildRef.current(c.id);

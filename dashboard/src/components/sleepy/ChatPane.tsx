@@ -86,6 +86,7 @@ import { chatAgentFor } from '../../lib/chatAgentBinding';
 import type { SuperId, SuperQueueItem } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { MemberWaitCard, SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
+import { SuperAwayTiles } from './super/SuperAwayTiles';
 import { OwnerCardSlot } from './super/OwnerCardSlot';
 import { anchorOwnerCards, NOTHING_TIMED, ownerCardItemsOf, placedByTime, placeOwnerCards, tailHolds } from './super/cardPlacement';
 import { SuperEventLine } from './super/SuperEventLine';
@@ -3258,7 +3259,8 @@ export function ChatPane({
                 onOpenFile={handleOpenFile}
               />
             )}
-            {isEmpty && !bare && <EmptyState />}
+            {/* The Super's empty screen with jobs to tell him about (super-v3 D10): the away tiles. */}
+            {isEmpty && !bare && (session.mode === 'super' && !session.superMirror ? <SuperAwayTiles session={session} fallback={<EmptyState />} /> : <EmptyState />)}
             {/* The window's ceiling, made visible and operable. Scrolling to the top does
                 this for you (see the scroll handler); the button is what makes the omission
                 honest for a reader who hasn't scrolled yet. */}
