@@ -333,6 +333,13 @@ function heroTitled(page, title) {
     .first().waitFor({ timeout: 60_000 }).then(() => true, () => false);
 }
 
+function unregisterVault(home, name) {
+  const r = spawnSync(process.execPath, [DIST, 'vaults', 'remove', name], {
+    env: { HOME: home, PATH: '/bin:/usr/bin', DREAMCONTEXT_EMBED_AUTO: '0' }, encoding: 'utf-8',
+  });
+  if (r.status !== 0) throw new Error(`vaults remove ${name} failed: ${r.stderr || r.stdout}`);
+}
+
 function registerVault(home, name, dir) {
   const r = spawnSync(process.execPath, [DIST, 'vaults', 'add', name, dir], {
     env: { HOME: home, PATH: '/bin:/usr/bin', DREAMCONTEXT_EMBED_AUTO: '0' }, encoding: 'utf-8',
@@ -679,9 +686,10 @@ const ROWS = {
     const now = Date.now();
     const stub = { connected: false, probe: { login: 'verify-user', scopes: ['repo', 'read:org', 'gist'] }, signin: null, git: null, repos: [], clone: null };
     const REPOS = [
-      { fullName: 'verify-user/orbit', private: true, description: 'Habit tracker', pushedAt: new Date(now - 3_600_000).toISOString(), sizeKb: 2400, onThisMac: false },
-      { fullName: 'verify-user/atlas', private: false, description: 'Docs site', pushedAt: new Date(now - 86_400_000).toISOString(), sizeKb: 1_600_000, onThisMac: false },
-      { fullName: 'acme/storefront', private: true, description: 'Shop', pushedAt: new Date(now - 7 * 86_400_000).toISOString(), sizeKb: 900, onThisMac: true },
+      { fullName: 'verify-user/orbit', private: true, description: 'Habit tracker', pushedAt: new Date(now - 3_600_000).toISOString(), sizeKb: 2400 },
+      { fullName: 'verify-user/atlas', private: false, description: 'Docs site', pushedAt: new Date(now - 86_400_000).toISOString(), sizeKb: 1_600_000 },
+      // On this Mac under ANOTHER name and folder: Open must land there, never on 'storefront'.
+      { fullName: 'acme/storefront', private: true, description: 'Shop', pushedAt: new Date(now - 7 * 86_400_000).toISOString(), sizeKb: 900, onThisMac: { vault: 'shop-local', path: join(m.base, 'Work', 'shop') } },
     ];
     const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     await ctx.route('**/api/**', (route) => {
@@ -771,6 +779,20 @@ const ROWS = {
         await page.getByTestId('clone-go').click();
         await see(page, label, locator, id, 20_000);
       }
+      // A repo already on this Mac under another name: the line names its real folder and Open
+      // lands on that registered project (review r1).
+      const shopDir = join(m.base, 'Work', 'shop');
+      await toClone(page);
+      await page.getByTestId('clone-repos').getByText('storefront').click();
+      const realPath = await page.locator('.ob-repos-foot').getByText('Work/shop').waitFor({ timeout: 10_000 }).then(() => true, () => false);
+      checks.push(['On this Mac names the real folder', realPath]);
+      mkdirSync(join(shopDir, '_dream_context'), { recursive: true });
+      registerVault(m.home, 'shop-local', shopDir);
+      await page.getByTestId('clone-open').click();
+      const landedShop = await heroTitled(page, 'What should we do in shop-local?');
+      await shots(page, landedShop ? 'clone-onmac-landed' : 'clone-onmac-FAILED');
+      checks.push(['On this Mac opens the registered project', landedShop]);
+      unregisterVault(m.home, 'shop-local');
       // A repo that already has a brain: it lands like any project.
       const brainDir = join(m.base, 'Projects', 'storefront');
       stub.clone = { state: 'done', progress: { phase: 'done' }, result: { path: brainDir, name: 'storefront', vaultName: 'storefront', hasContext: true } };

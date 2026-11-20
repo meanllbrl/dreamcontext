@@ -3908,7 +3908,8 @@ export async function handleSuperVerb(req: IncomingMessage, res: ServerResponse,
 }
 
 /** The verbs that start work, refused in the first read's result turn (C16). Exported for tests. */
-export const FIRST_READ_BARRED_VERBS = new Set<SuperVerb>(['delegate', 'pool-add', 'team-ask', 'schedule']);
+// `resume` and `send` restart or feed a child: a second read, the work C16 keeps for his answer.
+export const FIRST_READ_BARRED_VERBS = new Set<SuperVerb>(['delegate', 'pool-add', 'team-ask', 'schedule', 'resume', 'send']);
 
 /** The verbs that change what the owner's window shows: each reply names `window`. */
 const SCREEN_VERBS = new Set<SuperVerb>(['open', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'shape']);
@@ -4615,7 +4616,10 @@ export async function handleSuperFirstReadGet(req: IncomingMessage, res: ServerR
   const root = dirname(contextRoot);
   let pending = false;
   try { pending = firstReadDeps.eligible(root); } catch { pending = false; }
-  sendJson(res, 200, { pending });
+  // `starting`: a start is in flight (the lock), its child not recorded yet. A window that
+  // showed "Reading started" for a pending start falls back to the offer only when neither a
+  // claim nor a start in flight remains (review r1: a late start that never opened).
+  sendJson(res, 200, { pending, starting: firstReadLockHeld(contextRoot) });
 }
 
 export async function handleSuperFirstReadPost(req: IncomingMessage, res: ServerResponse, _params: Params, contextRoot: string): Promise<void> {

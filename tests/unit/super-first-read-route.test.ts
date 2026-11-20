@@ -28,7 +28,7 @@ import {
 } from '../../src/server/routes/super.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { _setOpenLogHomeForTests } from '../../src/lib/window-open-log.js';
-import { firstReadLockHeld, releaseFirstReadLock } from '../../src/lib/super/delegating.js';
+import { firstReadLockHeld, releaseFirstReadLock, takeFirstReadLock } from '../../src/lib/super/delegating.js';
 import { readFirstReadClaim, FIRST_READ_PROMPT } from '../../src/lib/first-read.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 
@@ -204,11 +204,17 @@ describe('first-read routes (S1)', () => {
     return out;
   }
 
-  it('GET answers only {pending} to the owner window with the key', async () => {
+  it('GET answers only {pending, starting} to the owner window with the key', async () => {
     const out = res();
     await handleSuperFirstReadGet(req({ [OWNER_KEY_HEADER]: KEY }), out, {}, root);
     expect(out.status).toBe(200);
-    expect(out.json).toEqual({ pending: true });
+    expect(out.json).toEqual({ pending: true, starting: false });
+    // A start in flight (the lock): the window keeps "Reading started" instead of re-offering.
+    expect(takeFirstReadLock(root, 60_000)).toBe(true);
+    const held = res();
+    await handleSuperFirstReadGet(req({ [OWNER_KEY_HEADER]: KEY }), held, {}, root);
+    expect(held.json).toEqual({ pending: true, starting: true });
+    releaseFirstReadLock(root);
   });
 
   it('refuses no key (a local curl), a cross-site Origin and another loopback port, for GET and POST', async () => {

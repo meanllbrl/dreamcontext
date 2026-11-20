@@ -94,8 +94,8 @@ describe('on this Mac (origins read from .git/config, never git)', () => {
   it('maps each registered origin to its project once', () => {
     const a = project('https://github.com/acme/api.git');
     const b = project('https://github.com/ACME/api');
-    const keys = registeredOriginKeys([a, b]);
-    expect(keys.get('acme/api')).toBe(a);
+    const keys = registeredOriginKeys([{ name: 'api-2', path: a }, { name: 'api', path: b }]);
+    expect(keys.get('acme/api')).toEqual({ vault: 'api-2', path: a });
     expect(keys.size).toBe(1);
   });
 });

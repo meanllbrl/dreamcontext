@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -9,6 +9,7 @@ import {
   handleLauncherClone,
   handleLauncherCloneStatus,
   handleLauncherCloneCancel,
+  setCloneJobDepsForTests,
 } from '../../src/server/routes/launcher.js';
 import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 
@@ -193,5 +194,66 @@ describe('launcher clone routes — /clone/status and /clone/cancel', () => {
     await handleLauncherCloneCancel(makeReq('POST', '/api/launcher/clone/cancel', { id: 'ghost' }), res, {}, null);
     expect(status()).toBe(200);
     expect(body()).toEqual({ ok: true, canceled: false });
+  });
+});
+
+// ─── The clone job deletes only a folder it created (review r1) ──────────────────
+
+describe('launcher clone job — cleanup touches only its own folder', () => {
+  afterEach(() => setCloneJobDepsForTests(null));
+
+  async function startJob(): Promise<string> {
+    process.env.GH_TOKEN = 'ghp_test';
+    const { res, status, body } = makeRes();
+    await handleLauncherClone(makeReq('POST', '/api/launcher/clone', { repo: 'acme/api', parent: base }), res, {}, null);
+    expect(status()).toBe(200);
+    return body().cloneId as string;
+  }
+  async function statusOf(id: string): Promise<any> {
+    const { res, body } = makeRes();
+    await handleLauncherCloneStatus(makeReq('GET', `/api/launcher/clone/status?id=${id}`), res, {}, null);
+    return body();
+  }
+  async function ended(id: string): Promise<any> {
+    for (let i = 0; i < 200; i++) {
+      const s = await statusOf(id);
+      if (s.state !== 'running') return s;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error('the clone job never ended');
+  }
+
+  it('a folder that appears during the Git wait is left alone and git never runs', async () => {
+    let git = false;
+    let cloned = 0;
+    setCloneJobDepsForTests({
+      gitAvailable: () => git,
+      sleep: () => new Promise((r) => setTimeout(r, 2)),
+      repoSizeKb: async () => null,
+      freeBytesAt: async () => null,
+      clone: async () => { cloned += 1; throw new Error('must not run'); },
+    });
+    const id = await startJob();
+    const dest = join(base, 'api');
+    mkdirSync(dest, { recursive: true });
+    writeFileSync(join(dest, 'mine.txt'), 'the owner made this');
+    git = true;
+    const s = await ended(id);
+    expect(s.state).toBe('error');
+    expect(cloned).toBe(0);
+    expect(readFileSync(join(dest, 'mine.txt'), 'utf-8')).toBe('the owner made this');
+  });
+
+  it('a clone that fails after creating its folder removes that folder', async () => {
+    setCloneJobDepsForTests({
+      gitAvailable: () => true,
+      repoSizeKb: async () => null,
+      freeBytesAt: async () => null,
+      clone: async ({ plan }) => { mkdirSync(plan.dest, { recursive: true }); throw new Error('network dropped'); },
+    });
+    const id = await startJob();
+    const s = await ended(id);
+    expect(s.state).toBe('error');
+    expect(existsSync(join(base, 'api'))).toBe(false);
   });
 });

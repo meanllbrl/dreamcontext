@@ -102,6 +102,25 @@ describe('handleLauncherDetect', () => {
     expect(JSON.stringify(out.body)).toMatch(/does not exist/i);
   });
 
+  it('names the registered project of a folder already registered under another name', async () => {
+    const home = mkTmp('dc-detect-home');
+    const folder = join(mkTmp(), 'shop');
+    mkdirSync(join(folder, '_dream_context'), { recursive: true });
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'shop-local', path: folder }] }));
+    const prev = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const out = await detect(folder);
+      expect(out.body.registeredAs).toBe('shop-local');
+      const other = join(mkTmp(), 'other');
+      mkdirSync(other, { recursive: true });
+      expect((await detect(other)).body.registeredAs).toBeUndefined();
+    } finally {
+      process.env.HOME = prev;
+    }
+  });
+
   it('rejects a relative path', async () => {
     const out = await detect('relative/path');
     expect(out.status).toBe(400);

@@ -170,6 +170,8 @@ export interface FolderProbe {
   /** Documents the initializer can read in. */
   docs?: { count: number; folders: string[] };
   writable?: boolean;
+  /** The folder is already a registered project: its name (land there, register nothing). */
+  registeredAs?: string;
 }
 
 /**
@@ -192,8 +194,9 @@ export interface GithubRepoSummary {
   pushedAt?: string;
   /** GitHub's size of the repo, in KB (C10). */
   sizeKb?: number;
-  /** A registered project on this Mac has this repo as its origin: open it, no second copy. */
-  onThisMac?: boolean;
+  /** A registered project on this Mac has this repo as its origin: its project name and folder
+   *  (Open lands on that project, never on a name guessed from the repo). */
+  onThisMac?: { vault: string; path: string };
 }
 
 /**

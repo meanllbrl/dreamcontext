@@ -41,6 +41,8 @@ interface Props {
 }
 
 const POLL_MS = 700;
+/** How long a restart waits for the cancelled clone to end before it plans again. */
+const SETTLE_MS = 15_000;
 
 
 
@@ -164,7 +166,11 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
         if (status.state !== 'running') { runIdRef.current = null; return; }
       }
     } catch (err) {
+      // Nobody follows the run any more: stop it on the server too, or it clones on unseen and
+      // the next try lands in "<name>-2" (review r1).
+      const orphan = runIdRef.current;
       runIdRef.current = null;
+      if (orphan) void cancelClone(orphan).catch(() => undefined);
       setRun(null);
       setError(err instanceof RequestError ? err.message : err instanceof Error ? err.message : String(err));
     }
@@ -175,6 +181,23 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
     runIdRef.current = null;
     if (id) void cancelClone(id).catch(() => undefined);
     setRun(null);
+  }
+
+  /**
+   * Cancel the run in flight and wait until the server has ended it (its half folder is gone by
+   * then), so a restart plans the SAME folder instead of "<name>-2" (review r1).
+   */
+  async function cancelAndSettle(): Promise<void> {
+    const id = runIdRef.current;
+    runIdRef.current = null;
+    if (!id) return;
+    await cancelClone(id).catch(() => undefined);
+    const until = Date.now() + SETTLE_MS;
+    while (Date.now() < until) {
+      const status = await getCloneStatus(id).catch(() => null);
+      if (!status || status.state !== 'running') return;
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
   }
 
   const back = (
@@ -196,7 +219,8 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
           onCancel={stop}
           onRetry={(shallow) => {
             if (run.status?.reason === 'git-missing') void fixRuns.start('git-install', { settleOnBackgroundWait: true });
-            void startClone(run.repo, shallow);
+            // A restart while the clone still runs ("Get the latest version only"): end it first.
+            void cancelAndSettle().then(() => startClone(run.repo, shallow));
           }}
           onInstallGit={() => { void fixRuns.start('git-install', { settleOnBackgroundWait: true }); void startClone(run.repo); }}
           onPickAnother={() => setRun(null)}
@@ -252,7 +276,9 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
   const login = authStatus?.login ?? '';
   const offline = repos.isError && !(repos.error instanceof RequestError && repos.error.status < 500);
   const target = selected ? homeShort(`${parentClean}/${folderName}`, home) : '';
-  const onThisMacAt = selected?.onThisMac ? homeShort(`${parentClean}/${folderName}`, home) : null;
+  // Where the copy on this Mac really is (the server read it from the registry), never a path
+  // built from the repo name.
+  const onThisMacAt = selected?.onThisMac ? homeShort(selected.onThisMac.path, home) : null;
   return (
     <div className="ob-panel-body ob-open">
       {back}
@@ -289,18 +315,21 @@ export function CloneFlow({ defaultParent, home, onBack, onExistingProject, onBa
               const on = selected?.fullName === r.fullName;
               const big = (r.sizeKb ?? 0) * 1024 > 1e9;
               return (
-                <li key={r.fullName} className={`ob-repo${on ? ' ob-repo--selected' : ''}`} onClick={() => setSelected(r)}>
-                  <span className="ob-repo-avatar" aria-hidden="true">{(owner ?? '?').slice(0, 1).toUpperCase()}</span>
-                  <span className="ob-repo-text">
-                    <span className="ob-repo-name"><span className="ob-repo-owner">{owner} /</span> {name}
-                      {r.private && <span className="ob-badge">{t('clone.pick.private')}</span>}
-                      {r.onThisMac && <span className="ob-badge ob-badge--ok">{t('clone.pick.onThisMac')}</span>}
+                <li key={r.fullName} className={`ob-repo${on ? ' ob-repo--selected' : ''}`}>
+                  {/* The row's select is a real button: Tab reaches it, Enter or Space picks it. */}
+                  <button type="button" className="ob-repo-pick" aria-pressed={on} onClick={() => setSelected(r)}>
+                    <span className="ob-repo-avatar" aria-hidden="true">{(owner ?? '?').slice(0, 1).toUpperCase()}</span>
+                    <span className="ob-repo-text">
+                      <span className="ob-repo-name"><span className="ob-repo-owner">{owner} /</span> {name}
+                        {r.private && <span className="ob-badge">{t('clone.pick.private')}</span>}
+                        {r.onThisMac && <span className="ob-badge ob-badge--ok">{t('clone.pick.onThisMac')}</span>}
+                      </span>
+                      <span className="ob-repo-desc">{[r.description, since(r.pushedAt, t), big ? sizeLabel((r.sizeKb ?? 0) * 1024) : ''].filter(Boolean).join(' · ')}</span>
                     </span>
-                    <span className="ob-repo-desc">{[r.description, since(r.pushedAt, t), big ? sizeLabel((r.sizeKb ?? 0) * 1024) : ''].filter(Boolean).join(' · ')}</span>
-                  </span>
+                  </button>
                   {on && (r.onThisMac
-                    ? <button type="button" className="ob-btn ob-btn--secondary ob-btn--sm" onClick={(e) => { e.stopPropagation(); onExistingProject(name); }}>{t('clone.pick.open')}</button>
-                    : <button type="button" className="ob-btn ob-btn--primary ob-btn--sm" onClick={(e) => { e.stopPropagation(); void startClone(r.fullName); }} data-testid="clone-go">{t('clone.pick.clone')}</button>)}
+                    ? <button type="button" className="ob-btn ob-btn--secondary ob-btn--sm" onClick={() => onExistingProject(r.onThisMac!.vault)} data-testid="clone-open">{t('clone.pick.open')}</button>
+                    : <button type="button" className="ob-btn ob-btn--primary ob-btn--sm" onClick={() => void startClone(r.fullName)} data-testid="clone-go">{t('clone.pick.clone')}</button>)}
                 </li>
               );
             })}

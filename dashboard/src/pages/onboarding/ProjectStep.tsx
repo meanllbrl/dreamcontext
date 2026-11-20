@@ -77,15 +77,24 @@ export function ProjectStep({ report: _report, onBusyChange, onLand }: Props) {
     try {
       const probe = await probeFolder(path.normalize('NFC'));
       const at = probe.path ?? path;
-      if (probe.hasContext) {
-        try {
-          await register.mutateAsync({ name: probe.name, path: at });
-        } catch (regErr) {
-          const msg = regErr instanceof Error ? regErr.message : String(regErr);
-          if (!/already registered/i.test(msg)) throw regErr;
-        }
-        onLand(probe.name);
+      if (probe.registeredAs) {
+        onLand(probe.registeredAs);
         return;
+      }
+      if (probe.hasContext) {
+        // A brain not registered yet. Its folder name may already name ANOTHER project: register
+        // it under the next free name instead of landing on that other one (review r1).
+        for (const candidate of [probe.name, ...[2, 3, 4, 5, 6, 7, 8, 9].map((n) => `${probe.name}-${n}`)]) {
+          try {
+            await register.mutateAsync({ name: candidate, path: at });
+            onLand(candidate);
+            return;
+          } catch (regErr) {
+            const msg = regErr instanceof Error ? regErr.message : String(regErr);
+            if (!/named .* already registered/i.test(msg)) throw regErr;
+          }
+        }
+        throw new Error(t('onboarding.project.nameTaken'));
       }
       const payload: ScaffoldPayload = {
         mode: 'existing',

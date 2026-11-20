@@ -297,6 +297,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/super/seen': deny(SUPER),
   'POST /api/super/owed/drop': deny(SUPER),
   'POST /api/super/pad': deny(SUPER),
+  'GET /api/super/first-read': deny(SUPER),
+  'POST /api/super/first-read': deny(SUPER),
   'POST /api/super/pad/add': deny(SUPER),
   'POST /api/super/pad/remove': deny(SUPER),
   // The Super never reads past days through it: it has `super state`.
@@ -402,6 +404,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/onboarding/readiness': deny(ONBOARDING),
   'POST /api/onboarding/fix': deny(ONBOARDING),
   'POST /api/onboarding/fix/cancel': deny(ONBOARDING),
+  'POST /api/onboarding/agents': deny(ONBOARDING),
+  'GET /api/onboarding/github-probe': deny(ONBOARDING),
   'POST /api/agent/prompt': filtered(`${CHAT}: hands an opening prompt to a new chat (the body's vault is checked with isMacExposed)`),
   // A photo or any file from the phone (task hands-free-phone-shows-every-picture…, any type since
   // 2026-10-27): an image is decided by its bytes and named by the server; another file keeps its

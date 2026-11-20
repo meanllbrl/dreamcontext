@@ -95,6 +95,17 @@ function writeRegistry(filePath: string, registry: VaultRegistry): void {
  * Throws `VaultError` on any validation failure.
  * Returns the registered `Vault` on success.
  */
+/**
+ * The registered vault whose folder is `dirPath` (same resolved or real path), the one test
+ * `addVault` refuses a second registration by. A caller that finds one lands on ITS name.
+ */
+export function vaultAtPath(dirPath: string, vaults: readonly Vault[] = listVaults()): Vault | undefined {
+  const realOf = (x: string): string => { try { return realPath(x); } catch { return resolve(x); } };
+  const resolved = resolve(dirPath);
+  const real = realOf(resolved);
+  return vaults.find((v) => resolve(v.path) === resolved || realOf(v.path) === real);
+}
+
 export function addVault(name: string, dirPath: string, home?: string): Vault {
   const resolved = resolve(dirPath);
 
@@ -125,9 +136,7 @@ export function addVault(name: string, dirPath: string, home?: string): Vault {
   }
 
   // Duplicate path check (compare resolved paths)
-  const realOf = (x: string): string => { try { return realPath(x); } catch { return resolve(x); } };
-  const realNew = realOf(resolved);
-  if (existing.some((v) => resolve(v.path) === resolved || realOf(v.path) === realNew)) {
+  if (vaultAtPath(resolved, existing)) {
     throw new VaultError(`Path is already registered: ${resolved}`);
   }
 

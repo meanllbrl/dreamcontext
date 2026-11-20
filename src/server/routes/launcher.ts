@@ -2,7 +2,7 @@ import { reportGitHubAuthOutcome } from '../../lib/git-sync/auth-store.js';
 import { githubErrorPayload } from '../../lib/git-sync/failure.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -10,6 +10,7 @@ import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { discoverVaultsAsync } from '../../lib/vault-discovery.js';
 import {
   addVault,
+  vaultAtPath,
   listVaults,
   removeVault,
   resolveVaultContextRoot,
@@ -548,6 +549,9 @@ export async function handleLauncherDetect(
     isGitRepo: folder.isGitRepo,
     docs: folder.docs,
     writable: folder.writable,
+    // Already a project here: its registered name (it may differ from the folder's), so the
+    // window lands on THAT project, never on a name guessed from the folder.
+    ...(() => { const v = vaultAtPath(folder.path); return v ? { registeredAs: v.name } : {}; })(),
   });
 }
 
@@ -614,7 +618,7 @@ export async function handleLauncherGithubRepos(
   const query = url.searchParams.get('q') ?? '';
   try {
     // The registered projects' origins, read once for this list (never per repo, never git).
-    const onThisMac = registeredOriginKeys(listVaults().map((v) => v.path));
+    const onThisMac = registeredOriginKeys(listVaults());
     const repos = await listGitHubRepos({ token: token.token, query, onThisMac });
     reportGitHubAuthOutcome({ source: token.source, fingerprint: token.fingerprint, kind: 'ok' });
     sendJson(res, 200, { repos });
@@ -759,10 +763,20 @@ const CLONE_FAIL_TEXT: Record<CloneFailReason, string> = {
   unknown: 'Failed to clone the repository.',
 };
 
+/** A dangling link answers false to existsSync; it still occupies the name. */
+function isLink(p: string): boolean {
+  try { return lstatSync(p).isSymbolicLink(); } catch { return false; }
+}
+
 /** Run one planned clone to its end: wait for Git, clone, register (a repo with a brain). */
 async function runCloneJob(run: CloneRun, plan: ClonePlan, token: string): Promise<void> {
   const d = cloneJobDeps;
   let clonedPath: string | undefined;
+  // True only once this job saw `plan.dest` absent right before git ran: the catch may delete
+  // the folder only then. Anything else there (a project made during the Git wait, a Finder
+  // folder) is the user's, and a destructive step never touches it (review r1).
+  let ownsDest = false;
+  let registeredAs: string | undefined;
   const fail = (reason: CloneFailReason, detail?: string) => {
     run.state = 'error';
     run.reason = reason;
@@ -783,6 +797,11 @@ async function runCloneJob(run: CloneRun, plan: ClonePlan, token: string): Promi
       if (stop || run.canceled) { fail('cancelled'); return; }
       run.cancel = undefined;
     }
+    if (existsSync(plan.dest) || isLink(plan.dest)) {
+      fail('unknown', `A folder named ${basename(plan.dest)} appeared there while the clone waited. Pick another folder.`);
+      return;
+    }
+    ownsDest = true;
     run.progress = { phase: 'receiving' };
     const cloned = await d.clone({
       plan,
@@ -801,6 +820,7 @@ async function runCloneJob(run: CloneRun, plan: ClonePlan, token: string): Promi
       const had = hadFiles(cloned.path);
       const countBefore = listVaults().length;
       result.vaultName = registerClonedVault(cloned.name, cloned.path);
+      registeredAs = result.vaultName;
       recordRegistration(cloned.path, had, countBefore);
       result.cli = await d.ensureCli();
     }
@@ -818,9 +838,15 @@ async function runCloneJob(run: CloneRun, plan: ClonePlan, token: string): Promi
     run.result = result;
     run.state = 'done';
   } catch (err) {
-    // A canceled or failed clone leaves no half folder (git cleans up on TERM; this is the net).
-    const half = clonedPath ?? plan.dest;
-    try { rmSync(half, { recursive: true, force: true }); } catch { /* best-effort */ }
+    // A canceled or failed clone leaves no half folder (git cleans up on TERM; this is the net),
+    // and no registration pointing at it. Only a folder this job created is removed.
+    if (registeredAs) {
+      try { removeVault(registeredAs); } catch { /* best-effort */ }
+      clearPending(clonedPath ?? plan.dest);
+    }
+    if (ownsDest) {
+      try { rmSync(clonedPath ?? plan.dest, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
     if (run.canceled) { fail('cancelled'); return; }
     if (err instanceof CloneError) {
       fail(cloneFailReason(err.end, err.stderr ?? err.message));

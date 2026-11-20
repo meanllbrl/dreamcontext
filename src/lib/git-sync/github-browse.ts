@@ -43,9 +43,15 @@ export interface GitHubRepoSummary {
   pushedAt?: string;
   /** GitHub's `size` (KB): the free-space check and the "about 2.3 GB" line. */
   sizeKb?: number;
-  /** A registered project on this Mac has this repo as its `origin` (no second copy). */
-  onThisMac?: boolean;
+  /**
+   * A registered project on this Mac has this repo as its `origin` (no second copy): its project
+   * name and folder, so Open lands on THAT project and the line says where it really is.
+   */
+  onThisMac?: OnThisMac;
 }
+
+/** The registered project that already holds a repo. */
+export interface OnThisMac { vault: string; path: string }
 
 /** Raw GitHub repo shape (only the fields we read). */
 interface GitHubApiRepo {
@@ -86,16 +92,16 @@ export function readOriginUrlFromConfig(projectPath: string): string | null {
 }
 
 /** The registered projects' origins, as keys: read once per list request. */
-export function registeredOriginKeys(paths: readonly string[]): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const p of paths) {
-    const key = originKey(readOriginUrlFromConfig(p));
-    if (key && !out.has(key)) out.set(key, p);
+export function registeredOriginKeys(vaults: ReadonlyArray<{ name: string; path: string }>): Map<string, OnThisMac> {
+  const out = new Map<string, OnThisMac>();
+  for (const v of vaults) {
+    const key = originKey(readOriginUrlFromConfig(v.path));
+    if (key && !out.has(key)) out.set(key, { vault: v.name, path: v.path });
   }
   return out;
 }
 
-function toSummary(r: GitHubApiRepo, onMac?: ReadonlyMap<string, string>): GitHubRepoSummary {
+function toSummary(r: GitHubApiRepo, onMac?: ReadonlyMap<string, OnThisMac>): GitHubRepoSummary {
   const key = originKey(r.full_name);
   return {
     fullName: r.full_name,
@@ -104,7 +110,7 @@ function toSummary(r: GitHubApiRepo, onMac?: ReadonlyMap<string, string>): GitHu
     defaultBranch: r.default_branch,
     pushedAt: r.pushed_at,
     ...(typeof r.size === 'number' && Number.isFinite(r.size) && r.size >= 0 ? { sizeKb: r.size } : {}),
-    ...(onMac && key && onMac.has(key) ? { onThisMac: true } : {}),
+    ...(onMac && key && onMac.has(key) ? { onThisMac: { ...onMac.get(key)! } } : {}),
   };
 }
 
@@ -125,7 +131,7 @@ export interface ListGitHubReposOptions {
   /** Injectable adapter — tests inject a fake `fetchImpl`. */
   adapter?: ApiAdapter;
   /** `owner/repo` keys of the registered projects' origins ({@link registeredOriginKeys}). */
-  onThisMac?: ReadonlyMap<string, string>;
+  onThisMac?: ReadonlyMap<string, OnThisMac>;
 }
 
 /**

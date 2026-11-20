@@ -485,11 +485,18 @@
 .ob-repos-empty { padding: var(--space-6) var(--space-4); text-align: center; }
 .ob-repo-list { list-style: none; margin: 0; padding: 0; max-height: 336px; overflow-y: auto; }
 .ob-repo {
-  display: flex; align-items: center; gap: var(--space-3); min-height: 52px;
+  display: flex; flex-direction: row; align-items: center; gap: var(--space-3); min-height: 52px;
   padding: var(--space-2); border-radius: var(--radius-md); cursor: pointer;
 }
 .ob-repo:hover { background: var(--color-bg-secondary); }
-.ob-repo--selected { background: var(--color-accent-soft); }
+/* Selected is a neutral surface: the accent stays on the Clone button beside it. */
+.ob-repo--selected { background: var(--color-bg-tertiary); }
+.ob-repo-pick {
+  display: flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 0;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ob-repo-pick:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
 .ob-repo-avatar {
   display: grid; place-items: center; flex: none;
   width: var(--space-8); height: var(--space-8); border-radius: var(--radius-sm);

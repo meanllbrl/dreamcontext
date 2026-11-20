@@ -136,7 +136,7 @@ describe('no verb that starts work in the first read\'s result turn', () => {
 
   it('refuses delegate, pool, team ask and schedule while that batch is open', async () => {
     _openEventTurnForTests('sup-1', 'b-1', root);
-    expect([...FIRST_READ_BARRED_VERBS].sort()).toEqual(['delegate', 'pool-add', 'schedule', 'team-ask']);
+    expect([...FIRST_READ_BARRED_VERBS].sort()).toEqual(['delegate', 'pool-add', 'resume', 'schedule', 'send', 'team-ask']);
     for (const v of FIRST_READ_BARRED_VERBS) {
       const r = await verb(v, { prompt: 'Build the export.' });
       expect(r.status, v).toBe(403);

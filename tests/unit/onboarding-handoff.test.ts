@@ -11,7 +11,7 @@ import {
   onboardingSteps,
   BAR_CHECKS,
 } from '../../dashboard/src/pages/onboarding/handoffPlan.js';
-import { gateSteps } from '../../dashboard/src/hooks/useOnboarding.js';
+import { createAgentGate, gateSteps } from '../../dashboard/src/hooks/useOnboarding.js';
 import type { ReadinessCheck, ReadinessReport } from '../../dashboard/src/lib/onboardingTypes.js';
 
 /**
@@ -55,6 +55,11 @@ const READY = report([
   check('git', 'ok', { tier: 'recommended' }),
 ]);
 const CHAT = { enabled: true, chatView: true };
+const signedIn = () => READY;
+const signedOut = () => report([
+  check('claude', 'ok', { scopes: ['machine', 'agent'] }),
+  check('claude-auth', 'missing', { scopes: ['machine', 'agent'] }),
+]);
 
 describe('handoffAction', () => {
   it('sends the start intent as an event only to an already-open window', () => {
@@ -118,13 +123,68 @@ describe('the first-run flow (plan ilk-acilis C1, C2, C5)', () => {
     expect(gateSteps(missing, 'antigravity')).toEqual(['antigravity-signin']);
   });
 
-  it('the gate never reads a missing report as "signed out": it waits for the first answer', () => {
+  it('the gate never reads a missing report as "signed out": it waits for the first answer', async () => {
     // gateSteps(undefined) counts every check missing, so the gate must not run on no report.
     expect(gateSteps(undefined, 'claude')).toContain('claude-signin');
-    const src = readFileSync(join(__dirname, '..', '..', 'dashboard/src/hooks/useOnboarding.ts'), 'utf-8');
-    const run = src.split('const run = useCallback(async (agent: GateAgent)')[1] ?? '';
-    expect(run.indexOf('while (!reportRef.current')).toBeGreaterThan(-1);
-    expect(run.indexOf('while (!reportRef.current')).toBeLessThan(run.indexOf('gateSteps(reportRef.current, agent)'));
+    let report: ReadinessReport | undefined;
+    const started: string[] = [];
+    const gate = createAgentGate({
+      report: () => report, start: async (fix) => { started.push(fix); return { fix, runId: 'r', phase: 'done', status: null }; },
+      pick: async () => undefined, set: () => undefined, tickMs: 5,
+    });
+    const done = gate.run('claude');
+    await new Promise((r) => setTimeout(r, 20));
+    report = signedIn();
+    expect(await done).toBe(true);
+    expect(started).toEqual([]);
+  });
+
+  it('Cancel while waiting for the first answer starts nothing and writes nothing more', async () => {
+    let report: ReadinessReport | undefined;
+    const started: string[] = [];
+    const states: string[] = [];
+    const gate = createAgentGate({
+      report: () => report, start: async (fix) => { started.push(fix); return { fix, runId: 'r', phase: 'done', status: null }; },
+      pick: async () => undefined, set: (s) => states.push(s.kind), tickMs: 5,
+    });
+    const done = gate.run('claude');
+    await new Promise((r) => setTimeout(r, 15));
+    gate.reset();
+    report = signedOut();
+    expect(await done).toBe(false);
+    expect(started).toEqual([]);
+    expect(states.at(-1)).toBe('idle');
+  });
+
+  it('Open again (Cancel then run) starts a new sign-in after the old one settles; the old one writes nothing', async () => {
+    const report = signedOut();
+    const releases: Array<() => void> = [];
+    const started: string[] = [];
+    const states: string[] = [];
+    const gate = createAgentGate({
+      report: () => report,
+      start: (fix) => new Promise((resolve) => {
+        started.push(fix);
+        const n = started.length;
+        // The first run ends as the cancel lands (not finished); the second signs in.
+        releases.push(() => resolve({ fix, runId: `r${n}`, phase: n === 1 ? 'error' : 'done', status: null }));
+      }),
+      pick: async () => undefined, set: (s) => states.push(s.kind),
+    });
+    const first = gate.run('claude');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started).toEqual(['claude-signin']);
+    expect(await gate.run('claude')).toBe(false); // a double click is not a restart
+    gate.reset();
+    const second = gate.run('claude');
+    releases[0]();
+    expect(await first).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started).toEqual(['claude-signin', 'claude-signin']);
+    expect(states).not.toContain('not-finished');
+    releases[1]();
+    expect(await second).toBe(true);
+    expect(states.at(-1)).toBe('idle');
   });
 });
 

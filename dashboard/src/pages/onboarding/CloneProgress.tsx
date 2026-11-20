@@ -97,7 +97,7 @@ export function CloneProgress({ name, into, status, gitInstalling, gitMissing, o
       </ol>
       <div className="ob-gate-actions">
         {status?.offerShallow && !waitingGit && (
-          <button type="button" className="ob-btn ob-btn--secondary" onClick={() => { onCancel(); onRetry(true); }}>{t('clone.fail.shallow')}</button>
+          <button type="button" className="ob-btn ob-btn--secondary" onClick={() => onRetry(true)}>{t('clone.fail.shallow')}</button>
         )}
         <button type="button" className="ob-btn ob-btn--secondary" onClick={onCancel} data-testid="clone-cancel">
           {waitingGit ? t('clone.git.stopWaiting') : t('onboarding.gate.cancel')}

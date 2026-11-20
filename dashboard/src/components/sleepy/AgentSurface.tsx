@@ -135,6 +135,8 @@ import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 const NO_JOBS: readonly SuperJobWire[] = [];
 /** The first-read refusals the offer line words (C17); any other reads 'other'. */
 const FIRST_READ_REASONS = new Set(['limited', 'claude_not_ready', 'cap_full', 'super_off', 'in_flight']);
+/** How often a "Reading started" with no child seen yet asks whether the start really opened. */
+const FIRST_READ_RECHECK_MS = 10_000;
 
 /**
  * Per session, the open permission and refusal items its own chat card answers, with the record
@@ -7136,8 +7138,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const [firstReadOut, setFirstReadOut] = useState(false);
   const [firstReadRefused, setFirstReadRefused] = useState<string | null>(null);
   const [firstReadStarted, setFirstReadStarted] = useState(false);
+  // A start shown here belongs to its project: only a project change clears it (a canSpawn
+  // flicker or a new api object must not drop "Reading started" back to the default).
+  useEffect(() => { setFirstReadStarted(false); }, [vault]);
   useEffect(() => {
-    setFirstReadPending(false); setFirstReadRefused(null); setFirstReadStarted(false);
+    setFirstReadPending(false); setFirstReadRefused(null);
     if (!vault || isMobile || !canSpawn) return undefined;
     let live = true;
     scopedApi.ownerGet<{ pending?: boolean }>('/super/first-read')
@@ -7154,6 +7159,22 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (firstReadLive) firstReadSeenLive.current = true;
     else if (firstReadSeenLive.current) { firstReadSeenLive.current = false; setFirstReadStarted(false); }
   }, [firstReadLive]);
+  // "Reading started" with no child seen yet (a start the window answered late): ask again now
+  // and then. No claim and no start in flight means it never opened: the offer comes back.
+  useEffect(() => {
+    if (!vault || !firstReadStarted || firstReadLive || firstReadSeenLive.current) return undefined;
+    let live = true;
+    const timer = setInterval(() => {
+      scopedApi.ownerGet<{ pending?: boolean; starting?: boolean }>('/super/first-read')
+        .then((r) => {
+          if (!live || firstReadSeenLive.current || r?.pending !== true || r.starting === true) return;
+          setFirstReadStarted(false);
+          setFirstReadPending(true);
+        })
+        .catch(() => undefined);
+    }, FIRST_READ_RECHECK_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, [vault, firstReadStarted, firstReadLive, scopedApi]);
   const startFirstRead = useCallback(async () => {
     if (firstReadOut) return;
     setFirstReadOut(true);

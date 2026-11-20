@@ -497,65 +497,117 @@ export async function postAgentPick(picked: GateAgent[]): Promise<void> {
 /** How long the gate waits for the first readiness answer before it says it could not start. */
 const REPORT_WAIT_MS = 20_000;
 
+export interface AgentGateDeps {
+  report: () => ReadinessReport | undefined;
+  start: (fix: FixId) => Promise<FixRunState>;
+  pick: (agent: GateAgent) => Promise<void>;
+  set: (state: GateState) => void;
+  /** Test seam: how long to wait for the first readiness answer, and how often to look. */
+  waitMs?: number;
+  tickMs?: number;
+}
+
+/**
+ * The gate's run logic, outside React so it can be tested. Each run owns a generation. `reset`
+ * (Cancel, Open again) moves the generation on: the old run writes no state and starts no
+ * further step, and the next run waits for the old one to settle instead of being dropped as
+ * busy (review r1: Open again opened nothing, Cancel during the wait still signed in).
+ */
+export function createAgentGate(deps: AgentGateDeps) {
+  let gen = 0;
+  let inflight: { gen: number; done: Promise<void> } | null = null;
+  const waitMs = deps.waitMs ?? REPORT_WAIT_MS;
+  const tickMs = deps.tickMs ?? 200;
+
+  async function run(agent: GateAgent): Promise<boolean> {
+    const prior = inflight;
+    if (prior && prior.gen === gen) return false; // a live run: a second click is not a restart
+    if (prior) await prior.done;
+    const mine = ++gen;
+    const current = () => gen === mine;
+    const put = (next: GateState) => { if (current()) deps.set(next); };
+    let finish: () => void = () => undefined;
+    inflight = { gen: mine, done: new Promise<void>((r) => { finish = r; }) };
+    try {
+      // No readiness answer yet: wait for it. Read without one, every check counts as missing and
+      // a click on a signed-in Mac would open a browser sign-in for nothing (verify 2026-11-20).
+      if (!deps.report()) {
+        put({ kind: 'preparing' });
+        const until = Date.now() + waitMs;
+        while (!deps.report() && Date.now() < until && current()) await new Promise((r) => setTimeout(r, tickMs));
+        if (!current()) return false;
+        if (!deps.report()) {
+          put({ kind: 'install-failed', output: '' });
+          return false;
+        }
+      }
+      const report = deps.report();
+      const steps = gateSteps(report, agent);
+      if (steps.length > 0 && report?.online === false) {
+        put({ kind: 'offline' });
+        return false;
+      }
+      for (const fix of steps) {
+        if (!current()) return false;
+        const check = checkForFix(deps.report(), fix);
+        if (check?.fix?.kind === 'manual') {
+          put({ kind: 'manual', command: check.fix.manual ?? '' });
+          return false;
+        }
+        put({ kind: 'preparing' });
+        const end = await deps.start(fix);
+        if (!current() || end.phase === 'abandoned') return false;
+        if (end.phase !== 'done') {
+          const signin = fix.endsWith('-signin');
+          if (end.startError?.code === 'network' || end.status?.outcome === 'offline') put({ kind: 'offline' });
+          else if (signin) put({ kind: 'not-finished' });
+          else put({ kind: 'install-failed', output: end.status?.output ?? end.startError?.message ?? '' });
+          return false;
+        }
+      }
+      if (!current()) return false;
+      await deps.pick(agent);
+      if (!current()) return false;
+      put({ kind: 'idle' });
+      return true;
+    } catch (err) {
+      put({ kind: 'install-failed', output: err instanceof Error ? err.message : String(err) });
+      return false;
+    } finally {
+      if (inflight?.gen === mine) inflight = null;
+      finish();
+    }
+  }
+
+  /** Stop the run in flight (it writes nothing more) and show the idle screen. */
+  function reset(): void {
+    gen += 1;
+    deps.set({ kind: 'idle' });
+  }
+
+  return { run, reset };
+}
+
 export function useAgentGate(report: ReadinessReport | undefined, fixRuns: FixRuns) {
   const [state, setState] = useState<GateState>({ kind: 'idle' });
-  const busy = useRef(false);
   const reportRef = useRef(report);
   reportRef.current = report;
+  const startRef = useRef(fixRuns.start);
+  startRef.current = fixRuns.start;
+  const gateRef = useRef<ReturnType<typeof createAgentGate> | null>(null);
+  gateRef.current ??= createAgentGate({
+    report: () => reportRef.current,
+    start: (fix) => startRef.current(fix),
+    pick: (agent) => postAgentPick([agent]),
+    set: setState,
+  });
 
   // A run waiting in the browser shows the browser card while it waits.
   const live = Object.values(fixRuns.runs).find((r) => r && r.phase === 'running');
   const awaitingBrowser = live?.status?.awaiting === 'browser';
   const shown: GateState = state.kind === 'preparing' && awaitingBrowser ? { kind: 'browser' } : state;
 
-  const run = useCallback(async (agent: GateAgent): Promise<boolean> => {
-    if (busy.current) return false;
-    busy.current = true;
-    try {
-      // No readiness answer yet: wait for it. Read without one, every check counts as missing and
-      // a click on a signed-in Mac would open a browser sign-in for nothing (verify 2026-11-20).
-      if (!reportRef.current) {
-        setState({ kind: 'preparing' });
-        const until = Date.now() + REPORT_WAIT_MS;
-        while (!reportRef.current && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
-        if (!reportRef.current) {
-          setState({ kind: 'install-failed', output: '' });
-          return false;
-        }
-      }
-      const steps = gateSteps(reportRef.current, agent);
-      if (steps.length > 0 && reportRef.current?.online === false) {
-        setState({ kind: 'offline' });
-        return false;
-      }
-      for (const fix of steps) {
-        const check = checkForFix(reportRef.current, fix);
-        if (check?.fix?.kind === 'manual') {
-          setState({ kind: 'manual', command: check.fix.manual ?? '' });
-          return false;
-        }
-        setState({ kind: 'preparing' });
-        const end = await fixRuns.start(fix);
-        if (end.phase === 'abandoned') return false;
-        if (end.phase !== 'done') {
-          const signin = fix.endsWith('-signin');
-          if (end.startError?.code === 'network' || end.status?.outcome === 'offline') setState({ kind: 'offline' });
-          else if (signin) setState({ kind: 'not-finished' });
-          else setState({ kind: 'install-failed', output: end.status?.output ?? end.startError?.message ?? '' });
-          return false;
-        }
-      }
-      await postAgentPick([agent]);
-      setState({ kind: 'idle' });
-      return true;
-    } catch (err) {
-      setState({ kind: 'install-failed', output: err instanceof Error ? err.message : String(err) });
-      return false;
-    } finally {
-      busy.current = false;
-    }
-  }, [fixRuns]);
-
-  const reset = useCallback(() => setState({ kind: 'idle' }), []);
+  const run = gateRef.current.run;
+  const reset = gateRef.current.reset;
   return { state: shown, run, reset };
 }
