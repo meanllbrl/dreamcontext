@@ -2424,11 +2424,11 @@
   box-sizing: border-box;
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: var(--color-bg);
   transition: outline-color 300ms;
 }
+/* The chat's own card fills the dock: its border is the dock's edge. */
+.super-ask-dock > div > * { max-width: none; margin: 0; }
 .super-ask-dock[data-revealed='true'] { outline: 2px solid var(--mood-waiting); outline-offset: 2px; }
 
 /* The chat's one row for a question asked beside the report. */

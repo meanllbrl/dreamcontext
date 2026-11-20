@@ -66,3 +66,15 @@ describe('planStage: the dock under the window\'s page', () => {
     expect(strip.askDock).toBeUndefined();
   });
 });
+
+describe('a presented member is not docked (Ü2)', () => {
+  it('the member tab stays in the window while the jobs go to the Dock', () => {
+    const jobs = Array.from({ length: 6 }, (_, i) => ({ id: `c${i}`, kind: 'chat', ref: `s${i}`, shape: 'portrait', place: 'float', live: true }) as unknown as StageItem);
+    const team = { id: 't0', kind: 'team', ref: 'team-sage', shape: 'square', place: 'float' } as StageItem;
+    const plan = planStage([...jobs, team], { mode: 'present', cards: ['t0'], layout: 'spotlight' }, { width: 1440, height: 820 },
+      { dock: { prev: false, needs: new Set(), focus: null, today: null, agenda: null, pool: 0, cap: null } });
+    expect(plan.cards.t0.where).toBe('present');
+    expect(plan.cards.t0.inWindow).toBe(true);
+    expect(plan.cards.c0.where).toBe('dock');
+  });
+});

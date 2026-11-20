@@ -2321,7 +2321,10 @@ export function planStage(
     }
     docked = dockDecision(d.prev, { need, room, card: 1 });
   }
-  const stays = (c: StageItem) => !windowed && (d.needs.has(c.id) || c.id === d.focus);
+  // A card in front (presented, or side by side) is never docked: it is what the window shows
+  // (a member's tab, Ü2; a job's session window).
+  const front = new Set(view.mode === 'present' ? view.cards ?? [] : view.mode === 'half' && view.card ? [view.card] : []);
+  const stays = (c: StageItem) => front.has(c.id) || (!windowed && (d.needs.has(c.id) || c.id === d.focus));
   const dockedJobs = docked ? jobs.filter((c) => !stays(c)) : [];
   const dockedMembers = docked ? containers.filter((c) => isMember(c) && !stays(c)) : [];
   const needs = docked ? jobs.filter((c) => d.needs.has(c.id)).map((c) => c.id) : [];

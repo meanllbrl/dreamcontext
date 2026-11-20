@@ -59,7 +59,8 @@ export function SuperQuestionCard({ ask, session, place = 'chat' }: {
       superSession={view.superSession ?? session}
       child={item.kind === 'question' ? view.sessionFor(item.sessionId) : undefined}
       remote={view.remote}
-      reads={item.kind === 'ask' ? view.readsOf?.(item) : undefined}
+      // Docked under its report, the report is right above it: no "To read" line.
+      reads={item.kind === 'ask' && place === 'chat' ? view.readsOf?.(item) : undefined}
     />
   );
 }

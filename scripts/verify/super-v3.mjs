@@ -50,6 +50,14 @@ const FRAMES = {
   'A-izin': { needs: 1, jobs: 3, minis: 0, perms: 1, allows: true, chat: 'allow', mock: 'super-ux-denetim/kareler/A-izin.png', sizes: [[1440, 900], [1180, 800]], light: true },
   // W3: the presentation window (K14, D14): a phone shot in front, a PDF waiting as a background tab.
   '08-kuyruk': { needs: 1, jobs: 4, minis: 0, present: true, mock: 'super-jakob-v3/v3/08-kuyruk-2.png', sizes: [[1440, 900], [1180, 800]], light: true },
+  // W3 Lane A/B: the window as wide as what it shows (07a phone, 07b PDF, 07c desktop page), a group
+  // as one tab (09d), a question about the shown report asked under it (K8), a member's tab (T2).
+  '07a-sunum-dar': { needs: 1, jobs: 4, minis: 0, present: 'phone', mock: 'super-jakob-v3/v3/07a-sunum-dar.png', sizes: [[1440, 900], [1180, 800]] },
+  '07b-sunum-orta': { needs: 1, jobs: 4, minis: 0, present: 'pdf', mock: 'super-jakob-v3/v3/07b-sunum-orta.png', sizes: [[1440, 900], [1180, 800]] },
+  '07c-sunum-genis': { needs: 1, jobs: 4, minis: 0, present: 'desk', mock: 'super-jakob-v3/v3/07c-sunum-genis.png', sizes: [[1440, 900], [1180, 800]] },
+  '09d-grup': { needs: 1, jobs: 4, minis: 0, present: 'group', mock: 'super-jakob-v3/v3/09d-grup-kapat-1.png', sizes: [[1440, 900]] },
+  'K8-rapor-soru': { needs: 0, jobs: 3, minis: 0, present: 'ask', mock: null, sizes: [[1440, 900], [1180, 800]], light: true },
+  'T2-sonra': { needs: 1, jobs: 6, minis: 0, members: ['sage'], present: 'member', mock: 'super-ux-denetim/kareler/T2-sonra.png', sizes: [[1440, 900]], light: true },
   'T3-sonra': { needs: 0, jobs: 2, minis: 0, members: ['sage'], memberDone: 'sage', chat: 'member', mock: 'super-ux-denetim/kareler/T3-sonra.png', sizes: [[1440, 900]], light: true },
 };
 /** The fictional AI Team the member frames seed through the real CLI (`agents create`). */
@@ -124,7 +132,29 @@ function seed(f) {
   if (f.chat) writeTranscript(superSession, f, kids, team, now);
   let view = { mode: 'float' };
   let presentQueue;
-  if (f.present) {
+  let groups = [];
+  if (f.present && f.present !== true) {
+    mkdirSync(join(app.proj, 'docs'), { recursive: true });
+    writeFileSync(join(app.proj, 'docs', 'hatirlatma.png'), png(390, 844));
+    writeFileSync(join(app.proj, 'docs', 'fiyat.pdf'), '%PDF-1.4\n1 0 obj << /Type /Page /MediaBox [0 0 595 842] >> endobj\n%%EOF\n');
+    writeFileSync(join(app.proj, 'docs', 'rapor.html'), '<!doctype html><body style="font-family:system-ui;padding:24px"><h1>Fiyat raporu</h1><p>Üç rakip yıllıkta 990 ile 1.290 arası alıyor.</p><table><tr><td>Rakip A</td><td>990</td></tr><tr><td>Rakip B</td><td>1.190</td></tr><tr><td>Rakip C</td><td>1.290</td></tr></table></body>');
+    const card = {
+      phone: { id: 'img1', kind: 'image', ref: 'docs/hatirlatma.png', title: 'Hatırlatmalar · sonra', aspect: 0.462 },
+      pdf: { id: 'pdf1', kind: 'pdf', ref: 'docs/fiyat.pdf', title: 'Fiyat önerisi', aspect: 0.707 },
+      desk: { id: 'web1', kind: 'web', ref: 'docs/panel.html', title: 'Panel · aylık özet' },
+      ask: { id: 'web1', kind: 'web', ref: 'docs/rapor.html', title: 'Fiyat raporu' },
+    }[f.present];
+    if (card) { containers.push({ ...card, shape: 'tall', place: 'float', by: 'super' }); view = { mode: 'present', cards: [card.id], layout: 'spotlight' }; }
+    if (f.present === 'group') {
+      const ids = ['img1', 'img2', 'img3'];
+      ids.forEach((id, i) => containers.push({ id, kind: 'image', ref: 'docs/hatirlatma.png', shape: 'tall', place: 'float', by: 'super', title: `Ekran ${i + 1}`, aspect: 0.462 }));
+      groups = [{ id: 'g1', name: 'Ekranlar', cards: ids, place: 'float' }];
+      view = { mode: 'present', cards: ids, layout: 'grid' };
+    }
+    if (f.present === 'member') view = { mode: 'present', cards: ['t0'], layout: 'spotlight' };
+    if (f.present === 'ask') queue.push({ id: 'qs', sessionId: superSession, kind: 'ask', state: 'escalated', createdAt: now - 3000, read: ['web1'], ownerText: 'Yıllık plan hangi fiyatla öne çıksın?', options: ['990 ₺', '1.190 ₺', '1.290 ₺'] });
+  }
+  if (f.present === true) {
     mkdirSync(join(app.proj, 'docs'), { recursive: true });
     writeFileSync(join(app.proj, 'docs', 'hatirlatma.png'), png(390, 844));
     writeFileSync(join(app.proj, 'docs', 'fiyat.pdf'), '%PDF-1.4\n1 0 obj << /Type /Page /MediaBox [0 0 595 842] >> endobj\n%%EOF\n');
@@ -141,7 +171,7 @@ function seed(f) {
   writeFileSync(join(app.proj, 'docs', 'panel.html'), '<!doctype html><h1 style="font-family:system-ui">Panel · aylık özet</h1>');
   writeFileSync(join(state, '.agent-sessions.json'), JSON.stringify({ sessions, activePane: 0, chatPermissionMode: 'auto', windows: [{ id: 'main', name: 'Chat', activePane: 0 }], generation: Date.now() }));
   writeFileSync(join(state, '.super-agent.json'), JSON.stringify({
-    v: 1, session: superSession, enabled: true, containers, groups: [], view, children, queue, ...(presentQueue ? { presentQueue } : {}),
+    v: 1, session: superSession, enabled: true, containers, groups, view, children, queue, ...(presentQueue ? { presentQueue } : {}),
     notes: {}, away, dismissed: [], pool: [], ownerBatches: [], team, ...(pad ? { pad, padSeq: pad.length } : {}),
   }));
 }
@@ -227,10 +257,13 @@ async function shoot(name, f, [w, h], dark) {
     return { rect: box(d), tiles: [...d.querySelectorAll('.sdock-tile')].map((t) => ({ kind: t.dataset.kind, ...box(t) })) };
   });
   const floats = await p.locator('[data-testid="super-container"][data-where="float"]').count();
+  const ask = { dock: await p.locator('[data-testid="super-ask-dock"]').count(), full: await p.locator('[data-testid="super-question-card"]').count(), rows: await p.locator('[data-testid="super-ask-row"]').count() };
+  const memberTab = await p.locator('[data-testid="super-member-tab"]').count();
+  const win = await p.evaluate(() => { const el = document.querySelector('.super-win'); if (!el) return null; const b = el.getBoundingClientRect(); return { width: Math.round(b.width), height: Math.round(b.height) }; });
   await ctx.close();
   // The montage: the mockup frame left, the build right, at the same height.
   let montage = null;
-  const mockFile = MOCK ? join(MOCK, f.mock) : null;
+  const mockFile = MOCK && f.mock ? join(MOCK, f.mock) : null;
   if (mockFile && existsSync(mockFile)) {
     montage = join(OUT, `${name}-${w}-${theme}-montage.png`);
     const mctx = await browser.newContext({ viewport: { width: 2 * 1440 + 24, height: 960 } });
@@ -243,9 +276,10 @@ async function shoot(name, f, [w, h], dark) {
     await mp.screenshot({ path: montage, fullPage: true });
     await mctx.close();
   }
-  return { file, montage, dock, floats };
+  return { file, montage, dock, floats, ask, memberTab, win };
 }
 
+const where0 = (name, size, dark) => `${name}@${size[0]}-${dark ? 'dark' : 'light'}`;
 const results = {};
 try {
   for (const [name, f] of Object.entries(FRAMES)) {
@@ -258,6 +292,14 @@ try {
         results[`${name}@${size[0]}-${dark ? 'dark' : 'light'}`] = r;
         console.log(`  shot ${r.file}${r.montage ? `\n  montage ${r.montage}` : ''}`);
         const total = f.needs + f.jobs;
+        if (f.present === 'ask') {
+          if (!r.ask.dock) fail(`${where0(name, size, dark)}: no question docked under the report`);
+          else if (r.ask.full !== 1) fail(`${where0(name, size, dark)}: ${r.ask.full} full question cards (want 1)`);
+          else ok(`${name}@${size[0]}: the question sits under the report, the chat holds one row (${r.ask.rows})`);
+          continue;
+        }
+        if (f.present === 'member') { if (!r.memberTab) fail(`${name}: no member tab in the window`); else ok(`${name}: member tab in the window`); continue; }
+        if (f.present && f.present !== true && r.win) ok(`${name}@${size[0]}: window ${r.win.width}x${r.win.height}`);
         if (f.list || f.members || f.redLight || f.chat || f.away) { ok(`${name}: shot`); continue; }
         if (name === '03-bes-mesaj') {
           if (r.dock && r.dock.tiles.some((t) => t.kind === 'job')) fail(`${name}: 5 jobs fit, yet jobs docked`); else ok(`${name}: 5 jobs float (${r.floats} floating cards)`);

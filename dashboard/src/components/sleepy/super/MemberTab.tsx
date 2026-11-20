@@ -27,7 +27,9 @@ export function MemberTab({ card, conversation }: { card: TeamCard; conversation
   const facts = teamTileFacts(card);
   const [view, setView] = useState<'chat' | 'routines'>('chat');
   const scope = global ? t('super.team.allProjects') : t('super.team.projectTeam').replace('{project}', project || t('super.team.thisProject'));
-  const meta = [agent?.roleLine, scope, facts.model].filter(Boolean).join(' · ');
+  // The field as its head word ("Strategy: prices, plans…" reads "Strategy"), so the scope shows.
+  const field = (agent?.roleLine ?? '').split(/[:.\n]/)[0].trim();
+  const meta = [field, scope, facts.model].filter(Boolean).join(' · ');
   const approvals = card.approval ? 1 : 0;
   return (
     <div className="super-member-tab" data-testid="super-member-tab" data-member={slug}>

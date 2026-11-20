@@ -33,4 +33,4 @@
 .super-member-tab-switch button:disabled { cursor: default; opacity: 0.6; }
 .super-member-tab-switch button i { font-style: normal; margin-left: var(--space-1); color: var(--color-text-tertiary); }
 .super-member-tab-switch button[data-waiting='true'] i { color: var(--mood-waiting); }
-.super-member-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.super-member-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: var(--space-3) var(--space-4) 0; }
