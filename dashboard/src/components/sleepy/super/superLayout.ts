@@ -2120,6 +2120,59 @@ export function dockDecision(prev: boolean, fit: { need: number; room: number; c
   return prev ? fit.room < fit.need + 2 * fit.card : false;
 }
 
+/**
+ * K14: the presentation window is as wide as what it shows (plan super-v3, the mockup's `pwFor`,
+ * super-jakob-v3/kaynak/parts/b-stage.js:172). What a tab shows, by shape: a phone shot or a PDF
+ * page fitted to the window's height plus its chrome, a session or member conversation at reading
+ * width, an album of pictures, a desktop page or anything else at desktop width.
+ */
+export type PresentContent =
+  | { kind: 'phone'; aspect: number }
+  | { kind: 'pdf'; aspect: number }
+  | { kind: 'session' | 'album' | 'albumdesk' | 'desk' };
+
+export const PRESENT_WIN = {
+  /** The window's title row (lights, tabs, Mention): the body is the window less this. */
+  TITLE_H: 44,
+  /** Chrome around a fitted phone shot (its caption and side room) and a PDF page (page bar). */
+  PHONE_PAD_H: 40, PHONE_CHROME_W: 180,
+  PDF_PAD_H: 32, PDF_CHROME_W: 64,
+  SESSION_W: 600, ALBUM_W: 520, ALBUM_DESK_W: 760, DESK_W: 820,
+  /** The tab strip's floor: 160 for the lights and actions plus 170 per tab. */
+  TABS_BASE: 160, TAB_W: 170,
+  /** The chat beside the window never reads narrower than this. */
+  CHAT_MIN: 520,
+  /** A PDF with no measured page: A4 (595 x 842). */
+  A4: 595 / 842,
+} as const;
+
+/** What one presented card shows, for K14 (a card the layout knows nothing about reads as desktop). */
+export function contentShape(item: Pick<StageItem, 'kind' | 'aspect'> | undefined, pictures = 0): PresentContent {
+  if (!item) return { kind: 'desk' };
+  if (item.kind === 'group') return pictures > 0 ? { kind: 'album' } : { kind: 'desk' };
+  if (item.kind === 'chat' || item.kind === 'team' || item.kind === 'member') return { kind: 'session' };
+  if (item.kind === 'pdf') return { kind: 'pdf', aspect: item.aspect && item.aspect > 0 ? item.aspect : PRESENT_WIN.A4 };
+  // A portrait picture or a web page given a phone's width is a phone shot; a landscape one a desktop.
+  if ((item.kind === 'image' || item.kind === 'web') && item.aspect && item.aspect < 1) return { kind: 'phone', aspect: item.aspect };
+  return { kind: 'desk' };
+}
+
+/**
+ * The window's width for `content` in a window whose body is `bodyH` tall with `tabs` tabs, never
+ * under the tabs' floor and never more than `room` (what leaves the chat its CHAT_MIN).
+ */
+export function presentWidth(content: PresentContent, bodyH: number, tabs: number, room = Infinity): number {
+  const W = PRESENT_WIN;
+  const want = content.kind === 'session' ? W.SESSION_W
+    : content.kind === 'album' ? W.ALBUM_W
+      : content.kind === 'albumdesk' ? W.ALBUM_DESK_W
+        : content.kind === 'pdf' ? Math.round(Math.max(0, bodyH - W.PDF_PAD_H) * content.aspect) + W.PDF_CHROME_W
+          : content.kind === 'phone' ? Math.round(Math.max(0, bodyH - W.PHONE_PAD_H) * content.aspect) + W.PHONE_CHROME_W
+            : W.DESK_W;
+  const floor = W.TABS_BASE + Math.max(1, tabs) * W.TAB_W;
+  return Math.max(0, Math.min(Math.max(want, floor), room));
+}
+
 type DockSpec = { id: string; kind: DockKind; w: number; h: number; compact: boolean } | { sep: true };
 
 /**
