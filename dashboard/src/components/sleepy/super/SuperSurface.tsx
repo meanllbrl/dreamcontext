@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, MAX_LIVE_CHILDREN, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
@@ -12,6 +12,7 @@ import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
 import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, PresentFrame, SheetTabs, StageControls, StripMarks, stripStartFor, type PresentTab } from './StageParts';
 import { PresentQueue } from './PresentQueue';
+import { StageDock, type DockTileView } from './StageDock';
 import { sendQueueJump } from './queueJump';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
@@ -23,7 +24,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
+import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type DockOptions, type DockTile, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize, PadStatus } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
@@ -440,10 +441,38 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // The bar's measured height (JobBar): the stage plans below its ACTUAL bottom (a wrapped card
   // row is taller than one line), so no card or agenda is ever drawn over it.
   const queueHeight = useQueueHeight(state.session);
+  // ── The v3 Dock (plan super-v3 D1, K1-K3): what waits on the owner and the job the Super talks
+  //    about stay on the stage; the rest docks together when one no longer fits. The last answer
+  //    is kept per stage (a vault switch starts afresh) for K1's hysteresis. ──
+  const dockPrevRef = useRef<{ vault: string | null; docked: boolean }>({ vault: null, docked: false });
+  const needsKey = state.containers.filter((c) => (c.kind === 'chat' && state.queue.some((q) => q.sessionId === c.ref && needsOwner(q)))
+    || (c.kind === 'team' && state.queue.some((q) => q.kind === 'approval' && needsOwner(q) && state.team.some((j) => j.id === c.ref && j.member === q.member)))).map((c) => c.id).join(',');
+  const spokeFocus = useMemo(() => {
+    // K3: the child the Super spoke to last, within 3 minutes.
+    let best: { id: string; at: number } | null = null;
+    for (const c of state.containers) {
+      if (c.kind !== 'chat' || !hasOwnKey(state.children, c.ref)) continue;
+      const at = state.children[c.ref].spokeAt;
+      if (typeof at === 'number' && Date.now() - at < 3 * 60_000 && (!best || at > best.at)) best = { id: c.id, at };
+    }
+    return best?.id ?? null;
+  }, [state.containers, state.children]);
+  const liveCount = liveJobsKey ? liveJobsKey.split(',').length : 0;
+  const poolCount = state.pool?.length ?? 0;
+  const agendaId = state.containers.find((c) => c.kind === 'agenda')?.id ?? null;
+  const dockOpts = useMemo<DockOptions>(() => {
+    const prev = dockPrevRef.current.vault === vault ? dockPrevRef.current.docked : false;
+    return {
+      prev, needs: new Set(needsKey ? needsKey.split(',') : []), focus: spokeFocus, today: agendaPill, agenda: agendaId, pool: poolCount,
+      cap: poolCount > 0 && liveCount >= MAX_LIVE_CHILDREN ? t('superDock.cap').replace('{n}', String(liveCount)).replace('{max}', String(MAX_LIVE_CHILDREN)) : null,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- prev is read, not watched: the plan below records it
+  }, [needsKey, spokeFocus, agendaPill, agendaId, poolCount, liveCount, vault, t, items]);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: dockOpts }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts],
   );
+  dockPrevRef.current = { vault, docked: !!plan.jobDock?.docked };
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
   const stripBig = plan.strip?.big;
@@ -1201,6 +1230,37 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return { id, title: titleOf(c), kind: c.kind, status: tone === null ? undefined : tone === 'starting' ? 'idle' : tone };
   };
   const othersItems: OthersItem[] = plan.others.map(pillItem);
+  /** A Dock tile as the record and the live sessions say (plan super-v3 D11). */
+  const dockViewOf = (tile: DockTile): DockTileView => {
+    const c = byId.get(tile.id);
+    const g = groupsById.get(tile.id);
+    if (!c) return { title: g?.name ?? tile.id };
+    if (c.kind === 'team') {
+      const card = teamCardOf(c);
+      const tone = card?.status === 'running' ? 'working' as const : card?.status === 'asking' ? 'asking' as const : card?.status === 'failed' ? 'stuck' as const : 'idle' as const;
+      return { title: card?.job.member ?? titleOf(c), face: (card?.job.member ?? titleOf(c)).slice(0, 1).toUpperCase(), tone, line: card?.lastLine || undefined };
+    }
+    if (c.kind === 'chat') {
+      const st = chatStatus(props.sessionFor(c.ref), remoteRowOf(c.ref)).kind;
+      const tone = toneOfStatus(st);
+      const waits = state.queue.filter((q) => q.sessionId === c.ref && needsOwner(q)).length;
+      const dockTone = tile.kind === 'needs' || tone === 'asking' ? 'asking' as const : tone === 'working' ? 'working' as const : remoteRowOf(c.ref)?.row === 'stuck' || state.children[c.ref]?.row === 'stuck' ? 'stuck' as const : 'idle' as const;
+      return {
+        title: titleOf(c), tone: dockTone, ...(waits ? { badge: waits } : {}),
+        line: dockTone === 'working' ? t('superDock.working') : dockTone === 'stuck' ? t('superDock.stuck') : t('superDock.idle'),
+      };
+    }
+    return { title: titleOf(c) };
+  };
+  /** A tile is a door (D11): a job opens as its session window beside the Super, a minimized card
+   *  comes back to the stage (`super float`), Today and the Pool open the agenda. */
+  const openDockTile = (tile: DockTile) => {
+    if (tile.kind === 'today' || tile.kind === 'pool') { openAgenda(); return; }
+    const c = byId.get(tile.id);
+    if (tile.kind === 'mini' && c?.place === 'others' && !remote) { onLayout({ cards: [{ id: tile.id, place: 'float' }] }); return; }
+    if (groupsById.has(tile.id)) { openFromTile(tile.id); return; }
+    actions.onSideBySide(tile.id);
+  };
   const toggleOthers = () => setOpenGroup((o) => (o === 'others' ? null : 'others'));
   // The live jobs with no room on the stage: beside a page or a presentation, or beside Others.
   const moreItems: OthersItem[] = (plan.more?.ids ?? []).filter((id) => byId.has(id)).map(pillItem);
@@ -1298,12 +1358,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
           const placed = ghost ? ghost.plan : plan.cards[c.id];
           // Off the stage (Others, a group): a page card that keeps its page is parked, hidden,
           // under the SAME key, so its frame is never rebuilt (owner 2026-10-22).
-          const off = !placed || placed.where === 'others' || placed.where === 'tab';
+          const off = !placed || placed.where === 'others' || placed.where === 'tab' || placed.where === 'dock';
           const parkedAt = !ghost && off && liveWeb.has(c.id)
             ? lastRectRef.current.get(c.id) : undefined;
           const parked = !!parkedAt;
           const cp = parked ? { ...parkedAt!, where: 'float' as const, z: -1, owner: false } : placed;
-          if (!cp || (!parked && (cp.where === 'others' || cp.where === 'tab'))) return null;
+          if (!cp || (!parked && (cp.where === 'others' || cp.where === 'tab' || cp.where === 'dock'))) return null;
           const cue = ghost ? { kind: 'close' as const } : stageCues.cueFor(c.id);
           const rect = cp.rect;
           return (
@@ -1356,7 +1416,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         })}
         {state.groups.map((g) => {
           const cp = plan.cards[g.id];
-          if (!cp || cp.where === 'others') return null;
+          if (!cp || cp.where === 'others' || cp.where === 'dock') return null;
           const members = membersOf(g);
           return (
             <SuperGroupCard
@@ -1441,8 +1501,16 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
-      {agendaPill && !plan.agendaInHead && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
+      {agendaPill && plan.pill && !plan.agendaInHead && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
       {!plan.othersInHead && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
+      {plan.jobDock && (
+        <StageDock dock={plan.jobDock} viewOf={dockViewOf} onOpen={openDockTile} pool={poolCount} cap={plan.jobDock.cap}
+          todayLine={(() => {
+            const waiting = bandCount(state);
+            const docked = plan.jobDock.tiles.filter((x) => x.kind === 'job').length;
+            return waiting > 0 ? t('superDock.todayNeeds').replace('{n}', String(waiting)) : t('superDock.todayRunning').replace('{n}', String(docked));
+          })()} />
+      )}
       {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
         // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).

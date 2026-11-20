@@ -360,6 +360,11 @@ export interface SuperChild {
   /** The owner message it answers (`msgRef`), when the Super started it in his turn
    *  (server-written; the board writing field keeps its marks while it runs). */
   origin?: string;
+  /** When the Super last spoke to it (`brief`, `send`, `answer`, `read`, `allow`; plan super-v3 K3,
+   *  MIRROR of src/lib/super/types.ts): the newest is the job it is talking about. */
+  spokeAt?: number;
+  /** The commands the Super allowed it (K5), newest last; the window shows "Claude allowed N". */
+  allows?: { at: number; summary: string }[];
 }
 
 /** `waiting`: its turn ended on something only the owner can do (an `owner` item is open). */

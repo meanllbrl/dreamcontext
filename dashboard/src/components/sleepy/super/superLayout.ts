@@ -167,7 +167,7 @@ export const TOUCH_REMOTE_CENTRE_MIN = 480;
 export const PHONE_STAGE_PX = 640;
 
 /** Where a card is drawn this time (its record may say otherwise: overflow is drawn, not written). */
-export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
+export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab' | 'dock';
 
 /** How the agent's chat is drawn: the centre window, the mini square, or its composer bar. */
 export type ChatDraw = 'column' | 'mini' | 'bar';
@@ -273,6 +273,9 @@ export interface StagePlan {
   more?: { rect: Rect; ids: string[] };
   /** The one-line rail while it holds more jobs than fit: a window of `visible` from `start`. */
   rail?: { rect: Rect; start: number; visible: number; total: number };
+  /** The v3 Dock at the stage's foot (plan super-v3 K2): its tiles, drawn by StageDock. Only when
+   *  the window plans with `dock` and something is in it. Its cards are drawn `where: 'dock'`. */
+  jobDock?: JobDock;
 }
 
 /** A side's orbit: x = x0 + dir * depth * (1 - ((y - cy) / ymax)^2), through tile centres. */
@@ -1111,7 +1114,7 @@ export function fitArrange(region: Rect, items: readonly Pick<StageItem, 'aspect
  * The stage for these cards and this view at this size. Pure: the same input always draws the
  * same screen. A card that does not fit is DRAWN in Others; the record is never touched.
  */
-export function planStage(
+function planStageCore(
   containers: readonly StageItem[],
   view: SuperView,
   stage: { width: number; height: number },
@@ -1122,7 +1125,7 @@ export function planStage(
   // inside that plan.
   if (opts.dragging) {
     const { dragging, ...still } = opts;
-    const free = planStage(containers, view, stage, still);
+    const free = planStageCore(containers, view, stage, still);
     const v = VARIANT.get(free);
     const seats = SEATS.get(free);
     // The order that seated his cards in that plan too (a reclaimed sized card ranks there).
@@ -2043,4 +2046,250 @@ export function agentShowsNew(prev: SuperView, next: SuperView): boolean {
   const cardsOf = (v: SuperView) => (v.mode === 'half' && v.card ? [v.card] : v.mode === 'present' ? v.cards ?? [] : []);
   const before = new Set(cardsOf(prev));
   return cardsOf(next).some((id) => !before.has(id));
+}
+
+// ─── The Dock (Super v3 "denge", plan super-v3 K1/K2) ─────────────────────────────
+
+/** The Dock's geometry, the approved mockups' own (super-jakob-v3/kaynak/v3.css `.dock`, `.dtile`,
+ *  `.dsep`; super-ux-denetim/kaynak/uye.css `.dtile.mt`); pinned by super-dock-oracle.test.ts. */
+export const DOCK = {
+  /** From the stage's bottom edge to the Dock's. */
+  INSET: 16,
+  PAD: 8,
+  GAP: 8,
+  BORDER: 1,
+  /** A separator: 1 px with 2 px of margin on each side (plus the row's gap). */
+  SEP_W: 1,
+  SEP_M: 2,
+  /** Tile heights: a wide tile, a compact (or member) tile. */
+  H: 72,
+  H_COMPACT: 80,
+  /** A job or needs-you tile; 134 while minis show or a window holds the stage. */
+  W: 150,
+  W_TIGHT: 134,
+  /** A needs-you tile in a crowd with no Team tiles (review frame B). */
+  W_NEEDS_CROWD: 136,
+  W_TODAY: 112,
+  W_MINI: 112,
+  W_MEMBER: 84,
+  W_COMPACT: 70,
+  W_POOL: 70,
+  /** Past this many jobs and needs-you tiles, job tiles go compact (b-stage.js `crowd`). */
+  CROWD: 10,
+  /** The Dock never comes closer than this to the stage's sides. */
+  SIDE: 12,
+  /** The gap kept between the stage's content and the Dock's top. */
+  ABOVE: 16,
+} as const;
+
+export type DockKind = 'today' | 'needs' | 'member' | 'job' | 'mini' | 'pool';
+export interface DockTile { id: string; kind: DockKind; rect: Rect; compact: boolean }
+export interface JobDock {
+  rect: Rect;
+  tiles: DockTile[];
+  /** Each separator's rect, in row order. */
+  seps: Rect[];
+  /** The first tile past the Dock's right edge while the row scrolls (at rest it shows from 0); null = it all fits. */
+  scrollFrom: number | null;
+  /** The live jobs moved off the stage (D1): the window keeps it as `prev` for the next plan. */
+  docked: boolean;
+  /** "N of 15 running" while the live cap is hit and the pool holds jobs (rides the Pool tile). */
+  cap?: string;
+}
+
+/** What goes in the Dock, in its order (D11): Today, needs you, Team, jobs, minimized, Pool. */
+export interface DockSet {
+  today?: string | null;
+  needs: readonly string[];
+  members: readonly string[];
+  jobs: readonly string[];
+  minis: readonly string[];
+  /** Jobs the pool keeps waiting (the Pool tile shows only with rows). */
+  pool?: number;
+  cap?: string | null;
+}
+
+/**
+ * K1: the Dock switch by FIT, with hysteresis (owner pick via the review). Docked the moment the
+ * live jobs need more room than the side columns have; back to floating only once the room holds
+ * them plus two more cards. Pure: `prev` is the window's last answer.
+ */
+export function dockDecision(prev: boolean, fit: { need: number; room: number; card: number }): boolean {
+  if (fit.need <= 0) return false;
+  if (fit.need > fit.room) return true;
+  return prev ? fit.room < fit.need + 2 * fit.card : false;
+}
+
+type DockSpec = { id: string; kind: DockKind; w: number; h: number; compact: boolean } | { sep: true };
+
+/**
+ * K2: the Dock's tiles for one set on a stage, one pure function (StageDock draws it, never
+ * re-measured in CSS). `tight`: minis show or a window holds the stage (134 wide tiles). Too wide
+ * for the stage it steps down: job tiles compact, needs tiles compact, Today and minis compact,
+ * then the row scrolls (`scrollFrom`), the needs-you tiles first at rest. Never wraps, never drops a tile.
+ */
+export function dockTiles(set: DockSet, stage: { width: number; height: number }, mode: { tight: boolean }): { rect: Rect; tiles: DockTile[]; seps: Rect[]; scrollFrom: number | null } {
+  const D = DOCK;
+  const crowd = set.needs.length + set.jobs.length > D.CROWD;
+  const withTeam = set.members.length > 0;
+  const max = Math.max(0, stage.width - 2 * D.SIDE);
+  const build = (step: number): DockSpec[] => {
+    const jobsCompact = crowd || step >= 1;
+    const needsCompact = (crowd && withTeam) || step >= 2;
+    const smallCompact = step >= 3;
+    const wide = mode.tight ? D.W_TIGHT : D.W;
+    const tile = (id: string, kind: DockKind, compact: boolean, w: number): DockSpec => ({ id, kind, w: compact ? D.W_COMPACT : w, h: compact ? D.H_COMPACT : D.H, compact });
+    const lead: DockSpec[] = [
+      ...(set.today ? [tile(set.today, 'today', smallCompact, D.W_TODAY)] : []),
+      ...set.needs.map((id) => tile(id, 'needs', needsCompact, crowd ? D.W_NEEDS_CROWD : wide)),
+    ];
+    const groups: DockSpec[][] = [
+      lead,
+      set.members.map((id) => ({ id, kind: 'member' as const, w: D.W_MEMBER, h: D.H_COMPACT, compact: false })),
+      set.jobs.map((id) => tile(id, 'job', jobsCompact, wide)),
+      set.minis.map((id) => tile(id, 'mini', smallCompact, D.W_MINI)),
+      (set.pool ?? 0) > 0 ? [tile('pool', 'pool', false, D.W_POOL)] : [],
+    ];
+    // A separator after the needs-you tiles (in a crowd, frame B), after the Team tiles, before the
+    // minis and before the Pool: each only when both sides hold tiles.
+    const out: DockSpec[] = [];
+    groups.forEach((g, i) => {
+      if (!g.length) return;
+      const sep = out.length > 0 && (i === 1 || i >= 3 || (i === 2 && (withTeam || (crowd && set.needs.length > 0))));
+      if (sep) out.push({ sep: true });
+      out.push(...g);
+    });
+    return out;
+  };
+  const widthOf = (specs: DockSpec[]) => specs.reduce((sum, s) => sum + ('sep' in s ? D.SEP_W + 2 * D.SEP_M : s.w), 0)
+    + Math.max(0, specs.length - 1) * D.GAP + 2 * D.PAD + 2 * D.BORDER;
+  let step = 0;
+  let specs = build(0);
+  while (widthOf(specs) > max && step < 3) specs = build(++step);
+  const tall = Math.max(D.H, ...specs.map((s) => ('sep' in s ? 0 : s.h)));
+  const height = tall + 2 * D.PAD + 2 * D.BORDER;
+  const width = Math.min(widthOf(specs), max);
+  const rect: Rect = { x: Math.floor((stage.width - width) / 2), y: stage.height - D.INSET - height, width, height };
+  const tiles: DockTile[] = [];
+  const seps: Rect[] = [];
+  const bottom = rect.y + height - D.BORDER - D.PAD;
+  const right = rect.x + rect.width - D.BORDER - D.PAD;
+  let x = rect.x + D.BORDER + D.PAD;
+  let scrollFrom: number | null = null;
+  for (const s of specs) {
+    if ('sep' in s) {
+      seps.push({ x: x + D.SEP_M, y: rect.y + D.BORDER + D.PAD + 4, width: D.SEP_W, height: tall - 8 });
+      x += D.SEP_W + 2 * D.SEP_M + D.GAP;
+      continue;
+    }
+    const r: Rect = { x, y: bottom - s.h, width: s.w, height: s.h };
+    if (scrollFrom === null && r.x + r.width > right + 1e-6) scrollFrom = tiles.length;
+    tiles.push({ id: s.id, kind: s.kind, rect: r, compact: s.compact });
+    x += s.w + D.GAP;
+  }
+  return { rect, tiles, seps, scrollFrom };
+}
+
+/** The Dock inputs a v3 window passes `planStage`. */
+export interface DockOptions {
+  /** The window's last `jobDock.docked` (K1's hysteresis). */
+  prev: boolean;
+  /** Cards that wait on the owner: they stay on the stage AND have a tile (needs-you, first). */
+  needs: ReadonlySet<string>;
+  /** The job the Super is talking about (K3): stays on the stage with a tile. */
+  focus?: string | null;
+  /** The agenda's id while it is minimized: its Today tile replaces the corner pill. */
+  today?: string | null;
+  /** The agenda's id, shown as Today while a window holds the stage. */
+  agenda?: string | null;
+  pool?: number;
+  cap?: string | null;
+}
+
+const probeItem = (n: number, slot: number): StageItem => ({ id: `__dock_probe_${n}`, kind: 'chat', shape: 'square', place: 'float', slot, live: true });
+
+/**
+ * The stage, planned. With `opts.dock` (the v3 window) the float and present stages put their
+ * overflow in the Dock instead of Others, the rail or the "more" pill (K2). The record is never
+ * written: an owner-placed card's `pos` comes back untouched when floating returns. Narrow and
+ * phone stages, and callers without `dock`, are planned exactly as before.
+ */
+export function planStage(
+  containers: readonly StageItem[],
+  view: SuperView,
+  stage: { width: number; height: number },
+  opts: PlanOptions & { dock?: DockOptions } = {},
+): StagePlan {
+  const { dock: d, ...rest } = opts;
+  const narrow = Math.max(0, stage.width) < (opts.narrowPx ?? NARROW_STAGE_PX);
+  if (!d || narrow) return planStageCore(containers, view, stage, rest);
+  const isJob = (c: StageItem) => !!c.live && c.kind === 'chat' && c.place === 'float';
+  const isMember = (c: StageItem) => c.kind === 'team' && c.place === 'float';
+  const jobs = containers.filter(isJob);
+  const jobIds = new Set(jobs.map((c) => c.id));
+  // A presentation or a session window holds the stage: every job has a tile (the rail is retired).
+  const windowed = view.mode !== 'float';
+  const base = planStageCore(containers, view, stage, rest);
+  const fits = (p: StagePlan, ids: Iterable<string>) => [...ids].every((id) => p.cards[id]?.where === 'float');
+  let docked: boolean;
+  if (windowed) docked = jobs.length > 0 || containers.some(isMember);
+  else {
+    const need = jobs.length;
+    let room = need - 1;
+    if (need > 0 && fits(base, jobIds)) {
+      room = need;
+      const top = Math.max(-1, ...containers.map((c) => c.slot ?? 0));
+      const probes = [probeItem(0, top + 1), probeItem(1, top + 2)];
+      const { dragging: _held, ...still } = rest;
+      const p2 = planStageCore([...containers, ...probes], view, stage, still);
+      if (fits(p2, [...jobIds, ...probes.map((x) => x.id)])) room = need + 2;
+    }
+    docked = dockDecision(d.prev, { need, room, card: 1 });
+  }
+  const stays = (c: StageItem) => !windowed && (d.needs.has(c.id) || c.id === d.focus);
+  const dockedJobs = docked ? jobs.filter((c) => !stays(c)) : [];
+  const dockedMembers = docked ? containers.filter((c) => isMember(c) && !stays(c)) : [];
+  const needs = docked ? jobs.filter((c) => d.needs.has(c.id)).map((c) => c.id) : [];
+  const away = new Set([...dockedJobs, ...dockedMembers].map((c) => c.id));
+  const today = d.today ?? (windowed && docked ? d.agenda ?? null : null);
+  const setOf = (minis: readonly string[]): DockSet => ({
+    today, needs, members: dockedMembers.map((c) => c.id),
+    jobs: dockedJobs.filter((c) => !d.needs.has(c.id)).map((c) => c.id),
+    minis: minis.filter((id) => !needs.includes(id) && !away.has(id)),
+    pool: d.pool ?? 0, cap: d.cap ?? null,
+  });
+  const tightOf = (minis: readonly string[]) => ({ tight: windowed || minis.length > 0 });
+  // Not docked: the stage is the plan it always was; what it drew in Others is minimized.
+  let inner = base;
+  if (away.size) {
+    const kept = containers.filter((c) => !away.has(c.id));
+    const plan1 = (h: number) => planStageCore(kept, view, { width: stage.width, height: Math.max(0, stage.height - h - DOCK.INSET) }, rest);
+    const first = dockTiles(setOf([]), stage, tightOf([]));
+    inner = plan1(first.rect.height);
+    const again = dockTiles(setOf(inner.others), stage, tightOf(inner.others));
+    if (again.rect.height !== first.rect.height) inner = plan1(again.rect.height);
+  }
+  // Beside a window only what was minimized is a mini (the rest waits behind the window, as before).
+  const stacked = new Set(containers.filter((c) => c.place === 'others').map((c) => c.id));
+  const set = setOf([...inner.others, ...(inner.more?.ids ?? [])].filter((id) => !windowed || stacked.has(id)));
+  const empty = !set.today && !set.needs.length && !set.members.length && !set.jobs.length && !set.minis.length && !(set.pool ?? 0);
+  if (empty) return base;
+  const geo = dockTiles(set, stage, tightOf(set.minis));
+  const cards: Record<string, CardPlan> = { ...inner.cards };
+  for (const t of geo.tiles) {
+    if (t.kind === 'today' || t.kind === 'pool') continue;
+    // A needs-you job drawn on the stage stays there; its tile is a door to it.
+    if (t.kind === 'needs' && cards[t.id]?.where === 'float') continue;
+    const item = containers.find((c) => c.id === t.id);
+    cards[t.id] = { id: t.id, rect: t.rect, where: 'dock', shape: item?.shape ?? 'square', owner: false, z: base.cards[t.id]?.z ?? 0 };
+  }
+  // The content never runs under the Dock: the chat stops a gap above it.
+  const limit = geo.rect.y - DOCK.ABOVE;
+  const centre = inner.centre.y + inner.centre.height > limit ? { ...inner.centre, height: Math.max(0, limit - inner.centre.y) } : inner.centre;
+  const { more: _more, ...plain } = inner;
+  return {
+    ...plain, height: stage.height, centre, cards, others: [], othersInHead: false,
+    ...(today ? { pill: null, agendaInHead: false } : {}),
+    jobDock: { ...geo, docked, ...(set.cap && (set.pool ?? 0) > 0 ? { cap: set.cap } : {}) },
+  };
 }
