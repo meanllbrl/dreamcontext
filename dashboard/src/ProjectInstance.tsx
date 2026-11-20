@@ -4,7 +4,7 @@ import { VaultProvider, emitInstance, useInstanceEvent, useVault } from './conte
 import { ProjectProvider } from './context/ProjectContext';
 import { I18nProvider } from './context/I18nContext';
 import { createInstanceQueryClient, registerInstanceClient, setInstanceActive } from './lib/instanceQueryClient';
-import { Shell, type ShellNavigation } from './components/layout/Shell';
+import { Shell, isShellPage, type ShellNavigation } from './components/layout/Shell';
 import { AgentSurface, PROJECT_ROLLUP_EVENT } from './components/sleepy/AgentSurface';
 import type { ProjectRollup } from './components/sleepy/agentStatus';
 import { TasksPage } from './pages/TasksPage';
@@ -145,14 +145,18 @@ function PageDrawerToggleBridge({ page, nonce, onDrawerToggle, onPageChange }: {
 }
 
 /**
- * The drawer's page rows (Project Relations, an AI Team member) as a navigation of THIS
- * project's Shell. Navigating collapses the chat, as any rail page does. Renders nothing.
+ * A window move's page landing (the drawer's Project Relations row, the project rail, ← →, ⌘K
+ * across projects) as a navigation of THIS project's Shell, with its item, marked `'landing'` so
+ * the window's recorder tells it from the owner's own navigation. Navigating collapses the chat,
+ * as any rail page does. `'chat'` is the Shell's own (it expands the chat as it stands). A page
+ * this shell cannot show (a device shell's hidden pages) is refused as `navigate` refuses it.
+ * Renders nothing.
  */
 function DrawerPageBridge({ nav }: { nav: ShellNavigation }) {
   useInstanceEvent<{ page?: unknown; id?: unknown }>(DRAWER_PAGE_EVENT, (detail) => {
     const page = detail?.page;
-    if (page !== 'relations') return;
-    nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'other');
+    if (!isShellPage(page)) return;
+    nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'landing');
   });
   return null;
 }

@@ -4,6 +4,7 @@ import { useVault } from '../../../context/VaultContext';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { SearchIcon } from '../../sleepy/TypeIcons';
 import { useChromeSlots } from '../chromeSlots';
+import { useChrome } from '../WindowChrome';
 import { phoneAllows } from '../../../lib/phoneSurface';
 import { SleepDebtTracker } from '../SleepDebtTracker';
 import { UpdateBadge } from '../UpdateBadge';
@@ -16,10 +17,6 @@ interface NewShellControlsProps {
   activePage: Page;
   onNavigate: (page: Page) => void;
   onOpenSearch: () => void;
-  canBack: boolean;
-  canForward: boolean;
-  onBack: () => void;
-  onForward: () => void;
 }
 
 /**
@@ -29,10 +26,14 @@ interface NewShellControlsProps {
  * every one of them is per project. Only the ACTIVE instance renders them (a portal escapes the
  * hidden instance's `inert` shroud).
  */
-export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack, canForward, onBack, onForward }: NewShellControlsProps) {
+export function NewShellControls({ activePage, onNavigate, onOpenSearch }: NewShellControlsProps) {
   const { isActive } = useVault();
   const slots = useChromeSlots();
   const { t } = useI18n();
+  // ← → are the window's (navigation B): one list of places across every project.
+  const { history } = useChrome();
+  const backTitle = history.backLabel ? t('shell.nav.backTo').replace('{place}', () => history.backLabel as string) : t('shell.back');
+  const forwardTitle = history.forwardLabel ? t('shell.nav.forwardTo').replace('{place}', () => history.forwardLabel as string) : t('shell.forward');
   // Above the `isActive` return, so it lives as long as the project: the chat surface publishes
   // its rollup and expanded state on CHANGE only, and a rail that remounted on every switch back
   // would start from zero and miss them (no badge, the wrong row lit).
@@ -51,10 +52,10 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack
             </button>
           )}
           <span className="ns-tb-nav">
-            <button type="button" className="ns-tb-btn" data-no-drag disabled={!canBack} onClick={onBack} title={t('shell.back')} aria-label={t('shell.back')}>
+            <button type="button" className="ns-tb-btn" data-no-drag disabled={!history.canBack} onClick={history.back} title={backTitle} aria-label={backTitle} data-testid="ns-back">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M8.5 3 4.5 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
-            <button type="button" className="ns-tb-btn" data-no-drag disabled={!canForward} onClick={onForward} title={t('shell.forward')} aria-label={t('shell.forward')}>
+            <button type="button" className="ns-tb-btn" data-no-drag disabled={!history.canForward} onClick={history.forward} title={forwardTitle} aria-label={forwardTitle} data-testid="ns-forward">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M5.5 3 9.5 7l-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
           </span>
