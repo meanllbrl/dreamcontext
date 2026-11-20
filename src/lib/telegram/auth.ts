@@ -16,9 +16,18 @@ import { PAIRING_ID_RE, PAIRING_MAX_WRONG, PAIRING_TTL_MS, type TelegramScope, t
 
 // ─── Update shapes (the fields the gate reads) ──────────────────────────────
 
-export interface TgChat { id: number; type: string; username?: string; first_name?: string }
-export interface TgFrom { id: number; is_bot?: boolean; username?: string; first_name?: string }
-export interface TgMessageLike { message_id?: number; chat?: TgChat; from?: TgFrom; text?: string; date?: number }
+export interface TgChat { id: number; type: string; username?: string; first_name?: string; title?: string }
+export interface TgFrom { id: number; is_bot?: boolean; username?: string; first_name?: string; last_name?: string }
+export interface TgEntity { type: string; offset: number; length: number; user?: TgFrom }
+export interface TgMessageLike {
+  message_id?: number; chat?: TgChat; from?: TgFrom; text?: string; date?: number;
+  /** Set when the message is sent on behalf of a chat (an anonymous admin, a linked channel). */
+  sender_chat?: TgChat;
+  caption?: string;
+  entities?: TgEntity[];
+  caption_entities?: TgEntity[];
+  reply_to_message?: TgMessageLike;
+}
 export interface TgUpdateLike {
   update_id: number;
   message?: TgMessageLike;
@@ -47,6 +56,90 @@ export function isAuthorized(update: TgUpdateLike, binding: PairedIdentity): boo
   if (chat.type !== 'private') return false;
   return Number.isSafeInteger(binding.chatId) && Number.isSafeInteger(binding.userId)
     && chat.id === binding.chatId && from.id === binding.userId;
+}
+
+// ─── Rooms: the private chat and the permitted groups (tg-grup C1) ──────────
+
+/** Where an update happened: the paired private chat, or a group the owner permitted. */
+export type Room = { kind: 'private' } | { kind: 'group'; chatId: number; title: string };
+/** Who sent it (D2): the owner, a member of a permitted group, or nobody we answer. */
+export type Actor = 'owner' | 'member' | 'stranger';
+
+/** The binding fields the room gate reads. */
+export interface RoomIdentity extends PairedIdentity {
+  botId: number;
+  botUsername: string;
+  groups?: readonly { chatId: number; title: string }[];
+}
+
+/** Telegram's service account for channel posts forwarded into a linked group. */
+export const TG_SERVICE_USER_ID = 777000;
+
+const isGroupChat = (chat: TgChat | null | undefined): chat is TgChat => !!chat && (chat.type === 'group' || chat.type === 'supergroup');
+
+/** The room of an update: private (the paired chat), a PERMITTED group, or null (any other chat). */
+export function roomOf(update: TgUpdateLike, binding: RoomIdentity): Room | null {
+  const { chat } = senderOf(update);
+  if (!chat || !Number.isSafeInteger(chat.id)) return null;
+  if (chat.type === 'private') return chat.id === binding.chatId ? { kind: 'private' } : null;
+  if (!isGroupChat(chat)) return null;
+  const g = (binding.groups ?? []).find((x) => x.chatId === chat.id);
+  return g ? { kind: 'group', chatId: g.chatId, title: g.title } : null;
+}
+
+/** By `from.id` only (D2): a message carrying `sender_chat` (an anonymous admin, a linked channel)
+ *  and Telegram's service account are strangers; so is any bot. */
+export function actorOf(update: TgUpdateLike, binding: PairedIdentity): Actor {
+  const { from } = senderOf(update);
+  if (!from || !Number.isSafeInteger(from.id) || from.is_bot === true || from.id === TG_SERVICE_USER_ID) return 'stranger';
+  if (update.message?.sender_chat) return 'stranger';
+  return from.id === binding.userId ? 'owner' : 'member';
+}
+
+/** A command word of a message (`/bagla`, `/bagla@bot`): the command and the bot it names, or null. */
+export function commandOf(text: string | undefined): { cmd: string; bot: string | null } | null {
+  if (typeof text !== 'string') return null;
+  const m = /^\/([a-z_]+)(?:@([A-Za-z0-9_]+))?(?:\s|$)/i.exec(text.trim());
+  return m ? { cmd: m[1].toLowerCase(), bot: m[2] ?? null } : null;
+}
+
+/**
+ * D4: a group message is for the bot only when it @mentions it, replies to one of ITS messages
+ * (Telegram's `reply_to_message` is always of the same chat), or is a command addressed to it.
+ */
+export function addressed(msg: TgMessageLike | undefined, bot: { botId: number; botUsername: string }): boolean {
+  if (!msg) return false;
+  if (msg.reply_to_message?.from?.id === bot.botId) return true;
+  const c = commandOf(msg.text);
+  if (c && c.bot !== null && c.bot.toLowerCase() === bot.botUsername.toLowerCase()) return true;
+  const name = `@${bot.botUsername}`.toLowerCase();
+  for (const [text, ents] of [[msg.text, msg.entities], [msg.caption, msg.caption_entities]] as const) {
+    if (typeof text !== 'string') continue;
+    for (const e of ents ?? []) {
+      if (e.type === 'text_mention' && e.user?.id === bot.botId) return true;
+      if (e.type === 'mention' && text.slice(e.offset, e.offset + e.length).toLowerCase() === name) return true;
+    }
+    // No entities (a client that sends none): the name as a whole word.
+    // (A username is [A-Za-z0-9_] only: `isBinding` checks it, so it is safe inside a pattern.)
+    if (!ents?.length && /^[A-Za-z0-9_]{1,64}$/.test(bot.botUsername)
+      && new RegExp(`(^|[^A-Za-z0-9_])@${bot.botUsername}(?![A-Za-z0-9_])`, 'i').test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * THE room gate (C1, G1): private needs the owner (`isAuthorized`); a group needs a permitted
+ * group, a sender who is not a stranger, and a message addressed to the bot (D4). A callback or a
+ * reaction in a group is never admitted (no button ever goes to a group, G4). Null = no effect.
+ */
+export function admit(update: TgUpdateLike, binding: RoomIdentity): { room: Room; actor: Actor } | null {
+  const room = roomOf(update, binding);
+  if (!room) return null;
+  if (room.kind === 'private') return isAuthorized(update, binding) ? { room, actor: 'owner' } : null;
+  if (!update.message || update.callback_query || update.message_reaction) return null;
+  const actor = actorOf(update, binding);
+  if (actor === 'stranger' || !addressed(update.message, binding)) return null;
+  return { room, actor };
 }
 
 /** Strangers are counted, never answered. */

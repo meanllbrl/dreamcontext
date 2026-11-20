@@ -182,6 +182,17 @@ export class WhiteboardSaveLoop<E> {
     this.requestSave();
   }
 
+  /**
+   * Flush and wait until no save is in flight or queued: what the canvas held when this was
+   * called is on disk (or its save failed and shows so) before the caller reads the file. The
+   * board's Sync button awaits it, so a stroke drawn just before the press travels with it.
+   */
+  async flushAndWait(): Promise<void> {
+    this.flush();
+    // A queued follow-up starts as the flight it waited on settles, so loop until none is left.
+    while (!this.disposed && this.inFlight && this.flight) await this.flight;
+  }
+
   /** Flush, then stop every timer. Responses that land after this change nothing on screen. */
   dispose(): void {
     if (this.disposed) return;

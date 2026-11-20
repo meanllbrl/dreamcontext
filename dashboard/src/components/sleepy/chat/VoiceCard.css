@@ -1,0 +1,58 @@
+/* A voice message card (`dream-voice`). Tokens only; the row's tight gap stacks several. */
+.chat-voice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: var(--chat-card-width, 100%);
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+.chat-voice-play {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-accent-strong);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  cursor: pointer;
+}
+.chat-voice-play:disabled { cursor: default; opacity: 0.8; }
+.chat-voice-play:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-voice-play svg { width: 16px; height: 16px; fill: currentColor; }
+.chat-voice-spin {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid currentColor; border-right-color: transparent;
+  animation: var(--dc-motion-status-name, chat-voice-spin) 0.8s linear infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+@keyframes chat-voice-spin { to { transform: rotate(360deg); } }
+.chat-voice-main { min-width: 0; flex: 1; }
+.chat-voice-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.chat-voice-kind { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.chat-voice-title { font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
+.chat-voice-text {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-voice-more {
+  margin-top: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-ink);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.chat-voice-note { display: block; margin-top: var(--space-1); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.chat-voice-note[data-failed="true"] { color: var(--color-error); }

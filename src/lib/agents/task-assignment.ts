@@ -276,8 +276,8 @@ export function commitAssignment(
   const { job } = prep;
   const future = job.startAt !== null && Date.parse(job.startAt) > fireAt.getTime();
   const state = future ? 'scheduled' : 'queued';
-  // An Ask agent plans first; the owner approves the plan before the work runs.
-  const step = (prep.target.autonomy ?? DEFAULT_AGENT_AUTONOMY) === 'ask' ? 'plan' : 'work';
+  // No member runs at Ask (owner 2026-11-18), so no assignment starts with a plan step.
+  const step = 'work' as const;
   // A new assignment ends whatever this machine held for an earlier one.
   forgetTaskJob(projectRoot, prep.task.id, opts.home);
   withTaskFileLock(contextRoot, slug, () => {

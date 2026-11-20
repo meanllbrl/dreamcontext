@@ -100,6 +100,10 @@ export interface BrainSyncResult {
   codeConflicts?: string[];
   /** Set when `action === 'error'` (or a token-shaped no-remote) — the specific, recoverable failure. */
   failure?: SyncFailure;
+  /** The boards travelled beside a team merge that waits for sleep (the board's Sync button). */
+  boards?: { sent: number; received: number; waiting: number; note?: string; error?: string; stopped?: 'secret' | 'no-session' | 'no-git'; trashed?: number };
+  /** Brain files a waiting team merge left for sleep (/dream-sync), by count. */
+  awaitingSleep?: number;
 }
 
 export interface TeamVaultUpdate {

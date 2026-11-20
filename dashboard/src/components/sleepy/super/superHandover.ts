@@ -17,7 +17,7 @@
  */
 import { superAnswerPicks, type QuestionLike } from '../../../../../src/lib/super/request-answer.js';
 import {
-  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type PadStatus, type QueueKind, type SuperChild, type SuperPadItem, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, owedVisible, type ChildRow, type PadRef, type PadStatus, type QueueKind, type SuperChild, type SuperPadItem, type SuperEventKind, type SuperOwed, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 import { cardMentionText } from '../../../lib/cardMention';
 import { isOwnerCardItem } from './superJobsStore';
@@ -650,8 +650,112 @@ export interface AgendaRow {
   author?: 'owner';
   bornAt?: number;
   for?: string;
-  /** A closed line read from its day file (C8): Ask names it by its words only, never its id. */
+  /** A closed line read from its day file (C8): its header names its day-file id (ajanda-filtre C3). */
   archived?: true;
+  /** The row's thread in the Super chat (ajanda-filtre C5): pressing the row shows only it.
+   *  Absent = the row keeps today's press. Decided by `threadKeyOf`, nowhere else. */
+  thread?: ThreadKey;
+}
+
+// ─── A row's thread in the Super chat (ajanda-filtre C2, C5) ─────────────────────
+
+/** What a filtered Super chat shows: the messages and cards explicitly linked to one row. */
+export interface ThreadKey {
+  /** A pad line's id (live or archived). */
+  note?: string;
+  /** The row's queue item (a question or an owner card). */
+  item?: string;
+  /** An unanswered debt's id. */
+  owed?: string;
+  /** The row's job (a child's session). Never the Super's own session (lineThread guards it). */
+  child?: string;
+  /** The owner messages that moved it (ref + arrival), oldest first. */
+  refs: PadRef[];
+  /** Sends without the chip while the filter is on (the filter store appends them). */
+  sent: PadRef[];
+  /** The row's words when the key was built: the filter chip's label. */
+  label: string;
+}
+
+/** Every field a waiting row's key is decided by (C5); the phone digest carries each one
+ *  (pinned by super-thread-key-digest.test.ts). */
+export const THREAD_KEY_FIELDS = ['id', 'kind', 'team', 'routine', 'member', 'direct', 'hasCard', 'wait'] as const;
+export interface ThreadKeySource {
+  id: string;
+  kind: QueueKind;
+  /** A team job's item: it names no child of this Super. */
+  team?: true;
+  routine?: string;
+  member?: string;
+  /** A child's question shown to him from birth: it lives in the child's own chat. */
+  direct?: true;
+  /** An `owner` item that has its card (a card to bring into view). */
+  hasCard?: true;
+  wait?: { kind: string };
+}
+
+/** A queue item as the notepad reads it: the phone's digest rows carry `hasCard`/`teamItem`
+ *  instead of the card handle and the job id (PhoneAgenda `digestToNotepadInput`). */
+export type NotepadQueueItem = SuperQueueItem & { hasCard?: true; teamItem?: true };
+
+/** The key source of a queue item, the ONE mapping both shells use. */
+export function threadKeySourceOf(q: NotepadQueueItem): ThreadKeySource {
+  return {
+    id: q.id, kind: q.kind,
+    ...(q.team || q.teamItem ? { team: true as const } : {}),
+    // A member or a routine as the row's own kind (what the phone digest carries).
+    ...(q.kind === 'routine' && q.routine ? { routine: q.routine } : {}),
+    ...(q.kind === 'member' && q.member ? { member: q.member } : {}),
+    ...(q.direct === true ? { direct: true as const } : {}),
+    ...(q.card || q.hasCard ? { hasCard: true as const } : {}),
+    // Only what decides the key: a refusal or a stall (the phone carries no other wait kind).
+    ...(q.wait?.kind === 'refusal' || q.wait?.kind === 'stalled' ? { wait: { kind: q.wait.kind } } : {}),
+  };
+}
+
+/** Every ref of the lines that follow `child`, oldest first, one copy per pair. */
+function childLineRefs(pad: readonly SuperPadItem[] | undefined, child: string | undefined): PadRef[] {
+  if (!child) return [];
+  const seen = new Set<string>();
+  const out: PadRef[] = [];
+  for (const p of pad ?? []) {
+    if (p.for !== child) continue;
+    for (const r of p.refs ?? []) {
+      const k = `${r.ref}@${r.at}`;
+      if (!seen.has(k)) { seen.add(k); out.push(r); }
+    }
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * The ONE place a row's thread key is decided (C5). A pad line: its id, its job, its refs. An
+ * unanswered debt: its id, its job, its message. A waiting row of the notepad's owner loop: a
+ * question (not `direct`), the Super's own ask, or an owner item with its card; never a routine,
+ * a member, a refusal or a stall. Its job is the row's `sid` as the notepad set it (unset for the
+ * Super's own items) and never a team item's. Undefined = the row keeps today's press.
+ */
+export function threadKeyOf(
+  src:
+    | { line: Pick<SuperPadItem, 'id' | 'for' | 'refs' | 'text'> }
+    | { owed: Pick<SuperOwed, 'id' | 'child' | 'ref' | 'at' | 'gist'> }
+    | { waiting: ThreadKeySource; sid?: string; label: string; pad?: readonly SuperPadItem[] },
+): ThreadKey | undefined {
+  if ('line' in src) {
+    const l = src.line;
+    return { note: l.id, ...(l.for ? { child: l.for } : {}), refs: [...(l.refs ?? [])], sent: [], label: l.text };
+  }
+  if ('owed' in src) {
+    const d = src.owed;
+    return { owed: d.id, ...(d.child ? { child: d.child } : {}), refs: /^[0-9a-z]{6}$/.test(d.ref) ? [{ ref: d.ref, at: d.at }] : [], sent: [], label: d.gist };
+  }
+  const w = src.waiting;
+  if (w.kind === 'routine' || w.kind === 'member' || w.routine || w.member) return undefined;
+  if (w.direct) return undefined;
+  if (w.wait?.kind === 'refusal' || w.wait?.kind === 'stalled') return undefined;
+  if (!(w.kind === 'question' || w.kind === 'ask' || (w.kind === 'owner' && w.hasCard))) return undefined;
+  const child = w.team ? undefined : src.sid;
+  return { item: w.id, ...(child ? { child } : {}), refs: childLineRefs(src.pad, child), sent: [], label: src.label };
 }
 
 /** A line's status, of five, from its stored section and stage (MIRROR of src/lib/super/pad.ts
@@ -682,9 +786,10 @@ export function agendaUpdatedAt(row: Pick<AgendaRow, 'note' | 'at' | 'for'>, chi
  * "Cevaplanmadı". `now` decides the parked ones (the card arms one timer for the next).
  */
 export function superUnanswered(state: Pick<SuperState, 'owed'>, now = Date.now()): AgendaRow[] {
-  return (state.owed ?? []).filter((d) => owedVisible(d, now)).sort((a, b) => a.seq - b.seq).map((d) => ({
-    key: `o:${d.id}`, section: 'unanswered' as const, text: d.gist, owed: d.id, owedKind: d.kind, at: d.at,
-  }));
+  return (state.owed ?? []).filter((d) => owedVisible(d, now)).sort((a, b) => a.seq - b.seq).map((d) => {
+    const thread = threadKeyOf({ owed: d });
+    return { key: `o:${d.id}`, section: 'unanswered' as const, text: d.gist, owed: d.id, owedKind: d.kind, at: d.at, ...(thread ? { thread } : {}) };
+  });
 }
 export interface JobLook {
   /** The child's live status kind in this window, or null when it has no session here. */
@@ -726,7 +831,7 @@ function isQuestionOpen(state: Pick<SuperState, 'queue'>): boolean {
  * owner right now (`needsOwner`, head first; the questions held behind an open one, "queued"),
  * so nothing he must answer is missing from it. Done: newest first.
  */
-export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: JobLook, now = Date.now()): Record<AgendaSection, AgendaRow[]> {
+export function superNotepad(state: { queue: NotepadQueueItem[]; pad?: SuperState['pad'] }, look: JobLook, now = Date.now()): Record<AgendaSection, AgendaRow[]> {
   const out: Record<AgendaSection, AgendaRow[]> = { waiting: [], now: [], done: [] };
   const head = queueHead(state);
   const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
@@ -754,9 +859,12 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
     }
     // An OWN item (K1: main's own refused command) is the Super's own, like its `ask`.
     const own = q.kind === 'ask' || q.kind === 'approval' || q.own === true;
+    const text = own ? look.superTitle : nameOf(q.sessionId);
+    // The strip names what the row shows: the Super's own question by its words, a job by its name.
+    const thread = threadKeyOf({ waiting: threadKeySourceOf(q), ...(own ? {} : { sid: q.sessionId }), label: (own && q.kind !== 'permission' && q.ownerText?.trim()) || text, pad: state.pad });
     out.waiting.push({
       key: `q:${q.id}`, section: 'waiting', item: q.id, ...(own ? {} : { sid: q.sessionId }),
-      text: own ? look.superTitle : nameOf(q.sessionId),
+      text, ...(thread ? { thread } : {}),
       // A permission row shows only the child's own request (the bar draws it); never the super's words.
       line: q.kind === 'permission' ? '' : (q.ownerText ?? ''), ...(q.allowed ? { allowed: true as const } : {}),
       chip: ownerWaitOf(q) ?? chipOf(q.kind), at: q.createdAt, ...(directChildQuestion(q) ? { direct: true } : {}),
@@ -785,6 +893,7 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
       ...(p.for ? { for: p.for } : {}),
       ...(p.section === 'done' && p.by === 'auto' ? { auto: true } : {}),
       ...(stale ? { stale: true } : {}),
+      thread: threadKeyOf({ line: p })!,
     });
   }
   out.done.sort((a, b) => b.at - a.at);
@@ -822,8 +931,12 @@ function aboutLine(text: string): string {
 export function agendaAboutBlock(row: Pick<AgendaRow, 'section' | 'note' | 'item' | 'text' | 'owed' | 'archived'>): string {
   // An unanswered line names its debt: the Super answers under that debt's ref.
   if (row.owed && ABOUT_ID.test(row.owed)) return `[About agenda line owed=${row.owed} section=unanswered]`;
-  // An archived line's id is not on the pad any more: its words only (plan build notes).
-  if (row.archived) return `[About a closed agenda line]\nline: ${JSON.stringify(aboutLine(row.text))}`;
+  // An archived line's id is not on the pad any more: the header names its day-file id, so a
+  // message about it joins the line's thread (ajanda-filtre C3); the Super reads plain text.
+  if (row.archived) {
+    const id = row.note && ABOUT_ID.test(row.note) ? ` note=${row.note}` : '';
+    return `[About a closed agenda line${id}]\nline: ${JSON.stringify(aboutLine(row.text))}`;
+  }
   if (row.note && ABOUT_ID.test(row.note)) {
     return `[About agenda line note=${row.note} section=${row.section}]\nline: ${JSON.stringify(aboutLine(row.text))}`;
   }

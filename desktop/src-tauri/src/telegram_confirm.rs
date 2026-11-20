@@ -33,6 +33,7 @@ const PAIRING: &str = "/api/telegram-pairing/";
 const FORWARD: &str = "/api/telegram-forward/";
 const CREATION: &str = "/api/telegram-creation/";
 const READOPT: &str = "/api/telegram-readopt/";
+const GROUP: &str = "/api/telegram-group/";
 /// The manager pairing's target in a `PairingPreview` (it cannot be a member slug).
 const MANAGER_TARGET: &str = "@manager";
 
@@ -147,6 +148,21 @@ pub(crate) fn forward_text(p: &Value) -> Option<(String, String)> {
     Some((
         "Rutin sonuçları Telegram'a gitsin mi?".into(),
         format!("{project} · {routine} sonuçları {bot} botuna da gitsin mi?"),
+    ))
+}
+
+/// What the group-bind alert says (tg-grup D3): the group's title, then what its members can and
+/// cannot reach, in the owner's approved words.
+pub(crate) fn group_text(p: &Value) -> Option<(String, String)> {
+    let title = clean_label(p.get("title")?.as_str()?);
+    let bot = at(p.get("botUsername")?.as_str()?);
+    let project = clean_label(p.get("projectName").and_then(Value::as_str).unwrap_or(""));
+    let title = if title.is_empty() { "Grup".to_string() } else { title };
+    Some((
+        format!("\"{title}\" grubuna bağlansın mı?"),
+        format!(
+            "Bu gruptaki herkes botu etiketleyip projenin hafızasındaki bilgi dosyalarını, işleri ve ana notları sorabilir. Senin sohbetlerin, kişisel notların ve taslakların kapalı. Değiştiren her iş önce sana özelden sorulur.\n\nProje: {project}\nBot: {bot}"
+        ),
     ))
 }
 
@@ -287,6 +303,34 @@ pub(crate) async fn confirm_telegram_binding(app: AppHandle, webview: Webview, p
     let shown = serde_json::json!({ "botId": bot_id, "userId": user_id }).to_string();
     let id = pairing_id;
     let (status, json) = blocking(move || http(port, "POST", &format!("{PAIRING}{id}/confirm"), Some(&shown), Some(&key))).await?;
+    if status != 200 {
+        return Err(status_error(status, &json));
+    }
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+/// A group the owner wrote /bagla in becomes permitted, only on his click (tg-grup D3).
+#[tauri::command]
+pub(crate) async fn confirm_telegram_group(app: AppHandle, webview: Webview, group_bind_id: String) -> Result<Value, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("unsupported".into());
+    }
+    let (port, _slot) = admit(&app, &webview, &group_bind_id)?;
+    let id = group_bind_id.clone();
+    let (status, preview) = blocking(move || http(port, "GET", &format!("{GROUP}{id}"), None, None)).await?;
+    if status != 200 {
+        return Err(status_error(status, &preview));
+    }
+    let (title, body) = group_text(&preview).ok_or("unreadable group request")?;
+    let bot_id = preview.get("botId").and_then(Value::as_i64).ok_or("unreadable group request")?;
+    let chat_id = preview.get("chatId").and_then(Value::as_i64).filter(|c| *c < 0).ok_or("unreadable group request")?;
+    if !native_confirm(window_of(&app, &webview)?, title, body, "Bağla").await? {
+        return Ok(cancelled());
+    }
+    let key = owner_key_while_server_lives(&app)?;
+    let shown = serde_json::json!({ "botId": bot_id, "chatId": chat_id }).to_string();
+    let id = group_bind_id;
+    let (status, json) = blocking(move || http(port, "POST", &format!("{GROUP}{id}/confirm"), Some(&shown), Some(&key))).await?;
     if status != 200 {
         return Err(status_error(status, &json));
     }
@@ -506,6 +550,16 @@ mod tests {
         let (_, body) = readopt_text(&json!({ "projectName": "Tilki", "target": "super", "botUsername": "nm_tilki_bot", "approvalHash": "h" })).unwrap();
         assert_eq!(body, "Tilki · Super için @nm_tilki_bot yeniden bağlansın mı?");
         assert!(forward_text(&json!({ "projectName": "x" })).is_none());
+    }
+
+    #[test]
+    fn the_group_alert_names_the_group_and_what_stays_closed() {
+        let (title, body) = group_text(&json!({ "projectName": "Acme", "title": "Ürün\u{202E} ekibi", "botUsername": "acme_super_bot", "botId": 1, "chatId": -100 })).unwrap();
+        assert_eq!(title, "\"Ürün ekibi\" grubuna bağlansın mı?");
+        assert!(body.starts_with("Bu gruptaki herkes botu etiketleyip"));
+        assert!(body.contains("Senin sohbetlerin, kişisel notların ve taslakların kapalı."));
+        assert!(body.ends_with("Proje: Acme\nBot: @acme_super_bot"));
+        assert!(group_text(&json!({ "projectName": "Acme" })).is_none());
     }
 
     #[test]

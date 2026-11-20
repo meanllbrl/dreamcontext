@@ -7,7 +7,7 @@ import type { WhiteboardCanvasApi, WhiteboardScene } from '../components/whitebo
 import { BoardPictures, isPictureOf, liveFileIds, type PictureFile } from '../components/whiteboard/boardPictures';
 import { readViewport, viewportShowsAny, writeViewport } from '../components/whiteboard/boardPlace';
 import { adoptBoardCards } from '../components/whiteboard/boardAgentScratch';
-import { agentCardsOf, setBoardCards } from '../components/whiteboard/agentPanelState';
+import { agentCardsOf } from '../components/whiteboard/agentCards';
 import { sceneSignature } from '../components/whiteboard/sceneSync';
 import { boardIsGone, listIsStale } from './whiteboardListSync';
 import {
@@ -364,9 +364,7 @@ export function useWhiteboardEditor(slug: string) {
           && doc.elements.some((el) => !(el as { isDeleted?: boolean } | null)?.isDeleted);
         if (Array.isArray(doc.elements)) pictures.markStored(liveFileIds(doc.elements));
         if (vault) {
-          const cards = agentCardsOf(doc.elements);
-          setBoardCards(vault, slug, cards);
-          adoptBoardCards(vault, slug, cards);
+          adoptBoardCards(vault, slug, agentCardsOf(doc.elements));
         }
         setLoad({
           kind: 'ready',
@@ -551,5 +549,9 @@ export function useWhiteboardEditor(slug: string) {
    *  closes its tab and moves on. */
   /** Send what the board holds now (the writing field, before it hands a message over). */
   const flush = useCallback(() => { loopRef.current?.flush(); }, []);
-  return { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush };
+  /** Send what the board holds now and wait for it to land (the Sync button, before it syncs). */
+  const flushAndWait = useCallback(async () => { await loopRef.current?.flushAndWait(); }, []);
+  /** Read the board from disk now (after a sync brought a teammate's drawing in). */
+  const refresh = useCallback(async () => { await loopRef.current?.poll(); }, []);
+  return { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh };
 }

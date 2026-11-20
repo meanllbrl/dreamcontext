@@ -4,7 +4,7 @@
  * answers, the argv it was spawned with, and a stop that kills its "process group".
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, request, type Server } from 'node:http';
@@ -55,6 +55,10 @@ interface Spawned {
   args: string[]; stdin?: string; resolve: (stdout: string) => void; child: EventEmitter & { pid: number }; killed: string[];
   /** A Codex / Antigravity run: the program, its timeout, its working folder, and the turn file read while it ran. */
   command?: { file: string; prefix: string[] }; timeoutMs?: number; cwd?: string; turn?: string; pictureOnDisk?: boolean;
+  /** The working folder's entries and mode while the run ran (it is removed after). */
+  cwdEntries?: string[]; cwdMode?: number; cwdReal?: string;
+  /** The `dreamcontext` shim first on its PATH, read while it ran. */
+  shim?: string;
   env?: Record<string, string | undefined>;
 }
 let spawned: Spawned[] = [];
@@ -69,6 +73,10 @@ function fakeExec(args: string[], opts: { onSpawned?: (c: unknown, at: Date) => 
     const pic = turn?.match(/^\[Picture 1: (.+)\]$/m)?.[1];
     const entry: Spawned = {
       args, child, killed: [], stdin: opts.stdin, command: opts.command, timeoutMs: opts.timeoutMs, cwd: opts.cwd, turn, env: opts.env,
+      cwdEntries: opts.cwd ? (() => { try { return readdirSync(opts.cwd!); } catch { return undefined; } })() : undefined,
+      shim: (() => { const d = opts.env?.PATH?.split(':')[0]; try { return d ? readFileSync(join(d, 'dreamcontext'), 'utf-8') : undefined; } catch { return undefined; } })(),
+      cwdReal: opts.cwd ? (() => { try { return realpathSync(opts.cwd!); } catch { return undefined; } })() : undefined,
+      cwdMode: opts.cwd ? (() => { try { return statSync(opts.cwd!).mode & 0o777; } catch { return undefined; } })() : undefined,
       pictureOnDisk: pic ? (() => { try { return readFileSync(pic).length > 0; } catch { return false; } })() : undefined,
       resolve: (stdout) => resolve({ spawned: true, timedOut: false, exitCode: 0, stdout, stderrTail: '', startedAt: new Date(), finishedAt: new Date(), result: null }),
     };
@@ -510,7 +518,7 @@ describe('quick edit memory (owner 13 Nov: "quick edit\'e de memory olsun ve ara
     setQuickDepsForTests({ exec: fakeExec as never, env: {}, system: () => 'SYS', status: () => ({ ok: true }), memory: async (_root, text) => `— Memory recall (BM25, top 1) —\n  [knowledge] knowledge/kargo.md\n    Why: ${text}` });
   });
 
-  it('a Claude run carries the recall block as data, works in the brain, and may only read it and run recall', async () => {
+  it('a Claude run carries the recall block as data, works in an EMPTY folder outside the brain, and may only read it and run recall', async () => {
     auto = () => ({ reply: 'ok', notBoard: false, add: [] });
     const slug = await boardWith([rect('A')]);
     const view = await settle(slug, (await call('POST', `/api/whiteboards/${slug}/quick-edit`, { text: 'kargo akışını çiz' })).body.job);
@@ -518,8 +526,18 @@ describe('quick edit memory (owner 13 Nov: "quick edit\'e de memory olsun ve ara
     expect(typeof view.timing.memoryMs).toBe('number');
     const sp = spawned[0];
     const brain = realpathSync(roots.a);
-    expect(sp.cwd).toBe(brain);
+    // Under `dontAsk` the working folder is readable whatever the allow rules say (measured on
+    // Claude Code 2.1.326: started in the brain, a run read people/, tmp/ and agents/). So the run
+    // works in an empty, owner-only folder outside the brain and the project; only the rules let it in.
+    expect(sp.cwd).toBeTruthy();
+    // Both sides real paths (macOS: /var is /private/var), so the check cannot pass by spelling.
+    expect(sp.cwdReal).toBeTruthy();
+    expect(sp.cwdReal!.startsWith(join(brain, '..') + '/')).toBe(false);
+    expect(sp.cwdEntries).toEqual([]);
+    expect(sp.cwdMode).toBe(0o700);
     const user = sp.args[sp.args.indexOf('-p') + 1];
+    // It is told where the brain is, to read its pages by their full path.
+    expect(user).toContain(`The brain folder (read its files by their full path under it): ${brain}`);
     expect(user).toMatch(/<memory-[0-9a-f]+>\n— Memory recall \(BM25, top 1\) —/);
     expect(user.indexOf('Request from the owner: kargo akışını çiz')).toBeLessThan(user.indexOf('<memory-'));
     const at = (flag: string) => sp.args[sp.args.indexOf(flag) + 1];
@@ -538,8 +556,11 @@ describe('quick edit memory (owner 13 Nov: "quick edit\'e de memory olsun ve ara
     for (const d of ['Read(//**/.env*)', 'Read(//**/.secrets.json)', 'Read(//**/lab/credentials.json)']) expect(denied).toContain(d);
     // The brain's machine-local and private pages are never on the allow list (quick-readable.ts).
     expect(allowed.some((a) => a.includes('/state/**') || a.includes('/agents/') || a.includes(`/${brain}/**/*.md`))).toBe(false);
-    // Its recall stays in this vault, through the running CLI.
+    // Its recall stays in this vault, through the running CLI, which steps into the project first.
     expect(sp.env?.DREAMCONTEXT_RECALL_SCOPE).toBe('quick-edit');
+    if (process.platform !== 'win32') {
+      expect(sp.shim).toContain(`cd '${join(roots.a, '..')}' || exit 1\nexec `);
+    }
   });
 
   it('no memory block when recall finds nothing; the run still has its search', async () => {

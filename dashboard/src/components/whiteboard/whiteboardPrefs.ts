@@ -1,6 +1,6 @@
 /**
  * The Whiteboard page's per-machine memory (the explorer, the last board, each board's
- * viewport, the agent panel), kept where a relaunch cannot wipe it.
+ * viewport), kept where a relaunch cannot wipe it.
  *
  * localStorage alone is not enough: the desktop app picks a fresh loopback port every launch,
  * so the origin and its localStorage are new each time and every tab came back closed (owner,

@@ -10,6 +10,11 @@ description = "Show the native confirm for a pending Telegram pairing and activa
 commands.allow = ["confirm_telegram_binding"]
 
 [[permission]]
+identifier = "allow-confirm-telegram-group"
+description = "Show the native confirm for binding a Telegram group the owner wrote /bagla in, and bind it with the owner key."
+commands.allow = ["confirm_telegram_group"]
+
+[[permission]]
 identifier = "allow-start-telegram-creation"
 description = "Start a one-tap Telegram bot creation the page minted an id for."
 commands.allow = ["start_telegram_creation"]

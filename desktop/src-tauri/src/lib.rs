@@ -128,6 +128,7 @@ pub fn run() {
             telegram_confirm::confirm_telegram_forward,
             telegram_confirm::start_telegram_creation,
             telegram_confirm::start_telegram_readopt,
+            telegram_confirm::confirm_telegram_group,
             html_snapshot::html_snapshot,
             app_link::take_app_link,
             splash::splash_done,

@@ -251,9 +251,10 @@ export interface StagePlan {
   layout: PresentLayout | null;
   /** How the agent's chat is drawn (the centre rect is its rect). */
   chat: ChatDraw;
-  /** A narrow sheet of 2+ cards (not a filmstrip): its tab row and the cards in tab order; the
-   *  selected one is drawn `sheet`, the rest `tab` (kept, not shown). */
-  tabs?: { rect: Rect; ids: string[] };
+  /** A narrow stage's page or presentation: its tab row over the chat, one tab per card in order.
+   *  Open, the selected card is drawn `sheet` under the row and the rest `tab` (kept, not shown);
+   *  `folded`, every card is `tab` and the chat takes the height under the row. */
+  tabs?: { rect: Rect; ids: string[]; folded?: boolean };
   /** Filmstrip: the strip under the big card, and which card is big. */
   strip?: StripPlan;
   /** While presenting: the top band's switcher and exit, at its right end. */
@@ -411,6 +412,11 @@ export interface PlanOptions {
   /** A presentation on a tight stage draws the live jobs as one-line cards (owner 2026-10-31):
    *  the width goes to the chat. Off: the classic rail of tiles. */
   miniRail?: boolean;
+  /** A narrow stage's page or presentation is folded to its tab row (owner 2026-11-17, "o kart
+   *  kapansın otomatik yeterince alan yoksa"): the chat runs full height under the row and the
+   *  cards are kept as `tab`. Window state; absent = open, as a sheet under the row. Ignored on a
+   *  wide stage. */
+  folded?: boolean;
   /** The new shell's chat drawer stands beside the stage (owner 2026-10-31). The chat's width
    *  comes from the stage's width alone, the drawer open or not (owner 2026-11-06): the plan is
    *  the same either way; kept so callers need not know. */
@@ -1248,7 +1254,7 @@ function planWith(
   // A page side by side or a presentation keeps its bands: it is drawn over the chat's head, and
   // its exits live there.
   const phone = stage.width > 0 && stage.width < PHONE_STAGE_PX && view.mode === 'float';
-  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
+  let f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
     phone ? { queue: !!opts.queueUp, terminals: (opts.terminals ?? 0) > 0 } : undefined, opts.queueUp ? opts.queueHeight ?? STAGE.BAND : STAGE.BAND);
   const narrow = f.width < (opts.narrowPx ?? NARROW_STAGE_PX);
   const ids = new Set(list.map((c) => c.id));
@@ -1260,6 +1266,9 @@ function planWith(
   const others: string[] = [];
   /** The corners that found no room beside the chat, on a floating stage. */
   const inHead = { others: false, agenda: false };
+  /** How far a presentation's own row (tabs + controls) sits below the band: a question's bar holds
+   *  the band, so the row stands under it, never over it. */
+  let rowDy = 0;
   const toOthers = (c: StageItem) => {
     cards[c.id] = { id: c.id, rect: f.othersRect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
     others.push(c.id);
@@ -1267,9 +1276,11 @@ function planWith(
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
     extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
     // The waiting queue's control holds the band's right end off a presentation.
-    const qb = queueBandRect(f, opts.queueBand, mode);
-    const bandRight = qb ? qb.rect : extra.controls;
-    const framed = extra.controls && mode === 'present' ? presentFrameOf(f, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
+    const fRow = rowDy ? { ...f, bandTop: f.bandTop + rowDy } : f;
+    const qb = queueBandRect(fRow, opts.queueBand, mode);
+    // A presentation's row of its own leaves the question's bar the band's whole width.
+    const bandRight = rowDy ? undefined : qb ? qb.rect : extra.controls;
+    const framed = extra.controls && mode === 'present' ? presentFrameOf(fRow, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
@@ -1351,16 +1362,33 @@ function planWith(
     return fit ? Math.max(fit + STAGE.CARD_CHROME.w + STAGE.WIDGET_BORDER_W, STAGE.FIT_MIN.w) : undefined;
   };
 
-  // ── half (a narrow stage opens it as a sheet over the centre) ──
+  // A narrow stage never splits the screen between a card and the chat (owner 2026-11-17): what
+  // a page or a presentation shows is a row of tabs over the chat. Folded, the chat runs full
+  // height under the row and every card is kept as `tab`; open, the picked card is a sheet under it.
+  const tabRow: Rect = { x: f.content.x, y: f.content.y, width: f.content.width, height: STAGE.TAB_H };
+  const underRow: Rect = (() => {
+    const y = tabRow.y + STAGE.TAB_H + STAGE.GAP / 2;
+    return { x: f.content.x, y, width: f.content.width, height: Math.max(0, f.content.y + f.content.height - y) };
+  })();
+  // A presentation's switcher, exit and queue step stay in the top band while folded: they take
+  // nothing from the chat, and the owner can leave or step on without opening a card first.
+  const foldedTo = (shown: readonly string[], mode: 'half' | 'present', layout: PresentLayout | null = null, controls?: Rect): StagePlan => {
+    for (const id of shown) place(id, underRow, 'tab');
+    for (const c of list) if (!cards[c.id]) toOthers(c);
+    return finish({ ...underRow }, underRow.width, mode, undefined, undefined, { layout, chat: 'column', tabs: { rect: tabRow, ids: [...shown], folded: true }, ...(controls ? { controls } : {}) });
+  };
+
+  // ── half (a narrow stage folds it to its tab, or opens it as a sheet over the centre) ──
   const half = view.mode === 'half' && view.card && ids.has(view.card) ? view.card : null;
   if (half) {
+    if (narrow && opts.folded) return foldedTo([half], 'half');
     const content = besideRail([half]);
     let centre: Rect;
     let region: Rect;
     if (narrow) {
-      centre = { ...f.content };
+      centre = { ...underRow };
       const i = STAGE.SHEET_INSET;
-      region = { x: centre.x + i, y: centre.y + i, width: centre.width - 2 * i, height: centre.height - 2 * i };
+      region = { x: centre.x + i, y: centre.y, width: centre.width - 2 * i, height: Math.max(0, centre.height - i) };
     } else {
       // A web page with a device width picked (owner 2026-10-28): the CARD takes the device's shape,
       // as presentation's fitCard does for a picture: a phone is a narrow tall card and the centre
@@ -1382,13 +1410,18 @@ function planWith(
     }
     place(half, region, narrow ? 'sheet' : 'half');
     for (const c of list) if (!cards[c.id]) toOthers(c);
-    return finish(centre, centre.width, 'half');
+    return finish(centre, centre.width, 'half', undefined, undefined, narrow ? { tabs: { rect: tabRow, ids: [half] } } : {});
   }
 
   // ── present: a named layout (a narrow stage opens it as a sheet over a composer bar) ──
   const pool = view.mode === 'present' ? [...new Set((view.cards ?? []).filter((id) => ids.has(id)))] : [];
   if (pool.length) {
     const layout = drawnLayout(view.layout, pool.length);
+    // Only a bar that is really drawn (it reports its height) holds the band.
+    if (opts.queueUp && (opts.queueHeight ?? 0) > 0 && !f.phone) {
+      rowDy = Math.max(STAGE.BAND, opts.queueHeight ?? STAGE.BAND);
+      f = { ...f, content: { ...f.content, y: f.content.y + STAGE.BAND, height: Math.max(0, f.content.height - STAGE.BAND) } };
+    }
     // The agenda is never a filmstrip's big card: drawn last there (the record keeps its order).
     const kindOf = (id: string) => list.find((x) => x.id === id)?.kind;
     const shown = pool.slice(0, presentRange(layout).max);
@@ -1396,7 +1429,7 @@ function planWith(
     const selected = opts.selected && ordered.includes(opts.selected) ? opts.selected : ordered[0];
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
     const cw = controlsWidth(choices, !!opts.groupExit);
-    const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
+    const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop + rowDy, width: Math.min(cw, f.content.width), height: STAGE.BAND };
     const strip = (main: Rect): StripPlan => {
       // The big card over one row holding a slot for EVERY card, in their fixed order: the big
       // one's slot is marked, never given to another card (selecting never reorders).
@@ -1429,28 +1462,24 @@ function planWith(
     };
 
     if (narrow) {
-      // Any layout is the sheet; the agent's composer is a bar under it (D14). A question of his
-      // open: the chat at the mini's height, its transcript shown, so the question is there (D7).
+      // Folded (the default for what the agent shows): the tab row over a full-height chat.
+      if (opts.folded) return foldedTo(ordered, 'present', layout, controls);
+      // Open: any layout is a sheet under the tab row; the agent's composer is a bar under it
+      // (D14). A question of his open: the chat at the mini's height, its transcript shown, so the
+      // question is there (D7); folding the sheet gives the chat its full height back.
       const i = STAGE.SHEET_INSET;
       const barH = opts.asking ? Math.min(STAGE.MINI_MAX_H, Math.max(STAGE.MINI_MIN_H, STAGE.MINI_FRAC_H * f.height), f.content.height / 2) : STAGE.CHAT_BAR_H;
       const bar: Rect = { x: f.content.x, y: f.content.y + f.content.height - barH, width: f.content.width, height: barH };
-      const sheet: Rect = { x: f.content.x + i, y: f.content.y + i, width: f.content.width - 2 * i, height: Math.max(0, f.content.height - barH - STAGE.GAP - i) };
-      const extra = { layout, chat: opts.asking ? 'mini' as const : 'bar' as const, controls };
+      const sheet: Rect = { x: underRow.x + i, y: underRow.y, width: underRow.width - 2 * i, height: Math.max(0, underRow.height - barH - STAGE.GAP) };
+      const extra = { layout, chat: opts.asking ? 'mini' as const : 'bar' as const, controls, tabs: { rect: tabRow, ids: ordered } };
       if (layout === 'filmstrip') {
         const st = strip(sheet);
         for (const c of list) if (!cards[c.id]) toOthers(c);
         return finish(bar, bar.width, 'present', undefined, undefined, { ...extra, strip: st });
       }
-      if (ordered.length === 1) {
-        place(ordered[0], sheet, 'sheet');
-        for (const c of list) if (!cards[c.id]) toOthers(c);
-        return finish(bar, bar.width, 'present', undefined, undefined, extra);
-      }
-      const tabs: Rect = { x: sheet.x, y: sheet.y, width: sheet.width, height: STAGE.TAB_H };
-      const body: Rect = { x: sheet.x, y: sheet.y + STAGE.TAB_H + STAGE.GAP / 2, width: sheet.width, height: Math.max(0, sheet.height - STAGE.TAB_H - STAGE.GAP / 2) };
-      for (const id of ordered) place(id, body, id === selected ? 'sheet' : 'tab');
+      for (const id of ordered) place(id, sheet, id === selected ? 'sheet' : 'tab');
       for (const c of list) if (!cards[c.id]) toOthers(c);
-      return finish(bar, bar.width, 'present', undefined, undefined, { ...extra, tabs: { rect: tabs, ids: ordered } });
+      return finish(bar, bar.width, 'present', undefined, undefined, extra);
     }
 
     // A wide stage keeps the live jobs beside the presentation; the layouts draw in what they leave.

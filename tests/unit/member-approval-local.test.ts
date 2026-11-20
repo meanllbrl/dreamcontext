@@ -382,16 +382,16 @@ describe('review round 1 (plan-r10 1e)', () => {
     const clean = join(projectRoot, 'clean.md');
     writeFileSync(clean, 'Summarise the open tasks when called.\n');
     vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '1');
-    expect((await run(['automations', 'create', 'evil', '--title', 'Evil', '--mode', 'call', '--prompt-file', risky])).code).toBe(0);
+    expect((await run(['automations', 'create', 'evil', '--title', 'Evil', '--mode', 'call', '--new-member', '--prompt-file', risky])).code).toBe(0);
     expect(routineApproved('evil')).toBe(false);
     expect(listAmendments(projectRoot, 'evil')[0]).toMatchObject({ by: 'agent', created: true, waits: true });
     expect(listAmendments(projectRoot, 'evil')[0].risks?.length).toBeGreaterThan(0);
-    expect((await run(['automations', 'create', 'helper', '--title', 'Helper', '--mode', 'call', '--prompt-file', clean])).code).toBe(0);
+    expect((await run(['automations', 'create', 'helper', '--title', 'Helper', '--mode', 'call', '--new-member', '--prompt-file', clean])).code).toBe(0);
     expect(routineApproved('helper')).toBe(true);
     expect(listAmendments(projectRoot, 'helper')[0]).toMatchObject({ by: 'agent', created: true });
     expect(listAmendments(projectRoot, 'helper')[0].waits).toBeUndefined();
     // Running by itself widens it, and it was made on this Mac: approved, the trace names the widening.
-    expect((await run(['automations', 'create', 'nightly', '--title', 'Nightly', '--days', 'daily', '--at', '22:00', '--prompt-file', clean])).code).toBe(0);
+    expect((await run(['automations', 'create', 'nightly', '--title', 'Nightly', '--days', 'daily', '--at', '22:00', '--new-member', '--prompt-file', clean])).code).toBe(0);
     expect(routineApproved('nightly')).toBe(true);
     expect(listAmendments(projectRoot, 'nightly')[0]).toMatchObject({ widened: ['mode'] });
     expect(listAmendments(projectRoot, 'nightly')[0].waits).toBeUndefined();

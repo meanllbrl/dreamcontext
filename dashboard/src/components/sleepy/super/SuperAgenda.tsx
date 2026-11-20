@@ -1,26 +1,43 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
+import { KIND_GLYPH } from '../../../lib/cardMention';
+import { useAgendaCardActions } from './agendaCardActions';
 import { nextOwedReveal, type PadStatus, type SuperChild, type SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
 import { tr } from '../../../lib/assignToAgent';
-import { superNotepad, superUnanswered, type AgendaRow, type JobLook } from './superHandover';
+import { superNotepad, superUnanswered, type AgendaRow, type JobLook, type ThreadKey } from './superHandover';
 import { showApprovalRow, superApprovalSentence, type SuperApproval } from './superApprovals';
 import { requestOpenAgents } from '../../../lib/openAgents';
 import { ownerSlotMounted, showOwnerSlot } from './superJobsStore';
 import { indexStopLine } from '../../../lib/indexStop';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import {
-  TODAY_GROUPS, agendaProgress, dayGroups, filterEntries, holdOrder, localDay, placeBeside, rowActions, smallEntries, todayGroups,
+  TODAY_GROUPS, agendaProgress, dayGroups, filterEntries, holdOrder, localDay, placeBeside, rowActions, shiftDay, smallEntries, todayGroups,
   type AgendaEntry, type AgendaFilter, type AgendaGroup, type DayGroup, type RowActions,
 } from './agendaGroups';
 import { AgendaRowView, type AgendaSize } from './AgendaRow';
 import { AgendaStatusMenu, FloatLayer } from './AgendaStatusMenu';
 import { AgendaDetail, type DetailJob } from './AgendaDetail';
+import { OPEN_ROW_DETAIL } from './agendaRowDetail';
+import { useVaultId } from '../../../context/VaultContext';
 import { AgendaDayNav, AgendaWeekStrip } from './AgendaDayNav';
+import { searchDays, searchSources } from './agendaSearch';
+import { AgendaFind } from './AgendaFind';
 import type { AgendaDay } from './superApi';
 import './SuperAgenda.css';
 
 export type { AgendaSize } from './AgendaRow';
+
+/** A thread row's press (ajanda-filtre D1): the host filters the Super chat and answers whether
+ *  the filter is now on (false: the same row was pressed again and it cleared). */
+export interface ThreadPress {
+  rowKey: string;
+  row: AgendaRow;
+  key: ThreadKey;
+  /** A question or owner-card row: its card, brought into view after the filter lands. */
+  focusItem?: string;
+}
 
 /** The row's machine detail (index-stop.ts writes JSON); an unreadable one still reads as a failed update. */
 function parseStopDetail(detail: string | undefined): { reason: string; asOf: string | null; estUsd: number | null } {
@@ -71,7 +88,7 @@ const toMidnight = (now: number) => { const d = new Date(now); d.setHours(24, 0,
  * Nothing polls: the record is pushed; a day's archived Done lines come from `loadDay` (today's
  * merge on open, on a day change and after a pad change).
  */
-export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onThread, threadRowKey = null, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, loadDays, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'> & { children?: Readonly<Record<string, SuperChild>> };
   /** The drawn size (small, medium, large, wide) or the full / side-by-side view. */
@@ -86,6 +103,11 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   onShowQuestion: (item: string) => void;
   /** Ask on a row: its About chip into the Super composer. Absent: no Ask. */
   onWriteAbout?: (row: AgendaRow) => void;
+  /** A row with a thread key was pressed (ajanda-filtre D1): filter the Super chat to it. The same
+   *  row again clears it (the store decides). Absent: a line's press opens its detail, as before. */
+  onThread?: (press: ThreadPress) => boolean;
+  /** The row whose thread the Super chat shows: drawn highlighted while the filter is on. */
+  threadRowKey?: string | null;
   /** His status change, Done included (`POST /api/super/pad`). Absent: no circle menu, no Done. */
   onPadStatus?: (id: string, status: PadStatus) => Promise<void>;
   /** His own line (`POST /api/super/pad/add`). Absent (no owner key here): no add box. */
@@ -94,6 +116,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   onPadRemove?: (id: string) => Promise<void>;
   /** One day of the agenda (`GET /api/super/agenda-day`). Absent: no day browsing (the phone). */
   loadDay?: (date: string) => Promise<AgendaDay | null>;
+  /** The days that have a file (`GET /api/super/agenda-days`): the search reads them all. Absent: it reads what is loaded. */
+  loadDays?: () => Promise<string[]>;
   /** The phone's web view: rows are read, never changed (rowActions readOnly). */
   readOnly?: boolean;
   taskRows?: OwnerInboxRow[];
@@ -115,6 +139,34 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   const { t, locale } = useI18n();
   const size: AgendaSize = sizeProp ?? (variant === 'tile' ? (wide ? 'medium' : 'small') : 'full');
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // The card's head (owner 19 Nov: "çok kalabalık ve heavy"): inside a card, ONE header row is the
+  // card's own head: ≡ Agenda on the left (the ≡ opens the day menu), search and list/board on the
+  // right. The big date, the arrows, Today, the count and the bar are gone. Found by the slots the
+  // card's head carries; with none (the phone, the full window) the agenda keeps its own header.
+  const [slots, setSlots] = useState<{ glyph: HTMLElement; tools: HTMLElement; head: HTMLElement } | null>(null);
+  useLayoutEffect(() => {
+    const body = rootRef.current?.closest('.super-card-frame');
+    const glyph = body?.querySelector<HTMLElement>('[data-agenda-slot="glyph"]') ?? null;
+    const tools = body?.querySelector<HTMLElement>('[data-agenda-slot="tools"]') ?? null;
+    const head = glyph?.closest<HTMLElement>('.super-card-head') ?? null;
+    setSlots(glyph && tools && head ? { glyph, tools, head } : null);
+  }, [size]);
+  const sade = !!slots && (size === 'small' || size === 'medium' || size === 'large');
+  /** Small keeps its magnifier in the foot: the head's right side is the hover buttons' on a 160 px tile. */
+  const toolsInHead = sade && size !== 'small';
+  const [dayMenu, setDayMenu] = useState(false);
+  const cardActions = useAgendaCardActions();
+  // The tools' width, so a floating card's hover buttons step left of them (CSS: --agenda-tools-w).
+  useLayoutEffect(() => {
+    const frame = slots?.head.closest<HTMLElement>('.super-card-frame');
+    const tools = slots?.tools;
+    if (!frame || !tools) return undefined;
+    const set = () => frame.style.setProperty('--agenda-tools-w', `${tools.offsetWidth ? tools.offsetWidth + 6 : 0}px`);
+    set();
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(set);
+    ro?.observe(tools);
+    return () => { ro?.disconnect(); frame.style.removeProperty('--agenda-tools-w'); };
+  }, [slots, size, toolsInHead]);
 
   // The clock: a parked unanswered line shows ten minutes after his Stop, and the day turns at
   // local midnight. One timer each, nothing polls.
@@ -151,6 +203,29 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     return () => { live = false; };
   }, [loadDay, day, padKey]);
 
+  // The search (owner 17 Nov): a magnifier opens a field on the header row; it reads the lines of
+  // EVERY day, so on open the days that have a file are loaded once (the cache is `dayData`).
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  // Typing stays light: the list follows the field a moment later, never blocking a keystroke.
+  const deferredQuery = useDeferredValue(query);
+  const markQ = searchOpen && deferredQuery.trim() ? deferredQuery : undefined;
+  useEffect(() => {
+    if (!searchOpen || !loadDay || !loadDays) return undefined;
+    let live = true;
+    loadDays().then((days) => {
+      // One day at a time: the archive only grows, and each answer redraws the results.
+      void (async () => {
+        for (const d of days) {
+          if (!live) return;
+          try { const one = await loadDay(d); if (live && one) setDayData((m) => (m[d] ? m : { ...m, [d]: one })); } catch { /* that day just stays out */ }
+        }
+      })();
+    }).catch(() => { /* the loaded days still search */ });
+    return () => { live = false; };
+  }, [searchOpen, loadDay, loadDays]);
+  const closeSearch = () => { setSearchOpen(false); setQuery(''); };
+
   const notepad = superNotepad(state, look, now);
   const unanswered = superUnanswered(state, now);
   const groups = todayGroups({
@@ -176,6 +251,18 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   // The detail (one at a time), the status menu, medium's filter, the small card's add popover.
   const [selected, setSelected] = useState<string | null>(null);
+  const { bus: projectBus } = useVaultId();
+  // The filter strip's line name opens that line's detail here (agendaRowDetail).
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const key = (ev as CustomEvent).detail;
+      if (typeof key !== 'string' || readOnly) return;
+      setMenu(null);
+      setSelected(key);
+    };
+    projectBus.addEventListener(OPEN_ROW_DETAIL, on);
+    return () => projectBus.removeEventListener(OPEN_ROW_DETAIL, on);
+  }, [readOnly, projectBus]);
   const [menu, setMenu] = useState<{ key: string; anchor: HTMLElement } | null>(null);
   const [filter, setFilter] = useState<AgendaFilter>('waiting');
   // List or board (owner 15 Nov: "büyük görünümdeyken board görünümü de opsiyon olarak kalsın"):
@@ -199,7 +286,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   // the add box shows its own (review r1, action-failure-shown-where-he-looks).
   const [error, setError] = useState<{ text: string; note?: string } | null>(null);
 
-  const all = [...TODAY_GROUPS.flatMap((g) => groups[g]), ...(past ? [...past.dayDone, ...past.dayOpen] : [])];
+  // Every day's lines: today's groups, then each loaded day's own (a past day's Done lines and
+  // the open lines born that day). The same line under two days is listed once, newest day.
+  const found = markQ ? searchDays(
+    searchSources(today, TODAY_GROUPS.flatMap((g) => groups[g]), pad, Object.fromEntries(Object.entries(dayData).map(([d, v]) => [d, v?.done ?? null]))),
+    deferredQuery,
+  ) : null;
+  const all = [...TODAY_GROUPS.flatMap((g) => groups[g]), ...(past ? [...past.dayDone, ...past.dayOpen] : []), ...(found ? found.flatMap((g) => g.entries) : [])];
   const selectedEntry = selected ? all.find((e) => e.key === selected) ?? null : null;
   useEffect(() => { if (selected && !selectedEntry) setSelected(null); }, [selected, selectedEntry]);
   useEffect(() => { setError(null); }, [selected]);
@@ -260,6 +353,18 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   };
   const groupName = (g: AgendaGroup | DayGroup) => t(`super.agenda.group.${g}`);
 
+  const inlineDetail = size === 'wide' || size === 'full';
+  // An archived line keeps its day file's id: a message about it joins its thread (C3).
+  const aboutRow = (e: AgendaEntry): AgendaRow => (e.live || e.kind !== 'line' ? e.row! : { ...e.row!, archived: true });
+  /** A thread row's press: filter (or, the same row, unfilter); a question or owner-card row then
+   *  brings its card into view through its own door, once the filtered chat has drawn (D3). */
+  const pressThread = (e: AgendaEntry, r: AgendaRow, focusItem?: string): boolean => {
+    if (!onThread || !r.thread) return false;
+    const on = onThread({ rowKey: e.key, row: r, key: r.thread, ...(focusItem ? { focusItem } : {}) });
+    if (on && focusItem) requestAnimationFrame(() => requestAnimationFrame(() => pressQuestion(r)));
+    return on;
+  };
+
   // ── One row, by kind ──────────────────────────────────────────────────────────
   const rowOf = (e: AgendaEntry) => {
     const a = actionsOf(e);
@@ -267,7 +372,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       const ap = e.approval;
       return (
         <AgendaRowView
-          key={e.key} entry={e} actions={a} size={size} label={ap.title}
+          key={e.key} mark={markQ} entry={e} actions={a} size={size} label={ap.title}
           line={superApprovalSentence(ap, t)}
           chips={<span className="super-agenda-chip" data-kind="approval">{t('super.jobs.chip.approval')}</span>}
           time="" onPress={onShowApproval ? () => onShowApproval(ap.key) : undefined} onHover={{}}
@@ -279,7 +384,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       const line = indexStopLine(parseStopDetail(r.detail), t);
       return (
         <AgendaRowView
-          key={e.key} entry={e} actions={a} size={size} label={line}
+          key={e.key} mark={markQ} entry={e} actions={a} size={size} label={line}
           chips={<span className="super-agenda-chip" data-kind="recall" data-state={indexUpdate}>{t(indexUpdate === 'running' ? 'super.agenda.index.running' : indexUpdate === 'failed' ? 'super.agenda.index.failed' : 'aiteam.inbox.update-index')}</span>}
           time={e.at !== null ? fmtTime(e.at) : ''}
           onPress={onUpdateIndex && indexUpdate !== 'running' ? () => onUpdateIndex(r) : undefined} onHover={{}}
@@ -290,7 +395,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       const line = tr(t, `super.agenda.sync.${syncReason(e.inbox)}`, e.inbox.title);
       return (
         <AgendaRowView
-          key={e.key} entry={e} actions={a} size={size} label={line}
+          key={e.key} mark={markQ} entry={e} actions={a} size={size} label={line}
           chips={<span className="super-agenda-chip" data-kind="sync">{tr(t, 'super.agenda.chip.sync', 'Brain sync')}</span>}
           time={e.at !== null ? fmtTime(e.at) : ''} onHover={{}}
         />
@@ -300,7 +405,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       const r = e.inbox;
       return (
         <AgendaRowView
-          key={e.key} entry={e} actions={a} size={size} label={r.title} line={r.detail}
+          key={e.key} mark={markQ} entry={e} actions={a} size={size} label={r.title} line={r.detail}
           chips={<span className="super-agenda-chip" data-kind="task">{tr(t, 'super.agenda.chip.task', 'Task')}</span>}
           time={e.at !== null ? fmtTime(e.at) : ''}
           onPress={onOpenTask ? () => onOpenTask(r.ref) : undefined} onHover={{}}
@@ -312,9 +417,11 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     if (e.kind === 'owed') {
       return (
         <AgendaRowView
-          key={e.key} entry={e} actions={a} size={size} label={r.text}
+          key={e.key} mark={markQ} entry={e} actions={a} size={size} label={r.text}
           chips={<span className="super-agenda-chip" data-kind="owed">{tr(t, r.owedKind === 'result' ? 'super.agenda.owed.result' : 'super.agenda.owed.msg', r.owedKind === 'result' ? 'Result' : 'Your message')}</span>}
           time={e.at !== null ? fmtTime(e.at) : ''}
+          onPress={a.press === 'thread' && onThread ? () => pressThread(e, r) : undefined}
+          threadOn={threadRowKey === e.key}
           onHover={{ ask: onWriteAbout ? () => onWriteAbout(r) : undefined, notNeeded: onDropOwed && r.owed ? () => onDropOwed(r.owed as string) : undefined }}
         />
       );
@@ -330,16 +437,16 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           : own ? undefined : r.line || undefined;
       return (
         <AgendaRowView
-          key={e.key} entry={e} actions={a} size={size} label={own ? r.line as string : r.text} line={line}
+          key={e.key} mark={markQ} entry={e} actions={a} size={size} label={own ? r.line as string : r.text} line={line}
           chips={r.chip ? <span className="super-agenda-chip" data-kind={r.chip}>{t(`super.jobs.chip.${r.chip}`)}</span> : undefined}
           time={e.at !== null ? fmtTime(e.at) : ''}
-          onPress={questionClickable(r) ? () => pressQuestion(r) : undefined}
+          onPress={a.press === 'thread' && onThread ? () => pressThread(e, r, r.item) : questionClickable(r) ? () => pressQuestion(r) : undefined}
+          threadOn={threadRowKey === e.key}
           onHover={{ ask: onWriteAbout ? () => onWriteAbout(r) : undefined }}
         />
       );
     }
     // An agenda line: live or archived (C8).
-    const id = r.note as string | undefined;
     const job = r.for ? state.children?.[r.for] : undefined;
     const chips = (
       <>
@@ -349,15 +456,26 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         {size === 'full' && r.author === 'owner' && r.status && r.section !== 'done' && <span className="super-agenda-chip" data-kind="status">{t(`super.agenda.status.${r.status}`)}</span>}
       </>
     );
-    const ask = onWriteAbout ? () => onWriteAbout(e.live ? r : { ...r, note: undefined, archived: true }) : undefined;
+    const ask = onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined;
+    const toggleDetail = () => { setMenu(null); setSelected((k) => (k === e.key ? null : e.key)); };
+    // The press filters the chat (Ask writes about the line without filtering); small and medium
+    // reach the detail from the strip's line name, wide and full open it inline with the filter.
+    const threaded = a.press === 'thread' && !!onThread;
     return (
       <AgendaRowView
-        key={e.key} entry={e} actions={a} size={size} label={r.text} chips={chips}
+        key={e.key} mark={markQ} entry={e} actions={a} size={size} label={r.text} chips={chips}
         time={e.group === 'earlier' ? '' : fmtTime(e.at ?? r.at)}
         selected={selected === e.key}
-        onPress={a.press === 'detail' ? () => { setMenu(null); setSelected((k) => (k === e.key ? null : e.key)); } : undefined}
+        threadOn={threadRowKey === e.key}
+        onPress={threaded
+          ? () => {
+            const on = pressThread(e, aboutRow(e));
+            // Wide/full: the inline detail follows the filter, on with it and off with it (D2).
+            if (inlineDetail && a.detail !== 'none') { setMenu(null); setSelected(on ? e.key : null); }
+          }
+          : a.press === 'detail' || a.press === 'thread' ? toggleDetail : undefined}
         onMenu={a.menu && onPadStatus ? (anchor) => setMenu({ key: e.key, anchor }) : undefined}
-        onHover={{ done: onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined, ask }}
+        onHover={{ ask }}
       />
     );
   };
@@ -383,8 +501,8 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         entry={e} actions={a} group={groupName(e.group)} job={job} fmtTime={fmtTime} fmtDay={fmtDay}
         error={error && error.note === id ? error.text : ''}
         onClose={() => setSelected(null)}
-        onAsk={a.hover.includes('ask') && onWriteAbout ? () => onWriteAbout(e.live ? r : { ...r, note: undefined, archived: true }) : undefined}
-        onDone={a.hover.includes('done') && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
+        onAsk={a.hover.includes('ask') && onWriteAbout ? () => onWriteAbout(aboutRow(e)) : undefined}
+        onDone={a.menu && onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined}
         onRemove={a.remove && onPadRemove && id ? () => {
           setError(null);
           onPadRemove(id).then(() => setSelected(null)).catch((e) => fail(e, id));
@@ -394,7 +512,6 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       />
     );
   };
-  const inlineDetail = size === 'wide' || size === 'full';
   const floatingDetail = !inlineDetail && selectedEntry && actionsOf(selectedEntry).detail !== 'none' && (
     <FloatLayer
       anchorOf={() => (rootRef.current?.closest('[data-stage-key]') as HTMLElement | null) ?? rootRef.current}
@@ -429,6 +546,12 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   const nav = (long: boolean) => (loadDay
     ? <AgendaDayNav day={day} onDay={onDay} locale={locale} long={long} />
     : <span className="agenda-day" data-testid="super-agenda-day" data-day={day}>{new Intl.DateTimeFormat(locale, { day: 'numeric', month: long ? 'long' : 'short' }).format(now)}</span>);
+  const pastBar = sade && loadDay && day !== today && (
+    <div className="agenda-pastbar" data-testid="super-agenda-pastbar">
+      <AgendaDayNav day={day} onDay={onDay} locale={locale} long={false} />
+      <button type="button" className="agenda-today-btn" data-testid="super-agenda-today" onClick={() => onDay(today)}>{t('super.agenda.today')}</button>
+    </div>
+  );
   const progressText = tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) });
 
   // ── The lists ───────────────────────────────────────────────────────────────
@@ -521,7 +644,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   };
   const boardOn = view === 'board' && !past;
   // The member's tasks (extra) stay under the board, never a fourth column.
-  const lines = (cap: boolean) => (boardOn ? <>{board()}{extra}</> : groupList(cap));
+  const lines = (cap: boolean) => results ?? (boardOn ? <>{board()}{extra}</> : groupList(cap));
   const viewSwitch = !past && (
     <div className="agenda-viewswitch" role="group" aria-label={tr(t, 'super.agenda.view.label', 'View')}>
       {(['list', 'board'] as const).map((v) => (
@@ -535,9 +658,70 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     </div>
   );
 
+  // ── The search: the magnifier (beside the view switch), the field that replaces the header
+  // row's words while it is open, and the results that replace the lists ───────────────────
+  const find = <AgendaFind open={searchOpen} query={query} onOpen={() => setSearchOpen(true)} onClose={closeSearch} onQuery={setQuery} />;
+  const findOn = searchOpen ? 'open' : undefined;
+  /** The matching lines of every day, under the day's heading; one quiet line when none match. */
+  const results = found && (
+    <div className="agenda-groups agenda-results" data-testid="super-agenda-results">
+      {found.length === 0 && <div className="super-agenda-empty" data-testid="super-agenda-no-results">{t('super.agenda.search.none')}</div>}
+      {found.map((g) => (
+        <section key={g.day} className="super-agenda-sec" data-section="search" data-day={g.day} data-testid="super-agenda-result-day">
+          <h3 className="super-agenda-sec-h"><span>{fmtDay(g.day)}</span><span className="super-agenda-n">{g.entries.length}</span></h3>
+          {g.entries.map(rowOf)}
+        </section>
+      ))}
+    </div>
+  );
+
   // Shown unless the open detail is the line it belongs to (that detail shows it).
   const inDetail = !!error?.note && selectedEntry?.row?.note === error.note && actionsOf(selectedEntry).detail !== 'none';
   const errorLine = error && !inDetail && <p className="agenda-error" role="alert" data-testid="super-agenda-error" title={error.text}>{error.text}</p>;
+
+  // The card head's pieces, drawn into its slots: the ≡ (a day menu: earlier days, back to today)
+  // and, on the right, search and list/board. Nothing here adds a row.
+  const dayMenuItems = loadDay ? [
+    { key: 'prev', label: t('super.agenda.prevDay'), disabled: false, go: () => onDay(shiftDay(day, -1)) },
+    { key: 'next', label: t('super.agenda.nextDay'), disabled: false, go: () => onDay(shiftDay(day, 1)) },
+    { key: 'today', label: t('super.agenda.today'), disabled: day === today, go: () => onDay(today) },
+  ] : [];
+  useEffect(() => {
+    if (!slots) return undefined;
+    if (toolsInHead && searchOpen) slots.head.setAttribute('data-find', 'open'); else slots.head.removeAttribute('data-find');
+    return () => slots.head.removeAttribute('data-find');
+  }, [slots, toolsInHead, searchOpen]);
+  useEffect(() => {
+    if (!dayMenu) return undefined;
+    const off = (e: PointerEvent) => { if (!(e.target as Element | null)?.closest?.('[data-testid="super-agenda-daymenu"], [data-testid="super-agenda-daymenu-btn"]')) setDayMenu(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setDayMenu(false); };
+    document.addEventListener('pointerdown', off, true);
+    document.addEventListener('keydown', esc, true);
+    return () => { document.removeEventListener('pointerdown', off, true); document.removeEventListener('keydown', esc, true); };
+  }, [dayMenu]);
+  const chrome = slots && (
+    <>
+      {createPortal(
+        // A 160 px tile has no room for it: the lights cover the ≡ on hover. Its day is the full view's.
+        sade && size !== 'small' && (dayMenuItems.length > 0 || cardActions.length > 0)
+          ? <button type="button" className="agenda-glyph-btn" data-testid="super-agenda-daymenu-btn" aria-haspopup="menu" aria-expanded={dayMenu} aria-label={t('super.agenda.dayMenu')} title={t('super.agenda.dayMenu')} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setDayMenu((o) => !o); }}>{KIND_GLYPH.agenda}</button>
+          : <span aria-hidden>{KIND_GLYPH.agenda}</span>,
+        slots.glyph,
+      )}
+      {toolsInHead && createPortal(<>{find}{size === 'large' && viewSwitch}</>, slots.tools)}
+      {sade && dayMenu && (
+        <div className="agenda-daymenu" role="menu" data-testid="super-agenda-daymenu">
+          {dayMenuItems.map((m) => (
+            <button key={m.key} type="button" role="menuitem" className="agenda-daymenu-item" data-testid={`super-agenda-daymenu-${m.key}`} disabled={m.disabled} onClick={() => { m.go(); setDayMenu(false); }}>{m.label}</button>
+          ))}
+          {cardActions.length > 0 && dayMenuItems.length > 0 && <div className="agenda-daymenu-rule" role="separator" />}
+          {cardActions.map((m) => (
+            <button key={m.key} type="button" role="menuitem" className="agenda-daymenu-item" data-testid={`super-agenda-menu-${m.key}`} onClick={() => { setDayMenu(false); m.go(); }}>{m.label}</button>
+          ))}
+        </div>
+      )}
+    </>
+  );
 
   const common = {
     ref: rootRef,
@@ -551,27 +735,35 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   };
 
   if (size === 'small') {
-    const rows = past ? [...past.dayOpen, ...past.dayDone].slice(0, 3) : smallEntries(groups, 3);
+    const rows = past ? [...past.dayOpen, ...past.dayDone].slice(0, sade ? 2 : 3) : smallEntries(groups, sade ? 2 : 3);
     return (
       <div className="super-agenda" {...common}>
-        <div className="agenda-head">
-          {nav(false)}
-          <span className="agenda-count" data-testid="super-agenda-progress">{progress.done}/{progress.total}</span>
-        </div>
-        {bar}
-        <div className="agenda-groups" {...listHandlers}>
-          {rows.length === 0 && <div className="super-agenda-empty">{t(past ? 'super.agenda.nothingDay' : 'super.agenda.emptyHint')}</div>}
-          {order(rows).map(rowOf)}
-        </div>
-        <div className="agenda-foot">
+        {sade ? pastBar : (
+          <>
+            <div className="agenda-head" data-find={findOn}>
+              {nav(false)}
+              <span className="agenda-count" data-testid="super-agenda-progress">{progress.done}/{progress.total}</span>
+              {find}
+            </div>
+            {bar}
+          </>
+        )}
+        {results ?? (
+          <div className="agenda-groups" {...listHandlers}>
+            {rows.length === 0 && <div className="super-agenda-empty">{t(past ? 'super.agenda.nothingDay' : 'super.agenda.emptyHint')}</div>}
+            {order(rows).map(rowOf)}
+          </div>
+        )}
+        <div className="agenda-foot" data-find={sade ? findOn : undefined}>
           {errorLine || (!past && (
             <span className="agenda-foot-waiting" data-on={progress.waiting > 0 ? 'true' : undefined}>
               {tr(t, 'super.agenda.summaryWaiting', '{n} waiting on you', { n: String(progress.waiting) })}
             </span>
           ))}
+          {sade && find}
           {fab}
         </div>
-        {statusMenu}{floatingDetail}
+        {statusMenu}{floatingDetail}{chrome}
       </div>
     );
   }
@@ -582,8 +774,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     return (
       <div className="super-agenda" {...common}>
         <div className="agenda-side">
-          {nav(false)}
-          {bar}
+          {sade ? pastBar : <>{nav(false)}{bar}</>}
           {!past && (['waiting', 'onit', 'done'] as const).map((f) => (
             <button key={f} type="button" className="agenda-filter" data-filter={f} data-on={filter === f ? 'true' : undefined} aria-pressed={filter === f} data-testid={`super-agenda-filter-${f}`} onClick={() => setFilter(f)}>
               <span className="agenda-filter-dot" aria-hidden />
@@ -593,46 +784,47 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           ))}
         </div>
         <div className="agenda-main">
-          <div className="agenda-main-head">
-            <span>{past ? tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) }) : groupName(filter === 'onit' ? 'super' : filter)}</span>
+          <div className="agenda-main-head" data-find={findOn}>
+            <span>{past ? tr(t, 'super.agenda.progress', '{done} of {total} done', { done: String(progress.done), total: String(progress.total) }) : groupName(filter === 'onit' ? 'super' : filter)}</span>{!toolsInHead && find}
           </div>
           <div className="agenda-scroll">
             {errorLine}
-            {past ? groupList(false) : (
+            {results ?? (past ? groupList(false) : (
               <div className="agenda-groups" {...listHandlers}>
                 {rows.length === 0 && <div className="super-agenda-empty">{t('super.agenda.emptyHint')}</div>}
                 {order(rows).map(rowOf)}
               </div>
-            )}
+            ))}
           </div>
           {strip}
         </div>
-        {statusMenu}{floatingDetail}
+        {statusMenu}{floatingDetail}{chrome}
       </div>
     );
   }
 
-  const header = (long: boolean) => (
-    <div className="agenda-head">
+  const header = (long: boolean) => (sade ? pastBar : (
+    <div className="agenda-head" data-find={findOn}>
       {nav(long)}
       {day === today && <span className="agenda-today">{t('super.agenda.today')}</span>}
       {/* Large is 344 px: the count in short (3/18), so the day, Today and the list/board switch fit. */}
       <span className="agenda-count" data-testid="super-agenda-progress" title={progressText}>{size === 'large' ? `${progress.done}/${progress.total}` : progressText}</span>
+      {find}
       {viewSwitch}
     </div>
-  );
+  ));
 
   if (size === 'large') {
     return (
       <div className="super-agenda" {...common}>
         <div className="agenda-scroll">
           {header(true)}
-          {bar}
+          {!sade && bar}
           {errorLine}
           {lines(false)}
         </div>
         {strip}
-        {statusMenu}{floatingDetail}
+        {statusMenu}{floatingDetail}{chrome}
       </div>
     );
   }
@@ -654,7 +846,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           {strip}
         </div>
         {detailPane}
-        {statusMenu}
+        {statusMenu}{chrome}
       </div>
     );
   }
@@ -669,9 +861,10 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       <div className="agenda-col">
         <div className="agenda-scroll">
         {loadDay && <AgendaWeekStrip day={day} today={today} onDay={onDay} locale={locale} />}
-        <div className="agenda-title-row">
+        <div className="agenda-title-row" data-find={findOn}>
           <h2 className="agenda-title">{new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(new Date(`${day}T12:00:00`))}</h2>
           {day === today && <span className="agenda-today">{t('super.agenda.today')}</span>}
+          {find}
           {viewSwitch}
         </div>
         <div className="agenda-progress-row">
@@ -684,7 +877,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
         {strip}
       </div>
       {detailPane}
-      {statusMenu}
+      {statusMenu}{chrome}
     </div>
   );
 }

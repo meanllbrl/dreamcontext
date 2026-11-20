@@ -176,7 +176,8 @@ describe('New agent on a board presets that board as home', () => {
     const page = code(read('dashboard/src/pages/AiTeamPage.tsx'));
     expect(page).toMatch(/agentsFocus\.create && agentsFocus\.whiteboard \? \{ whiteboard: agentsFocus\.whiteboard \} : \{\}/);
     const modal = code(read('dashboard/src/components/aiteam/ManageMembersModal.tsx'));
-    expect(modal).toMatch(/focus\.create \? \{ start: 'blank', \.\.\.\(focus\.whiteboard \? \{ whiteboard: focus\.whiteboard \} : \{\}\) \}/);
+    expect(modal).toMatch(/\(\{ start: 'blank' as TeamStarter, \.\.\.\(f\.whiteboard \? \{ whiteboard: f\.whiteboard \} : \{\}\)/);
+    expect(modal).toMatch(/focus\.create \? createOf\(focus\) : null/);
     expect(modal).toMatch(/whiteboard=\{creating\.whiteboard\}/);
   });
 

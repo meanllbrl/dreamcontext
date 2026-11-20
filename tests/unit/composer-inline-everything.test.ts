@@ -65,10 +65,9 @@ describe('staging — every door stages inline and pending (the composer puts th
     expect(readScratch('c').attachments[0]).toMatchObject({ kind: 'file', inline: true, pending: true, uploading: true });
   });
 
-  it('a web card element pick, a board drop and the phone files (source)', () => {
+  it('a web card element pick and the phone files (source)', () => {
     const src = (f: string) => readFileSync(join(import.meta.dirname, '../../dashboard/src', f), 'utf8');
     expect(src('components/sleepy/AgentSurface.tsx')).toMatch(/kind: 'element'[\s\S]{0,400}inline: true, pending: true/);
-    expect(src('components/whiteboard/canvasGestures.ts')).toMatch(/kind: 'ref', name: chipName\(unit, ctx\.tx\), path, inline: true, pending: true/);
     const composer = src('components/sleepy/chat/Composer.tsx');
     expect(composer.match(/kind: 'file', name, size: file\.size[^\n]*inline: true, pending: true/g)).toHaveLength(2);
     // The row above the text is gone: no attachment strip, no quote strip.

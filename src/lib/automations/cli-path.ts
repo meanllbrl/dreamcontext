@@ -38,8 +38,10 @@ function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-export function renderCliShim(execPath: string, entry: string): string {
-  return `#!/bin/sh\n# Written by dreamcontext for headless runs. Rewritten when the CLI moves.\nexec ${shq(execPath)} ${shq(entry)} "$@"\n`;
+export function renderCliShim(execPath: string, entry: string, cdInto?: string): string {
+  // `cdInto`: run the CLI from that folder (a quick edit works in an empty one, quick-memory.ts).
+  const cd = cdInto ? `cd ${shq(cdInto)} || exit 1\n` : '';
+  return `#!/bin/sh\n# Written by dreamcontext for headless runs. Rewritten when the CLI moves.\n${cd}exec ${shq(execPath)} ${shq(entry)} "$@"\n`;
 }
 
 /**

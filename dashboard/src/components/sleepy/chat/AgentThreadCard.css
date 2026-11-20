@@ -156,3 +156,12 @@
   line-height: 1.5;
 }
 .chat-agentthread-note.is-bad { color: var(--color-error); }
+
+/* A member's question: who asks + Open on ONE small line above the chat's own question card. */
+.chat-memberask { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; min-width: 0; }
+.chat-memberask-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 var(--space-1); }
+.chat-memberask-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.chat-memberask-says { flex: 1 1 auto; white-space: nowrap; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.chat-memberask-open { flex: 0 0 auto; margin-left: auto; padding: 2px var(--space-2); border: 0; background: none; font: inherit; font-size: var(--font-size-xs); color: var(--color-accent); cursor: pointer; border-radius: var(--radius-sm); }
+.chat-memberask-open:hover:not(:disabled) { text-decoration: underline; }
+.chat-memberask-open:disabled { opacity: 0.55; cursor: default; }

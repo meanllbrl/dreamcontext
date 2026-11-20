@@ -66,6 +66,8 @@ function fakeInjector(onText: (text: string) => void = () => {}) {
 }
 
 const assistant = (h: reg.ChatHandle, text: string) => h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
+/** The turn's end: a short unmarked text is the last word only then (owner-text-gate finding 5). */
+const turnEnd = (h: reg.ChatHandle) => h.observe({ type: 'result', subtype: 'success', parent_tool_use_id: null });
 
 beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'tg-hub-home-'));
@@ -178,9 +180,14 @@ describe('the Super target', () => {
       await vi.waitFor(() => expect(tg.texts()).toContain("CLI açılışı 0.35 sn'den 0.16 sn'ye indi."));
       await quiet();
       expect(tg.texts().filter((t) => t.includes('CLI açılışı'))).toHaveLength(1);
-      // An unmarked text goes too.
+      // An unmarked short text goes too, as the turn's last word: a step before it never does.
+      assistant(h, 'Bakıyorum.');
       assistant(h, 'Onay verdim, iş sürüyor.');
+      await quiet();
+      expect(tg.texts()).not.toContain('Onay verdim, iş sürüyor.');
+      turnEnd(h);
       await vi.waitFor(() => expect(tg.texts()).toContain('Onay verdim, iş sürüyor.'));
+      expect(tg.texts()).not.toContain('Bakıyorum.');
     });
 
     describe('a server-opened event turn goes out only when it is for him (the Mac fold rule)', () => {
@@ -226,6 +233,7 @@ describe('the Super target', () => {
         await ownerBatches('b-wait');
         _openEventTurnForTests(SID, 'b-wait', root);
         assistant(h, 'Bir iş senden bekliyor: tarayıcıda giriş yap.');
+        turnEnd(h);
         await vi.waitFor(() => expect(tg.texts()).toContain('Bir iş senden bekliyor: tarayıcıda giriş yap.'));
       });
 
@@ -298,6 +306,7 @@ describe('the Super target', () => {
       // The window writes the turn as the schedule source: it answers no Mac wait and the answer goes back.
       h.userSent(text, { source: 'schedule' });
       assistant(h, 'Bugünün özeti hazır.');
+      turnEnd(h);
       await vi.waitFor(() => expect(tg.texts()).toContain('Bugünün özeti hazır.'));
     });
 

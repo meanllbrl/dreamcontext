@@ -161,3 +161,21 @@ export async function agendaDoneOn(contextRoot: string, id: SuperId, day: string
   }
   return mergeDayDone(live, fileLines, day);
 }
+
+/** Every day that has a file, newest first (the agenda's search reads them all). A folder that is
+ *  absent, a link or unreadable is no days; only `YYYY-MM-DD.json` plain files count. */
+export async function agendaDays(contextRoot: string, id: SuperId): Promise<string[]> {
+  try {
+    const dir = await containedDir(contextRoot, id, false);
+    if (!dir) return [];
+    const names = await fsp.readdir(dir, { withFileTypes: true });
+    return names
+      .filter((n) => n.isFile() && n.name.endsWith('.json') && okDay(n.name.slice(0, -5)))
+      .map((n) => n.name.slice(0, -5))
+      .sort()
+      .reverse();
+  } catch (err) {
+    console.warn(`[super] ${superAgendaDaysDir(contextRoot, id)}: the days could not be listed: ${(err as Error).message}`);
+    return [];
+  }
+}

@@ -81,7 +81,7 @@ describe('teammates in all projects', () => {
   it('the form offers the choice in the new shell only, where the launcher route is open, without remounting', () => {
     const form = code(read('components/aiteam/NewTeammate.tsx'));
     expect(form).toMatch(/useIsNewShell\(\) && phoneAllows\('POST', '\/api\/launcher\/global-agents'\)/);
-    expect(form).toMatch(/scope=\{everywhere \? 'global' : undefined\}/);
+    expect(form).toMatch(/scope=\{everywhere && canChoose \? 'global' : undefined\}/);
     expect(form).toContain('key={starter}');
   });
 

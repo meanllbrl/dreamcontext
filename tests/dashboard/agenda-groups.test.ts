@@ -21,7 +21,11 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({ locale: 'en', setLocale: () => {}, t: (key: string) => key }),
   I18nProvider: ({ children }: { children: unknown }) => children,
 }));
-vi.mock('../../dashboard/src/context/VaultContext.js', () => ({ useApi: () => ({}), useVaultId: () => ({ vault: 'acme' }) }));
+vi.mock('../../dashboard/src/context/VaultContext.js', () => ({
+  useApi: () => ({}),
+  useVaultId: () => ({ vault: 'acme', bus: new EventTarget() }),
+  emitInstance: (bus: EventTarget, type: string, detail?: unknown) => { bus.dispatchEvent(new CustomEvent(type, { detail })); },
+}));
 
 const G = await import('../../dashboard/src/components/sleepy/super/agendaGroups.js');
 const { superNotepad, superUnanswered, padStatusOf } = await import('../../dashboard/src/components/sleepy/super/superHandover.js');
@@ -127,7 +131,7 @@ describe('a past day (C4)', () => {
 describe('rowActions (C8): the one source of what a row may do', () => {
   const ent = (kind: string, live: boolean, row: Record<string, unknown> = {}) => ({ kind, live, row } as never);
   it('row by row', () => {
-    expect(G.rowActions(ent('line', true, { section: 'now', status: 'in-progress' }))).toEqual({ mark: 'status', menu: true, press: 'detail', hover: ['done', 'ask'], detail: 'full', remove: false });
+    expect(G.rowActions(ent('line', true, { section: 'now', status: 'in-progress' }))).toEqual({ mark: 'status', menu: true, press: 'detail', hover: ['ask'], detail: 'full', remove: false });
     expect(G.rowActions(ent('line', true, { section: 'now', author: 'owner' })).remove).toBe(true);
     expect(G.rowActions(ent('line', true, { section: 'done', author: 'owner' }))).toEqual({ mark: 'status', menu: true, press: 'detail', hover: ['ask'], detail: 'full', remove: false });
     // An archived line, today's or a past day's: check, Ask, read-only detail, never the menu.
@@ -189,7 +193,8 @@ describe('no row draws an action rowActions did not return', () => {
         const k = kind === 'note' ? 'line' : kind;
         const want = G.rowActions({ kind: k, live, row: { section: /data-state="([^"]+)"/.exec(attrs)![1] } } as never);
         expect(/data-testid="super-agenda-status"/.test(inner), `${size} ${attrs}`).toBe(want.menu);
-        expect(/data-testid="super-agenda-done"/.test(inner), `${size} ${attrs}`).toBe(want.hover.includes('done'));
+        // Owner 2026-11-17: no Done or Details on a row's hover, at any size (Done is in the detail).
+        expect(/data-testid="super-agenda-done"|data-testid="super-agenda-detail-open"/.test(inner), `${size} ${attrs}`).toBe(false);
         expect(/data-testid="super-agenda-about"/.test(inner), `${size} ${attrs}`).toBe(want.hover.includes('ask'));
       }
     }
@@ -207,5 +212,132 @@ describe('no row draws an action rowActions did not return', () => {
     }
     expect(html).toContain('data-testid="super-agenda-section-waiting"');
     vi.useRealTimers();
+  });
+});
+
+describe('the filter strip (owner 2026-11-17): the press filters, the line name opens its detail', () => {
+  it('the name is a button when it can open the detail, plain words otherwise', async () => {
+    const { SuperThreadChip } = await import('../../dashboard/src/components/sleepy/super/SuperThreadChip.js');
+    const withDoor = renderToStaticMarkup(createElement(SuperThreadChip, { sessionId: 'sup-1', label: 'Ship the invoice export', count: 2, onClear: () => {}, onLabel: () => {} }));
+    expect(withDoor).toMatch(/<button[^>]*data-testid="super-thread-label"[^>]*>Ship the invoice export<\/button>/);
+    const plain = renderToStaticMarkup(createElement(SuperThreadChip, { sessionId: 'sup-1', label: 'Ship the invoice export', count: 2, onClear: () => {} }));
+    expect(plain).not.toContain('super-thread-label');
+    expect(plain).toContain('>Ship the invoice export</span>');
+  });
+
+  it('a request for a row detail reaches its own project only (row keys repeat across projects)', async () => {
+    const { OPEN_ROW_DETAIL, requestRowDetail } = await import('../../dashboard/src/components/sleepy/super/agendaRowDetail.js');
+    const mine = new EventTarget();
+    const other = new EventTarget();
+    const got: string[] = [];
+    mine.addEventListener(OPEN_ROW_DETAIL, (e) => { got.push(`mine ${(e as CustomEvent).detail}`); });
+    other.addEventListener(OPEN_ROW_DETAIL, (e) => { got.push(`other ${(e as CustomEvent).detail}`); });
+    requestRowDetail(mine, 'n:n3');
+    expect(got).toEqual(['mine n:n3']);
+  });
+
+  it('no row offers Done or Details on its hover; Done is in the detail', () => {
+    const live = G.rowActions({ kind: 'line', live: true, row: { section: 'now', status: 'in-progress' } } as never);
+    expect(live.hover).toEqual(['ask']);
+    expect(live.menu).toBe(true);
+  });
+});
+
+describe('the row that filters the chat stays clearly selected (owner 2026-11-17)', () => {
+  const css = async () => (await import('node:fs')).readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperAgenda.css', import.meta.url), 'utf8');
+  const rule = (src: string, selector: string) => {
+    const i = src.indexOf(`${selector} {`);
+    return i < 0 ? '' : src.slice(i, src.indexOf('}', i) + 1);
+  };
+
+  it('the selected row carries a tint and an accent bar on its left edge, drawn as layers that fade in', async () => {
+    const src = await css();
+    // Owner 2026-11-17: "küt diye değil". The tint and the bar are their own layers, so the press
+    // animates only opacity and transform; the row's own background and shadow never change.
+    expect(rule(src, ".super-agenda-row[data-thread='on']")).toBe('');
+    const tint = rule(src, '.super-agenda-row::before');
+    expect(tint).toMatch(/background:\s*var\(--color-accent-soft\)/);
+    expect(tint).toMatch(/opacity:\s*0/);
+    const bar = rule(src, '.super-agenda-row::after');
+    expect(bar).toMatch(/width:\s*3px/);
+    expect(bar).toMatch(/background:\s*var\(--color-accent\)/);
+    expect(src).toMatch(/\.super-agenda-row\[data-thread='on'\]::before, \.super-agenda-row\[data-thread='on'\]::after \{ opacity: 1; transform: none; \}/);
+  });
+
+  it('every new motion is opacity and transform only, and none of it runs under reduced motion', async () => {
+    const fs = await import('node:fs');
+    const agenda = await css();
+    const chat = fs.readFileSync(new URL('../../dashboard/src/components/sleepy/ChatPane.css', import.meta.url), 'utf8');
+    const chip = fs.readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperThreadChip.css', import.meta.url), 'utf8');
+    const motionBlock = (src: string) => {
+      const i = src.indexOf('@media (prefers-reduced-motion: no-preference) {\n  /* ajanda-filtre motion');
+      expect(i, 'a no-preference block named ajanda-filtre motion').toBeGreaterThan(-1);
+      return src.slice(i, src.indexOf('\n}\n', i) + 3);
+    };
+    const a = motionBlock(agenda);
+    expect(a).toMatch(/\.super-agenda-row::before, \.super-agenda-row::after \{ transition: opacity [0-9]+ms cubic-bezier\([^)]*\), transform [0-9]+ms cubic-bezier\([^)]*\); \}/);
+    const c = motionBlock(chat);
+    expect(c).toMatch(/\.chat-scroll-inner\[data-thread-anim='a'\]/);
+    expect(c).toMatch(/\.chat-scroll-inner\[data-thread-anim='b'\]/);
+    const k = motionBlock(chip);
+    expect(k).toMatch(/\.super-thread-chip \{ animation:/);
+    // Every keyframe and transition in these blocks moves opacity and transform only.
+    for (const block of [a, c, k]) {
+      for (const [, body] of block.matchAll(/@keyframes [\w-]+ \{([\s\S]*?)\}\s*\}/g)) {
+        for (const [, prop] of body.matchAll(/([a-z-]+)\s*:/g)) expect(['opacity', 'transform']).toContain(prop);
+      }
+      for (const [, props] of block.matchAll(/transition:\s*([^;]+);/g)) {
+        for (const part of props.replace(/\([^)]*\)/g, '').split(',')) expect(['opacity', 'transform']).toContain(part.trim().split(/\s+/)[0]);
+      }
+    }
+    // Nothing outside those blocks animates these layers.
+    expect(agenda.replace(a, '')).not.toMatch(/super-agenda-row::(before|after)[^{]*\{[^}]*transition/);
+  });
+
+  it('a mouse press does not leave the Ask strip over the selected row (keyboard focus still shows it)', async () => {
+    const src = await css();
+    expect(src).not.toMatch(/\.super-agenda-row:focus-within \.agenda-hover/);
+    expect(src).toMatch(/\.super-agenda-row:has\(:focus-visible\) \.agenda-hover/);
+  });
+
+  it('the pressed row is drawn selected and pressed, on the Mac and on the phone sheet', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    const threadRow = (readOnly: boolean) => {
+      const props = {
+        state: { queue: queue as never, pad, owed: owed as never, children: children as never }, look, size: 'large' as const, readOnly,
+        canShowChild: () => true, onShowChild: () => {}, onShowQuestion: () => {}, onWriteAbout: () => {}, onThread: () => true,
+      };
+      const html = renderToStaticMarkup(createElement(SuperAgenda, props));
+      const key = /data-row="(n:[^"]+)"[^>]*data-kind="note"/.exec(html)![1];
+      return { key, html: renderToStaticMarkup(createElement(SuperAgenda, { ...props, threadRowKey: key })) };
+    };
+    for (const ro of [false, true]) {
+      const { key, html } = threadRow(ro);
+      const row = new RegExp(`<div class="super-agenda-row" data-row="${key}"[^>]*>`).exec(html)![0];
+      expect(row, `readOnly ${ro}`).toContain('data-thread="on"');
+      expect(html.match(/data-thread="on"/g)?.length, `readOnly ${ro}`).toBe(1);
+      expect(html).toMatch(/aria-pressed="true"/);
+    }
+    vi.useRealTimers();
+  });
+});
+
+describe('a line reads across the whole row; its chips sit in one small line under it (owner 2026-11-17)', () => {
+  const css = async () => (await import('node:fs')).readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperAgenda.css', import.meta.url), 'utf8');
+  const WIDE = ".super-agenda:not([data-size='small'], [data-size='medium'])";
+
+  it('large and up: the row wraps, the words take a whole line, then the detail, then source · date', async () => {
+    const src = await css();
+    expect(src).toContain(`${WIDE} .super-agenda-row-btn { display: flex; flex-wrap: wrap;`);
+    expect(src).toMatch(new RegExp(`${WIDE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\.super-agenda-row-btn > \\.super-agenda-name \\{ flex: 1 1 100%;`));
+    // The old grid kept a column for the chips beside the words.
+    expect(src).not.toMatch(/grid-template-columns: minmax\(50%, 1fr\)/);
+  });
+
+  it('the chips under the words are muted words with a dot between them, no pills', async () => {
+    const src = await css();
+    expect(src).toMatch(/\.super-agenda-row-btn \.super-agenda-chip \{[^}]*background: none;[^}]*padding: 0;/);
+    expect(src).toMatch(/\.super-agenda-row-btn \.super-agenda-chip \+ \.super-agenda-chip::before \{ content: '·';/);
+    expect(src).toMatch(/\.super-agenda-meta:not\(:empty\) \+ \.agenda-time::before \{ content: '·';/);
   });
 });

@@ -71,7 +71,9 @@ import { loadStatuses } from '../../lib/overrides.js';
 import { isSafeTaskSlug, readTaskFile } from '../../lib/task-backend/local.js';
 import { isValidWhiteboardSlug } from '../../lib/whiteboards/validate.js';
 import {
-  AGENT_AUTONOMY_LEVELS,
+  ASK_NOT_A_LEVEL,
+  CHOOSABLE_AGENT_AUTONOMY,
+  memberLevel,
   AutomationError,
   EFFORT_LEVELS,
   type AgentAutonomy,
@@ -303,8 +305,9 @@ function readSoul(v: unknown): string | undefined {
  *  the owner's proof there (uye-bildirim K3 "Level"), which no agent holds. */
 function readAutonomy(v: unknown): AgentAutonomy | undefined {
   if (v === undefined) return undefined;
-  if (typeof v !== 'string' || !(AGENT_AUTONOMY_LEVELS as readonly string[]).includes(v)) {
-    throw new AutomationError(`Invalid autonomy: expected one of ${AGENT_AUTONOMY_LEVELS.join(', ')}.`);
+  if (v === 'ask') throw new AutomationError(ASK_NOT_A_LEVEL);
+  if (typeof v !== 'string' || !(CHOOSABLE_AGENT_AUTONOMY as readonly string[]).includes(v)) {
+    throw new AutomationError(`Invalid autonomy: expected one of ${CHOOSABLE_AGENT_AUTONOMY.join(', ')}.`);
   }
   return v as AgentAutonomy;
 }
@@ -491,7 +494,7 @@ function globalAgentRow(agent: AgentManifest): GlobalAgentRow {
     roleLine: roleLineOf(agent.prompt),
     description: agent.prompt.trim().slice(0, DESCRIPTION_MAX_CHARS),
     face: faceOf(agent.slug, agent.face),
-    autonomy: agent.autonomy,
+    autonomy: memberLevel(agent.autonomy),
     model: agent.model,
     approvedToRun: checkApproval(GLOBAL_REGISTRY_KEY, target, undefined, 'run').approved,
   };
@@ -1010,7 +1013,8 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
   const target = agentTarget(contextRoot, slug);
   if (!target) return null;
   const agent = getAgent(contextRoot, slug);
-  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && m.mode === 'sched' && (m.agent ?? m.slug) === slug);
+  // A file of its own you only call is the member itself; a member's on-call routine is a routine.
+  const routines = listAutomations(contextRoot).filter((m) => m.runKind !== 'agent' && (m.agent ?? m.slug) === slug && (m.mode === 'sched' || m.slug !== slug));
   // Its own call target and every routine that runs as it: the slugs its work happens under.
   const slugs = [slug, ...routines.map((m) => m.slug).filter((s) => s !== slug)];
   const titleOf = (s: string): string => (s === slug ? target.agentTitle || target.title : routines.find((m) => m.slug === s)?.title ?? s);
