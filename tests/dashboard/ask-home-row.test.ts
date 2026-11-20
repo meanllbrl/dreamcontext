@@ -16,7 +16,7 @@ vi.mock('../../dashboard/src/hooks/useAgents.js', () => ({ useAgent: () => ({ da
 vi.mock('../../dashboard/src/hooks/useAutomations.js', () => ({ useAutomation: () => ({ data: undefined }) }));
 vi.mock('../../dashboard/src/components/agents/AgentAvatar.js', () => ({ AgentAvatar: () => null }));
 vi.mock('../../dashboard/src/components/sleepy/chat/SurveyCard.js', () => ({
-  SurveyCard: () => createElement('div', { 'data-testid': 'survey-card' }), SurveyReceipt: () => null,
+  SurveyCard: (p: { draftKey?: string }) => createElement('div', { 'data-testid': 'survey-card', 'data-draft': p.draftKey ? p.draftKey.replace('\u0000', '|') : 'none' }), SurveyReceipt: () => null,
 }));
 vi.mock('../../dashboard/src/components/sleepy/chat/InlineTerminal.js', () => ({ InlineTerminal: () => null }));
 
@@ -57,5 +57,12 @@ describe('one full card per question (K8)', () => {
     const html = renderToStaticMarkup(createElement(SuperQuestionCard, { ask, session }));
     expect(html).toContain('data-testid="survey-card"');
     setDockedAsk('OTHER', null);
+  });
+  it('the picks outlive a fold or a minimise: chat and dock draw the card with one draft key', () => {
+    const chat = renderToStaticMarkup(createElement(SuperQuestionCard, { ask, session }));
+    setDockedAsk('SUPER', 'q-plan');
+    const dock = renderToStaticMarkup(createElement(ReportAskDock, { rect: { x: 600, y: 500, width: 700, height: 300 }, item: 'q-plan', session }));
+    expect(chat).toContain('data-draft="super-ask:SUPER|q-plan"');
+    expect(dock).toContain('data-draft="super-ask:SUPER|q-plan"');
   });
 });

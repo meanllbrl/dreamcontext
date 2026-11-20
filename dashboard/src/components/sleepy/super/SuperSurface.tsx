@@ -16,7 +16,8 @@ import { PresentQueue } from './PresentQueue';
 import { StageDock, type DockTileView } from './StageDock';
 import { sendQueueJump } from './queueJump';
 import { StageListSwitch, SuperStatusPill, setStageViewMode, useStageViewMode } from './SuperListView';
-import { dockedAskOf, revealQuestion, setDockedAsk } from './superQuestions';
+import { dockedAskOf, setDockedAsk } from './superQuestions';
+import { revealAgendaWaiting } from './agendaReveal';
 import { ReportAskDock } from './ReportAskDock';
 import { jobTokensOf, publishJobTokens, requestStopJob, setJobFilter, useJobFilter } from './superJobFilter';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
@@ -1460,7 +1461,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
                 <>
                   <SuperStatusPill working={workingCount} needs={ownerQueueCount(state)}
                     onWorking={() => setStageViewMode('list')}
-                    onNeeds={() => { const head = queueHead(state); if (head) revealQuestion(head.id); }} />
+                    onNeeds={() => { if (!agendaOnStage) openAgenda(); revealAgendaWaiting(queueHead(state)?.id ?? null); }} />
                   <StageListSwitch value={listMode} onChange={setStageViewMode} />
                 </>
               ) : undefined}

@@ -105,6 +105,8 @@
   border-radius: var(--radius-md);
 }
 .super-agenda-row:hover, .super-agenda-row[data-selected='true'] { background: var(--color-bg-secondary); }
+/* The header pill's "needs you" landed here (D13): a short waiting ring, still under reduced motion. */
+.super-agenda-row[data-flash='true'] { box-shadow: inset 0 0 0 2px var(--mood-waiting); }
 .agenda-mark {
   width: 24px;
   height: 28px;

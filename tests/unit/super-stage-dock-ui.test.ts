@@ -81,9 +81,11 @@ describe('the red light (D2) and Undo', () => {
 });
 
 describe('the head (D13) and the agenda seams (K13)', () => {
-  it('the pill counts from the record and needs-you jumps to queueHead\'s item', () => {
+  it('the pill counts from the record and needs-you jumps to the agenda\'s first pink row (v3-4)', () => {
     expect(SURFACE).toContain('needs={ownerQueueCount(state)}');
-    expect(SURFACE).toContain('const head = queueHead(state); if (head) revealQuestion(head.id);');
+    // Opens the agenda when it is not on the stage, then the agenda shows its first waiting row;
+    // queueHead's item is the chat's fallback when no pink row can be drawn.
+    expect(SURFACE).toContain('onNeeds={() => { if (!agendaOnStage) openAgenda(); revealAgendaWaiting(queueHead(state)?.id ?? null); }}');
     expect(SURFACE).toContain("rowOf(c, jobLook.live(sid)) === 'working'");
   });
   it('List is a window-only view (Today beside the chat), remembered per window, never written', () => {

@@ -107,7 +107,8 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
     // The child's own AskUserQuestion, answered through the child's own session. The super's
     // words lead as the context strip when the child gave none.
     const pending: PendingQuestion = own.title || !item.ownerText ? own : { ...own, title: item.ownerText };
-    return wrap(<SurveyCard key={own.requestId} item={pending} session={child} />);
+    // The same draft key the child's own chat uses: his picks follow the question between them.
+    return wrap(<SurveyCard key={own.requestId} item={pending} session={child} draftKey={surveyDraftKey(child.claudeId, own.requestId)} />);
   }
   // The child is here but no longer asks this (its answer just went out; the record follows):
   // nothing to draw, never a second way to answer it.
@@ -155,7 +156,16 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
     answerQuestion: (_requestId, questions, picked, notes) => { send(superAnswerText(item, questions, picked, notes)); return true; },
     answer: (_requestId, opts) => { send(opts.message === ALREADY_ANSWERED_MESSAGE ? superAlreadyText(item) : superUnclearText(item, opts.message ?? '')); return true; },
   };
-  return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} />);
+  // The picks outlive the card (surveyDrafts): the same question drawn in the chat or docked under
+  // the report, remounted by a fold, a minimise, a resize or a refused send, comes back with his
+  // picks. Its own namespace, so the Super chat's `result` sweep (keyed by real request ids) never
+  // drops it; the store's cap retires it (end review 2026-11-20).
+  return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} draftKey={superAskDraftKey(item)} />);
+}
+
+/** Where a Super question's picks are kept across remounts (one key wherever it is drawn). */
+export function superAskDraftKey(item: Pick<SuperQueueItem, 'id' | 'sessionId'>): string {
+  return surveyDraftKey(`super-ask:${item.sessionId}`, item.id);
 }
 
 const NONE_PLACED: ReadonlySet<string> = new Set();

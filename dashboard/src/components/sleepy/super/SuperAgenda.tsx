@@ -21,6 +21,7 @@ import { AgendaStatusMenu, FloatLayer } from './AgendaStatusMenu';
 import { AgendaDetail, type DetailJob } from './AgendaDetail';
 import { AgendaDayNav, AgendaWeekStrip } from './AgendaDayNav';
 import type { AgendaDay } from './superApi';
+import { REVEAL_AGENDA_WAITING_EVENT, clearPendingReveal, revealFallback, showFirstWaitingRow, takePendingReveal } from './agendaReveal';
 import './SuperAgenda.css';
 
 export type { AgendaSize } from './AgendaRow';
@@ -215,6 +216,23 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     window.addEventListener(VIEW_EVENT, on);
     return () => window.removeEventListener(VIEW_EVENT, on);
   }, []);
+  // The header pill's "needs you" (D13, v3-4): show the first pink row; medium's filter turns to
+  // waiting first. A request made just before this agenda mounted (the press opened it) is taken.
+  useEffect(() => {
+    if (readOnly) return undefined;
+    let frame = 0;
+    const show = (headId: string | null) => {
+      clearPendingReveal();
+      setFilter('waiting');
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => { if (!showFirstWaitingRow(rootRef.current)) revealFallback(headId); }); });
+    };
+    const on = (e: Event) => show(((e as CustomEvent).detail?.headId as string | null | undefined) ?? null);
+    window.addEventListener(REVEAL_AGENDA_WAITING_EVENT, on);
+    const early = takePendingReveal();
+    if (early) show(early.headId);
+    return () => { window.removeEventListener(REVEAL_AGENDA_WAITING_EVENT, on); cancelAnimationFrame(frame); };
+  }, [readOnly]);
   // A refused write (C8): its words and the line it belongs to (absent = the card's). Shown where
   // he is looking at every size: that line's detail when it is open, else the card's error line;
   // the add box shows its own (review r1, action-failure-shown-where-he-looks).
