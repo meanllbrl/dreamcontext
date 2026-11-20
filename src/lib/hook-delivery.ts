@@ -35,13 +35,26 @@ const PART_FILE_TTL_MS = 60 * 60 * 1000;
  * Print everything, whatever the pipe does. A hook process exits right after this, and stdout on
  * a pipe can be non-blocking, so a plain write can leave the tail behind.
  */
-export function writeStdoutSync(text: string): void {
+export function writeStdoutSync(text: string, write: (buf: Buffer, off: number) => number = (b, o) => writeSync(1, b, o)): void {
   const buf = Buffer.from(text, 'utf-8');
   let off = 0;
-  for (let tries = 0; off < buf.length && tries < 1000; tries++) {
-    try { off += writeSync(1, buf, off); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EAGAIN') return; }
+  // A full pipe is a reader that is behind, not gone: wait for it. Retrying with no pause gave up
+  // within microseconds, so a reader a few ms late (a loaded machine) got a cut or EMPTY turn.
+  // Bounded by time, under the hook's own timeout.
+  const deadline = Date.now() + STDOUT_DRAIN_MS;
+  while (off < buf.length) {
+    try {
+      off += write(buf, off);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EAGAIN' || Date.now() >= deadline) return;
+      Atomics.wait(DRAIN_SLEEP, 0, 0, STDOUT_DRAIN_POLL_MS);
+    }
   }
 }
+/** How long a hook keeps waiting for a slow reader to take its output. */
+export const STDOUT_DRAIN_MS = 5_000;
+const STDOUT_DRAIN_POLL_MS = 5;
+const DRAIN_SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
 /**
  * The brain a tool hook (Pre/PostToolUse) reads, WITHOUT moving the process: the hook's cwd first,
