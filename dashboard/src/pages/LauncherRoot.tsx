@@ -74,8 +74,11 @@ export function LauncherRoot() {
   // drawer beside it: never a second window over a launcher nobody needs any more.
   const [landed, setLanded] = useState<{ name: string; how?: 'initializer' | 'existing' | 'super-landing' } | null>(null);
   if (landed) {
+    // A Super landing sends NO drawer intent: `open-window` shows the panes, and seeded beside the
+    // start it raced it (whichever ran last won; verify 2026-11-20: "No open chats" instead of
+    // the stage). The landing itself expands the surface and shows the stage.
     return <WindowChrome initialVault={landed.name} initialStart={landed.how === 'initializer' || landed.how === 'super-landing' ? landed.how : null}
-      initialIntent={landed.how ? { kind: 'open-window' } : { kind: 'new-window' }} />;
+      initialIntent={landed.how === 'super-landing' ? undefined : landed.how ? { kind: 'open-window' } : { kind: 'new-window' }} />;
   }
   if (!newShell) return <TodayLauncher />;
   if (pick === null) {

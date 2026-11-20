@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   canStartClaude,
   entryStage,
@@ -114,6 +116,15 @@ describe('the first-run flow (plan ilk-acilis C1, C2, C5)', () => {
       expect(gateSteps(missing, agent)).not.toContain('git-install');
     }
     expect(gateSteps(missing, 'antigravity')).toEqual(['antigravity-signin']);
+  });
+
+  it('the gate never reads a missing report as "signed out": it waits for the first answer', () => {
+    // gateSteps(undefined) counts every check missing, so the gate must not run on no report.
+    expect(gateSteps(undefined, 'claude')).toContain('claude-signin');
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard/src/hooks/useOnboarding.ts'), 'utf-8');
+    const run = src.split('const run = useCallback(async (agent: GateAgent)')[1] ?? '';
+    expect(run.indexOf('while (!reportRef.current')).toBeGreaterThan(-1);
+    expect(run.indexOf('while (!reportRef.current')).toBeLessThan(run.indexOf('gateSteps(reportRef.current, agent)'));
   });
 });
 

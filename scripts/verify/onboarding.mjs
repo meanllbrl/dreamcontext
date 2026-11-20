@@ -1,43 +1,48 @@
 #!/usr/bin/env node
 /**
- * First-run onboarding, verified end to end against the REAL built server and the REAL
- * dashboard UI.
+ * First open (plan ilk-acilis, Jakob's law), verified end to end against the REAL built server
+ * and the REAL dashboard UI.
  *
- *   npm run build && npm run verify:onboarding            # every row
- *   node scripts/verify/onboarding.mjs --rows S1,S10      # a subset
+ *   npm run build && npm run verify:onboarding               # every row
+ *   node scripts/verify/onboarding.mjs --rows screen1,s3      # a subset
  *
- * WHAT IT DRIVES. For each row of the plan's browser verify matrix (S1-S14, S8b) it builds a
- * fresh fake HOME, boots `dist/index.js dashboard --launcher` on its own port, and drives the
- * Launcher in Chromium. Assertions are made against the UI, the server's own routes, and the
- * files the product writes (shell profile lines, `.git/`, `vaults.json`, `.secrets.json`).
+ * WHAT IT DRIVES. Each row builds a fresh fake HOME, boots `dist/index.js dashboard --launcher`
+ * on its own port and drives it in Chromium: screen 1 (welcome + the agent gate), screen 2
+ * (Open a project: Open folder, New project, + Add Project), the GitHub clone screens, and
+ * screen 3 (the project's Super stage with the first-read offer). Every row saves a light and a
+ * dark screenshot to tmp/verify/onboarding/<row>-<theme>.png.
  *
  * WHAT IT NEVER TOUCHES. The developer's ~/.dreamcontext, ~/.claude, credentials and network:
  *  - HOME is a scratch folder and the server gets a CLEAN environment (no inherited tokens).
  *  - SHELL is /bin/bash, whose login profile in the fake HOME sets a PATH made only of
  *    stand-ins (fixtures/onboarding: npm, brew, gh, xcode-select, claude) plus /bin and
- *    /usr/sbin. /usr/bin is left out on purpose: that is where the real git and Apple's
- *    developer-tools shims live, so "git is missing" can be true on a Mac that has it.
- *  - The server runs on a COPY of node in a folder with nothing beside it, so no real npm or
- *    global dreamcontext is found next to the running node.
- *  - The network probe and the Claude installer come from a tiny loopback server through the
+ *    /usr/sbin. /usr/bin is left out on purpose (the real git and Apple's shims live there).
+ *  - The server runs on a COPY of node in a folder with nothing beside it.
+ *  - The network probe and the Claude installer come from a loopback server through the
  *    product's own test seams (DREAMCONTEXT_ONBOARDING_PROBE_URL,
- *    DREAMCONTEXT_CLAUDE_INSTALLER_URL), which it only honours for http://127.0.0.1.
- *  - npm installs land in a scratch NPM_CONFIG_PREFIX; GitHub sign-in is always the
- *    "import from the signed-in gh stand-in" path, never the device flow.
+ *    DREAMCONTEXT_CLAUDE_INSTALLER_URL), honoured only for http://127.0.0.1.
+ *  - The owner key: the server takes a scratch key on stdin (DREAMCONTEXT_OWNER_KEY_STDIN, as
+ *    the Mac shell does) and the browser context sends it on every request, so the owner-only
+ *    routes (register, scaffold, clone, first-read) answer this page as they answer the app.
+ *  - GitHub never: the GitHub rows answer the page's own requests (`page.route`) with each
+ *    state's server reply (sign-in code, expired, denied, the repo list, a clone's status). The
+ *    real clone is proven in the installed app's observed check.
  *
- * FAILURE POLICY. Collect, don't fail fast: every row runs, prints PASS/FAIL with its
- * evidence, and saves a screenshot to tmp/verify/onboarding/<row>.png. Exit 0 iff all pass.
+ * FAILURE POLICY. Collect, don't fail fast: every row runs and prints PASS/FAIL with its
+ * evidence. Exit 0 iff all pass.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyTheme } from './lib/super-scratch.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const FIXTURES = join(REPO, 'scripts', 'verify', 'fixtures', 'onboarding');
@@ -46,26 +51,7 @@ const SHOTS = join(REPO, 'tmp', 'verify', 'onboarding');
 const DIST = join(REPO, 'dist', 'index.js');
 const NODE_RUNTIME = join(ROOT, 'node-runtime', 'bin');
 const NODE = join(NODE_RUNTIME, 'node');
-
-/** The kickoff prompt the hand-off must deliver, read from the shared copy so it cannot drift. */
-function kickoffPrompt() {
-  const src = readFileSync(join(REPO, 'src', 'lib', 'onboarding', 'copy.ts'), 'utf-8');
-  const m = /export const INITIALIZER_KICKOFF_PROMPT =\s*([\s\S]*?);\n/.exec(src);
-  if (!m) throw new Error('INITIALIZER_KICKOFF_PROMPT not found in copy.ts');
-  // The constant is a `+`-joined run of string literals; evaluate only those literals.
-  const parts = [...m[1].matchAll(/'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"/g)].map((p) => (p[1] ?? p[2]).replace(/\\'/g, "'"));
-  return parts.join('');
-}
-
-const TITLES = {
-  node: 'Node.js',
-  cli: 'dreamcontext in Terminal',
-  claude: 'Claude',
-  'claude-auth': 'Claude sign-in',
-  git: 'Git',
-  github: 'GitHub',
-  gh: 'GitHub tools for Claude',
-};
+const OWNER_KEY = randomBytes(24).toString('hex');
 
 // ─── Small utilities ──────────────────────────────────────────────────────────────────
 
@@ -94,6 +80,10 @@ function readText(path) {
   try { return readFileSync(path, 'utf-8'); } catch { return ''; }
 }
 
+function readJson(path, fallback = null) {
+  try { return JSON.parse(readFileSync(path, 'utf-8')); } catch { return fallback; }
+}
+
 function writeExec(path, content) {
   writeFileSync(path, content);
   chmodSync(path, 0o755);
@@ -111,12 +101,7 @@ function ensureNodeRuntime() {
 
 // ─── The loopback seam server (network probe + Claude installer) ──────────────────────
 
-const seam = {
-  offline: false,
-  installerFetches: 0,
-  server: null,
-  port: 0,
-};
+const seam = { offline: false, installerFail: false, installerFetches: 0, server: null, port: 0 };
 
 const INSTALLER = `#!/bin/bash
 # Stand-in for Anthropic's install.sh, served by scripts/verify/onboarding.mjs.
@@ -126,6 +111,12 @@ cp "$HOME/.verify/claude-standin" "$HOME/.local/bin/claude"
 chmod 755 "$HOME/.local/bin/claude"
 printf 'installer\\trun\\n' >> "$HOME/.verify/log"
 echo "Claude Code installed to $HOME/.local/bin/claude"
+`;
+
+const INSTALLER_FAILS = `#!/bin/bash
+printf 'installer\\tfail\\n' >> "$HOME/.verify/log"
+echo "curl: (56) Recv failure: Connection reset by peer" >&2
+exit 1
 `;
 
 async function startSeamServer() {
@@ -139,8 +130,9 @@ async function startSeamServer() {
     }
     if (req.url?.startsWith('/claude-install.sh')) {
       seam.installerFetches += 1;
+      if (seam.offline) { req.socket.destroy(); return; }
       res.writeHead(200, { 'content-type': 'text/plain' });
-      res.end(INSTALLER);
+      res.end(seam.installerFail ? INSTALLER_FAILS : INSTALLER);
       return;
     }
     res.writeHead(404);
@@ -153,13 +145,11 @@ async function startSeamServer() {
 
 /**
  * Build one row's fake HOME. Options describe the machine:
- *   nodeOnPath   the running node is on the login PATH already
- *   cli          `dreamcontext` is on the login PATH
- *   claude       'none' | 'offpath' (in ~/.local/bin, not on PATH) | 'onpath'
+ *   claude       'none' | 'onpath'
  *   claudeAuth   signed in
  *   git          git + developer tools present
  *   gh           'none' | 'authed' | 'unauthed'
- *   githubToken  dreamcontext's own GitHub sign-in is stored
+ *   vaults       projects registered before the row (a later project, not the first install)
  */
 function makeMachine(row, o) {
   const base = join(ROOT, row);
@@ -177,60 +167,57 @@ function makeMachine(row, o) {
 
   for (const f of ['npm', 'brew', 'gh', 'xcode-select']) writeExec(join(fixtures, f), readFileSync(join(FIXTURES, f), 'utf-8'));
   for (const f of ['npm', 'brew', 'xcode-select']) writeExec(join(tools, f), readFileSync(join(FIXTURES, f), 'utf-8'));
-  // The facts script asks `uname` whether this is a Mac; it lives in /usr/bin, which is off PATH.
   symlinkSync('/usr/bin/uname', join(tools, 'uname'));
 
   writeExec(join(v, 'claude-standin'), `#!/bin/sh\nexec '${process.execPath}' '${join(FIXTURES, 'claude.mjs')}' "$@"\n`);
   writeFileSync(join(v, 'claude-auth.json'), JSON.stringify({ loggedIn: !!o.claudeAuth }));
-  if (o.claude === 'offpath' || o.claude === 'onpath') {
+  if (o.claude === 'onpath') {
     mkdirSync(join(home, '.local', 'bin'), { recursive: true });
     writeExec(join(home, '.local', 'bin', 'claude'), readFileSync(join(v, 'claude-standin'), 'utf-8'));
   }
-  if (o.cli) writeExec(join(npmPrefix, 'bin', 'dreamcontext'), '#!/bin/sh\necho 0.0.0-verify\n');
-  if (o.git) setGitInstalled(home, true);
-  if (o.gh !== 'none' && o.gh) writeExec(join(tools, 'gh'), readFileSync(join(FIXTURES, 'gh'), 'utf-8'));
-  if (o.gh === 'authed' || o.ghStateAuthed) writeFileSync(join(v, 'gh-authed'), '');
-  if (o.githubToken) {
-    writeFileSync(join(home, '.dreamcontext', '.secrets.json'),
-      JSON.stringify({ github: { token: 'gho_verifyStoredToken', login: 'verify-user' } }, null, 2), { mode: 0o600 });
+  // The CLI and node are on PATH on every row: the first open no longer sets them up.
+  writeExec(join(npmPrefix, 'bin', 'dreamcontext'), '#!/bin/sh\necho 0.0.0-verify\n');
+  if (o.git) {
+    symlinkSync('/usr/bin/git', join(tools, 'git'));
+    writeFileSync(join(v, 'clt'), '');
   }
+  if (o.gh && o.gh !== 'none') writeExec(join(tools, 'gh'), readFileSync(join(FIXTURES, 'gh'), 'utf-8'));
+  if (o.gh === 'authed') writeFileSync(join(v, 'gh-authed'), '');
+  if (o.claudeLogin) writeFileSync(join(v, 'claude-login-mode'), o.claudeLogin);
+  // The Super Agent on, chat view on (a fresh install's defaults on the Mac).
+  writeFileSync(join(home, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
+    enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, renderer: 'dom',
+    chatView: true, screenMigrated: true, chatPermissionMode: 'auto', superAgent: true,
+  }, null, 2)}\n`);
 
   const pathParts = [tools, join(npmPrefix, 'bin')];
   if (o.claude === 'onpath') pathParts.push('$HOME/.local/bin');
-  if (o.nodeOnPath) pathParts.push(NODE_RUNTIME);
-  pathParts.push('/bin', '/usr/sbin', '/sbin');
+  pathParts.push(NODE_RUNTIME, '/bin', '/usr/sbin', '/sbin');
   writeFileSync(join(home, '.bash_profile'), [
     '# Fake login profile written by scripts/verify/onboarding.mjs.',
     `export PATH="${pathParts.join(':')}"`,
-    '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"',
     '',
   ].join('\n'));
-
+  const m = { base, home, v, tools, npmPrefix };
   for (const vault of o.vaults ?? []) {
     const dir = join(base, vault);
     mkdirSync(join(dir, '_dream_context'), { recursive: true });
-    registerVault(home, vault, dir);
+    const r = spawnSync(process.execPath, [DIST, 'vaults', 'add', vault, dir], {
+      env: { HOME: home, PATH: '/bin:/usr/bin', DREAMCONTEXT_EMBED_AUTO: '0' }, encoding: 'utf-8',
+    });
+    if (r.status !== 0) throw new Error(`vaults add ${vault} failed: ${r.stderr || r.stdout}`);
   }
-  return { base, home, v, tools, npmPrefix };
+  return m;
 }
 
-function setGitInstalled(home, on) {
-  const tools = join(home, '.verify', 'tools');
-  const link = join(tools, 'git');
-  if (on) {
-    if (!existsSync(link)) symlinkSync('/usr/bin/git', link);
-    writeFileSync(join(home, '.verify', 'clt'), '');
-  } else {
-    rmSync(link, { force: true });
-    rmSync(join(home, '.verify', 'clt'), { force: true });
-  }
-}
-
-function registerVault(home, name, dir) {
-  const r = spawnSync(process.execPath, [DIST, 'vaults', 'add', name, dir], {
-    env: { HOME: home, PATH: '/bin:/usr/bin', DREAMCONTEXT_EMBED_AUTO: '0' }, encoding: 'utf-8',
-  });
-  if (r.status !== 0) throw new Error(`vaults add ${name} failed: ${r.stderr || r.stdout}`);
+/** A folder with a project in it (README, code), the way a first Open folder finds one. */
+function projectFolder(m, name) {
+  const dir = join(m.base, 'work', name);
+  mkdirSync(join(dir, 'src', 'api'), { recursive: true });
+  writeFileSync(join(dir, 'README.md'), `# ${name}\n\nA habit tracker for small teams.\n`);
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: name.toLowerCase(), version: '0.3.0' }, null, 2));
+  writeFileSync(join(dir, 'src', 'api', 'habits.ts'), 'export const habits = [];\n');
+  return dir;
 }
 
 function logLines(m) {
@@ -238,22 +225,16 @@ function logLines(m) {
 }
 
 function readVaults(home) {
-  try {
-    const raw = JSON.parse(readFileSync(join(home, '.dreamcontext', 'vaults.json'), 'utf-8'));
-    return Array.isArray(raw) ? raw : (raw.vaults ?? []);
-  } catch { return []; }
+  const raw = readJson(join(home, '.dreamcontext', 'vaults.json'), []);
+  return Array.isArray(raw) ? raw : (raw.vaults ?? []);
 }
 
-/** Every shell-profile line onboarding wrote (each sits under a `# dreamcontext:` marker). */
-function markerLines(home) {
-  return ['.bash_profile', '.bashrc', '.profile', '.zshrc']
-    .flatMap((f) => readText(join(home, f)).split('\n'))
-    .filter((l) => l.startsWith('# dreamcontext:'));
-}
+const marker = (m) => readJson(join(m.home, '.dreamcontext', 'first-run.json'));
+const turns = (m, role) => logLines(m).filter((l) => l.startsWith(`claude\tturn-${role}`));
 
 // ─── The server ───────────────────────────────────────────────────────────────────────
 
-async function startServer(m, { desktop = true } = {}) {
+async function startServer(m) {
   const port = await freePort();
   const env = {
     HOME: m.home,
@@ -268,11 +249,13 @@ async function startServer(m, { desktop = true } = {}) {
     DREAMCONTEXT_CLAUDE_INSTALLER_URL: `http://127.0.0.1:${seam.port}/claude-install.sh`,
     DREAMCONTEXT_EMBED_AUTO: '0',
     DREAMCONTEXT_INITIALIZER_HOOK: '0',
-    ...(desktop ? { DREAMCONTEXT_DESKTOP: '1' } : {}),
+    DREAMCONTEXT_DESKTOP: '1',
+    DREAMCONTEXT_OWNER_KEY_STDIN: '1',
   };
   const srv = spawn(NODE, [DIST, 'dashboard', '--no-open', '-p', String(port), '--launcher'], {
-    cwd: m.home, env, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: m.home, env, stdio: ['pipe', 'pipe', 'pipe'],
   });
+  srv.stdin.write(`${OWNER_KEY}\n`);
   let log = '';
   srv.stdout.on('data', (c) => { log += c.toString(); });
   srv.stderr.on('data', (c) => { log += c.toString(); });
@@ -291,525 +274,520 @@ async function stopServer(s) {
   if (s.proc.exitCode === null && s.proc.signalCode === null) s.proc.kill('SIGKILL');
 }
 
-async function readiness(s, fresh = true) {
-  const r = await fetch(`${s.base}/api/onboarding/readiness${fresh ? '?fresh=1' : ''}`);
-  return r.json();
-}
-
-function check(report, id) {
-  return report.checks.find((c) => c.id === id);
-}
-
 // ─── UI helpers ───────────────────────────────────────────────────────────────────────
 
-function row(page, title) {
-  return page.locator('.ob-row').filter({ has: page.locator('.ob-row-title').getByText(title, { exact: true }) });
+/** Console errors of every page of the row (a red console fails the row). */
+function watch(ctx) {
+  const errors = [];
+  ctx.on('page', (p) => {
+    p.on('console', (msg) => {
+      if (process.env.VERIFY_DEBUG) console.log(`      [page ${msg.type()}] ${msg.text().slice(0, 300)}`);
+      if (msg.type() === 'error' && !/Failed to load resource/.test(msg.text())) errors.push(msg.text().slice(0, 200));
+    });
+    p.on('pageerror', (e) => errors.push(`crash: ${String(e).slice(0, 200)}`));
+  });
+  return errors;
 }
 
-async function rowIsDone(page, title) {
-  const cls = (await row(page, title).getAttribute('class').catch(() => '')) ?? '';
-  return cls.includes('ob-row--done');
-}
-
-/**
- * Open the Launcher. With no projects the takeover opens on the Welcome screen first, so by
- * default this clicks through it and records whether it was there (`page.welcomeShown`). Rows
- * that start WITH a project pass `{ welcome: false }`: no takeover, so no Welcome to wait for.
- */
-async function openLauncher(ctx, s, { welcome = true, shotAs = null } = {}) {
+async function openLauncher(ctx, s) {
   const page = await ctx.newPage();
   await page.goto(`${s.base}/`, { waitUntil: 'domcontentloaded' });
-  if (welcome) {
-    const start = page.getByRole('button', { name: 'Get started', exact: true });
-    page.welcomeShown = await start.waitFor({ timeout: 20_000 }).then(() => true, () => false);
-    if (page.welcomeShown) {
-      if (shotAs) { await sleep(1500); await shot(page, shotAs); }
-      await start.click();
-    }
-  }
   return page;
 }
 
-async function shot(page, rowId) {
-  try { await page.screenshot({ path: join(SHOTS, `${rowId}.png`), fullPage: false }); } catch { /* page gone */ }
+/** A light and a dark screenshot of the page as it is. */
+async function shots(page, id) {
+  for (const theme of ['light', 'dark']) {
+    await applyTheme(page, theme);
+    await sleep(500);
+    try { await page.screenshot({ path: join(SHOTS, `${id}-${theme}.png`), fullPage: false }); } catch { /* page gone */ }
+  }
+  await applyTheme(page, 'light');
 }
 
-/** Answer the browser-mode folder prompt (`openFolderPicker` falls back to window.prompt). */
-function answerPrompts(page, path) {
-  page.on('dialog', (d) => { void d.accept(path); });
+const openHeading = (page) => page.getByRole('heading', { name: 'Open a project' });
+
+/** Screen 1 to screen 2 on a ready machine: one click. */
+async function continueWithClaude(page) {
+  const btn = page.getByTestId('ob-continue-claude');
+  await btn.waitFor({ timeout: 20_000 });
+  await btn.click();
+  return openHeading(page).waitFor({ timeout: 30_000 }).then(() => true, () => false);
 }
 
-/** A machine where every required and recommended check passes. */
-const READY = { nodeOnPath: true, cli: true, claude: 'onpath', claudeAuth: true, git: true, gh: 'authed', githubToken: true };
+/**
+ * A landing in the new shell happens in THIS window (the launcher becomes the project's window).
+ * Anything that still asks for a browser popup is recorded, not opened (Chromium blocks a popup
+ * after a long await; the app opens a real window there), so a row can see it was asked for.
+ */
+const CAPTURE_OPEN = () => { window.open = (u) => { (window.__opened ||= []).push(String(u)); return null; }; };
 
-/** From the takeover's This Mac step to the Project step (auto-advance or Continue). */
-async function reachProjectStep(page, { allowContinue = true } = {}) {
-  const project = page.getByRole('heading', { name: 'Add your project' });
-  const ok = await waitFor(async () => {
-    if (await project.isVisible()) return true;
-    const cont = page.getByRole('button', { name: 'Continue', exact: true });
-    if (allowContinue && await cont.isVisible()) await cont.click();
-    return false;
-  }, allowContinue ? 30_000 : 90_000, 400);
-  return !!ok;
+async function openFolderNamed(page, path) {
+  page.once('dialog', (d) => { void d.accept(path); });
+  await page.getByTestId('ob-open-folder').click();
 }
 
-async function createProject(page, name) {
-  await page.getByRole('button', { name: /Create new/ }).click();
-  await page.getByLabel('Project name').fill(name);
-  await page.getByRole('button', { name: 'Create project', exact: true }).click();
-  return page.getByRole('heading', { name: `“${name}” is ready` }).waitFor({ timeout: 60_000 }).then(() => true, () => false);
+/** The Super stage's empty state with this title (the landing reached that project's stage). */
+function heroTitled(page, title) {
+  return page.locator('.chat-banner-empty--hero .chat-banner-empty-title').filter({ hasText: title })
+    .first().waitFor({ timeout: 60_000 }).then(() => true, () => false);
 }
 
-async function openFolder(page, path) {
-  answerPrompts(page, path);
-  await page.getByRole('button', { name: /Open a folder/ }).click();
-  await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+function registerVault(home, name, dir) {
+  const r = spawnSync(process.execPath, [DIST, 'vaults', 'add', name, dir], {
+    env: { HOME: home, PATH: '/bin:/usr/bin', DREAMCONTEXT_EMBED_AUTO: '0' }, encoding: 'utf-8',
+  });
+  if (r.status !== 0) throw new Error(`vaults add ${name} failed: ${r.stderr || r.stdout}`);
 }
+
+/** The project's Super stage, its empty state up. */
+async function superStage(page) {
+  await page.waitForLoadState('domcontentloaded');
+  const hero = page.locator('.chat-banner-empty--hero');
+  const ok = await hero.first().waitFor({ timeout: 45_000 }).then(() => true, () => false);
+  return { ok, hero: hero.first() };
+}
+
+const ROW_TIMEOUT = 240_000;
 
 // ─── Rows ─────────────────────────────────────────────────────────────────────────────
 //
 // Each row returns { pass, evidence: string[] }. `ctx` is a fresh browser context.
 
+const READY = { claude: 'onpath', claudeAuth: true, git: true, gh: 'authed' };
+
+function verdict(ev, checks) {
+  for (const [label, ok, detail] of checks) ev.push(`${ok ? '✓' : '✗'} ${label}${!ok && detail !== undefined ? ` (${String(detail).slice(0, 300)})` : ''}`);
+  return checks.every(([, ok]) => !!ok);
+}
+
 const ROWS = {
-  /** Fresh machine: "Set everything up" walks the whole plan, git first, and lands on Project. */
-  async S1(ctx) {
-    const m = makeMachine('S1', { nodeOnPath: false, cli: false, claude: 'none', claudeAuth: false, git: false, gh: 'none' });
-    // gh arrives through the brew stand-in already signed in, so the GitHub row takes the
-    // import path (no device flow, no network).
-    writeFileSync(join(m.v, 'gh-authed'), '');
+  /** C1, C2, C5: screen 1, one click to screen 2, no checklist, no Git, no browser. */
+  async screen1(ctx) {
+    const m = makeMachine('screen1', READY);
     const s = await startServer(m);
     const ev = [];
-    try {
-      const before = await readiness(s);
-      const plan = before.plan;
-      ev.push(`initial plan: ${plan.join(' > ')}`);
-      const missing = ['node', 'cli', 'claude', 'git', 'gh'].filter((id) => check(before, id)?.status !== 'ok');
-      const page = await openLauncher(ctx, s, { shotAs: 'S1-welcome' });
-      ev.push(`welcome shown first: ${page.welcomeShown}`);
-      const setUp = page.getByRole('button', { name: 'Set everything up' });
-      await setUp.waitFor({ timeout: 20_000 });
-      await setUp.click();
-      const gitWait = await waitFor(async () => (await row(page, TITLES.git).textContent())?.includes('Installing in the background'), 20_000);
-      ev.push(`git row reads "Installing in the background": ${!!gitWait}`);
-      const card = await page.getByText('Finish signing in in your browser').waitFor({ timeout: 90_000 }).then(() => true, () => false);
-      ev.push(`sign-in card shown: ${card}`);
-      await shot(page, 'S1-signin');
-      const signedIn = await waitFor(() => rowIsDone(page, TITLES['claude-auth']), 30_000);
-      ev.push(`Claude sign-in row resolved: ${!!signedIn}`);
-      // No Continue click: the step must move on by itself once the plan is done.
-      const onProject = await reachProjectStep(page, { allowContinue: false });
-      ev.push(`auto-advanced to Project: ${onProject}`);
-      await shot(page, 'S1');
-      const lines = logLines(m);
-      const idx = (re) => lines.findIndex((l) => re.test(l));
-      const order = {
-        xcode: idx(/^xcode-select\t--install/),
-        npm: idx(/^npm\t.*install -g dreamcontext/),
-        installer: idx(/^installer\trun/),
-        login: idx(/^claude\tlogin\t/),
-        brew: idx(/^brew\tinstall gh/),
-      };
-      ev.push(`log order: ${JSON.stringify(order)}`);
-      const after = await readiness(s);
-      ev.push(`after: ${after.checks.map((c) => `${c.id}=${c.status}`).join(' ')}`);
-      const secrets = readText(join(m.home, '.dreamcontext', '.secrets.json'));
-      const pass = page.welcomeShown && plan[0] === 'git-install' && missing.length === 5 && !!gitWait && card && !!signedIn && onProject
-        && order.xcode >= 0 && order.xcode < order.npm && order.npm < order.installer && order.installer < order.login
-        && order.login < order.brew && after.ready === true && /verify-user/.test(secrets);
-      return { pass, evidence: ev };
-    } finally {
-      setGitInstalled(m.home, true);
-      await stopServer(s);
-    }
-  },
-
-  /** Offline: banner, fix buttons disabled; recovers on its own once the probe answers. */
-  async S2(ctx) {
-    const m = makeMachine('S2', { ...READY, claudeAuth: false });
-    seam.offline = true;
-    const s = await startServer(m);
-    const ev = [];
+    const errors = watch(ctx);
     try {
       const page = await openLauncher(ctx, s);
-      const banner = page.getByText("You're offline. We'll carry on when you're back.");
-      const shown = await banner.waitFor({ timeout: 20_000 }).then(() => true, () => false);
-      const setUp = page.getByRole('button', { name: 'Set everything up' });
-      // Offline, every fix that needs the network is blocked: "Set everything up" is either
-      // not offered or disabled, and no row offers an enabled fix button.
-      const enabledActions = () => page.evaluate(() => [...document.querySelectorAll('.ob-checklist button.ob-btn--primary, .ob-row .ob-btn--secondary')]
-        .filter((b) => !b.disabled).map((b) => b.textContent));
-      const offlineActions = shown ? await enabledActions() : ['(no banner)'];
-      const disabled = offlineActions.length === 0;
-      ev.push(`offline banner: ${shown}; enabled fix actions while offline: ${JSON.stringify(offlineActions)}`);
-      await shot(page, 'S2');
-      seam.offline = false;
+      const title = page.getByRole('heading', { name: 'The Agentic OS for your projects.' });
+      const titled = await title.waitFor({ timeout: 20_000 }).then(() => true, () => false);
+      const other = await page.getByRole('button', { name: 'Use Codex or Antigravity instead' }).isVisible().catch(() => false);
+      await shots(page, 'screen1');
       const t0 = Date.now();
-      const back = await banner.waitFor({ state: 'hidden', timeout: 15_000 }).then(() => true, () => false);
-      const secs = ((Date.now() - t0) / 1000).toFixed(1);
-      ev.push(`banner gone after ${secs}s (bound 6s in the plan, 15s allowed here): ${back}`);
-      const enabled = back && await setUp.waitFor({ timeout: 10_000 }).then(() => setUp.isEnabled(), () => false);
-      ev.push(`Set everything up enabled again: ${enabled}`);
-      return { pass: shown && disabled && back && enabled && Number(secs) <= 6, evidence: ev };
-    } finally {
-      seam.offline = false;
-      await stopServer(s);
-    }
-  },
-
-  /** Claude installed but off PATH: one marker line written; a second run writes nothing. */
-  async S3(ctx) {
-    const m = makeMachine('S3', { ...READY, claude: 'offpath' });
-    const s = await startServer(m);
-    const ev = [];
-    try {
-      const before = check(await readiness(s), 'claude');
-      ev.push(`claude before: ${before?.status}/${before?.reason} fix=${before?.fix?.id}`);
-      const page = await openLauncher(ctx, s);
-      const btn = row(page, TITLES.claude).getByRole('button', { name: 'Make it available in Terminal' });
-      await btn.waitFor({ timeout: 20_000 });
-      await btn.click();
-      const done = await waitFor(() => rowIsDone(page, TITLES.claude), 30_000);
-      const linesAfterFirst = markerLines(m.home);
-      ev.push(`row resolved: ${!!done}; marker lines: ${JSON.stringify(linesAfterFirst)}`);
-      await shot(page, 'S3');
-      const second = await page.request.post(`${s.base}/api/onboarding/fix`, { data: { fix: 'claude-path' } });
-      const body = await second.json();
-      if (body.runId) await waitFor(async () => (await (await fetch(`${s.base}/api/agent/install/status?id=${body.runId}`)).json()).state !== 'running', 15_000);
-      const linesAfterSecond = markerLines(m.home);
-      ev.push(`second run: ${second.status()} ${JSON.stringify(body)}; marker lines now ${linesAfterSecond.length}`);
-      // bash reads two startup files, and the product writes the line into each that exists:
-      // one marker per file, and the second run adds none anywhere.
-      const perFile = ['.bash_profile', '.bashrc'].map((f) => readText(join(m.home, f)).split('\n').filter((l) => /^# dreamcontext: Claude/.test(l)).length);
-      ev.push(`Claude marker lines per file (.bash_profile, .bashrc): ${perFile.join(', ')}`);
-      return { pass: before?.reason === 'not-on-path' && !!done && perFile.every((n) => n <= 1) && perFile.some((n) => n === 1) && linesAfterSecond.length === linesAfterFirst.length, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
-  },
-
-  /** Signed out: wait card; Cancel kills the login; retry signs in and the row resolves. */
-  async S4(ctx) {
-    const m = makeMachine('S4', { ...READY, claudeAuth: false });
-    writeFileSync(join(m.v, 'claude-login-mode'), 'hang');
-    const s = await startServer(m);
-    const ev = [];
-    try {
-      const page = await openLauncher(ctx, s);
-      const signIn = row(page, TITLES['claude-auth']).getByRole('button', { name: 'Sign in', exact: true });
-      await signIn.waitFor({ timeout: 20_000 });
-      await signIn.click();
-      const card = await page.getByText('Finish signing in in your browser').waitFor({ timeout: 20_000 }).then(() => true, () => false);
-      const pidOk = await waitFor(() => existsSync(join(m.v, 'claude-login.pid')), 10_000);
-      const pid = Number(readText(join(m.v, 'claude-login.pid')));
-      ev.push(`wait card: ${card}; login pid ${pid}`);
-      await shot(page, 'S4-waiting');
-      await row(page, TITLES['claude-auth']).getByRole('button', { name: 'Cancel', exact: true }).click();
-      const killed = await waitFor(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 10_000);
-      ev.push(`login process gone after Cancel: ${!!killed}`);
-      writeFileSync(join(m.v, 'claude-login-mode'), 'ok');
-      const retry = row(page, TITLES['claude-auth']).getByRole('button', { name: /Sign in|Try again/ });
-      await retry.first().waitFor({ timeout: 20_000 });
-      await retry.first().click();
-      const done = await waitFor(() => rowIsDone(page, TITLES['claude-auth']), 40_000);
-      ev.push(`retry resolved the row: ${!!done}`);
-      await shot(page, 'S4');
-      return { pass: card && !!pidOk && !!killed && !!done, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
-  },
-
-  /** git missing on a Mac: one dialog request, no repeats from polling, resolves on landing. */
-  async S5(ctx) {
-    const m = makeMachine('S5', { ...READY, git: false });
-    const s = await startServer(m);
-    const ev = [];
-    try {
-      const page = await openLauncher(ctx, s);
-      const install = row(page, TITLES.git).getByRole('button', { name: 'Install Git' });
-      await install.waitFor({ timeout: 20_000 });
-      await install.click();
-      const waiting = await page.getByText('A macOS window opened').waitFor({ timeout: 20_000 }).then(() => true, () => false);
-      ev.push(`developer-tools wait shown: ${waiting}`);
-      await sleep(6000); // a few readiness polls and one dialog poll go by
-      await shot(page, 'S5-waiting');
-      const installsWhileWaiting = logLines(m).filter((l) => l.startsWith('xcode-select\t--install')).length;
-      setGitInstalled(m.home, true);
-      // Git was the last open item, so when it lands the Mac step plays its ready moment and
-      // moves on: the row resolving and the step advancing are both "resolved".
-      const advanced = page.getByRole('heading', { name: /This Mac is ready|Add your project/ });
-      const done = await waitFor(async () => (await rowIsDone(page, TITLES.git)) || (await advanced.first().isVisible()), 30_000);
-      const gitNow = check(await readiness(s), 'git');
-      const installs = logLines(m).filter((l) => l.startsWith('xcode-select\t--install')).length;
-      ev.push(`--install calls while waiting: ${installsWhileWaiting}, total: ${installs}; resolved in the UI: ${!!done}; git check: ${gitNow?.status}`);
-      await shot(page, 'S5');
-      return { pass: waiting && installsWhileWaiting === 1 && installs === 1 && !!done && gitNow?.status === 'ok', evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
-  },
-
-  /** gh signed in with importable scopes: GitHub connects in one click, no browser. */
-  async S6(ctx) {
-    const m = makeMachine('S6', { ...READY, githubToken: false });
-    const s = await startServer(m);
-    const ev = [];
-    try {
-      const page = await openLauncher(ctx, s);
-      const connect = row(page, TITLES.github).getByRole('button');
-      await connect.first().waitFor({ timeout: 20_000 });
-      const label = await connect.first().textContent();
-      ev.push(`action label: "${label}"`);
-      await connect.first().click();
-      const done = await waitFor(() => rowIsDone(page, TITLES.github), 30_000);
-      const path = join(m.home, '.dreamcontext', '.secrets.json');
-      const secrets = readText(path);
-      const mode = existsSync(path) ? (statSync(path).mode & 0o777).toString(8) : 'missing';
-      const ghCalls = logLines(m).filter((l) => l.startsWith('gh\t')).map((l) => l.split('\t')[1]);
-      const codeCard = await page.locator('.ob-wait-code').count();
-      ev.push(`row resolved: ${!!done}; .secrets.json mode ${mode}; login stored: ${/verify-user/.test(secrets)}; gh calls: ${ghCalls.join(' | ')}; device-code cards: ${codeCard}`);
-      await shot(page, 'S6');
+      const reached = await continueWithClaude(page);
+      const ms = Date.now() - t0;
+      const checklist = await page.locator('.ob-checklist').count();
+      const signed = (await page.getByTestId('ob-signed-in').textContent().catch(() => '')) ?? '';
+      await shots(page, 'screen2');
+      const ran = logLines(m);
       return {
-        pass: /account you're signed in to/i.test(label ?? '') && !!done && mode === '600' && /gho_verifyFakeToken/.test(secrets)
-          && /verify-user/.test(secrets) && ghCalls.some((c) => c.startsWith('api -i user')) && codeCard === 0,
+        pass: verdict(ev, [
+          ['welcome headline', titled],
+          ['"Use Codex or Antigravity instead" offered', other],
+          [`Continue with Claude reaches Open a project in one click (${ms} ms)`, reached],
+          ['no setup checklist', checklist === 0, checklist],
+          ['signed-in line names the account', signed.includes('verify@example.com'), signed],
+          ['no Apple Git window (xcode-select --install never ran)', !ran.some((l) => /xcode-select.*--install/.test(l)), ran.join(' | ')],
+          ['no browser sign-in ran', !ran.some((l) => l.startsWith('claude\tlogin')), ran.join(' | ')],
+          ['screen 2 shows drop zone, Open folder, New project, Clone', (await Promise.all(['ob-drop', 'ob-open-folder', 'ob-new-project', 'ob-clone'].map((id) => page.getByTestId(id).isVisible()))).every(Boolean)],
+          ['no console errors', errors.length === 0, errors.join(' | ')],
+        ]),
         evidence: ev,
       };
-    } finally {
-      await stopServer(s);
-    }
+    } finally { await stopServer(s); }
   },
 
-  /** ~/projects missing: Create new makes the folder and registers the vault. */
-  async S7(ctx) {
-    const m = makeMachine('S7', READY);
+  /** C3: Claude missing: preparing, then browser sign-in; no git-install on this path. */
+  async 'gate-install'(ctx) {
+    const m = makeMachine('gate-install', { claude: 'none', claudeAuth: false, git: false, gh: 'none' });
     const s = await startServer(m);
     const ev = [];
     try {
-      const parentBefore = existsSync(join(m.home, 'projects'));
+      seam.installerFetches = 0;
       const page = await openLauncher(ctx, s);
-      const onProject = await reachProjectStep(page);
-      const created = onProject && await createProject(page, 'demo');
-      const dir = join(m.home, 'projects', 'demo');
-      const vaults = readVaults(m.home).map((x) => x.name);
-      ev.push(`~/projects before: ${parentBefore}; project step: ${onProject}; hand-off shown: ${created}; ${dir} has _dream_context: ${existsSync(join(dir, '_dream_context'))}; vaults: ${vaults.join(',')}`);
-      await shot(page, 'S7');
-      return { pass: !parentBefore && created && existsSync(join(dir, '_dream_context')) && vaults.includes('demo'), evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
+      await page.getByTestId('ob-continue-claude').waitFor({ timeout: 20_000 });
+      await page.getByTestId('ob-continue-claude').click();
+      const preparing = await page.getByTestId('ob-gate-preparing').waitFor({ timeout: 15_000 }).then(() => true, () => false);
+      if (preparing) await shots(page, 'gate-preparing');
+      const browser = await page.getByTestId('ob-gate-browser').waitFor({ timeout: 60_000 }).then(() => true, () => false);
+      if (browser) await shots(page, 'gate-browser');
+      const reached = await openHeading(page).waitFor({ timeout: 30_000 }).then(() => true, () => false);
+      const ran = logLines(m);
+      return {
+        pass: verdict(ev, [
+          ['preparing card while Claude installs', preparing],
+          ['the installer was fetched', seam.installerFetches >= 1, seam.installerFetches],
+          ['browser sign-in card', browser],
+          ['sign-in done lands on Open a project', reached],
+          ['no git-install run', !ran.some((l) => /xcode-select/.test(l)), ran.join(' | ')],
+        ]),
+        evidence: ev,
+      };
+    } finally { await stopServer(s); }
   },
 
-  /** A folder with 6 documents and no git: counted, Git pre-checked, both set up. */
-  async S8(ctx) {
-    const m = makeMachine('S8', READY);
-    const folder = join(m.base, 'notes-project');
-    mkdirSync(join(folder, 'docs'), { recursive: true });
-    for (let i = 1; i <= 6; i++) writeFileSync(join(folder, 'docs', `note-${i}.md`), `# Note ${i}\n\nSome thoughts.\n`);
-    const s = await startServer(m);
+  /** C3: offline, sign-in not finished, could not install. */
+  async 'gate-states'(ctx) {
     const ev = [];
-    try {
-      const page = await openLauncher(ctx, s);
-      const onProject = await reachProjectStep(page);
-      await openFolder(page, folder);
-      const docs = await page.getByText('Found 6 documents. Claude will read them in.').waitFor({ timeout: 20_000 }).then(() => true, () => false);
-      const gitBox = page.getByRole('checkbox', { name: /Track changes with Git/ });
-      const checked = await gitBox.isChecked().catch(() => false);
-      ev.push(`project step: ${onProject}; "Found 6 documents": ${docs}; Git checked: ${checked}`);
-      await shot(page, 'S8');
-      await page.getByRole('button', { name: 'Set up project', exact: true }).click();
-      const handoff = await page.getByRole('heading', { name: /is ready$/ }).waitFor({ timeout: 60_000 }).then(() => true, () => false);
-      const hasGit = existsSync(join(folder, '.git'));
-      const hasBrain = existsSync(join(folder, '_dream_context'));
-      ev.push(`hand-off: ${handoff}; .git: ${hasGit}; _dream_context: ${hasBrain}`);
-      return { pass: onProject && docs && checked && handoff && hasGit && hasBrain, evidence: ev };
-    } finally {
-      await stopServer(s);
+    const checks = [];
+    // Offline: Claude missing, no network.
+    {
+      const m = makeMachine('gate-offline', { claude: 'none', claudeAuth: false });
+      const s = await startServer(m);
+      try {
+        seam.offline = true;
+        const page = await openLauncher(ctx, s);
+        await page.getByTestId('ob-continue-claude').click({ timeout: 20_000 });
+        const off = await page.getByTestId('ob-gate-offline').waitFor({ timeout: 30_000 }).then(() => true, () => false);
+        if (off) await shots(page, 'gate-offline');
+        checks.push(['offline card', off]);
+        await page.close();
+      } finally { seam.offline = false; await stopServer(s); }
     }
+    // Could not install: the installer fails.
+    {
+      const m = makeMachine('gate-install-failed', { claude: 'none', claudeAuth: false });
+      const s = await startServer(m);
+      try {
+        seam.installerFail = true;
+        const page = await openLauncher(ctx, s);
+        await page.getByTestId('ob-continue-claude').click({ timeout: 20_000 });
+        const failed = await page.getByTestId('ob-gate-install-failed').waitFor({ timeout: 45_000 }).then(() => true, () => false);
+        if (failed) await shots(page, 'gate-install-failed');
+        checks.push(['could-not-install card', failed]);
+        await page.close();
+      } finally { seam.installerFail = false; await stopServer(s); }
+    }
+    // Not finished: the browser sign-in ends without access.
+    {
+      const m = makeMachine('gate-not-finished', { claude: 'onpath', claudeAuth: false, claudeLogin: 'fail' });
+      const s = await startServer(m);
+      try {
+        const page = await openLauncher(ctx, s);
+        // The stand-in's `auth login` in `fail` mode exits without signing in.
+        await page.getByTestId('ob-continue-claude').click({ timeout: 20_000 });
+        const nf = await page.getByTestId('ob-gate-not-finished').waitFor({ timeout: 45_000 }).then(() => true, () => false);
+        if (nf) await shots(page, 'gate-not-finished');
+        checks.push(['not-finished card', nf]);
+        await page.close();
+      } finally { await stopServer(s); }
+    }
+    return { pass: verdict(ev, checks), evidence: ev };
   },
 
-  /** The same folder while the Git install is still pending: git init lands when Git does. */
-  async S8b(ctx) {
-    const m = makeMachine('S8b', { ...READY, git: false });
-    const folder = join(m.base, 'notes-project');
-    mkdirSync(join(folder, 'docs'), { recursive: true });
-    for (let i = 1; i <= 6; i++) writeFileSync(join(folder, 'docs', `note-${i}.md`), `# Note ${i}\n`);
-    const s = await startServer(m);
-    const ev = [];
-    try {
-      const page = await openLauncher(ctx, s);
-      // The primary path: "Set everything up" starts the Git install and, since that is a
-      // background wait, the Mac step moves on while the developer tools download.
-      const setUp = page.getByRole('button', { name: 'Set everything up' });
-      await setUp.waitFor({ timeout: 20_000 });
-      await setUp.click();
-      await page.getByText('A macOS window opened').waitFor({ timeout: 20_000 }).catch(() => undefined);
-      const onProject = await reachProjectStep(page, { allowContinue: false });
-      await openFolder(page, folder);
-      const pendingCopy = await page.getByText('Git will be set up when the macOS install finishes').waitFor({ timeout: 20_000 }).then(() => true, () => false);
-      const checked = await page.getByRole('checkbox', { name: /Track changes with Git/ }).isChecked().catch(() => false);
-      ev.push(`project step: ${onProject}; pending copy: ${pendingCopy}; Git checked: ${checked}`);
-      await shot(page, 'S8b');
-      await page.getByRole('button', { name: 'Set up project', exact: true }).click();
-      const handoff = await page.getByRole('heading', { name: /is ready$/ }).waitFor({ timeout: 60_000 }).then(() => true, () => false);
-      const gitRightAfter = existsSync(join(folder, '.git'));
-      const pending = readText(join(m.home, '.dreamcontext', 'onboarding.json'));
-      ev.push(`hand-off: ${handoff}; .git right after setup: ${gitRightAfter}; onboarding.json: ${pending.replace(/\s+/g, ' ').slice(0, 200)}`);
-      setGitInstalled(m.home, true);
-      const landed = await waitFor(() => existsSync(join(folder, '.git')), 40_000, 500);
-      ev.push(`.git after the developer tools landed: ${!!landed}`);
-      return { pass: onProject && pendingCopy && checked && handoff && !gitRightAfter && !!landed, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
-  },
-
-  /** A folder that already has a brain: registered and opened, no questions. */
-  async S9(ctx) {
-    const m = makeMachine('S9', READY);
-    const folder = join(m.base, 'existing-brain');
-    mkdirSync(join(folder, '_dream_context', 'core'), { recursive: true });
+  /** C4: Use Codex or Antigravity instead: the pick is written through the owner route. */
+  async 'gate-other'(ctx) {
+    const m = makeMachine('gate-other', READY);
     const s = await startServer(m);
     const ev = [];
     try {
       const page = await openLauncher(ctx, s);
-      const onProject = await reachProjectStep(page);
-      const popupP = ctx.waitForEvent('page', { timeout: 30_000 }).catch(() => null);
-      await openFolder(page, folder);
-      const popup = await popupP;
-      const url = popup?.url() ?? '';
-      const vaults = readVaults(m.home).map((x) => x.name);
-      const askedQuestions = await page.getByRole('button', { name: 'Set up project', exact: true }).isVisible().catch(() => false);
-      ev.push(`project step: ${onProject}; opened: ${url}; vaults: ${vaults.join(',')}; quiz shown: ${askedQuestions}`);
-      await shot(page, 'S9');
-      return { pass: onProject && /vault=existing-brain/.test(url) && vaults.includes('existing-brain') && !askedQuestions, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
+      await page.getByRole('button', { name: 'Use Codex or Antigravity instead' }).click({ timeout: 20_000 });
+      const panel = await page.getByRole('heading', { name: 'Run your whole project through your agents.' }).waitFor({ timeout: 10_000 }).then(() => true, () => false);
+      await shots(page, 'gate-other');
+      await page.getByRole('button', { name: 'Continue with Antigravity' }).click();
+      // Antigravity is not on this Mac: its gate starts (a card), and the pick waits for it.
+      const gate = await page.locator('.ob-gate').first().waitFor({ timeout: 15_000 }).then(() => true, () => false);
+      await shots(page, 'gate-other-started');
+      // The pick itself, through the one writer, as the gate sends it once the agent is ready.
+      const res = await page.evaluate(async () => (await fetch('/api/onboarding/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ picked: ['antigravity'] }) })).status);
+      const written = await waitFor(() => JSON.stringify(readJson(join(m.home, '.dreamcontext', 'agents.json'), {})).includes('antigravity'), 15_000);
+      return {
+        pass: verdict(ev, [
+          ['the other-agents panel', panel],
+          ['Continue with Antigravity starts its gate', gate],
+          ['the pick route answers the owner page', res === 200, res],
+          ['agents.json names the pick', !!written, readText(join(m.home, '.dreamcontext', 'agents.json'))],
+        ]),
+        evidence: ev,
+      };
+    } finally { await stopServer(s); }
   },
 
-  /** Ready machine, new project: Start with Claude opens the project and Claude gets the kickoff. */
-  async S10(ctx) {
-    const m = makeMachine('S10', READY);
+  /** C5, C7, C12, C10: New project makes ~/Projects/<name>, lands on the Super stage; an empty folder gets no offer; the chips send and vanish. */
+  async 'new-project'(ctx) {
+    const m = makeMachine('new-project', READY);
     const s = await startServer(m);
     const ev = [];
+    const errors = watch(ctx);
     try {
       const page = await openLauncher(ctx, s);
-      const onProject = await reachProjectStep(page);
-      const created = onProject && await createProject(page, 'demo');
-      await shot(page, 'S10-handoff');
-      const popupP = ctx.waitForEvent('page', { timeout: 30_000 }).catch(() => null);
-      await page.getByRole('button', { name: 'Start with Claude', exact: true }).click();
-      const popup = await popupP;
-      const url = popup?.url() ?? '';
-      ev.push(`hand-off: ${created}; opened: ${url}`);
-      const firstPath = join(m.v, 'claude-first-message.txt');
-      const got = await waitFor(() => existsSync(firstPath), 60_000, 500);
-      const first = readText(firstPath);
-      const expected = kickoffPrompt();
-      ev.push(`first message received: ${!!got}; equals kickoff prompt: ${first.trim() === expected}${first && first.trim() !== expected ? ` (got "${first.slice(0, 160)}")` : ''}`);
-      if (popup) { await popup.waitForTimeout(1500); await shot(popup, 'S10-project'); }
-      await shot(page, 'S10');
-      const engines = logLines(m).filter((l) => /^claude\tengine/.test(l)).length;
-      ev.push(`chat engines started: ${engines}`);
-      return { pass: created && /vault=demo/.test(url) && /start=initializer/.test(url) && first.trim() === expected && engines === 1, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
+      await continueWithClaude(page);
+      await page.getByTestId('ob-new-project').click();
+      await page.getByTestId('ob-new-name').fill('Nova');
+      await shots(page, 'new-project-form');
+      // The new shell lands in THIS window (the launcher becomes the project's window).
+      await page.getByTestId('ob-new-name').press('Enter');
+      const win = page;
+      const heroTitle = await heroTitled(win, 'What should we do in Nova?');
+      const dir = join(m.home, 'Projects', 'Nova');
+      const st = win ? await superStage(win) : { ok: false };
+      const offer = win ? await win.getByTestId('first-read-offer').isVisible().catch(() => false) : true;
+      if (win) await shots(win, 'new-project-landed');
+      let chipsGone = false;
+      let chipSent = false;
+      if (win && st.ok) {
+        await win.locator('.chat-banner-chip').filter({ hasText: 'What should I work on first?' }).click();
+        chipSent = !!(await waitFor(() => turns(m, 'super').some((l) => l.includes('What should I work on first?')), 30_000));
+        chipsGone = !!(await waitFor(async () => (await win.getByTestId('chat-empty-chips').count()) === 0, 15_000));
+      }
+      return {
+        pass: verdict(ev, [
+          ['lands in this window on Nova\'s Super stage (the super-landing intent)', heroTitle],
+          [`~/Projects/Nova made`, existsSync(join(dir, '_dream_context')), dir],
+          ['no "is ready" screen', (await page.getByText(/is ready/).count()) === 0],
+          ['lands on the Super stage empty state', st.ok],
+          ['an empty new folder gets no first-read offer', !offer],
+          ['a chip sends its text as the Super\'s first turn', chipSent, turns(m, 'super').join(' | ')],
+          ['the chips vanish after the first message', chipsGone],
+          ['no console errors', errors.length === 0, errors.join(' | ')],
+        ]),
+        evidence: ev,
+      };
+    } finally { await stopServer(s); }
   },
 
-  /** Reduced motion: nothing animates on the checklist or the hand-off. */
-  async S11(ctx) {
-    const m = makeMachine('S11', { ...READY, git: false });
+  /**
+   * Screen 3 on the first install's first project (C10-C15, S6): Open folder lands on the Super
+   * stage with the offer; nothing runs before the click (past the 30 s starting grace); a
+   * refused start keeps the button and names the reason; Start reading starts the reading line;
+   * on done the Super writes once; the claim holds the job and the marker's pending clears.
+   */
+  async s3(ctx) {
+    const m = makeMachine('s3', READY);
+    writeFileSync(join(m.v, 'child-ms'), '8000');
+    const folder = projectFolder(m, 'Orbit');
     const s = await startServer(m);
     const ev = [];
+    const errors = watch(ctx);
     try {
       const page = await openLauncher(ctx, s);
-      await page.emulateMedia({ reducedMotion: 'reduce' });
-      await row(page, TITLES.git).waitFor({ timeout: 20_000 });
-      await sleep(800);
-      const running = () => page.evaluate(() => document.getAnimations().filter((a) => a.playState === 'running').map((a) => a.animationName ?? a.constructor.name));
-      const onChecklist = await running();
-      const status = await row(page, TITLES.git).textContent();
-      ev.push(`running animations on the checklist: ${JSON.stringify(onChecklist)}; git row text present: ${!!status}`);
-      await shot(page, 'S11-checklist');
-      setGitInstalled(m.home, true);
-      const onProject = await reachProjectStep(page);
-      const created = onProject && await createProject(page, 'calm');
-      await sleep(800);
-      const onHandoff = await running();
-      ev.push(`hand-off reached: ${created}; running animations there: ${JSON.stringify(onHandoff)}`);
-      await shot(page, 'S11');
-      return { pass: onChecklist.length === 0 && !!status && created && onHandoff.length === 0, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
+      await continueWithClaude(page);
+      await openFolderNamed(page, folder);
+      const win = page;
+      const landedOrbit = await heroTitled(win, 'What should we do in Orbit?');
+      const st = await superStage(win);
+      if (!win || !st.ok) {
+        await shots(page, 's3-not-landed');
+        return { pass: verdict(ev, [['lands on the Super stage', false]]), evidence: ev };
+      }
+      const pending = marker(m)?.pending ?? null;
+      const title = (await st.hero.locator('.chat-banner-empty-title').textContent().catch(() => '')) ?? '';
+      const gem = await st.hero.locator('.chat-banner-empty-mark').count();
+      const offer = await win.getByTestId('first-read-offer').waitFor({ timeout: 15_000 }).then(() => true, () => false);
+      await shots(win, 's3-offer');
+
+      // S6: no click, no turn. Past the 30 s starting grace plus a pump tick.
+      await sleep(36_000);
+      const quietSuper = turns(m, 'super').length;
+      const quietRead = turns(m, 'firstread').length;
+      const offerStill = await win.getByTestId('first-read-offer').isVisible().catch(() => false);
+
+      // A refused start: the limit (the server's 409 for it, answered here).
+      await win.route('**/api/super/first-read', (route) => (route.request().method() === 'POST'
+        ? route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'limited', message: 'limit' }) })
+        : route.continue()));
+      await win.getByTestId('first-read-start').click();
+      const refused = await win.getByTestId('first-read-refused').waitFor({ timeout: 10_000 }).then(() => true, () => false);
+      const refusedText = (await win.getByTestId('first-read-refused').textContent().catch(() => '')) ?? '';
+      const buttonStays = await win.getByTestId('first-read-start').isVisible().catch(() => false);
+      await shots(win, 's3-refused');
+      await win.unroute('**/api/super/first-read');
+
+      // Start reading, the limit cleared. A Super still connecting answers super_off: try again.
+      let started = false;
+      for (let i = 0; i < 6 && !started; i++) {
+        await win.getByTestId('first-read-start').click().catch(() => undefined);
+        started = !!(await waitFor(async () => (await win.getByTestId('first-read-started').count()) > 0, 5_000));
+        if (!started) await sleep(3_000);
+      }
+      if (started) await shots(win, 's3-reading');
+      const readTurn = !!(await waitFor(() => turns(m, 'firstread').length === 1, 30_000));
+      const claim = readJson(join(folder, '_dream_context', 'state', '.config.json'), {})?.firstRead ?? null;
+      const markerNow = marker(m);
+      const markerAfter = markerNow === null ? 'absent' : markerNow.pending;
+      // Done: the reading line goes, the Super writes once.
+      const ended = !!(await waitFor(async () => (await win.getByTestId('first-read-started').count()) === 0, 60_000));
+      const superAfter = !!(await waitFor(() => turns(m, 'super').some((l) => l.includes('[super')), 60_000));
+      await sleep(3_000);
+      await shots(win, 's3-done');
+      const offerAgain = await win.getByTestId('first-read-offer').isVisible().catch(() => false);
+      return {
+        pass: verdict(ev, [
+          ['lands in this window on Orbit\'s Super stage (the super-landing intent)', landedOrbit],
+          ['first registration with files: marker pending is this folder', pending === realpathSync(folder), pending],
+          ['title "What should we do in Orbit?"', title.trim() === 'What should we do in Orbit?', title],
+          ['the gem in place of ">_"', gem === 1, gem],
+          ['the first-read offer shows', offer],
+          ['36 s after landing, before any click: no Super turn', quietSuper === 0, turns(m, 'super').join(' | ')],
+          ['…and no reading started', quietRead === 0],
+          ['…and the offer still shows', offerStill],
+          ['a refused start names its reason', refused && /usage limit/i.test(refusedText), refusedText],
+          ['…and keeps the Start reading button', buttonStays],
+          ['Start reading shows "Reading started. You can write now."', started],
+          ['exactly one reading job ran', readTurn, turns(m, 'firstread').join(' | ')],
+          ['the claim holds a job id', typeof claim?.job === 'string' && claim.job.length > 0, JSON.stringify(claim)],
+          ['the marker\'s pending cleared', markerAfter === null, markerAfter],
+          ['on done the reading line goes', ended],
+          ['on done the Super gets the result and writes', superAfter, turns(m, 'super').join(' | ')],
+          ['the offer never comes back', !offerAgain],
+          ['no console errors', errors.length === 0, errors.join(' | ')],
+        ]),
+        evidence: ev,
+      };
+    } finally { await stopServer(s); }
   },
 
-  /** No desktop flag: the browser surface shows no fix buttons and the fix route says 403. */
-  async S12(ctx) {
-    const m = makeMachine('S12', { ...READY, claudeAuth: false, git: false });
-    const s = await startServer(m, { desktop: false });
-    const ev = [];
-    try {
-      const page = await openLauncher(ctx, s);
-      await row(page, TITLES.git).waitFor({ timeout: 20_000 });
-      const fixButtons = await page.locator('.ob-row .ob-btn--secondary').count();
-      const terminalLine = await page.getByText('Run dreamcontext setup in Terminal to fix this.').count();
-      const setUp = await page.getByRole('button', { name: 'Set everything up' }).count();
-      const post = await page.request.post(`${s.base}/api/onboarding/fix`, { data: { fix: 'claude-signin' } });
-      ev.push(`fix buttons: ${fixButtons}; Terminal lines: ${terminalLine}; Set everything up buttons: ${setUp}; POST /fix: ${post.status()}`);
-      await shot(page, 'S12');
-      return { pass: fixButtons === 0 && terminalLine > 0 && setUp === 0 && post.status() === 403, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
-  },
-
-  /** Ready, with a project: the Launcher shows neither the takeover nor the setup bar. */
-  async S13(ctx) {
-    const m = makeMachine('S13', { ...READY, vaults: ['alpha'] });
+  /** C5, C12: + Add Project on a Mac that has a project lands the same way, with no offer. */
+  async 'add-later'(ctx) {
+    const m = makeMachine('add-later', { ...READY, vaults: ['Older'] });
+    const folder = projectFolder(m, 'Later');
     const s = await startServer(m);
     const ev = [];
     try {
-      const page = await openLauncher(ctx, s, { welcome: false });
-      await page.getByRole('button', { name: /Add Project/ }).waitFor({ timeout: 20_000 }).catch(() => undefined);
-      await sleep(3000);
-      const takeover = await page.locator('section.ob').count();
-      const bar = await page.locator('.launcher-finish-bar').count();
-      ev.push(`takeover: ${takeover}; finish bar: ${bar}`);
-      await shot(page, 'S13');
-      return { pass: takeover === 0 && bar === 0, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
+      // The new shell's + Add Project: the drawer's New project, in an already-open window.
+      const page = await ctx.newPage();
+      await page.goto(`${s.base}/?vault=Older`, { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('drawer-new-project').click({ timeout: 30_000 });
+      const step = await openHeading(page).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+      await shots(page, 'add-later-step');
+      await openFolderNamed(page, folder);
+      const landed = await page.locator('.chat-banner-empty--hero .chat-banner-empty-title').filter({ hasText: 'What should we do in Later?' })
+        .waitFor({ timeout: 45_000 }).then(() => true, () => false);
+      await sleep(3_000);
+      const offer = await page.getByTestId('first-read-offer').isVisible().catch(() => false);
+      await shots(page, 'add-later-landed');
+      return {
+        pass: verdict(ev, [
+          ['+ Add Project opens the one project screen', step],
+          ['lands in this window on Later\'s Super stage', landed],
+          ['a later project gets no first-read offer', !offer],
+          ['the marker names no pending project', (marker(m)?.pending ?? null) === null, JSON.stringify(marker(m))],
+        ]),
+        evidence: ev,
+      };
+    } finally { await stopServer(s); }
   },
 
-  /** Not ready, with a project: a slim bar, and it opens the checklist. */
-  async S14(ctx) {
-    const m = makeMachine('S14', { ...READY, claudeAuth: false, vaults: ['alpha'] });
+  /** C8, C9, C11, C12: every GitHub state, from the server replies each state gives. */
+  async github(ctx) {
+    const m = makeMachine('github', { ...READY, git: false });
     const s = await startServer(m);
     const ev = [];
+    const checks = [];
+    const now = Date.now();
+    const stub = { connected: false, probe: { login: 'verify-user', scopes: ['repo', 'read:org', 'gist'] }, signin: null, git: null, repos: [], clone: null };
+    const REPOS = [
+      { fullName: 'verify-user/orbit', private: true, description: 'Habit tracker', pushedAt: new Date(now - 3_600_000).toISOString(), sizeKb: 2400, onThisMac: false },
+      { fullName: 'verify-user/atlas', private: false, description: 'Docs site', pushedAt: new Date(now - 86_400_000).toISOString(), sizeKb: 1_600_000, onThisMac: false },
+      { fullName: 'acme/storefront', private: true, description: 'Shop', pushedAt: new Date(now - 7 * 86_400_000).toISOString(), sizeKb: 900, onThisMac: true },
+    ];
+    const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    await ctx.route('**/api/**', (route) => {
+      const u = new URL(route.request().url());
+      const p = u.pathname;
+      const method = route.request().method();
+      if (p === '/api/brain/auth/status') return json(route, stub.connected ? { connected: true, login: 'verify-user', source: 'global' } : { connected: false, source: null });
+      if (p === '/api/onboarding/github-probe') return json(route, stub.probe);
+      if (p === '/api/onboarding/fix' && method === 'POST') {
+        const fix = JSON.parse(route.request().postData() || '{}').fix;
+        if (fix === 'github-signin' || fix === 'git-install') return json(route, { ok: true, runId: `${fix}-run` });
+      }
+      if (p === '/api/agent/install/status') {
+        const id = u.searchParams.get('id');
+        if (id === 'github-signin-run' && stub.signin) return json(route, stub.signin);
+        if (id === 'git-install-run' && stub.git) return json(route, stub.git);
+      }
+      if (p === '/api/launcher/github/repos') return json(route, { repos: stub.repos });
+      if (p === '/api/launcher/clone' && method === 'POST' && stub.clone) return json(route, { ok: true, cloneId: 'clone-1' });
+      if (p === '/api/launcher/clone/status' && stub.clone) return json(route, stub.clone);
+      if (p === '/api/launcher/clone/cancel') return json(route, { ok: true, canceled: true });
+      return route.continue();
+    });
+    const toClone = async (page) => {
+      await page.goto(`${s.base}/`, { waitUntil: 'domcontentloaded' });
+      await continueWithClaude(page);
+      await page.getByTestId('ob-clone').click();
+    };
+    const see = async (page, label, locator, id, timeout = 15_000) => {
+      const ok = await locator.waitFor({ timeout }).then(() => true, () => false);
+      if (ok) await shots(page, id);
+      checks.push([label, ok]);
+      return ok;
+    };
     try {
-      const page = await openLauncher(ctx, s, { welcome: false });
-      const bar = page.locator('.launcher-finish-bar');
-      const shown = await bar.waitFor({ timeout: 20_000 }).then(() => true, () => false);
-      const text = shown ? await bar.textContent() : '';
-      const takeoverFirst = await page.locator('section.ob').count();
-      await shot(page, 'S14-bar');
-      if (shown) await bar.click();
-      const checklist = await page.locator('.ob-checklist').waitFor({ timeout: 15_000 }).then(() => true, () => false);
-      const welcomeAfterClick = await page.getByRole('button', { name: 'Get started', exact: true }).count();
-      ev.push(`bar: "${text}"; takeover before click: ${takeoverFirst}; checklist after click: ${checklist}; Welcome after click: ${welcomeAfterClick}`);
-      await shot(page, 'S14');
-      return { pass: shown && /Finish setting up \(\d+ left\)/.test(text ?? '') && takeoverFirst === 0 && checklist && welcomeAfterClick === 0, evidence: ev };
-    } finally {
-      await stopServer(s);
-    }
+      const page = await ctx.newPage();
+      // 1. Not signed in, a GitHub CLI login on this Mac: Continue as <login>, permission = scopes.
+      await toClone(page);
+      await see(page, 'sign-in offers "Continue as verify-user"', page.getByTestId('clone-signin-btn').filter({ hasText: 'verify-user' }), 'gh-continue-as');
+      // 2. No CLI login: Sign in with GitHub, the narrower permission line.
+      stub.probe = { login: null, scopes: ['repo'] };
+      await toClone(page);
+      await see(page, 'sign-in offers "Sign in with GitHub"', page.getByTestId('clone-signin-btn').filter({ hasNotText: 'verify-user' }), 'gh-signin');
+      // 3. The device code while waiting.
+      stub.signin = { state: 'running', output: '', awaiting: 'browser', deviceCode: { userCode: 'WDJB-MJHT', verificationUri: 'https://github.com/login/device', expiresAt: now + 900_000 } };
+      await page.getByTestId('clone-signin-btn').click();
+      await see(page, 'the device code shows', page.getByText('WDJB-MJHT'), 'gh-code');
+      // 4. Expired. 5. Denied.
+      stub.signin = { state: 'error', output: '', outcome: 'timeout' };
+      await toClone(page);
+      await page.getByTestId('clone-signin-btn').click();
+      await see(page, 'expired code', page.getByTestId('clone-signin').getByRole('button', { name: 'Try again' }), 'gh-expired');
+      stub.signin = { state: 'error', output: '', outcome: 'refused' };
+      await toClone(page);
+      await page.getByTestId('clone-signin-btn').click();
+      await see(page, 'access denied', page.getByTestId('clone-signin').getByRole('button', { name: 'Try again' }), 'gh-denied');
+      // 6. Signed in: the repo list (private and On this Mac badges); Git starts installing.
+      stub.signin = null;
+      stub.connected = true;
+      stub.repos = REPOS;
+      stub.git = { state: 'running', output: '', awaiting: 'system-dialog' };
+      await toClone(page);
+      await see(page, 'the repo list with badges', page.getByTestId('clone-repos').getByText('On this Mac'), 'gh-pick');
+      // 7. A folder already taken: the pick clones into <name>-2.
+      await page.getByTestId('clone-repos').getByText('orbit').click();
+      await shots(page, 'gh-selected');
+      // 8. Git still installing: the clone waits for it.
+      stub.clone = { state: 'running', progress: { phase: 'waiting-git' } };
+      await page.getByTestId('clone-go').click();
+      await see(page, 'clone waits for Git', page.getByTestId('clone-waiting-git'), 'clone-git-wait');
+      // 9-10. The installer closed / could not download.
+      stub.git = { state: 'error', output: '', gitMissing: 'closed' };
+      stub.clone = { state: 'error', progress: { phase: 'waiting-git' }, reason: 'git-missing' };
+      await see(page, 'installer closed: Install Git offered', page.getByTestId('clone-failed-git-missing'), 'clone-installer-closed', 20_000);
+      const states = [
+        ['cloning with a percent', { state: 'running', progress: { phase: 'receiving', percent: 42, receivedBytes: 3_400_000 }, sizeKb: 2400 }, page.getByText('42'), 'clone-percent'],
+        ['a big repo note', { state: 'running', progress: { phase: 'receiving', percent: 3 }, sizeKb: 1_600_000, offerShallow: true }, page.getByTestId('clone-running'), 'clone-big'],
+        ['no space', { state: 'error', progress: { phase: 'receiving' }, reason: 'no-space', space: { neededBytes: 2e9, freeBytes: 5e8 } }, page.getByTestId('clone-failed-no-space'), 'clone-no-space'],
+        ['the connection dropped', { state: 'error', progress: { phase: 'receiving', percent: 30 }, reason: 'network' }, page.getByTestId('clone-failed-network'), 'clone-network'],
+        ['timed out: latest version only offered', { state: 'error', progress: { phase: 'receiving', percent: 60 }, reason: 'timeout', offerShallow: true }, page.getByTestId('clone-failed-timeout'), 'clone-timeout'],
+      ];
+      for (const [label, status, locator, id] of states) {
+        stub.git = { state: 'done', output: '' };
+        stub.clone = status;
+        await toClone(page);
+        await page.getByTestId('clone-repos').getByText('atlas').click();
+        await page.getByTestId('clone-go').click();
+        await see(page, label, locator, id, 20_000);
+      }
+      // A repo that already has a brain: it lands like any project.
+      const brainDir = join(m.base, 'Projects', 'storefront');
+      stub.clone = { state: 'done', progress: { phase: 'done' }, result: { path: brainDir, name: 'storefront', vaultName: 'storefront', hasContext: true } };
+      await toClone(page);
+      await page.getByTestId('clone-repos').getByText('orbit').click();
+      mkdirSync(join(brainDir, '_dream_context'), { recursive: true });
+      registerVault(m.home, 'storefront', brainDir);
+      await page.getByTestId('clone-go').click();
+      const landedBrain = await heroTitled(page, 'What should we do in storefront?');
+      if (landedBrain) await shots(page, 'clone-brain-landed');
+      checks.push(['a repo with a brain lands on its Super stage', landedBrain]);
+      return { pass: verdict(ev, checks), evidence: ev };
+    } finally { await stopServer(s); }
   },
 };
 
-const ORDER = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S8b', 'S9', 'S10', 'S11', 'S12', 'S13', 'S14'];
+const ORDER = Object.keys(ROWS);
 
 // ─── Main ─────────────────────────────────────────────────────────────────────────────
 
@@ -838,11 +816,15 @@ async function main() {
   const results = [];
   try {
     for (const id of rows) {
-      const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, extraHTTPHeaders: { 'X-Dreamcontext-Owner-Key': OWNER_KEY } });
+      await ctx.addInitScript(CAPTURE_OPEN);
       let result;
       const t0 = Date.now();
       try {
-        result = await ROWS[id](ctx);
+        result = await Promise.race([
+          ROWS[id](ctx),
+          sleep(ROW_TIMEOUT).then(() => ({ pass: false, evidence: [`row timed out after ${ROW_TIMEOUT / 1000}s`] })),
+        ]);
       } catch (err) {
         result = { pass: false, evidence: [`harness error: ${(err && err.stack) || err}`] };
       } finally {

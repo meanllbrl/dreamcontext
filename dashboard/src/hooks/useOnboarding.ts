@@ -494,6 +494,9 @@ export async function postAgentPick(picked: GateAgent[]): Promise<void> {
  * through `useFixRuns().start` (the guarded fix route), never the whole plan. Writes the pick,
  * then resolves true; any stop resolves false and leaves the state that says why.
  */
+/** How long the gate waits for the first readiness answer before it says it could not start. */
+const REPORT_WAIT_MS = 20_000;
+
 export function useAgentGate(report: ReadinessReport | undefined, fixRuns: FixRuns) {
   const [state, setState] = useState<GateState>({ kind: 'idle' });
   const busy = useRef(false);
@@ -509,6 +512,17 @@ export function useAgentGate(report: ReadinessReport | undefined, fixRuns: FixRu
     if (busy.current) return false;
     busy.current = true;
     try {
+      // No readiness answer yet: wait for it. Read without one, every check counts as missing and
+      // a click on a signed-in Mac would open a browser sign-in for nothing (verify 2026-11-20).
+      if (!reportRef.current) {
+        setState({ kind: 'preparing' });
+        const until = Date.now() + REPORT_WAIT_MS;
+        while (!reportRef.current && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
+        if (!reportRef.current) {
+          setState({ kind: 'install-failed', output: '' });
+          return false;
+        }
+      }
       const steps = gateSteps(reportRef.current, agent);
       if (steps.length > 0 && reportRef.current?.online === false) {
         setState({ kind: 'offline' });

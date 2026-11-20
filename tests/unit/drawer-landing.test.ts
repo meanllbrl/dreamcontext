@@ -140,8 +140,13 @@ describe('a project is a job, the first project is the only job', () => {
   // Antigravity pick opens it as it is.
   it('a project lands on its Super stage, never on a fresh chat', () => {
     expect(flow).toContain("const start: StartIntent | undefined = agent === 'claude' ? 'super-landing' : undefined;");
-    expect(flow).toContain("landHere(name, start ?? 'existing');"),
-    expect(src('dashboard/src/components/layout/WindowChrome.tsx')).toContain("how ? { kind: 'open-window' } : { kind: 'new-window' }");
+    expect(flow).toContain("landHere(name, start ?? 'existing');");
+    // The first-run launcher lands a Super landing with no open-window intent beside it: the two
+    // raced and the panes could win over the stage.
+    expect(src('dashboard/src/pages/LauncherRoot.tsx')).toContain("initialIntent={landed.how === 'super-landing' ? undefined : landed.how ? { kind: 'open-window' } : { kind: 'new-window' }}");
+    // …and the drawer's New project neither: it only brings the project forward.
+    expect(src('dashboard/src/components/layout/WindowChrome.tsx')).toContain("const landing: DrawerIntent | null = how === 'super-landing' ? null : how ? { kind: 'open-window' } : { kind: 'new-window' };");
+    expect(src('dashboard/src/components/layout/WindowChrome.tsx')).toContain('if (intent) setPendingDrawerIntents(');
   });
   it('from the drawer: a task, no steps, and Cancel', () => {
     expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain('purpose="new-project"');
