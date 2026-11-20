@@ -409,12 +409,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const items = useMemo(() => {
     const live = new Set(liveJobsKey ? liveJobsKey.split(',') : []);
     const devices = new Map(devicesKey ? devicesKey.split(',').map((e) => e.split('=') as [string, string]) : []);
-    return stageItems(state.containers, state.groups, view, (c) => live.has(c.id), (c) => {
+    const all = stageItems(state.containers, state.groups, view, (c) => live.has(c.id), (c) => {
       const d = devices.get(c.id);
       return isWebDevice(d) ? deviceAspect(d) : undefined;
     }, (c) => pageFitOf(pageFitKey(vault, c.ref)));
+    // The List view (D13, v2 list frame): the chat and Today beside it, nothing else on the stage.
+    return listAgenda ? all.filter((i) => i.id === listAgenda) : all;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fitsVersion: the store's answers changed
-  }, [state.containers, state.groups, view, liveJobsKey, devicesKey, fitsVersion, vault]);
+  }, [state.containers, state.groups, view, liveJobsKey, devicesKey, fitsVersion, vault, listAgenda]);
   // The agenda minimised to its corner pill (owner 2026-10-22 23:44): not a card on the stage
   // (stageItems leaves it out) unless the view shows it side by side or presented.
   const agendaPill = useMemo(() => {

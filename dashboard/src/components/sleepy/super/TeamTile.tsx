@@ -101,15 +101,18 @@ export function TeamTile({ card }: { card: TeamCard }) {
           <span className="super-tile-title" data-testid="super-team-name">{name}</span>
           {field && <span className="super-team-field" data-testid="super-team-field">{field}</span>}
         </span>
-        <span className="super-team-scope" data-scope={global ? 'global' : 'project'} data-testid="super-team-scope">
-          {global ? <><GlobeIcon size={11} />{t('super.team.allProjects')}</> : t('super.team.projectTeam').replace('{project}', project || t('super.team.thisProject'))}
-        </span>
         {liveHelpers > 0 && (
           <span className="super-tile-chip super-team-helpers-count" data-testid="super-team-helpers-count"
             title={t('superStage.team.helpersLive').replace('{n}', String(liveHelpers))} aria-label={t('superStage.team.helpersLive').replace('{n}', String(liveHelpers))}>
             ⧉ {liveHelpers}
           </span>
         )}
+      </div>
+      <div className="super-team-meta">
+        <span className="super-team-scope" data-scope={global ? 'global' : 'project'} data-testid="super-team-scope">
+          {global ? <><GlobeIcon size={11} />{t('super.team.allProjects')}</> : t('super.team.projectTeam').replace('{project}', project || t('super.team.thisProject'))}
+        </span>
+        <span className="super-team-nth" data-testid="super-team-jobs">{t('super.team.nthJob').replace('{ord}', ordinal(facts.jobs)).replace('{n}', String(facts.jobs))}</span>
       </div>
       {card.approval
         ? (
@@ -133,7 +136,6 @@ export function TeamTile({ card }: { card: TeamCard }) {
       {runsOn && <div className="super-tile-runs-on" data-testid="super-team-runs-on" title={runsOn}>{runsOn}</div>}
       <div className="super-tile-foot">
         <span className="super-tile-state" data-testid="super-team-state">{status === 'queued' ? t('superStage.team.queued') : t(`super.team.state.${status}`)}</span>
-        <span data-testid="super-team-jobs">· {t('super.team.nthJob').replace('{ord}', ordinal(facts.jobs)).replace('{n}', String(facts.jobs))}</span>
         <span>· {elapsedLabel(Date.now() - (card.job.chain?.newest.startedAt ?? card.job.startedAt))}</span>
       </div>
     </div>

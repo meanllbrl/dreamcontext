@@ -2237,8 +2237,8 @@
 .super-card-ask { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .super-card-ask-line { font-size: var(--font-size-sm); line-height: 19px; color: var(--color-text); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
 .super-tile-askline { color: var(--color-text); }
-.super-card-asked { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }
-.super-card-asked > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.super-card-asked { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.super-card-asked > span { white-space: nowrap; }
 .super-card-show {
   flex: none; height: 22px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid color-mix(in srgb, var(--mood-waiting) 55%, var(--color-border));
   background: transparent; color: var(--mood-waiting); font: inherit; font-weight: 600; cursor: pointer; pointer-events: auto;
@@ -2279,3 +2279,6 @@
 .super-team-scope[data-scope='global'] { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
 .super-tile[data-tile='team'] .super-tile-line b { color: var(--color-text); font-weight: 600; }
 .super-team-ask { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+
+.super-team-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--font-size-2xs); color: var(--color-text-tertiary); }
+.super-team-nth { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

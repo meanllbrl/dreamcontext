@@ -12,6 +12,8 @@
  */
 import { parseArgs } from 'node:util';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
@@ -31,7 +33,27 @@ const FRAMES = {
   '05-sekiz-oturum': { needs: 1, jobs: 7, minis: 0, mock: 'super-jakob-v3/v3/05-sekiz-oturum.png', sizes: [[1440, 900], [1180, 800]] },
   '09b-kucult-3': { needs: 1, jobs: 7, minis: 1, mock: 'super-jakob-v3/v3/09b-kucult-3.png', sizes: [[1440, 900]] },
   'B-onbes': { needs: 2, jobs: 13, minis: 0, mock: 'super-ux-denetim/kareler/B-onbes.png', sizes: [[1440, 900], [1180, 800]], light: true },
+  // W1 Lane B: the head's List view (v2 list), the members' cards (T1, T5), the red light's sheet (09a).
+  '05-liste': { needs: 1, jobs: 7, minis: 0, list: true, mock: 'super-jakob-v2/yeni/05-sekiz-oturum.png', sizes: [[1440, 900]] },
+  'T1-sonra': { needs: 1, jobs: 2, minis: 0, members: ['sage', 'mira'], mock: 'super-ux-denetim/kareler/T1-sonra.png', sizes: [[1440, 900]], light: true },
+  'T5-sonra': { needs: 1, jobs: 2, minis: 0, members: ['sage'], approval: 'sage', mock: 'super-ux-denetim/kareler/T5-sonra.png', sizes: [[1440, 900]] },
+  '09a-kapat-2': { needs: 0, jobs: 4, minis: 0, redLight: true, mock: 'super-jakob-v3/v3/09a-kapat-2.png', sizes: [[1440, 900]] },
 };
+/** The fictional AI Team the member frames seed through the real CLI (`agents create`). */
+const MEMBERS = {
+  sage: { title: 'Sage', prompt: 'Strategy: prices, plans and positioning for the product.', brief: 'Fiyat sayfası: compare 3 competitor prices and suggest a yearly price' },
+  mira: { title: 'Mira', prompt: 'Research: reads reviews and the market and reports back.', brief: 'Mağaza açıklaması: read 12 store reviews and draft the copy', global: true },
+};
+const REPO = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const made = new Set();
+function makeMember(slug) {
+  if (made.has(slug)) return;
+  const m = MEMBERS[slug];
+  const args = ['--yes', 'tsx', join(REPO, 'src', 'cli', 'index.ts'), 'agents', 'create', slug, '--title', m.title, '--prompt', m.prompt, ...(m.global ? ['--scope', 'global'] : [])];
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k))), HOME: app.home, npm_config_cache: join(process.env.HOME ?? app.home, '.npm') };
+  const r = spawnSync('npx', args, { cwd: app.proj, env, encoding: 'utf-8' });
+  if (r.status !== 0) fail(`agents create ${slug}: ${(r.stderr || r.stdout).slice(0, 200)}`); else made.add(slug);
+}
 const only = values.only ? new Set(values.only.split(',')) : null;
 
 const app = await openApp({ suite: 'super-v3', target: '/?vault=proj' });
@@ -54,14 +76,21 @@ function seed(f) {
     ...Array.from({ length: f.minis }, (_, i) => ({ id: `m${i}`, kind: 'web', ref: 'docs/panel.html', shape: 'square', place: 'others', by: 'super', title: 'Panel · aylık özet' })),
   ];
   const queue = kids.slice(0, f.needs).map((k, i) => ({ id: `q${i}`, sessionId: k.id, kind: 'question', state: 'escalated', createdAt: now - 1000 * (i + 1), ownerText: 'Yıllık plan fiyatı ne olsun? 990 ₺, 1.190 ₺ ya da 790 ₺' }));
+  const superSession = randomUUID();
+  const team = (f.members ?? []).map((slug, i) => {
+    makeMember(slug);
+    return { id: `team-${slug}`, member: slug, runId: new Date(now - 60_000 * (3 + 3 * i)).toISOString(), jobKind: 'run', queued: false, brief: MEMBERS[slug].brief, startedAt: now - 60_000 * (3 + 3 * i), open: true };
+  });
+  for (const [i, j] of team.entries()) containers.push({ id: `t${i}`, kind: 'team', ref: j.id, shape: 'square', place: 'float', by: 'super', title: MEMBERS[j.member].title });
+  if (f.approval) queue.push({ id: 'qa', sessionId: superSession, kind: 'approval', member: f.approval, state: 'escalated', createdAt: now - 500 });
   const sessions = kids.map((k, i) => ({ title: k.title, kind: 'chat', sessionId: k.id, pane: i, active: i === 0, window: 'main', size: 1 }));
   const state = join(app.proj, '_dream_context', 'state');
   mkdirSync(join(app.proj, 'docs'), { recursive: true });
   writeFileSync(join(app.proj, 'docs', 'panel.html'), '<!doctype html><h1 style="font-family:system-ui">Panel · aylık özet</h1>');
   writeFileSync(join(state, '.agent-sessions.json'), JSON.stringify({ sessions, activePane: 0, chatPermissionMode: 'auto', windows: [{ id: 'main', name: 'Chat', activePane: 0 }], generation: Date.now() }));
   writeFileSync(join(state, '.super-agent.json'), JSON.stringify({
-    v: 1, session: randomUUID(), enabled: true, containers, groups: [], view: { mode: 'float' }, children, queue,
-    notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team: [],
+    v: 1, session: superSession, enabled: true, containers, groups: [], view: { mode: 'float' }, children, queue,
+    notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team,
   }));
 }
 
@@ -79,7 +108,18 @@ async function shoot(name, f, [w, h], dark) {
   await p.goto(`${app.base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
   await p.waitForSelector('[data-testid="super-centre"]', { timeout: 60_000 }).catch(() => fail(`${where}: the Super stage never drew`));
   await p.waitForTimeout(2500);
-  await p.mouse.move(2, h - 2);
+  if (f.list) {
+    await p.locator('[data-testid="super-view-list"]').click({ timeout: 10_000 }).catch(() => fail(`${where}: no List switch`));
+    await p.waitForTimeout(1200);
+  }
+  if (f.redLight) {
+    const card = p.locator('[data-testid="super-container"][data-where="float"][data-kind="chat"]').first();
+    await card.hover().catch(() => {});
+    await p.waitForTimeout(300);
+    await card.locator('[data-testid="super-card-close"], [data-light="close"]').first().click({ timeout: 5000 }).catch(() => fail(`${where}: no red light on a working card`));
+    await p.waitForTimeout(500);
+  }
+  if (!f.redLight) await p.mouse.move(2, h - 2);
   await p.evaluate(() => document.getAnimations().forEach((a) => { try { a.pause(); a.currentTime = 1300; } catch { /* */ } }));
   const file = join(OUT, `${name}-${w}-${theme}-build.png`);
   await p.screenshot({ path: file });
@@ -121,6 +161,7 @@ try {
         results[`${name}@${size[0]}-${dark ? 'dark' : 'light'}`] = r;
         console.log(`  shot ${r.file}${r.montage ? `\n  montage ${r.montage}` : ''}`);
         const total = f.needs + f.jobs;
+        if (f.list || f.members || f.redLight) { ok(`${name}: shot`); continue; }
         if (name === '03-bes-mesaj') {
           if (r.dock && r.dock.tiles.some((t) => t.kind === 'job')) fail(`${name}: 5 jobs fit, yet jobs docked`); else ok(`${name}: 5 jobs float (${r.floats} floating cards)`);
           continue;
