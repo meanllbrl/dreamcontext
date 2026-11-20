@@ -52,7 +52,7 @@ import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, buildGlobalTeam, ekipByProject, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
+  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
   type DeviceChats, type DrawerChild, type DrawerFacts, type FanoutFacts,
 } from './newshell/drawerModel';
 import { readFanoutFacts, useDrawerProjects } from '../../hooks/useDrawerProjects';
@@ -1526,8 +1526,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   };
   /** A drawer row (and every other caller of the queue): a chat intent is a move to that
    *  project's Chat, a page intent a move to that page; a rename, close or drag is none. */
-  const trackedIntent = useCallback((vault: string, intent: DrawerIntent): Promise<AddTabResult> => {
-    const target: MoveTarget | null = intent.kind === 'page'
+  const trackedIntent = useCallback((vault: string, intent: DrawerIntent | null): Promise<AddTabResult> => {
+    const target: MoveTarget | null = !intent ? null : intent.kind === 'page'
       ? (intent.page === 'chat' ? targetOf({ vault, kind: 'chat' }) : targetOf({ vault, kind: 'page', page: intent.page, id: intent.id ?? null, label: null }))
       : landsOnChat(intent) ? targetOf({ vault, kind: 'chat' }) : null;
     if (!target) return queueDrawerIntent(vault, intent);
