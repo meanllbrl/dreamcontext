@@ -202,7 +202,8 @@ export function smallEntries(groups: Record<AgendaGroup, AgendaEntry[]>, n = 3):
 
 export type RowMark = 'status' | 'check' | 'icon';
 export type RowPress = 'detail' | 'legacy' | 'none';
-export type HoverAction = 'done' | 'ask' | 'notNeeded';
+/** `stop`: the red light's flow on the line's running job (super-v3 D9); drawn only while it runs. */
+export type HoverAction = 'done' | 'ask' | 'notNeeded' | 'stop';
 export interface RowActions {
   /** The leading mark: a status circle, a plain check (archived), or the row kind's icon. */
   mark: RowMark;
@@ -233,13 +234,13 @@ export function rowActions(entry: Pick<AgendaEntry, 'kind' | 'live' | 'row'>, op
       if (ro) return { ...NONE, mark: 'status', press: 'none' };
       const done = entry.row?.section === 'done';
       return {
-        mark: 'status', menu: true, press: 'detail', hover: done ? ['ask'] : ['done', 'ask'], detail: 'full',
+        mark: 'status', menu: true, press: 'detail', hover: done ? ['ask'] : ['done', 'ask', 'stop'], detail: 'full',
         remove: !done && entry.row?.author === 'owner',
       };
     }
     case 'question':
       // Today's About chip stays on every notepad question row; its press answers it, as today.
-      return ro ? NONE : { ...NONE, hover: ['ask'] };
+      return ro ? NONE : { ...NONE, hover: ['ask', 'stop'] };
     case 'owed':
       return ro ? NONE : { ...NONE, hover: ['notNeeded', 'ask'] };
     default:

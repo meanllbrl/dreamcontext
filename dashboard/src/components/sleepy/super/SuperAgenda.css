@@ -491,3 +491,12 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 .agenda-board { flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: var(--space-3); align-items: start; overflow-x: auto; overscroll-behavior-x: contain; }
 .agenda-board-col { min-width: 0; padding: var(--space-1); border-radius: var(--radius-lg, 10px); background: color-mix(in srgb, var(--color-bg-secondary) 60%, transparent); }
 .agenda-board-col + .agenda-board-col { margin-top: 0; }
+
+/* Docked (super-v3 D9): one row for the running jobs the Dock already lists. */
+.super-agenda-dockrow {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); margin: var(--space-1) 0 var(--space-2);
+  border-radius: var(--radius-md); background: var(--color-bg-secondary);
+  font-size: var(--font-size-sm); color: var(--color-text-secondary);
+}
+.super-agenda-dockrow-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); flex: none; }

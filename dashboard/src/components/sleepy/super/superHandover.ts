@@ -609,7 +609,7 @@ function bridgeModelChip(m: string, effort: string | undefined | null): { name: 
 export type AgendaSection = 'waiting' | 'now' | 'done';
 export const AGENDA_SECTIONS: readonly AgendaSection[] = ['waiting', 'now', 'done'];
 /** `needsYou`: a child waiting on something only the owner can do (an unrun run card, a secret, a checklist). */
-export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou' | 'refusal' | 'stalled' | 'routine';
+export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou' | 'refusal' | 'stalled' | 'routine' | 'approval';
 /** A row's section: one of the notepad's three, or the unanswered lines above them (owed.ts). */
 export type AgendaRowSection = AgendaSection | 'unanswered';
 export interface AgendaRow {
@@ -749,6 +749,15 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
       out.waiting.push({
         key: `q:${q.id}`, section: 'waiting', item: q.id, member: q.member ?? '', text: look.memberTitleFor?.(q.member ?? '') || (q.member ?? ''),
         line: q.of === 'permission' ? '' : (q.ownerText ?? ''), chip: memberChip(q), at: q.createdAt, ...(q.allowed ? { allowed: true as const } : {}),
+      });
+      continue;
+    }
+    // A member's approval (super-v3 Ü4, T5): named by the member, with its face; pressing it opens
+    // the witnessed approval row (never the member's page).
+    if (q.kind === 'approval' && q.member) {
+      out.waiting.push({
+        key: `q:${q.id}`, section: 'waiting', item: q.id, member: q.member, text: look.memberTitleFor?.(q.member) || q.member,
+        line: q.ownerText ?? '', chip: 'approval', at: q.createdAt,
       });
       continue;
     }

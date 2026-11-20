@@ -16,7 +16,7 @@ import { StageDock, type DockTileView } from './StageDock';
 import { sendQueueJump } from './queueJump';
 import { StageListSwitch, SuperStatusPill, setStageViewMode, useStageViewMode } from './SuperListView';
 import { revealQuestion } from './superQuestions';
-import { requestStopJob, setJobFilter, useJobFilter } from './superJobFilter';
+import { jobTokensOf, publishJobTokens, requestStopJob, setJobFilter, useJobFilter } from './superJobFilter';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda, type AgendaSize } from './SuperAgenda';
@@ -1158,6 +1158,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // K13: the agenda's job filter and its Stop. A job drawn only as a Dock tile has no card to ask
   // with: it comes onto the stage first (beside the chat), then its red light runs.
   const jobFilter = useJobFilter();
+  // What names the filtered job in this record (its lines, items, cards): the chat keeps an owner
+  // message whose About head names one of them. Only main's own stage sets it (never a member's).
+  useEffect(() => {
+    if (member || remote) return;
+    publishJobTokens(jobTokensOf(state, jobFilter), state.session ?? null);
+  }, [member, remote, state, jobFilter]);
   const stopJob = (child: string) => {
     if (requestStopJob(child)) return;
     showChild(child);

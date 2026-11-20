@@ -94,6 +94,7 @@ import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { RunLiveLine } from './super/RunLiveLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
+import { keepJobTurns, setJobFilter, useJobFilterFor } from './super/superJobFilter';
 import { answerForCards, sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { onQueueJump } from './super/queueJump';
 import { JumpToLatest } from './chat/JumpToLatest';
@@ -840,6 +841,8 @@ export function ChatPane({
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
   // The Super chat's question view: its open questions and the owner cards its children left.
   const superQuestionView = useSuperQuestions(superView ? session.claudeId : null);
+  // The agenda's job filter (super-v3 D9, K11): this Super chat narrowed to one job's turns.
+  const jobFilter = useJobFilterFor(session.mode === 'super' && !session.superMirror ? session.claudeId : null);
   // The one rule of where an owner card is drawn (cardPlacement.ts): every one in its place in the
   // transcript, where it arrived, waiting or settled; it scrolls with the chat like any message.
   const placedOwnerCards = useMemo(() => placeOwnerCards(ownerCardItemsOf(superQuestionView)).all, [superQuestionView]);
@@ -2486,6 +2489,8 @@ export function ChatPane({
     // The phone's mirror draws them too (its cards come from /api/agent/super-questions).
     if (superView) for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
     if (superView) drawnForCards.push(...drawn);
+    // Narrowed to a job: its turns only; an open question card's anchor always stays (K11).
+    if (jobFilter) kept = keepJobTurns(kept, jobFilter, new Set(questionCards.keys()));
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
@@ -3081,6 +3086,12 @@ export function ChatPane({
       <SelectionScope handler={selectionHandler}>
       <div className={superView ? 'chat-transcript chat-transcript--super' : 'chat-transcript'}>
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
+        {jobFilter && (
+          <div className="chat-job-filter" role="status" data-testid="super-job-filter-bar">
+            <span className="chat-job-filter-text">{t('super.filter.showing').replace('{name}', superCtx?.titleFor(jobFilter) || t('super.filter.thisJob'))}</span>
+            <button type="button" className="chat-job-filter-all" onClick={() => setJobFilter(null)}>{t('super.filter.showAll')}</button>
+          </div>
+        )}
                 <div
           className="chat-scroll"
           ref={scrollRef}

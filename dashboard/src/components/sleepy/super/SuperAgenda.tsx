@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { nextOwedReveal, type PadStatus, type SuperChild, type SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
@@ -13,6 +13,9 @@ import {
   TODAY_GROUPS, agendaProgress, dayGroups, filterEntries, holdOrder, localDay, placeBeside, rowActions, smallEntries, todayGroups,
   type AgendaEntry, type AgendaFilter, type AgendaGroup, type DayGroup, type RowActions,
 } from './agendaGroups';
+import { AgentAvatar } from '../../agents/AgentAvatar';
+import { useAgent } from '../../../hooks/useAgents';
+import { QueryClientContext } from '@tanstack/react-query';
 import { AgendaRowView, type AgendaSize } from './AgendaRow';
 import { AgendaStatusMenu, FloatLayer } from './AgendaStatusMenu';
 import { AgendaDetail, type DetailJob } from './AgendaDetail';
@@ -71,7 +74,7 @@ const toMidnight = (now: number) => { const d = new Date(now); d.setHours(24, 0,
  * Nothing polls: the record is pushed; a day's archived Done lines come from `loadDay` (today's
  * merge on open, on a day change and after a pad change).
  */
-export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra, docked = false, selected: jobSelected = null, onSelect, onStop }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'> & { children?: Readonly<Record<string, SuperChild>> };
   /** The drawn size (small, medium, large, wide) or the full / side-by-side view. */
@@ -161,10 +164,20 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   const notepad = superNotepad(state, look, now);
   const unanswered = superUnanswered(state, now);
-  const groups = todayGroups({
+  const allGroups = todayGroups({
     notepad, unanswered, pad, routeDone: dayData[today]?.done ?? null,
     approvals, taskRows, recallRows, syncRows, children: state.children, now,
   });
+  // Docked (super-v3 D9): the Dock already lists the running jobs, so Today does not relist them:
+  // their lines leave the Super's and his own sections and one row says "Running N · in the Dock".
+  const running = (child: string | undefined) => {
+    const c = child ? state.children?.[child] : undefined;
+    return !!c && c.endedAt === undefined && (c.row === 'working' || c.row === undefined);
+  };
+  const dockedRunning = docked ? Object.values(state.children ?? {}).filter((c) => running(c.sessionId)).length : 0;
+  const groups = dockedRunning
+    ? { ...allGroups, super: allGroups.super.filter((x) => !running(x.row?.for)), mine: allGroups.mine.filter((x) => !running(x.row?.for)) }
+    : allGroups;
   const past = day !== today ? dayGroups(day, pad, dayData[day]?.done ?? null) : null;
   // Every count and the bar describe the day on screen (review r1): a past day's from its lines.
   const progress = past
@@ -242,11 +255,16 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       if (canOpenMember && !showApprovalRow(`routine:${r.routine}`)) requestOpenAgents({ slug: r.member || r.routine });
       return;
     }
-    if (r.member) { if (canOpenMember) requestOpenAgents({ slug: r.member }); return; }
+    if (r.member && r.chip !== 'approval') { if (canOpenMember) requestOpenAgents({ slug: r.member }); return; }
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const fallbackActs = (r: AgendaRow) => (r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
+  // A job that still runs (not ended, not done): its line offers Stop (D9).
+  const jobRuns = (child: string) => {
+    const c = state.children?.[child];
+    return !!c && c.endedAt === undefined && c.row !== 'done' && c.row !== 'gone';
+  };
+  const fallbackActs = (r: AgendaRow) => (r.chip === 'approval' ? true : r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
   const questionClickable = (r: AgendaRow) => !!r.item && ((cardItem(r) && ownerSlotMounted(r.item)) || fallbackActs(r));
 
   const fmtTime = useCallback((ms: number) => {
@@ -276,6 +294,7 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       return (
         <AgendaRowView
           key={e.key} entry={e} actions={a} size={size} label={ap.title}
+          face={ap.member ? <MemberFace slug={ap.member} title={ap.memberTitle || ap.title} /> : undefined}
           line={superApprovalSentence(ap, t)}
           chips={<span className="super-agenda-chip" data-kind="approval">{t('super.jobs.chip.approval')}</span>}
           time="" onPress={onShowApproval ? () => onShowApproval(ap.key) : undefined} onHover={{}}
@@ -341,8 +360,9 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
           key={e.key} entry={e} actions={a} size={size} label={own ? r.line as string : r.text} line={line}
           chips={r.chip ? <span className="super-agenda-chip" data-kind={r.chip}>{t(`super.jobs.chip.${r.chip}`)}</span> : undefined}
           time={e.at !== null ? fmtTime(e.at) : ''}
+          face={r.member ? <MemberFace slug={r.member} title={r.text} /> : undefined}
           onPress={questionClickable(r) ? () => pressQuestion(r) : undefined}
-          onHover={{ ask: onWriteAbout ? () => onWriteAbout(r) : undefined }}
+          onHover={{ ask: onWriteAbout ? () => onWriteAbout(r) : undefined, stop: onStop && r.sid && jobRuns(r.sid) ? () => onStop(r.sid as string) : undefined }}
         />
       );
     }
@@ -362,10 +382,19 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       <AgendaRowView
         key={e.key} entry={e} actions={a} size={size} label={r.text} chips={chips}
         time={e.group === 'earlier' ? '' : fmtTime(e.at ?? r.at)}
-        selected={selected === e.key}
-        onPress={a.press === 'detail' ? () => { setMenu(null); setSelected((k) => (k === e.key ? null : e.key)); } : undefined}
+        selected={selected === e.key || (!!jobSelected && r.for === jobSelected)}
+        onPress={a.press === 'detail' ? () => {
+          setMenu(null); setSelected((k) => (k === e.key ? null : e.key));
+          // A line of a job: the tap narrows the Super chat to that job and puts its About chip in
+          // the composer; a second tap clears it (super-v3 D9, K11).
+          if (onSelect && r.for && e.live) {
+            const next = jobSelected === r.for ? null : r.for;
+            onSelect(next);
+            if (next && ask) ask();
+          }
+        } : undefined}
         onMenu={a.menu && onPadStatus ? (anchor) => setMenu({ key: e.key, anchor }) : undefined}
-        onHover={{ done: onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined, ask }}
+        onHover={{ done: onPadStatus && id ? () => { void setStatus(id, 'done'); } : undefined, ask, stop: onStop && r.for && e.live && jobRuns(r.for) ? () => onStop(r.for as string) : undefined }}
       />
     );
   };
@@ -470,7 +499,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     const empty = TODAY_GROUPS.every((g) => groups[g].length === 0);
     return (
       <div className="agenda-groups" {...listHandlers}>
-        {empty && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+        {empty && !dockedRunning && <div className="super-agenda-empty">{t('super.agenda.nothing')}</div>}
+        {dockedRunning > 0 && (
+          <div className="super-agenda-dockrow" data-testid="super-agenda-running-dock">
+            <span className="super-agenda-dockrow-dot" aria-hidden />
+            {t('super.agenda.runningDock').replace('{n}', String(dockedRunning))}
+          </div>
+        )}
         {TODAY_GROUPS.map((g) => {
           const rows = order(groups[g]);
           if (!rows.length) return null;
@@ -763,4 +798,16 @@ function AgendaFab({ onAdd, explain, onStart }: {
       )}
     </div>
   );
+}
+
+/** An AI Team member's 16 px face on its agenda row (super-v3 Ü4, T5, T6). */
+function MemberFace({ slug, title }: { slug: string; title: string }) {
+  // The phone's agenda has no query client: the initial, no photo lookup.
+  return useContext(QueryClientContext)
+    ? <MemberFaceLive slug={slug} title={title} />
+    : <AgentAvatar of="agent" slug={slug} title={title} hasPhoto={false} size={16} />;
+}
+function MemberFaceLive({ slug, title }: { slug: string; title: string }) {
+  const agent = useAgent(slug).data?.agent;
+  return <AgentAvatar of="agent" slug={slug} title={agent?.title || title} hasPhoto={!!agent?.hasPhoto} size={16} />;
 }

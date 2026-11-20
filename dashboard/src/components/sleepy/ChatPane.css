@@ -506,3 +506,14 @@
 }
 .chat-hitlcard-receipt-check { color: var(--color-success); font-weight: 700; }
 .chat-hitlcard-error { margin: 0; color: var(--color-error); font-size: 12px; }
+
+/* The Super chat narrowed to one job (super-v3 D9): one quiet line over the transcript. */
+.chat-job-filter {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin: var(--space-2) var(--space-4) 0; padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-accent); border-radius: var(--radius-md);
+  background: var(--color-accent-soft); color: var(--color-text); font-size: var(--font-size-sm);
+}
+.chat-job-filter-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-job-filter-all { flex: none; font: inherit; font-weight: var(--font-weight-medium); color: var(--color-accent); background: none; border: none; cursor: pointer; padding: var(--space-1); }
+.chat-job-filter-all:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }

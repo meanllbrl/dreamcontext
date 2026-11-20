@@ -297,7 +297,7 @@ describe('the agenda row\'s Write about this icon', () => {
   it('Ask calls onWriteAbout(row); the row keeps its own press; hover shows it, a touch screen opens the detail', () => {
     const src = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.tsx', ROOT_URL), 'utf-8');
     expect(src).toMatch(/onPress=\{questionClickable\(r\) \? \(\) => pressQuestion\(r\) : undefined\}/);
-    expect(src).toMatch(/onHover=\{\{ ask: onWriteAbout \? \(\) => onWriteAbout\(r\) : undefined \}\}/);
+    expect(src).toMatch(/onHover=\{\{ ask: onWriteAbout \? \(\) => onWriteAbout\(r\) : undefined[,}]/);
     const css = readFileSync(new URL('dashboard/src/components/sleepy/super/SuperAgenda.css', ROOT_URL), 'utf-8');
     expect(css).toMatch(/\.super-agenda-row:hover \.agenda-hover, \.super-agenda-row:focus-within \.agenda-hover \{ display: inline-flex; \}/);
     expect(css).toMatch(/@media \(hover: none\) \{ \.super-agenda-row:hover \.agenda-hover \{ display: none; \} \}/);
