@@ -234,7 +234,7 @@ export function ownerWaitOf(item: SuperQueueItem): 'refusal' | 'stalled' | null 
 
 /** A permission of his, a child's or a member's (the mirror of a member's permission), or a
  *  refused command (a job stopped dead until he answers): the head of the line. */
-function isPermission(item: SuperQueueItem): boolean {
+export function isPermission(item: SuperQueueItem): boolean {
   return item.kind === 'permission' || (item.kind === 'member' && item.of === 'permission') || ownerWaitOf(item) === 'refusal';
 }
 
@@ -1342,6 +1342,31 @@ export function doingOf(items: ReadonlyArray<{ kind: string; name?: string; inpu
     return { verb: 'tool', subject: name };
   }
   return null;
+}
+
+/** The last command a child ran, as the card's mono line (v3 frame 03): a shell command whole,
+ *  else the tool and its short subject. Empty when it has run nothing yet. */
+export function lastCommandOf(items: ReadonlyArray<{ kind: string; name?: string; input?: unknown }>, max = 120): string {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind !== 'tool' || !it.name) continue;
+    const input = it.input && typeof it.input === 'object' ? it.input as Record<string, unknown> : {};
+    if (it.name === 'Bash') return oneLine(input.command, max);
+    if (it.name === 'Edit' || it.name === 'Write' || it.name === 'MultiEdit') return oneLine(`edit ${shortPath(input.file_path)}`, max);
+    if (it.name === 'Read') return oneLine(`read ${shortPath(input.file_path)}`, max);
+    if (it.name === 'Grep' || it.name === 'Glob') return oneLine(`grep ${oneLine(input.pattern, max)}`, max);
+    if (it.name === 'WebFetch') return oneLine(`fetch ${oneLine(input.url, max)}`, max);
+    return oneLine(it.name, max);
+  }
+  return '';
+}
+
+/** What a waiting card says it waits on (D7): the question as asked, one line. Empty for a
+ *  permission (the card reads the child's own pending command) and for an item with no words. */
+export function cardAskLine(item: Pick<SuperQueueItem, 'kind' | 'ask' | 'ownerText' | 'text'>): string {
+  if (item.kind === 'permission') return '';
+  const q = item.ask?.questions?.[0]?.question;
+  return oneLine(q || item.ownerText || item.text || '', 140);
 }
 
 /** What a child runs in the background: shells and agents still running (the card's chip). */

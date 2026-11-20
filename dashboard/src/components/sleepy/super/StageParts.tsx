@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent } from 'react';
 import { STAGE, type Rect, type StagePlan, type StripPlan } from './superLayout';
 import { KindTile } from './SuperTiles';
-import type { PresentLayout, SuperContainer, SuperStateView } from '../../../lib/superTypes';
+import type { PresentLayout, SuperContainer, SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import { useI18n } from '../../../context/I18nContext';
 import type { ChatSession } from '../chatSession';
 import { ChatTile, type AsksOwner } from './AgentCard';
@@ -10,13 +10,13 @@ import { useLiveSession } from './liveSession';
 import { toneOfStatus } from './superHandover';
 
 /** A chat in an open panel: the same tile as on the stage, live, glowing as it does there. */
-export function PanelChatTile({ session, child, title, asksOwner, remoteChild }: { session: ChatSession | undefined; child: SuperStateView['children'][string] | undefined; title: string; asksOwner: AsksOwner; remoteChild?: RemoteRow | null }) {
+export function PanelChatTile({ session, child, title, asksOwner, askItem, remoteChild }: { session: ChatSession | undefined; child: SuperStateView['children'][string] | undefined; title: string; asksOwner: AsksOwner; askItem?: SuperQueueItem | null; remoteChild?: RemoteRow | null }) {
   // The panel's frame follows the status; the tile inside follows its own lines.
   useLiveSession(session, () => chatStatus(session).kind);
   const status = chatStatus(session, remoteChild);
   return (
     <div className="super-panel-tile" data-status={status.kind === 'asking' ? 'asking' : status.kind === 'working' ? 'working' : 'idle'} data-super-tone={toneOfStatus(status.kind)}>
-      <div className="super-panel-clip"><ChatTile session={session} child={child} title={title} asksOwner={asksOwner} status={status} /></div>
+      <div className="super-panel-clip"><ChatTile session={session} child={child} title={title} asksOwner={asksOwner} askItem={askItem} status={status} /></div>
     </div>
   );
 }

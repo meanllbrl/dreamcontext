@@ -4,7 +4,7 @@ import { OpenStageButton, TeamHeadTitle } from './TeamHelpers';
 import { useI18n } from '../../../context/I18nContext';
 import { useVaultId } from '../../../context/VaultContext';
 import { pageFitKey, setPageFit } from '../../../lib/pageFit';
-import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type MemberCardRef, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
+import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type MemberCardRef, type SuperChild, type SuperQueueItem, type SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
 import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
 import { DocumentReader } from '../../appLink/DocumentReader';
@@ -20,6 +20,7 @@ import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
 import { AgentCard, ChatTile, type AsksOwner } from './AgentCard';
+import { STOP_JOB_EVENT } from './superJobFilter';
 import { InsightCard } from './InsightCard';
 import { backgroundOf, toneOfStatus } from './superHandover';
 import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
@@ -186,6 +187,8 @@ export interface SuperContainerProps extends SuperCardActions {
   /** The hand-over has landed: a non-chat card may mount its view (SuperSurface). */
   viewReady: boolean;
   asksOwner: AsksOwner;
+  /** The first item waiting on the owner about this card's child (its words and Show). */
+  askItem?: SuperQueueItem | null;
   /** This card hosts the shown chat's slot (the half card, or the first presented chat). */
   shownSlot: boolean;
   /** A shown child with no live chat (finished, or a dormant tab after a relaunch): its saved
@@ -271,6 +274,20 @@ export function SuperContainer(props: SuperContainerProps) {
   // The red light (super-v3 D2): a job that works, asks or runs background tasks asks first
   // ("Send to Dock" / "Stop job"); an idle one stops at once, with Undo on the stage.
   const onCloseClick = () => (asksOnClose ? (childBusy ? setCloseAsk((v) => !v) : props.onEndSession(c.id, false, true)) : props.onClose(c.id));
+  // The agenda's Stop on this card's job runs the same red light (D9).
+  const stopRef = useRef(onCloseClick);
+  stopRef.current = () => (childBusy ? setCloseAsk(true) : props.onEndSession(c.id, false, true));
+  useEffect(() => {
+    if (c.kind !== 'chat' || props.remote) return undefined;
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ child: string; handled: boolean }>).detail;
+      if (!d || d.child !== c.ref || d.handled || props.parked) return;
+      d.handled = true;
+      stopRef.current();
+    };
+    window.addEventListener(STOP_JOB_EVENT, on);
+    return () => window.removeEventListener(STOP_JOB_EVENT, on);
+  }, [c.kind, c.ref, props.remote, props.parked]);
   // A page's frame allowed and shown (its trust gate passed): from then on it may open full screen.
   const [allowedHref, setAllowedHref] = useState<string | null>(null);
   const full = fullscreenOf(c, props.title, allowedHref);
@@ -659,8 +676,8 @@ function FloatBody(p: BodyProps): ReactNode {
     <div className="super-card-body" data-inert="true">
       {c.kind === 'chat'
         ? (SIZE_UNITS[size].h > 1
-          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
-          : <ChatTile session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} />)
+          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} askItem={p.askItem} status={p.status!} tall />
+          : <ChatTile session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} askItem={p.askItem} status={p.status!} />)
         : c.kind === 'browser'
           ? <BrowserCard sessionId={p.browserSessionId} live={!!p.browserLive} large={false} />
           : c.kind === 'team' && p.team
@@ -757,7 +774,7 @@ function LargeBody(p: BodyProps): ReactNode {
       <CardHead kind={c.kind} title={p.title} container={c} team={p.team} />
       <div className="super-card-large-body">
         {c.kind === 'chat'
-          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
+          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} askItem={p.askItem} status={p.status!} tall />
           : c.kind === 'team' && p.team
             // The job's own session, the way a child's card shows one.
             ? (p.viewReady && !p.parked ? p.teamConversation?.(p.team) ?? viewFor(p) : null)

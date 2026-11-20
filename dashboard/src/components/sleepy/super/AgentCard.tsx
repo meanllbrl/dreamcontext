@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useReducer } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { pollMs } from '../../../lib/windowActivity';
-import type { SuperChild } from '../../../lib/superTypes';
+import type { SuperChild, SuperQueueItem } from '../../../lib/superTypes';
 import type { SessionStatusInfo, SessionStatusKind } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
 import { useSpinSlot } from './spinSlots';
@@ -11,7 +11,10 @@ import { FALLBACK_MODEL_CONFIG, chatAccountOf, modelNameFromId } from '../../../
 import { useAgentModelConfig, useAgentTools } from '../../../hooks/useAgentCapabilities';
 import { ToolMark } from '../chat/model-picker/ModelPicker';
 import { activeRow, claudeState, codexState, type PickerToolState } from '../chat/model-picker/pickerModel';
-import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, chipFromPickerLabel, modelChip, toneOfStatus, type DoingLine } from './superHandover';
+import { backgroundOf, cardAskLine, doingOf, elapsedLabel, lastCommandOf, lastLineOf, lastLinesOf, chipFromPickerLabel, modelChip, permissionSummary, toneOfStatus, type DoingLine } from './superHandover';
+import { revealQuestion } from './superQuestions';
+import { useJobFilter } from './superJobFilter';
+import type { PendingPermission } from '../chatSession';
 
 /** What a child's card says it waits on the owner for: a question it asks (`ask`), or something
  *  only he can do (`owner`: a command to run himself, a key, a checklist, a sign-in). */
@@ -29,12 +32,14 @@ const asksKey = (a: AsksOwner) => (a === 'owner' ? 'super.card.needsYou' : 'supe
  * card (the rate-limit ring rides the per-account usage poll the composers already share). The card frame (SuperContainer) re-renders it at most once a frame on a token; the
  * elapsed label ticks on a slow clock that follows `pollMs`.
  */
-export function AgentCard({ session, child, title, asksOwner, status, tall }: {
+export function AgentCard({ session, child, title, asksOwner, askItem, status, tall }: {
   session: ChatSession | undefined;
   child: SuperChild | undefined;
   title: string;
   /** The queue holds an item about this child that the OWNER must answer. */
   asksOwner: AsksOwner;
+  /** That item (the first one waiting, `queueHead`'s order): its words on the card, its Show. */
+  askItem?: SuperQueueItem | null;
   status: SessionStatusInfo;
   /** Drawn taller than wide: room for the last few lines under the doing-line. */
   tall: boolean;
@@ -56,15 +61,24 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
   const since = session?.busy && model?.turnStartedAt ? model.turnStartedAt : child?.startedAt;
   const chip = childModelChip(session, child);
   const tool = childTool(session, child);
+  const command = model ? lastCommandOf(model.items) : '';
+  const filtered = useJobFilter() === child?.sessionId && !!child?.sessionId;
   return (
-    <div className="super-card" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)}>
+    <div className="super-card" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} data-asks={asksOwner || undefined} data-job-filter={filtered ? 'on' : undefined}>
       <div className="super-card-top">
         <span className="super-card-dot" data-kind={status.kind} aria-hidden />
         <span className="super-card-brief" title={title}>{title}</span>
+        {since ? <span className="super-card-when">{elapsedLabel(Date.now() - since)}</span> : null}
         <AccountLimitRing accountId={chatAccountOf(session)} />
       </div>
-      <div className="super-card-line" data-testid="super-card-doing">{line || t(`super.card.state.${status.kind}`)}</div>
-      {lines.length > 0 && (
+      {asksOwner && askItem
+        ? <CardAsk item={askItem} session={session} />
+        : <>
+          <div className="super-card-line" data-testid="super-card-doing">{line || t(`super.card.state.${status.kind}`)}</div>
+          {command && <div className="super-card-cmd" data-testid="super-card-command" title={command}>{command}</div>}
+        </>}
+      {status.kind === 'working' && !asksOwner && <div className="super-card-walk" data-testid="super-card-walk" aria-hidden><i /></div>}
+      {lines.length > 0 && !asksOwner && (
         <div className="super-card-lines" aria-hidden>
           {lines.map((l, i) => <div key={i} className="super-card-lines-row">{l}</div>)}
         </div>
@@ -80,7 +94,6 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
         )}
         <div className="super-card-meta">
           <span className="super-card-state">{t(`super.card.state.${status.kind}`)}</span>
-          {since ? <span>· {elapsedLabel(Date.now() - since)}</span> : null}
           {(bg.shells > 0 || bg.agents > 0) && (
             <span className="super-card-bg" data-testid="super-card-bg">{backgroundText(t, bg)}</span>
           )}
@@ -97,11 +110,12 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
  * The corner brackets light while it works or asks. Same live reads as the card above; the ring
  * shares the composer's per-account usage poll, so a tile adds no request of its own.
  */
-export function ChatTile({ session, child, title, asksOwner, status }: {
+export function ChatTile({ session, child, title, asksOwner, askItem, status }: {
   session: ChatSession | undefined;
   child: SuperChild | undefined;
   title: string;
   asksOwner: AsksOwner;
+  askItem?: SuperQueueItem | null;
   status: SessionStatusInfo;
 }) {
   const { t } = useI18n();
@@ -126,8 +140,10 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
   // state): one of at most MAX_SPINNING at a time, the rest drawn closed (spinSlots.ts).
   const working = status.kind === 'working';
   const spin = useSpinSlot(child?.sessionId ?? session?.claudeId ?? '', working);
+  const filtered = useJobFilter() === child?.sessionId && !!child?.sessionId;
+  const askLine = asksOwner && askItem ? askLineOf(askItem, session) : '';
   return (
-    <div className="super-tile" data-tile="chat" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} title={[title, child?.branch, child?.startError].filter(Boolean).join('\n')}>
+    <div className="super-tile" data-tile="chat" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} data-job-filter={filtered ? 'on' : undefined} title={[title, child?.branch, child?.startError].filter(Boolean).join('\n')}>
       <span className="super-tile-corners" aria-hidden />
       {working && <span className="super-tile-spin" data-spin={spin ? 'on' : 'closed'} data-testid="super-tile-spin" aria-hidden />}
       <div className="super-tile-top">
@@ -140,7 +156,10 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
           : <span className="super-tile-kind">{t('super.tile.kind.chat')}</span>}
       </div>
       <div className="super-tile-title">{title}</div>
-      <div className="super-tile-line" data-testid="super-card-doing">{line || state}</div>
+      {askLine
+        ? <div className="super-tile-line super-tile-askline" data-testid="super-card-ask">{askLine}</div>
+        : <div className="super-tile-line" data-testid="super-card-doing">{line || state}</div>}
+      {asksOwner && askItem && <AskedInChat item={askItem} />}
       <div className="super-tile-foot">
         <span className="super-card-dot" data-kind={status.kind} data-testid="super-tile-status" aria-hidden />
         {/* What the owner must answer takes the state word's place: the same word, once. */}
@@ -262,6 +281,52 @@ function ChildModelChip({ session, child }: { session: ChatSession | undefined; 
 /** The tool a child runs on: its live session's binding, else the record's (`delegate --tool`). */
 export function childTool(session: ChatSession | undefined, child: SuperChild | undefined): 'claude' | 'codex' | 'antigravity' {
   return session?.tool || child?.tool || 'claude';
+}
+
+/** A waiting card's words: the question as asked, or the permission's command from the child's
+ *  own pending request (never retyped). */
+function askLineOf(item: SuperQueueItem, session: ChatSession | undefined): string {
+  if (item.kind !== 'permission') return cardAskLine(item);
+  const pending = session?.getModel().pending.find(
+    (p): p is PendingPermission => p.kind === 'permission' && p.requestId === item.requestId,
+  );
+  return pending ? permissionSummary(pending.input) : '';
+}
+
+/**
+ * What a waiting card holds (v3 10c, D7): the question once, in one line, and "Asked in the chat ·
+ * Show". The question itself lives where it was asked (the chat); Show scrolls there. A permission
+ * shows its command in a mono box the same way; its Allow is the chat's card.
+ */
+function CardAsk({ item, session }: { item: SuperQueueItem; session: ChatSession | undefined }) {
+  const { t } = useI18n();
+  const words = askLineOf(item, session);
+  return (
+    <div className="super-card-ask" data-testid="super-card-ask" data-ask-kind={item.kind}>
+      {item.kind === 'permission'
+        ? <>
+          <div className="super-card-ask-line">{t('super.card.wantsToRun')}</div>
+          {words && <div className="super-card-cmd super-card-cmd--box" title={words}>{words}</div>}
+        </>
+        : words ? <div className="super-card-ask-line" title={words}>{words}</div> : null}
+      <AskedInChat item={item} />
+    </div>
+  );
+}
+
+/** "Asked in the chat · Show": a live control on an otherwise inert card (its own pointer). */
+function AskedInChat({ item }: { item: SuperQueueItem }) {
+  const { t } = useI18n();
+  return (
+    <div className="super-card-asked">
+      <span>{t('super.card.askedInChat')}</span>
+      <button type="button" className="super-card-show" data-testid="super-card-show"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); revealQuestion(item.id); }}>
+        {t('super.card.show')}
+      </button>
+    </div>
+  );
 }
 
 function doingText(t: (k: string) => string, d: DoingLine): string {

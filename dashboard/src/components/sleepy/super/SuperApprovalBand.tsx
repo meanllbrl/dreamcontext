@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
@@ -8,7 +8,7 @@ import { isConditionUnseen, useApproveAutomation, useAutomation } from '../../..
 import { useApproveAgent } from '../../../hooks/useAgents';
 import { ConditionScript, conditionView } from '../../automations/ConditionScript';
 import { TeamIcon } from '../../aiteam/TeamIcons';
-import { superApprovalSentence, type SuperApproval } from './superApprovals';
+import { OPEN_APPROVAL_EVENT, superApprovalSentence, type SuperApproval } from './superApprovals';
 import { appRequestTitle, useTellShown } from '../chat/AppRequestCard';
 import type { AppCard } from '../../assistant/ProposalList';
 import { phoneAllows } from '../../../lib/phoneSurface';
@@ -50,6 +50,16 @@ export function SuperApprovalBand({ items, appCards = [], onOpenApp, superId, to
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState<string | null>(null);
+  // A member card's Approve opens that member's row here (super-v3 Ü4): the same witnessed review.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const member = (e as CustomEvent<{ member?: string }>).detail?.member;
+      const row = items.find((it) => it.key === `agent:${member}`) ?? items.find((it) => it.member === member);
+      if (row) setOpen(row.key);
+    };
+    window.addEventListener(OPEN_APPROVAL_EVENT, on);
+    return () => window.removeEventListener(OPEN_APPROVAL_EVENT, on);
+  }, [items]);
   const count = items.length + appCards.length;
   if (count === 0 && !toast) return null;
   return (

@@ -25,6 +25,16 @@ export function setJobFilter(job: string | null): void {
   for (const fn of [...listeners]) fn();
 }
 
+/** The agenda's Stop on a job (D9 = D2's red light on that job): the job's own card answers it
+ *  (its sheet when it works, else it ends with Undo) and marks the event handled. */
+export const STOP_JOB_EVENT = 'super:stop-job';
+export function requestStopJob(child: string): boolean {
+  if (typeof window === 'undefined' || !child) return false;
+  const detail = { child, handled: false };
+  window.dispatchEvent(new CustomEvent(STOP_JOB_EVENT, { detail }));
+  return detail.handled;
+}
+
 /** The value now, outside React. */
 export function jobFilterNow(): string | null { return current; }
 

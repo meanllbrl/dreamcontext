@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { MAX_CONTAINERS, MAX_LIVE_CHILDREN, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, MAX_LIVE_CHILDREN, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperQueueItem, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
@@ -14,6 +14,9 @@ import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, PresentFrame, SheetTabs, 
 import { PresentQueue } from './PresentQueue';
 import { StageDock, type DockTileView } from './StageDock';
 import { sendQueueJump } from './queueJump';
+import { StageListSwitch, SuperStatusPill, setStageViewMode, useStageViewMode } from './SuperListView';
+import { revealQuestion } from './superQuestions';
+import { requestStopJob, setJobFilter, useJobFilter } from './superJobFilter';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda, type AgendaSize } from './SuperAgenda';
@@ -43,7 +46,7 @@ import { AppRequestPopup } from './AppRequestPopup';
 import { emitInstance, useVault, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
-import { bandCount, bandHead, freshPending, hasOwnKey, needsOwner, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
+import { bandCount, bandHead, freshPending, hasOwnKey, isPermission, needsOwner, ownerQueueCount, queueHead, rowOf, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { SuperHeadMenu } from './SuperHeadMenu';
 import { SuperAddMenu } from './SuperAddMenu';
 import { MENU_WIDTH } from './superAddMenuModel';
@@ -195,8 +198,10 @@ export function routineTitleIn(automations: ReadonlyArray<{ slug: string; title?
  * Super dock both draw it; the dock passes no agenda (the agenda is a stage card), no Turn off and
  * no Add. A mini chat (a presentation's) keeps only Add in its ⋯.
  */
-export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who, telegramMember }: {
+export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who, telegramMember, status }: {
   chat: string;
+  /** The status pill and the Stage / List switch (v3 D13), right of the name, before the ⋯. */
+  status?: ReactNode;
   /** A member's stage: its own head (face, name, model) instead of the Super Agent's mark and name. */
   who?: ReactNode;
   agenda?: ReactNode;
@@ -223,6 +228,7 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
         </>
       )}
       {column && agenda}
+      {status}
       {/* A chat folded to the bar hides its head: the ⋯ unmounts with it, so no menu stays open
           (and keeps the arrow keys) out of sight. */}
       {chat !== 'bar' && (column || onAdd || telegramMember) && (
@@ -382,7 +388,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // While held, the stage keeps the view it last drew (another page side by side stays there),
   // or floats when that view names no card any more: nothing moves until the gate opens.
   const drawnView = useRef<SuperView>(state.view);
-  const view = useMemo<SuperView>(() => (halfHeld ? heldFallback(drawnView.current, state.view, state.containers) : state.view), [halfHeld, state.view, state.containers]);
+  // The List view (D13): Today beside the chat as a page, computed here and never written to the
+  // record; only the owner's own Super stage on this Mac has it.
+  const listMode = useStageViewMode();
+  const listAgenda = listMode === 'list' && !remote && !member ? state.containers.find((c) => c.kind === 'agenda')?.id ?? null : null;
+  const view = useMemo<SuperView>(() => (listAgenda ? { mode: 'half', card: listAgenda }
+    : halfHeld ? heldFallback(drawnView.current, state.view, state.containers) : state.view), [listAgenda, halfHeld, state.view, state.containers]);
   useLayoutEffect(() => { drawnView.current = view; });
 
   // ── The plan ──
@@ -475,8 +486,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prev is read, not watched: the plan below records it
   }, [needsKey, spokeFocus, agendaPill, agendaId, poolCount, liveCount, vault, t, items]);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: dockOpts }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda],
   );
   dockPrevRef.current = { vault, docked: !!plan.jobDock?.docked };
   cuesPlanRef.current = plan;
@@ -557,8 +568,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const job = state.team.find((j) => j.id === c.ref);
     if (!job) return undefined;
     const live = state.teamLive?.[job.id];
-    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '', ...(live?.sessionId ? { sessionId: live.sessionId } : {}), ...(live?.resumable ? { resumable: true } : {}) };
-  }, [state.team, state.teamLive]);
+    const approval = state.queue.find((q) => q.kind === 'approval' && q.member === job.member && needsOwner(q));
+    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '', ...(live?.sessionId ? { sessionId: live.sessionId } : {}), ...(live?.resumable ? { resumable: true } : {}), ...(approval ? { approval } : {}) };
+  }, [state.team, state.teamLive, state.queue]);
   /** A remote stage's child (no live session here): the row its status is read from. Null on the Mac. */
   const remoteRowOf = (sid: string): RemoteRow | null => (remote && hasOwnKey(state.children, sid) ? state.children[sid] : null);
   /** A group's cards as its tile shows them: kind, title and (a chat's) live state. */
@@ -1014,7 +1026,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const c = byId.get(id);
     if (!c) return null;
     if (c.kind === 'chat') {
-      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.get(c.ref) ?? false} remoteChild={remoteRowOf(c.ref)} />;
+      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.get(c.ref) ?? false} askItem={askItems.get(c.ref) ?? null} remoteChild={remoteRowOf(c.ref)} />;
     }
     const team = teamCardOf(c);
     if (team) return <div className="super-panel-tile"><div className="super-panel-clip"><TeamTile card={team} /></div></div>;
@@ -1032,6 +1044,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const asking = useMemo(() => {
     const m = new Map<string, AsksOwner>();
     for (const q of state.queue.filter(needsOwner)) if (m.get(q.sessionId) !== 'owner') m.set(q.sessionId, q.kind === 'owner' ? 'owner' : 'ask');
+    return m;
+  }, [state.queue]);
+  // The item each waiting card shows (its words and Show): the first one by queueHead's order.
+  const askItems = useMemo(() => {
+    const m = new Map<string, SuperQueueItem>();
+    const open = state.queue.filter(needsOwner).sort((a, b) => (isPermission(b) ? 1 : 0) - (isPermission(a) ? 1 : 0) || a.createdAt - b.createdAt);
+    for (const q of open) if (!m.has(q.sessionId)) m.set(q.sessionId, q);
     return m;
   }, [state.queue]);
   // The centre's event lines read the children's titles and which batches render full: published
@@ -1102,6 +1121,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // drawn by SuperAgenda inside the card's own chrome. Off the stage (closed, in Others, hidden
   // by a page side by side), the centre's head offers it back.
   const agendaCard = state.containers.find((k) => k.kind === 'agenda');
+  // The pill's "N working": live jobs whose row is working, from the record (live status for a v1 record).
+  const workingCount = Object.entries(state.children).filter(([sid, c]) => !c.endedAt && rowOf(c, jobLook.live(sid)) === 'working').length;
   const agendaOnStage = !!agendaCard && !!plan.cards[agendaCard.id] && plan.cards[agendaCard.id].where !== 'others';
   // The owner's press always shows it (end review r1): closed, in Others or in a group, the
   // server brings it back floating, out of its group (and a page side by side or a presentation,
@@ -1132,6 +1153,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // the floating view (its cards to Others, the head's Agenda button stays), so the composer
   // the chip lands in is in view.
   const onWriteAbout = props.onWriteAbout;
+  // K13: the agenda's job filter and its Stop. A job drawn only as a Dock tile has no card to ask
+  // with: it comes onto the stage first (beside the chat), then its red light runs.
+  const jobFilter = useJobFilter();
+  const stopJob = (child: string) => {
+    if (requestStopJob(child)) return;
+    showChild(child);
+    requestAnimationFrame(() => requestAnimationFrame(() => { requestStopJob(child); }));
+  };
   const writeAbout = onWriteAbout && superSession && superSession.status !== 'closed'
     ? (row: AgendaRow) => {
       // Never from a remote screen: that automatic write would move the Mac's stage under him.
@@ -1238,6 +1267,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onUpdateIndex={remote ? undefined : (r) => { setIndexPressed(true); answerInbox.mutate({ id: r.id, action: 'update-index' }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: INDEX_KEY }) }); }}
       approvals={agendaApprovals}
       onShowApproval={showApproval}
+      docked={!!plan.jobDock && plan.jobDock.tiles.some((tile) => tile.kind === 'job')}
+      selected={remote ? null : jobFilter}
+      onSelect={remote ? undefined : setJobFilter}
+      onStop={remote ? undefined : stopJob}
+      onAsk={remote ? undefined : actions.onAskAbout}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
       onPadStatus={props.onPadStatus}
       onPadAdd={props.onPadAdd}
@@ -1266,8 +1300,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     if (!c) return { title: g?.name ?? tile.id };
     if (c.kind === 'team') {
       const card = teamCardOf(c);
-      const tone = card?.status === 'running' ? 'working' as const : card?.status === 'asking' ? 'asking' as const : card?.status === 'failed' ? 'stuck' as const : 'idle' as const;
-      return { title: card?.job.member ?? titleOf(c), face: (card?.job.member ?? titleOf(c)).slice(0, 1).toUpperCase(), tone, line: card?.lastLine || undefined };
+      const tone = card?.approval ? 'asking' as const : card?.status === 'running' ? 'working' as const : card?.status === 'asking' ? 'asking' as const : card?.status === 'failed' ? 'stuck' as const : 'idle' as const;
+      return { title: card?.job.member ?? titleOf(c), face: (card?.job.member ?? titleOf(c)).slice(0, 1).toUpperCase(), tone, ...(card?.approval ? { badge: 1 } : {}), line: card?.lastLine || undefined };
     }
     if (c.kind === 'chat') {
       const st = chatStatus(props.sessionFor(c.ref), remoteRowOf(c.ref)).kind;
@@ -1335,6 +1369,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
                   )}
                 </>
               )}
+              status={!member && !remote ? (
+                <>
+                  <SuperStatusPill working={workingCount} needs={ownerQueueCount(state)}
+                    onWorking={() => setStageViewMode('list')}
+                    onNeeds={() => { const head = queueHead(state); if (head) revealQuestion(head.id); }} />
+                  <StageListSwitch value={listMode} onChange={setStageViewMode} />
+                </>
+              ) : undefined}
               pending={freshPending(state)}
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
@@ -1420,6 +1462,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               browserLive={liveBrowser.has(c.id)}
               viewReady={viewsReady}
               asksOwner={c.kind === 'chat' ? asking.get(c.ref) ?? false : false}
+              askItem={c.kind === 'chat' ? askItems.get(c.ref) ?? null : null}
               shownSlot={shownCard?.id === c.id}
               childTranscript={c.kind === 'chat' ? props.childTranscript : undefined}
               teamConversation={c.kind === 'team' ? props.teamConversation : undefined}
@@ -1531,7 +1574,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         />
       )}
       {agendaPill && plan.pill && !plan.agendaInHead && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
-      {!plan.othersInHead && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
+      {!plan.othersInHead && !listAgenda && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
       {plan.jobDock && (
         <StageDock dock={plan.jobDock} viewOf={dockViewOf} onOpen={openDockTile} pool={poolCount} cap={plan.jobDock.cap}
           todayLine={(() => {
