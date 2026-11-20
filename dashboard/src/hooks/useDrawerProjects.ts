@@ -42,9 +42,19 @@ export function identitiesOf(agents: readonly (Pick<AgentSummary, 'slug' | 'titl
   return agents.map((a) => ({ slug: a.slug, title: a.title, hasPhoto: a.hasPhoto, global: a.scope === 'global', ...(a.face ? { face: a.face } : {}) }));
 }
 
-/** A folded project's marks and Ekip read; null when the summary read failed, so no old number
- *  stays on its row. */
-export function readFoldedMarks(vault: string): Promise<{ marks: SuperMarks; ekip: DrawerEkipFacts } | null> {
+/** A marks read that has not answered by then counts as failed (navigation B, D9: the rail reads
+ *  every project, and one hung project must not hold the round's other badges). */
+export const MARKS_READ_TIMEOUT_MS = 8_000;
+
+/** A folded project's marks and Ekip read; null when the summary read failed or ran out of time,
+ *  so no old number stays on its row. */
+export function readFoldedMarks(vault: string, timeoutMs = MARKS_READ_TIMEOUT_MS): Promise<{ marks: SuperMarks; ekip: DrawerEkipFacts } | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); });
+  return Promise.race([readFoldedMarksNow(vault), late]).finally(() => clearTimeout(timer));
+}
+
+function readFoldedMarksNow(vault: string): Promise<{ marks: SuperMarks; ekip: DrawerEkipFacts } | null> {
   const api = new ApiClient(vault);
   return Promise.all([
     api.get<{ superWorking?: unknown; superAsking?: unknown; members?: unknown }>('/agent/sessions?summary=1'),

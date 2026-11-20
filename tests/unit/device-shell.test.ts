@@ -142,7 +142,10 @@ describe('a device shell\'s drawer is chats only', () => {
 
   it('a device shell reads no project roster or team: the fan-out gets no project', () => {
     const src = read('dashboard/src/components/layout/WindowChrome.tsx');
-    expect(src).toMatch(/useDrawerProjects\(newShell && !deviceShell \? drawerExpanded : \[\]/);
+    // Both project lists are empty on a device shell (the rail's marks-only read too: railOn is false there).
+    expect(src).toMatch(/const railOn = newShell && !deviceShell;/);
+    expect(src).toMatch(/newShell && !deviceShell && !marksOnly \? drawerExpanded : \[\]/);
+    expect(src).toMatch(/newShell && !deviceShell \? \(marksOnly \? projectOrder : drawerFolded\) : \[\]/);
   });
 });
 

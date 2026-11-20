@@ -53,9 +53,9 @@ import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
   buildDrawerRows, buildGlobalTeam, ekipByProject, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
-  type DeviceChats, type DrawerFacts,
+  type DeviceChats, type DrawerChild, type DrawerFacts, type FanoutFacts,
 } from './newshell/drawerModel';
-import { useDrawerProjects } from '../../hooks/useDrawerProjects';
+import { readFanoutFacts, useDrawerProjects } from '../../hooks/useDrawerProjects';
 import { ApiClient } from '../../api/client';
 import { setMemberEnabled } from '../aiteam/teamModel';
 import { requestManageMembers } from '../../lib/openAgents';
@@ -65,7 +65,10 @@ import type { HomeRow } from '../sleepy/phoneHome';
 import { useIsNarrowWindow } from '../../hooks/useIsNarrowWindow';
 import { ChatHistoryPicker } from '../sleepy/ChatHistoryPicker';
 import { landsOnChat, type DrawerIntent, type PendingDrawerIntent } from '../../lib/drawerIntents';
-import { createPlaceHistory, localPlaceStorage, type Place, type PlaceHistory } from '../../lib/placeHistory';
+import { createPlaceHistory, localPlaceStorage, placeKey, type Place, type PlaceHistory } from '../../lib/placeHistory';
+import { ProjectRail, orderWithRail, railTarget, type RailProject } from './newshell/ProjectRail';
+import { ProjectCard, type ProjectCardData } from './newshell/ProjectCard';
+import { needsYouOf, railMarksOf, type NeedsYouRow } from './newshell/railMarks';
 import { createNavRecorder, targetOf, type MoveTarget, type NavRecorder } from './navRecorder';
 import { readShownSurface } from '../../lib/projectSwitchPage';
 import { PAGE_LABEL_KEY } from '../../lib/pageLabels';
@@ -1270,7 +1273,18 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const drawerFolded = useMemo(() => projectOrder.filter((name) => !drawerExpanded.includes(name)), [projectOrder, drawerExpanded]);
   // A device shell reads no project's roster or team (its drawer is chats only), so no fan-out
   // and no vault-less avatar request.
-  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell && !deviceShell ? drawerExpanded : [], mountedNames, drawerVisible, newShell && !deviceShell ? drawerFolded : [], drawerHidden);
+  // Navigation B (D9): the project rail is on every page of a desktop new shell, so the marks are
+  // read while the drawer OR the rail is on screen. With the drawer hidden only the marks are read
+  // (every far project as folded, under the same cap and timeouts): no roster for a list nobody sees.
+  const railOn = newShell && !deviceShell;
+  const marksOnly = railOn && !drawerVisible;
+  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(
+    newShell && !deviceShell && !marksOnly ? drawerExpanded : [],
+    mountedNames,
+    drawerVisible || railOn,
+    newShell && !deviceShell ? (marksOnly ? projectOrder : drawerFolded) : [],
+    drawerHidden,
+  );
   // The Mac's running chats, for the chat rows of projects this window has not mounted.
   const { live: liveChats, answered: liveAnswered } = useDrawerChats({ activeVault, drawerVisible, enabled: newShell });
   // A device shell's one published fact: memoized on the read and the tabs, a constant elsewhere.
@@ -1522,6 +1536,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     const place: Place = shown.chatOpen
       ? { vault, kind: 'chat' }
       : { vault, kind: 'page', page: shown.page, id: shown.item?.id ?? null, label: shown.item?.label ?? null };
+    setShownPlace((prev) => (prev && placeKey(prev) === placeKey(place) && (prev.kind !== 'page' || place.kind !== 'page' || prev.label === place.label) ? prev : place));
     recorder.shown(place, shown.byOwner);
   }, [recorder]);
   const placeLabel = useCallback((place: Place) => {
@@ -1542,6 +1557,92 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [backLabel, forwardLabel, stepTo, navRev]);
   const railProjects = useMemo(() => projectOrder.filter((n) => !drawerHidden.includes(n)), [projectOrder, drawerHidden]);
+
+  /* ── Navigation B, W2: the project rail, its card and the breadcrumb (D2, D3, D6, D9-D11) ── */
+
+  /** The project whose card is open, and the badge it opened from. */
+  const [card, setCard] = useState<{ name: string; anchor: DOMRect } | null>(null);
+  /** A fresh read of the card's project when this window has not mounted it (D10): while the card
+   *  is open it is that badge's mark too, so the count and the rows always agree. */
+  const [cardRead, setCardRead] = useState<{ vault: string; facts: FanoutFacts } | null>(null);
+  useEffect(() => {
+    if (!card || deviceShell || mountedNames.includes(card.name)) { setCardRead(null); return undefined; }
+    let gone = false;
+    const vault = card.name;
+    void readFanoutFacts(vault).then((facts) => { if (!gone) setCardRead({ vault, facts }); }, () => { /* degrades to the poll's marks */ });
+    return () => { gone = true; };
+    // Read once per card opening, not on every mount change while it stays open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card?.name, deviceShell]);
+  // The rail's rows: the drawer's own model, every rail project EXPANDED (C6), so a badge and its
+  // drawer row say the same thing.
+  const railRows = useMemo(() => {
+    if (!newShell) return [];
+    const fan = cardRead && card?.name === cardRead.vault ? { ...fanout, [cardRead.vault]: cardRead.facts } : fanout;
+    return buildDrawerRows({
+      projects: drawerProjects.filter((p) => railProjects.includes(p.name)),
+      activeVault,
+      expanded: railProjects,
+      facts: drawerFacts,
+      fanout: fan,
+      ...(deviceShell ? { device: deviceChats } : {}),
+    });
+  }, [newShell, drawerProjects, railProjects, activeVault, drawerFacts, fanout, cardRead, card?.name, deviceShell, deviceChats]);
+  const railItems = useMemo<RailProject[]>(() => railRows.map((r) => ({
+    name: r.name, logo: r.logo, logoStamp: r.logoStamp, active: r.active, asleep: r.asleep, otherWindow: r.otherWindow, marks: railMarksOf(r),
+  })), [railRows]);
+  /** A badge: the same place kind in that project, at the last item opened on that page there
+   *  (D3); on Chat, that project's Chat (the switch carry). The active badge does nothing. */
+  const railPick = useCallback((vault: string) => {
+    const to = railTarget(vault, activeRef.current, readShownSurface(), (v, p) => places.lastItemOn(v, p), (p) => deviceShell && DEVICE_HIDDEN_PAGES.has(p));
+    if (to.kind === 'switch') switchTo(vault);
+    else if (to.kind === 'place') goToPlace(to.place);
+  }, [deviceShell, switchTo, goToPlace, places]);
+  const closeCard = useCallback(() => setCard(null), []);
+  /** A NEEDS YOU row (or the red count's first one) lands through the intent its drawer row carries. */
+  const openNeedsYou = useCallback((vault: string, row: NeedsYouRow) => {
+    setCard(null);
+    closeOverlay();
+    void trackedIntent(vault, row.intent);
+  }, [trackedIntent, closeOverlay]);
+  const railCount = useCallback((vault: string) => {
+    const row = railRows.find((r) => r.name === vault);
+    const first = row ? needsYouOf(row)[0] : undefined;
+    if (first) openNeedsYou(vault, first);
+    else railPick(vault);
+  }, [railRows, openNeedsYou, railPick]);
+  const cardPlace = useCallback((place: Place) => { setCard(null); closeOverlay(); goToPlace(place); }, [goToPlace, closeOverlay]);
+  const railReorder = useCallback((names: string[]) => {
+    reorder(orderWithRail(projectOrderRef.current, drawerHiddenRef.current, names));
+  }, [reorder]);
+  const cardData = useMemo<ProjectCardData | null>(() => {
+    if (!card) return null;
+    const row = railRows.find((r) => r.name === card.name);
+    if (!row) return null;
+    const sup = row.children.find((c): c is Extract<DrawerChild, { kind: 'super' }> => c.kind === 'super');
+    return {
+      project: { name: row.name, logo: row.logo, logoStamp: row.logoStamp },
+      ...(sup ? { superAgent: { on: sup.on, working: sup.working > 0, asking: sup.asking } } : {}),
+      needsYou: needsYouOf(row),
+      lastHere: places.lastHere(row.name),
+      recent: places.recent(row.name),
+    };
+    // `navRev`: the places moved.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, railRows, places, navRev]);
+  // A card whose project left the rail (hidden, removed) closes.
+  useEffect(() => { if (card && !railProjects.includes(card.name)) setCard(null); }, [card, railProjects]);
+  /** What the breadcrumb says after the project: the page and its item (the active project's last
+   *  report), or nothing until the project on screen has said where it is. */
+  const [shownPlace, setShownPlace] = useState<Place | null>(null);
+  const crumb = useMemo(() => {
+    if (!shownPlace || shownPlace.vault !== activeVault) return { page: null, item: null };
+    if (shownPlace.kind === 'chat') return { page: t('nav.chat'), item: null };
+    return { page: t(PAGE_LABEL_KEY[shownPlace.page]), item: shownPlace.label };
+  }, [shownPlace, activeVault, t]);
+  // The phone (≤600): the rail is a strip at the top of the page, a long press opens the card as a
+  // bottom sheet (D11).
+  const phoneStrip = phoneNarrow;
 
   const openChatRow = useCallback((vault: string, row: HomeRow) => {
     void trackedIntent(vault, { kind: 'open-chat', row });
@@ -1714,6 +1815,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
           </div>
           <TitleBar
             activeVault={activeVault}
+            crumb={crumb}
             rows={pickerRows}
             pickerOpen={pickerOpen}
             onNewProject={() => { setPickerOpen(false); setNewProjectOpen(true); }}
@@ -1734,9 +1836,24 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             {...(deviceShell ? { device: { tunnel, remote } } : {})}
           />
           {newProjectOpen && <NewProjectFlow onClose={() => setNewProjectOpen(false)} onLand={landNewProject} />}
-          {/* [rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
+          {phoneStrip && railItems.length > 0 && (
+            <div className="ns-prail-stripwrap">
+              <ProjectRail layout="strip" projects={railItems} onPick={(n) => { closeOverlay(); railPick(n); }} onCount={railCount}
+                onReorder={railReorder} onCard={(c) => setCard(c)} cardFor={card?.name ?? null} />
+            </div>
+          )}
+          {card && cardData && (
+            <ProjectCard data={cardData} anchor={card.anchor} sheet={phoneStrip}
+              onNeedsYou={(row) => openNeedsYou(card.name, row)} onPlace={cardPlace} onClose={closeCard} />
+          )}
+          {/* [project rail][page rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
           <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
+            {!phoneStrip && (
+              <ProjectRail projects={railItems} onPick={railPick} onCount={railCount} onReorder={railReorder}
+                {...(deviceShell ? {} : { onNewProject: () => { closeOverlay(); setNewProjectOpen(true); } })}
+                onCard={(c) => setCard(c)} cardFor={card?.name ?? null} />
+            )}
             <div className="ns-rail-slot" ref={setRailSlot} />
             {drawerVisible && drawerFloating && !peekOnly && (
               <div className="ns-drawer-scrim" onClick={closeOverlay} aria-hidden="true" />
@@ -1801,6 +1918,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   onStartConsumed={consumeStart}
                   drawerToggleNonce={drawerToggleNonce}
                   drawerVisible={drawerVisible && !peekOnly}
+                  railOn={railOn}
                   onDrawerToggle={onDrawerToggle}
                   onDrawerDismiss={dismissFloating}
                   onDrawerFacts={handleDrawerFacts}

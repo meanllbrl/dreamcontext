@@ -566,6 +566,9 @@ export interface ProjectInstanceProps {
   onDrawerDismiss?: () => void;
   /** New shell: the window's chat drawer is on screen (W2 polls the drawer's facts faster). */
   drawerVisible?: boolean;
+  /** New shell: the window's project rail shows this project's marks (navigation B, D9): its
+   *  drawer facts poll as they do while the drawer is on screen. Only `DrawerFactsBridge` reads it. */
+  railOn?: boolean;
   /** New shell: the drawer button meant the chat drawer itself. */
   onDrawerToggle?: () => void;
   /** New shell: this project's drawer facts, for the window's drawer (D5). */
@@ -582,7 +585,7 @@ export interface ProjectInstanceProps {
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
   pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle, onDrawerDismiss,
-  drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
+  drawerVisible = false, railOn = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
   pendingManage = null, onManageConsumed,
 }: ProjectInstanceProps) {
   const newShell = useIsNewShell();
@@ -714,7 +717,7 @@ export function ProjectInstance({
                   until the next status flip, and the ceiling would refuse to evict it. */}
               <RollupBridge vault={vault} onRollup={onRollup} />
               {/* The new shell's drawer facts: before `AgentSurface` for the same reason. */}
-              {newShell && <DrawerFactsBridge vault={vault} drawerVisible={drawerVisible} onFacts={onDrawerFacts} />}
+              {newShell && <DrawerFactsBridge vault={vault} drawerVisible={drawerVisible || railOn} onFacts={onDrawerFacts} />}
               {/* Mounted OUTSIDE Shell, exactly as it was at the app root: the agent floater
                   keeps its PTY/scrollback alive across navigation and collapse/expand, which
                   only holds while it is not remounted by the page switch. */}

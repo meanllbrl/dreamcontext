@@ -543,3 +543,252 @@
 /* The picker's last row: New project, under a rule so it never reads as a project. */
 .ns-picker-new { border-top: 1px solid var(--color-border); margin-top: var(--space-1); padding-top: var(--space-2); }
 .ns-picker-new-mark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: var(--color-text-secondary); }
+
+/* ── Navigation B: the breadcrumb (D6) ───────────────────────────────────────────────── */
+
+.ns-tb-crumb {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--space-7);
+  padding: 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+.ns-tb-crumb .vault-logo { flex: none; border-radius: var(--radius-sm); margin-right: var(--space-1); }
+.ns-tb-crumb-part { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ns-tb-crumb-project { flex: none; max-width: 200px; color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.ns-tb-crumb-item { color: var(--color-text); }
+.ns-tb-crumb-sep { flex: none; color: var(--color-text-tertiary); }
+@media (max-width: 600px) {
+  .ns-tb-left .ns-tb-crumb { flex: 0 1 auto; max-width: 200px; }
+}
+
+/* ── Navigation B: the project rail (D2), its card (D10), the phone strip (D11) ──────── */
+
+.ns-prail {
+  flex: none;
+  width: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  /* Beside the page rail: above the chat overlay (20), below the title bar (40). */
+  position: relative;
+  z-index: 30;
+}
+.ns-prail-list { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.ns-prail-cell { position: relative; display: flex; }
+.ns-prail-cell[data-drop-before="true"]::before {
+  content: "";
+  position: absolute;
+  left: 4px; right: 4px; top: -6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+.ns-prail-cell[data-dragging="true"] { opacity: 0.5; }
+
+.ns-prail-badge {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.ns-prail-badge:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+/* The one you are in: the long bar on the rail's left edge. */
+.ns-prail[data-layout="column"] .ns-prail-badge[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -12px; top: 4px; bottom: 4px;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-text);
+}
+.ns-prail-badge[data-active="true"] .ns-prail-face { box-shadow: 0 0 0 2px var(--color-bg-secondary), 0 0 0 4px var(--color-text); }
+/* Its Super Agent at work: the violet ring. */
+.ns-prail-badge[data-working="true"] .ns-prail-face { box-shadow: 0 0 0 2px var(--color-bg-secondary), 0 0 0 4px var(--color-accent); }
+.ns-prail-badge[data-asleep="true"] .ns-prail-face { opacity: 0.6; }
+
+.ns-prail-face {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: hsl(var(--rail-hue, 260) 55% 52%);
+  color: #fff;
+  transition: box-shadow 120ms ease;
+}
+[data-theme="dark"] .ns-prail-face { background: hsl(var(--rail-hue, 260) 45% 42%); }
+.ns-prail-initial { font-size: 15px; font-weight: var(--font-weight-semibold); line-height: 1; }
+.ns-prail-face .ns-prail-logo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ns-prail-badge:hover:not([data-active="true"]) .ns-prail-face { box-shadow: 0 0 0 2px var(--color-bg-secondary), 0 0 0 4px var(--color-border-hover); }
+
+/* Replies not read: the short bar. */
+.ns-prail-fresh {
+  position: absolute;
+  left: -12px; top: 15px;
+  width: 4px; height: 10px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-text-secondary);
+}
+.ns-prail[data-layout="strip"] .ns-prail-fresh { left: 15px; top: auto; bottom: -7px; width: 10px; height: 3px; border-radius: 2px; }
+
+/* What waits on the owner: the red count; a click opens the first such thing. */
+.ns-prail-count {
+  position: absolute;
+  top: -6px; right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 2px solid var(--color-bg-secondary);
+  border-radius: 9px;
+  background: var(--color-error);
+  color: #fff;
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 14px;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.ns-prail-add {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--color-border-hover);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.ns-prail-add:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
+.ns-prail-add:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+
+/* The phone: a strip of badges at the top of the page. */
+.ns-prail-stripwrap {
+  flex: none;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+.ns-prail[data-layout="strip"] {
+  width: auto;
+  flex-direction: row;
+  padding: var(--space-2) var(--space-3);
+  overflow-x: auto;
+  overflow-y: visible;
+  border-right: none;
+}
+.ns-prail[data-layout="strip"] .ns-prail-list { flex-direction: row; gap: var(--space-3); padding-top: 6px; }
+.ns-prail[data-layout="strip"] .ns-prail-badge { width: 40px; height: 40px; }
+.ns-prail[data-layout="strip"] .ns-prail-cell[data-drop-before="true"]::before { left: -7px; right: auto; top: 4px; bottom: 4px; width: 2px; height: auto; }
+
+/* The card beside a badge. */
+.ns-pcard {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+.ns-pcard-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  font-size: var(--font-size-md, 15px);
+  font-weight: var(--font-weight-semibold);
+}
+.ns-pcard-title .ns-prail-face { width: 22px; height: 22px; flex: none; border-radius: var(--radius-sm); }
+.ns-pcard-title .ns-prail-initial { font-size: 11px; }
+.ns-pcard-title > span:not(.ns-prail-face) { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-pcard-head {
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ns-pcard-head--needs { color: var(--color-error-ink, var(--color-error)); }
+.ns-pcard-row {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ns-pcard-row:hover, .ns-pcard-row:focus-visible { background: var(--color-bg-tertiary); outline: none; }
+.ns-pcard-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-pcard-where, .ns-pcard-state { flex: none; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
+.ns-pcard-state[data-asking="true"] {
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink, var(--color-error));
+}
+.ns-pcard-super { background: var(--color-bg-secondary); }
+.ns-pcard-diamond {
+  flex: none;
+  width: 9px; height: 9px;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  background: var(--color-accent);
+}
+.ns-pcard-diamond[data-working="true"] { animation: ns-pcard-pulse 1.4s ease-in-out infinite; }
+@keyframes ns-pcard-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .ns-pcard-diamond[data-working="true"] { animation: none; } }
+.ns-pcard-needs { color: var(--color-error-ink, var(--color-error)); font-weight: var(--font-weight-medium); }
+.ns-pcard-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--color-error); }
+.ns-pcard-n {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-error);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+.ns-pcard-ico { flex: none; color: var(--color-text-tertiary); }
+.ns-pcard-empty { padding: var(--space-1) var(--space-2) var(--space-2); color: var(--color-text-tertiary); }
+.ns-pcard-sheet .ns-pcard-title { padding: var(--space-2) var(--space-3); }
+.ns-pcard-sheet .ns-pcard-body { padding: 0 var(--space-2) var(--space-4); overflow-y: auto; }
+.ns-pcard-sheet .ns-pcard-row { min-height: var(--touch-target, 44px); }
