@@ -90,4 +90,17 @@ describe('wiring (source)', () => {
     expect(inst).toContain('drawerVisible={drawerVisible || railOn}');
     expect(inst).toContain('<AgentSurface stageBesideDrawer={drawerVisible}');
   });
+
+  it('the floating chat drawer starts right of BOTH rails: the project rail sets its width on .ns-body', () => {
+    const drawerCss = src('components/layout/newshell/ChatDrawer.css');
+    const shellCss = src('components/layout/newshell/NewShell.css');
+    expect(drawerCss).toContain('left: calc(var(--ns-prail-w, 0px) + var(--space-13));');
+    expect(shellCss).toContain('.ns-body[data-prail="column"] { --ns-prail-w: 64px; }');
+    expect(chrome).toContain(`data-prail={phoneStrip ? undefined : 'column'}`);
+  });
+
+  it('the phone strip scrolls under a finger: its badges pan, and a moving finger never reorders', () => {
+    expect(src('components/layout/newshell/NewShell.css')).toMatch(/\.ns-prail\[data-layout="strip"\] \.ns-prail-badge \{[^}]*touch-action: pan-x;/);
+    expect(src('components/layout/newshell/ProjectRail.tsx')).toMatch(/if \(strip\) \{[\s\S]{0,200}press\.current = null;\s*return;\s*\}\s*p\.dragging = true;/);
+  });
 });

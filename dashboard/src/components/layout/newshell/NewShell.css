@@ -569,9 +569,11 @@
 
 /* ── Navigation B: the project rail (D2), its card (D10), the phone strip (D11) ──────── */
 
+.ns-body[data-prail="column"] { --ns-prail-w: 64px; }
+
 .ns-prail {
   flex: none;
-  width: 64px;
+  width: var(--ns-prail-w, 64px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -701,7 +703,7 @@
   border-right: none;
 }
 .ns-prail[data-layout="strip"] .ns-prail-list { flex-direction: row; gap: var(--space-3); padding-top: 6px; }
-.ns-prail[data-layout="strip"] .ns-prail-badge { width: 40px; height: 40px; }
+.ns-prail[data-layout="strip"] .ns-prail-badge { width: 40px; height: 40px; touch-action: pan-x; }
 .ns-prail[data-layout="strip"] .ns-prail-cell[data-drop-before="true"]::before { left: -7px; right: auto; top: 4px; bottom: 4px; width: 2px; height: auto; }
 
 /* The card beside a badge. */

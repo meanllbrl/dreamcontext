@@ -154,6 +154,26 @@ const settle = (page) => page.waitForTimeout(700);
   await settle(page);
   await shot(page, 'S6-sonra-1440-light.png');
 
+  // The chat drawer floating over a page (not Chat) starts right of both rails, at 1440 and 800.
+  for (const w of [1440, 800]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await page.waitForTimeout(400);
+    await page.getByTestId('ns-drawer-toggle').hover();
+    await page.waitForTimeout(500);
+    const drawer = page.locator('.ns-drawer').first();
+    const box = await drawer.boundingBox().catch(() => null);
+    const rails = await page.evaluate(() => {
+      const r = [...document.querySelectorAll('.ns-prail, .ns-rail')].map((el) => el.getBoundingClientRect().right);
+      return Math.max(0, ...r);
+    });
+    if (!box) app.findings.push(`drawer@${w}: the drawer did not open on hover`);
+    else if (box.x + 0.5 < rails) app.findings.push(`drawer@${w}: starts at ${box.x}px, under the rails ending at ${rails}px`);
+    await shot(page, `cekmece-${w}-light.png`);
+    await page.mouse.move(w - 20, 600);
+    await page.waitForTimeout(500);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   // S7: the red count opens the first thing waiting (only when something waits in this scratch set).
   const counts = await page.getByTestId('ns-prail-count').count();
   results.push({ s: 7, what: 'Kırmızı işaret seni işe götürür', target: '1', clicks: counts ? 1 : null, landed: counts ? 'count shown' : 'nothing waits in the scratch projects: unit-tested (rail-marks)' });
@@ -197,6 +217,8 @@ for (const [w, h, theme] of [[1180, 800, 'dark'], [1440, 900, 'dark'], [1180, 80
   }
   const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (over > 1) app.findings.push(`phone overflows sideways by ${over}px`);
+  const pan = await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid="ns-prail-strip"] .ns-prail-badge')).touchAction);
+  if (pan !== 'pan-x') app.findings.push(`phone strip badges: touch-action ${pan}, a swipe on a badge would not scroll the strip`);
   await context.close();
 }
 

@@ -1848,7 +1848,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
           )}
           {/* [project rail][page rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
-          <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
+          <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'} data-prail={phoneStrip ? undefined : 'column'}>
             {!phoneStrip && (
               <ProjectRail projects={railItems} onPick={railPick} onCount={railCount} onReorder={railReorder}
                 {...(deviceShell ? {} : { onNewProject: () => { closeOverlay(); setNewProjectOpen(true); } })}

@@ -129,6 +129,8 @@ export function ProjectRail({ projects, layout = 'column', onPick, onCount, onRe
 
   const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>, name: string) => {
     if (e.button !== 0) return;
+    // A long press on a browser that sends no click after it must not swallow the next tap.
+    suppressClick.current = false;
     press.current = { name, x: e.clientX, y: e.clientY, id: e.pointerId, dragging: false, long: false };
     if (strip) {
       const anchor = e.currentTarget.getBoundingClientRect();
@@ -145,6 +147,13 @@ export function ProjectRail({ projects, layout = 'column', onPick, onCount, onRe
     if (!p || p.id !== e.pointerId || p.long) return;
     if (!p.dragging) {
       if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_THRESHOLD_PX) return;
+      // The strip: a finger moving is the strip scrolling (`touch-action: pan-x`), never a
+      // reorder and never a long press (D11 asks for tap and long press only).
+      if (strip) {
+        if (longTimer.current !== null) { window.clearTimeout(longTimer.current); longTimer.current = null; }
+        press.current = null;
+        return;
+      }
       p.dragging = true;
       if (longTimer.current !== null) { window.clearTimeout(longTimer.current); longTimer.current = null; }
       clearTimers();

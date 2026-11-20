@@ -84,8 +84,7 @@ export function TitleBar({
         </button>
         {/* The breadcrumb replaces the project picker button (navigation B, D6): a label, no
             click target. ⌘P still opens the picker, under it; the rail switches projects. */}
-        <div ref={pickerRef} className="ns-tb-crumb" data-testid="ns-crumb" role="group" aria-label={t('shell.nav.crumb')}
-          title={t('shell.picker.open')}>
+        <div ref={pickerRef} className="ns-tb-crumb" data-testid="ns-crumb" role="group" aria-label={t('shell.nav.crumb')}>
           <VaultLogo name={activeVault} hasLogo={!!active?.logo} stamp={active?.logoStamp ?? null} size={16} />
           <span className="ns-tb-crumb-part ns-tb-crumb-project" data-testid="ns-crumb-project">{activeVault}</span>
           {crumb?.page && (<><span className="ns-tb-crumb-sep" aria-hidden="true">›</span><span className="ns-tb-crumb-part" data-testid="ns-crumb-page">{crumb.page}</span></>)}

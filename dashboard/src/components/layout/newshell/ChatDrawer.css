@@ -578,8 +578,10 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: var(--space-13);
-  width: min(300px, calc(100vw - var(--space-16)));
+  /* Right of everything left of it: the project rail (navigation B, `--ns-prail-w` on .ns-body
+     while the column rail shows) and the page rail. */
+  left: calc(var(--ns-prail-w, 0px) + var(--space-13));
+  width: min(300px, calc(100vw - var(--space-16) - var(--ns-prail-w, 0px)));
   box-shadow: var(--shadow-lg);
 }
 
