@@ -88,15 +88,17 @@ export function jobsRows(src: JobsSource, needsOwner: (q: QueueLike) => boolean,
       at: c.rowAt ?? c.finishedAt ?? c.startedAt,
     });
   }
-  // An AI Team member's job: its member's root, once (follow-ups continue the same card).
+  // An AI Team member's job: its member's newest root, once (follow-ups continue the same card).
+  // A team job's `endedAt` is its settle stamp (a reply job that finished), never "ended by super
+  // end": the row stays, its state from `outcome` and `open`, its time the settle (end review 2026-11-20).
   const seen = new Set<string>();
   for (const j of src.team ?? []) {
-    if (j.followUpOf || seen.has(j.member) || j.endedAt !== undefined) continue;
+    if (j.followUpOf || seen.has(j.member)) continue;
     seen.add(j.member);
     if (only && !only.has(j.id)) continue;
     const q = waits.get(`member:${j.member}`);
     const state: JobRowState = q ? 'waiting' : j.outcome === 'failed' ? 'stuck' : j.outcome === 'done' || !j.open ? 'done' : 'running';
-    rows.push({ id: j.id, kind: 'member', name: nameOf(src, j.id, j.brief), state, waitingOn: q ? askLine(q) : '', ...(q ? { itemId: q.id } : {}), at: j.startedAt });
+    rows.push({ id: j.id, kind: 'member', name: nameOf(src, j.id, j.brief), state, waitingOn: q ? askLine(q) : '', ...(q ? { itemId: q.id } : {}), at: j.endedAt ?? j.startedAt });
   }
   rows.sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.at - a.at);
   return {

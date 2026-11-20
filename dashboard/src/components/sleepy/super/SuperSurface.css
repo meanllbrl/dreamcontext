@@ -585,7 +585,7 @@
   line-height: 20px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
-  color: var(--mood-waiting);
+  color: var(--mood-waiting-ink);
   font-size: var(--font-size-xs);
   font-weight: 700;
 }
@@ -678,7 +678,7 @@
   line-height: 20px;
   text-align: center;
 }
-.super-others-stack[data-asking] .super-others-count { background: color-mix(in srgb, var(--mood-waiting) 20%, transparent); color: var(--mood-waiting); }
+.super-others-stack[data-asking] .super-others-count { background: color-mix(in srgb, var(--mood-waiting) 20%, transparent); color: var(--mood-waiting-ink); }
 /* The corner a dragged card is dropped into (lit while the pointer is over it). */
 .super-others-zone {
   position: absolute;
@@ -771,7 +771,7 @@
   padding: 0 8px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
-  color: var(--mood-waiting);
+  color: var(--mood-waiting-ink);
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
   font-weight: 700;
@@ -894,7 +894,7 @@
   line-height: 20px;
   text-align: center;
 }
-.super-tile[data-kind='asking'] .super-tile-count { background: color-mix(in srgb, var(--mood-waiting) 22%, transparent); color: var(--mood-waiting); }
+.super-tile[data-kind='asking'] .super-tile-count { background: color-mix(in srgb, var(--mood-waiting) 22%, transparent); color: var(--mood-waiting-ink); }
 /* The status ring: colour is the state, the mark says it again. */
 .super-ring { flex: none; --ring: var(--color-text-tertiary); }
 .super-ring[data-super-tone] { --ring: var(--tone); }
@@ -1164,7 +1164,7 @@
   line-height: 20px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--mood-waiting) 18%, transparent);
-  color: var(--mood-waiting);
+  color: var(--mood-waiting-ink);
   font-size: var(--font-size-xs);
   font-weight: 700;
   white-space: nowrap;
@@ -2242,7 +2242,7 @@
 .super-card-asked > span { white-space: nowrap; }
 .super-card-show {
   flex: none; height: 22px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid color-mix(in srgb, var(--mood-waiting) 55%, var(--color-border));
-  background: transparent; color: var(--mood-waiting); font: inherit; font-weight: 600; cursor: pointer; pointer-events: auto;
+  background: transparent; color: var(--mood-waiting-ink); font: inherit; font-weight: 600; cursor: pointer; pointer-events: auto;
 }
 .super-card-show:hover { background: color-mix(in srgb, var(--mood-waiting) 14%, transparent); }
 .super-card-show:focus-visible { outline: 2px solid var(--mood-waiting); outline-offset: 2px; }
@@ -2308,18 +2308,8 @@
   border-bottom: 1px solid var(--color-border);
   min-width: 0;
 }
-.super-win-lights { flex: none; display: flex; gap: var(--space-2); }
-.super-win-light {
-  width: 12px;
-  height: 12px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-full);
-  cursor: pointer;
-}
-.super-win-light[data-light='close'] { background: #ff5f57; }
-.super-win-light[data-light='min'] { background: #febc2e; }
-.super-win-light:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+/* The window's lights are the card lights (CardLights inline): in the title row's flow, 24 px targets. */
+.super-card-lights--inline { position: static; flex: none; margin-left: calc(-1 * var(--space-2)); }
 .super-win-tabs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--space-1); overflow: hidden; }
 .super-win-tab {
   flex: 0 1 170px;

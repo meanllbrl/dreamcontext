@@ -31,7 +31,7 @@ export function MemberQuoteCard({ answer, at, session }: { answer: MemberAnswer;
   return (
     <figure className="super-quote" data-testid="member-quote-card" data-member={answer.member} data-team={answer.team} data-open={open ? '' : undefined}>
       <figcaption className="super-quote-head">
-        <AgentAvatar slug={answer.member} title={name} hasPhoto={agent?.hasPhoto ?? false} size={28} />
+        <AgentAvatar slug={answer.member} title={name} hasPhoto={agent?.hasPhoto ?? false} size={28} of="agent" />
         <span className="super-quote-who">{t(answer.event === 'done' ? 'super.quote.answered' : 'super.quote.noted').replace('{name}', name)}</span>
         <span className="super-quote-meta">{job ? `· ${t('super.quote.for').replace('{job}', job)} ` : ''}· {when}</span>
       </figcaption>

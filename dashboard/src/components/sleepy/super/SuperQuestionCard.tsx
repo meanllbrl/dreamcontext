@@ -259,7 +259,7 @@ function MemberWaitBody({ item, name, slug, hasPhoto }: { item: SuperQueueItem; 
   return (
     <div className="chat-viewcard chat-agentthread" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of} data-row={row}>
       <CardHeader
-        glyph={<AgentAvatar slug={slug} title={name} hasPhoto={hasPhoto} size={22} />}
+        glyph={<AgentAvatar slug={slug} title={name} hasPhoto={hasPhoto} size={22} of="agent" />}
         title={t(title).replace('{name}', name)}
       />
       {allowed ? (

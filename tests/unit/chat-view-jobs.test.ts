@@ -49,6 +49,14 @@ describe('jobsRows', () => {
   it('ids narrow the rows', () => {
     expect(jobsRows(state, needs, ['c', 'zz']).rows.map((r) => r.id)).toEqual(['c']);
   });
+  it("a member's finished reply job (its settle stamp endedAt) is its row, never an older job's", () => {
+    // Newest first, as the record keeps them: the reply settled, the older run is done too.
+    const s = jobsRows({ ...state, children: {}, queue: [], team: [
+      { id: 'team-sage-2', member: 'sage', brief: 'Reply on churn', startedAt: now - 1000, outcome: 'done', endedAt: now },
+      { id: 'team-sage-1', member: 'sage', brief: 'Old price scan', startedAt: now - 90_000, outcome: 'done' },
+    ] }, needs);
+    expect(s.rows).toEqual([expect.objectContaining({ id: 'team-sage-2', kind: 'member', state: 'done', at: now })]);
+  });
   it('a member job and its approval: the member row waits', () => {
     const s = jobsRows({ ...state, children: {}, queue: [{ id: 'qa', sessionId: 'sup', kind: 'approval', member: 'sage', state: 'escalated', createdAt: now }],
       team: [{ id: 'team-sage', member: 'sage', brief: 'Price scan', startedAt: now, open: true }] }, needs);

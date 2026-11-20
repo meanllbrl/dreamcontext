@@ -534,6 +534,6 @@
 }
 .chat-qstrip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mood-waiting); flex: none; }
 .chat-qstrip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-qstrip-go { flex: none; font: inherit; font-weight: var(--font-weight-medium); color: var(--mood-waiting); background: none; border: none; cursor: pointer; padding: var(--space-1); }
+.chat-qstrip-go { flex: none; font: inherit; font-weight: var(--font-weight-medium); color: var(--mood-waiting-ink); background: none; border: none; cursor: pointer; padding: var(--space-1); }
 .chat-qstrip-go:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 .chat-transcript [data-revealed='true'] { outline: 2px solid var(--mood-waiting); outline-offset: 4px; border-radius: var(--radius-lg); transition: outline-color 300ms; }

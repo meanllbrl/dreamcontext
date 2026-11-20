@@ -48,7 +48,7 @@ import { AppRequestPopup } from './AppRequestPopup';
 import { emitInstance, useVault, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
-import { stageBandCount, stageBandHead, freshPending, hasOwnKey, isPermission, needsOwner, ownerQueueCount, queueHead, rowOf, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
+import { stageBandCount, stageBandHead, freshPending, hasOwnKey, isPermission, macPermissionItems, needsOwner, ownerQueueCount, queueHead, rowOf, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { SuperHeadMenu } from './SuperHeadMenu';
 import { SuperAddMenu } from './SuperAddMenu';
 import { MENU_WIDTH } from './superAddMenuModel';
@@ -437,6 +437,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // centre asks, not spins (owner, 2026-10-22). A child's permission stays on the child's card.
   // A chat folded to its bar is drawn as the mini meanwhile, so the question shows (D7).
   const ownerAsk = state.queue.some((q) => needsOwner(q) && q.kind !== 'permission');
+  // On the Mac a child's permission is a card in this chat too (D8, the band no longer carries it),
+  // so it unfolds a folded chat the same way; a remote screen keeps it in its band. The centre's
+  // status stays `ownerAsk`: the permission is the child's, not the Super's (end review 2026-11-20).
+  const chatAsks = ownerAsk || (!props.remote && macPermissionItems(state.queue).length > 0);
   // The layouts the switcher offers: those the presented cards can take (R3(f)).
   const presented = useMemo(() => (view.mode === 'present' ? (view.cards ?? []).filter((id) => state.containers.some((c) => c.id === id)) : []), [view, state.containers]);
   // A selection belongs to one presentation: another card set starts on its first card.
@@ -497,12 +501,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const askCandidate = view.mode === 'present'
     ? dockedAskOf(state.queue, { cards: view.cards ?? [], ...(view.ask ? { ask: view.ask } : {}) }) : null;
   const plan = useMemo(
-    () => planStage(items, view, size, { presentTabCount, askDock: !!askCandidate, dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts }),
-    [items, view, size, presentTabCount, askCandidate, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda],
+    () => planStage(items, view, size, { presentTabCount, askDock: !!askCandidate, dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: chatAsks, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts }),
+    [items, view, size, presentTabCount, askCandidate, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, chatAsks, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda],
   );
   dockPrevRef.current = { vault, docked: !!plan.jobDock?.docked };
   // Docked only where the window drew its dock (a wide stage); else the chat keeps the full card.
-  const dockedAsk = plan.askDock && askCandidate && superSession ? askCandidate : null;
+  // Docked under the page only while the stage that draws the dock is on screen: folded away (the
+  // off-page Super dock holds this same chat), the chat keeps the full card (end review 2026-11-20).
+  const dockedAsk = props.visible && plan.askDock && askCandidate && superSession ? askCandidate : null;
   const superScope = superSession?.claudeId ?? null;
   useEffect(() => {
     if (!superScope) return undefined;
@@ -816,7 +822,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }
   /** Whether a size can be drawn for this card now: the plan the window draws (its options), asked with that size. */
   const canFit = (id: string, next: ContainerSize, pin?: boolean) => fitsNow(items, view, size, id, next,
-    { terminals: props.terminals.length, agendaPill, asking: ownerAsk, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }, growAt(id, pin));
+    { terminals: props.terminals.length, agendaPill, asking: chatAsks, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }, growAt(id, pin));
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 

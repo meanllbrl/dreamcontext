@@ -36,7 +36,7 @@
 .sdock-ti { font-size: 12.5px; font-weight: 600; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sdock-two { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 15px; font-size: 12px; }
 .sdock-ln { font-size: 11.5px; line-height: 16px; color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: auto; }
-.sdock-wait { color: var(--mood-waiting); }
+.sdock-wait { color: var(--mood-waiting-ink); }
 
 .sdock-ring { flex: none; }
 .sdock-ring .tr { stroke: var(--color-border-hover); }
@@ -56,7 +56,7 @@
 }
 .sdock-badge {
   position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px;
-  background: var(--mood-waiting); color: #fff; font-size: 11.5px; font-weight: 700; display: grid; place-items: center;
+  background: var(--mood-waiting); color: var(--mood-waiting-on); font-size: 11.5px; font-weight: 700; display: grid; place-items: center;
   box-shadow: 0 0 0 2px var(--color-bg-secondary);
 }
 

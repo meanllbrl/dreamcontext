@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 're
 import type { Rect } from './superLayout';
 import { PRESENT_WIN } from './superLayout';
 import { useI18n } from '../../../context/I18nContext';
+import { CardLights } from './CardLights';
 
 /** The app's own drag type for a presentation tab; its payload is the id to mention. */
 export const PRESENT_TAB_DRAG = 'application/x-dreamcontext-present-tab';
@@ -86,12 +87,9 @@ export function PresentWindow({ win, tabs, onShow, onClose, onMinimize, onMentio
     <div ref={rootRef} className="super-win" data-testid="super-present-window"
       style={{ left: win.x, top: win.y, width: win.width, height: win.height, ['--win-title-h' as string]: `${PRESENT_WIN.TITLE_H}px` }}>
       <div className="super-win-title" role="group" aria-label={t('super.pq.label')} data-testid="super-present-tabs">
-        <div className="super-win-lights">
-          <button type="button" className="super-win-light" data-light="close" aria-label={t('super.win.close')} title={t('super.win.close')}
-            data-testid="super-win-close" onClick={() => front && close([front.key])} />
-          <button type="button" className="super-win-light" data-light="min" aria-label={t('super.win.minimize')} title={t('super.win.minimize')}
-            data-testid="super-win-min" onClick={onMinimize} />
-        </div>
+        <CardLights inline
+          close={{ label: t('super.win.close'), testId: 'super-win-close', onClick: front ? () => close([front.key]) : undefined }}
+          minimize={{ label: t('super.win.minimize'), testId: 'super-win-min', onClick: onMinimize }} />
         <div className="super-win-tabs" role="tablist">
           {tabs.map((tab) => (
             <div key={tab.key} role="tab" tabIndex={0} aria-selected={tab.front} className="super-win-tab"

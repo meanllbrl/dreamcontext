@@ -327,7 +327,9 @@ describe('only the owner decides', () => {
       return statSync(p).isDirectory() ? files(p) : /\.ts$/.test(n) ? [p] : [];
     });
     const importers = files(src).filter((p) => /from '\.\/automation-approvals\.js'|automation-approvals\.js'/.test(readFileSync(p, 'utf8'))).map((p) => relative(src, p).replace(/\\/g, '/'));
-    expect(importers.sort()).toEqual(['server/telegram/blocks.ts', 'server/telegram/w5.ts']);
+    expect(importers.sort()).toEqual(['server/telegram/asks.ts', 'server/telegram/blocks.ts', 'server/telegram/w5.ts']);
+    // A member's routine approval (super-v3 v3-12) only SENDS the card from asks.ts; it decides nothing.
+    expect(readFileSync(join(src, 'server', 'telegram', 'asks.ts'), 'utf8')).toMatch(/^import \{ sendAutomationCard \} from '\.\/automation-approvals\.js';$/m);
     // The one door into a decision on the hub: a callback that passed the paired-account gate.
     const hub = readFileSync(join(src, 'server', 'telegram', 'hub.ts'), 'utf8');
     expect(hub).toMatch(/if \(!isAuthorized\(u as unknown as TgUpdateLike, ab\.binding\)\) \{ this\.strangers\.note/);
