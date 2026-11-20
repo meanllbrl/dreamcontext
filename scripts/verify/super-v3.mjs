@@ -47,6 +47,8 @@ const FRAMES = {
   // question, and its card then draws nothing (SuperQuestionCard); off stage the record's text draws.
   'C-soru': { needs: 1, jobs: 3, minis: 0, chat: 'ask', cards: 'noAsking', mock: 'super-ux-denetim/kareler/C-soru.png', sizes: [[1440, 900]], light: true },
   'H-ajanda': { needs: 1, jobs: 3, minis: 0, chat: 'ask', pad: true, agendaTap: true, mock: 'super-ux-denetim/kareler/H-ajanda.png', sizes: [[1440, 900]], light: true },
+  // v3-4: the pill's 'needs you' lands on the agenda's first pink row (no mockup: an interaction frame).
+  'H-needs': { needs: 1, jobs: 3, minis: 0, chat: 'ask', pad: true, needsTap: true, mock: null, sizes: [[1440, 900]], light: true },
   'A-izin': { needs: 1, jobs: 3, minis: 0, perms: 1, allows: true, chat: 'allow', mock: 'super-ux-denetim/kareler/A-izin.png', sizes: [[1440, 900], [1180, 800]], light: true },
   // W3: the presentation window (K14, D14): a phone shot in front, a PDF waiting as a background tab.
   '08-kuyruk': { needs: 1, jobs: 4, minis: 0, present: true, mock: 'super-jakob-v3/v3/08-kuyruk-2.png', sizes: [[1440, 900], [1180, 800]], light: true },
@@ -236,6 +238,17 @@ async function shoot(name, f, [w, h], dark) {
     await p.locator('[data-testid="super-agenda-row"][data-live="true"][data-state="now"]').first().click({ timeout: 10_000, position: { x: 60, y: 12 } }).catch(() => fail(`${where}: no live agenda line to tap`));
     await p.waitForTimeout(800);
     if (!(await p.locator('[data-testid="super-job-filter-bar"]').count())) fail(`${where}: the agenda tap did not narrow the chat`);
+  }
+  if (f.needsTap) {
+    await p.locator('[data-testid="super-status-needs"]').click({ timeout: 10_000 }).catch(() => fail(`${where}: no needs-you pill`));
+    await p.waitForTimeout(400);
+    const landed = await p.evaluate(() => {
+      const row = document.querySelector('.super-agenda-row[data-flash="true"]');
+      const first = document.querySelector('.super-agenda-row[data-group="waiting"]');
+      return { flash: !!row, first: !!row && row === first, focus: !!row && row.contains(document.activeElement) };
+    });
+    if (!landed.first || !landed.focus) fail(`${where}: needs-you did not land on the agenda's first pink row (${JSON.stringify(landed)})`);
+    else ok(`${where}: needs-you landed on the agenda's first pink row, focused`);
   }
   if (f.chat === 'member' && !(await p.locator('.super-event-with-quotes').count())) fail(`${where}: no member quote card`);
   if (f.away && !(await p.locator('[data-testid="super-away"]').count())) fail(`${where}: no away tiles`);
