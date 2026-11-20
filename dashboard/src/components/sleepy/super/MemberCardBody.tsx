@@ -87,7 +87,7 @@ export function ownAutomation<T extends TeamAutomation>(all: readonly T[], slug:
   return implicit ? all.find((a) => a.slug === slug && routineOf(a, slug)) ?? null : null;
 }
 
-function useMemberRoutines(slug: string): TeamAutomation[] {
+export function useMemberRoutines(slug: string): TeamAutomation[] {
   const autos = useAutomations();
   const implicit = !!findAgent(useAgents().data, slug)?.implicit;
   // The member's own unsplit scheduled manifest IS the member (the server's rule): never a row

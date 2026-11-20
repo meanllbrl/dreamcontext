@@ -142,7 +142,7 @@ export function TeamTile({ card }: { card: TeamCard }) {
   );
 }
 
-function GlobeIcon({ size }: { size: number }) {
+export function GlobeIcon({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
       <circle cx="8" cy="8" r="6.2" /><path d="M1.8 8h12.4M8 1.8c1.8 1.9 2.6 3.9 2.6 6.2S9.8 12.3 8 14.2C6.2 12.3 5.4 10.3 5.4 8S6.2 3.7 8 1.8Z" />

@@ -318,6 +318,8 @@ export interface SuperStageView {
   /** Open again cards the owner closed (the owner's own open): one side by side, several as a
    *  group presented. Resolves false when none could be opened. */
   reopen: (cards: readonly KnownCard[]) => Promise<boolean>;
+  /** Open a member's card as its tab in the presentation window (Ü2). False: no card for it. */
+  showMember?: (member: string) => boolean;
 }
 const stageViews = new Map<string, SuperStageView>();
 const stageKeys = new Map<string, string>();

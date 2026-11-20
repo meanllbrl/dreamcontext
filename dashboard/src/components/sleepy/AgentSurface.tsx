@@ -21,7 +21,9 @@ import { openMemberMirrors, openOwnerQuestions, sendToSuper, trimOwnerAnswers } 
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
 import { ParkedChat } from './ParkedChat';
+import { memberCardOf } from './super/memberQuote';
 import { TeamJobConversation } from './super/TeamJobConversation';
+import { MemberTab } from './super/MemberTab';
 import type { TeamCard } from './super/TeamTile';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -4041,7 +4043,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     <ChildTranscript key={claudeId} claudeId={claudeId}
       parked={sessionListRef.current.some((m) => m.claudeId === claudeId && m.dormant && !!m.parked)} />
   ), []);
-  const renderTeamJob = useCallback((card: TeamCard) => <TeamJobConversation key={card.job.id} card={card} vault={vault ?? ''} />, [vault]);
+  // In the presentation window a member is its tab (Ü2, MemberTab): chat UI, so mounted from here.
+  const renderTeamJob = useCallback((card: TeamCard, tab: boolean) => {
+    const convo = <TeamJobConversation key={card.job.id} card={card} vault={vault ?? ''} />;
+    return tab ? <MemberTab card={card} conversation={convo} /> : convo;
+  }, [vault]);
   // The super chat draws the Super Agent's questions to the owner as cards (superQuestions.ts,
   // owner 2026-10-21 "soruyu hep chatta sorsun"). They read the record's open questions from
   // here, where the record lives whether or not the stage is up; no live record = static cards.
@@ -4114,6 +4120,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // is now and bring one back with the stage's own moves: a card side by side (as a question's
   // report card does, above), a group presented whole (the group's "Open all"), from Others too.
   const superGroups = superState?.groups;
+  const superTeam = superState?.team;
   // The cards in front now (presented, or side by side): their tiles do not read "Show again".
   const stageViewNow = superState?.view;
   const superFrontKey = stageViewNow?.mode === 'present' ? (stageViewNow.cards ?? []).join(',')
@@ -4154,8 +4161,15 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       editLayoutRef.current({ view: { mode: 'present', cards: ids.slice(0, MAX_FILMSTRIP) } });
       return true;
     };
-    publishSuperStage(superQuestionSid, { now, bring, reopen }, superStageKey);
-  }, [superQuestionSid, superStageKey, superContainers, superGroups, superFront]);
+    const showMember = (member: string) => {
+      const id = memberCardOf(member, superTeam ?? [], containers);
+      const c = id ? containers.find((k) => k.id === id) : undefined;
+      if (!id || !c) return false;
+      editLayoutRef.current({ ...(c.place === 'others' ? { cards: [{ id, place: 'float' as const }] } : {}), view: { mode: 'present', cards: [id] } });
+      return true;
+    };
+    publishSuperStage(superQuestionSid, { now, bring, reopen, showMember }, superStageKey);
+  }, [superQuestionSid, superStageKey, superContainers, superGroups, superFront, superTeam]);
   useEffect(() => () => {
     if (publishedStageSid.current) publishSuperStage(publishedStageSid.current, null);
   }, []);

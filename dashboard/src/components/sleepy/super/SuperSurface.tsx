@@ -92,7 +92,7 @@ export interface SuperSurfaceProps {
   miniRail?: boolean;
   /** A team card shown large: its member's conversation (SuperContainer's `teamConversation`).
    *  Absent while the surface is folded away: it hands the session back to the AI Team page. */
-  teamConversation?: (card: TeamCard) => ReactNode;
+  teamConversation?: (card: TeamCard, tab: boolean) => ReactNode;
   titleFor: (claudeId: string) => string;
   /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
   nameFor?: (claudeId: string) => string;
@@ -731,7 +731,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       const c = byId.get(id);
       if (!c) return;
       if (c.kind === 'web') setLru((prev) => touchLru(prev, id));
-      onLayout(c.place === 'others' ? { cards: [{ id, place: 'float' }], view: { mode: 'half', card: id } } : { view: { mode: 'half', card: id } });
+      // A member opens as a tab in the presentation window (Ü2), never beside the chat as a page.
+      const view = c.kind === 'team' ? { mode: 'present' as const, cards: [id] } : { mode: 'half' as const, card: id };
+      onLayout(c.place === 'others' ? { cards: [{ id, place: 'float' }], view } : { view });
     },
     onToOthers: (id: string) => { if (remote) return; onLayout({ cards: [{ id, place: 'others' }] }); focusAfter(id); },
     onAskAbout: (id: string) => {

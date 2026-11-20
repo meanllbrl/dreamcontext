@@ -61,3 +61,14 @@ export function jobNameOf(brief: string, max = 60): string {
   const first = (brief.split('\n').find((l) => l.trim()) ?? '').replace(/\s+/g, ' ').trim();
   return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first;
 }
+
+/** The member's ONE card on the stage (Ü2): the team card standing on one of its jobs, or null.
+ *  "Read full answer" opens it as the member's tab in the presentation window. */
+export function memberCardOf(
+  member: string,
+  team: ReadonlyArray<{ id: string; member: string }>,
+  containers: ReadonlyArray<{ id: string; kind: string; ref: string }>,
+): string | null {
+  const jobs = new Set(team.filter((j) => j.member === member).map((j) => j.id));
+  return containers.find((c) => c.kind === 'team' && jobs.has(c.ref))?.id ?? null;
+}
