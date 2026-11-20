@@ -792,3 +792,5 @@
 .ns-pcard-sheet .ns-pcard-title { padding: var(--space-2) var(--space-3); }
 .ns-pcard-sheet .ns-pcard-body { padding: 0 var(--space-2) var(--space-4); overflow-y: auto; }
 .ns-pcard-sheet .ns-pcard-row { min-height: var(--touch-target, 44px); }
+.ns-pcard-super[data-off="true"] { color: var(--color-text-tertiary); }
+.ns-pcard-super[data-off="true"] .ns-pcard-diamond { background: var(--color-text-tertiary); }

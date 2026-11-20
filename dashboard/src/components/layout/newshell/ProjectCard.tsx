@@ -79,13 +79,13 @@ export function ProjectCard({ data, anchor, sheet = false, onNeedsYou, onPlace, 
   const body = (
     <>
       {s && (
-        <button type="button" className="ns-pcard-super ns-pcard-row" data-testid="ns-pcard-super"
+        <button type="button" className="ns-pcard-super ns-pcard-row" data-testid="ns-pcard-super" data-off={s.on ? undefined : 'true'}
+          title={s.working ? t('shell.nav.superWorking') : s.on ? t('shell.nav.superIdle') : t('shell.nav.superOff')}
           onClick={() => onNeedsYou({ key: 'super', kind: 'super', label: '', count: 0, intent: { kind: 'super' } })}>
           <span className="ns-pcard-diamond" data-working={s.working ? 'true' : undefined} aria-hidden="true" />
           <span className="ns-pcard-t">{t('shell.drawer.superAgent')}</span>
-          <span className="ns-pcard-state" data-asking={s.asking ? 'true' : undefined}>
-            {s.asking ? t('shell.nav.needsYou') : s.working ? t('shell.nav.superWorking') : s.on ? t('shell.nav.superIdle') : t('shell.nav.superOff')}
-          </span>
+          {/* The name already says "Super Agent": only what needs the owner, or its work, is said. */}
+          {s.asking && <span className="ns-pcard-state" data-asking="true">{t('shell.nav.needsYou')}</span>}
         </button>
       )}
       <div className="ns-pcard-head ns-pcard-head--needs">{t('shell.nav.needsYou')}</div>
