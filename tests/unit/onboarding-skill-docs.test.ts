@@ -71,7 +71,7 @@ describe('the documented flags exist on the real command tree', () => {
 });
 
 describe('the UI words the docs quote are the UI copy', () => {
-  for (const label of ['This Mac', 'Set everything up', 'Start with Claude', 'Finish setting up ({n} left)']) {
+  for (const label of ['This Mac', 'Set everything up', 'Continue with Claude', 'Open a project', 'Start reading', 'Finish setting up ({n} left)']) {
     it(`"${label}" is an EN string in I18nContext`, () => {
       expect(I18N).toContain(`'${label}'`);
     });
@@ -170,13 +170,14 @@ describe('skill/references/troubleshooting.md', () => {
 });
 
 describe('skill/references/integrations.md', () => {
-  it('describes the onboarding takeover, its three steps and the no-Node setup screen', () => {
+  it('describes the onboarding takeover, its screens and the no-Node setup screen', () => {
     expect(lineStartingWith(INTEGRATIONS, '- **First-run onboarding**')).toContain('Finish setting up (N left)');
+    expect(lineStartingWith(INTEGRATIONS, '  - **Welcome**')).toContain('**Continue with Claude**');
     const mac = lineStartingWith(INTEGRATIONS, '  - **This Mac**');
     expect(mac).toContain('GET /api/onboarding/readiness');
     expect(mac).toContain('**Set everything up**');
     expect(lineStartingWith(INTEGRATIONS, '  - **Project**')).toContain('git init');
-    expect(lineStartingWith(INTEGRATIONS, '  - **Start**')).toContain('**Start with Claude**');
+    expect(lineStartingWith(INTEGRATIONS, '  - **Super**')).toContain('**Start reading**');
     const noNode = lineStartingWith(INTEGRATIONS, '- **No Node.js on the Mac**');
     expect(noNode).toContain('~/.dreamcontext/node/<version>');
     expect(noNode).toContain('DREAMCONTEXT_FORCE_NODE_SETUP=1');
@@ -188,10 +189,10 @@ describe('skill/references/integrations.md', () => {
 });
 
 describe('skill-initializer/SKILL.md', () => {
-  it('names the onboarding hand-off as an entry', () => {
+  it('names the onboarding hand-off and the desktop first read as entries', () => {
     const line = lineStartingWith(INITIALIZER, '- **Onboarding hand-off**');
-    expect(line).toContain('Start with Claude');
     expect(line).toContain('dreamcontext setup');
+    expect(lineStartingWith(INITIALIZER, '- **First read (desktop)**')).toContain('Start reading');
   });
 });
 
@@ -203,12 +204,13 @@ describe('README.md', () => {
     expect(README).toContain('`~/.dreamcontext/node`');
   });
 
-  it('the Desktop App onboarding paragraph describes This Mac, Project and Start with Claude', () => {
+  it('the Desktop App onboarding paragraph describes Continue with Claude, Project, Start reading and This Mac', () => {
     const para = lineStartingWith(README, '**Onboarding without a terminal.**');
+    expect(para).toContain('**Continue with Claude**');
     expect(para).toContain('**This Mac**');
     expect(para).toContain('**Set everything up**');
     expect(para).toContain('**Project**');
-    expect(para).toContain('**Start with Claude**');
+    expect(para).toContain('**Start reading**');
     expect(para).not.toContain('paste into your agent');
   });
 });
@@ -221,7 +223,9 @@ describe('the new onboarding prose carries no em dash', () => {
     ['integrations onboarding bullet', lineStartingWith(INTEGRATIONS, '- **First-run onboarding**')],
     ['integrations This Mac step', lineStartingWith(INTEGRATIONS, '  - **This Mac**')],
     ['integrations Project step', lineStartingWith(INTEGRATIONS, '  - **Project**')],
-    ['integrations Start step', lineStartingWith(INTEGRATIONS, '  - **Start**')],
+    ['integrations Welcome step', lineStartingWith(INTEGRATIONS, '  - **Welcome**')],
+    ['integrations Super step', lineStartingWith(INTEGRATIONS, '  - **Super**')],
+    ['initializer first-read line', lineStartingWith(INITIALIZER, '- **First read (desktop)**')],
     ['integrations agent panel bullet', lineStartingWith(INTEGRATIONS, '- **Agent panel setup**')],
     ['integrations no-Node bullet', lineStartingWith(INTEGRATIONS, '- **No Node.js on the Mac**')],
     ['initializer hand-off line', lineStartingWith(INITIALIZER, '- **Onboarding hand-off**')],

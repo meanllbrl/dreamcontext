@@ -173,7 +173,8 @@ describe('the intents', () => {
 
   it('the window queues a close without bringing the project forward', () => {
     const src = read('dashboard/src/components/layout/WindowChrome.tsx');
-    expect(src).toMatch(/if \(intent\.kind === 'move-window' \|\| intent\.kind === 'close-chat'\) return 'focused-tab';/);
+    // A null intent (a Super landing: bring the window forward only) is not a close either.
+    expect(src).toMatch(/if \(intent && \(intent\.kind === 'move-window' \|\| intent\.kind === 'close-chat'\)\) return 'focused-tab';/);
   });
 
   it('the surface closes through the one tab-close path, asks first through confirmAction, marks it closed', () => {
