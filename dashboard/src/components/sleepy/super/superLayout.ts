@@ -1240,7 +1240,8 @@ function planStageOnce(
     VARIANT.set(p, { band, opts: { agendaCap: opts.agendaCap, ownerAside: opts.ownerAside } });
     return p;
   };
-  if (opts.dockBelow && !narrow) return tag(planWith(containers, view, stage, opts, false), false);
+  // Under a Dock the band is released only while it holds nothing of its own (terminal pills, the agenda pill).
+  if (opts.dockBelow && !narrow && !(opts.terminals ?? 0) && !opts.agendaPill) return tag(planWith(containers, view, stage, opts, false), false);
   if (!narrow && !(opts.terminals ?? 0) && !opts.agendaPill && containers.length > 0) {
     const tall = planWith(containers, view, stage, opts, false);
     if (tall.others.length === 0 && !tall.more) return tag(tall, false);
@@ -1280,9 +1281,10 @@ function planWith(
   const ids = new Set(list.map((c) => c.id));
   // A presentation window over the Dock (K8, approved frame D; Super 2026-11-20 "tam yüksekliği
   // alsın"): no top band either; the window and the chat start one margin under the stage's top and
-  // the controls ride in the window's title row (`inTitle` below).
+  // the controls ride in the window's title row (`inTitle` below). Only while the top band holds
+  // nothing else: a job item there (queueUp) keeps the band, and the window stays under it.
   const presentN = view.mode === 'present' ? new Set((view.cards ?? []).filter((id) => ids.has(id))).size : 0;
-  const liftTop = !!opts.dockBelow && !narrow && !phone && presentN > 0 && drawnLayout(view.layout, presentN) !== 'filmstrip';
+  const liftTop = !!opts.dockBelow && !opts.queueUp && !narrow && !phone && presentN > 0 && drawnLayout(view.layout, presentN) !== 'filmstrip';
   const f: Frame = liftTop
     ? { ...f0, content: { ...f0.content, y: STAGE.MARGIN, height: f0.content.height + f0.content.y - STAGE.MARGIN }, free: { ...f0.free, y: STAGE.MARGIN, height: f0.free.height + f0.free.y - STAGE.MARGIN } }
     : f0;

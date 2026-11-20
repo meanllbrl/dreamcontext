@@ -128,4 +128,19 @@ describe('the window reaches down to the Dock (K8 frame D, Super 2026-11-20)', (
       expect(c.x + c.width).toBeLessThanOrEqual(win.x + win.width);
     }
   });
+  it('a band that holds something stays clear: terminal pills under the window, a job item over it', () => {
+    const jobs = Array.from({ length: 3 }, (_, i) => ({ id: `c${i}`, kind: 'chat', ref: `s${i}`, shape: 'portrait', place: 'float', live: true }) as unknown as StageItem);
+    const page = { id: 'web-plan', shape: 'tall', place: 'float', kind: 'web' } as StageItem;
+    const dock = { prev: false, needs: new Set<string>(), focus: null, today: null, agenda: null, pool: 0, cap: null };
+    const view = { mode: 'present' as const, cards: ['web-plan'], layout: 'spotlight' as const };
+    const overlaps = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
+      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    const term = planStage([...jobs, page], view, { width: 1440, height: 836 }, { terminals: 2, dock });
+    expect(overlaps(term.dock!, term.presentWindow!)).toBe(false);
+    expect(overlaps(term.dock!, term.centre)).toBe(false);
+    const queued = planStage([...jobs, page], view, { width: 1440, height: 836 }, { queueUp: true, queueHeight: 56, dock });
+    expect(queued.controlsInTitle).toBeUndefined();
+    expect(overlaps(queued.queue!, queued.presentWindow!)).toBe(false);
+    expect(overlaps(queued.queue!, queued.centre)).toBe(false);
+  });
 });
