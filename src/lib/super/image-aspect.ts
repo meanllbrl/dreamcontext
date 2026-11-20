@@ -10,6 +10,10 @@
  * because the browser draws the picture rotated. An Exif block that is there but unreadable gives
  * no aspect (neutral), never a guess. Accepted limit: an orientation inside a PNG or WEBP is not
  * read. SVG, an unreadable header, a missing file, a symlink out of the project: no aspect.
+ *
+ * A PDF (W3 K14, its presentation window is as wide as its page): the first page's `/MediaBox`
+ * found in the first 64 KB, turned by a `/Rotate 90|270` in the same head. Accepted limit: a
+ * MediaBox only inside a compressed object stream or past the head gives no aspect (A4 is assumed).
  */
 import { promises as fsp } from 'node:fs';
 import { join, sep } from 'node:path';
@@ -99,6 +103,24 @@ async function jpegSize(fh: FileHandle): Promise<{ width: number; height: number
   return null;
 }
 
+const NUM = '(-?\\d+(?:\\.\\d+)?)';
+const MEDIA_BOX = new RegExp(`/MediaBox\\s*\\[\\s*${NUM}\\s+${NUM}\\s+${NUM}\\s+${NUM}\\s*\\]`);
+
+/** A PDF head's first page size (MediaBox, turned by a quarter rotation), or null. */
+export function pdfPageSize(head: Buffer): { width: number; height: number } | null {
+  if (head.toString('latin1', 0, 5) !== '%PDF-') return null;
+  const text = head.toString('latin1');
+  const m = MEDIA_BOX.exec(text);
+  if (!m) return null;
+  const [x0, y0, x1, y1] = m.slice(1, 5).map(Number) as [number, number, number, number];
+  const width = Math.abs(x1 - x0);
+  const height = Math.abs(y1 - y0);
+  if (!(width > 0) || !(height > 0)) return null;
+  const rot = /\/Rotate\s+(-?\d+)/.exec(text);
+  const quarter = rot ? Math.abs(Number(rot[1])) % 180 === 90 : false;
+  return quarter ? { width: height, height: width } : { width, height };
+}
+
 /** width / height, 3 decimals, or undefined outside [ASPECT_MIN, ASPECT_MAX]. */
 export function aspectOf(size: { width: number; height: number } | null): number | undefined {
   if (!size || !(size.width > 0) || !(size.height > 0)) return undefined;
@@ -120,6 +142,7 @@ export async function imageAspect(projectRoot: string, ref: string): Promise<num
     if (!st.isFile()) return undefined;
     fh = await fsp.open(real, 'r');
     const head = await readAt(fh, 0, HEAD_BYTES);
+    if (/\.pdf$/i.test(ref)) return aspectOf(pdfPageSize(head));
     const mime = sniffImageType(head);
     if (!mime) return undefined;
     if (mime === 'image/jpeg') return aspectOf(await jpegSize(fh));
@@ -138,9 +161,9 @@ export async function imageAspects(projectRoot: string, refs: readonly string[])
   return new Map(out);
 }
 
-/** Writes (or clears) a card's aspect from a freshly read map; images only. */
+/** Writes (or clears) a card's aspect from a freshly read map; pictures and PDFs only. */
 export function setAspect(card: { kind: string; ref: string; aspect?: number }, aspects: ReadonlyMap<string, number | undefined>): void {
-  if (card.kind !== 'image' || !aspects.has(card.ref)) return;
+  if ((card.kind !== 'image' && card.kind !== 'pdf') || !aspects.has(card.ref)) return;
   const a = aspects.get(card.ref);
   if (a === undefined) delete card.aspect; else card.aspect = a;
 }

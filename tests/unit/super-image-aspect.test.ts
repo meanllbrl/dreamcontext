@@ -112,6 +112,20 @@ describe('imageAspect', () => {
   });
 });
 
+describe('a PDF: its first page from the MediaBox (W3 K14)', () => {
+  const pdf = (box: string, extra = '') => `%PDF-1.7\n1 0 obj << /Type /Page /MediaBox [${box}]${extra} >> endobj\n`;
+  it('A4, Letter, a turned page; none without a box, without the header, or via a symlink out', async () => {
+    expect(await imageAspect(root, put('a4.pdf', pdf('0 0 595 842')))).toBe(0.707);
+    expect(await imageAspect(root, put('letter.pdf', pdf('0 0 612.0 792.0')))).toBe(0.773);
+    expect(await imageAspect(root, put('turned.pdf', pdf('0 0 595 842', ' /Rotate 90')))).toBe(1.415);
+    expect(await imageAspect(root, put('nobox.pdf', '%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n'))).toBeUndefined();
+    expect(await imageAspect(root, put('fake.pdf', '1 0 obj << /MediaBox [0 0 595 842] >>'))).toBeUndefined();
+    writeFileSync(join(outside, 'x.pdf'), pdf('0 0 595 842'));
+    symlinkSync(join(outside, 'x.pdf'), join(root, 'link.pdf'));
+    expect(await imageAspect(root, 'link.pdf')).toBeUndefined();
+  });
+});
+
 describe('the record keeps a sane aspect on pictures only', () => {
   const card = (id: string, kind: string, aspect: unknown) => ({ id, kind, ref: kind === 'image' ? `${id}.png` : id, shape: 'square', place: 'float', aspect });
   it('drops 1:30, NaN, a string and a non-picture\'s; keeps and rounds a sane one', () => {
@@ -126,5 +140,9 @@ describe('the record keeps a sane aspect on pictures only', () => {
     expect(by('image-c')?.aspect).toBeUndefined();
     expect(by('task-d')?.aspect).toBeUndefined();
     expect(by('image-e')?.aspect).toBe(1.667);
+  });
+  it('a PDF keeps its first page\'s', () => {
+    const s = sanitizeSuperState({ v: SUPER_STATE_VERSION, containers: [card('pdf-a', 'pdf', 0.7071)] });
+    expect(s.containers[0]?.aspect).toBe(0.707);
   });
 });

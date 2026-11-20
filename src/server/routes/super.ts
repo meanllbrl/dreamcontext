@@ -1605,7 +1605,7 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
   touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
   // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
   // time, so a mockup overwritten at the same path gets its new shape.
-  const aspects = kind === 'image' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
+  const aspects = kind === 'image' || kind === 'pdf' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
   // The child `--for` named left the record meanwhile (an ended one past the history cap):
   // refused, never opened unlinked as if for its job.
   let childGone = false;
@@ -2192,7 +2192,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     let presented: { shown: boolean; at: number; of: number } = { shown: true, at: 1, of: 1 };
     // The presented pictures' shapes, read before the write (image-aspect.ts).
     const aspects = await imageAspects(dirname(c.who.contextRoot),
-      c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
+      c.state.containers.filter((k) => (k.kind === 'image' || k.kind === 'pdf') && ids.includes(k.id)).map((k) => k.ref));
     const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, aspects);
       // A group presented whole comes out of Others: leaving the presentation finds it on the stage.

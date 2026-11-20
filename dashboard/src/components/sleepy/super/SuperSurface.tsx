@@ -488,9 +488,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prev is read, not watched: the plan below records it
   }, [needsKey, spokeFocus, agendaPill, agendaId, poolCount, liveCount, vault, t, items]);
+  // The window's tabs (K14: its width never under the tabs' floor): the queue on screen, else one.
+  const presentTabCount = qc.showing && pq && pqHead ? pq.items.length : 1;
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda],
+    () => planStage(items, view, size, { presentTabCount, dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts }),
+    [items, view, size, presentTabCount, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda],
   );
   dockPrevRef.current = { vault, docked: !!plan.jobDock?.docked };
   cuesPlanRef.current = plan;

@@ -162,7 +162,7 @@ export interface SuperContainer {
   forAt?: number;
   /** A picture's width/height (3 decimals), read by the SERVER from the file's header whenever
    *  an agent opens, presents or asks with it (image-aspect.ts); never written by the owner's
-   *  layout. Images only, in [ASPECT_MIN, ASPECT_MAX]; absent = unknown (drawn as today). */
+   *  layout. Pictures and PDFs (the first page) only, in [ASPECT_MIN, ASPECT_MAX]; absent = unknown. */
   aspect?: number;
 }
 

@@ -72,7 +72,7 @@ export interface SuperContainer {
   /** A picture shown for this child's job: it goes to Others once the job moves on. */
   forChild?: string;
   forAt?: number;
-  /** A picture's width/height, server-read from its file header (absent = unknown). */
+  /** A picture's or a PDF's first page's width/height, server-read from its file header (absent = unknown). */
   aspect?: number;
 }
 

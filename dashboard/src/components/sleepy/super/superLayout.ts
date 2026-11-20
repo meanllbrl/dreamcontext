@@ -361,7 +361,7 @@ export function stageItems(
     if (c.min && !shown.has(c.id)) return;
     const live = c.kind === 'chat' && isLive(c);
     const page = c.kind === 'web' ? pageAspect(c) : undefined;
-    const aspect = c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect
+    const aspect = (c.kind === 'image' || c.kind === 'pdf') && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect
       : typeof page === 'number' && Number.isFinite(page) && page > 0 ? page : undefined;
     const fit = c.kind === 'web' && !aspect && c.sizeBy !== 'owner' ? pageFit(c) : undefined;
     if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(c.sizeBy ? { sizeBy: c.sizeBy } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}), ...(fit ? { fit } : {}) });
