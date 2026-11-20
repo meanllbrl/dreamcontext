@@ -246,12 +246,13 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const stopChatRetries = useCallback(() => { ladderRef.current?.(); ladderRef.current = null; }, []);
   const startChatLadder = useCallback(() => {
     stopChatRetries();
-    ladderRef.current = runChatLadder(bus, CHAT_MOVE_MAX_MS, {
+    // Classic keeps its old 2.5 s carry; the new shell asks until the chat move's bound.
+    ladderRef.current = runChatLadder(bus, newShell ? CHAT_MOVE_MAX_MS : 2_500, {
       isOpen: () => chatOpenRef.current,
       stillActive: () => isActiveRef.current,
     });
     if (chatOpenRef.current) stopChatRetries();
-  }, [bus, stopChatRetries]);
+  }, [bus, newShell, stopChatRetries]);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => {
     const isOpen = open === true;
     // An open the ladder asked for is a landing's; a close right after a navigation is that
