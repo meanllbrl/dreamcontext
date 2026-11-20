@@ -413,7 +413,24 @@ export function askHome(item: Pick<SuperQueueItem, 'id' | 'kind' | 'read'>, fron
  *  question stays in the chat, so exactly one full card is drawn for each. */
 export function dockedAskOf(queue: readonly SuperQueueItem[], front: WindowFront | null): string | null {
   if (!front) return null;
-  return openOwnerQuestions(queue).find((q) => askHome(q, front) === 'report')?.id ?? null;
+  return openOwnerQuestions(queue).find((q) => askHome(q, front) === 'report' && decisionChoices(q) !== null)?.id ?? null;
+}
+
+/** The most choices a decision strip draws as one-tap chips (approved frame D-sunum-karar: 3). */
+export const DECISION_MAX_CHOICES = 4;
+
+/**
+ * A question the strip under the report can ask (approved frame D, owner 2026-11-20 "Maket D'yi
+ * birebir yap"): ONE question, one pick, 1-4 short choices with no preview. Its question and its
+ * choices; null for anything richer, which the chat asks with its full card instead.
+ */
+export function decisionChoices(item: Pick<SuperQueueItem, 'ask' | 'ownerText' | 'options'>): { question: string; choices: string[] } | null {
+  const spec = askSpecOf(item);
+  if (spec.questions.length !== 1) return null;
+  const q = spec.questions[0];
+  if (q.multiSelect || q.options.length < 1 || q.options.length > DECISION_MAX_CHOICES) return null;
+  if (q.options.some((o) => o.preview || !o.label.trim())) return null;
+  return { question: q.question, choices: q.options.map((o) => o.label) };
 }
 
 /** The docked question of each Super chat (its claude id): the chat then draws one row for it. */

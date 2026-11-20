@@ -8,7 +8,7 @@ import { openJobRow } from './superJobsStore';
 import { revealQuestion } from './superQuestions';
 import { awayHasAny, awaySummary, finishedOthersText, rememberAwaySpan } from './awaySummary';
 import { JobsView } from '../chat/JobsView';
-import { BotMark } from '../AgentSetup';
+import { BrandMark } from '../../brand/BrandMark';
 import './SuperAwayTiles.css';
 
 const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -47,7 +47,8 @@ export function SuperAwayTiles({ session, fallback = null }: { session: ChatSess
 
   return (
     <section className="super-away" data-testid="super-away" aria-label={t(sum.span ? 'super.away.title' : 'super.away.titleNow')}>
-      <BotMark />
+      {/* Frame E: the Super's gem with its glow, never the terminal glyph. */}
+      <BrandMark size={48} glow className="super-away-gem" />
       <h3 className="super-away-title">{t(sum.span ? 'super.away.title' : 'super.away.titleNow')}</h3>
       {sub && <p className="super-away-sub" data-testid="super-away-span">{sub}</p>}
       <div className="super-away-tiles">

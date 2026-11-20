@@ -4,12 +4,12 @@
  * bunları"); exactly one full card per question, the chat keeps one row. Fictional fixtures.
  */
 import { describe, it, expect } from 'vitest';
-import { askHome, dockedAskOf } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
+import { askHome, decisionChoices, dockedAskOf } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
 import { PRESENT_WIN, STAGE, planStage, type StageItem } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import type { SuperQueueItem } from '../../dashboard/src/lib/superTypes.js';
 
 const ask = (id: string, over: Partial<SuperQueueItem> = {}): SuperQueueItem => ({
-  id, kind: 'ask', state: 'escalated', sessionId: 'super-1', createdAt: 1, ownerText: 'Ship the pricing page?', ...over,
+  id, kind: 'ask', state: 'escalated', sessionId: 'super-1', createdAt: 1, ownerText: 'Ship the pricing page?', options: ['Ship it', 'Wait'], ...over,
 } as SuperQueueItem);
 
 describe('askHome', () => {
@@ -40,22 +40,46 @@ describe('dockedAskOf: one docked question at a time', () => {
   });
 });
 
+describe('decisionChoices: what the strip can ask with one tap (approved frame D)', () => {
+  const spec = (questions: unknown[]) => ({ ask: { questions } }) as unknown as SuperQueueItem;
+  it('one question, one pick, 1-4 choices: its words and its chips', () => {
+    expect(decisionChoices(spec([{ question: 'Yearly price?', options: [{ label: '990' }, { label: '1,190' }, { label: '790' }] }])))
+      .toEqual({ question: 'Yearly price?', choices: ['990', '1,190', '790'] });
+  });
+  it('several questions, a multi-pick, a free text, five choices or a preview: the chat\'s full card', () => {
+    const o = (n: number) => Array.from({ length: n }, (_, i) => ({ label: `o${i}` }));
+    expect(decisionChoices(spec([{ question: 'a', options: o(2) }, { question: 'b', options: o(2) }]))).toBeNull();
+    expect(decisionChoices(spec([{ question: 'a', options: o(2), multiSelect: true }]))).toBeNull();
+    expect(decisionChoices(spec([{ question: 'a', options: [] }]))).toBeNull();
+    expect(decisionChoices(spec([{ question: 'a', options: o(5) }]))).toBeNull();
+    expect(decisionChoices(spec([{ question: 'a', options: [{ label: 'x', preview: '<b>x</b>' }] }]))).toBeNull();
+  });
+  it('a question the strip cannot carry is never docked: the chat asks it whole', () => {
+    const rich = ask('q-rich', { read: ['web-plan'], ask: { questions: [{ question: 'a', options: [], multiSelect: false }] } } as Partial<SuperQueueItem>);
+    expect(dockedAskOf([rich], { cards: ['web-plan'] })).toBeNull();
+  });
+});
+
 describe('planStage: the dock under the window\'s page', () => {
   const stage = { width: 1440, height: 820 };
   const page = { id: 'web-plan', shape: 'tall', place: 'float', kind: 'web' } as StageItem;
   const view = { mode: 'present' as const, cards: ['web-plan'], layout: 'spotlight' as const };
-  it('the page gives its foot to the dock; the dock spans the window under it', () => {
+  it('approved frame D: a thin strip in the window\'s foot, the page takes the window\'s height above it', () => {
     const plain = planStage([page], view, stage);
     const docked = planStage([page], view, stage, { askDock: true });
     const win = docked.presentWindow!;
     const dock = docked.askDock!;
     expect(plain.askDock).toBeUndefined();
-    expect(dock.x).toBe(win.x);
-    expect(dock.width).toBe(win.width);
-    expect(dock.y + dock.height).toBe(win.y + win.height);
-    expect(dock.height).toBeLessThanOrEqual(PRESENT_WIN.ASK_MAX_H);
+    // Inset 16 px from the window's sides and 14 px from its foot, 96 px tall: a strip, never a card.
+    expect(dock.x).toBe(win.x + PRESENT_WIN.ASK_INSET_X);
+    expect(dock.width).toBe(win.width - 2 * PRESENT_WIN.ASK_INSET_X);
+    expect(dock.y + dock.height).toBe(win.y + win.height - PRESENT_WIN.ASK_INSET_B);
+    expect(dock.height).toBe(PRESENT_WIN.ASK_H);
+    expect(dock.height).toBeLessThan(0.15 * win.height);
     const r = docked.cards['web-plan'].rect;
-    expect(r.y + r.height).toBeLessThanOrEqual(dock.y - STAGE.GAP + 0.5);
+    expect(r.y + r.height).toBeLessThanOrEqual(dock.y + 0.5);
+    // The page keeps most of the window: at least 80% of the body it has without a question.
+    expect(r.height).toBeGreaterThanOrEqual(0.8 * plain.cards['web-plan'].rect.height);
     expect(win.width).toBeGreaterThanOrEqual(PRESENT_WIN.ASK_MIN_W);
     expect(docked.centre.width).toBeGreaterThanOrEqual(PRESENT_WIN.CHAT_MIN);
   });

@@ -1481,9 +1481,10 @@ function planWith(
       const itemOf = (id: string) => list.find((x) => x.id === id);
       const items = ordered.map(itemOf);
       const pictures = items.filter((it) => it?.kind === 'image');
-      // A question about what it shows sits under the page (K8): the page gives it its foot.
-      const askH = opts.askDock ? Math.round(Math.min(PRESENT_WIN.ASK_MAX_H, PRESENT_WIN.ASK_FRAC * content.height)) : 0;
-      const bodyH = Math.max(0, content.height - PRESENT_WIN.TITLE_H - (askH ? askH + STAGE.GAP : 0));
+      // A question about what it shows is a thin decision strip in the window's foot (K8, approved
+      // frame D): the page keeps the window's height above it and scrolls inside.
+      const askH = opts.askDock ? PRESENT_WIN.ASK_H : 0;
+      const bodyH = Math.max(0, content.height - PRESENT_WIN.TITLE_H - (askH ? askH + PRESENT_WIN.ASK_INSET_B * 2 : 0));
       const room = content.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN;
       // Two or more cards side by side keep their floor as far as the chat's floor allows: the chat
       // then gives way down to REGION_MIN only, as it did beside the cards before (a 968 px touch stage).
@@ -1510,7 +1511,9 @@ function planWith(
       const win: Rect = { x: content.x + content.width - pw, y: content.y, width: pw, height: content.height };
       const body: Rect = { x: win.x, y: win.y + PRESENT_WIN.TITLE_H, width: pw, height: bodyH };
       const centre: Rect = { x: content.x, y: content.y, width: Math.max(0, content.width - STAGE.GAP - pw), height: content.height };
-      const askDock: Rect | undefined = askH ? { x: win.x, y: body.y + body.height + STAGE.GAP, width: pw, height: askH } : undefined;
+      const askDock: Rect | undefined = askH
+        ? { x: win.x + PRESENT_WIN.ASK_INSET_X, y: win.y + win.height - PRESENT_WIN.ASK_INSET_B - askH, width: Math.max(0, pw - 2 * PRESENT_WIN.ASK_INSET_X), height: askH }
+        : undefined;
       const extra = { layout, chat: 'column' as const, controls, presentWindow: win, ...(askDock ? { askDock } : {}) };
       // A picture or a device page keeps its shape in the body (the window is already about its
       // width; the height decides the rest). A card the owner sized fills it.
@@ -2153,9 +2156,10 @@ export const PRESENT_WIN = {
   TABS_BASE: 160, TAB_W: 170,
   /** The chat beside the window never reads narrower than this. */
   CHAT_MIN: 520,
-  /** The question dock under the page (K8): at most this tall, or this share of the window; the
-   *  window never narrower than its card reads (the chat's own card width). */
-  ASK_MAX_H: 340, ASK_FRAC: 0.42, ASK_MIN_W: 460,
+  /** The decision strip in the window's foot (K8, approved frame D-sunum-karar): its height (two
+   *  lines over a row of 30 px chips), its inset from the window's sides and foot, and the window
+   *  never narrower than the strip reads. */
+  ASK_H: 96, ASK_INSET_X: 16, ASK_INSET_B: 14, ASK_MIN_W: 460,
   /** A PDF with no measured page: A4 (595 x 842). */
   A4: 595 / 842,
 } as const;

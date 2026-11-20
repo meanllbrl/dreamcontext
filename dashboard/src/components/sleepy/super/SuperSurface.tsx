@@ -588,6 +588,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const origin = c.kind === 'chat' && hasOwnKey(state.children, c.ref) ? (state.children[c.ref] as { workOrigin?: unknown }).workOrigin : undefined;
     return typeof origin === 'string' && origin.startsWith('main:') ? `${title} · ${t('superStage.member.forSuper')}` : title;
   }, [props.titleFor, state.team, state.children, tasks, t]);
+  // The strip's item and the job it is from (frame D: "From <job>"): the shown card's job.
+  const dockedAskItem = dockedAsk ? state.queue.find((q) => q.id === dockedAsk) ?? null : null;
+  // Only a job, never the card's own name again (the title is said once, in its tab).
+  const dockedAskFrom = useMemo(() => {
+    if (!dockedAskItem) return '';
+    const shown = new Set([...(dockedAskItem.read ?? []), ...(view.cards ?? [])]);
+    const job = state.containers.find((c) => shown.has(c.id) && c.forChild)?.forChild;
+    return job ? props.titleFor(job) : '';
+  }, [dockedAskItem, state.containers, view.cards, props.titleFor]);
   /** A team card's job and its status now (the view's `teamLive`); undefined when the job is gone. */
   const teamCardOf = useCallback((c: Container): TeamCard | undefined => {
     if (c.kind !== 'team') return undefined;
@@ -1638,7 +1647,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           onMinimize={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation}
           onMention={(id) => { if (!remote) actions.onAskAbout(id); }} />
       )}
-      {plan.askDock && dockedAsk && superSession && <ReportAskDock rect={plan.askDock} item={dockedAsk} session={superSession} />}
+      {plan.askDock && dockedAskItem && superSession && <ReportAskDock rect={plan.askDock} item={dockedAskItem} from={dockedAskFrom} session={superSession} />}
       {plan.presentTabs && plan.layout && !plan.presentWindow && (
         <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
       )}

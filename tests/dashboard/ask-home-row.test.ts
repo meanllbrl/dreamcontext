@@ -25,7 +25,7 @@ const { setDockedAsk } = await import('../../dashboard/src/components/sleepy/sup
 const { SuperQuestionCard } = await import('../../dashboard/src/components/sleepy/super/SuperQuestionCard.js');
 const { ReportAskDock } = await import('../../dashboard/src/components/sleepy/super/ReportAskDock.js');
 
-const item = { id: 'q-plan', kind: 'ask', state: 'escalated', sessionId: 'SUPER', createdAt: 1, ownerText: 'Ship the pricing page?', read: ['web-plan'] };
+const item = { id: 'q-plan', kind: 'ask', state: 'escalated', sessionId: 'SUPER', createdAt: 1, ownerText: 'Ship the pricing page?', options: ['Ship it', 'Wait'], read: ['web-plan'] };
 const session = { claudeId: 'SUPER', status: 'open', busy: false, steer: () => true, send: () => true } as never;
 const ask = { item: 'q-plan', kind: 'ask' as const, toolItemId: 't1', live: true };
 let n = 0;
@@ -48,9 +48,15 @@ describe('one full card per question (K8)', () => {
     expect(chat).toContain('data-testid="super-ask-row"');
     expect(chat).toContain('Ship the pricing page?');
     expect(chat).toContain('super.ask.besideReport');
-    const dock = renderToStaticMarkup(createElement(ReportAskDock, { rect: { x: 600, y: 500, width: 700, height: 300 }, item: 'q-plan', session }));
-    expect((dock.match(/data-testid="survey-card"/g) ?? []).length).toBe(1);
+    const dock = renderToStaticMarkup(createElement(ReportAskDock, { rect: { x: 616, y: 700, width: 668, height: 96 }, item: item as never, from: 'Pricing: yearly plan', session }));
+    // Approved frame D: a thin decision strip, never the general card: what it decides, the job,
+    // the choices as one-tap chips (the first one primary), no radio list.
+    expect(dock).not.toContain('data-testid="survey-card"');
     expect(dock).toContain('data-testid="super-ask-dock"');
+    expect(dock).toContain('super.decide.decides');
+    expect(dock).toContain('super.decide.from');
+    expect((dock.match(/data-testid="super-decide-chip"/g) ?? []).length).toBe(2);
+    expect(dock).toMatch(/data-primary="true"[^>]*>Ship it</);
   });
   it('another chat\'s docked question changes nothing here', () => {
     setDockedAsk('OTHER', 'q-plan');
@@ -58,11 +64,8 @@ describe('one full card per question (K8)', () => {
     expect(html).toContain('data-testid="survey-card"');
     setDockedAsk('OTHER', null);
   });
-  it('the picks outlive a fold or a minimise: chat and dock draw the card with one draft key', () => {
+  it('the picks outlive a fold or a minimise: the chat card keeps them under one draft key', () => {
     const chat = renderToStaticMarkup(createElement(SuperQuestionCard, { ask, session }));
-    setDockedAsk('SUPER', 'q-plan');
-    const dock = renderToStaticMarkup(createElement(ReportAskDock, { rect: { x: 600, y: 500, width: 700, height: 300 }, item: 'q-plan', session }));
     expect(chat).toContain('data-draft="super-ask:SUPER|q-plan"');
-    expect(dock).toContain('data-draft="super-ask:SUPER|q-plan"');
   });
 });
