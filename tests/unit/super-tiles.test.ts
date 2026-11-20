@@ -202,14 +202,11 @@ describe('the surface wiring (source rules)', () => {
     expect(surface).toMatch(/const liveWeb = keptWebIds\(lru, heldOnScreen, /);
   });
 
-  it('a card released on a tile groups: on a card a new group where it stood, on a group into it', () => {
-    // Only in the float view: beside a page a tile is a live job's rail tile (super-canli-kart-sahnede).
+  it('a card released on a tile makes no group: only the Super groups (super-v3 D5), the window says so', () => {
     expect(surface).toMatch(/const tg = drop && !h && floatView \? dropTargetAt\(p, x - origin\.left, y - origin\.top, id\) : null;/);
     expect(surface).toMatch(/else if \(drop && tg\) groupOnto\(id, tg\);/);
-    expect(surface).toMatch(/if \(isGroupId\(onto\)\) onLayout\(\{ \.\.\.out, group: \{ id: onto, cards: \[held\] \} \}\);/);
-    expect(surface).toMatch(/onLayout\(\{ \.\.\.out, group: \{ id: newGroupId\(\), cards: \[onto, held\], name: nextGroupName\(/);
-    // A card brought out of Others onto a tile is no longer put aside.
-    expect(surface).toMatch(/byId\.get\(held\)\?\.place === 'others' \? \{ cards: \[\{ id: held, place: 'float' as const \}\] \} : \{\}/);
+    expect(surface).toContain('onGroupRefused?.();');
+    expect(surface).not.toContain('group: { id:');
     // Dragged out of a group, a card leaves it wherever it lands.
     expect(surface).toMatch(/const leave = from !== 'others' && from !== 'more' \? \{ leave: \[id\] \} : \{\};/);
   });

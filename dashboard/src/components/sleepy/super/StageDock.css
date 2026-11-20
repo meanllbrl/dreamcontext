@@ -89,3 +89,33 @@
   .sdock-walk i { left: 0; width: 100%; opacity: 0.5; }
   .sdock-tile { transition: none; }
 }
+
+/* One line about the owner's last gesture (super-v3 D5: a drop groups nothing), above the Dock. */
+.super-stage-note {
+  position: absolute;
+  left: 50%;
+  bottom: 124px;
+  transform: translateX(-50%);
+  z-index: 60;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.super-stage-note--undo { pointer-events: auto; display: inline-flex; align-items: center; gap: var(--space-3); }
+.super-stage-note-btn {
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.super-stage-note-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }

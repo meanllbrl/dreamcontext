@@ -382,3 +382,12 @@ export function sendToSuper(s: Pick<ChatSession, 'status' | 'busy' | 'steer' | '
   if (s.busy) return s.steer(text) || s.send(text);
   return s.send(text);
 }
+
+/** The window event that asks the Super chat to scroll to an open question (super-v3 K13). */
+export const REVEAL_QUESTION_EVENT = 'super:reveal-question';
+
+/** A stage card's "Asked in the chat · Show" (D7): the chat (W2.A) listens and scrolls to it. */
+export function revealQuestion(itemId: string): void {
+  if (typeof window === 'undefined' || !itemId) return;
+  window.dispatchEvent(new CustomEvent(REVEAL_QUESTION_EVENT, { detail: { itemId } }));
+}

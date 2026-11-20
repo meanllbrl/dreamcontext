@@ -38,9 +38,12 @@ describe('the close menu closes when its card stops being where it opened', () =
   });
 });
 
-describe('the close menu offers Minimise where the card can be minimised', () => {
-  it('a Minimise row, only for a card that is not floating, that minimises and closes the menu', () => {
-    expect(CONTAINER).toMatch(/\{!floating && \(\s*<button[^>]*data-testid="super-close-minimize"\s*onClick=\{\(\) => \{ setCloseAsk\(false\); props\.onMinimize\(c\.id\); \}\}>\s*\{t\('super\.card\.minimize'\)\}/);
+describe('the red light (super-v3 D2): a running job asks "Send to Dock / Stop job", an idle one stops with Undo', () => {
+  it('the sheet appears only for a busy job; an idle one ends at once, undoable', () => {
+    expect(CONTAINER).toContain("asksOnClose ? (childBusy ? setCloseAsk((v) => !v) : props.onEndSession(c.id, false, true)) : props.onClose(c.id)");
+    expect(CONTAINER).toMatch(/data-testid="super-close-others"[\s\S]*?props\.onKeepRunning\(c\.id\); props\.onToOthers\(c\.id\);[\s\S]*?t\('super\.close\.toDock'\)/);
+    expect(CONTAINER).toMatch(/data-testid="super-close-end"[\s\S]*?props\.onEndSession\(c\.id, false\);[\s\S]*?t\('super\.close\.stopJob'\)/);
+    expect(CONTAINER).not.toContain('super-close-minimize');
   });
 });
 
@@ -51,8 +54,11 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
     expect(CSS).not.toContain('super-icon-btn--caption');
     expect(CSS).toMatch(/\.super-card-lights \{[^}]*position: absolute;[^}]*top: 6px;[^}]*left: 8px;/);
   });
-  it('a large card minimises on yellow and opens full screen on green; a floating card has yellow off and green brings it back', () => {
-    expect(CONTAINER).toContain("minimize={floating ? { label: t('super.card.minimize') } : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}");
+  it('a large card minimises on yellow and opens full screen on green; a floating card\'s yellow sends it to the Dock (super-v3 D2) and green brings it back', () => {
+    expect(CONTAINER).toContain("{ label: t('super.card.toDock'), onClick: () => props.onToOthers(c.id), testId: 'super-card-to-dock' }");
+    expect(CONTAINER).toContain(": { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}");
+    // The separate full-screen button is gone: green is full screen (no ⤢ left).
+    expect(CONTAINER).not.toContain('<IconButton icon="fullscreen"');
     expect(CONTAINER).toContain("? { label: t('super.card.sideBySide'), onClick: () => props.onSideBySide(c.id), testId: 'super-card-restore' }");
     expect(CONTAINER).toContain(": { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}");
   });

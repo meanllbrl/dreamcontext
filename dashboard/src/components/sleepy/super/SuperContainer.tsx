@@ -144,7 +144,7 @@ export interface SuperCardActions {
   onClose: (id: string) => void;
   /** A CHILD CHAT card's close: end its session (`whenDone`: once its turn ends), the same end
    *  `super end` does. Other cards close at once (`onClose`). */
-  onEndSession: (id: string, whenDone: boolean) => void;
+  onEndSession: (id: string, whenDone: boolean, undoable?: boolean) => void;
   /** "Move to Others" from that choice: the child keeps running (a pending end is dropped). */
   onKeepRunning: (id: string) => void;
   onMinimize: (id: string) => void;
@@ -268,7 +268,9 @@ export function SuperContainer(props: SuperContainerProps) {
     openedAt.current = placeKey;
     setCloseAsk(false);
   }, [placeKey]);
-  const onCloseClick = () => (asksOnClose ? setCloseAsk((v) => !v) : props.onClose(c.id));
+  // The red light (super-v3 D2): a job that works, asks or runs background tasks asks first
+  // ("Send to Dock" / "Stop job"); an idle one stops at once, with Undo on the stage.
+  const onCloseClick = () => (asksOnClose ? (childBusy ? setCloseAsk((v) => !v) : props.onEndSession(c.id, false, true)) : props.onClose(c.id));
   // A page's frame allowed and shown (its trust gate passed): from then on it may open full screen.
   const [allowedHref, setAllowedHref] = useState<string | null>(null);
   const full = fullscreenOf(c, props.title, allowedHref);
@@ -386,7 +388,10 @@ export function SuperContainer(props: SuperContainerProps) {
         <CardLights
           floating={floating}
           close={closeLight}
-          minimize={floating ? { label: t('super.card.minimize') } : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}
+          // Yellow sends a floating card to the Dock (super-v3 D2; a job keeps running there).
+          minimize={floating
+            ? (props.remote || c.kind === 'agenda' || c.kind === 'member' ? { label: t('super.card.minimize') } : { label: t('super.card.toDock'), onClick: () => props.onToOthers(c.id), testId: 'super-card-to-dock' })
+            : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}
           zoom={floating
             ? { label: t('super.card.sideBySide'), onClick: () => props.onSideBySide(c.id), testId: 'super-card-restore' }
             : { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}
@@ -404,10 +409,7 @@ export function SuperContainer(props: SuperContainerProps) {
             {small ? (
               <IconButton icon="more" label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')} onClick={() => setMenu((m) => (m ? null : 'more'))} testId="super-card-more" expanded={!!menu} />
             ) : (
-              <>
-                <IconButton icon="size" label={t('super.size.label')} onClick={() => setMenu((m) => (m === 'size' ? null : 'size'))} testId="super-card-size-btn" expanded={menu === 'size'} />
-                {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
-              </>
+              <IconButton icon="size" label={t('super.size.label')} onClick={() => setMenu((m) => (m === 'size' ? null : 'size'))} testId="super-card-size-btn" expanded={menu === 'size'} />
             )}
           </>
         ) : (
@@ -415,7 +417,6 @@ export function SuperContainer(props: SuperContainerProps) {
             {/* A member card's way to its member's own stage (owner 2026-11-15): in the head, not
                 at its foot. Not from the phone, which opens no stage here. */}
             {c.kind === 'team' && props.team && !props.remote && <OpenStageButton member={props.team.job.member} />}
-            {c.kind === 'agenda' && openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen-btn" />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
           </>
         )}
@@ -426,13 +427,6 @@ export function SuperContainer(props: SuperContainerProps) {
           drawn={drawnSize}
           canFit={props.canFit ?? (() => true)}
           onPick={(size) => { setMenu(null); props.onSize(c.id, size); }}
-          onFullscreen={menu === 'more' && openFull ? () => {
-            // The viewer gives focus back to what had it when it opened: the ⋯ button, not the
-            // menu item about to unmount (which would leave focus on <body>).
-            frameRef.current?.querySelector<HTMLElement>('[data-testid="super-card-more"]')?.focus();
-            setMenu(null);
-            openFull();
-          } : undefined}
           onToOthers={menu === 'more' && !props.remote ? () => { setMenu(null); props.onToOthers(c.id); } : undefined}
           onClose={() => setMenu(null)}
         />
@@ -452,21 +446,16 @@ export function SuperContainer(props: SuperContainerProps) {
       {closeAsk && (
         <div className="super-close-choice" role="group" aria-label={t('super.close.ask')} data-testid="super-close-choice"
           onPointerDown={(e) => e.stopPropagation()}>
-          <span className="super-close-choice-q">{t('super.close.ask')}</span>
-          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-close-end"
-            onClick={() => { setCloseAsk(false); props.onEndSession(c.id, childBusy); }}>
-            {childBusy ? t('super.close.endWhenDone') : t('super.close.end')}
-          </button>
+          {/* macOS Terminal's sheet (super-v3 D2): the job is still running. */}
+          <span className="super-close-choice-q">{t('super.close.askRunning')}</span>
           <button type="button" className="super-close-choice-btn" data-testid="super-close-others"
             onClick={() => { setCloseAsk(false); props.onKeepRunning(c.id); props.onToOthers(c.id); }}>
-            {t('super.close.toOthers')}
+            {t('super.close.toDock')}
           </button>
-          {!floating && (
-            <button type="button" className="super-close-choice-btn" data-testid="super-close-minimize"
-              onClick={() => { setCloseAsk(false); props.onMinimize(c.id); }}>
-              {t('super.card.minimize')}
-            </button>
-          )}
+          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-close-end"
+            onClick={() => { setCloseAsk(false); props.onEndSession(c.id, false); }}>
+            {t('super.close.stopJob')}
+          </button>
         </div>
       )}
       {props.endPending && !closeAsk && (

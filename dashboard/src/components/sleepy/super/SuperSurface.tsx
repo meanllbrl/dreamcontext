@@ -61,6 +61,9 @@ import './superTone.css';
 export { runFlights, prefersReducedMotion, type FlightRun } from './motionRunner';
 export { samePlan } from './StageMotion';
 
+/** How long his Undo stays on the stage: the server's window (src/lib/super/types.ts OWNER_UNDO_MS). */
+const UNDO_MS = 15_000;
+
 export interface SuperSurfaceProps {
   state: SuperStateView;
   /** The surface's size at the press: the first render's guess (it measures itself before paint). */
@@ -116,6 +119,9 @@ export interface SuperSurfaceProps {
   onWriteAbout?: (row: AgendaRow) => void;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
   onEndChild: (child: string, whenDone: boolean) => void;
+  /** His Undo on "Closed <name>" (super-v3 D2, K4b): the server relaunches it within 15 s.
+   *  Resolves to the refusal's line, or null when it came back. */
+  onUndoEnd?: (child: string) => Promise<string | null>;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
   onKeepChild: (child: string) => void;
   /** His status change on an agenda line, Done included (`POST /api/super/pad`). Absent: read only. */
@@ -715,11 +721,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (remote) return;
       closeCards([id]); focusAfter(id);
     },
-    onEndSession: (id: string, whenDone: boolean) => {
+    onEndSession: (id: string, whenDone: boolean, undoable?: boolean) => {
       const c = byId.get(id);
       if (c?.kind !== 'chat' || remote) return;
       props.onEndChild(c.ref, whenDone);
       if (!whenDone) focusAfter(id);
+      // An idle job closed by its red light: "Closed <name> · Undo" for the 15 s the server allows.
+      if (undoable && props.onUndoEnd) setUndoEnd({ child: c.ref, name: titleOf(c), at: Date.now() });
     },
     onKeepRunning: (id: string) => {
       const c = byId.get(id);
@@ -977,6 +985,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   dragDeps.current = {
     rootRef, layerRef, planRef, stateRef, byId, groupsById, titleOf, onLayout, actions, liftOnTop, setOpenGroup,
     groupWord: t('super.group.word'), onSize: actions.onSize, canFit, noRoom: t('super.size.noRoomDrag'),
+    onGroupRefused: () => setStageNote(t('super.group.bySuper')),
   };
   /** A card clicked in a panel: side by side; a group in Others: back on the stage. */
   const openFromPanel = (id: string) => {
@@ -1177,6 +1186,26 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const id = window.setTimeout(() => setApprovalNote(''), 4000);
     return () => window.clearTimeout(id);
   }, [approvalNote]);
+  // One line on the stage about his last gesture (super-v3 D5: a drop that groups nothing).
+  const [stageNote, setStageNote] = useState('');
+  // The job his red light just closed, while Undo can still bring it back (D2, OWNER_UNDO_MS).
+  const [undoEnd, setUndoEnd] = useState<{ child: string; name: string; at: number } | null>(null);
+  useEffect(() => {
+    if (!undoEnd) return undefined;
+    const id = window.setTimeout(() => setUndoEnd(null), Math.max(0, UNDO_MS - (Date.now() - undoEnd.at)));
+    return () => window.clearTimeout(id);
+  }, [undoEnd]);
+  const undoNow = () => {
+    const u = undoEnd;
+    if (!u || !props.onUndoEnd) return;
+    setUndoEnd(null);
+    void props.onUndoEnd(u.child).then((why) => { if (why) setStageNote(why); });
+  };
+  useEffect(() => {
+    if (!stageNote) return undefined;
+    const id = window.setTimeout(() => setStageNote(''), 4000);
+    return () => window.clearTimeout(id);
+  }, [stageNote]);
   const approvalsTop = !member && (approvals.length > 0 || appCards.length > 0 || approvalNote !== '');
   useEffect(() => {
     slotsChangedRef.current();
@@ -1510,6 +1539,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
             const docked = plan.jobDock.tiles.filter((x) => x.kind === 'job').length;
             return waiting > 0 ? t('superDock.todayNeeds').replace('{n}', String(waiting)) : t('superDock.todayRunning').replace('{n}', String(docked));
           })()} />
+      )}
+      {stageNote && !undoEnd && <p role="status" className="super-stage-note" data-testid="super-stage-note">{stageNote}</p>}
+      {undoEnd && (
+        <p role="status" className="super-stage-note super-stage-note--undo" data-testid="super-undo-end">
+          {t('super.close.closed').replace('{name}', undoEnd.name)}
+          <button type="button" className="super-stage-note-btn" data-testid="super-undo-end-btn" onClick={undoNow}>{t('super.close.undo')}</button>
+        </p>
       )}
       {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {

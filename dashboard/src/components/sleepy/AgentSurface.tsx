@@ -198,7 +198,7 @@ import {
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, fetchAgendaDay, postSuperOwedDrop, postSuperPadAdd, postSuperPadRemove, postSuperPadStatus, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperResume, postSuperFresh, postSuperLayout, postSuperOpen, fetchAgendaDay, postSuperOwedDrop, postSuperPadAdd, postSuperPadRemove, postSuperPadStatus, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
@@ -4789,6 +4789,19 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }
     endChildNow(child);
   }, [chatByClaudeId, endChildNow]);
+  // His Undo on "Closed <name>" (super-v3 K4b): the server relaunches it with `super resume`'s own
+  // core and puts its agenda lines back; this window never resumes on its own. The refusal's own
+  // line (cap, too late, on the phone) is what the stage says.
+  const undoEndChild = useCallback(async (child: string): Promise<string | null> => {
+    const sid = superIdOfChildHere(child);
+    try {
+      const st = await postSuperResume(forSuper(scopedApi, sid), child);
+      if (st) setSuperRecordFor(sid, sid === activeSuperIdRef.current ? withPendingEdits(st) : st);
+      return null;
+    } catch (err: unknown) {
+      return err instanceof Error && err.message ? err.message : 'It could not be brought back.';
+    }
+  }, [scopedApi, setSuperRecordFor, superIdOfChildHere]);
   // "Move to Others" after "End when done": the owner's latest word keeps it running.
   const keepChildRunning = useCallback((child: string) => {
     setEndPending((prev) => without(prev, child));
@@ -7299,6 +7312,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onCommentCardText={commentOnCard}
             onWriteAbout={writeAboutRow}
             onEndChild={endChildFromCard}
+            onUndoEnd={isMacPhoneSurface() ? undefined : undoEndChild}
             onKeepChild={keepChildRunning}
             onPadStatus={isMacPhoneSurface() ? undefined : setAgendaStatus}
             // His own lines need the shell's key: a browser dashboard has none, so no add box there.

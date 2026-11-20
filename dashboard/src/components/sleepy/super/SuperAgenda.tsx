@@ -111,6 +111,14 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   canOpenMember?: boolean;
   /** The phone: a refused command cannot be allowed from its web view. */
   remote?: boolean;
+  /** super-v3 K13 seams (W2.A draws them): the running jobs are in the Dock (Today shows one
+   *  "Running N · in the Dock" row); the row tapped as the chat's job filter; a tap selects or
+   *  clears; Stop is the red light's flow on that job; Ask is the existing About path. */
+  docked?: boolean;
+  selected?: string | null;
+  onSelect?: (id: string | null) => void;
+  onStop?: (child: string) => void;
+  onAsk?: (id: string) => void;
 }) {
   const { t, locale } = useI18n();
   const size: AgendaSize = sizeProp ?? (variant === 'tile' ? (wide ? 'medium' : 'small') : 'full');

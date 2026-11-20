@@ -1,10 +1,10 @@
 import { useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
-import { CONTAINER_SIZES, nextGroupName, type ContainerSize, type SuperContainer as Container, type SuperGroup, type SuperStateView } from '../../../lib/superTypes';
+import { CONTAINER_SIZES, type ContainerSize, type SuperContainer as Container, type SuperGroup, type SuperStateView } from '../../../lib/superTypes';
 import { armPointerDrag } from '../tabDrag';
 import type { Rect } from './handoverMotion';
 import {
-  dropTargetAt, isGroupId, overCentre, overOthersZone, posFromRect, sizeOf, sizePx, type LayoutPatch, type StagePlan,
+  dropTargetAt, overCentre, overOthersZone, posFromRect, sizeOf, sizePx, type LayoutPatch, type StagePlan,
 } from './superLayout';
 
 /**
@@ -38,8 +38,6 @@ export interface DragState {
   fromOthers: boolean;
 }
 
-/** A new group's id (the server keeps it): never a container id, those start with their kind. */
-const newGroupId = () => `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 export type Hot = 'centre' | 'others' | null;
 
@@ -58,6 +56,8 @@ export interface StageDragDeps {
   setOpenGroup: (id: string | null) => void;
   /** "Group" in the owner's language: a new group's default name is "<word> N". */
   groupWord: string;
+  /** A card released on another: only the Super makes groups (super-v3 D5); the window says so. */
+  onGroupRefused?: () => void;
   /** The owner's size for a card (the menu and the corner handle). */
   /** `pin`: the corner gesture, the card grows where it is drawn (its inner top corner held). */
   onSize: (id: string, size: ContainerSize, pin?: boolean) => void;
@@ -82,13 +82,12 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
   const [panelDrag, setPanelDrag] = useState(false);
   const deps = () => depsRef.current!;
 
-  /** A card released on another: a new group standing where the target stood, or into a group. */
-  const groupOnto = (held: string, onto: string) => {
-    const { byId, stateRef, onLayout, groupWord } = deps();
-    // A card brought out of Others stops being put aside: if its group ever dissolves it floats.
-    const out = byId.get(held)?.place === 'others' ? { cards: [{ id: held, place: 'float' as const }] } : {};
-    if (isGroupId(onto)) onLayout({ ...out, group: { id: onto, cards: [held] } });
-    else onLayout({ ...out, group: { id: newGroupId(), cards: [onto, held], name: nextGroupName(stateRef.current.groups, groupWord) } });
+  /** A card released on another: no group forms, only the Super makes groups (super-v3 D5, K9;
+   *  the server refuses an owner `group` too). A card brought out of Others still comes back. */
+  const groupOnto = (held: string, _onto: string) => {
+    const { byId, onLayout, onGroupRefused } = deps();
+    if (byId.get(held)?.place === 'others') onLayout({ cards: [{ id: held, place: 'float' as const }] });
+    onGroupRefused?.();
   };
 
   /** Where a release lands: the centre (ask), the Others corner, or the stage (a drop). */
@@ -123,7 +122,8 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
         const h = hotAt(planRef.current, x - origin.left, y - origin.top);
         // Over another tile it would group with: the held card shrinks a little toward it.
         // Outside the float view a tile is a live job's rail tile: no group target there.
-        const tg = h || planRef.current.mode !== 'float' ? null : dropTargetAt(planRef.current, x - origin.left, y - origin.top, id);
+        // No group target any more (super-v3 D5): the held card never shrinks toward another.
+        const tg = null;
         // A slight lift, kept centred on the card (origin top-left, F6).
         const k = tg ? 0.94 : 1.02;
         el.style.transform = `translate(${dx - (card.rect.width * (k - 1)) / 2}px, ${dy - (card.rect.height * (k - 1)) / 2}px) scale(${k})`;
