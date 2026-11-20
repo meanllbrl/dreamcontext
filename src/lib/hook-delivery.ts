@@ -14,7 +14,8 @@
  *
  * Claude only. A Codex hook has its own limit and its own splitter (t3-bridge/context.ts).
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync, readSync } from 'node:fs';
+import { isatty } from 'node:tty';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveContextRoot } from './context-path.js';
@@ -51,6 +52,34 @@ export function writeStdoutSync(text: string, write: (buf: Buffer, off: number) 
     }
   }
 }
+/**
+ * A hook's whole input, read to its end; null on a terminal. Never through `process.stdin`: touching it
+ * makes fd 0 non-blocking, and a plain read of a pipe then stops at EAGAIN once the 8 KB the writer got
+ * in first is used up. Measured 20 Nov: every prompt over ~8.6 KB reached the hook as nothing, so the
+ * turn got no memory and no rules, silently. A pipe that is empty for now is waited on, bounded by time.
+ */
+export function readStdinSync(read: (buf: Buffer) => number = (b) => readSync(0, b, 0, b.length, null), tty: () => boolean = () => isatty(0)): string | null {
+  if (tty()) return null;
+  const chunks: Buffer[] = [];
+  const deadline = Date.now() + STDIN_WAIT_MS;
+  for (;;) {
+    const buf = Buffer.allocUnsafe(64 * 1024);
+    let n: number;
+    try {
+      n = read(buf);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'EAGAIN' && Date.now() < deadline) { Atomics.wait(DRAIN_SLEEP, 0, 0, STDOUT_DRAIN_POLL_MS); continue; }
+      if (code === 'EOF' || code === 'EAGAIN') break;
+      throw e;
+    }
+    if (n === 0) break;
+    chunks.push(buf.subarray(0, n));
+  }
+  return Buffer.concat(chunks).toString('utf-8');
+}
+/** How long a hook waits for the rest of its input (Claude Code writes it all at once). */
+export const STDIN_WAIT_MS = 5_000;
 /** How long a hook keeps waiting for a slow reader to take its output. */
 export const STDOUT_DRAIN_MS = 5_000;
 const STDOUT_DRAIN_POLL_MS = 5;
