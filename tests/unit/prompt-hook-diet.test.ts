@@ -47,6 +47,15 @@ describe('recallQuery: the owner words, nothing a machine wrote (MM-1)', () => {
     expect(recallQuery(report + '\nwhy is the checkout slow?')).toBe('why is the checkout slow?');
   });
 
+  it('the server\'s hidden card-feedback turn is no query (it used to search on its own tag)', () => {
+    const gate = '<dreamcontext-card-feedback>\n<owner-text-gate>\nYour last answer to him was not in Turkish. Write that same answer again, in Turkish only.\nDo not mention this note itself.\n</owner-text-gate>\n</dreamcontext-card-feedback>\n[owner language] The owner writes Turkish.';
+    const skipped = '<dreamcontext-card-feedback>\nThe chat did NOT draw part of your last answer. The owner sees only this note where the card should be:\n- A run card spans two lines.\n</dreamcontext-card-feedback>';
+    expect(recallQuery(gate)).toBeNull();
+    expect(promptOwnerText(gate)).toBeNull();
+    expect(recallQuery(skipped)).toBeNull();
+    expect(recallQuery('  ' + skipped)).toBeNull();
+  });
+
   it('a child kickoff keeps the job, drops the dev-server line and the brief path', () => {
     const p = 'If you start a dev server, pin its url (a `dream-view` pin) so the owner sees the site. Your job is B1. Read and follow /Users/me/brain/_dream_context/tmp/super-prompts/gece/brief.md';
     const q = recallQuery(p);
