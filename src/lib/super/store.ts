@@ -1036,9 +1036,24 @@ async function assertContained(contextRoot: string, id: SuperId = 'main', create
   let realDir: string;
   try {
     realRoot = await fsp.realpath(contextRoot);
-    realDir = await fsp.realpath(stateDir);
   } catch {
     throw new SuperStoreRefused('outside', 'the vault has no state directory');
+  }
+  // A brain cloned from GitHub may have no `state/` at all (git keeps no empty folder): a read
+  // finds no record, a write makes the folder. Only a truly absent path qualifies (lstat ENOENT);
+  // a dangling or outside link is still refused below.
+  const stateLstat = await fsp.lstat(stateDir).catch((e: NodeJS.ErrnoException) => {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  });
+  if (stateLstat === null) {
+    if (!create) return path;
+    await fsp.mkdir(stateDir).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'EEXIST') throw e; });
+  }
+  try {
+    realDir = await fsp.realpath(stateDir);
+  } catch {
+    throw new SuperStoreRefused('outside', 'state/ resolves outside the vault');
   }
   if (realDir !== join(realRoot, 'state')) throw new SuperStoreRefused('outside', 'state/ resolves outside the vault');
   if (id !== 'main') {

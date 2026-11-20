@@ -780,7 +780,7 @@ const ROWS = {
       registerVault(m.home, 'storefront', brainDir);
       await page.getByTestId('clone-go').click();
       const landedBrain = await heroTitled(page, 'What should we do in storefront?');
-      if (landedBrain) await shots(page, 'clone-brain-landed');
+      await shots(page, landedBrain ? 'clone-brain-landed' : 'clone-brain-FAILED');
       checks.push(['a repo with a brain lands on its Super stage', landedBrain]);
       return { pass: verdict(ev, checks), evidence: ev };
     } finally { await stopServer(s); }
