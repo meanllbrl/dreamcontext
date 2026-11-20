@@ -520,7 +520,7 @@
 
 /* An open question scrolled out of view (super-v3 D7, super/QuestionStrip.tsx): one line over the
    transcript's foot, above the ↓ button; it takes no room. */
-.super-question-strip {
+.chat-qstrip {
   position: absolute; z-index: 4;
   left: var(--space-4); right: var(--space-4); bottom: calc(var(--space-3) + 40px);
   display: flex; align-items: center; gap: var(--space-2);
@@ -530,8 +530,8 @@
   background: var(--color-bg-elevated, var(--color-bg-secondary)); box-shadow: var(--shadow-md, var(--shadow-sm));
   font-size: var(--font-size-sm); color: var(--color-text);
 }
-.super-question-strip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mood-waiting); flex: none; }
-.super-question-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.super-question-strip-go { flex: none; font: inherit; font-weight: var(--font-weight-medium); color: var(--mood-waiting); background: none; border: none; cursor: pointer; padding: var(--space-1); }
-.super-question-strip-go:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
-[data-testid='super-question-card'][data-revealed='true'] { outline: 2px solid var(--mood-waiting); outline-offset: 4px; border-radius: var(--radius-lg); transition: outline-color 300ms; }
+.chat-qstrip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mood-waiting); flex: none; }
+.chat-qstrip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-qstrip-go { flex: none; font: inherit; font-weight: var(--font-weight-medium); color: var(--mood-waiting); background: none; border: none; cursor: pointer; padding: var(--space-1); }
+.chat-qstrip-go:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chat-transcript [data-revealed='true'] { outline: 2px solid var(--mood-waiting); outline-offset: 4px; border-radius: var(--radius-lg); transition: outline-color 300ms; }

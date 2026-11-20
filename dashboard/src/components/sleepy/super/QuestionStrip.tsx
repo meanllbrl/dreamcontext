@@ -61,10 +61,10 @@ export function QuestionStrip({ scrollRef, enabled }: { scrollRef: { readonly cu
 
   if (!enabled || !hidden) return null;
   return (
-    <div className="super-question-strip" role="status" data-testid="super-question-strip">
-      <span className="super-question-strip-dot" aria-hidden />
-      <span className="super-question-strip-text">{t('super.question.waiting')}</span>
-      <button type="button" className="super-question-strip-go" onClick={() => scrollToQuestion(scrollRef.current)}>{t('super.question.goTo')}</button>
+    <div className="chat-qstrip" role="status" data-testid="super-question-strip">
+      <span className="chat-qstrip-dot" aria-hidden />
+      <span className="chat-qstrip-text">{t('super.question.waiting')}</span>
+      <button type="button" className="chat-qstrip-go" onClick={() => scrollToQuestion(scrollRef.current)}>{t('super.question.goTo')}</button>
     </div>
   );
 }
