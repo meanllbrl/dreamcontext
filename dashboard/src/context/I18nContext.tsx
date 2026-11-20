@@ -3678,8 +3678,8 @@ const translations: Record<string, Record<string, string>> = {
     'onboarding.back': 'Back',
     'onboarding.continue': 'Continue',
     // First open (plan ilk-acilis v2-01, v2-02, C2).
-    'onboarding.welcome.title': 'The Agentic OS for your projects.',
-    'onboarding.welcome.body': 'Your agents remember your whole project, so every chat starts already knowing it.',
+    'onboarding.welcome.title': 'Agents that see the big picture.',
+    'onboarding.welcome.body': 'The agentic OS for your projects. Every agent starts out knowing what you decided, what is in flight and why it matters, and a team of agents gets the work done while you stay in charge.',
     'onboarding.welcome.row.remembers': 'Remembers.',
     'onboarding.welcome.row.remembersBody': 'Decisions, tasks and notes carry into every chat.',
     'onboarding.welcome.row.picture': 'Sees the big picture.',
@@ -8303,8 +8303,8 @@ const TR_PARTIAL: Record<string, string> = {
   'super.empty.chip.morning': 'Her sabah bana {name} özetini ver',
   'super.agenda.emptyHint': 'Sana gelen sorular ve işler buraya düşer',
   // İlk açılış (plan ilk-acilis v2-01, v2-02, C2).
-  'onboarding.welcome.title': 'Projelerin için Ajan İşletim Sistemi.',
-  'onboarding.welcome.body': 'Ajanların tüm projeni hatırlar, böylece her sohbet onu zaten bilerek başlar.',
+  'onboarding.welcome.title': 'Büyük resmi gören ajanlar.',
+  'onboarding.welcome.body': 'Projelerin için Ajan İşletim Sistemi. Her ajan işe neye karar verdiğini, nelerin sürdüğünü ve bunun neden önemli olduğunu bilerek başlar; sen yönetimde kalırken bir ajan ekibi işi bitirir.',
   'onboarding.welcome.row.remembers': 'Hatırlar.',
   'onboarding.welcome.row.remembersBody': 'Kararlar, işler ve notlar her sohbete taşınır.',
   'onboarding.welcome.row.picture': 'Büyük resmi görür.',

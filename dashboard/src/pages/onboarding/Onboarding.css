@@ -376,7 +376,8 @@
 
 .ob-welcome-body {
   margin: 0;
-  max-width: 34em;
+  max-width: 40em;
+  text-align: center;
   font-size: var(--font-size-base);
   line-height: var(--line-height-normal);
   color: var(--color-text-secondary);

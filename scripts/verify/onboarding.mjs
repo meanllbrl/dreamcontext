@@ -377,7 +377,7 @@ const ROWS = {
     const errors = watch(ctx);
     try {
       const page = await openLauncher(ctx, s);
-      const title = page.getByRole('heading', { name: 'The Agentic OS for your projects.' });
+      const title = page.getByRole('heading', { name: 'Agents that see the big picture.' });
       const titled = await title.waitFor({ timeout: 20_000 }).then(() => true, () => false);
       const other = await page.getByRole('button', { name: 'Use Codex or Antigravity instead' }).isVisible().catch(() => false);
       await shots(page, 'screen1');
@@ -866,7 +866,7 @@ async function main() {
   const results = [];
   try {
     for (const id of rows) {
-      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, extraHTTPHeaders: { 'X-Dreamcontext-Owner-Key': OWNER_KEY } });
+      const ctx = await browser.newContext({ viewport: (() => { const m = /^(\d+)x(\d+)$/.exec(process.env.DC_VERIFY_VIEWPORT ?? ''); return m ? { width: +m[1], height: +m[2] } : { width: 1440, height: 900 }; })(), extraHTTPHeaders: { 'X-Dreamcontext-Owner-Key': OWNER_KEY } });
       await ctx.addInitScript(CAPTURE_OPEN);
       let result;
       const t0 = Date.now();
