@@ -773,7 +773,10 @@
   border-radius: 2px;
   background: var(--color-accent);
 }
-.ns-pcard-diamond[data-working="true"] { animation: ns-pcard-pulse 1.4s ease-in-out infinite; }
+.ns-pcard-diamond[data-working="true"] {
+  animation: var(--dc-motion-status-name, ns-pcard-pulse) 1.4s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
 @keyframes ns-pcard-pulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .ns-pcard-diamond[data-working="true"] { animation: none; } }
 .ns-pcard-needs { color: var(--color-error-ink, var(--color-error)); font-weight: var(--font-weight-medium); }

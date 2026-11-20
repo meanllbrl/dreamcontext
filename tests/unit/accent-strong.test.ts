@@ -39,6 +39,8 @@ function walk(dir: string, exts: string[], out: string[] = []): string[] {
 /** Fills that carry no text — a dot, a bar, a track, a rule, a check mark — keep the plain
  *  accent. Keyed `file::selector` (file relative to dashboard/src). Each needs a reason. */
 const NON_TEXT_FILLS: Record<string, string> = {
+  'components/layout/newshell/NewShell.css::.ns-prail-cell[data-drop-before="true"]::before': 'drop marker line on the project rail (non-text, 3:1 rule)',
+  'components/layout/newshell/NewShell.css::.ns-pcard-diamond': 'status diamond on a project card (non-text)',
   'components/layout/newshell/ChatDrawer.css::.ns-dr-win[data-drop-before="true"]::after, .ns-dr-win[data-drop-after="true"]::after': 'drop line',
   'components/roadmap/Priority.css::.pc-bar > span': 'bar',
   'components/roadmap/Priority.css::.pc-dot': 'dot',
