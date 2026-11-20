@@ -58,7 +58,7 @@ const FRAMES = {
   '07b-sunum-orta': { needs: 1, jobs: 4, minis: 0, present: 'pdf', mock: 'super-jakob-v3/v3/07b-sunum-orta.png', sizes: [[1440, 900], [1180, 800]] },
   '07c-sunum-genis': { needs: 1, jobs: 4, minis: 0, present: 'desk', mock: 'super-jakob-v3/v3/07c-sunum-genis.png', sizes: [[1440, 900], [1180, 800]] },
   '09d-grup': { needs: 1, jobs: 4, minis: 0, present: 'group', mock: 'super-jakob-v3/v3/09d-grup-kapat-1.png', sizes: [[1440, 900]] },
-  'K8-rapor-soru': { needs: 0, jobs: 3, minis: 0, present: 'ask', mock: null, sizes: [[1440, 900], [1180, 800]], light: true },
+  'K8-rapor-soru': { needs: 0, jobs: 3, minis: 0, present: 'ask', mock: 'super-ux-denetim/kareler/D-sunum-karar.png', sizes: [[1440, 900], [1180, 800]], light: true },
   'T2-sonra': { needs: 1, jobs: 6, minis: 0, members: ['sage'], present: 'member', mock: 'super-ux-denetim/kareler/T2-sonra.png', sizes: [[1440, 900]], light: true },
   'T3-sonra': { needs: 0, jobs: 2, minis: 0, members: ['sage'], memberDone: 'sage', chat: 'member', mock: 'super-ux-denetim/kareler/T3-sonra.png', sizes: [[1440, 900]], light: true },
 };
@@ -270,7 +270,7 @@ async function shoot(name, f, [w, h], dark) {
     return { rect: box(d), tiles: [...d.querySelectorAll('.sdock-tile')].map((t) => ({ kind: t.dataset.kind, ...box(t) })) };
   });
   const floats = await p.locator('[data-testid="super-container"][data-where="float"]').count();
-  const ask = { dock: await p.locator('[data-testid="super-ask-dock"]').count(), full: await p.locator('[data-testid="super-question-card"]').count(), rows: await p.locator('[data-testid="super-ask-row"]').count() };
+  const ask = { dock: await p.locator('[data-testid="super-ask-dock"]').count(), full: await p.locator('[data-testid="super-question-card"]').count(), rows: await p.locator('[data-testid="super-ask-row"]').count(), chips: await p.locator('[data-testid="super-decide-chip"]').count(), text: (await p.locator('[data-testid="super-ask-dock"]').first().innerText().catch(() => '')).replace(/\s+/g, ' ') };
   const memberTab = await p.locator('[data-testid="super-member-tab"]').count();
   const win = await p.evaluate(() => { const el = document.querySelector('.super-win'); if (!el) return null; const b = el.getBoundingClientRect(); return { width: Math.round(b.width), height: Math.round(b.height) }; });
   await ctx.close();
@@ -307,8 +307,11 @@ try {
         const total = f.needs + f.jobs;
         if (f.present === 'ask') {
           if (!r.ask.dock) fail(`${where0(name, size, dark)}: no question docked under the report`);
-          else if (r.ask.full !== 1) fail(`${where0(name, size, dark)}: ${r.ask.full} full question cards (want 1)`);
-          else ok(`${name}@${size[0]}: the question sits under the report, the chat holds one row (${r.ask.rows})`);
+          // Frame D: a thin decision strip (no full card anywhere), one chip per choice, the chat one row.
+          else if (r.ask.full !== 0) fail(`${where0(name, size, dark)}: ${r.ask.full} full question cards (want 0: the strip asks it)`);
+          else if (r.ask.chips !== 3) fail(`${where0(name, size, dark)}: ${r.ask.chips} chips (want 3)`);
+          else if (r.ask.rows !== 1) fail(`${where0(name, size, dark)}: ${r.ask.rows} chat rows (want 1)`);
+          else ok(`${name}@${size[0]}: decision strip under the report, 3 chips, one chat row ("${r.ask.text}")`);
           continue;
         }
         if (f.present === 'member') { if (!r.memberTab) fail(`${name}: no member tab in the window`); else ok(`${name}: member tab in the window`); continue; }
