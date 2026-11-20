@@ -53,6 +53,8 @@ describe('decisionChoices: what the strip can ask with one tap (approved frame D
     expect(decisionChoices(spec([{ question: 'a', options: [] }]))).toBeNull();
     expect(decisionChoices(spec([{ question: 'a', options: o(5) }]))).toBeNull();
     expect(decisionChoices(spec([{ question: 'a', options: [{ label: 'x', preview: '<b>x</b>' }] }]))).toBeNull();
+    // Two chips with one label could not tell the answers apart: the chat's full card asks it.
+    expect(decisionChoices(spec([{ question: 'a', options: [{ label: 'Ship' }, { label: 'Ship ' }] }]))).toBeNull();
   });
   it('a question the strip cannot carry is never docked: the chat asks it whole', () => {
     const rich = ask('q-rich', { read: ['web-plan'], ask: { questions: [{ question: 'a', options: [], multiSelect: false }] } } as Partial<SuperQueueItem>);

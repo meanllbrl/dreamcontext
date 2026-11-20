@@ -21,6 +21,7 @@ import { revealAgendaWaiting } from './agendaReveal';
 import { ReportAskDock } from './ReportAskDock';
 import { jobTokensOf, publishJobTokens, requestStopJob, setJobFilter, useJobFilter } from './superJobFilter';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
+import { revealDockedAsk } from './DockedAskRow';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda, type AgendaSize } from './SuperAgenda';
 import type { AgendaDay } from './superApi';
@@ -1189,8 +1190,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     // An AI Team approval: its row on the Super's own approval card.
     const asked = state.queue.find((q) => q.id === item);
     if (asked?.kind === 'approval' && asked.member && showMemberApproval(asked.member, rootRef.current ?? document)) return;
-    const askDockEl = rootRef.current?.querySelector('[data-testid="super-ask-dock"]');
-    if (askDockEl && showQuestionCard(item, askDockEl)) return;
+    if (revealDockedAsk(item, rootRef.current)) return;
     if (showQuestionCard(item, superSession?.container)) return;
     document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
@@ -1647,7 +1647,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           onMinimize={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation}
           onMention={(id) => { if (!remote) actions.onAskAbout(id); }} />
       )}
-      {plan.askDock && dockedAskItem && superSession && <ReportAskDock rect={plan.askDock} item={dockedAskItem} from={dockedAskFrom} session={superSession} />}
+      {plan.askDock && dockedAskItem && superSession && <ReportAskDock key={dockedAskItem.id} rect={plan.askDock} item={dockedAskItem} from={dockedAskFrom} session={superSession} />}
       {plan.presentTabs && plan.layout && !plan.presentWindow && (
         <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
       )}

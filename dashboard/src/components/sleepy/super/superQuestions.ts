@@ -416,7 +416,7 @@ export function dockedAskOf(queue: readonly SuperQueueItem[], front: WindowFront
   return openOwnerQuestions(queue).find((q) => askHome(q, front) === 'report' && decisionChoices(q) !== null)?.id ?? null;
 }
 
-/** The most choices a decision strip draws as one-tap chips (approved frame D-sunum-karar: 3). */
+/** The most choices a decision strip draws as one-tap chips (approved frame D-sunum-karar draws 3; K8 allows up to 4). */
 export const DECISION_MAX_CHOICES = 4;
 
 /**
@@ -430,6 +430,7 @@ export function decisionChoices(item: Pick<SuperQueueItem, 'ask' | 'ownerText' |
   const q = spec.questions[0];
   if (q.multiSelect || q.options.length < 1 || q.options.length > DECISION_MAX_CHOICES) return null;
   if (q.options.some((o) => o.preview || !o.label.trim())) return null;
+  if (new Set(q.options.map((o) => o.label.trim())).size !== q.options.length) return null;
   return { question: q.question, choices: q.options.map((o) => o.label) };
 }
 

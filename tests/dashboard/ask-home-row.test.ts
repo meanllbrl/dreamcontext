@@ -4,6 +4,7 @@
  * Fictional fixtures (synthetic-fixtures).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 
@@ -67,5 +68,13 @@ describe('one full card per question (K8)', () => {
   it('the picks outlive a fold or a minimise: the chat card keeps them under one draft key', () => {
     const chat = renderToStaticMarkup(createElement(SuperQuestionCard, { ask, session }));
     expect(chat).toContain('data-draft="super-ask:SUPER|q-plan"');
+  });
+});
+
+describe('the strip belongs to one question (K8 review r1)', () => {
+  it('is mounted keyed by its question, so a tap on one never disables the next docked one', () => {
+    // A tap's sent state lives in the strip; a new docked question must get a fresh strip.
+    const src = readFileSync(new URL('../../dashboard/src/components/sleepy/super/SuperSurface.tsx', import.meta.url), 'utf8');
+    expect(src).toMatch(/<ReportAskDock key=\{dockedAskItem\.id\}/);
   });
 });
