@@ -1438,7 +1438,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       const inTerminal = !!el?.closest('.xterm');
       const editable = !!el?.closest('input, textarea, select, [contenteditable="true"], .xterm');
       // ⌘1-9 skip the chat too, as the classic switcher does (ProjectSwitcher.tsx).
-      const inChat = editable || !!el?.closest('.agent-surface');
+      // The picker's own filter box is an input, but ⌘1-9 there still jump.
+      const inChat = (editable && !el?.closest('.ns-picker')) || !!el?.closest('.agent-surface');
       const key = e.key.toLowerCase();
       if (key === 'p' && !inTerminal) {
         e.preventDefault();
