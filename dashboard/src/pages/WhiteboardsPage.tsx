@@ -3,6 +3,7 @@ import { TOGGLE_PAGE_DRAWER_EVENT } from '../lib/uxMode';
 import { useI18n } from '../context/I18nContext';
 import { useApi, useInstanceEvent, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
+import { usePublishOpenItem } from '../lib/openItem';
 import { useDefaultWhiteboard, useWhiteboardEditor, useWhiteboardList } from '../hooks/useWhiteboards';
 import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
@@ -17,7 +18,7 @@ import { useExplorerPrefs } from './whiteboards/useExplorerPrefs';
 import { touchRecent } from './whiteboards/explorerLogic';
 import { DEFAULT_BOARD_SLUG, goneBoardTarget } from './whiteboards/boardSwitcherLogic';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
+import { clearBoardHash, forgetLoadBoardHash, formatBoardHash, loadBoardHash } from './whiteboards/boardHash';
 import { publishPageDetail } from '../lib/pageContext';
 import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardSuperField';
 import type { Region } from '../components/whiteboard/quickEditLogic';
@@ -69,7 +70,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   // The board open before a reload: the URL hash (see boardHash). There is one URL per window,
   // so only the window's first project reads it back, like Shell's `/lab/` deep link.
   const [openSlug, setOpenSlug] = useState<string | null>(
-    () => focus?.id ?? (instanceId === 'inst-1' ? parseBoardHash(window.location.hash) : null),
+    () => focus?.id ?? (instanceId === 'inst-1' ? loadBoardHash() : null),
   );
   useFocusTarget(focus, setOpenSlug);
   // Agent cards keep their composer buckets across remounts and board switches; they die with
@@ -105,6 +106,9 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   useEffect(() => {
     if (openSlug && vault) writeLastBoard(vault, openSlug);
   }, [openSlug, vault]);
+  // The open board, for the window's places (navigation B, C4): `navigate('whiteboards', slug)`
+  // opens it again (the focus target above).
+  usePublishOpenItem(bus, 'whiteboards', openSlug, boards.data?.find((b) => b.slug === openSlug)?.name ?? null);
   // The open board, for the Super dock's page chip (lib/pageContext.ts).
   useEffect(() => {
     if (!openSlug) return undefined;
@@ -375,6 +379,7 @@ function useBoardHash(slug: string): void {
   const { isActive } = useVault();
   useEffect(() => {
     if (!isActive) return;
+    forgetLoadBoardHash();
     writeHash(formatBoardHash(slug, window.location.hash));
   }, [isActive, slug]);
   const activeRef = useRef(isActive);

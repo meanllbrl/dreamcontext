@@ -20,6 +20,23 @@ export function parseBoardHash(hash: string): string | null {
 }
 
 /**
+ * The board a reload lands back on: the hash as the window LOADED, until a board page first
+ * writes the hash. The hash is one per window and the project in front rewrites it, so read
+ * later it names another project's board (navigation B: a badge or ← opening this page in the
+ * window's first project asked for the other project's board, a 404). Captured when this module
+ * first loads, before any board page has written the hash; reading it is free of side effects
+ * (StrictMode runs a state initializer twice).
+ */
+let loadBoard: string | null = typeof window === 'undefined' ? null : parseBoardHash(window.location.hash);
+export function loadBoardHash(): string | null {
+  return loadBoard;
+}
+/** A board page wrote the hash: from now on it says nothing about the load. */
+export function forgetLoadBoardHash(): void {
+  loadBoard = null;
+}
+
+/**
  * Write the board into a hash, keeping any other hash params as they were. A null or malformed
  * board leaves no board param. Returns '' when nothing is left.
  */

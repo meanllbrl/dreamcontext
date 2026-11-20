@@ -10,6 +10,8 @@ import { ZoomMenu } from './ZoomMenu';
 
 interface TitleBarProps {
   activeVault: string;
+  /** Where the owner is (navigation B, D6): the page and the item on it, after the project. */
+  crumb?: { page: string | null; item: string | null };
   rows: readonly PickerRow[];
   pickerOpen: boolean;
   /** The picker's last row: the app's Add Project flow. */
@@ -40,18 +42,18 @@ interface TitleBarProps {
 }
 
 /**
- * The new shell's title bar (owner-approved prototype r27): the drawer button, the project
- * picker, the active project's search and back/forward, the logo centred on the WINDOW,
+ * The new shell's title bar (owner-approved prototype r27): the drawer button, the breadcrumb
+ * (project › page › item, navigation B), the active project's search and back/forward, the logo centred on the WINDOW,
  * Hands-free, zoom and theme. It is the window's drag handle (every control carries
  * `data-no-drag`), keeps the macOS traffic-light inset, and sits at z-index 40 like today's bar:
  * above the page, below every full-screen view.
  */
 export function TitleBar({
-  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, onDrawerHover, waiting = 0, touch = false,
+  activeVault, crumb, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer, onDrawerHover, waiting = 0, touch = false,
   zoom, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot, device,
 }: TitleBarProps) {
   const { t } = useI18n();
-  const pickerRef = useRef<HTMLButtonElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const active = rows.find((r) => r.name === activeVault);
   return (
     <div
@@ -80,21 +82,14 @@ export function TitleBar({
             <line x1="6.1" y1="2.8" x2="6.1" y2="13.2" stroke="currentColor" strokeWidth="1.4" />
           </svg>
         </button>
-        <button
-          ref={pickerRef}
-          type="button"
-          className="ns-tb-picker"
-          data-no-drag
-          aria-haspopup="listbox"
-          aria-expanded={pickerOpen}
-          title={t('shell.picker.open')}
-          data-testid="ns-picker-btn"
-          onClick={() => onPickerOpen(!pickerOpen)}
-        >
+        {/* The breadcrumb replaces the project picker button (navigation B, D6): a label, no
+            click target. ⌘P still opens the picker, under it; the rail switches projects. */}
+        <div ref={pickerRef} className="ns-tb-crumb" data-testid="ns-crumb" role="group" aria-label={t('shell.nav.crumb')}>
           <VaultLogo name={activeVault} hasLogo={!!active?.logo} stamp={active?.logoStamp ?? null} size={16} />
-          <span className="ns-tb-picker-name">{activeVault}</span>
-          <svg className="ns-tb-caret" width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 3 4 5.5 6.5 3" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
-        </button>
+          <span className="ns-tb-crumb-part ns-tb-crumb-project" data-testid="ns-crumb-project">{activeVault}</span>
+          {crumb?.page && (<><span className="ns-tb-crumb-sep" aria-hidden="true">›</span><span className="ns-tb-crumb-part" data-testid="ns-crumb-page">{crumb.page}</span></>)}
+          {crumb?.page && crumb.item && (<><span className="ns-tb-crumb-sep" aria-hidden="true">›</span><span className="ns-tb-crumb-part ns-tb-crumb-item" data-testid="ns-crumb-item">{crumb.item}</span></>)}
+        </div>
         <div className="chrome-slot ns-tb-slot" ref={setLeftSlot} />
       </div>
 

@@ -7,7 +7,12 @@ import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
 import { publishPage } from '../../lib/pageContext';
 import { planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../lib/projectSwitchPage';
-import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from '../../lib/agentSettings';
+import { AGENT_SURFACE_EXPANDED_EVENT } from '../../lib/agentSettings';
+import { runChatLadder } from '../../lib/chatLadder';
+import { DRAWER_PAGE_EVENT } from '../../lib/drawerIntents';
+import { useOpenItem } from '../../lib/openItem';
+import { CHAT_MOVE_MAX_MS } from './navRecorder';
+import { useChrome } from './WindowChrome';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
 import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
@@ -18,6 +23,15 @@ const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
 const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'settings', 'whiteboards', 'relations', 'stats', 'apps'];
 /** Pages only the new shell offers: classic never lands on one, even from a stored value. */
 const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
+
+/** A page name this shell knows (a window landing's page is checked against it). */
+export function isShellPage(p: unknown): p is Page {
+  return typeof p === 'string' && (VALID_PAGES as readonly string[]).includes(p);
+}
+
+/** A chat closing this soon after a navigation is that navigation's doing (it collapses the
+ *  chat), never a separate act of the owner's. */
+const NAV_COLLAPSE_MS = 1_000;
 
 /**
  * Which page a project was last on — per-project navigation, so it goes through the
@@ -69,7 +83,9 @@ function initialPage(vault: string | null, instanceId: string, newShell: boolean
   return { page, settings: false };
 }
 
-export type NavOrigin = 'chat' | 'rail' | 'other';
+/** `'landing'`: a window move landed it (the project rail, ← →, a switch's carry, ⌘K across
+ *  projects); the window's recorder tells it from the owner's own navigation by this. */
+export type NavOrigin = 'chat' | 'rail' | 'other' | 'landing';
 
 export interface ShellNavigation {
   page: Page;
@@ -113,9 +129,12 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, for the stored value read at mount
   const [origin, setOrigin] = useState<NavOrigin>('other');
-  // The new shell's ← → in the title bar: this project's own page history.
-  const historyRef = useRef<{ stack: Page[]; at: number }>({ stack: [activePage], at: 0 });
-  const [historyRev, setHistoryRev] = useState(0);
+  // Navigation B: ← → are the WINDOW's (WindowChrome's place history). This Shell reports what it
+  // shows, and whether the owner caused the change, to the window's recorder.
+  const chrome = useChrome();
+  // Who caused the next report: the owner (a non-`landing` navigate, his own Chat open or close)
+  // or a landing. Taken by the report, then false (an item publish is nobody's act).
+  const ownerRef = useRef<{ byOwner: boolean; navAt: number }>({ byOwner: false, navAt: 0 });
   const [focusId, setFocusId] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -190,12 +209,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     }
     setActivePage(page);
     setOrigin(from);
-    const h = historyRef.current;
-    if (h.stack[h.at] !== page) {
-      h.stack = [...h.stack.slice(0, h.at + 1), page].slice(-50);
-      h.at = h.stack.length - 1;
-      setHistoryRev((n) => n + 1);
-    }
+    ownerRef.current = { byOwner: from !== 'landing', navAt: Date.now() };
     setFocusId(id);
     setNonce((n) => n + 1);
     // Tell this instance's Agent overlay (mounted outside this tree, but inside the same
@@ -223,12 +237,36 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const [chatOpen, setChatOpen] = useState(false);
   const chatOpenRef = useRef(chatOpen);
   chatOpenRef.current = chatOpen;
-  // The carried Chat's retries (a freshly mounted surface is not listening yet) stop the moment
-  // it opens, and on any navigation: they never reopen a chat the owner closed or left.
-  const chatRetriesRef = useRef<number[]>([]);
-  const stopChatRetries = useCallback(() => { for (const t of chatRetriesRef.current) window.clearTimeout(t); chatRetriesRef.current = []; }, []);
-  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => { setChatOpen(open === true); if (open === true) stopChatRetries(); });
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+  // The carried or landed Chat's ladder (lib/chatLadder.ts: a freshly mounted surface is not
+  // listening yet) stops the moment it opens, and on any navigation: it never reopens a chat the
+  // owner closed or left.
+  const ladderRef = useRef<(() => void) | null>(null);
+  const stopChatRetries = useCallback(() => { ladderRef.current?.(); ladderRef.current = null; }, []);
+  const startChatLadder = useCallback(() => {
+    stopChatRetries();
+    // Classic keeps its old 2.5 s carry; the new shell asks until the chat move's bound.
+    ladderRef.current = runChatLadder(bus, newShell ? CHAT_MOVE_MAX_MS : 2_500, {
+      isOpen: () => chatOpenRef.current,
+      stillActive: () => isActiveRef.current,
+    });
+    if (chatOpenRef.current) stopChatRetries();
+  }, [bus, newShell, stopChatRetries]);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => {
+    const isOpen = open === true;
+    // An open the ladder asked for is a landing's; a close right after a navigation is that
+    // navigation's; any other open or close is the owner's (the rail's Chat row, Esc).
+    const byOwner = isOpen ? ladderRef.current === null : Date.now() - ownerRef.current.navAt > NAV_COLLAPSE_MS;
+    ownerRef.current = { ...ownerRef.current, byOwner };
+    setChatOpen(isOpen);
+    if (isOpen) stopChatRetries();
+  });
   useInstanceEvent('dreamcontext-navigate', stopChatRetries);
+  // A window move landing on this project's Chat (C5): the chat expands as it stands.
+  useInstanceEvent<{ page?: unknown }>(DRAWER_PAGE_EVENT, (detail) => {
+    if (detail?.page === 'chat') startChatLadder();
+  });
   const wasActiveRef = useRef(false);
   useEffect(() => {
     const arrived = isActive && !wasActiveRef.current;
@@ -237,22 +275,37 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     if (!arrived || !vault || !takeProjectSwitch(vault)) return undefined;
     const plan = planProjectSwitch(readShownSurface(), { page: activePage, chat: chatOpen },
       (p) => !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p)));
-    if (plan.navigate) navigate(plan.navigate, null);
+    if (plan.navigate) navigate(plan.navigate, null, 'landing');
     // Closing the chat with a navigate signal no page reads as its own (Lab clears its open funnel
     // on `page: 'lab'`); the agent surface collapses on any.
-    if (plan.chat === false && !plan.navigate) emitInstance(bus, 'dreamcontext-navigate', { page: null });
+    if (plan.chat === false && !plan.navigate) {
+      ownerRef.current = { byOwner: false, navAt: Date.now() };
+      emitInstance(bus, 'dreamcontext-navigate', { page: null });
+    }
     if (plan.chat !== true) return undefined;
     // A project mounted by this switch has no chat surface listening yet: ask until it opens.
-    openAgentSurface(bus);
-    if (chatOpenRef.current) return undefined;
-    chatRetriesRef.current = [150, 500, 1200, 2500].map((ms) => window.setTimeout(() => {
-      if (!chatOpenRef.current) openAgentSurface(bus);
-    }, ms));
+    startChatLadder();
     return stopChatRetries;
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- once per arrival on screen
   useEffect(() => {
     if (isActive) publishShownSurface({ page: activePage, chat: chatOpen });
   }, [isActive, activePage, chatOpen]);
+
+  // What this project shows, to the window's recorder (C3): on becoming active and on every
+  // change, only while active. The open item travels only when it belongs to the shown page.
+  const openItem = useOpenItem(bus);
+  const itemOnPage = openItem && openItem.page === activePage ? openItem : null;
+  const reportedRef = useRef(false);
+  const reportShown = chrome.reportShown;
+  useEffect(() => {
+    if (!newShell || !vault) return;
+    if (!isActive) { reportedRef.current = false; return; }
+    const becoming = !reportedRef.current;
+    reportedRef.current = true;
+    const byOwner = !becoming && ownerRef.current.byOwner;
+    ownerRef.current = { ...ownerRef.current, byOwner: false };
+    reportShown(vault, { page: activePage, chatOpen, item: itemOnPage ? { id: itemOnPage.id, label: itemOnPage.label } : null, byOwner });
+  }, [newShell, vault, isActive, activePage, chatOpen, itemOnPage?.id, itemOnPage?.label, reportShown]); // eslint-disable-line react-hooks/exhaustive-deps -- the item by value
 
   const handleSidebarNavigate = useCallback(
     (page: Page, id?: string) => {
@@ -262,25 +315,6 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   );
 
   const clearFocus = useCallback(() => setFocusId(null), []);
-
-  // ← → step through this project's page history without adding to it.
-  const stepHistory = useCallback((delta: -1 | 1) => {
-    const h = historyRef.current;
-    const at = h.at + delta;
-    if (at < 0 || at >= h.stack.length) return;
-    h.at = at;
-    setHistoryRev((n) => n + 1);
-    const page = h.stack[at];
-    setActivePage(page);
-    setFocusId(null);
-    setNonce((n) => n + 1);
-    setOrigin('other');
-    emitInstance(bus, 'dreamcontext-navigate', { page });
-    writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, page);
-  }, [bus, vault]);
-  const canBack = historyRef.current.at > 0;
-  const canForward = historyRef.current.at < historyRef.current.stack.length - 1;
-  void historyRev;
 
   // Stable so <CommandModal>'s topmost-Esc effect doesn't re-register (and re-assert
   // the palette as top of the overlay stack) on every Shell re-render — which would
@@ -303,10 +337,6 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
           activePage={activePage}
           onNavigate={(page) => navigate(page, null, 'rail')}
           onOpenSearch={() => setPaletteOpen(true)}
-          canBack={canBack}
-          canForward={canForward}
-          onBack={() => stepHistory(-1)}
-          onForward={() => stepHistory(1)}
         />
         <div className="shell-body">
           <main className="shell-main">

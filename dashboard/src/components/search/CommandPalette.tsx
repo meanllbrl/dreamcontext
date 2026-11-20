@@ -1,7 +1,12 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Fragment, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
 import { useRecallMode } from '../../hooks/useSleep';
-import { useApi } from '../../context/VaultContext';
+import { useApi, useVault } from '../../context/VaultContext';
+import { useI18n } from '../../context/I18nContext';
+import { ApiClient } from '../../api/client';
+import { fanOutRecall, RECALL_DEBOUNCE_MS, RECALL_PER_VAULT } from '../../lib/recallFanout';
+import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
+import { useChrome } from '../layout/WindowChrome';
 import { TypeIcon, SearchIcon, SparkIcon } from '../sleepy/TypeIcons';
 import { DocContent } from '../sleepy/DocContent';
 import { recallNavTarget } from '../../lib/recallNav';
@@ -76,8 +81,16 @@ interface CommandPaletteProps {
   onNavigate: (page: Page, focusId: string | null) => void;
 }
 
+/** One row of the list: the open project's hit (`vault: null`) or another project's. */
+interface PaletteRow { hit: RecallHit; vault: string | null }
+
 export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProps) {
   const api = useApi();
+  const { t } = useI18n();
+  const { vault: openVault } = useVault();
+  const chrome = useChrome();
+  // ⌘K across projects (navigation B, C7): the new shell on this Mac, Normal mode only.
+  const acrossProjects = useIsNewShell() && !readDeviceShell();
   const overlayId = useOverlayId('command-palette');
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -122,11 +135,45 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
   const intelliReady = intelligent && intelliState === 'done' && intelliQuery !== '' && intelliQuery === trimmed;
   const hits: RecallHit[] = intelligent ? (intelliReady ? intelliHits : []) : bmHits;
 
-  const go = useCallback((hit: RecallHit) => {
-    const target = recallNavTarget(hit);
-    onNavigate(target.page, target.slug);
+  // Every other registered project's hits, one group per project as each lands, below the open
+  // project's (C7). A newer query (or closing) bumps the sequence: older answers are dropped.
+  const [groups, setGroups] = useState<Array<{ vault: string; hits: RecallHit[] }>>([]);
+  const [failed, setFailed] = useState<string[]>([]);
+  const fanSeq = useRef(0);
+  const others = useMemo(() => chrome.registered.filter((v) => v !== openVault), [chrome.registered, openVault]);
+  const othersKey = others.join('\u0000');
+  const fanOn = acrossProjects && open && !intelligent && !!trimmed && others.length > 0;
+  useEffect(() => {
+    fanSeq.current += 1;
+    const seq = fanSeq.current;
+    setGroups([]);
+    setFailed([]);
+    if (!fanOn) return undefined;
+    const query = trimmed;
+    const level = minLevel || undefined;
+    const timer = setTimeout(() => {
+      void fanOutRecall<RecallHit>({
+        vaults: othersKey.split('\u0000'),
+        read: (v) => recallOnce(new ApiClient(v), query, [], RECALL_PER_VAULT, level),
+        current: () => fanSeq.current === seq,
+        onGroup: (v, got) => { if (got.length) setGroups((g) => [...g, { vault: v, hits: got }]); },
+        onFailed: (v) => setFailed((f) => [...f, v]),
+      });
+    }, RECALL_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [fanOn, trimmed, minLevel, othersKey]);
+  const rows = useMemo<PaletteRow[]>(() => [
+    ...hits.map((hit) => ({ hit, vault: null })),
+    ...(intelligent ? [] : groups.flatMap((g) => g.hits.map((hit) => ({ hit, vault: g.vault })))),
+  ], [hits, groups, intelligent]);
+
+  const go = useCallback((row: PaletteRow) => {
+    const target = recallNavTarget(row.hit);
+    if (row.vault === null) onNavigate(target.page, target.slug);
+    // Another project's hit lands in THAT project, at that item (navigation B).
+    else chrome.goToPlace({ vault: row.vault, kind: 'page', page: target.page, id: target.slug || null, label: row.hit.title || null });
     onClose();
-  }, [onNavigate, onClose]);
+  }, [onNavigate, onClose, chrome]);
 
   const focusInput = useCallback(() => { try { inputRef.current?.focus(); } catch { /* ignore */ } }, []);
 
@@ -135,10 +182,10 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
   // handler. (`onEnter` closes over `runIntelli`/`go`, declared just below; it's only
   // invoked on keydown, well after those initialize.)
   const { focused, setFocused, onKeyDown } = useListKeyboardNav({
-    length: hits.length,
+    length: rows.length,
     onEnter: (i) => {
       if (intelligent && !intelliReady && trimmed) { void runIntelli(); return; }
-      if (hits[i]) go(hits[i]);
+      if (rows[i]) go(rows[i]);
     },
   });
 
@@ -200,13 +247,14 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
     return () => cancelAnimationFrame(raf);
   }, [open, setFocused]);
 
-  const focusedHit = hits[focused] ?? null;
+  const focusedRow = rows[focused] ?? null;
+  const focusedHit = focusedRow?.hit ?? null;
   const showIntelliCTA = intelligent && !!trimmed && intelliState !== 'thinking' && !intelliReady;
   const showThinking = intelligent && intelliState === 'thinking';
   const showEmpty =
     !!trimmed &&
     ((!intelligent && !isFetching && bmHits.length === 0 && debouncedQ === trimmed) ||
-      (intelligent && intelliReady && intelliHits.length === 0));
+      (intelligent && intelliReady && intelliHits.length === 0)) && groups.length === 0;
   const showIdleHint = !trimmed;
 
   return (
@@ -301,14 +349,17 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
             <div className="cmdk-empty">No matches for “{trimmed}”.</div>
           )}
 
-          {hits.map((hit, i) => (
+          {rows.map(({ hit, vault }, i) => (
+            <Fragment key={`${vault ?? ''}/${hit.type}/${hit.slug}/${i}`}>
+            {vault !== null && rows[i - 1]?.vault !== vault && (
+              <div className="cmdk-group" aria-hidden="true"><span className="cmdk-vault-badge">{vault.slice(0, 1).toUpperCase()}</span>{vault}</div>
+            )}
             <button
-              key={`${hit.type}/${hit.slug}/${i}`}
               type="button"
               role="option"
               aria-selected={i === focused}
               className={`cmdk-row${i === focused ? ' cmdk-row--focused' : ''}`}
-              onClick={() => go(hit)}
+              onClick={() => go(rows[i])}
               onMouseEnter={() => setFocused(i)}
             >
               <span className="cmdk-row-icon" aria-hidden="true"><TypeIcon type={hit.type} size={15} /></span>
@@ -316,8 +367,10 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
                 <span className="cmdk-row-title"><Highlight text={hit.title} tokens={queryTokens} /></span>
                 <span className="cmdk-row-snippet"><Highlight text={hit.snippet || hit.description} tokens={queryTokens} /></span>
               </span>
+              {vault !== null && <span className="cmdk-vault-badge" title={vault} data-testid="cmdk-row-vault">{vault.slice(0, 1).toUpperCase()}</span>}
               <span className="cmdk-row-type">{hit.type}</span>
             </button>
+            </Fragment>
           ))}
         </div>
 
@@ -328,7 +381,8 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
               <span className="cmdk-preview-title">{focusedHit.title}</span>
             </div>
             <div className="cmdk-preview-path">{focusedHit.path}</div>
-            <div className="cmdk-preview-body"><DocContent hit={focusedHit} /></div>
+            {/* Another project's doc is read through ITS server path, not this one's: its snippet. */}
+            <div className="cmdk-preview-body">{focusedRow?.vault ? <p className="cmdk-preview-snippet">{focusedHit.snippet || focusedHit.description}</p> : <DocContent hit={focusedHit} />}</div>
           </div>
         )}
       </div>
@@ -337,6 +391,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
         <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
         <span><kbd>↵</kbd> {intelligent && !intelliReady ? 'reason' : 'open'}</span>
         <span><kbd>esc</kbd> close</span>
+        {failed.length > 0 && <span className="cmdk-foot-failed" role="status">{t('shell.nav.searchFailed').replace('{names}', () => failed.join(', '))}</span>}
         <span className={`cmdk-foot-mode${intelligent || hybridActive ? ' cmdk-foot-mode--intel' : ''}`}>
           {intelligent
             ? (intelliReady && intelliMode === 'bm25' ? 'bm25 · fallback' : 'intelligent · haiku')

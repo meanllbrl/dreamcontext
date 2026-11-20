@@ -28,7 +28,7 @@ describe('phone drawer (AC9) = the new shell\'s drawer', () => {
   });
 
   it('a row opens through ONE intent in its own project; a live row adopts with reattach=1', () => {
-    expect(chrome).toMatch(/const openChatRow = useCallback\(\(vault: string, row: HomeRow\) => \{\s*void queueDrawerIntent\(vault, \{ kind: 'open-chat', row \}\);/);
+    expect(chrome).toMatch(/const openChatRow = useCallback\(\(vault: string, row: HomeRow\) => \{\s*void trackedIntent\(vault, \{ kind: 'open-chat', row \}\);/);
     expect(surface).toMatch(/else if \(plan\.kind === 'adopt'\) \{ setSuperView\('panes'\); adoptLiveChat\(plan\.chat\); \}/);
     expect(surface).toMatch(/const adoptLiveChat = useCallback\(\(chat: LiveChatWire\) => \{\s*resumePastSession\([\s\S]*?'1'\)/);
     expect(surface).toMatch(/spawn\(bypass, past\.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach\)/);

@@ -8,6 +8,7 @@ import { publishPageDetail } from '../../lib/pageContext';
 import { fill, openChildrenMessage } from '../../lib/taskObjection';
 import { TaskDeleteDialog } from './TaskDeleteDialog';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
+import { usePublishOpenItem } from '../../lib/openItem';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import {
@@ -256,6 +257,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   }, [pendingSave, s, flash]);
 
   const selectedTask = selectedSlug ? tasks.find((t) => t.slug === selectedSlug) || null : null;
+  // The open task, for the window's places (navigation B, C4): the focus target opens it again.
+  // Only a task the list has (an unknown slug opens nothing, so it is never published).
+  usePublishOpenItem(bus, 'tasks', selectedTask ? selectedTask.slug : null, selectedTask?.name ?? null);
 
   // The new shell's page frame already draws the card (D11): no second border, and the board
   // fills the frame instead of sizing from the viewport.
