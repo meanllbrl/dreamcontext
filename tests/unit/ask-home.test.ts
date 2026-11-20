@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { askHome, decisionChoices, dockedAskOf } from '../../dashboard/src/components/sleepy/super/superQuestions.js';
-import { PRESENT_WIN, STAGE, planStage, type StageItem } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { DOCK, PRESENT_WIN, STAGE, planStage, type StageItem } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import type { SuperQueueItem } from '../../dashboard/src/lib/superTypes.js';
 
 const ask = (id: string, over: Partial<SuperQueueItem> = {}): SuperQueueItem => ({
@@ -102,5 +102,30 @@ describe('a presented member is not docked (Ü2)', () => {
     expect(plan.cards.t0.where).toBe('present');
     expect(plan.cards.t0.inWindow).toBe(true);
     expect(plan.cards.c0.where).toBe('dock');
+  });
+});
+
+describe('the window reaches down to the Dock (K8 frame D, Super 2026-11-20)', () => {
+  it('under a Dock no band is reserved: window and chat run from one margin under the top to one margin above the Dock', () => {
+    const jobs = Array.from({ length: 3 }, (_, i) => ({ id: `c${i}`, kind: 'chat', ref: `s${i}`, shape: 'portrait', place: 'float', live: true }) as unknown as StageItem);
+    const agenda = { id: 'ag', kind: 'agenda', ref: 'agenda', shape: 'square', place: 'float' } as StageItem;
+    const page = { id: 'web-plan', shape: 'tall', place: 'float', kind: 'web' } as StageItem;
+    for (const stage of [{ width: 1440, height: 836 }, { width: 1180, height: 736 }]) {
+      const plan = planStage([agenda, ...jobs, page], { mode: 'present', cards: ['web-plan'], layout: 'spotlight' }, stage,
+        { askDock: true, dock: { prev: false, needs: new Set(), focus: null, today: null, agenda: 'ag', pool: 0, cap: null } });
+      const win = plan.presentWindow!;
+      const dockTop = plan.jobDock!.rect.y;
+      expect(dockTop - (win.y + win.height)).toBe(STAGE.MARGIN);
+      expect(plan.centre.y + plan.centre.height).toBe(win.y + win.height);
+      // The window holds the stage's height less the top band, the margin and the Dock.
+      expect(win.height).toBe(stage.height - win.y - STAGE.MARGIN - plan.jobDock!.rect.height - DOCK.INSET);
+      // No top band either: the window starts one margin under the stage's top, its controls ride in its title row.
+      expect(win.y).toBe(STAGE.MARGIN);
+      expect(plan.controlsInTitle).toBe(true);
+      const c = plan.controls!;
+      expect(c.y).toBeGreaterThanOrEqual(win.y);
+      expect(c.y + c.height).toBeLessThanOrEqual(win.y + PRESENT_WIN.TITLE_H);
+      expect(c.x + c.width).toBeLessThanOrEqual(win.x + win.width);
+    }
   });
 });

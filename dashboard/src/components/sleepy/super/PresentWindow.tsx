@@ -40,13 +40,15 @@ export function nextSelection(selected: ReadonlySet<string>, key: string, shift:
   return out;
 }
 
-export function PresentWindow({ win, tabs, onShow, onClose, onMinimize, onMention }: {
+export function PresentWindow({ win, tabs, onShow, onClose, onMinimize, onMention, endRoom = 0 }: {
   win: Rect;
   tabs: readonly WindowTab[];
   onShow: (key: string) => void;
   onClose: (keys: string[]) => void;
   onMinimize: () => void;
   onMention: (id: string) => void;
+  /** Width kept free at the title row's right end for the stage controls riding there (a window over the Dock). */
+  endRoom?: number;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -86,7 +88,8 @@ export function PresentWindow({ win, tabs, onShow, onClose, onMinimize, onMentio
   return (
     <div ref={rootRef} className="super-win" data-testid="super-present-window"
       style={{ left: win.x, top: win.y, width: win.width, height: win.height, ['--win-title-h' as string]: `${PRESENT_WIN.TITLE_H}px` }}>
-      <div className="super-win-title" role="group" aria-label={t('super.pq.label')} data-testid="super-present-tabs">
+      <div className="super-win-title" role="group" aria-label={t('super.pq.label')} data-testid="super-present-tabs"
+        style={endRoom > 0 ? { paddingRight: endRoom + 6 } : undefined}>
         <CardLights inline
           close={{ label: t('super.win.close'), testId: 'super-win-close', onClick: front ? () => close([front.key]) : undefined }}
           minimize={{ label: t('super.win.minimize'), testId: 'super-win-min', onClick: onMinimize }} />

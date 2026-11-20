@@ -1644,6 +1644,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       )}
       {plan.presentWindow && plan.layout && (
         <PresentWindow win={plan.presentWindow} tabs={windowTabs} onShow={showTab} onClose={closeTabs}
+          endRoom={plan.controlsInTitle && plan.controls ? plan.presentWindow.x + plan.presentWindow.width - plan.controls.x : 0}
           onMinimize={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation}
           onMention={(id) => { if (!remote) actions.onAskAbout(id); }} />
       )}
