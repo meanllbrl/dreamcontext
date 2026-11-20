@@ -4107,14 +4107,14 @@
     },
     {
       "path": "super float",
-      "desc": "Bring a card or a group from Others back to the stage (placed for you); a grouped card leaves its group",
+      "desc": "Bring a card or a group back from the Dock to the stage (placed for you); a grouped card leaves its group",
       "args": [
         "<card>"
       ]
     },
     {
       "path": "super group",
-      "desc": "Put cards together as one tile on the stage; a group id among them adds the rest to that group",
+      "desc": "Put cards together as one tile on the stage (only you make groups: the owner's drag never does; presented, a group is one tab); a group id among them adds the rest to that group",
       "args": [
         "<cards...>"
       ],
@@ -4124,7 +4124,7 @@
     },
     {
       "path": "super half",
-      "desc": "Show one card side by side with you (half page); --off returns to the floating cards",
+      "desc": "Show one card side by side with you (half page; a child's chat opens as its session window beside you); --off returns to the floating cards",
       "args": [
         "[card]"
       ]
@@ -4264,7 +4264,7 @@
     },
     {
       "path": "super present",
-      "desc": "Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4, only when asked: side-by-side), filmstrip (2+, its strip scrolls; the default for 3+ cards and for 2+ pictures or clips), review (a page with its child's chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards",
+      "desc": "Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4, only when asked: side-by-side), filmstrip (2+, its strip scrolls; the default for 3+ cards and for 2+ pictures or clips), review (a page with its child's chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once (one tab, filmstrip); without --layout the cards pick it; drawn inside the tabbed presentation window, and a second present while one shows arrives as a background tab; --off returns to the floating cards",
       "args": [
         "[cards...]"
       ],
@@ -4401,7 +4401,7 @@
     },
     {
       "path": "super stack",
-      "desc": "Put a card or a group in Others (bottom right); a grouped card leaves its group",
+      "desc": "Minimize a card or a group to the Dock's right (the record still says Others); a grouped card leaves its group",
       "args": [
         "<card>"
       ]
