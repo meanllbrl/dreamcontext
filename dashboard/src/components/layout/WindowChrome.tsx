@@ -1282,8 +1282,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     newShell && !deviceShell && !marksOnly ? drawerExpanded : [],
     mountedNames,
     drawerVisible || railOn,
-    newShell && !deviceShell ? (marksOnly ? projectOrder : drawerFolded) : [],
-    drawerHidden,
+    newShell && !deviceShell ? (marksOnly ? projectOrder.filter((n) => !drawerHidden.includes(n)) : drawerFolded) : [],
+    // Marks only: neither the rail nor a closed drawer shows a hidden project; the drawer's Hidden
+    // group reads them again the moment it opens.
+    marksOnly ? [] : drawerHidden,
   );
   // The Mac's running chats, for the chat rows of projects this window has not mounted.
   const { live: liveChats, answered: liveAnswered } = useDrawerChats({ activeVault, drawerVisible, enabled: newShell });

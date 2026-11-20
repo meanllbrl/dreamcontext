@@ -145,7 +145,7 @@ describe('a device shell\'s drawer is chats only', () => {
     // Both project lists are empty on a device shell (the rail's marks-only read too: railOn is false there).
     expect(src).toMatch(/const railOn = newShell && !deviceShell;/);
     expect(src).toMatch(/newShell && !deviceShell && !marksOnly \? drawerExpanded : \[\]/);
-    expect(src).toMatch(/newShell && !deviceShell \? \(marksOnly \? projectOrder : drawerFolded\) : \[\]/);
+    expect(src).toMatch(/newShell && !deviceShell \? \(marksOnly \? projectOrder\.filter\(\(n\) => !drawerHidden\.includes\(n\)\) : drawerFolded\) : \[\]/);
   });
 });
 
