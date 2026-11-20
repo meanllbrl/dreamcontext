@@ -41,15 +41,18 @@ function readDuration(buf: Buffer, mvhd: Box): number | null {
   if (v === 1) {
     if (o + 28 > mvhd.end) return null;
     scale = buf.readUInt32BE(o + 16);
-    dur = Number(buf.readBigUInt64BE(o + 20));
+    const raw = buf.readBigUInt64BE(o + 20);
+    if (raw === 0xFFFF_FFFF_FFFF_FFFFn) return null; // all ones = unknown
+    dur = Number(raw);
   } else {
     if (o + 16 > mvhd.end) return null;
     scale = buf.readUInt32BE(o + 8);
     dur = buf.readUInt32BE(o + 12);
+    if (dur === 0xFFFF_FFFF) return null; // all ones = unknown
   }
   if (!scale || !Number.isFinite(dur)) return null;
   const s = Math.round(dur / scale);
-  return s > 0 ? s : null;
+  return s > 0 && s <= 86_400 ? s : null; // Telegram reads a 32-bit int; a day is far past any card video
 }
 
 /** Display size from `tkhd` (16.16 fixed width/height; a 90/270 degree matrix swaps them), or null for a non-visual track. */

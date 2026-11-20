@@ -38,6 +38,15 @@ describe('mp4VideoParams', () => {
     const p = mp4VideoParams(mp4(1920, 1080, true));
     expect([p.width, p.height]).toEqual([1080, 1920]);
   });
+  it('an unknown (all ones) or absurd duration is left out', () => {
+    const b = mp4(1920, 1080);
+    const at = b.indexOf('mvhd') + 4 + 16;
+    b.writeUInt32BE(0xFFFFFFFF, at);
+    expect(mp4VideoParams(b)).toEqual({ width: 1920, height: 1080, supports_streaming: true });
+    b.writeUInt32BE(1, at - 4); // timescale 1 -> huge seconds
+    b.writeUInt32BE(0x7FFFFFFF, at);
+    expect(mp4VideoParams(b).duration).toBeUndefined();
+  });
   it('an unreadable file gives no fields', () => {
     expect(mp4VideoParams(Buffer.from('not a video at all'))).toEqual({});
     expect(mp4VideoParams(mp4(1920, 1080).subarray(0, 60))).toEqual({});
