@@ -4,6 +4,12 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **Moving between projects (new shell).** A column of project badges sits at the left of every page. Click one: the same page opens in that project, at the last board, task, document or app you had open there. Rest the pointer on a badge: its card shows the Super Agent, what waits for you there, where you were last and where you went lately; each line opens in one click. A red number on a badge opens the first thing waiting for you. Drag a badge to reorder (the chat list follows). The title bar shows where you are (`project › page › item`) instead of the project menu; ⌘P, ⌘1-9 and ⌥Tab work as before.
+- **Back and forward across projects.** ← and → walk every place you stopped on, in any project; going back into a chat opens that project's chat as you left it. Hovering ← names where it goes.
+- **⌘K searches every project.** Results from the open project come first, other projects' results follow with their badge; Enter opens the result in its project.
+- **Phone.** The project badges are a strip at the top of the page; a long press opens the project's card.
+- **Boards.** Opening Boards in the window's first project no longer asks for another project's board.
+
 ## [0.41.22] - 2026-11-16
 
 Patch on 0.41.21. Local build; not published.
