@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useIsNewShell } from '../lib/uxMode';
 import { useKnowledgeList, useKnowledge, useToggleKnowledgePin, useKnowledgeLiveRefresh } from '../hooks/useKnowledge';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
+import { usePublishOpenItem } from '../lib/openItem';
 import { useI18n } from '../context/I18nContext';
 import { FullscreenOverlay } from '../components/layout/FullscreenOverlay';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
@@ -196,7 +197,7 @@ interface KnowledgePageProps {
 export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
   const { t } = useI18n();
   const newShell = useIsNewShell();
-  const { vault } = useVault();
+  const { vault, bus } = useVault();
   const { data: entries, isLoading, isError, error } = useKnowledgeList();
   const togglePin = useToggleKnowledgePin();
   const [selected, setSelected] = useState<string | null>(null);
@@ -219,6 +220,10 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
   });
 
   const { data: detail } = useKnowledge(selected ?? '');
+  // The open doc, for the window's places (navigation B, C4): the focus target opens it again.
+  // Only a doc the list has (an unknown slug opens nothing, so it is never published).
+  const selectedEntry = selected ? entries?.find((e) => e.slug === selected) ?? null : null;
+  usePublishOpenItem(bus, 'knowledge', selectedEntry ? selectedEntry.slug : null, detail?.name ?? selectedEntry?.name ?? null);
 
   // Live-refresh the open doc (esp. Excalidraw boards) when its file changes on
   // disk: the list poll carries each file's mtime; refetch the open doc only

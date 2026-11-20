@@ -3,6 +3,7 @@ import { TOGGLE_PAGE_DRAWER_EVENT } from '../lib/uxMode';
 import { useI18n } from '../context/I18nContext';
 import { useApi, useInstanceEvent, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
+import { usePublishOpenItem } from '../lib/openItem';
 import { useDefaultWhiteboard, useWhiteboardEditor, useWhiteboardList } from '../hooks/useWhiteboards';
 import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
@@ -105,6 +106,9 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   useEffect(() => {
     if (openSlug && vault) writeLastBoard(vault, openSlug);
   }, [openSlug, vault]);
+  // The open board, for the window's places (navigation B, C4): `navigate('whiteboards', slug)`
+  // opens it again (the focus target above).
+  usePublishOpenItem(bus, 'whiteboards', openSlug, boards.data?.find((b) => b.slug === openSlug)?.name ?? null);
   // The open board, for the Super dock's page chip (lib/pageContext.ts).
   useEffect(() => {
     if (!openSlug) return undefined;
