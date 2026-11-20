@@ -8,6 +8,7 @@ import { OwnerCardSlot } from './OwnerCardSlot';
 import { ownerCardItemsOf, placeOwnerCards } from './cardPlacement';
 import { surveyDraftKey } from '../chat/surveyDrafts';
 import { MacPermission, RemotePermission, SuperAllowsLine } from './SuperPermissionCard';
+import { DockedAskRow } from './DockedAskRow';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { requestOpenAgents } from '../../../lib/openAgents';
@@ -19,7 +20,7 @@ import {
   MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, oneChoiceQuestion, rewriteAnswer, ownerRowKind, questionAnswer, useOwnerAnswer, visibleText,
 } from './ownerAnswer';
 import {
-  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText, superAlreadyText,
+  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText, superAlreadyText, useDockedAsk,
   type AskRef,
 } from './superQuestions';
 
@@ -38,15 +39,20 @@ import {
  * question, and the answer stands in the transcript as the card's receipt (`SuperAnswerReceipt`).
  * A send that wrote nothing remounts the card, so it can be answered again.
  */
-export function SuperQuestionCard({ ask, session }: {
+export function SuperQuestionCard({ ask, session, place = 'chat' }: {
   ask: AskRef & { live: boolean };
   /** The super chat this card is drawn in. */
   session: ChatSession;
+  /** 'dock': drawn under the window's page (ReportAskDock, K8). In the chat, a question docked
+   *  there is one row: one full card per question on this Mac. */
+  place?: 'chat' | 'dock';
 }) {
   const view = useSuperQuestions(session.claudeId);
+  const docked = useDockedAsk(session.claudeId);
   if (cardState(ask.item, ask.live, view) !== 'open' || !view) return null;
   const item = view.open.find((q) => q.id === ask.item);
   if (!item) return null;
+  if (place === 'chat' && docked === item.id) return <DockedAskRow item={item} />;
   return (
     <OpenQuestion
       item={item}

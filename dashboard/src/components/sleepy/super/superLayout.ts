@@ -268,6 +268,8 @@ export interface StagePlan {
   /** A wide stage's presentation window (K14, W3): as wide as what it shows, the chat's column at
    *  its left; `presentFrame` is this window and `presentTabs` its title row. */
   presentWindow?: Rect;
+  /** The question docked in the window under its page (K8): the window's full width, its foot. */
+  askDock?: Rect;
   /** The presentation queue's control in the top band (D7, D2): `step` left of `controls` while a
    *  queued presentation is on screen, `wait` at the band's right end while presentations wait
    *  off screen. `short`: the narrow band's form (D10). */
@@ -401,6 +403,9 @@ export interface PlanOptions {
   /** The presentation window's tab count (the shown presentation and those queued after it):
    *  the window never draws narrower than its tabs (K14). Absent = 1. */
   presentTabCount?: number;
+  /** A Super question about what the window shows waits (K8 `askHome` = 'report'): the window
+   *  keeps a dock under its page for it. */
+  askDock?: boolean;
   /** The presentation queue's control (superTypes `queueCounter`): `step` while a queued
    *  presentation of 2+ is on screen, `wait` while presentations wait off screen. */
   queueBand?: 'step' | 'wait';
@@ -1279,7 +1284,7 @@ function planWith(
     others.push(c.id);
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
-    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls' | 'presentWindow'>> = {}): StagePlan => {
+    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls' | 'presentWindow' | 'askDock'>> = {}): StagePlan => {
     // The waiting queue's control holds the band's right end off a presentation.
     const qb = queueBandRect(f, opts.queueBand, mode);
     const bandRight = qb ? qb.rect : extra.controls;
@@ -1476,7 +1481,9 @@ function planWith(
       const itemOf = (id: string) => list.find((x) => x.id === id);
       const items = ordered.map(itemOf);
       const pictures = items.filter((it) => it?.kind === 'image');
-      const bodyH = Math.max(0, content.height - PRESENT_WIN.TITLE_H);
+      // A question about what it shows sits under the page (K8): the page gives it its foot.
+      const askH = opts.askDock ? Math.round(Math.min(PRESENT_WIN.ASK_MAX_H, PRESENT_WIN.ASK_FRAC * content.height)) : 0;
+      const bodyH = Math.max(0, content.height - PRESENT_WIN.TITLE_H - (askH ? askH + STAGE.GAP : 0));
       const room = content.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN;
       // Two or more cards side by side keep their floor as far as the chat's floor allows: the chat
       // then gives way down to REGION_MIN only, as it did beside the cards before (a 968 px touch stage).
@@ -1499,11 +1506,12 @@ function planWith(
             : { kind: 'desk' };
       const cardsFloor = (layout === 'compare' || layout === 'grid') && ordered.length > 1 ? Math.min(ordered.length, 2) * STAGE.FIT_MIN.w + STAGE.GAP
         : rest.length ? rest.length * (STAGE.FIT_MIN.w + STAGE.GAP) - STAGE.GAP : 0;
-      const pw = Math.max(presentWidth(shape, pageH, opts.presentTabCount ?? 1, room), Math.min(cardsFloor, floorCap));
+      const pw = Math.max(presentWidth(shape, pageH, opts.presentTabCount ?? 1, room), Math.min(cardsFloor, floorCap), askH ? Math.min(PRESENT_WIN.ASK_MIN_W, room) : 0);
       const win: Rect = { x: content.x + content.width - pw, y: content.y, width: pw, height: content.height };
       const body: Rect = { x: win.x, y: win.y + PRESENT_WIN.TITLE_H, width: pw, height: bodyH };
       const centre: Rect = { x: content.x, y: content.y, width: Math.max(0, content.width - STAGE.GAP - pw), height: content.height };
-      const extra = { layout, chat: 'column' as const, controls, presentWindow: win };
+      const askDock: Rect | undefined = askH ? { x: win.x, y: body.y + body.height + STAGE.GAP, width: pw, height: askH } : undefined;
+      const extra = { layout, chat: 'column' as const, controls, presentWindow: win, ...(askDock ? { askDock } : {}) };
       // A picture or a device page keeps its shape in the body (the window is already about its
       // width; the height decides the rest). A card the owner sized fills it.
       const lead = itemOf(page);
@@ -2145,6 +2153,9 @@ export const PRESENT_WIN = {
   TABS_BASE: 160, TAB_W: 170,
   /** The chat beside the window never reads narrower than this. */
   CHAT_MIN: 520,
+  /** The question dock under the page (K8): at most this tall, or this share of the window; the
+   *  window never narrower than its card reads (the chat's own card width). */
+  ASK_MAX_H: 340, ASK_FRAC: 0.42, ASK_MIN_W: 460,
   /** A PDF with no measured page: A4 (595 x 842). */
   A4: 595 / 842,
 } as const;

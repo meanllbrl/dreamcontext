@@ -16,7 +16,8 @@ import { PresentQueue } from './PresentQueue';
 import { StageDock, type DockTileView } from './StageDock';
 import { sendQueueJump } from './queueJump';
 import { StageListSwitch, SuperStatusPill, setStageViewMode, useStageViewMode } from './SuperListView';
-import { revealQuestion } from './superQuestions';
+import { dockedAskOf, revealQuestion, setDockedAsk } from './superQuestions';
+import { ReportAskDock } from './ReportAskDock';
 import { jobTokensOf, publishJobTokens, requestStopJob, setJobFilter, useJobFilter } from './superJobFilter';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
@@ -491,11 +492,23 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [needsKey, spokeFocus, agendaPill, agendaId, poolCount, liveCount, vault, t, items]);
   // The window's tabs (K14: its width never under the tabs' floor): the queue on screen, else one.
   const presentTabCount = qc.showing && pq && pqHead ? pq.items.length : 1;
+  // K8: a Super question about what the window shows is asked under its page, not in the chat.
+  // The plan decides: only the window draws a dock (a filmstrip or a narrow stage has none).
+  const askCandidate = view.mode === 'present'
+    ? dockedAskOf(state.queue, { cards: view.cards ?? [], ...(view.ask ? { ask: view.ask } : {}) }) : null;
   const plan = useMemo(
-    () => planStage(items, view, size, { presentTabCount, dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts }),
-    [items, view, size, presentTabCount, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda],
+    () => planStage(items, view, size, { presentTabCount, askDock: !!askCandidate, dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts }),
+    [items, view, size, presentTabCount, askCandidate, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda],
   );
   dockPrevRef.current = { vault, docked: !!plan.jobDock?.docked };
+  // Docked only where the window drew its dock (a wide stage); else the chat keeps the full card.
+  const dockedAsk = plan.askDock && askCandidate && superSession ? askCandidate : null;
+  const superScope = superSession?.claudeId ?? null;
+  useEffect(() => {
+    if (!superScope) return undefined;
+    setDockedAsk(superScope, dockedAsk);
+    return () => setDockedAsk(superScope, null);
+  }, [superScope, dockedAsk]);
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
   const stripBig = plan.strip?.big;
@@ -1158,6 +1171,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     // An AI Team approval: its row on the Super's own approval card.
     const asked = state.queue.find((q) => q.id === item);
     if (asked?.kind === 'approval' && asked.member && showMemberApproval(asked.member, rootRef.current ?? document)) return;
+    const askDockEl = rootRef.current?.querySelector('[data-testid="super-ask-dock"]');
+    if (askDockEl && showQuestionCard(item, askDockEl)) return;
     if (showQuestionCard(item, superSession?.container)) return;
     document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
@@ -1614,6 +1629,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           onMinimize={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation}
           onMention={(id) => { if (!remote) actions.onAskAbout(id); }} />
       )}
+      {plan.askDock && dockedAsk && superSession && <ReportAskDock rect={plan.askDock} item={dockedAsk} session={superSession} />}
       {plan.presentTabs && plan.layout && !plan.presentWindow && (
         <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
       )}

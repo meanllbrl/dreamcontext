@@ -2416,3 +2416,41 @@
    (the tab names it, its × closes it), no second frame. */
 .super-card-frame[data-in-window='true'] .super-card-head { display: none; }
 .super-card-frame[data-in-window='true'] .super-card-clip { border-color: transparent; box-shadow: none; border-radius: 0 0 var(--radius-lg) var(--radius-lg); background: transparent; }
+
+/* K8: the Super's question about the shown document, docked under the window's page. */
+.super-ask-dock {
+  position: absolute;
+  z-index: var(--sz-queue);
+  box-sizing: border-box;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  transition: outline-color 300ms;
+}
+.super-ask-dock[data-revealed='true'] { outline: 2px solid var(--mood-waiting); outline-offset: 2px; }
+
+/* The chat's one row for a question asked beside the report. */
+.super-ask-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.super-ask-row-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
+.super-ask-row-where { flex: none; color: var(--color-text-secondary); }
+.super-ask-row-show {
+  flex: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--color-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.super-ask-row-show:hover { text-decoration: underline; }
