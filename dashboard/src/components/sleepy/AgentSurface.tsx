@@ -4114,8 +4114,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // is now and bring one back with the stage's own moves: a card side by side (as a question's
   // report card does, above), a group presented whole (the group's "Open all"), from Others too.
   const superGroups = superState?.groups;
+  // The cards in front now (presented, or side by side): their tiles do not read "Show again".
+  const stageViewNow = superState?.view;
+  const superFrontKey = stageViewNow?.mode === 'present' ? (stageViewNow.cards ?? []).join(',')
+    : stageViewNow?.mode === 'half' && stageViewNow.card ? stageViewNow.card : '';
+  const superFront = useMemo(() => (superFrontKey ? superFrontKey.split(',') : []), [superFrontKey]);
   const superStageKey = (superContainers ?? []).map((k) => `${k.id}=${k.place}=${k.title ?? ''}`).join('\u0001')
-    + '\u0002' + (superGroups ?? []).map((g) => `${g.id}=${g.place}=${g.name}=${g.cards.join(',')}`).join('\u0001');
+    + '\u0002' + (superGroups ?? []).map((g) => `${g.id}=${g.place}=${g.name}=${g.cards.join(',')}`).join('\u0001')
+    + '\u0003' + superFrontKey;
   const publishedStageSid = useRef<string | null>(null);
   // The owner's own open (declared further down): a closed card's tile opens it again.
   const openCardRef = useRef<(body: SuperOpenBody) => Promise<{ id: string; groupId: string | null }>>(async () => { throw new Error('no stage'); });
@@ -4126,36 +4132,30 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (!superQuestionSid) return;
     const containers = superContainers ?? [];
     const groups = superGroups ?? [];
-    const now = { containers, groups };
+    const now = { containers, groups, shown: superFront };
     const bring = (target: { card: string } | { group: string }) => {
       const patch = bringPatch(target, now, (g) => groupPresentCards({ cards: [...g.cards] }, containers));
       if (patch) editLayoutRef.current(patch);
     };
     const reopen = async (cards: readonly KnownCard[]) => {
       const ids: string[] = [];
-      const groupIds = new Set<string | null>();
       for (const card of cards) {
         const body = reopenBody(card);
         if (!body) continue;
         try {
           const r = await openCardRef.current(body);
           if (!ids.includes(r.id)) ids.push(r.id);
-          groupIds.add(r.groupId);
         } catch { /* refused (stage full, file gone): the rest still open */ }
       }
       if (!ids.length) return false;
       if (ids.length === 1) { editLayoutRef.current({ view: { mode: 'half', card: ids[0] } }); return true; }
-      // Several came back as the group they were: the server's own picture chain grouped them,
-      // else they are put together again, and the group is presented whole.
-      const one = groupIds.size === 1 ? [...groupIds][0] : null;
-      const shown = ids.slice(0, MAX_FILMSTRIP);
-      editLayoutRef.current(one
-        ? { view: { mode: 'present', cards: shown } }
-        : { group: { id: `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, cards: ids }, view: { mode: 'present', cards: shown } });
+      // Several are presented together. Only Claude makes groups (super-v3 D5): the server's
+      // own picture chain may have grouped them again; the owner's patch never carries one.
+      editLayoutRef.current({ view: { mode: 'present', cards: ids.slice(0, MAX_FILMSTRIP) } });
       return true;
     };
     publishSuperStage(superQuestionSid, { now, bring, reopen }, superStageKey);
-  }, [superQuestionSid, superStageKey, superContainers, superGroups]);
+  }, [superQuestionSid, superStageKey, superContainers, superGroups, superFront]);
   useEffect(() => () => {
     if (publishedStageSid.current) publishSuperStage(publishedStageSid.current, null);
   }, []);

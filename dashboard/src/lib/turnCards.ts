@@ -254,6 +254,8 @@ export function answerForCards(byAnswer: ReadonlyMap<string, TurnCards>, cards: 
 export interface StageNow {
   containers: ReadonlyArray<{ id: string; kind: string; ref: string; title?: string; place: string }>;
   groups: ReadonlyArray<{ id: string; name: string; cards: readonly string[]; place: string }>;
+  /** The cards in front now: the presentation's cards, or the card side by side. Absent = none. */
+  shown?: readonly string[];
 }
 
 export type TurnTile =
@@ -310,6 +312,19 @@ export function turnTiles(turn: TurnCards, now: StageNow | null): TurnTile[] {
     tiles.push({ kind: 'card', key: id, card, place: live.place });
   }
   return tiles;
+}
+
+/**
+ * Whether a tile's chip reads "Show again" (super-v3 AC10, the audit's "a closed presentation
+ * leaves no trace"): a card he closed, a group none of whose cards is in front, or a card resting
+ * in the Dock. A card floating on the stage, or one in front now, is in sight: no label.
+ */
+export function showAgain(tile: TurnTile, now: StageNow | null): boolean {
+  if (!now) return false;
+  if (tile.kind === 'reopen') return true;
+  const front = new Set(now.shown ?? []);
+  if (tile.kind === 'group') return !tile.cards.some((c) => front.has(c.id));
+  return !front.has(tile.card.id) && tile.place === 'others';
 }
 
 /** What the owner's own open (`POST /api/super/open`) takes to bring a closed card back: a kind
