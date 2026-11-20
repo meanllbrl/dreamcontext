@@ -192,8 +192,9 @@
 .super-fresh-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .super-fresh-glyph { flex: none; }
 /* The Agenda and Others buttons (the head's own when those cards are off the stage) keep only
-   their glyph on a narrow centre; the word stays in aria-label and title. */
-@container super-centre (max-width: 399px) {
+   their glyph on a narrow centre (the chat at its 520 floor beside the presentation window
+   squeezed "Super Agent" to "S..." at 1180); the word stays in aria-label and title. */
+@container super-centre (max-width: 599px) {
   .super-fresh-btn { padding: 0 var(--space-1); }
   .super-fresh-btn-label { display: none; }
 }
@@ -2411,3 +2412,7 @@
   text-align: center;
   pointer-events: none;
 }
+/* A card in the presentation window's body is the window's content: no title bar of its own
+   (the tab names it, its × closes it), no second frame. */
+.super-card-frame[data-in-window='true'] .super-card-head { display: none; }
+.super-card-frame[data-in-window='true'] .super-card-clip { border-color: transparent; box-shadow: none; border-radius: 0 0 var(--radius-lg) var(--radius-lg); background: transparent; }

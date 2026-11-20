@@ -16,6 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
 import { chromium } from 'playwright';
 import { openApp } from './lib/app.mjs';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
@@ -47,6 +48,8 @@ const FRAMES = {
   'C-soru': { needs: 1, jobs: 3, minis: 0, chat: 'ask', cards: 'noAsking', mock: 'super-ux-denetim/kareler/C-soru.png', sizes: [[1440, 900]], light: true },
   'H-ajanda': { needs: 1, jobs: 3, minis: 0, chat: 'ask', pad: true, agendaTap: true, mock: 'super-ux-denetim/kareler/H-ajanda.png', sizes: [[1440, 900]], light: true },
   'A-izin': { needs: 1, jobs: 3, minis: 0, perms: 1, allows: true, chat: 'allow', mock: 'super-ux-denetim/kareler/A-izin.png', sizes: [[1440, 900], [1180, 800]], light: true },
+  // W3: the presentation window (K14, D14): a phone shot in front, a PDF waiting as a background tab.
+  '08-kuyruk': { needs: 1, jobs: 4, minis: 0, present: true, mock: 'super-jakob-v3/v3/08-kuyruk-2.png', sizes: [[1440, 900], [1180, 800]], light: true },
   'T3-sonra': { needs: 0, jobs: 2, minis: 0, members: ['sage'], memberDone: 'sage', chat: 'member', mock: 'super-ux-denetim/kareler/T3-sonra.png', sizes: [[1440, 900]], light: true },
 };
 /** The fictional AI Team the member frames seed through the real CLI (`agents create`). */
@@ -119,15 +122,42 @@ function seed(f) {
   const pad = f.pad ? kids.map((k, i) => ({ id: `n${i + 1}`, section: rowOf(i) === 'done' ? 'done' : rowOf(i) === 'asking' ? 'waiting' : 'now', text: k.title, at: now - 60_000 * (i + 1), for: k.id })) : undefined;
   const away = f.away ? { since: now - 150 * 60_000, events: 4, until: now - 5 * 60_000, viaTelegram: 2 } : { since: null, events: 0 };
   if (f.chat) writeTranscript(superSession, f, kids, team, now);
+  let view = { mode: 'float' };
+  let presentQueue;
+  if (f.present) {
+    mkdirSync(join(app.proj, 'docs'), { recursive: true });
+    writeFileSync(join(app.proj, 'docs', 'hatirlatma.png'), png(390, 844));
+    writeFileSync(join(app.proj, 'docs', 'fiyat.pdf'), '%PDF-1.4\n1 0 obj << /Type /Page /MediaBox [0 0 595 842] >> endobj\n%%EOF\n');
+    containers.push(
+      { id: 'img1', kind: 'image', ref: 'docs/hatirlatma.png', shape: 'tall', place: 'float', by: 'super', title: 'Hatırlatmalar · sonra', aspect: 0.462 },
+      { id: 'pdf1', kind: 'pdf', ref: 'docs/fiyat.pdf', shape: 'tall', place: 'others', by: 'super', title: 'Fiyat önerisi', aspect: 0.707 },
+    );
+    view = { mode: 'present', cards: ['img1'], layout: 'spotlight' };
+    presentQueue = { items: [{ id: 'pq1', cards: ['img1'], layout: 'spotlight', at: now - 60_000, shown: true }, { id: 'pq2', cards: ['pdf1'], at: now - 10_000 }], seen: 0, seq: 2, showing: 'pq1' };
+  }
   const sessions = kids.map((k, i) => ({ title: k.title, kind: 'chat', sessionId: k.id, pane: i, active: i === 0, window: 'main', size: 1 }));
   const state = join(app.proj, '_dream_context', 'state');
   mkdirSync(join(app.proj, 'docs'), { recursive: true });
   writeFileSync(join(app.proj, 'docs', 'panel.html'), '<!doctype html><h1 style="font-family:system-ui">Panel · aylık özet</h1>');
   writeFileSync(join(state, '.agent-sessions.json'), JSON.stringify({ sessions, activePane: 0, chatPermissionMode: 'auto', windows: [{ id: 'main', name: 'Chat', activePane: 0 }], generation: Date.now() }));
   writeFileSync(join(state, '.super-agent.json'), JSON.stringify({
-    v: 1, session: superSession, enabled: true, containers, groups: [], view: { mode: 'float' }, children, queue,
+    v: 1, session: superSession, enabled: true, containers, groups: [], view, children, queue, ...(presentQueue ? { presentQueue } : {}),
     notes: {}, away, dismissed: [], pool: [], ownerBatches: [], team, ...(pad ? { pad, padSeq: pad.length } : {}),
   }));
+}
+
+/** A plain PNG (rows of grey with a dark header band): a fictional phone shot, no real screen in it. */
+function png(w, h) {
+  const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (b) => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    const v = y < 120 ? 40 : Math.floor(y / 70) % 2 ? 236 : 248;
+    for (let x = 0; x < w; x++) raw.fill(v, y * (w * 3 + 1) + 1 + x * 3, y * (w * 3 + 1) + 4 + x * 3);
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
 /** The Super's transcript, rows as the CLI writes them (`~/.claude/projects/<dir>/<session>.jsonl`). */

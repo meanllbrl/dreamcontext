@@ -192,6 +192,9 @@ export interface CardPlan {
   /** Presented at its page's own width (StageItem.fit): the page is laid out in the card, never
    *  at the desktop width and scaled down to it. */
   fitted?: boolean;
+  /** Drawn in the presentation window's body (W3 D14): the window's tab names it and closes it,
+   *  so the card draws no title bar of its own. */
+  inWindow?: boolean;
 }
 
 /** A filmstrip's strip (owner 2026-10-29: "every time I select one, it swaps places"): every
@@ -1518,6 +1521,7 @@ function planWith(
         rest.forEach((id, k) => place(id, { x: body.x + k * (rw + STAGE.GAP), y: body.y + body.height - rowH, width: rw, height: rowH }, 'present'));
       }
       if (fitted) cards[page] = { ...cards[page], fitted };
+      for (const id of ordered) if (cards[id]) cards[id] = { ...cards[id], inWindow: true };
       for (const k of list) if (!cards[k.id]) toOthers(k);
       return finish(centre, centre.width, 'present', undefined, undefined, extra);
     }

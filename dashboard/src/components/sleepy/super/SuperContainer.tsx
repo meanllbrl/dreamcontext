@@ -344,6 +344,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-kind={c.kind}
       data-open-stage={c.kind === 'team' && props.team && !props.remote ? 'true' : undefined}
       data-where={plan.where}
+      data-in-window={plan.inWindow ? 'true' : undefined}
       data-shape={plan.shape}
       data-size={floating ? drawnSize : undefined}
       data-mini={plan.mini ? 'true' : undefined}
@@ -401,7 +402,8 @@ export function SuperContainer(props: SuperContainerProps) {
       {/* Top left, the Mac window controls (owner 2026-11-08): red close, yellow minimise, green
           full screen, always in colour, their glyphs shown on hover and focus. A floating card is
           already small: its yellow is off and its green brings it back side by side. */}
-      {!thumb && !plan.mini && (
+      {/* In the presentation window its tab and the window's own lights stand for these. */}
+      {!thumb && !plan.mini && !plan.inWindow && (
         <CardLights
           floating={floating}
           close={closeLight}
@@ -414,7 +416,7 @@ export function SuperContainer(props: SuperContainerProps) {
             : { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}
         />
       )}
-      {!thumb && !plan.mini && <div className="super-card-actions">
+      {!thumb && !plan.mini && !plan.inWindow && <div className="super-card-actions">
         {floating ? (
           <>
             {/* A 160 px tile holds the lights and two buttons: To Others joins size and full
