@@ -1591,7 +1591,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {plan.jobDock && (
         <StageDock dock={plan.jobDock} viewOf={dockViewOf} onOpen={openDockTile} pool={poolCount} cap={plan.jobDock.cap}
           todayLine={(() => {
-            const waiting = bandCount(state);
+            const waiting = ownerQueueCount(state);
             const docked = plan.jobDock.tiles.filter((x) => x.kind === 'job').length;
             return waiting > 0 ? t('superDock.todayNeeds').replace('{n}', String(waiting)) : t('superDock.todayRunning').replace('{n}', String(docked));
           })()} />

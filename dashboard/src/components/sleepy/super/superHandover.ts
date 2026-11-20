@@ -276,6 +276,17 @@ export function bandCount(state: Pick<SuperState, 'queue'> | null | undefined): 
   return (state?.queue ?? []).filter((it) => needsOwner(it) && bandItem(it)).length;
 }
 
+/** The STAGE's top band (super-v3 D8): on the Mac a permission is a card in the Super chat
+ *  (SuperQuestionTail, Allow once first), never this band; a remote screen keeps it in the band,
+ *  where it says the Mac answers. The off-page dock keeps `bandHead`. */
+function stageBandItem(remote: boolean) { return (it: SuperQueueItem) => bandItem(it) && (remote || it.kind !== 'permission'); }
+export function stageBandHead(state: Pick<SuperState, 'queue'> | null | undefined, remote: boolean): SuperQueueItem | null {
+  return queueHead(state ? { queue: state.queue.filter(stageBandItem(remote)) } : state);
+}
+export function stageBandCount(state: Pick<SuperState, 'queue'> | null | undefined, remote: boolean): number {
+  return (state?.queue ?? []).filter((it) => needsOwner(it) && stageBandItem(remote)(it)).length;
+}
+
 /** Items whose alarm this window already raised, per project: the strip remounts (the stage is
  *  redrawn, the mode re-entered) and a ref would forget, ringing the same head again. Bounded:
  *  the oldest ids go first (an id never comes back once answered). */

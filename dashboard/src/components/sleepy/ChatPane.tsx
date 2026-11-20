@@ -98,6 +98,7 @@ import { keepJobTurns, setJobFilter, useJobFilterFor } from './super/superJobFil
 import { answerForCards, sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { onQueueJump } from './super/queueJump';
 import { JumpToLatest } from './chat/JumpToLatest';
+import { QuestionStrip } from './super/QuestionStrip';
 import { isOwnSend } from './chat/ownSend';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
@@ -3355,6 +3356,8 @@ export function ChatPane({
             onClose={closeFind}
           />
         )}
+        {/* One copy of a question (super-v3 D7): Show from a stage card lands here; scrolled away, one line says it waits. */}
+        <QuestionStrip scrollRef={scrollRef} enabled={session.mode === 'super' && !session.superMirror} />
         <JumpToLatest
           shown={!atBottom}
           below={superView ? superUnread.below : 0}
