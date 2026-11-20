@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { PRESENT_WIN, contentShape, presentWidth, type PresentContent } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { PRESENT_WIN, STAGE, contentShape, planStage, presentWidth, type PresentContent, type StageItem } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 
 interface Frame { present?: { x: number; y: number; width: number; height: number } }
 const FRAMES = JSON.parse(readFileSync(new URL('./fixtures/super-v3/frames.json', import.meta.url), 'utf-8')) as Record<string, Frame>;
@@ -31,6 +31,25 @@ describe('presentWidth equals the drawn window on frames 07a/b/c', () => {
       expect(Math.abs(w - drawn.width), `${name}: ${w} vs ${drawn.width}`).toBeLessThanOrEqual(2);
     });
   }
+});
+
+describe('the stage draws that window (planStage, a spotlight at the mockup\'s width)', () => {
+  // A stage whose content is the mockup's window height (684): the app's own margins and 24 px gap.
+  const stage = { width: MOCK.width, height: 684 + 88 };
+  const one = (it: Partial<StageItem>) => {
+    const item = { id: 'a', shape: 'tall', place: 'float', kind: 'web', ...it } as StageItem;
+    return planStage([item], { mode: 'present', cards: ['a'], layout: 'spotlight' }, stage);
+  };
+  it('a phone shot and a PDF page match frames 07a and 07b; a desktop page leaves the chat its floor', () => {
+    const phone = one({ kind: 'image', aspect: PHONE });
+    expect(phone.presentWindow!.height).toBe(684);
+    expect(Math.abs(phone.presentWindow!.width - FRAMES['07a-sunum-dar'].present!.width)).toBeLessThanOrEqual(2);
+    expect(Math.abs(one({ kind: 'pdf' }).presentWindow!.width - FRAMES['07b-sunum-orta'].present!.width)).toBeLessThanOrEqual(2);
+    const desk = one({ kind: 'web' });
+    expect(desk.presentWindow!.width).toBe(desk.free.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN);
+    expect(desk.centre.width).toBe(PRESENT_WIN.CHAT_MIN);
+    for (const p of [phone, desk]) expect(p.presentWindow!.x + p.presentWindow!.width).toBe(p.free.x + p.free.width);
+  });
 });
 
 describe('presentWidth rules', () => {

@@ -1359,7 +1359,7 @@ function planWith(
   /** The card a measured page needs, chrome included; absent = it takes what it is given. */
   const pageWidth = (id: string): number | undefined => {
     const fit = list.find((x) => x.id === id)?.fit;
-    return fit ? Math.max(fit + STAGE.CARD_CHROME.w + STAGE.WIDGET_BORDER_W, STAGE.FIT_MIN.w) : undefined;
+    return fit ? measuredCardWidth(fit) : undefined;
   };
 
   // ── half (a narrow stage opens it as a sheet over the centre) ──
@@ -1473,39 +1473,51 @@ function planWith(
       const itemOf = (id: string) => list.find((x) => x.id === id);
       const items = ordered.map(itemOf);
       const pictures = items.filter((it) => it?.kind === 'image');
-      const shape: PresentContent = ordered.length === 1 ? contentShape(items[0])
-        : pictures.length === ordered.length
-          ? (pictures.every((p) => p?.aspect !== undefined && p.aspect < 1) ? { kind: 'album' } : { kind: 'albumdesk' })
-          : { kind: 'desk' };
       const bodyH = Math.max(0, content.height - PRESENT_WIN.TITLE_H);
       const room = content.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN;
-      // Two or more cards side by side keep their floor, as far as the chat's floor allows.
-      // The chat then gives way, down to REGION_MIN only, as it did beside the cards before (a 968 px touch stage).
-      const cardsFloor = (layout === 'compare' || layout === 'grid') && ordered.length > 1
-        ? Math.min(ordered.length, 2) * STAGE.FIT_MIN.w + STAGE.GAP : 0;
-      const pw = Math.max(presentWidth(shape, bodyH, opts.presentTabCount ?? 1, room), Math.min(cardsFloor, content.width - STAGE.GAP - STAGE.REGION_MIN));
+      // Two or more cards side by side keep their floor as far as the chat's floor allows: the chat
+      // then gives way down to REGION_MIN only, as it did beside the cards before (a 968 px touch stage).
+      const floorCap = content.width - STAGE.GAP - STAGE.REGION_MIN;
+      // Review: the child's page big on top (its site, else its browser), its other cards in a row
+      // under it at their floor; the window takes the page's shape at the height the row leaves it.
+      const page = layout === 'review' ? ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0] : ordered[0];
+      const rest = layout === 'review' ? ordered.filter((id) => id !== page) : [];
+      const rowH = rest.length ? Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * bodyH)) : 0;
+      const pageH = Math.max(0, bodyH - (rest.length ? rowH + STAGE.GAP : 0));
+      // Compare with every card a measured page: the window holds both at their width, when the
+      // chat keeps its floor beside it; wider than that, the desktop window and its split.
+      const pages = layout === 'compare' ? ordered.map(pageWidth) : [];
+      const pagesW = pages.length > 1 && pages.every((w) => w !== undefined)
+        ? pages.length * Math.max(...(pages as number[])) + (pages.length - 1) * STAGE.GAP : undefined;
+      const shape: PresentContent = layout === 'review' || ordered.length === 1 ? contentShape(itemOf(page))
+        : pagesW !== undefined && pagesW <= room ? { kind: 'desk', width: pagesW }
+          : pictures.length === ordered.length
+            ? (pictures.every((p) => p?.aspect !== undefined && p.aspect < 1) ? { kind: 'album' } : { kind: 'albumdesk' })
+            : { kind: 'desk' };
+      const cardsFloor = (layout === 'compare' || layout === 'grid') && ordered.length > 1 ? Math.min(ordered.length, 2) * STAGE.FIT_MIN.w + STAGE.GAP
+        : rest.length ? rest.length * (STAGE.FIT_MIN.w + STAGE.GAP) - STAGE.GAP : 0;
+      const pw = Math.max(presentWidth(shape, pageH, opts.presentTabCount ?? 1, room), Math.min(cardsFloor, floorCap));
       const win: Rect = { x: content.x + content.width - pw, y: content.y, width: pw, height: content.height };
       const body: Rect = { x: win.x, y: win.y + PRESENT_WIN.TITLE_H, width: pw, height: bodyH };
       const centre: Rect = { x: content.x, y: content.y, width: Math.max(0, content.width - STAGE.GAP - pw), height: content.height };
       const extra = { layout, chat: 'column' as const, controls, presentWindow: win };
+      // A picture or a device page keeps its shape in the body (the window is already about its
+      // width; the height decides the rest). A card the owner sized fills it.
+      const lead = itemOf(page);
+      const keep = lead && lead.sizeBy !== 'owner' && lead.aspect && (lead.kind === 'image' || lead.kind === 'web') ? lead.aspect : undefined;
+      // A measured page the window holds at its width is laid out there, never scaled (StageItem.fit).
+      const need = pageWidth(page);
+      const fitted = layout !== 'compare' && layout !== 'grid' && need !== undefined && pw >= need - 0.5;
       if (layout === 'compare' || layout === 'grid') {
         const { rects } = fitArrange(body, ordered.map((id) => ({ aspect: itemOf(id)?.aspect })));
         ordered.forEach((id, k) => place(id, rects[k], 'present'));
-      } else if (layout === 'review') {
-        // The child's page big on top (its site, else its browser), its other cards in a row under it.
-        const page = ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0];
-        const rest = ordered.filter((id) => id !== page);
-        const rowH = rest.length ? Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * body.height)) : 0;
-        place(page, { x: body.x, y: body.y, width: body.width, height: Math.max(0, body.height - (rest.length ? rowH + STAGE.GAP : 0)) }, 'present');
+      } else {
+        const top: Rect = { x: body.x, y: body.y, width: body.width, height: pageH };
+        place(page, keep ? fitCard(top, keep) : top, 'present');
         const rw = rest.length ? (body.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
         rest.forEach((id, k) => place(id, { x: body.x + k * (rw + STAGE.GAP), y: body.y + body.height - rowH, width: rw, height: rowH }, 'present'));
-      } else {
-        // Spotlight: the one card in the body, a picture or a device page keeping its shape (the
-        // window is already about its width; the height decides the rest).
-        const one = items[0];
-        const keep = one && one.sizeBy !== 'owner' && one.aspect && (one.kind === 'image' || one.kind === 'web') ? one.aspect : undefined;
-        place(ordered[0], keep ? fitCard(body, keep) : body, 'present');
       }
+      if (fitted) cards[page] = { ...cards[page], fitted };
       for (const k of list) if (!cards[k.id]) toOthers(k);
       return finish(centre, centre.width, 'present', undefined, undefined, extra);
     }
@@ -2129,12 +2141,17 @@ export const PRESENT_WIN = {
   A4: 595 / 842,
 } as const;
 
+/** The card a measured page needs, chrome and border included (planStage's pageWidth). */
+export function measuredCardWidth(fit: number): number {
+  return Math.max(fit + STAGE.CARD_CHROME.w + STAGE.WIDGET_BORDER_W, STAGE.FIT_MIN.w);
+}
+
 /** What one presented card shows, for K14 (a card the layout knows nothing about reads as desktop). */
 export function contentShape(item: Pick<StageItem, 'kind' | 'aspect' | 'fit' | 'sizeBy'> | undefined, pictures = 0): PresentContent {
   if (!item) return { kind: 'desk' };
   // A card the owner sized keeps no shape of its own: its window is desktop width.
   if (item.sizeBy === 'owner') return { kind: 'desk' };
-  if (item.kind === 'web' && !item.aspect && item.fit) return { kind: 'desk', width: Math.min(PRESENT_WIN.DESK_W, Math.round(item.fit + STAGE.CARD_CHROME.w)) };
+  if (item.kind === 'web' && !item.aspect && item.fit) return { kind: 'desk', width: Math.min(PRESENT_WIN.DESK_W, measuredCardWidth(item.fit)) };
   if (item.kind === 'group') return pictures > 0 ? { kind: 'album' } : { kind: 'desk' };
   if (item.kind === 'chat' || item.kind === 'team' || item.kind === 'member') return { kind: 'session' };
   if (item.kind === 'pdf') return { kind: 'pdf', aspect: item.aspect && item.aspect > 0 ? item.aspect : PRESENT_WIN.A4 };

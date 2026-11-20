@@ -539,7 +539,7 @@ describe("the request on the member's own stage, live (super-team.mjs T3)", () =
     expect(pane).toMatch(/const request = requestTurnOf\(item\.text, superCtx\?\.requests\);/);
     expect(pane).toMatch(/requestTurnOf\(\(it as \{ text\?: string \}\)\.text, superCtx\.requests\) !== null/);
     // The block is drawn before the event line is: the request is never folded behind "Show".
-    expect(pane.indexOf('const request = requestTurnOf(')).toBeLessThan(pane.indexOf('const line = <SuperEventLine'));
+    expect(pane.indexOf('const request = requestTurnOf(')).toBeLessThan(pane.indexOf('const eventLine = <SuperEventLine'));
   });
   it("main's card pins nothing above the conversation; the record's request shows only until the transcript holds it (plan r4 E1)", () => {
     const card = src('dashboard/src/components/sleepy/super/useMemberRecord.ts') + src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');

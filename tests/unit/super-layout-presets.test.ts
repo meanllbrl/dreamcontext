@@ -73,7 +73,8 @@ describe('the wide stage (not narrow)', () => {
       const p = plan('spotlight', items(1), stage);
       expect(p.chat).toBe('column');
       const win = p.presentWindow!;
-      expect(win.width).toBe(PRESENT_WIN.DESK_W);
+      // Desktop width, as far as the chat's floor allows (K14: the chat never under CHAT_MIN).
+      expect(win.width).toBe(Math.min(PRESENT_WIN.DESK_W, p.free.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN));
       expect(p.centre.width).toBeGreaterThanOrEqual(PRESENT_WIN.CHAT_MIN);
       expect(p.centre.height).toBeCloseTo(p.free.height, 5);
       expect(p.centre.x).toBe(p.free.x);
@@ -99,10 +100,11 @@ describe('the wide stage (not narrow)', () => {
     });
   }
 
-  it('the expected first look at a 1440 window (stage 1384): a desktop card in an 820 px window, the chat the rest', () => {
+  it('the expected first look at a 1440 window (stage 1384): a desktop card in a window that leaves the chat its 520, then 820 on a wider stage', () => {
     const p = plan('spotlight', items(1), STAGES[0]);
-    expect(p.presentWindow!.width).toBe(820);
-    expect(p.centre.width).toBeCloseTo(p.free.width - STAGE.GAP - 820, 5);
+    expect(p.centre.width).toBe(PRESENT_WIN.CHAT_MIN);
+    expect(p.presentWindow!.width).toBeCloseTo(p.free.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN, 5);
+    expect(plan('spotlight', items(1), STAGES[1]).presentWindow!.width).toBe(PRESENT_WIN.DESK_W);
   });
 
   it('filmstrip: one row holding a slot for every card in a fixed order; the agenda is never the big one; selecting never reorders', () => {

@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
-import { STAGE, applyLayoutPatch, controlsWidth, patchEchoed, planStage, type Rect } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { PRESENT_WIN, STAGE, applyLayoutPatch, controlsWidth, patchEchoed, planStage, type Rect } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { remoteLayoutPatch, remoteStageState } from '../../dashboard/src/components/sleepy/super/remoteStage.js';
 import { PRESENT_REPLY_KEYS as CLIENT_PRESENT_KEYS, answerForCards, turnCardsByAnswer, type TurnItem } from '../../dashboard/src/lib/turnCards.js';
 import { PRESENT_REPLY_KEYS } from '../../src/server/routes/super.js';
@@ -46,16 +46,15 @@ describe('the top band (D7, D10)', () => {
   const items = [card('a'), card('b'), card('c')];
   const present: client.SuperView = { mode: 'present', cards: ['a', 'b'] };
 
-  it('step: a presentation is framed, its tab strip left of the icons, which keep their place', () => {
+  it('step: a presentation is framed, its tabs in the window\'s title row under the icons, which keep their place', () => {
     const before = planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3 });
     const p = planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3, queueBand: 'step' });
     expect(p.controls).toEqual(before.controls);
     // A queued presentation on screen is named by the frame's tabs, never a pill.
     expect(p.queueBand).toBeUndefined();
-    expect(p.presentTabs!.x + p.presentTabs!.width).toBeLessThanOrEqual(p.controls!.x);
-    expect(p.presentTabs!.y).toBe(p.controls!.y);
-    expect(p.presentFrame!.x).toBeLessThanOrEqual(p.presentTabs!.x);
-    expect(p.presentFrame!.y).toBe(p.presentTabs!.y + p.presentTabs!.height);
+    // K14 (W3): the window's title row holds the tabs, across the window's width, under the band.
+    expect(p.presentTabs).toEqual({ x: p.presentFrame!.x, y: p.presentFrame!.y, width: p.presentFrame!.width, height: PRESENT_WIN.TITLE_H });
+    expect(p.presentTabs!.y).toBeGreaterThanOrEqual(p.controls!.y + p.controls!.height);
   });
 
   it('the icon box is exactly its icons', () => {
