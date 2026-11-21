@@ -38,6 +38,15 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // A live link's board viewer is its own entry (tunel-paylasim C7): the share listener serves
+    // only the files the manifest lists for `share.html`, never the dashboard's own bundle.
+    manifest: true,
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        share: fileURLToPath(new URL('./share.html', import.meta.url)),
+      },
+    },
   },
   server: {
     // A verify run from a worktree: its node_modules are symlinks out of the project, so allow
