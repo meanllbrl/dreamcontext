@@ -373,6 +373,23 @@ describe('a voice day (AC7)', () => {
     expect(tg.texts().some((t) => t.includes('ses kaydı yoktu'))).toBe(false);
   });
 
+  it('a voice-day answer that links a PDF still hands the file to the extras; a short line with a PDF is never chatter (review w4 r1)', async () => {
+    await start(0, { speakSummary: async () => ({ ok: true as const, ogg: Buffer.from('OggS-fake'), seconds: 9 }) });
+    const ab = hub.active.get(keyOf(scopeOfContextRoot(root), 'super'))!;
+    (hub as unknown as { voiceDays: Map<string, string> }).voiceDays.set(ab.key, dayOf(clock));
+    const extras: string[] = [];
+    hub.answerExtras = async (_ab, text) => { extras.push(text); };
+    const { h, ref } = await hisMessage('pdf hazır mı?');
+    const n = tg.calls.length;
+    assistant(h, `<!-- re:${ref} -->\n**PDF hazır.**\n\n[Karşılama: değişenler](_dream_context/tmp/super/k.pdf)\n\nAltı sayfa.`);
+    result(h);
+    await vi.waitFor(() => expect(tg.calls.slice(n).some((c) => c.method === 'sendVoice')).toBe(true), { timeout: 5000 });
+    await vi.waitFor(() => expect(extras.length).toBeGreaterThan(0), { timeout: 5000 });
+    expect(extras.join('\n')).toContain('(<_dream_context/tmp/super/k.pdf>)');
+    const { isChatter } = await import('../../src/server/telegram/sade.js');
+    expect(isChatter("PDF'i hazırlıyorum: [taslak](_dream_context/tmp/super/k.pdf)")).toBe(false);
+  });
+
   it('after he asked for voice, the next answer with no voice block is still spoken', async () => {
     const spoken: string[] = [];
     hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, speakSummary: async (t) => { spoken.push(t); return { ok: true, ogg: Buffer.from('OggS-fake'), seconds: 9 }; } });

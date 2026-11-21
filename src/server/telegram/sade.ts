@@ -17,7 +17,7 @@
  *    "yazıyla" ends it (`asksForText`).
  */
 import type { SuperPadItem } from '../../lib/super/types.js';
-import { escapeHtml, markdownImages, redactSecrets, splitReplySections, telegramHtmlToPlain, markdownToTelegramHtml } from '../../lib/telegram/format.js';
+import { escapeHtml, markdownFileLinks, markdownImages, redactSecrets, splitReplySections, telegramHtmlToPlain, markdownToTelegramHtml } from '../../lib/telegram/format.js';
 import { voiceAnswer, type VoiceBlock } from '../../lib/telegram/voice-block.js';
 
 /** A held text with no tool call or end after it goes out this soon (a provider that streams no hints). */
@@ -48,7 +48,7 @@ const FENCE_ANY = /^[ \t]*(```|~~~)\s*([A-Za-z0-9_-]*)/m;
 export function isChatter(md: string): boolean {
   const text = splitReplySections(md).map((s) => s.text).join('\n').trim();
   if (!text) return true;
-  if (FENCE_ANY.test(text) || markdownImages(text).length) return false;
+  if (FENCE_ANY.test(text) || markdownImages(text).length || markdownFileLinks(text).length) return false;
   const plain = telegramHtmlToPlain(markdownToTelegramHtml(text)).replace(/\s+/g, ' ').trim();
   if (plain.length > 200) return false;
   // Only a line about the work itself is chatter ("Bakıyorum.", "Kontrol ediyorum, bitince
@@ -213,9 +213,11 @@ export function voiceFromText(md: string): { voice: VoiceBlock; line: string } |
   return { voice: { title: Array.from(first).slice(0, 60).join(''), text }, line: first };
 }
 
-/** The pictures of a text, as their own lines after a blank one (a voice day's one line keeps
- *  them: the hub sends each after the text), or ''. */
+/** The pictures and linked files (PDFs) of a text, as their own lines after a blank one (a voice
+ *  day's one line keeps them: the hub sends each after the text, never a silent drop), or ''. */
 export function picturesOnly(md: string): string {
   const pics = markdownImages(md).filter((i) => !i.web).map((i) => `![${i.alt.replace(/[[\]]/g, '')}](<${i.src}>)`);
-  return pics.length ? `\n\n${pics.join('\n')}` : '';
+  const files = markdownFileLinks(md).map((f) => `[${f.alt.replace(/[[\]]/g, '')}](<${f.src}>)`);
+  const all = [...pics, ...files];
+  return all.length ? `\n\n${all.join('\n')}` : '';
 }

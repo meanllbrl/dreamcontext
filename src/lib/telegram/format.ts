@@ -335,7 +335,7 @@ const FILE_LINK_OR_CODE = /`[^`\n]+`|(^|[^!])\[([^\]\n]+)\]\((?:<([^>\n]+)>|((?:
 const DOC_FILE = /\.pdf$/i;
 /** A line that is only a local PDF link (in a list item or not): in `'hub'` mode the hub sends the
  *  file itself, so the line goes. */
-const DOC_LINE = /^\s*(?:[-*+]\s+)?\[[^\]\n]+\]\((?:<[^>\n]+>|[^()\s]+)\)\s*$/;
+const DOC_LINE = /^\s*(?:[-*+]\s+)?\[[^\]\n]+\]\((?:<[^>\n]+>|[^()\s]+)(?:\s+"[^"\n]*")?\)\s*$/;
 
 /**
  * The files a text links (`[label](path.pdf)`), local ones only, outside code fences and code

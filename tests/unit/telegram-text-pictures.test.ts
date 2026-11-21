@@ -230,6 +230,7 @@ describe('end to end: the Super answer with pictures reaches the fake bot', () =
       expect(markdownFileLinks(text)).toEqual([{ alt: 'Karşılama: değişenler', src: '_dream_context/tmp/super/rapor.pdf', web: false }]);
       const html = markdownToTelegramHtml(text, { blocks: 'hub' });
       expect(html).not.toContain('Karşılama: değişenler');
+      expect(markdownToTelegramHtml('[Başlıklı](_dream_context/tmp/super/rapor.pdf "t")', { blocks: 'hub' })).not.toContain('Başlıklı');
       // Mac mode (no hub to send it) keeps the label as words.
       expect(markdownToTelegramHtml(text)).toContain('Karşılama: değişenler');
       const transport = new TelegramTransport({ token: '123:abc', baseUrl: bot.url, timeoutMs: 5000 });

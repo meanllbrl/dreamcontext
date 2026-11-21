@@ -739,8 +739,8 @@ export class TelegramHub implements TelegramHubApi {
    *  `reply.answers`: the owner turn this text answers; when he wrote again since, the first
    *  message is a native Telegram reply to his (B2). */
   async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string; answers?: string }, blocks: 'hub' | 'mac' = 'mac', fold: boolean | 'answer' = false): Promise<void> {
-    // A Super's answer folds past ~450 open characters (`'answer'`, owner 2026-11-21, replacing the
-    // 2026-11-14 "never folds"); a question reads whole; a routine's forwarded result folds long.
+    // A Super's answer folds its `**Ayrıntı**` quote, never the answer or a state line (`'answer'`,
+    // owner 2026-11-21, replacing the 2026-11-14 "never folds"); a question reads whole; a routine's forwarded result folds long.
     const first = this.replyParamsFor(ab, reply?.answers);
     let n = 0;
     for (const html of toTelegramMessages(redactSecrets(md), { blocks, fold })) {
