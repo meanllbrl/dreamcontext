@@ -403,7 +403,8 @@ export function ciWatchIn(command: string): string | null {
   const segs = shellSegments(command).map((x) => x.replace(/^(?:(?:do|then|else|[({])\s+)+/, '').replace(ENV_PREFIX, '').replace(WRAPPER, '').trim());
   if (segs.some((x) => /^gh\s+run\s+watch\b/.test(x))) return 'gh run watch';
   if (segs.some((x) => /^gh\s+pr\s+checks\b.*\s--watch\b/.test(x))) return 'gh pr checks --watch';
-  const polls = segs.some((x) => /^gh\s+(?:run\s+(?:view|list)|pr\s+checks|api\s+\S*actions\/runs)\b/.test(x));
+  // The loop's own condition is a poll too: `until gh run view 1 | grep -q completed; do ...`.
+  const polls = segs.some((x) => /^gh\s+(?:run\s+(?:view|list)|pr\s+checks|api\s+\S*actions\/runs)\b/.test(x.replace(/^(?:(?:while|until|if)\s+(?:!\s+)?)+/, '')));
   const loops = segs.some((x) => /^(?:while|until|for)\b/.test(x) || /^sleep\s+\d/.test(x));
   return polls && loops ? 'a gh polling loop' : null;
 }
@@ -417,7 +418,14 @@ export function ciWaitAny(command: string): string | null {
 /** Any browser run, through the lock or not, `dreamcontext shots` included: a Super takes none (D6). */
 export function browserAny(command: string, cwd?: string): boolean {
   if (shellSegments(command).some((x) => /^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+shots\b/.test(x.replace(/^(?:(?:do|then|[({])\s+)+/, '')))) return true;
-  return heavyStep(command, {}, cwd)?.kind === 'browser';
+  if (heavyStep(command, {}, cwd)?.kind === 'browser') return true;
+  // Through the lock: what `builder heavy [opts] -- <cmd>` runs is the browser run.
+  return shellSegments(command).some((x) => {
+    const inner = /^(?:\S+=\S*\s+)*(?:npx\s+)?dreamcontext\s+builder\s+heavy\b.*?\s--\s+(.+)$/.exec(x.trim())?.[1];
+    if (!inner) return false;
+    const bare = /^'(.*)'$/s.exec(inner.trim())?.[1]?.replace(/'\\''/g, "'") ?? inner;
+    return heavyStep(bare, {}, cwd)?.kind === 'browser';
+  });
 }
 
 /** POSIX single quotes, the only form that keeps text inert when pasted back into a shell. */
