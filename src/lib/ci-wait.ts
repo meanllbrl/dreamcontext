@@ -24,7 +24,9 @@ const MAX_LOG_BYTES = 200 * 1024;
 
 const RUN_ID = /^\d{1,20}$/;
 const BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*\.lock$)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
-const SHA = /^[0-9a-f]{7,64}$/;
+/** A FULL commit sha: `gh run list --commit` matches the run's exact head sha, a short one matches nothing. */
+const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const OK_CONCLUSIONS = ['success', 'neutral', 'skipped'];
 
 export interface GhResult { code: number; stdout: string; stderr: string }
 export interface CiWaitDeps {
@@ -38,6 +40,7 @@ export interface CiWaitDeps {
 export interface CiWaitOpts { runId?: string; branch?: string; sha?: string; slice?: string }
 export interface CiWaitResult { exit: number; lines: string[] }
 
+interface RunRow { databaseId?: number; headSha?: string; status?: string; conclusion?: string | null; name?: string; url?: string }
 interface RunView { status?: string; conclusion?: string | null; jobs?: { name?: string; conclusion?: string | null; status?: string }[]; url?: string }
 
 /** Env-shaped lines of a CI log are masked: a printed secret must not reach the transcript. */
@@ -65,10 +68,13 @@ export function sliceSeconds(raw: string | undefined, inAgent: boolean): number 
 
 export async function ciWait(opts: CiWaitOpts, deps: CiWaitDeps): Promise<CiWaitResult> {
   if (opts.runId !== undefined && opts.branch !== undefined) return usage('give a run id OR --branch, not both');
-  if (opts.runId === undefined && opts.branch === undefined) return usage('give a run id, or --branch <branch> [--sha <sha>]');
+  if (opts.runId === undefined && opts.branch === undefined) return usage('give a run id, or --branch <branch> --sha <full sha>');
   if (opts.runId !== undefined && !RUN_ID.test(opts.runId)) return usage(`"${opts.runId.slice(0, 40)}" is no run id (digits only)`);
   if (opts.branch !== undefined && !BRANCH.test(opts.branch)) return usage(`"${opts.branch.slice(0, 60)}" is no branch name`);
-  if (opts.sha !== undefined && (!SHA.test(opts.sha) || opts.branch === undefined)) return usage(opts.branch === undefined ? '--sha goes with --branch' : `"${opts.sha.slice(0, 70)}" is no commit sha`);
+  if (opts.sha !== undefined && opts.branch === undefined) return usage('--sha goes with --branch');
+  // The newest run of a branch is not this commit's (just pushed, [skip ci], another workflow):
+  // a branch wait is always for ONE commit, every run of it (review r1, ci-wait-run-identity).
+  if (opts.branch !== undefined && (opts.sha === undefined || !SHA.test(opts.sha))) return usage(opts.sha === undefined ? '--branch needs --sha <full sha> (the CLI fills in this checkout\'s HEAD)' : `"${opts.sha.slice(0, 70)}" is no full commit sha (git rev-parse <sha>)`);
   const slice = sliceSeconds(opts.slice, deps.inAgent);
   if (slice === null) return usage(`--slice must be a whole number of seconds, got "${opts.slice}"`);
   const gh = deps.gh;
@@ -76,16 +82,37 @@ export async function ciWait(opts: CiWaitOpts, deps: CiWaitDeps): Promise<CiWait
 
   const start = deps.now();
   const deadline = start + slice * 1000;
-  let runId = opts.runId ?? null;
+  const runId = opts.runId ?? null;
   let polls = 0;
+  let seen = 0;
+  const redOf = async (id: string, run: RunView, waited: number, label = ''): Promise<CiWaitResult> => {
+    const failed = (run.jobs ?? []).filter((j) => j.conclusion && !OK_CONCLUSIONS.includes(j.conclusion)).map((j) => `${j.name ?? '?'}: ${j.conclusion}`);
+    const log = await gh(['run', 'view', id, '--log-failed']);
+    return {
+      exit: CI_WAIT_EXIT.red,
+      lines: [
+        `ci wait: ${label}run ${id} ${run.conclusion ?? 'failed'} after ${waited}s${run.url ? ` (${run.url})` : ''}. Failed jobs: ${failed.join(', ') || 'none named'}. Rerunning is your call (never automatic).`,
+        ...(log.code === 0 && log.stdout ? failedLogBlock(log.stdout) : []),
+      ],
+    };
+  };
   for (;;) {
     if (runId === null) {
-      const list = await gh(['run', 'list', '--branch', opts.branch!, ...(opts.sha ? ['--commit', opts.sha] : []), '--limit', '1', '--json', 'databaseId']);
+      const list = await gh(['run', 'list', '--branch', opts.branch!, '--commit', opts.sha!, '--limit', '50', '--json', 'databaseId,headSha,status,conclusion,name,url']);
       if (list.code !== 0) return { exit: CI_WAIT_EXIT.usage, lines: [`ci wait: gh run list failed: ${list.stderr.trim().split('\n')[0] ?? ''}`] };
-      try {
-        const rows = JSON.parse(list.stdout) as { databaseId?: number }[];
-        if (rows[0]?.databaseId !== undefined) runId = String(rows[0].databaseId);
-      } catch { /* not there yet */ }
+      let rows: RunRow[] = [];
+      try { rows = (JSON.parse(list.stdout) as RunRow[]).filter((r) => r.headSha === opts.sha && r.databaseId !== undefined); } catch { /* not there yet */ }
+      seen = rows.length;
+      // Every run of this commit, every workflow: green only when all of them ended green.
+      if (rows.length && rows.every((r) => r.status === 'completed')) {
+        const waited = Math.round((deps.now() - start) / 1000);
+        const red = rows.find((r) => !OK_CONCLUSIONS.includes(r.conclusion ?? ''));
+        if (!red) return { exit: CI_WAIT_EXIT.ok, lines: [`ci wait: ${rows.length} run(s) of ${opts.sha!.slice(0, 12)} green after ${waited}s: ${rows.map((r) => `${r.name ?? r.databaseId} ${r.conclusion}`).join(', ')}`] };
+        const view = await gh(['run', 'view', String(red.databaseId), '--json', 'status,conclusion,jobs,url']);
+        let run: RunView = { conclusion: red.conclusion, url: red.url };
+        try { if (view.code === 0) run = JSON.parse(view.stdout) as RunView; } catch { /* the row's own fields */ }
+        return redOf(String(red.databaseId), run, waited, `${red.name ?? 'workflow'}: `);
+      }
     }
     if (runId !== null) {
       const view = await gh(['run', 'view', runId, '--json', 'status,conclusion,jobs,url']);
@@ -97,22 +124,14 @@ export async function ciWait(opts: CiWaitOpts, deps: CiWaitDeps): Promise<CiWait
         if (run.conclusion === 'success' || run.conclusion === 'neutral' || run.conclusion === 'skipped') {
           return { exit: CI_WAIT_EXIT.ok, lines: [`ci wait: run ${runId} ${run.conclusion} after ${waited}s${run.url ? ` (${run.url})` : ''}`] };
         }
-        const failed = (run.jobs ?? []).filter((j) => j.conclusion && !['success', 'skipped', 'neutral'].includes(j.conclusion)).map((j) => `${j.name ?? '?'}: ${j.conclusion}`);
-        const log = await gh(['run', 'view', runId, '--log-failed']);
-        return {
-          exit: CI_WAIT_EXIT.red,
-          lines: [
-            `ci wait: run ${runId} ${run.conclusion ?? 'failed'} after ${waited}s${run.url ? ` (${run.url})` : ''}. Failed jobs: ${failed.join(', ') || 'none named'}. Rerunning is your call (never automatic).`,
-            ...(log.code === 0 && log.stdout ? failedLogBlock(log.stdout) : []),
-          ],
-        };
+        return redOf(runId, run, waited);
       }
     }
     const left = deadline - deps.now();
     if (left <= 0) {
       return {
         exit: CI_WAIT_EXIT.running,
-        lines: [`ci wait: ${runId ? `run ${runId}` : `no run yet for ${opts.branch}`} still going after ${Math.round((deps.now() - start) / 1000)}s; run the same command again (it stops before the shell tool's 600 s ceiling).`],
+        lines: [`ci wait: ${runId ? `run ${runId}` : seen ? `${seen} run(s) of ${opts.sha!.slice(0, 12)}` : `no run of ${opts.sha!.slice(0, 12)} on ${opts.branch} yet`} still going after ${Math.round((deps.now() - start) / 1000)}s; run the same command again (it stops before the shell tool's 600 s ceiling).`],
       };
     }
     polls += 1;

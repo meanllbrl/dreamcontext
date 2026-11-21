@@ -58,11 +58,58 @@ describe('ci wait', () => {
     const r = await ciWait({ runId: '1' }, { ...fakeWorld(1).deps(), gh: null });
     expect(r.exit).toBe(2);
   });
-  it('--branch finds the newest run and waits on it', async () => {
-    const w = fakeWorld(30);
-    const r = await ciWait({ branch: 'super/x', sha: 'abcdef1' }, w.deps());
+  const SHA = 'a'.repeat(40);
+  const OLD = 'b'.repeat(40);
+  /** `gh run list` rows, as they stand at `now`. */
+  function branchWorld(rowsAt: (nowMs: number) => object[]) {
+    let now = 0;
+    const calls: string[][] = [];
+    const deps: CiWaitDeps = {
+      inAgent: true, now: () => now, sleep: async (ms) => { now += ms; },
+      gh: async (args) => {
+        calls.push(args);
+        if (args[1] === 'list') return { code: 0, stdout: JSON.stringify(rowsAt(now)), stderr: '' };
+        if (args.includes('--log-failed')) return { code: 0, stdout: 'boom\n', stderr: '' };
+        return { code: 0, stdout: JSON.stringify({ status: 'completed', conclusion: 'failure', jobs: [{ name: 'e2e', conclusion: 'failure' }] }), stderr: '' };
+      },
+    };
+    return { deps, calls };
+  }
+  it('--branch waits on every run of ONE full commit', async () => {
+    const w = branchWorld((t) => [{ databaseId: 1, headSha: SHA, name: 'CI', status: t > 30_000 ? 'completed' : 'in_progress', conclusion: t > 30_000 ? 'success' : null }]);
+    const r = await ciWait({ branch: 'super/x', sha: SHA }, w.deps);
     expect(r.exit).toBe(0);
-    expect(w.calls[0]).toEqual(['run', 'list', '--branch', 'super/x', '--commit', 'abcdef1', '--limit', '1', '--json', 'databaseId']);
+    expect(w.calls[0].slice(0, 6)).toEqual(['run', 'list', '--branch', 'super/x', '--commit', SHA]);
+  });
+  it('just pushed: the previous commit\'s green run is not this one; no run of it yet keeps waiting (review r1)', async () => {
+    const w = branchWorld(() => [{ databaseId: 9, headSha: OLD, name: 'CI', status: 'completed', conclusion: 'success' }]);
+    const r = await ciWait({ branch: 'super/x', sha: SHA }, w.deps);
+    expect(r.exit).toBe(4);
+    expect(r.lines.join('\n')).toMatch(/no run of a{12} on super\/x yet/);
+  });
+  it('two workflows of one commit: a red one is red even when the newest is green', async () => {
+    const w = branchWorld(() => [
+      { databaseId: 2, headSha: SHA, name: 'CI', status: 'completed', conclusion: 'success' },
+      { databaseId: 3, headSha: SHA, name: 'E2E', status: 'completed', conclusion: 'failure' },
+    ]);
+    const r = await ciWait({ branch: 'super/x', sha: SHA }, w.deps);
+    expect(r.exit).toBe(1);
+    expect(r.lines.join('\n')).toMatch(/E2E: run 3 failure/);
+  });
+  it('one still running holds the wait even when another is done', async () => {
+    const w = branchWorld(() => [
+      { databaseId: 2, headSha: SHA, name: 'CI', status: 'completed', conclusion: 'success' },
+      { databaseId: 3, headSha: SHA, name: 'E2E', status: 'in_progress', conclusion: null },
+    ]);
+    expect((await ciWait({ branch: 'super/x', sha: SHA }, w.deps)).exit).toBe(4);
+  });
+  it('a short sha or no sha with --branch never reaches gh (the CLI resolves both)', async () => {
+    for (const sha of ['abcdef1', undefined]) {
+      const w = branchWorld(() => []);
+      const r = await ciWait({ branch: 'super/x', sha }, w.deps);
+      expect(r.exit).toBe(2);
+      expect(w.calls).toHaveLength(0);
+    }
   });
   it('masks env-shaped values and caps the log tail', () => {
     expect(maskLog('API_KEY=sk_live_x')).toBe('API_KEY=***');

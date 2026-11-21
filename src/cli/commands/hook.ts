@@ -2590,6 +2590,18 @@ export function superSessionOnDisk(contextRoot: string, sessionId: string): bool
  * `dreamcontext ci wait`. A Super session: no CI wait of any kind and no browser run either; the
  * child waits and reports, and the owner's next message does not queue behind a watch.
  */
+/**
+ * Where a foreground CI watch is ours to refuse: the same sessions the heavy-step limit holds
+ * (gate 1d). Our own children, a Claude session inside a dreamcontext project, a Codex or
+ * Antigravity session in a project that opted in. The Mac-wide Codex and Antigravity hooks run in
+ * every folder: the owner's own sessions elsewhere are not ours to hold (review r1).
+ */
+export function ciWatchGated(cwd: string): boolean {
+  if (process.env.DREAMCONTEXT_CONTEXT_BY) return true;
+  if (hookTool() !== null) return codexProjectOptedIn(cwd);
+  return resolveContextRoot(cwd) !== null;
+}
+
 export function ciGateRefusal(command: string, cwd: string, sessionId: string): string | null {
   const wait = ciWaitAny(command);
   const browser = !wait && /playwright|puppeteer|shots|verify|node|tsx|bun/.test(command) && browserAny(command, cwd);
@@ -2600,8 +2612,8 @@ export function ciGateRefusal(command: string, cwd: string, sessionId: string): 
     }
   }
   const watch = ciWatchIn(command);
-  if (watch) {
-    return `Not run: ${watch} holds this session in the foreground and hits the tool's 600 s ceiling. Run: dreamcontext ci wait <run-id> (or --branch <branch> [--sha <sha>]) with the Bash tool's timeout 600000; it returns before the ceiling (exit 4 = still running: run the same command again).`;
+  if (watch && ciWatchGated(cwd)) {
+    return `Not run: ${watch} holds this session in the foreground and hits the tool's 600 s ceiling. Run: dreamcontext ci wait <run-id> (or --branch <branch>: every run of this checkout's HEAD) with the Bash tool's timeout 600000; it returns before the ceiling (exit 4 = still running: run the same command again).`;
   }
   return null;
 }

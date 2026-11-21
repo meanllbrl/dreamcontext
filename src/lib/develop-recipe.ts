@@ -83,7 +83,7 @@ changed or a criterion is about what the owner sees (\`--because\` names that cr
 verify script of your own. Full: the pick below.
 
 CI: never \`gh run watch\`, \`gh pr checks --watch\` or a polling loop (refused). Wait with
-\`dreamcontext ci wait <run-id>\` (or \`--branch <b> [--sha <s>]\`): it stops before the shell tool's
+\`dreamcontext ci wait <run-id>\` (or \`--branch <b>\`: every run of HEAD): it stops before the shell tool's
 ceiling with exit 4, and you run the same command again; 1 = red, its failed log is data.`;
 
 const END_FINAL_CHECK = `- The final check, ONCE, after the last PASS: \`dreamcontext builder load --reap\` first; \`busy\` = check again every

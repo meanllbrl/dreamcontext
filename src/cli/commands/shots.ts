@@ -198,8 +198,11 @@ export async function runShots(deps: ShotsDeps, rawUrl: string, opts: ShotsOptio
       for (const f of r.files) deps.print(`shot: ${f}`);
       for (const e of r.errors) deps.printErr(e);
       if (r.failed) deps.printErr(`shots: the page did not load: ${r.failed}`);
-      deps.print(`console errors: ${r.errors.length}`);
-      code = r.failed || r.errors.length > 0 ? 1 : 0;
+      deps.print(`console errors: ${r.errors.length}${r.errors.length ? ' (listed as data: compare them with the page before your change; they do not make this run red)' : ''}`);
+      // Red only when the page did not load or a width was not captured: a dev server's own
+      // console noise (a React dev warning, a missing favicon) is not this change's failure, and a
+      // red here spends the fast run's one extra (review r1, shots-red-on-preexisting-noise).
+      code = r.failed || r.files.length < widths.length ? 1 : 0;
     }
     if (code !== 0 && scope) recordRed(budget, scope, target, Date.now());
     return code;
