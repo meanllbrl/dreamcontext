@@ -68,6 +68,22 @@ describe('reveal gate: activation', () => {
     expect(gate.current()).toBeNull();
   });
 
+  it('a mounted B that took the intent before the prepare started still matches (warm, no bound)', () => {
+    const { gate, activated } = make();
+    // The window queues the intent, awaits mountForPrepare, and B takes it in between.
+    gate.consumed('b', 9);
+    gate.start('b', { kind: 'page', page: 'tasks' as never, id: null }, { cold: false, nonce: 9, moveId: 1 });
+    gate.report('b', at('tasks'));
+    gate.report('b', at('tasks'));
+    expect(activated.map((p) => p.vault)).toEqual(['b']);
+    // An earlier intent's consumption never stands in for a newer one.
+    gate.consumed('c', 10);
+    gate.start('c', { kind: 'page', page: 'tasks' as never, id: null }, { cold: false, nonce: 11, moveId: 2 });
+    gate.report('c', at('tasks'));
+    gate.report('c', at('tasks'));
+    expect(activated).toHaveLength(1);
+  });
+
   it('nothing counts before its intent is taken; an unsettled frame starts the count again', () => {
     const { gate, activated } = make();
     gate.start('b', { kind: 'page', page: 'tasks' as never, id: null }, { cold: true, nonce: 3, moveId: null });

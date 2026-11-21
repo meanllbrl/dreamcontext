@@ -121,6 +121,12 @@ export function createRevealGate(deps: RevealGateDeps): RevealGate {
   /** The last prepare that ended without activation: a re-prepare of the same B while its cold
    *  bound would still run stays cold (its instance may still be loading). */
   let lastEnded: { vault: string; cold: boolean; startedAt: number } | null = null;
+  /** An intent taken before its prepare started: a mounted B can take it while the window still
+   *  waits on `mountForPrepare`, so `consumed` arrives first and the start must not lose it. */
+  let takenEarly: { vault: string; nonce: number } | null = null;
+  const wasTaken = (vault: string, nonce: number | null) => (
+    nonce === null || (!!takenEarly && takenEarly.vault === vault && takenEarly.nonce === nonce)
+  );
 
   const stopTimer = () => { if (timer !== null) deps.clearTimer(timer); timer = null; };
   const end = (why: 'cancel' | 'replaced'): Prepare | null => {
@@ -154,7 +160,7 @@ export function createRevealGate(deps: RevealGateDeps): RevealGate {
     start(vault, target, opts) {
       if (cur && cur.vault === vault) {
         // The same B again (a second ⌘2, a row clicked twice): one prepare, its cold and bound.
-        cur = { ...cur, target, nonce: opts.nonce, consumed: opts.nonce === null, moveId: opts.moveId ?? cur.moveId };
+        cur = { ...cur, target, nonce: opts.nonce, consumed: wasTaken(vault, opts.nonce), moveId: opts.moveId ?? cur.moveId };
         frames = 0;
         deps.onChange?.(cur);
         return cur;
@@ -167,7 +173,7 @@ export function createRevealGate(deps: RevealGateDeps): RevealGate {
       const startedAt = resumeCold && lastEnded ? lastEnded.startedAt : now;
       const p: Prepare = {
         id: seq, vault, target, cold, startedAt,
-        nonce: opts.nonce, consumed: opts.nonce === null, moveId: opts.moveId,
+        nonce: opts.nonce, consumed: wasTaken(vault, opts.nonce), moveId: opts.moveId,
       };
       cur = p;
       frames = 0;
@@ -176,9 +182,11 @@ export function createRevealGate(deps: RevealGateDeps): RevealGate {
       return p;
     },
     consumed(vault, nonce) {
-      if (cur && cur.vault === vault && cur.nonce === nonce && !cur.consumed) {
-        cur = { ...cur, consumed: true };
+      if (cur && cur.vault === vault && cur.nonce === nonce) {
+        if (!cur.consumed) cur = { ...cur, consumed: true };
+        return;
       }
+      takenEarly = { vault, nonce };
     },
     report(vault, r) {
       const p = cur;
@@ -192,7 +200,7 @@ export function createRevealGate(deps: RevealGateDeps): RevealGate {
     },
     cancel: () => end('cancel'),
     current: () => cur,
-    dispose() { stopTimer(); cur = null; },
+    dispose() { stopTimer(); cur = null; takenEarly = null; },
   };
 }
 
