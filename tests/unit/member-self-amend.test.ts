@@ -140,6 +140,10 @@ describe('a member corrects its own instructions from his feedback', () => {
     expect(brief).toContain('dreamcontext super team amend doctor --why');
     expect(brief).toContain('--quote "<his exact words>"');
     expect(brief).toContain('Yourself only');
+    // D11/D7/D8: his correction is its member rule; a relayed one is his word; the amend prints AMENDED.
+    expect(brief).toContain('--scope member --quote "<his exact words>"');
+    expect(brief).toContain('<owner-relay>');
+    expect(brief).toContain('AMENDED <id>');
   });
 
   it('its briefing has it READ what waits on him before answering, and send the card with Onayla (owner 2026-11-19)', () => {

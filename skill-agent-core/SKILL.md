@@ -73,6 +73,7 @@ _dream_context/
 - Automation (runs on a schedule): `dreamcontext automations create <slug> --agent <agent>`. More work for an existing member is its routine (`--agent <member>`, `--mode call` on demand), never a new member. For "check every N, act only if X", a condition script is the better default: it runs first with no model, so a check that finds nothing costs no tokens. (`--condition '<sh>'`; Exit 0 = true, exit 1 = false, anything else = a loud error. A source only an MCP connector reaches (claude.ai Gmail, Slack) cannot be checked by a script. The owner approves it on its card.)
 - Release or version: `dreamcontext core releases add`.
 - Person: `dreamcontext people add "<Name>" --email <address>`.
+- His rule (only in the session where he typed it, or an `<owner-relay>` block on a member's request): `dreamcontext learn "<rule>" --scope me|project|member --quote "<his exact words>"`; `member` = how this AI Team member works, it rides the member everywhere. A member changes its own instructions only on his quoted word (`super team amend <slug> --quote`).
 - Board over tracked insights: `dreamcontext lab board create <slug> --title "<title>"`.
 
 If you cannot tell which entity something is, report the ambiguity instead of

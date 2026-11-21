@@ -150,8 +150,10 @@ describe('C8: the learn paragraph is in every text an agent reads', () => {
 
   it('the member directive splits a rule about him from a lesson about its own job (D2)', () => {
     expect(member).toContain('dreamcontext automations learn scout-helper --lesson');
-    expect(member).toContain('dreamcontext learn "<the rule>" --scope me');
-    expect(member.indexOf('automations learn')).toBeLessThan(member.indexOf('dreamcontext learn "'));
+    // 2026-11-21 (global-uye-ogrenme D11): his correction of how it works is its member rule, first;
+    // its own working notes stay lessons, after it.
+    expect(member).toContain('dreamcontext learn "<the rule>" --scope member');
+    expect(member.indexOf('dreamcontext learn "')).toBeLessThan(member.indexOf('automations learn'));
     // Still nothing at all when the member does not learn.
     expect(buildTurnLearningDirective({ slug: 'scout-helper', learning: false, pattern: '' })).toBe('');
   });
