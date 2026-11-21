@@ -4,7 +4,7 @@
  * its words, and a job's status is one message drawn from a `dream-status` block.
  */
 import { describe, it, expect } from 'vitest';
-import { ANSWER_OPEN_MAX, foldAnswer, markdownToTelegramHtml, telegramHtmlToPlain, toTelegramMessages } from '../../src/lib/telegram/format.js';
+import { ANSWER_FOLD_AT, foldAnswer, markdownToTelegramHtml, telegramHtmlToPlain, toTelegramMessages } from '../../src/lib/telegram/format.js';
 import { jobStatusHtml, JOB_STATUS_MAX } from '../../src/lib/telegram/system-lines.js';
 import { TELEGRAM_WRITING_RULE } from '../../src/lib/telegram/writing.js';
 import { SUPER_TELEGRAM_LINE } from '../../src/server/chat-modes.js';
@@ -35,18 +35,49 @@ const REPORT = [
 ].join('\n');
 
 describe('an answer stays short on his phone (AC1)', () => {
-  it('a long, four-head report: at most ~450 open characters, no head open, the rest folded', () => {
-    expect(REPORT.length).toBeGreaterThan(800);
+  it('an unmarked report up to ~1,200 visible characters stays whole: the code never guesses what he asked', () => {
     const html = markdownToTelegramHtml(REPORT, { fold: 'answer' });
-    expect(openText(html).length).toBeLessThanOrEqual(ANSWER_OPEN_MAX);
+    expect(telegramHtmlToPlain(html).length).toBeLessThanOrEqual(ANSWER_FOLD_AT);
+    expect(html).not.toContain('<blockquote');
+  });
+
+  it('a longer unmarked report: the answer group and every group with a state line stay open whole; the others fold', () => {
+    const extra = ['', '**Arka plan**', ...Array.from({ length: 6 }, (_, i) => `- Eski ekranın ${i + 1}. notu burada uzun uzun anlatılıyor, bir sürü ayrıntıyla birlikte.`)].join('\n');
+    const md = `${REPORT}${extra}`;
+    const html = markdownToTelegramHtml(md, { fold: 'answer' });
+    expect(telegramHtmlToPlain(html).length).toBeGreaterThan(ANSWER_FOLD_AT);
+    const open = openText(html);
     expect(html.startsWith('<b>Canlıdaki sürüm doğru çalışıyor.</b>')).toBe(true);
-    // No head line stays open: every one sits behind the fold.
-    const open = html.replace(/<blockquote expandable>[\s\S]*?<\/blockquote>/g, '');
-    expect(open.match(/^<b>[^<]*<\/b>$/gm)?.length ?? 0).toBe(1);
-    expect(html).toContain('<blockquote expandable>');
-    // Nothing is lost: every word is still there, folded.
+    // The first group after the lead is the answer, open.
+    expect(open).toContain('dün akşamki 14 kayıt eksiksiz');
+    expect(open).toContain('Velilere giden hatırlatmalar');
+    // A group whose head or lines say where work stands stays whole ("Bekleyen" head).
+    expect(open).toContain('iki dersi takvimde çakışıyor');
+    expect(open).toContain('yazım hatası var');
+    // Extra detail folds; nothing is lost.
+    expect(open).not.toContain('Eski ekranın 1. notu');
+    expect(open).not.toContain('Her sabah yedide');
+    expect(telegramHtmlToPlain(html)).toContain('Eski ekranın 6. notu');
     expect(telegramHtmlToPlain(html).replace(/\s+/g, ' ')).toContain('Türkçe harfler her yerde doğru çıkıyor');
-    for (const h of ['Canlıda', 'Bekleyen', 'Kontrol ne yapıyor', 'Dikkat']) expect(telegramHtmlToPlain(html)).toContain(h);
+  });
+
+  it('a later group with one state line stays open whole, in order', () => {
+    const filler = Array.from({ length: 14 }, (_, i) => `- Ek bilgi ${i + 1}: bu satır sormadığı bir ayrıntıyı uzun uzun anlatıyor, okunması gerekmez.`).join('\n');
+    const md = ['**PDF hazır.**', '', '**Ne var**', '- Karşılama: tek düğme', '- Proje açma: 1 ekran', '', '**Ekler**', '- Eski ekranın notları', '- 2. dalga şu an yapılıyor', '- Henüz senin uygulamanda yok', '', '**Arka plan**', filler].join('\n');
+    const html = markdownToTelegramHtml(md, { fold: 'answer' });
+    const open = openText(html);
+    expect(open).toContain('Proje açma: 1 ekran');
+    expect(open).toMatch(/Eski ekranın notları\n• 2\. dalga şu an yapılıyor\n• Henüz senin uygulamanda yok/);
+    expect(open).not.toContain('Ek bilgi 1');
+    expect(telegramHtmlToPlain(html)).toContain('Ek bilgi 14');
+  });
+
+  it('an Ayrıntı quote the writer added marks the extras: nothing else folds', () => {
+    const md = `**Bitti.**\n\n${'Sorduğun şeyin cevabı uzun bir cümleyle burada. '.repeat(12)}\n\n> **Ayrıntı**\n> iç ayrıntı`;
+    const html = markdownToTelegramHtml(md, { fold: 'answer' });
+    expect(openText(html)).toContain('Sorduğun şeyin cevabı');
+    expect(openText(html)).not.toContain('iç ayrıntı');
+    expect((html.match(/<blockquote expandable>/g) ?? []).length).toBe(1);
   });
 
   it('a short answer is never folded', () => {
@@ -65,15 +96,15 @@ describe('an answer stays short on his phone (AC1)', () => {
       expect(q.slice(1)).not.toMatch(/<blockquote|<pre/);
     }
     expect(telegramHtmlToPlain(html)).toContain('iç ayrıntı');
-    expect(openText(html).length).toBeLessThanOrEqual(ANSWER_OPEN_MAX);
+    expect(openText(html).length).toBeLessThanOrEqual(ANSWER_FOLD_AT);
   });
 
-  it('one long first block folds after its first lines; tags stay balanced', () => {
+  it('one long first block is the answer: it stays whole and its tags balanced', () => {
     const lines = Array.from({ length: 14 }, (_, i) => `Satır ${i + 1}: ılık İğdır üzümü **önemli** bir not burada.`);
     const html = foldAnswer(markdownToTelegramHtml(lines.join('\n')));
-    expect(openText(html).length).toBeLessThanOrEqual(ANSWER_OPEN_MAX);
+    expect(html).not.toContain('<blockquote');
     expect((html.match(/<b>/g) ?? []).length).toBe((html.match(/<\/b>/g) ?? []).length);
-    expect(telegramHtmlToPlain(html)).toContain('Satır 14');
+    expect(openText(html)).toContain('Satır 14');
   });
 
   it('a very long answer still splits into valid messages under 4096 with Turkish intact', () => {

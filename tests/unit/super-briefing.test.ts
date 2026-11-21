@@ -265,7 +265,7 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   const OWN_MESSAGES_ONLY_2026_11_15 = 480; // telegram-cevaplayan: a `shown=owner` question waits on his Mac bar only, never on Telegram; `queue ask` when he is away (measured 26,703, +475)
   const OWNER_WRITTEN_YES_2026_11_15 = 40; // sahip-yazili-izin: only his own yes or no passes a permission (`super queue allow`) (measured 26,734, +31)
   const VOICE_CLAIM_2026_11_16 = 60; // uye-sesli-ozet: only the `dream-voice` block speaks, never claim a voice without it (measured 26,804, +55)
-  const TELEGRAM_SADE_2026_11_21 = 960; // telegram-sade: short Telegram rule, one message per turn, one `dream-status` block per job edited in place, a voice day (measured 27,806, +955)
+  const TELEGRAM_SADE_2026_11_21 = 1250; // telegram-sade: short Telegram rule, one message per turn, one `dream-status` block per job edited in place, a voice day, the answer and state lines never fold, a PDF link goes as the file (measured 27,806, +955; +~285)
   const PRESENT_QUEUE_2026_11_14 = 130; // sunum-sirasi: a present over his presentation answers `queued: {at, of}`; never claimed as shown (measured 23,521)
   const APP_INSTALL_2026_11_13 = 320; // app-kurulum-claude: install asks at once, its one-tap card even after his yes in words, the card place from `Shown:`, Claude fills the settings (measured 23,145)
   it('files every task itself and carries the split rows, the guide being lookup only', () => {

@@ -21,6 +21,7 @@ import { scopeOfContextRoot } from '../../src/lib/telegram/config.js';
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { telegramHtmlToPlain } from '../../src/lib/telegram/format.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
+import { sendAnswerBlocks } from '../../src/server/telegram/blocks.js';
 
 const TOKEN = '123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const OWNER = 777;
@@ -43,6 +44,10 @@ beforeEach(async () => {
     vaults: () => [{ name: 'acme', contextRoot: root }], openLink: () => {}, injectorWaitMs: 300,
   });
   await hub.start();
+  // The answer's extras as the app wires them (w5.ts): a linked PDF goes as the file itself.
+  hub.answerExtras = (ab, text, sid) => sendAnswerBlocks(hub, ab, text, sid, { snapshot: async () => null });
+  mkdirSync(join(root, 'tmp', 'super', 'karsilama'), { recursive: true });
+  writeFileSync(join(root, 'tmp', 'super', 'karsilama', 'degisenler.pdf'), '%PDF-1.4\n% golden\n%%EOF\n');
   writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SID, enabled: true }));
   resetSuperIndex(); await readSuperState(root);
   const s = await hub.beginPairing({ scope: scopeOfContextRoot(root), target: 'super', token: TOKEN, projectName: 'acme', contextRoot: root });
@@ -59,7 +64,7 @@ afterEach(async () => {
 
 /** One step of a Super turn as the old export shows it: a text, or a tool call between texts. */
 type Step = string | { tool: true };
-interface Golden { name: string; owner: string; turn: Step[]; maxMessages: number; maxVisible: number }
+interface Golden { name: string; owner: string; turn: Step[]; maxMessages: number; maxVisible: number; open?: string[]; document?: string }
 
 const GOLDEN: Golden[] = [
   {
@@ -75,6 +80,7 @@ const GOLDEN: Golden[] = [
     // Export dc-b: three "I am looking" lines between tool calls, then a long answer with a
     // relative link to a PDF and two bold groups.
     name: 'dc-b', owner: 'Onaylattığım ve kodlanan değişiklikleri soruyorum', maxMessages: 1, maxVisible: 1200,
+    open: ['Proje açma: 3 ekran yerine 1', 'İlk okuma: yalnız ilk projede', '2. dalga', 'Henüz senin uygulamanda yok'], document: 'Karşılama: değişenler',
     turn: [
       'Ne istediğini doğru anlamak için önceki konuşmaya bakıyorum.', { tool: true },
       "Önceki oturumda ne istediğini buluyorum, sonra doğru PDF'i hazırlayacağım.", { tool: true },
@@ -92,6 +98,7 @@ const GOLDEN: Golden[] = [
   {
     // Export tilki-a, the check's result: five bold groups, 1.500 characters.
     name: 'tilki-b', owner: 'Sonuç ne oldu?', maxMessages: 1, maxVisible: 1200,
+    open: ['120 aktif öğrencinin hepsine bakıldı', "Ece'nin kayıtlı ders ücreti", 'Haber mesajı hâlâ gitmedi', 'Bir velinin aynı gece'],
     turn: [
       "Kontrol bitti: veride ciddi bir hata yok, canlı ekran öğrencileri doğru gösteriyor. Ücreti yanlış kalmış iki öğrenci ve gitmemiş bir haber mesajı var.\n\n**Doğru olanlar**\n- 120 aktif öğrencinin hepsine bakıldı, yeni bir tutarsızlık çıkmadı\n- Dünkü düzeltmeler yerinde (Ece, Bora, Selin), hoca sonradan bu kayıtlara dokunmamış\n- Peşin ders ve \"N ders kaldı\" düzeltmeleri canlı sitenin kodunda var\n\n**Küçük hatalar**\n- Ece'nin kayıtlı ders ücreti 1.500 TL'de kalmış, doğrusu 1.300 TL\n- Bora'nınki 1.300 TL'de kalmış, doğrusu 1.500 TL\n- Bakiyeleri doğru. Ama hoca bu iki öğrenciye yeni ders açarsa yanlış fiyat gelir\n\n**Eksik kalan sözler**\n- Haber mesajı hâlâ gitmedi. Hoca dün 21:16'da \"sizden haber bekliyorum\" yazdı\n- Hocaya \"bir süre düzenli kontrol edeceğim\" denmiş, bunun için açılmış bir iş yok\n- Takvimde Excel'e döndüğünü söylemişti, buna cevap verilmedi\n\n**Dikkat**\n- Bir velinin aynı gece iki ödeme mesajı aldı, 23 saniye arayla\n- Bu bir hata değil, kurumun \"bakiye bitince hatırlat\" ayarından geliyor. Ama veli hocaya bunu sorabilir\n\nHiçbir şey göndermedim, hiçbir kaydı değiştirmedim.",
     ],
@@ -110,6 +117,7 @@ describe('the golden set (Doc 2026-11-21): four real conversations, fictional na
       await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 10_000 });
       const ref = parseTelegramPrefix(sent[0]).ref!;
       const n = tg.sent().length;
+      const nDocs = tg.sent('sendDocument').length;
       g.turn.forEach((step, i) => {
         if (typeof step === 'string') h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: i === 0 ? `<!-- re:${ref} -->\n${step}` : step }] } });
         else h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: `tu${i}`, name: 'Bash', input: { command: 'ls' } }] } });
@@ -120,7 +128,8 @@ describe('the golden set (Doc 2026-11-21): four real conversations, fictional na
       const out = tg.sent().slice(n).filter((c) => !String(c.params.text).startsWith('ℹ️'));
       if (OUT) {
         mkdirSync(OUT, { recursive: true });
-        writeFileSync(join(OUT, `${g.name}.json`), JSON.stringify({ owner: g.owner, sent: out.map((c) => ({ text: c.params.text, silent: !!c.params.disable_notification })) }, null, 2));
+        const docs = tg.sent('sendDocument').slice(nDocs).map((c) => ({ document: String(c.params.caption ?? '').replace(/<[^>]+>/g, '') }));
+        writeFileSync(join(OUT, `${g.name}.json`), JSON.stringify({ owner: g.owner, sent: [...out.map((c) => ({ text: c.params.text, silent: !!c.params.disable_notification })), ...docs] }, null, 2));
       }
       expect(out.length).toBeLessThanOrEqual(g.maxMessages);
       const html = out.map((c) => String(c.params.text)).join('\n');
@@ -133,6 +142,13 @@ describe('the golden set (Doc 2026-11-21): four real conversations, fictional na
       for (const step of g.turn) {
         if (typeof step !== 'string' || /bakıyorum\.|buluyorum, sonra|hazırlıyorum\./.test(step)) continue;
         for (const line of step.split('\n').filter((l) => l.startsWith('- '))) expect(telegramHtmlToPlain(html)).toContain(line.slice(2, 40));
+      }
+      // Owner 2026-11-21 ("under-information"): what he asked and where the work stands stay open.
+      for (const s of g.open ?? []) expect(visible).toContain(s);
+      if (g.document) {
+        await vi.waitFor(() => expect(tg.sent('sendDocument').length).toBeGreaterThan(nDocs), { timeout: 5000 });
+        expect(String(tg.sent('sendDocument').slice(nDocs)[0].params.caption)).toContain(g.document);
+        expect(visible).not.toContain(g.document);
       }
     });
   }

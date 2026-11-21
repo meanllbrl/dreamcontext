@@ -8,17 +8,21 @@
  *  - the answer in one bold line, then at most three short sentences, each on its own line with a
  *    blank line between them; no heads, no bullet groups;
  *  - what he did not ask for but may need goes in a `**Ayrıntı**` quote (it opens folded), never
- *    dropped: short is for the answer, never at the cost of what he needs to know;
+ *    dropped: short is for the answer, never at the cost of what he needs to know; the answer to
+ *    what he asked and every state line stay open (owner 2026-11-21, "under-information");
+ *  - a linked PDF goes as the file itself (`blocks.ts`);
  *  - `inline code` for what he copies, a fenced block for a command he runs, a `>` quote for
  *    someone's own words;
  *  - no "still working", no echo of a card, no reassurance or footnote lines.
- * The converter (`format.ts`) folds whatever stays open past ~450 visible characters by itself
- * (`foldAnswer`), so a reply that breaks the rule still reads short on his phone.
+ * The converter (`format.ts`, `foldAnswer`) folds the `**Ayrıntı**` quote; a reply written the old
+ * way folds only its extra groups past ~1,200 characters, never the answer or a state line.
  */
 export const TELEGRAM_WRITING_RULE =
   'Write for his phone, short. The answer first, in ONE bold line. Then at most three short sentences, each on its own line with ONE blank line between them. '
   + 'No heads, no bullet groups, no report shape: what he did not ask for but may need goes last, in a `>` quote whose first line is `**Ayrıntı**` (it opens folded on his phone); '
   + 'detail he needs is never dropped, it goes there. Never a code block or another quote inside that quote. '
+  + 'Short never cuts what he asked: the answer to his question and every line saying where work stands (running, not yet, waiting, being done, when it ends) stay open, never in that quote. '
+  + 'A file you show him (a PDF) is a `[name](path)` link on its own line: it reaches him as the file itself. '
   + 'Bold only that answer line, never words inside a sentence. '
   + 'A path, command, file name or anything he would copy goes in `inline code`; a command he should run is a fenced code block with its language. '
   + "Someone's own words (a source you read, a message you cite) go in a `>` quote whose bold first line names the speaker. "

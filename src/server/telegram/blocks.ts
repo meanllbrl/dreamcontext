@@ -17,11 +17,11 @@
  *    `learned` → the rule's own receipt line (`learn`'s line 2) with a "Geri al" button for an
  *    active rule (learning loop C9); keeping or dropping a proposed one stays on the Mac.
  */
-import { escapeHtml, fenceTitle, imageName, markdownImages } from '../../lib/telegram/format.js';
+import { escapeHtml, fenceTitle, imageName, markdownFileLinks, markdownImages } from '../../lib/telegram/format.js';
 import { dreamHtmlPage, fenceBlocks } from '../../lib/telegram/render.js';
 import { agentUrlButton, cleanTitle } from '../../lib/telegram/urls.js';
 import { neutraliseHeaders } from '../../lib/telegram/inbound.js';
-import { pngFile, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
+import { caption, pngFile, sendMedia, sendPictures, type MediaItem, type Snapshotter } from './pictures.js';
 import { NOT_SENT, cardWhy, notSentLine, readProjectFile, type CardContext } from './cards.js';
 import { superMediaRoots } from './media-roots.js';
 import { secretPending } from './present.js';
@@ -142,11 +142,14 @@ export const MAX_TEXT_PICTURES = 10;
  */
 export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text: string, pictures: boolean, deps: Pick<BlocksDeps, 'mediaRoots' | 'isGitIgnored'> = {}): Promise<number> {
   const local = markdownImages(text).filter((i) => !i.web);
+  const docSeen = new Set<string>();
+  const docs = markdownFileLinks(text).filter((d) => (docSeen.has(d.src) ? false : (docSeen.add(d.src), true)));
   const root = hub.rootOf(ab);
-  if (!local.length) return 0;
+  if (!local.length && !docs.length) return 0;
   if (!root) {
-    // Never a silent drop: the text already left the picture out ('hub' mode).
-    await hub.notice(ab, 'file', `${local.length === 1 ? 'Resim' : `${local.length} resim`} gönderilemedi: bu botun projesi Mac'te bulunamadı.`);
+    // Never a silent drop: the text already left the picture or the file out ('hub' mode).
+    const n = local.length + docs.length;
+    await hub.notice(ab, 'file', `${n === 1 ? (docs.length ? 'Dosya' : 'Resim') : `${n} dosya`} gönderilemedi: bu botun projesi Mac'te bulunamadı.`);
     return 0;
   }
   const seen = new Set<string>();
@@ -169,6 +172,16 @@ export async function sendTextPictures(hub: TelegramHub, ab: ActiveBinding, text
     const r = await sendPictures(ab, items, true);
     sent = r.sent.length;
     for (const m of r.unsent) lines.push(notSentLine('Resim: ', m.title, NOT_SENT.refused));
+  }
+  // A linked PDF goes as the document itself, its label the caption (owner 2026-11-21).
+  for (const d of docs) {
+    const name = cleanTitle(imageName(d), 80);
+    if (!pictures) { lines.push(notSentLine('Dosya: ', name, NOT_SENT.secret)); continue; }
+    const f = readProjectFile({ contextRoot: root, mediaRoots: roots, ...(deps.isGitIgnored ? { isGitIgnored: deps.isGitIgnored } : {}) }, d.src);
+    if (!f.ok) { lines.push(notSentLine('Dosya: ', name, cardWhy(f.reason))); continue; }
+    const doc: MediaItem = { kind: 'document', file: f.file, title: name };
+    if (await sendMedia(ab, doc, caption(name)).catch(() => null)) sent++;
+    else lines.push(notSentLine('Dosya: ', name, NOT_SENT.refused));
   }
   if (lines.length) await hub.send(ab, lines.map((l) => `📎 <i>${escapeHtml(l)}</i>`).join('\n')).catch(() => {});
   return sent;

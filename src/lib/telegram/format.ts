@@ -183,7 +183,8 @@ export interface FormatOptions {
   /** A long text keeps its first paragraphs open and the rest in an expandable quote. `true`: a
    *  routine's forwarded result (`foldLong`, past ~900 visible characters). `'answer'`: what a
    *  bot's Super writes him (owner 2026-11-21, "Hepsini uygula" on Doc's diagnosis, replacing the
-   *  2026-11-14 "never folds"): past ~450 open characters the rest folds (`foldAnswer`). Off by default. */
+   *  2026-11-14 "never folds"): the writer's `**Ayrıntı**` quote folds; an unmarked answer folds only its
+   *  extra groups past ~1,200 characters, never the answer or a state line (`foldAnswer`). Off by default. */
   fold?: boolean | 'answer';
 }
 
@@ -330,6 +331,32 @@ export function markdownImages(md: string): MarkdownImage[] {
   return found;
 }
 
+const FILE_LINK_OR_CODE = /`[^`\n]+`|(^|[^!])\[([^\]\n]+)\]\((?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\)/g;
+const DOC_FILE = /\.pdf$/i;
+/** A line that is only a local PDF link (in a list item or not): in `'hub'` mode the hub sends the
+ *  file itself, so the line goes. */
+const DOC_LINE = /^\s*(?:[-*+]\s+)?\[[^\]\n]+\]\((?:<[^>\n]+>|[^()\s]+)\)\s*$/;
+
+/**
+ * The files a text links (`[label](path.pdf)`), local ones only, outside code fences and code
+ * spans, in order. The hub sends each as a document after the text (`blocks.ts`); owner
+ * 2026-11-21: a PDF the Super linked reached his phone as its label, a file he could not open.
+ */
+export function markdownFileLinks(md: string): MarkdownImage[] {
+  const found: MarkdownImage[] = [];
+  mapProseLines(stripReplyMarks(md), (line) => {
+    for (const m of line.matchAll(FILE_LINK_OR_CODE)) {
+      if (m[0].startsWith('`')) continue;
+      const raw = (m[3] ?? m[4] ?? '').trim();
+      if (!raw || isWebSrc(raw) || /^[a-z][a-z0-9+.-]*:/i.test(raw.replace(/^file:\/\//i, ''))) continue;
+      const src = localSrc(raw);
+      if (DOC_FILE.test(src.split(/[?#]/)[0])) found.push({ alt: m[2].trim(), src: src.split(/[?#]/)[0], web: false });
+    }
+    return line;
+  });
+  return found;
+}
+
 /** A picture's name for a caption or a line: its alt text, else its file name. */
 export function imageName(img: Pick<MarkdownImage, 'alt' | 'src'>): string {
   const alt = img.alt.replace(/^\.+$/, '').trim();
@@ -343,6 +370,7 @@ export function imageName(img: Pick<MarkdownImage, 'alt' | 'src'>): string {
 const GONE = '\u0002';
 function picturesOut(md: string, mode: 'mac' | 'hub'): string {
   return mapProseLines(md, (line) => {
+    if (mode === 'hub' && DOC_LINE.test(line) && markdownFileLinks(line).length) return null;
     let touched = false;
     const next = line.replace(IMAGE_OR_CODE, (m: string, alt: string | undefined, a: string | undefined, b: string | undefined) => {
       if (m.startsWith('`')) return m;
@@ -457,25 +485,37 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
   return opts.fold === true ? foldLong(html) : opts.fold === 'answer' ? foldAnswer(html) : html;
 }
 
-/** What an answer keeps open on his phone (Doc 2026-11-21: a bold line and three short sentences). */
-export const ANSWER_OPEN_MAX = 450;
+/** Visible characters an unmarked answer may show before anything folds (owner 2026-11-21,
+ *  "under-information": about a phone screen and a half; the writing rule keeps answers far
+ *  shorter, this is only the net under a reply written the old way). */
+export const ANSWER_FOLD_AT = 1200;
 
 /** Open `<pre>`/`<blockquote>` tags minus closed ones in a piece of converter HTML. */
 function openDepth(b: string): number {
   return (b.match(/<(?:pre|blockquote)\b/gi)?.length ?? 0) - (b.match(/<\/(?:pre|blockquote)>/gi)?.length ?? 0);
 }
 
+/** A line that says where the work stands (owner 2026-11-21: "under-information"): it never folds.
+ *  Over-keeping is the safe side: a state line folded away is information he lost. */
+const STATE_LINE = /(?:^|[^\p{L}])(?:sürüyor|devam ediyor|henüz|hâlâ|bekliyor|bekleniyor|bekleyen|yapılıyor|yazılıyor|bitince|bitti|bitenler|tamamlandı|yazıldı|geçti|durdu|takıldı|başarısız|çalışıyor|onay(?:ını|ın|ınızı)? bekl|still running|waiting|blocked|pending|not yet)/iu;
+export function isStateLine(html: string): boolean { return STATE_LINE.test(telegramHtmlToPlain(html)); }
+
 /**
- * An answer on his phone (owner 2026-11-21, "Hepsini uygula"): what stays open is the first block
- * and the blocks after it while they fit in ~450 visible characters and are not a new head; the
- * rest folds into an expandable quote he opens with a tap, so nothing he may need is lost and the
- * bubble stays short however the agent wrote. A `**Ayrıntı**` quote already there joins the fold;
- * a code block or a plain quote cannot sit inside one (Telegram nests neither), so it stays
- * between folds, in its place. A first block longer than the limit folds after its first lines.
+ * An answer on his phone (owner 2026-11-21, "Hepsini uygula", then "sadece son kısımda
+ * under-information mı verecek super diye çekindim"): what he asked is never folded. Only the
+ * writer knows which part that is, so the code folds only what it can trust (nothing is deleted;
+ * a fold is an expandable quote he opens with a tap):
+ *  - a `**Ayrıntı**` quote means the writer marked the extras: nothing else folds;
+ *  - an unmarked answer up to ~1,200 visible characters stays whole;
+ *  - past that, the answer stays open (the first block, any blocks before the first head, and the
+ *    first group after it) and so does every later group with a state line in it (sürüyor, henüz,
+ *    bekliyor, yapılıyor, bitince…), whole; the other groups fold.
+ * A code block or a plain quote cannot sit inside a fold (Telegram nests neither): it stays in
+ * its place.
  */
 export function foldAnswer(html: string): string {
   const visible = (h: string): number => telegramHtmlToPlain(h).length;
-  if (visible(html) <= ANSWER_OPEN_MAX) return html;
+  if (visible(html) <= ANSWER_FOLD_AT) return html;
   // Top-level blocks: a blank line inside a code block or a quote does not end it.
   const tops: string[] = [];
   let cur: string[] = [];
@@ -487,43 +527,25 @@ export function foldAnswer(html: string): string {
   }
   if (cur.length) tops.push(cur.join('\n\n'));
   const nested = (b: string): boolean => /<(?:pre|blockquote)\b/i.test(b);
-  const folded = (b: string): RegExpExecArray | null => /^<blockquote expandable>([\s\S]*)<\/blockquote>$/.exec(b);
-  const open: string[] = [];
-  const rest: string[] = [];
-  let seen = 0;
-  tops.forEach((b, k) => {
-    if (rest.length) { rest.push(b); return; }
-    if (k === 0) {
-      // One long first block: its first lines stay open, the rest folds (never inside a tag pair:
-      // only a block with no code or quote is cut, and only at a line).
-      if (visible(b) > ANSWER_OPEN_MAX && !nested(b) && b.includes('\n')) {
-        const lines = b.split('\n');
-        let n = 0;
-        let len = 0;
-        while (n < lines.length && (n === 0 || len + visible(lines[n]) <= ANSWER_OPEN_MAX)) len += visible(lines[n++]);
-        open.push(lines.slice(0, n).join('\n'));
-        seen = len;
-        if (n < lines.length) rest.push(lines.slice(n).join('\n'));
-        return;
-      }
-      open.push(b);
-      seen = visible(b);
-      return;
-    }
-    const head = b.startsWith('<b>') && !b.includes('\n') ? true : /^<b>[^\n]*<\/b>\n/.test(b);
-    if (!head && !folded(b) && seen + visible(b) <= ANSWER_OPEN_MAX) { open.push(b); seen += visible(b); return; }
-    rest.push(b);
-  });
-  if (!rest.length) return html;
-  // The rest: runs of plain blocks and folded quotes become one fold each; a code block or a plain
-  // quote stays where it was, between them.
-  const out = [...open];
+  // The writer marked the extras: what stands outside that quote is what he asked.
+  if (tops.some((b) => /^<blockquote expandable>/.test(b))) return html;
+  const isHead = (b: string): boolean => /^<b>(?:(?!<\/b>).)*<\/b>$/.test(b.split('\n')[0]);
+  const heads = tops.map((b, k) => k > 0 && isHead(b));
+  const firstHead = heads.indexOf(true);
+  // The answer: through the end of the first head's group, or the first block after the lead.
+  let answerEnd: number;
+  if (firstHead < 0) answerEnd = Math.min(1, tops.length - 1);
+  else {
+    answerEnd = firstHead;
+    while (answerEnd + 1 < tops.length && !heads[answerEnd + 1]) answerEnd++;
+  }
+  const out = tops.slice(0, answerEnd + 1);
   let fold: string[] = [];
   const flush = (): void => { if (fold.length) out.push(`<blockquote expandable>${fold.join('\n\n')}</blockquote>`); fold = []; };
-  for (const b of rest) {
-    const f = folded(b);
-    if (f && !nested(f[1])) { fold.push(f[1]); continue; }
-    if (nested(b)) { flush(); out.push(b); continue; }
+  for (let k = answerEnd + 1; k < tops.length; k++) {
+    const b = tops[k];
+    // A code block or plain quote stays in place; a block that says where work stands stays whole.
+    if (nested(b) || b.split('\n').some(isStateLine) || (isHead(b) && /^(?:durum|status)(?:[^\p{L}]|$)/iu.test(telegramHtmlToPlain(b.split('\n')[0])))) { flush(); out.push(b); continue; }
     fold.push(b);
   }
   flush();
