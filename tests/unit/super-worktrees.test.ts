@@ -274,7 +274,10 @@ describe('the git invocation itself', () => {
   it('every command carries hooks, fsmonitor and signing off, through one argv-only execFile', () => {
     expect([...GIT_SAFE_ARGS]).toEqual(['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgSign=false']);
     const src = readFileSync(new URL('../../src/lib/super/worktrees.ts', import.meta.url), 'utf-8');
-    expect(src.match(/execFile\(/g)).toHaveLength(1);
+    // One git execFile; the only other one is the APFS node_modules clone (D11), argv-only too.
+    expect(src.match(/execFile\('git'/g)).toHaveLength(1);
+    expect(src.match(/execFile\(/g)).toHaveLength(2);
+    expect(src).toContain("execFile('cp', ['-c', '-R', src, dest]");
     expect(src).toContain("execFile('git', [...GIT_SAFE_ARGS, ...args]");
     expect(src).not.toMatch(/\bexec\(|execSync|shell:\s*true/);
   });
