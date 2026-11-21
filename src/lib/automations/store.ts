@@ -965,7 +965,7 @@ export function renderPattern(p: AutomationPattern): string {
   return parts.join('\n\n');
 }
 
-// ─── Twin lessons (D6: merge, never a cap) ───────────────────────────────────
+// ─── Lessons (D6: never a cap, never a merge) ───────────────────────────────────
 
 /**
  * Add a lesson newest-first, always as its own line (owner 2026-11-21, "Birleştirmeyi çıkar"): an

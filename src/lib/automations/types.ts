@@ -1379,7 +1379,7 @@ export const APPROVAL_DIFF_FIELDS = [
 
 /**
  * No lesson is ever dropped or cut on WRITE (plan global-uye-ogrenme D6; owner: no regression in
- * memory, no count caps): a near-twin lesson merges into the stored one (`×N`) instead. Only the
+ * memory, no count caps): every lesson is its own line (owner 2026-11-21: no merge). Only the
  * prompt VIEW is bounded, by size ({@link PATTERN_VIEW_LESSON_CHARS}, {@link PATTERN_VIEW_MAX_CHARS}),
  * newest first, and one line names `automations pattern <slug>`, which prints every lesson whole.
  */
