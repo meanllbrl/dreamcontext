@@ -130,6 +130,9 @@ describe('what counts as a line between tool calls (AC2)', () => {
   it('only a line about the work going on is chatter; a short answer is news', async () => {
     const { isChatter, mergeHeld } = await import('../../src/server/telegram/sade.js');
     for (const t of ['Bakıyorum.', 'Kontrol ediyorum, bitince yazacağım.', 'Hâlâ sürüyor.', "Let me check."]) expect(isChatter(t)).toBe(true);
+    // The golden set (Doc's dc-b): clauses joined by a comma and "sonra" are still only work.
+    for (const t of ["Önceki oturumda ne istediğini buluyorum, sonra doğru PDF'i hazırlayacağım.", "Onayladığın değişikliklerin PDF'ini hazırlıyorum."]) expect(isChatter(t)).toBe(true);
+    for (const t of ['Evet, raporu yarın hazırlayacağım çünkü veri eksik.', 'Hayır, bunu yapmayacağım.']) expect(isChatter(t)).toBe(false);
     for (const t of ['Evet, bu normal.', 'Bunu öneriyorum.', 'Hazır: testler geçti.', '![a](x.png) Bakıyorum.']) expect(isChatter(t)).toBe(false);
     // Dropped only when a tool call came after it; its reply mark rides on the answer.
     expect(mergeHeld('<!-- re:abc123 -->\nBakıyorum.', 'Bitti.', true)).toBe('<!-- re:abc123 -->\nBitti.');

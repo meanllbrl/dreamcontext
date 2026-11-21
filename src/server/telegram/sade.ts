@@ -54,15 +54,19 @@ export function isChatter(md: string): boolean {
   // Only a line about the work itself is chatter ("Bakıyorum.", "Kontrol ediyorum, bitince
   // yazarım."): a short ANSWER ("Evet, bu normal.") is news and stays (owner 17:15: "under-
   // information da olmasın"). Every sentence must say what is being done or will be said.
-  const sentences = plain.split(/(?<=[.!?…])\s+/).map((s) => s.replace(/[.!?…:]+$/, '').trim()).filter(Boolean);
-  return sentences.length > 0 && sentences.every((s) => CHATTER_RE.test(s));
+  // Clauses, not only sentences: "Buluyorum, sonra PDF'i hazırlayacağım." is two work clauses
+  // (the golden set, Doc's dc-b: three such lines reached the phone before the answer).
+  const clauses = plain.split(/(?<=[.!?…])\s+|,\s*|;\s*/)
+    .map((s) => s.replace(/[.!?…:]+$/, '').replace(/^(?:sonra|ardından|ve|then|and)\s+/iu, '').trim()).filter(Boolean);
+  return clauses.length > 0 && clauses.every((s) => CHATTER_RE.test(s));
 }
 
 /** A sentence that only reports the work going on, in Turkish or English. */
 const CHATTER_RE = new RegExp([
   // A work verb only (never "öneriyorum", "katılıyorum": those are answers).
-  '(?:bak|kontrol ed|incel|hazırl|çalış|başl|den|ar|ok|yaz|test ed|düzelt|kur|derl|topl|devam ed|bekl|ölç|tara|sorgul)(?:ıyorum|iyorum|uyorum|üyorum)$',
-  '(?:yaz|bak|dön|haber ver|bildir|söyle)(?:acağım|eceğim)$|(?:yazarım|bakarım|dönerim|haber veririm|bildiririm)$', // bitince yazacağım
+  '(?:bak|kontrol ed|incel|hazırl|çalış|başl|den|ar|ok|bul|yaz|test ed|düzelt|kur|derl|topl|devam ed|bekl|ölç|tara|sorgul|getir|çıkar)(?:ıyorum|iyorum|uyorum|üyorum)$',
+  // bitince yazacağım, sonra PDF'i hazırlayacağım
+  '(?:yaz|bak|dön|haber ver|bildir|söyle|hazırla|kontrol ed|incele|getir|çıkar|bul)(?:y?acağım|y?eceğim)$|(?:yazarım|bakarım|dönerim|haber veririm|bildiririm)$',
   '\\b(?:hâlâ|hala|halen)\\s+(?:sürüyor|çalışıyor|devam ediyor|bekliyor)\\b',
   '^(?:bir (?:saniye|dakika)|şimdi bakıyorum|tamam,? bakıyorum)\\b',
   "^(?:let me|i'll|i will|i'm (?:checking|looking|on it)|checking|looking|working on it|still (?:running|working))\\b",
