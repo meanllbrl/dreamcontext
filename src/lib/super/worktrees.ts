@@ -182,6 +182,21 @@ async function isMerged(repoPath: string, branch: string): Promise<boolean> {
 
 export interface CreatedWorktree { path: string; branch: string; repo: string; repoPath: string; base: string }
 
+/**
+ * Where `createChildWorktree` WOULD put `slug` of `repo`, without touching git or disk: the path and
+ * branch a live child can already hold. Null when anything is off (unknown repo, bad slug): the
+ * creation itself reports that, with its own refusal.
+ */
+export function plannedChildWorktree(o: { projectRoot: string; repo: unknown; slug: unknown; home?: string }): { path: string; branch: string } | null {
+  try {
+    const repo = resolveWorktreeRepo(o.projectRoot, o.repo, o.home);
+    if (!validSlug(o.slug)) return null;
+    const branch = `super/${o.slug}`;
+    const path = safeChildPath(superWorktreeRoot(o.home ?? homedir()), `${sanitizeRepoName(repo.name)}-super-${o.slug}`);
+    return path ? { path, branch } : null;
+  } catch { return null; }
+}
+
 export async function createChildWorktree(o: {
   projectRoot: string; repo: unknown; slug: unknown; base?: unknown; home?: string;
   /** A task job's worktree: made with `--no-checkout`, the caller fills it (agents/raw-checkout.ts),

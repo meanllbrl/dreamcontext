@@ -125,6 +125,8 @@ function print(r: CallResult): void {
     const e = (result.cardError ?? {}) as { message?: unknown; todo?: unknown };
     process.stderr.write(`CARD NOT OPENED: ${String(e.message ?? 'the owner cannot see this child')}. Next: ${String(e.todo ?? '`super state`')}\n`);
   }
+  // `super end` that ended nothing, or not all: said on stderr, a refusal inside an ok answer is easy to miss.
+  if (result && typeof result.warning === 'string' && result.notEnded === true) process.stderr.write(`END REFUSED: ${result.warning}\n`);
   if (result && result.started === false) process.stderr.write(`CHILD DID NOT START: ${String(result.startError)}\n`);
 }
 
@@ -215,7 +217,7 @@ export function registerSuperCommand(program: Command): void {
   const jobBody = (o: JobOpts) => ({ prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp, tool: o.tool });
 
   job(s.command('delegate')
-    .description(`Start a child chat in THIS project and open its card; returns its session id. At the cap (${MAX_LIVE_CHILDREN} live children, the only limit), the job is kept in the pool (\`held\`)`)
+    .description(`Start a child chat in THIS project and open its card; returns its session id. At the cap (${MAX_LIVE_CHILDREN} live children, the only limit), the job is kept in the pool (\`held\`). With --worktree/--slug, refused (\`worktree_busy\`, naming the child) while a live child already works in that worktree`)
     .option('--prompt <text>', 'The child\'s first message, complete and self-contained')
     .option('--from <pool id>', 'Start a job the pool kept (`super pool list`), exactly as it was kept')
     .option('--force', 'With --from: start a job whose earlier start went unconfirmed')
@@ -329,7 +331,7 @@ export function registerSuperCommand(program: Command): void {
       run('allow', { child, requestId, deny: o.deny === true, why: o.why }));
 
   s.command('end [children...]')
-    .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks')
+    .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks: the answer then carries `refused: true` (several children: `notEnded` and a `warning`), and nothing was ended')
     .option('--idle', 'List the idle children you started; add --yes to end them all')
     .option('--yes', 'With --idle: end every listed child')
     .option('--force', 'ONLY when the owner asked: kill it even while it works, asks or runs background tasks, or when it is his own chat. Answers ended only once its process is gone')
@@ -339,7 +341,7 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('resume <child>')
-    .description('Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others')
+    .description('Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others. Refused (`worktree_busy`, naming it) while another live child works in its worktree')
     .option('--mode <mode>', 'basic | plan | develop')
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
