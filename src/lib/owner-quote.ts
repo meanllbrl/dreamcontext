@@ -94,8 +94,8 @@ function sentences(text: string): string[] {
 /**
  * Whether his words are about what this change adds and removes: the sentences of `after` that
  * `before` lacks, and of `before` that `after` lacks. Each changed side must share a term with the
- * quote, and the change as a whole two (all, when it has fewer): so a removed guard line that
- * shares one of his words is NOT covered. A filter, never a proof: text that repeats two of his
+ * quote, and a change that removes anything two in all (all, when it has fewer): so a removed
+ * guard line that shares one of his words is NOT covered. A filter, never a proof: text that repeats two of his
  * words passes here and still meets `amendmentRisks`.
  */
 export function quoteCoversChange(quote: string, before: string, after: string): boolean {
@@ -107,7 +107,8 @@ export function quoteCoversChange(quote: string, before: string, after: string):
   const removed = [...was].filter((s) => !now.has(s));
   if (added.length === 0 && removed.length === 0) return true;
   const changeTerms = new Set(tokenize([...added, ...removed].join(' ')));
-  const need = Math.min(2, changeTerms.size);
+  // Two shared terms only when something is removed (a guard line); an addition needs one.
+  const need = removed.length > 0 ? Math.min(2, changeTerms.size) : Math.min(1, changeTerms.size);
   if (need === 0) return true;
   if (added.length > 0 && sharedTerms(q, added) < 1) return false;
   if (removed.length > 0 && sharedTerms(q, removed) < 1) return false;

@@ -1155,6 +1155,9 @@ export function personalRulesVisible(contextRoot: string, home: string = homedir
   const person = active.slug ? people[active.slug] : undefined;
   const emails = (person?.emails ?? []).map((e) => e.trim().toLowerCase());
   if (emails.some((e) => me.emails.includes(e))) return { visible: true, line: null };
+  // No email on either side (no git email on this Mac): the vault's active person here is this
+  // Mac's local owner, and nothing names anyone else, so his preferences ride (D10).
+  if (me.local_owner && me.emails.length === 0 && emails.length === 0) return { visible: true, line: null };
   if (me.local_owner) return { visible: false, line: 'His preferences are not shown here: ~/.dreamcontext/me/me.json names no email yet (add his once: {"emails": ["<his email>"]}).' };
   return { visible: false, line: 'His preferences are not shown here: this vault\'s active person shares no email with ~/.dreamcontext/me/me.json.' };
 }

@@ -954,6 +954,9 @@ function print(out: LearnOutcome, json?: boolean): void {
 }
 
 export function registerLearnCommand(program: Command): void {
+  /** `learn` itself takes `--json`, so commander hands a subcommand's `--json` to the parent: read both. */
+  const wantsJson = (opts: { json?: boolean }, cmd: { parent?: { opts(): { json?: boolean } } | null }): boolean =>
+    Boolean(opts.json || cmd.parent?.opts().json);
   const learnCmd = program
     .command('learn')
     .argument('[text]', 'The rule, one line, never stricter than his words')
@@ -985,7 +988,8 @@ export function registerLearnCommand(program: Command): void {
     .option('--member <slug>', 'Only this member\'s rules (default in a member session: its own, beside his and this project\'s)')
     .option('--all', 'Also replaced and undone rules')
     .option('--json', 'Machine-readable')
-    .action((opts: { me?: boolean; project?: boolean; all?: boolean; member?: string; json?: boolean }) => {
+    .action((opts: { me?: boolean; project?: boolean; all?: boolean; member?: string; json?: boolean }, cmd: { parent?: { opts(): { json?: boolean } } | null }) => {
+      opts.json = wantsJson(opts, cmd);
       const out = learnList(liveContext(), opts);
       if (opts.json) console.log(JSON.stringify(out.rules, null, 2));
       else for (const l of out.lines) console.log(l);
@@ -996,7 +1000,8 @@ export function registerLearnCommand(program: Command): void {
     .argument('<id>', 'Rule id')
     .description('One rule with its history')
     .option('--json', 'Machine-readable')
-    .action((id: string, opts: { json?: boolean }) => {
+    .action((id: string, opts: { json?: boolean }, cmd: { parent?: { opts(): { json?: boolean } } | null }) => {
+      opts.json = wantsJson(opts, cmd);
       const ctx = liveContext();
       const found = locateRule(ctx, id);
       if (!found) { console.error(`REFUSED: no rule ${id}`); process.exitCode = 1; return; }

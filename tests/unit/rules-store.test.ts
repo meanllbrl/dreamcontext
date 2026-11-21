@@ -298,6 +298,12 @@ describe('rules-store: personal visibility (C2)', () => {
     expect(personalRulesVisible(ctx, home).visible).toBe(true);
   });
 
+  it('a local_owner store in a vault whose active person has no email either: shown (nobody else is named)', () => {
+    ensureMeFile(home, null);
+    roster([]);
+    expect(personalRulesVisible(ctx, home).visible).toBe(true);
+  });
+
   it('a local_owner store in a vault with a roster says how to add his email', () => {
     ensureMeFile(home, null);
     roster(['sam@orchard.test']);

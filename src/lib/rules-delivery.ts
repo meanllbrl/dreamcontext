@@ -153,6 +153,7 @@ function weightOrder(a: RuleView, b: RuleView): number {
 export function shortForm(v: RuleView): string {
   const where = v.scope === 'me' ? '' : v.scope === 'member' ? ', yours' : ', this project';
   if (v.hot && v.text && v.text !== v.headline) return `- ${v.headline} [${v.id}, said again${where}]: ${v.text}`;
+  if (v.hot) return `- ${v.headline} [${v.id}, said again${where}]`;
   return `- ${v.headline} [${v.id}${where}]`;
 }
 
