@@ -35,8 +35,8 @@ children that finish fast. Verbs are in
    it for a RAM squeeze. A `light mode is on` note is the app slowing its animations and polling:
    it holds no job and nothing needs closing or switching off.
    Heavy steps run one at a time per checkout (each worktree has its own lock) and share the
-   machine's heavy slots (at least 2: one per 2 cores, per 4 GB of memory and per 2 GB free, so 4
-   on an 8-core 16 GB Mac; 2 while it is hot, 1 when it is very hot or memory is critical:
+   machine's steps: at most 2 at once machine-wide, short checks (tsc, a few test files) counted
+   in, 1 while it is hot, memory is critical or the load passes the cores:
    `machine.heat.heavyLimit`). Heat limits heavy STEPS, never children: keep
    delegating (§5).
 8. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via

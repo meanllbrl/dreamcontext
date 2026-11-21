@@ -58,7 +58,7 @@ import {
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
-  CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, SUPER_PERMISSION_GRACE_MS,
+  CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, READOPT_RESUME_GRACE_MS, STALE_SWEEP_MS, SUPER_PERMISSION_GRACE_MS,
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS,
   MEMBER_ITEM_OF, type MemberItemOf, type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
@@ -5138,10 +5138,12 @@ export async function startSuperInbox(contextRoots: readonly string[], opts: { p
     // Only a child the relaunch brings back gets the grace: one it holds (ended, closed, parked,
     // already gone) is not coming back, and its absence is no news (field 2026-10-21).
     const frozen: string[] = [];
+    // Cut off mid-job: it is told to go on (resumeCutChildren), so it gets the longer grace.
+    const cut = new Set(cutChildren(s, opts.parked));
     for (const sid of Object.keys(s.children)) {
       if (isLive(getChat(sid))) continue;
       const hold = superRestoreHold(s, sid, opts.parked?.(sid) ?? false);
-      if (!hold) { armGone(keyOf(root), sid, READOPT_GRACE_MS, regraceTimers); continue; }
+      if (!hold) { armGone(keyOf(root), sid, cut.has(sid) ? READOPT_RESUME_GRACE_MS : READOPT_GRACE_MS, regraceTimers); continue; }
       // Held, yet its row still says it works or asks: no process will ever move it. It is
       // not running: gone, quietly (review).
       if (hold !== 'ended' && (s.children[sid].row === 'working' || s.children[sid].row === 'asking')) frozen.push(sid);

@@ -1,7 +1,7 @@
 import { noteRunSession } from '../../lib/automations/run-session.js';
 import { readIndexStop } from '../../lib/embeddings/index-stop.js';
 import { logHandoff } from '../../lib/usage-records.js';
-import { directHeavy, heavySuggestion } from '../../lib/run-budget.js';
+import { browserAny, ciWaitAny, ciWatchIn, directHeavy, heavySuggestion } from '../../lib/run-budget.js';
 import { suiteRedOpen } from '../../lib/suite-record.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
@@ -2598,6 +2598,63 @@ export function codexToolCallsAsClaude(toolName: string, toolInput: Record<strin
   return [{ toolName, toolInput }];
 }
 
+/**
+ * Is `sessionId` a Super (main's or a member's) of the brain at `contextRoot`? Read off the records
+ * on disk, the `session` field only; false on anything unreadable. Only asked for a line that waits
+ * on CI or runs a browser, so the ordinary call never reads a record.
+ */
+export function superSessionOnDisk(contextRoot: string, sessionId: string): boolean {
+  if (!sessionId) return false;
+  const files = [join(contextRoot, 'state', '.super-agent.json')];
+  try {
+    const dir = join(contextRoot, 'state', '.super', 'members');
+    if (lstatSync(dir).isDirectory()) for (const n of readdirSync(dir)) if (n.endsWith('.json') && !n.endsWith('.read-marks.json')) files.push(join(dir, n));
+  } catch { /* no member supers */ }
+  for (const f of files) {
+    try {
+      const st = lstatSync(f);
+      if (!st.isFile() || st.size > 2 * 1024 * 1024) continue;
+      const v = JSON.parse(readFileSync(f, 'utf-8')) as { session?: unknown };
+      if (v.session === sessionId) return true;
+    } catch { /* unreadable: not this one */ }
+  }
+  return false;
+}
+
+/**
+ * Why this shell line is refused by the CI gate, or null (plan sirket-yavaslik D6). Every session:
+ * a foreground `gh run watch`, `gh pr checks --watch` or `gh run` polling loop becomes
+ * `dreamcontext ci wait`. A Super session: no CI wait of any kind and no browser run either; the
+ * child waits and reports, and the owner's next message does not queue behind a watch.
+ */
+/**
+ * Where a foreground CI watch is ours to refuse: the same sessions the heavy-step limit holds
+ * (gate 1d). Our own children, a Claude session inside a dreamcontext project, a Codex or
+ * Antigravity session in a project that opted in. The Mac-wide Codex and Antigravity hooks run in
+ * every folder: the owner's own sessions elsewhere are not ours to hold (review r1).
+ */
+export function ciWatchGated(cwd: string): boolean {
+  if (process.env.DREAMCONTEXT_CONTEXT_BY) return true;
+  if (hookTool() !== null) return codexProjectOptedIn(cwd);
+  return resolveContextRoot(cwd) !== null;
+}
+
+export function ciGateRefusal(command: string, cwd: string, sessionId: string): string | null {
+  const wait = ciWaitAny(command);
+  const browser = !wait && /playwright|puppeteer|shots|verify|node|tsx|bun/.test(command) && browserAny(command, cwd);
+  if (wait || browser) {
+    const root = resolveContextRoot(cwd);
+    if (root && superSessionOnDisk(root, sessionId)) {
+      return `Not run: a Super does not ${wait ? `wait on CI (${wait})` : 'run a browser'}. Give it to the child that owns the work (super delegate, or super update <child>) and read the result from its report; the owner's next message must not wait behind this.`;
+    }
+  }
+  const watch = ciWatchIn(command);
+  if (watch && ciWatchGated(cwd)) {
+    return `Not run: ${watch} holds this session in the foreground and hits the tool's 600 s ceiling. Run: dreamcontext ci wait <run-id> (or --branch <branch>: every run of this checkout's HEAD) with the Bash tool's timeout 600000; it returns before the ceiling (exit 4 = still running: run the same command again).`;
+  }
+  return null;
+}
+
 export function registerHookCommand(program: Command): void {
   const hook = program
     .command('hook')
@@ -3439,11 +3496,23 @@ export function registerHookCommand(program: Command): void {
         }
       } catch { /* fail open: the act gate never blocks a call it could not read */ }
 
+      // Gate 1c (plan sirket-yavaslik D6): no foreground CI watch past `ci wait`, and a Super
+      // never waits on CI or runs a browser. Read only when the line could be one; any error lets
+      // the call through.
+      if (toolName === 'Bash') {
+        try {
+          const command = typeof toolInput.command === 'string' ? toolInput.command : '';
+          const at = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+          const reason = ciGateRefusal(command, at, typeof input.session_id === 'string' ? input.session_id : '');
+          if (reason) { deny(reason); return; }
+        } catch { /* fail open */ }
+      }
+
       // Gate 1d: a heavy step goes through the lock and the repeat limit. Measured 2026-10-31:
       // 88% of them went straight past `builder`, so the limit would count almost nothing.
       if (toolName === 'Bash') {
         const command = typeof toolInput.command === 'string' ? toolInput.command : '';
-        const kind = directHeavy(command);
+        const kind = directHeavy(command, typeof input.cwd === 'string' && input.cwd ? input.cwd : undefined);
         if (!kind) allow();
         const suggested = heavySuggestion(command, { redOpen: kind === 'suite' && suiteRedOpen(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd()) });
         // The Mac-wide Codex hook runs in every Codex session in every folder: the owner's own

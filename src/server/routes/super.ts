@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
-  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, type WindowIdentity, type WindowResult,
+  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, windowGone, type WindowIdentity, type WindowResult,
 } from '../../lib/window-control.js';
 import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
@@ -40,7 +40,10 @@ import { memberScope } from '../../lib/agents/scope.js';
 import { AmendmentRefused, amendMember, approvedTargets } from '../../lib/agents/amendments.js';
 import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
-import { checkApproval } from '../../lib/automations/registry.js';
+import { checkApproval, registerProject } from '../../lib/automations/registry.js';
+import { raiseLaneIntentToFull, writeLaneIntent } from '../../lib/lane-intent.js';
+import { opsBlock, readOpsCard } from '../../lib/ops-card.js';
+import { startChildHeadless } from '../headless-child.js';
 import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
@@ -651,6 +654,44 @@ function childTestMinutes(now: number): (worktree: string, branch?: string) => T
   };
 }
 
+/** What a child hears when the owner asks for full verification of a fast job. */
+export const FULL_VERIFY_MESSAGE = 'The owner asked for full verification (tam doğrula). Your worktree\'s lane is full now: take the same diff through the whole chain (dreamcontext builder lane, then the review it names and the project\'s own QA), fix what it finds, and report.';
+
+/**
+ * Make a child's worktree lane full (`update --full`, `resume --full`, plan sirket-yavaslik D4b):
+ * only ever up, written from the repo side. null = done; otherwise why not, and the child hears
+ * nothing.
+ */
+async function raiseToFull(c: SuperCaller, child: string): Promise<{ error: string; message: string } | null> {
+  const ch = c.state.children[child];
+  const root = c.who.contextRoot;
+  if (!ch?.worktree) return { error: 'no_worktree', message: 'that child has no worktree of its own, so there is no lane to raise; delegate the full check as a new job' };
+  if (!existsSync(ch.worktree)) return { error: 'no_worktree', message: `that child's worktree ${ch.worktree} is gone; delegate the full check as a new job` };
+  const repo = await repoOfWorktree(dirname(root), ch.worktree);
+  if (!repo) return { error: 'no_worktree', message: `${ch.worktree} is not a worktree of a linked repo any more` };
+  try {
+    raiseLaneIntentToFull(repo.path, ch.worktree, { superId: c.superId, child, contextRoot: root });
+  } catch (err) {
+    return { error: 'lane_not_written', message: `the lane could not be written: ${(err as Error).message.slice(0, 200)}` };
+  }
+  return null;
+}
+
+/**
+ * What a child is told before its job (plan sirket-yavaslik D10): the ops card as data, and the
+ * lane its worktree records. The line is for the child to read; the code reads only the file in
+ * the worktree's git folder. Empty when there is neither.
+ */
+export function childFacts(root: string, worktree: string | undefined, lane: 'fast' | 'full' | undefined): string {
+  let block: string | null = null;
+  try { block = opsBlock(readOpsCard(root, worktree ? { worktree } : {})); } catch { block = null; }
+  const laneLine = lane === 'fast'
+    ? 'Lane: fast (a look or copy change; `dreamcontext builder lane` confirms it from the diff, money never takes it).'
+    : lane === 'full' ? 'Lane: full (the owner asked for full verification).' : null;
+  const parts = [block, laneLine].filter((x): x is string => !!x);
+  return parts.length ? `${parts.join('\n\n')}\n\n` : '';
+}
+
 export function worktreePreamble(w: Pick<CreatedWorktree, 'path' | 'branch' | 'repo'>, outward?: OutwardGrant): string {
   return `You work in your own git worktree: ${w.path} (branch ${w.branch}, repo ${w.repo}). `
     + 'cd there first, then work and commit only there; if that folder is missing, do no work anywhere else: say so and stop. '
@@ -918,6 +959,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.worktree ? { worktree: job.worktree } : {}), ...(job.slug ? { slug: job.slug } : {}), ...(job.base ? { base: job.base } : {}),
       ...(job.mcp ? { mcp: job.mcp } : {}),
       ...(job.tool ? { tool: job.tool } : {}),
+      ...(job.laneIntent ? { laneIntent: job.laneIntent } : {}),
       ...(extra.held ? { held: true } : {}),
       ...(extra.outward ? { outward: extra.outward } : {}),
       ...(extra.workOrigin ? { workOrigin: extra.workOrigin } : {}),
@@ -1054,6 +1096,12 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   try {
     if (job.worktree) {
       wt = await createChildWorktree({ projectRoot: dirname(root), repo: job.worktree, slug: job.slug, base: job.base });
+      // The lane's one home (plan sirket-yavaslik D3): written before the child hears of the
+      // worktree. The brain is registered so a worktree's reader may accept its contextRoot.
+      if (job.laneIntent) {
+        try { registerProject(dirname(root)); } catch { /* already registered, or the registry is unreadable: the card is then not read */ }
+        writeLaneIntent(wt.repoPath, wt.path, { intent: job.laneIntent, base: wt.base, contextRoot: root, superId: c.superId, child: sid0 });
+      }
     }
     // The window refuses the frame after `deadline` (epoch ms); the server waits that long
     // plus a grace, so a child the window opens is (almost always) answered in time. A frame
@@ -1066,7 +1114,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // record read when the call came in (the owner may have taken that chat meanwhile).
     const lateMs = succeeds ? 0 : delegateLateMs;
     const deadline = sentAt + delegateAnswerMs + lateMs;
-    firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${job.prompt}`;
+    firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ''}${DEV_SERVER_LINE}\n\n${childFacts(root, wt?.path, job.laneIntent)}${job.prompt}`;
     const r = await sendSuperCommand(c.token, 'delegate', {
       prompt: firstPrompt,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
@@ -1108,6 +1156,15 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         do: `The Mac is slow to open the chat (the window did not answer in ${Math.round((delegateAnswerMs + delegateGraceMs) / 1000)} s). The start is NOT lost: when the window opens it, by ${clock(pending.until)}, it is recorded by itself and shows in \`dreamcontext super state\`. Do not delegate this job again before then. ${poolable ? 'If it has not opened by then, it waits in the pool with the reason (a full pool keeps nothing: then delegate it again).' : 'If it has not opened by then, delegate it again (a prompt over 16 KB is not kept in the pool).'}`,
       });
       return;
+    }
+    // No window to send the frame to at all (the app's window closed): the server starts the
+    // child itself, with the same fields (plan sirket-yavaslik D12). Not a hand-over: its old
+    // child keeps the work until a window is there.
+    // Only a window that is really gone: one reconnecting opens the tab itself (AC14).
+    if (!r.ok && r.error === 'no_window' && r.sent === false && !succeeds && windowGone(c.token)) {
+      const h = await startChildHeadless({ contextRoot: root, prompt: firstPrompt, mode: job.mode, model: job.model, effort: job.effort, mcp: job.mcp ?? [], tool: job.tool, member: memberOfSuperId(c.superId) });
+      appendOpenLog('delegate_headless', { superId: c.superId, ok: h.ok, ...(h.ok ? { child: h.sessionId } : { why: h.why }) });
+      if (h.ok && SESSION_ID_RE.test(h.sessionId)) { ok(res, { ...(await recordStart(h.sessionId)), headless: true }); return; }
     }
     if (!r.ok || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
       // Unconfirmed: the window timed out (it may still have opened the child) or answered
@@ -3160,6 +3217,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireMemberReady(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    if (b.full === true) {
+      // "Tam doğrula" on a finished or parked child: the worktree's lane becomes full, the child
+      // comes back the usual way, then it hears to take the same diff through the whole chain.
+      const why = await raiseToFull(c, child);
+      if (why) { refuse(res, 409, why.error, why.message); return; }
+      const back = await resumeCore(c, { ...b, full: undefined });
+      if (back.json.ok !== true) { refuse(res, back.status >= 400 ? back.status : 409, String(back.json.error ?? 'not_resumed'), `the lane is full now, but the child did not come back: ${String(back.json.message ?? '')}`); return; }
+      await SUPER_VERB_HANDLERS.send(c, { child, text: FULL_VERIFY_MESSAGE }, res);
+      return;
+    }
     const originArg = jobOrigin(c, b);
     if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
     const root = c.who.contextRoot;
@@ -3208,7 +3275,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Its new process is this resume's doing, never the owner reopening it (inbox noteChatStarted).
     noteResuming(child, true);
     try {
-      const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+      let r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+      // No window at all: the server reopens its own recorded child itself (plan sirket-yavaslik D12).
+      if (!r.ok && r.error === 'no_window' && r.sent === false && ch.endedAt === undefined && windowGone(c.token)) {
+        const h = await startChildHeadless({ contextRoot: root, resumeId: child, mode, model, effort, mcp: ch.mcp ?? [], tool: ch.tool, member: memberOfSuperId(c.superId) });
+        if (h.ok) r = { ok: true, result: undefined };
+      }
       if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
       // What the window ACTUALLY started it with: a parked tab comes back as it was parked, so
       // the record holds that, never a request the window did not apply. An older window that
@@ -3249,6 +3321,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireHandedOver(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
+    if (b.full === true) {
+      // `--full` is a change on its own: the lane only ever goes up, and the child is told.
+      if (str(b.mode) || str(b.model) || str(b.effort)) { refuse(res, 400, 'invalid_args', 'run --full on its own, then --mode, --model or --effort in a second call'); return; }
+      const why = await raiseToFull(c, child);
+      if (why) { refuse(res, 409, why.error, why.message); return; }
+      await SUPER_VERB_HANDLERS.send(c, { child, text: FULL_VERIFY_MESSAGE }, res);
+      return;
+    }
     const ch = c.state.children[child];
     const mode = str(b.mode);
     if (mode && !(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }

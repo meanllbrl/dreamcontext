@@ -60,7 +60,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '2.1', develop: '1.8', train: '0.1',
+  basic: '1.0', plan: '2.1', develop: '1.9', train: '0.1',
 };
 
 /**
@@ -336,7 +336,7 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
   if the repo has it, no build. SAME script red 3 times → STOP. A check already green on the same
   code prints its receipt instead of running (\`--fresh\` re-runs); no \`| tail\`, use \`--tail N\`.
 - **\`builder lane\` picks the process**; light = one \`reviewer\`, who reads the security too, browser only for a visible
-  change, no own script.
+  change, no own script. \`fast\` (a worktree the Super opened \`--fast\`): exactly the process \`builder lane\` prints.
 - **Never stop between waves to ask whether to go on, and never end your turn while a judge
   you started runs.** The owner is not your scheduler.
 - **Judges you do not control:** after the last wave, the end review the diff picks
@@ -706,6 +706,9 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   named is the child's: \`delegate --outward "<that step>"\` (outside his turn \`--origin <ref>\`); never a
   force-push or a default-branch merge. A brief over a line is a file (\`_dream_context/tmp/super-prompts/<slug>/brief.md\`),
   \`--prompt\` one plain line naming it: an inline heredoc or \`$(cat …)\` is refused in an auto-mode project.
+- **Fast or full:** one screen, look or copy only, no money, A/B, redirect, analytics, auth, migration,
+  endpoint or release → \`delegate --worktree … --fast\`; in doubt, no flag. "tam doğrula" / "tam test" →
+  \`--full\` (a fast job already given: \`super update|resume <child> --full\`).
 - At most ${member ? MAX_MEMBER_LIVE_CHILDREN : MAX_LIVE_CHILDREN} children run at once; beyond that \`delegate\` answers \`held\` and keeps the job
   in the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
   \`super state\` first). The cap is the only limit on children: all of \`super state\`'s

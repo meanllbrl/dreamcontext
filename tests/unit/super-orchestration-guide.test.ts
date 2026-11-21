@@ -321,7 +321,7 @@ describe('heat and the heavy lock (the heat task, AC5)', () => {
     // memory-sized (src/lib/builder-tools.ts machineHeavySlots, src/lib/heat.ts heavyLimitFor);
     // the old "per project, at most 2 projects" line described neither.
     expect(FLAT).toContain('Heavy steps run one at a time per checkout (each worktree has its own lock)');
-    expect(FLAT).toContain('2 while it is hot, 1 when it is very hot or memory is critical');
+    expect(FLAT).toContain('at most 2 at once machine-wide, short checks (tsc, a few test files) counted in, 1 while it is hot, memory is critical or the load passes the cores');
     expect(FLAT).not.toContain('at most 2 projects at once');
     expect(FLAT).toContain('Heat limits heavy STEPS, never children');
     expect(FLAT).toContain('a hook sends tsc, builds, tests and browser scripts through `dreamcontext builder heavy`');

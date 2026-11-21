@@ -41,6 +41,9 @@ export type WindowResult = { ok: true; result: unknown } | { ok: false; error: s
 export interface WindowChannel {
   /** Send one `_meta` frame down the chat's CURRENT socket; false when none is open. */
   send: (frame: Record<string, unknown>) => boolean;
+  /** How long the chat has had no window socket: 0 while one holds it, Infinity when no window
+   *  ever did (the server started it). Absent (tests): read as never away. */
+  windowAway?: () => number;
   /** WHO holds the token (task chat-gets-a-super-agent-mode…, plan-r7 D4): the chat's vault
    *  name and context root, its pin id, and the mode it was spawned in. A mode switch respawns
    *  the chat, which mints a new token, so `mode` is always the running process's. The route
@@ -165,6 +168,22 @@ function settle(id: string, r: WindowResult): boolean {
   pending.delete(id);
   p.resolve(r);
   return true;
+}
+
+/**
+ * A window socket that dropped comes back within seconds on a reload, a reconnect or an app
+ * relaunch restoring its tabs; only one away this long means the window is really closed (AC14,
+ * owner 2026-11-21: a relaunch opened a second session of one job).
+ */
+export const WINDOW_GONE_MS = 45_000;
+
+/** Is the window behind this token really gone, so the SERVER may start a child itself? A send
+ *  that found no open socket is not enough: the window may be reconnecting and will restore or
+ *  open the tab itself. Unknown token: false (nothing to decide for). */
+export function windowGone(token: string, goneMs = WINDOW_GONE_MS): boolean {
+  const c = channels.get(token);
+  if (!c) return false;
+  return (c.windowAway?.() ?? 0) >= goneMs;
 }
 
 /** The identity behind a live token, or null (unknown token, or minted without one). */

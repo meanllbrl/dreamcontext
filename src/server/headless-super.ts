@@ -163,7 +163,7 @@ async function startOnce(o: HeadlessSuperOpts): Promise<HeadlessWake> {
   appendOpenLog('telegram_headless_start', { session: short, member: o.member ?? 'main', resumed }, o.home);
   try {
     (startOverride ?? startChatSession)(sock as unknown as import('ws').WebSocket, projectRoot, {
-      bypass, sessionId: resumed ? '' : o.sessionId, resumeId: resumed ? o.sessionId : '', model, effort, mode: 'super',
+      bypass, serverStarted: true, sessionId: resumed ? '' : o.sessionId, resumeId: resumed ? o.sessionId : '', model, effort, mode: 'super',
       account: '', initialPrompt: '', deferPrompt: false, vault: o.vault || basename(projectRoot),
       ...(o.member ? { agent: o.member } : {}),
     });
