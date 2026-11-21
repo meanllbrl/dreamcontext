@@ -177,8 +177,10 @@ describe('the Super\'s two-question card, one clean message per question', () =>
     await writeState({ queue: [superCard()] });
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
-    const msgs = tg.texts().filter((t) => t.startsWith('❓'));
-    expect(msgs).toHaveLength(2);
+    // One message holds the card (telegram-sade, Doc C3); each question its own block in it.
+    const card = tg.texts().filter((t) => t.startsWith('❓'));
+    expect(card).toHaveLength(1);
+    const msgs = card[0].split('\n\n❓');
     expect(msgs[0]).toContain('App onay kartı → görünüş');
     expect(msgs[0]).toContain('Onay kartı bu çizimdeki gibi olsun mu? (1/2)');
     expect(msgs[0]).not.toContain('options:');
@@ -274,10 +276,10 @@ describe('answered elsewhere', () => {
     await afterWrite();
     await vi.waitFor(() => expect(withButton('Gönder').length).toBe(1));
     child.answered('req-q', { [CARD.questions[0].question]: 'Bu taslak olur', [CARD.questions[1].question]: "Mac'te değilken" });
-    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2));
+    // One message holds the whole card (telegram-sade): one edit, one line with both answers.
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(1));
     const edits = tg.calls.filter((c) => c.method === 'editMessageText');
-    expect(String(edits[0].params.text)).toContain('✓ Cevaplandı: Bu taslak olur');
-    expect(String(edits[1].params.text)).toContain("✓ Cevaplandı: Mac'te değilken");
+    expect(String(edits[0].params.text)).toContain("✓ Cevaplandı: Bu taslak olur · Mac'te değilken");
     for (const e of edits) expect(e.params.reply_markup).toBeUndefined();
   });
 
@@ -300,7 +302,10 @@ describe('answered elsewhere', () => {
     await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(1));
     // Owner 2026-11-10: a card stamped "Cevaplandı" while the Super still waited on him.
     const text = String(tg.calls.find((c) => c.method === 'editMessageText')!.params.text);
-    expect(text).toContain('<i>Bu kart kapandı.</i>');
+    expect(text).toContain('<b>Bu kart kapandı</b>');
+    // One line once closed (telegram-sade): the question is gone, its subject stays after the dot.
+    expect(text).not.toContain('\n');
+    expect(text.replace(/<[^>]+>/g, '').length).toBeLessThanOrEqual(60);
     expect(text).not.toContain('Cevaplandı');
   });
 });
@@ -408,7 +413,7 @@ describe('a card buried under a later turn comes back to the bottom (owner 2026-
   }
   const live = () => withButton('Yeşil').filter((c) => c.result);
 
-  it('a later turn wrote under it: the card is sent again below, the old copy says so and loses its buttons', async () => {
+  it('a later turn wrote under it: the card is sent again below, the old copy is deleted', async () => {
     const h = superChat();
     await writeState({ queue: [superAsk('ask-1', 'Hangi renk?', ['Mor', 'Yeşil'], 1)] });
     await afterWrite();
@@ -420,10 +425,9 @@ describe('a card buried under a later turn comes back to the bottom (owner 2026-
     const again = live()[1].result!.message_id;
     // The new card is the newest message the bot posted.
     expect(again).toBeGreaterThan(Math.max(...tg.sent('sendMessage').filter((c) => c.result && c !== live()[1]).map((c) => c.result!.message_id)));
-    await vi.waitFor(() => expect(tg.sent('editMessageText').some((c) => c.params.message_id === first)).toBe(true));
-    const edit = tg.sent('editMessageText').find((c) => c.params.message_id === first);
-    expect(String(edit?.params.text)).toContain('aşağıda yeniden soruldu');
-    expect(edit?.params.reply_markup).toBeUndefined();
+    // telegram-sade (Doc C3): the old copy goes, it is not kept whole with a line under it.
+    await vi.waitFor(() => expect(tg.sent('deleteMessage').some((c) => c.params.message_id === first)).toBe(true));
+    expect(tg.sent('editMessageText').some((c) => c.params.message_id === first)).toBe(false);
     const log = join(home, '.dreamcontext', 'logs', 'telegram-asks.log');
     expect(readFileSync(log, 'utf8')).toMatch(/ask-1 ask resent below/);
     // The new card answers: a tap on it is his answer.
@@ -464,7 +468,8 @@ describe('a card buried under a later turn comes back to the bottom (owner 2026-
     await vi.waitFor(() => expect(injected.some((t) => t.includes('"Hangi renk?"="Yeşil"'))).toBe(true), { timeout: 3000 });
     await vi.waitFor(() => expect(live()).toHaveLength(2), { timeout: 3000 });
     await quiet();
-    expect(tg.sent('editMessageText').some((c) => c.params.message_id === old.result!.message_id && String(c.params.text).includes('aşağıda yeniden soruldu'))).toBe(false);
+    expect(tg.sent('editMessageText').some((c) => c.params.message_id === old.result!.message_id && String(c.params.text).includes('Aşağıda yeniden soruldu'))).toBe(false);
+    expect(tg.sent('deleteMessage').some((c) => c.params.message_id === old.result!.message_id)).toBe(false);
   });
 
   it('the turn that asked it is not a later turn: its own line under the card sends nothing again', async () => {

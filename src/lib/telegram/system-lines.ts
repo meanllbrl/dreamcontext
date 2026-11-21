@@ -30,6 +30,27 @@ export function statusLineHtml(state: StatusState, name: string, note?: string):
   return `${STATUS_GLYPH[state]} <i>${escapeHtml(clip(name, STATUS_NAME_MAX))}</i> · ${STATUS_LABEL[state]}${extra}`;
 }
 
+/** A closed card shows at most this many visible characters. */
+export const CLOSED_CARD_MAX = 60;
+
+/** What a card is about, from its own text: its first line, the "❓" and bold gone. */
+export function cardAbout(textOrHtml: string): string {
+  const plain = textOrHtml.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  return (plain.split('\n').find((l) => l.trim()) ?? '').replace(/^[\s❓🔐✋⏰]+/u, '').trim();
+}
+
+/**
+ * A card once it is closed (Doc 2026-11-21, C3: 155 closed cards stayed in the chat in full): ONE
+ * line, at most 60 visible characters, what happened in bold and what it was about after it
+ * ("✓ Cevaplandı: Yeşil · Hangi renk?"). The question itself is gone; the answer stays.
+ */
+export function closedCardHtml(head: string, about = ''): string {
+  const h = clip(redactSecrets(head), CLOSED_CARD_MAX);
+  const room = CLOSED_CARD_MAX - Array.from(h).length - 3;
+  const a = about && room >= 8 ? clip(redactSecrets(about), room) : '';
+  return `<b>${escapeHtml(h)}</b>${a ? ` · <i>${escapeHtml(a)}</i>` : ''}`;
+}
+
 /** A job status message holds at most this many visible characters (its oldest steps go first). */
 export const JOB_STATUS_MAX = 1200;
 

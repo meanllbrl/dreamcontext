@@ -448,7 +448,8 @@ describe('a rich ask outlives an expired note capture (capture.ts)', () => {
     const press = (label: string) => {
       const edit = [...tg.calls].reverse().find((c) => c.method === 'editMessageReplyMarkup' && c.params.message_id === q2.result!.message_id);
       const kb = ((edit ?? q2).params.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat();
-      const btn = kb.find((b) => b.text === label || b.text === `✓ ${label}`)!;
+      // One message holds both questions (telegram-sade): the second question's buttons are "2· …".
+      const btn = kb.find((b) => [label, `2· ${label}`, `2· ✓ ${label}`].includes(b.text))!;
       tg.push(TOKEN, { callback_query: { id: `cb${Math.random()}`, data: btn.callback_data, from: { id: OWNER }, message: { message_id: q2.result!.message_id, chat: { id: OWNER, type: 'private' }, text: q2Text, ...(edit ? { edit_date: 9 } : {}) } } });
     };
     press('Not ekle');

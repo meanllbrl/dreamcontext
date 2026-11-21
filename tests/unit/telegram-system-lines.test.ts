@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { voiceEchoHtml, statusLineHtml, noticeHtml, NOTICE_EMOJI, SILENT, STATUS_NAME_MAX, VOICE_ECHO_MAX } from '../../src/lib/telegram/system-lines.js';
+import { closedCardHtml, cardAbout, CLOSED_CARD_MAX, voiceEchoHtml, statusLineHtml, noticeHtml, NOTICE_EMOJI, SILENT, STATUS_NAME_MAX, VOICE_ECHO_MAX } from '../../src/lib/telegram/system-lines.js';
 import { telegramHtmlToPlain } from '../../src/lib/telegram/format.js';
 import { LINES } from '../../src/server/telegram/hub.js';
 import { HF_LINES } from '../../src/server/telegram/handsfree.js';
@@ -90,5 +90,15 @@ describe('permission prompt (one shape for the Super and its jobs)', () => {
     expect(permissionHtml('Bash', 'a < b')).toBe('🔐 <b>İzin istiyor: Bash</b>\n<pre>a &lt; b</pre>');
     expect(permissionHtml('Bash', 'x', 'iş · uzun')).not.toContain('· İzin');
     expect(permissionHtml('Bash', 'x', `${'i'.repeat(50)} sk-ant-api03-${'C'.repeat(40)}`)).not.toContain('sk-ant');
+  });
+  it('a closed card is one line of at most 60 visible characters, Turkish intact (telegram-sade, Doc C3)', () => {
+    const html = closedCardHtml('✓ Cevaplandı: Yeşil', cardAbout('❓ <b>Hangi renk?</b>\nMor mu, yeşil mi?'));
+    expect(html).toBe('<b>✓ Cevaplandı: Yeşil</b> · <i>Hangi renk?</i>');
+    const long = closedCardHtml(`✓ Cevaplandı: ${'Çok uzun bir cevap şöyle ğüşıöç '.repeat(4)}`, 'İçerik üretim hattı nasıl kurulsun?');
+    expect(long).not.toContain('\n');
+    expect(Array.from(telegramHtmlToPlain(long)).length).toBeLessThanOrEqual(CLOSED_CARD_MAX);
+    expect(telegramHtmlToPlain(long)).toContain('ğüşıöç');
+    expect(closedCardHtml('Bu kart kapandı', 'a < b & "c"')).toBe('<b>Bu kart kapandı</b> · <i>a &lt; b &amp; &quot;c&quot;</i>');
+    expect(closedCardHtml(`✓ Cevaplandı: sk-ant-api03-${'C'.repeat(40)}`)).not.toContain('sk-ant-api03-CCCC');
   });
 });

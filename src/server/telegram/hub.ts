@@ -63,7 +63,7 @@ import { TelegramTransport, type FetchLike } from '../../lib/telegram/transport.
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
 import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
-import { SILENT, jobStatusHtml, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
+import { SILENT, cardAbout, closedCardHtml, jobStatusHtml, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import {
   API_DOWN_LINE, HELD_CAP_MS, NOTICE_ONCE_MS, OWNER_ACTIVE_MS, TEXT_GRACE_MS, agendaPinHtml, asksForText, dayOf, isApiErrorText, isNight,
   mergeHeld, nightDigestMarkdown, picturesOnly, statusBlocks, voiceFromText, type StatusBlock,
@@ -1797,6 +1797,13 @@ export class TelegramHub implements TelegramHubApi {
     return ab.transport.editMessageText(ab.binding.chatId, messageId, html).then(() => true, () => false);
   }
 
+  /** A message of the hub's gone from the chat (an old copy of a card sent again below), its
+   *  buttons with it. False when Telegram refuses (a bot may delete its own message for 48 h). */
+  async deleteMessage(ab: ActiveBinding, messageId: number): Promise<boolean> {
+    for (const b of [...this.buttons.values()]) if (b.key === ab.key && b.messageId === messageId) this.buttons.delete(b.id);
+    return ab.transport.call('deleteMessage', { chat_id: ab.binding.chatId, message_id: messageId }).then(() => true, () => false);
+  }
+
   /** A multi-select toggle (P4): the message's buttons re-drawn under a FRESH record bound to the
    *  same message and text; the records it replaces die. Only the hub edits its own messages. */
   async reissueButtons(ab: ActiveBinding, messageId: number, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<string | null> {
@@ -1834,7 +1841,8 @@ export class TelegramHub implements TelegramHubApi {
     }
     await ab.transport.answerCallbackQuery(id, answer ?? undefined).catch(() => {});
     if (answer && rec!.singleUse) {
-      await ab.transport.editMessageText(ab.binding.chatId, rec!.messageId, `${escapeHtml(String(message?.text ?? ''))}\n\n${escapeHtml(answer)}`).catch(() => {});
+      // The card becomes ONE line: what he picked, and what it was about (telegram-sade, Doc C3).
+      await ab.transport.editMessageText(ab.binding.chatId, rec!.messageId, closedCardHtml(answer, cardAbout(String(message?.text ?? '')))).catch(() => {});
     }
   }
 
