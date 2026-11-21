@@ -37,7 +37,7 @@ import {
   PATTERN_PLAYBOOK_MAX_CHARS,
   PATTERN_VIEW_LESSON_CHARS,
 } from '../../src/lib/automations/types.js';
-import { addLesson, lessonTwinScore } from '../../src/lib/automations/store.js';
+import { addLesson } from '../../src/lib/automations/store.js';
 import { patternView } from '../../src/lib/automations/runner.js';
 
 let projectRoot: string;
@@ -116,39 +116,21 @@ describe('recordLesson', () => {
     expect(view).toContain('start ');
   });
 
-  it('a near-twin lesson updates the stored one (×N) instead of a new line', () => {
+  it('every lesson is its own line, newest first: an old one never swallows a new one (owner 2026-11-21)', () => {
     make();
     recordLesson(root, 'digest', { lesson: 'Run the build before the screenshot step', now: new Date('2026-07-27T10:00:00') });
-    recordLesson(root, 'digest', { lesson: 'unrelated note about the port', now: new Date('2026-07-27T10:00:00') });
     const after = recordLesson(root, 'digest', { lesson: 'run the build before every screenshot step', now: new Date('2026-07-28T10:00:00') });
-    const lessons = readPattern(after).lessons;
-    expect(lessons).toHaveLength(2);
-    // The new one adds "every": its text is kept, never the shorter old one (nothing it adds is lost).
-    expect(lessons[0].text).toBe('run the build before every screenshot step (×2)');
-    expect(lessons[0].date).toBe('2026-07-28');
-    const third = addLesson(lessons, { date: '2026-07-29', text: 'run the build before the screenshot step' });
-    expect(third[0]!.text).toMatch(/\(×3\)$/);
-  });
-
-  it('a lesson that extends an old one keeps the extension; two that each add a word are both kept', () => {
-    const one = addLesson([{ date: '2026-07-27', text: 'Deploy fails on the staging branch' }],
-      { date: '2026-07-28', text: 'Deploy fails on the staging branch: run the migrations first, then retry' });
-    expect(one).toEqual([{ date: '2026-07-28', text: 'Deploy fails on the staging branch: run the migrations first, then retry (×2)' }]);
-    const shorter = addLesson(one, { date: '2026-07-29', text: 'deploy fails on the staging branch' });
-    expect(shorter[0]!.text).toBe('Deploy fails on the staging branch: run the migrations first, then retry (×3)');
-    const both = addLesson([{ date: '2026-07-27', text: 'Use pnpm never npm for installs in this repo always' }],
-      { date: '2026-07-28', text: 'Use pnpm never npm for installs in this repo with force' });
-    expect(both).toHaveLength(2);
-    // A negation is a word too: the newer word is kept, never the old one it reverses.
-    const not = addLesson([{ date: '2026-07-27', text: 'Run the migrations before deploy' }], { date: '2026-07-28', text: 'Do not run the migrations before deploy' });
-    expect(not[0]!.text).toBe('Do not run the migrations before deploy (×2)');
-    const no = addLesson([{ date: '2026-07-27', text: 'Use the cache on staging builds' }], { date: '2026-07-28', text: 'No, do not use the cache on staging builds' });
-    expect(no[0]!.text).toBe('No, do not use the cache on staging builds (×2)');
-  });
-
-  it('two lessons that differ in a number are two facts, never twins', () => {
-    expect(lessonTwinScore('lesson number 0', 'lesson number 1')).toBe(0);
-    expect(lessonTwinScore('Ders 01: kurgusal çalışma notu 1', 'Ders 02: kurgusal çalışma notu 2')).toBe(0);
+    expect(readPattern(after).lessons.map((l) => l.text)).toEqual(['run the build before every screenshot step', 'Run the build before the screenshot step']);
+    // A lesson that takes a word back is never lost to the one it reverses (the r3 review pairs).
+    for (const [old, neu] of [
+      ['Do not run the migrations before deploy', 'Run the migrations before deploy'],
+      ['Never use the cache on staging builds', 'Use the cache on staging builds'],
+      ['Never use npm in this repo, use pnpm', 'Never use pnpm in this repo, use npm'],
+      ['Run lint after the tests pass', 'Run the tests after lint pass'],
+    ]) {
+      const out = addLesson([{ date: '2026-07-27', text: old! }], { date: '2026-07-28', text: neu! });
+      expect(out).toEqual([{ date: '2026-07-28', text: neu }, { date: '2026-07-27', text: old }]);
+    }
   });
 
   it('caps the playbook SIZE too', () => {

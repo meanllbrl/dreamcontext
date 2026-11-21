@@ -1626,7 +1626,7 @@ export function registerAutomationsCommand(program: Command): void {
         const pattern = readPattern(updated);
         success(`Pattern updated for "${slug}".`);
         if (opts.lesson) {
-          console.log(chalk.dim(`  lessons: ${pattern.lessons.length} (none is dropped; the same note again counts ×N)`));
+          console.log(chalk.dim(`  lessons: ${pattern.lessons.length} (none is dropped; each is its own line)`));
         }
         if (playbook !== undefined) console.log(chalk.dim('  playbook rewritten.'));
       } catch (err) {

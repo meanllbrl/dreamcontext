@@ -967,61 +967,13 @@ export function renderPattern(p: AutomationPattern): string {
 
 // ─── Twin lessons (D6: merge, never a cap) ───────────────────────────────────
 
-const TIMES_RE = /\s*\(×(\d+)\)$/;
-/** Stricter than a rule's twin bar: two notes that differ in one word are often two facts. */
-const LESSON_TWIN_BAR = 0.8;
-const LESSON_STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'not', 'bir', 've', 'ile', 'için', 'icin', 'bu', 'da', 'de', 'ki', 'ama', 'gibi', 'daha', 'çok', 'cok']);
-
-function lessonTerms(text: string): Set<string> {
-  return new Set(text.replace(TIMES_RE, '').toLocaleLowerCase('tr').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z0-9ı]+/).filter((w) => w.length >= 3 && !LESSON_STOP.has(w)));
-}
-
-/** The numbers a lesson names ("port 5173", "step 2"): two lessons with different numbers are two facts. */
-function lessonNumbers(text: string): string {
-  return (text.replace(TIMES_RE, '').match(/\d+/g) ?? []).join(',');
-}
-
-/** How much of the smaller lesson two lessons share (0..1); 0 under two shared terms or when their numbers differ. */
-export function lessonTwinScore(a: string, b: string): number {
-  if (lessonNumbers(a) !== lessonNumbers(b)) return 0;
-  const x = lessonTerms(a);
-  const y = lessonTerms(b);
-  let shared = 0;
-  for (const t of x) if (y.has(t)) shared += 1;
-  if (shared < 2) return 0;
-  return shared / Math.min(x.size, y.size);
-}
-
-/** Of two near-twin lessons, the text that already holds every term of the other; null when each
- *  adds a term the other lacks (two facts: both are kept). */
-function lessonKeeps(oldText: string, newText: string): string | null {
-  // Every word counts here, stop words and short ones too: "not", "no", "do" change a lesson.
-  const words = (t: string): Set<string> => new Set(t.replace(TIMES_RE, '').toLocaleLowerCase('tr').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z0-9ı]+/).filter(Boolean));
-  const a = words(oldText);
-  const b = words(newText);
-  const newAdds = [...b].some((t) => !a.has(t));
-  const oldAdds = [...a].some((t) => !b.has(t));
-  if (newAdds && oldAdds) return null;
-  return newAdds ? newText : oldText;
-}
-
 /**
- * Add a lesson newest-first. A near-twin of a stored lesson updates THAT lesson instead (its date
- * and a `×N` count, moved to the top), so the same note said again never piles up and nothing is
- * dropped. Pure.
+ * Add a lesson newest-first, always as its own line (owner 2026-11-21, "Birleştirmeyi çıkar"): an
+ * old lesson never swallows a new one, since a lesson that takes a word back would otherwise lose
+ * to the one it reverses. Nothing is dropped and there is no count cap. Pure.
  */
 export function addLesson(lessons: readonly PatternLesson[], lesson: PatternLesson): PatternLesson[] {
-  const text = oneLine(lesson.text);
-  const i = lessons.findIndex((l) => lessonTwinScore(l.text, text) >= LESSON_TWIN_BAR && lessonKeeps(l.text, text) !== null);
-  if (i < 0) return [{ date: lesson.date, text }, ...lessons];
-  const old = lessons[i]!;
-  const n = Number(TIMES_RE.exec(old.text)?.[1] ?? '1') + 1;
-  // The kept text is the one that holds every term of both: a new lesson that extends the old one
-  // (the fix, a new "never") replaces its text; a merge never drops a word either side added.
-  const merged = { date: lesson.date, text: `${lessonKeeps(old.text, text)!.replace(TIMES_RE, '')} (×${n})` };
-  return [merged, ...lessons.slice(0, i), ...lessons.slice(i + 1)];
+  return [{ date: lesson.date, text: oneLine(lesson.text) }, ...lessons];
 }
 
 /** The automation's pattern, already parsed. Empty when it has never learned. */

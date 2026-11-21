@@ -122,6 +122,17 @@ describe('member-carry exam', () => {
     expect(pattern).toContain('Ders 21');
   });
 
+  exam('E3b', 'a lesson that takes a word back is its own line in every project; the old one never swallows it (regression, 21 Nov)', () => {
+    const old = dc(w, w.project('kestrel'), ['automations', 'learn', 'mira', '--lesson', 'Do not run the migrations before deploy']);
+    expect(old.code, old.err).toBe(0);
+    const neu = dc(w, w.project('kestrel'), ['automations', 'learn', 'mira', '--lesson', 'Run the migrations before deploy']);
+    expect(neu.code, neu.err).toBe(0);
+    const pattern = dc(w, w.project('lumen'), ['automations', 'pattern', 'mira']).out;
+    expect(pattern).toContain('Do not run the migrations before deploy');
+    expect(pattern).toMatch(/(^|[^t] )Run the migrations before deploy/m);
+    expect(pattern).not.toMatch(/×\d/);
+  });
+
   exam('E4', 'his words relayed by a Super through team ask make Mira\'s rule active in lumen T', () => {
     const sup = newSid('super-kestrel');
     const quote = 'Mira\'ya söyle: raporda önce sonuç yazsın';
