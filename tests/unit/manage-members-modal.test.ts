@@ -107,10 +107,10 @@ describe('a project not on screen: queued, never a timer (end review Major 4)', 
   it('the ChromeApi exposes queueDrawerIntent: the drawer\'s own per-project pending-intent path', () => {
     expect(chrome).toMatch(/queueDrawerIntent\(vault: string, intent: DrawerIntent\): void;/);
     expect(chrome).toMatch(/queueDrawerIntent: \(\) => \{\},/);
-    expect(chrome).toMatch(/queueDrawerIntent: \(vault: string, intent: DrawerIntent\) => \{ void trackedIntent\(vault, intent\); \}/);
+    expect(chrome).toMatch(/queueDrawerIntent: \(vault: string, intent: DrawerIntent\) => \{ void queueDrawerIntent\(vault, intent\); \}/);
     // A project's Ekip list (a global member's row too) opens it in that project through the same queue (`pick` -> onIntent).
     expect(code(read('components/layout/newshell/ChatDrawer.tsx'))).toMatch(/onOpen=\{\(m\) => openMember\(c\.vault, m\)\}/);
-    expect(chrome).toMatch(/onIntent=\{\(vault, intent\) => void trackedIntent\(vault, intent\)\}/);
+    expect(chrome).toMatch(/onIntent=\{\(vault, intent\) => void queueDrawerIntent\(vault, intent\)\}/);
   });
 });
 
