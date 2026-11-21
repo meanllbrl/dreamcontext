@@ -180,10 +180,11 @@ export interface FormatOptions {
    *  insight / agent-thread / automation views) are left out of the text with `'hub'`; with
    *  `'mac'` (the default, e.g. routine forwards) every dream fence is one "Mac'te" line. */
   blocks?: 'mac' | 'hub';
-  /** A long text keeps its first paragraphs open and the rest in an expandable quote. Only a
-   *  routine's forwarded result folds; what a bot's Super writes him (main's or a member's own)
-   *  never does (owner 2026-11-11, 2026-11-14). Off by default. */
-  fold?: boolean;
+  /** A long text keeps its first paragraphs open and the rest in an expandable quote. `true`: a
+   *  routine's forwarded result (`foldLong`, past ~900 visible characters). `'answer'`: what a
+   *  bot's Super writes him (owner 2026-11-21, "Hepsini uygula" on Doc's diagnosis, replacing the
+   *  2026-11-14 "never folds"): past ~450 open characters the rest folds (`foldAnswer`). Off by default. */
+  fold?: boolean | 'answer';
 }
 
 /** The fences the hub sends as their own message in `'hub'` mode (M5). */
@@ -206,9 +207,11 @@ function inline(raw: string): string {
   const codes: string[] = [];
   let s = raw.replace(/`([^`\n]+)`/g, (_m, c: string) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
   const links: string[] = [];
-  s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label: string, href: string) => {
+  s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_m, label: string, href: string) => {
     const safe = safeHref(href);
-    if (!safe) return m;
+    // A link the phone cannot open (a project path, `file:`, `mailto:`) is its words only: the
+    // raw `[name](_dream_context/…)` never shows (Doc 2026-11-21, C6).
+    if (!safe) return label;
     links.push(`<a href="${escapeHtml(safe)}">${escapeHtml(label)}</a>`);
     return `\u0001${links.length - 1}\u0001`;
   });
@@ -451,7 +454,80 @@ export function markdownToTelegramHtml(md: string, opts: FormatOptions = {}): st
     i++;
   }
   const html = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return opts.fold === true ? foldLong(html) : html;
+  return opts.fold === true ? foldLong(html) : opts.fold === 'answer' ? foldAnswer(html) : html;
+}
+
+/** What an answer keeps open on his phone (Doc 2026-11-21: a bold line and three short sentences). */
+export const ANSWER_OPEN_MAX = 450;
+
+/** Open `<pre>`/`<blockquote>` tags minus closed ones in a piece of converter HTML. */
+function openDepth(b: string): number {
+  return (b.match(/<(?:pre|blockquote)\b/gi)?.length ?? 0) - (b.match(/<\/(?:pre|blockquote)>/gi)?.length ?? 0);
+}
+
+/**
+ * An answer on his phone (owner 2026-11-21, "Hepsini uygula"): what stays open is the first block
+ * and the blocks after it while they fit in ~450 visible characters and are not a new head; the
+ * rest folds into an expandable quote he opens with a tap, so nothing he may need is lost and the
+ * bubble stays short however the agent wrote. A `**Ayrıntı**` quote already there joins the fold;
+ * a code block or a plain quote cannot sit inside one (Telegram nests neither), so it stays
+ * between folds, in its place. A first block longer than the limit folds after its first lines.
+ */
+export function foldAnswer(html: string): string {
+  const visible = (h: string): number => telegramHtmlToPlain(h).length;
+  if (visible(html) <= ANSWER_OPEN_MAX) return html;
+  // Top-level blocks: a blank line inside a code block or a quote does not end it.
+  const tops: string[] = [];
+  let cur: string[] = [];
+  let depth = 0;
+  for (const b of html.split('\n\n')) {
+    cur.push(b);
+    depth += openDepth(b);
+    if (depth <= 0) { tops.push(cur.join('\n\n')); cur = []; depth = 0; }
+  }
+  if (cur.length) tops.push(cur.join('\n\n'));
+  const nested = (b: string): boolean => /<(?:pre|blockquote)\b/i.test(b);
+  const folded = (b: string): RegExpExecArray | null => /^<blockquote expandable>([\s\S]*)<\/blockquote>$/.exec(b);
+  const open: string[] = [];
+  const rest: string[] = [];
+  let seen = 0;
+  tops.forEach((b, k) => {
+    if (rest.length) { rest.push(b); return; }
+    if (k === 0) {
+      // One long first block: its first lines stay open, the rest folds (never inside a tag pair:
+      // only a block with no code or quote is cut, and only at a line).
+      if (visible(b) > ANSWER_OPEN_MAX && !nested(b) && b.includes('\n')) {
+        const lines = b.split('\n');
+        let n = 0;
+        let len = 0;
+        while (n < lines.length && (n === 0 || len + visible(lines[n]) <= ANSWER_OPEN_MAX)) len += visible(lines[n++]);
+        open.push(lines.slice(0, n).join('\n'));
+        seen = len;
+        if (n < lines.length) rest.push(lines.slice(n).join('\n'));
+        return;
+      }
+      open.push(b);
+      seen = visible(b);
+      return;
+    }
+    const head = b.startsWith('<b>') && !b.includes('\n') ? true : /^<b>[^\n]*<\/b>\n/.test(b);
+    if (!head && !folded(b) && seen + visible(b) <= ANSWER_OPEN_MAX) { open.push(b); seen += visible(b); return; }
+    rest.push(b);
+  });
+  if (!rest.length) return html;
+  // The rest: runs of plain blocks and folded quotes become one fold each; a code block or a plain
+  // quote stays where it was, between them.
+  const out = [...open];
+  let fold: string[] = [];
+  const flush = (): void => { if (fold.length) out.push(`<blockquote expandable>${fold.join('\n\n')}</blockquote>`); fold = []; };
+  for (const b of rest) {
+    const f = folded(b);
+    if (f && !nested(f[1])) { fold.push(f[1]); continue; }
+    if (nested(b)) { flush(); out.push(b); continue; }
+    fold.push(b);
+  }
+  flush();
+  return out.join('\n\n');
 }
 
 /** Visible characters past which a text folds (about one phone screen, 24 lines at 360pt). */

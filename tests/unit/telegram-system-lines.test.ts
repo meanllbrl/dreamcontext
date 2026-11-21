@@ -9,8 +9,8 @@ import { PHONE_LINES } from '../../src/server/telegram/present.js';
 import { TOO_LARGE_LINE } from '../../src/lib/telegram/inbound.js';
 
 describe('telegram system lines', () => {
-  it('voice echo is a label plus one expandable italic quote', () => {
-    expect(voiceEchoHtml('merhaba dünya')).toBe('🎙 <i>Duyduğum</i>\n<blockquote expandable><i>merhaba dünya</i></blockquote>');
+  it('voice echo is one folded quote led by its label (owner 2026-11-21: collapsible, small when closed)', () => {
+    expect(voiceEchoHtml('merhaba\n dünya')).toBe('<blockquote expandable>🎙 <i>Duyduğum:</i> merhaba dünya</blockquote>');
   });
   it('voice echo escapes markup and cuts a very long transcript', () => {
     expect(voiceEchoHtml('a <b> & c')).toContain('a &lt;b&gt; &amp; c');
@@ -18,7 +18,7 @@ describe('telegram system lines', () => {
     expect(long.length).toBeLessThan(VOICE_ECHO_MAX + 100);
   });
   it('voice echo plain fallback keeps order, no tags', () => {
-    expect(telegramHtmlToPlain(voiceEchoHtml('a <b> & c'))).toBe('🎙 Duyduğum\na <b> & c');
+    expect(telegramHtmlToPlain(voiceEchoHtml('a <b> & c'))).toBe('🎙 Duyduğum: a <b> & c');
   });
   it('status row: icon, italic name, status word, no bold', () => {
     const h = statusLineHtml('running', 'UA Testler: manuel testler');
