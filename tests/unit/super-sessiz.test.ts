@@ -23,7 +23,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } 
 import { emptySuperState, type SuperChild, type SuperOwed, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobStatus } from '../../src/lib/super/types.js';
 import {
   OWNER_VOICE, PROGRESS_DUE_MS, PROGRESS_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, notStalledReason, ownerPresent, progressDraft, progressDue,
-  pruneProgressDraft, pumpSuper, setRow, stampToldDraft, startSuperInbox, superBatchText, writeSuper, type SuperInbox, type SuperEventFrame,
+  progressExitDraft, pruneProgressDraft, pumpSuper, setRow, stampToldDraft, startSuperInbox, superBatchText, writeSuper, type SuperInbox, type SuperEventFrame,
 } from '../../src/lib/super/inbox.js';
 import { setRequestSource, setTeamLiveSource, teamJobStatusNow, teamProgressRead } from '../../src/lib/super/team.js';
 import { owedRef, owedClock, openDebts } from '../../src/lib/super/owed.js';
@@ -214,6 +214,29 @@ describe('criterion 3: one item, re-checked at delivery', () => {
     expect(s.children.c1.workingSince).toBeUndefined();
     expect(s.children.c1.toldAt).toBeUndefined();
     expect(s.children.c1.progressAt).toBe(at(3));
+  });
+});
+
+describe('a Super that dies on its progress turn (review r2, retry-cap)', () => {
+  it('first exit: pending again and due at once; second exit: closed, and no new item until a full window passed', () => {
+    const s = state({ children: { c1: awaitedChild('c1') }, owed: [msgDebt('o1', 'msg005', 5, false)] });
+    progressDraft(s, at(15), NO_TEAMS);
+    const item = progressItems(s)[0];
+    // Delivered (its clock stamped), then its turn dies with no result.
+    item.state = 'delivered'; s.children.c1.progressAt = at(15);
+    progressExitDraft(s, item, at(16));
+    expect(item.state).toBe('pending');
+    expect(s.children.c1.progressAt).toBeUndefined();
+    expect(pruneProgressDraft(s, at(16), NO_TEAMS)).toBe(false);
+    // Delivered again, and dies again: it closes.
+    item.state = 'delivered'; s.children.c1.progressAt = at(16);
+    progressExitDraft(s, item, at(17));
+    expect(item.state).toBe('done');
+    // The sweeps after it breed nothing: the job waits a full window from the second death.
+    for (const m of [18, 19, 25, 31.9]) progressDraft(s, at(m), NO_TEAMS);
+    expect(progressItems(s).filter((q) => q.state === 'pending')).toHaveLength(0);
+    progressDraft(s, at(32), NO_TEAMS);
+    expect(progressItems(s).filter((q) => q.state === 'pending')).toHaveLength(1);
   });
 });
 

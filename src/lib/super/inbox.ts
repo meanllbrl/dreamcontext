@@ -1281,18 +1281,7 @@ async function settleCarried(key: string): Promise<boolean> {
           clearFresh(it.sessionId);
           continue;
         }
-        if (pureExit && progressItem(it)) {
-          // Its turn died with no result (review r1): the line never reached him, so the clocks its
-          // delivery stamped go back and it is due again at the next pump, at most once more.
-          const exits = (it.exits ?? 0) + 1;
-          it.exits = exits;
-          for (const j of it.progress?.jobs ?? []) {
-            if (j.child) { const ch = s.children[j.child]; if (ch) delete ch.progressAt; }
-            else { const t = s.team.find((x) => x.id === j.team); if (t) delete t.progressAt; }
-          }
-          if (exits < 2) { it.state = 'pending'; delete it.batch; } else it.state = 'done';
-          continue;
-        }
+        if (pureExit && progressItem(it)) { progressExitDraft(s, it, Date.now()); continue; }
         if (pureExit) {
           const exits = (it.exits ?? 0) + 1;
           it.exits = exits;
@@ -4810,6 +4799,27 @@ export function pruneProgressDraft(s: SuperState, now: number, teams: ProgressTe
     if (jobs.length) q.progress = { jobs }; else { q.state = 'done'; delete q.progress; }
   }
   return changed;
+}
+
+/**
+ * A progress turn that died with no result (a process exit), in a write draft. The first time the
+ * line never reached him: the clocks its delivery stamped go back and the item is pending again,
+ * delivered once more. The second time it closes and its jobs wait a FULL window (`progressAt` =
+ * now): a Super that dies on every such turn must not breed a new item each sweep (review r2,
+ * retry-cap: done, no pending item, the old clock still due, a fresh item a minute later).
+ */
+export function progressExitDraft(s: SuperState, it: SuperQueueItem, now: number): void {
+  const exits = (it.exits ?? 0) + 1;
+  it.exits = exits;
+  const last = exits >= 2;
+  for (const j of it.progress?.jobs ?? []) {
+    const job = j.child ? s.children[j.child] : s.team.find((x) => x.id === j.team);
+    if (!job) continue;
+    if (last) job.progressAt = now; else delete job.progressAt;
+  }
+  if (last) { it.state = 'done'; return; }
+  it.state = 'pending';
+  delete it.batch;
 }
 
 /** A written progress delivery (C3): each job the DELIVERED snapshot named gets `progressAt`. */
