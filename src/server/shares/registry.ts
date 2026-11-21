@@ -447,6 +447,11 @@ export function allShares(): Share[] {
   return [...shares.values()];
 }
 
+/** The one-live-share key of an app (D9, C10): every share of that app hash. */
+export function appShareKey(hash: string): string {
+  return `app:${hash}`;
+}
+
 /** C10: the app has a share that is starting or open (the shared-live window). */
 export function sharedLive(key: string): boolean {
   return liveFor(key) !== null;

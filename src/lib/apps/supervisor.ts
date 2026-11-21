@@ -340,6 +340,8 @@ export class AppRuntime {
   readonly windows = new Map<string, number>();
   private calls = new Map<number, number>();
   private callSeq = 0;
+  /** Live-link leases (tunel-paylasim C9): the backend stays up while a share holds one. */
+  private shareLeases = new Set<number>();
   private redact: Redactor;
   private secrets: SecretValue[] = [];
   private watcher: FSWatcher | null = null;
@@ -855,6 +857,22 @@ export class AppRuntime {
     return () => { this.calls.delete(id); };
   }
 
+  /**
+   * Hold a live-link lease (C9): from a share's start to step 2 of its close the backend is not
+   * swept, even with the owner's window closed. `stoppedByOwner` still wins. Returns its release
+   * (idempotent).
+   */
+  acquireShare(): () => void {
+    const id = ++this.callSeq;
+    this.shareLeases.add(id);
+    return () => { this.shareLeases.delete(id); };
+  }
+
+  /** Live-link leases held now. */
+  shareLeaseCount(): number {
+    return this.shareLeases.size;
+  }
+
   /** Stop the backend when no lease is left. Returns true when it stopped it. */
   sweep(): boolean {
     const now = this.now();
@@ -868,7 +886,7 @@ export class AppRuntime {
     // A call lease is never aged out: it lives exactly as long as its request (release() runs in
     // a finally), so a long action is not killed mid-way. The request's own idle timeout bounds it.
     const launching = now - this.launchHoldAt < WINDOW_LEASE_TTL_MS;
-    const leased = this.liveWindows() > 0 || this.calls.size > 0 || launching;
+    const leased = this.liveWindows() > 0 || this.calls.size > 0 || this.shareLeases.size > 0 || launching;
     const ownerStopped = !!this.rec.stoppedByOwner && (!!this.backend || this.state === 'running' || this.state === 'updating');
     if (ownerStopped || (!leased && (this.state === 'running' || this.state === 'error') && (this.backend || this.watcher))) {
       this.stop();

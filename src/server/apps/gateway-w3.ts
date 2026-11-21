@@ -53,6 +53,7 @@ import { containedPath } from '../../lib/apps/data-conflicts.js';
 import { SDK_FILE_MAX_BYTES } from '../../lib/apps/data-share.js';
 import { addTombstone, clearTombstones } from '../../lib/apps/data-deletes.js';
 import { appDataStatus, sharedMember, trackedAppFiles } from '../../lib/apps/others.js';
+import { appShareKey, liveShare, sharedLive } from '../shares/registry.js';
 
 const NOTIFY_PER_MINUTE = 30;
 
@@ -61,6 +62,20 @@ let loginPath: (() => Promise<string>) | undefined;
 export function configureGatewayW3(opts: { home?: string; loginPath?: () => Promise<string> }): void {
   if (opts.home) homeDir = opts.home;
   if (opts.loginPath) loginPath = opts.loginPath;
+}
+
+/**
+ * Live links (tunel-paylasim C10): while the app has a live link (starting or open), its agent
+ * doors shut. `ai` = the share's AI switch lifts the gate (ask, team/say); automations and learn
+ * pass `ai: false` and stay shut either way. True when it answered 409.
+ */
+function sharedGate(gw: AppGateway, req: IncomingMessage, res: ServerResponse, opts: { liftedByAi: boolean }): boolean {
+  const key = appShareKey(gw.runtime.hash);
+  if (!sharedLive(key)) return false;
+  if (opts.liftedByAi && liveShare(key)?.ai) return false;
+  req.resume();
+  send(res, 409, { error: 'shared_live', message: 'This app is shared over a live link right now: its AI features are off until the link is closed.' });
+  return true;
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -160,6 +175,7 @@ registerGatewayRoute('/__dc/notify', { cookie: true, bearer: true }, async (gw: 
 // ─── learn ──────────────────────────────────────────────────────────────────────────
 
 registerGatewayRoute('/__dc/learn', { cookie: false, bearer: true }, async (gw: AppGateway, req, res) => {
+  if (sharedGate(gw, req, res, { liftedByAi: false })) return;
   if ((req.method ?? 'GET').toUpperCase() !== 'POST') { send(res, 405, { error: 'method' }); return; }
   let body: Record<string, unknown>;
   try { body = (await readJson(req, 8 * 1024)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
@@ -224,6 +240,7 @@ registerGatewayRoute('/__dc/schedules', { cookie: true, bearer: true }, (gw, _re
 // Not `/api/automations`: its route has no way to carry `app`, and this slug must come from the
 // gateway, never from the backend's own body.
 registerGatewayRoute('/__dc/automations', { cookie: false, bearer: true }, async (gw, req, res) => {
+  if (sharedGate(gw, req, res, { liftedByAi: false })) return;
   if ((req.method ?? 'GET').toUpperCase() !== 'POST') { send(res, 405, { error: 'method' }); return; }
   let body: unknown;
   try { body = await readJson(req); } catch { send(res, 400, { error: 'invalid_body' }); return; }
@@ -235,6 +252,7 @@ registerGatewayRoute('/__dc/automations', { cookie: false, bearer: true }, async
 
 // `app` is this gateway's own slug: a backend cannot speak as another app, or as the owner.
 registerGatewayRoute('/__dc/team/say', { cookie: false, bearer: true }, async (gw, req, res) => {
+  if (sharedGate(gw, req, res, { liftedByAi: true })) return;
   if ((req.method ?? 'GET').toUpperCase() !== 'POST') { send(res, 405, { error: 'method' }); return; }
   let body: Record<string, unknown>;
   try { body = (await readJson(req)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
@@ -286,6 +304,8 @@ registerGatewayRoute('/__dc/ask', { cookie: false, bearer: true }, async (gw, re
     return;
   }
   if ((req.method ?? 'GET').toUpperCase() !== 'POST' || url.pathname !== '/__dc/ask') { send(res, 405, { error: 'method' }); return; }
+  // A poll above still answers: a question asked before the link opened is not lost (D4).
+  if (sharedGate(gw, req, res, { liftedByAi: true })) return;
   let body: Record<string, unknown>;
   try { body = (await readJson(req, 32 * 1024)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
   const text = typeof body?.text === 'string' ? body.text : '';

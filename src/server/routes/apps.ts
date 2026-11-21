@@ -63,6 +63,8 @@ import { appLogoPath, appLogoStamp, clearAppLogo } from '../../lib/apps/app-logo
 import { icnsToPng } from '../../lib/apps/icns-raster.js';
 import { sendPhotoFile } from './automations.js';
 import { configureGatewayW3 } from '../apps/gateway-w3.js';
+import { registerAppShareKind } from '../shares/app-kind.js';
+import { appShareKey, closeSharesFor } from '../shares/registry.js';
 import { spendLinkNonce } from '../apps/link-nonces.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { approvedTarget, checkApproval } from '../../lib/automations/registry.js';
@@ -138,6 +140,9 @@ function runtime(rec: AppRecord): AppRuntime {
     onPullHeld: (projectRoot) => retryAppPullRecovery(projectRoot),
   });
 }
+
+// Live links of an app (tunel-paylasim C6, C9): this module's home and runtime factory.
+registerAppShareKind({ home: () => home, runtime: (rec) => runtime(rec) });
 
 /** Host names this loopback listener by its own number: a rebinding page's Host is its own name. */
 function isLoopbackHostRequest(req: IncomingMessage): boolean {
@@ -362,6 +367,8 @@ export const findAppFor = (contextRoot: string, slug: string, res: ServerRespons
 
 /** Stop everything an app runs before its folder moves (uninstall). The record stays. */
 export async function retireAppRuntime(rec: AppRecord): Promise<void> {
+  // First: its live links close, so no guest request can start the backend of an app going away.
+  void closeSharesFor(appShareKey(rec.hash), 'removed');
   for (const id of stampAppRemoved(rec.hash, home)) void stopLiveChat(id).catch(() => { /* already gone */ });
   // Its folder (and with "delete data", its data folder) moves next: the backend's last save
   // lands first. Best effort: a backend that will not go is killed by stop()'s SIGKILL anyway.
@@ -1325,6 +1332,8 @@ export async function handleAppDelete(req: IncomingMessage, res: ServerResponse,
   if (!rec) return;
   // An installed app leaves through Uninstall (to the trash, restorable), never half-removed.
   if (rec.origin === 'installed') { sendError(res, 409, 'use_uninstall', 'This app was installed from someone else: remove it with Uninstall on its card (it goes to the trash).'); return; }
+  // First: its live links close (before the stamp, the stop and forgetRuntime).
+  void closeSharesFor(appShareKey(rec.hash), 'removed');
   // Its conversations read from now on and spawn nothing; the ones running end here.
   for (const id of stampAppRemoved(rec.hash, home)) void stopLiveChat(id).catch(() => { /* already gone */ });
   forgetRuntime(rec.hash);
