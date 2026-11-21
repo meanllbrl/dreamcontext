@@ -4,6 +4,7 @@ import { agentPhotoUrl, automationPhotoUrl } from '../../api/client';
 import { useVault } from '../../context/VaultContext';
 import type { AgentFace } from '../../../../src/lib/agents/figure.js';
 import { AgentFigure } from './AgentFigure';
+import { usePhotoEpoch } from './photoEpoch';
 import './AgentAvatar.css';
 
 /**
@@ -35,7 +36,10 @@ export function initialsFor(title: string): string {
  * face is the worst possible way to find that out.
  *
  * `version` busts the browser cache. A photo is replaced in place at a stable
- * URL, so without it an owner uploads a new picture and keeps seeing the old.
+ * URL, so without it an owner uploads a new picture and keeps seeing the old. Leave it out
+ * unless the photo itself changed: every distinct value is a separate download of the file, so a
+ * per-message value (a run id) re-fetched the same face for every message. Without one the face
+ * reads the window's upload epoch (`photoEpoch.ts`).
  *
  * `of` says which route the slug names: `'automation'` (the default, every existing caller) reads
  * `/api/automations/:slug/photo`, `'agent'` reads `/api/agents/:slug/photo`. An agent you only
@@ -74,6 +78,9 @@ export function AgentAvatar({
   const ctx = useVault();
   const vault = vaultOverride ?? ctx.vault;
   const [failed, setFailed] = useState(false);
+  // No version of its own: the window's upload epoch (0 = the bare URL, shared by every face).
+  const epoch = usePhotoEpoch();
+  const v = version ?? (epoch || undefined);
   // The stamped face, when the caller did not pass one: read from the agents/automations lists
   // already in the query cache (no fetch of its own; outside a query client, the bare hash).
   const qc = useContext(QueryClientContext);
@@ -96,7 +103,7 @@ export function AgentAvatar({
   return (
     <span className="agent-av" style={style}>
       <img
-        src={of === 'agent' ? agentPhotoUrl(vault, slug, version) : automationPhotoUrl(vault, slug, version)}
+        src={of === 'agent' ? agentPhotoUrl(vault, slug, v) : automationPhotoUrl(vault, slug, v)}
         alt=""
         onError={() => setFailed(true)}
       />

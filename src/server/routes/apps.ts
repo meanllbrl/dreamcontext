@@ -1357,7 +1357,7 @@ export function appIconPath(contextRoot: string, slug: string, opts: { own?: boo
 export async function handleAppIcon(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
   const own = new URL(req.url ?? '/', 'http://x').searchParams.get('own') === '1';
-  sendPhotoFile(res, appIconPath(contextRoot, params.slug, { own }) ?? await appIcnsRaster(contextRoot, params.slug));
+  sendPhotoFile(res, appIconPath(contextRoot, params.slug, { own }) ?? await appIcnsRaster(contextRoot, params.slug), req);
 }
 
 /** An `.icns` icon as the cached PNG the notch and the history can draw. */

@@ -80,7 +80,7 @@ function SystemRow({ entry, rootText }: { entry: ThreadEntry; rootText: string |
 function RowFace({ who, message }: { who: 'user' | 'agent'; message: FeedMessage }) {
   if (who === 'user') return <span className="agent-you-av" aria-hidden="true">You</span>;
   const face = agentFaceOf(message);
-  return <AgentAvatar slug={face.slug} title={face.title} hasPhoto={message.hasPhoto} of={face.of} size={32} version={message.runId} />;
+  return <AgentAvatar slug={face.slug} title={face.title} hasPhoto={message.hasPhoto} of={face.of} size={32} />;
 }
 
 function AuthoredRow({

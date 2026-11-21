@@ -155,7 +155,7 @@ export function AgentThreadCard({ spec }: { spec: AgentThreadViewSpec }) {
   return (
     <div className="chat-viewcard chat-agentthread">
       <CardHeader
-        glyph={<AgentAvatar slug={spec.slug} title={agentTitle} hasPhoto={hasPhoto} size={22} version={runId ?? undefined} />}
+        glyph={<AgentAvatar slug={spec.slug} title={agentTitle} hasPhoto={hasPhoto} size={22} />}
         title={agentTitle}
         aside={
           message?.needsYou
