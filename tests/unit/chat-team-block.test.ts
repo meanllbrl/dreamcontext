@@ -276,6 +276,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'hashes, paths and commands only when he asks; never switch subject mid-message; a choice you',
       'need from him goes in a `super ask` card, never only as a question in your text (it slips by',
       expect.stringContaining('unseen): the text says in one line that a question waits.'),
+      // rev 58 (2026-11-21, super-sessiz-kalmaz): while he waits, what is still running, never with a time guess.
+      expect.stringContaining('what is still running, never with a time: estimates are guesses.'),
       // rev 41 (2026-11-12, gece-duzeltme B7): the guide is lookup only (its delegate line is back to the
       // frozen wording, the no-task rule moved to its own bullet).
       '- Before you split work, read the orchestration guide: .claude/skills/dreamcontext/references/super-orchestration.md.',

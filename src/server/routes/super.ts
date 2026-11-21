@@ -2526,11 +2526,17 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const live = liveSayJob(root, j);
       let text = '';
       // While it runs or waits, the facts of THIS job (super-sessiz-kalmaz D3b); after, its answer.
-      try { text = teamProgressRead(root, j, Date.now(), j.request ? await requestChildren(root, j) : []) ?? ''; } catch { text = ''; }
+      // A request whose children all stopped without the member closing it (its Super was not
+      // running when they finished, 2026-11-21 Doc) is not "running": what those children wrote
+      // last is the job's answer so far, ahead of a queued line.
+      const kids = j.request ? await requestChildren(root, j) : [];
+      const childLive = kids.some((k) => getChat(k.sid) !== undefined);
+      let progress = '';
+      try { progress = teamProgressRead(root, j, Date.now(), kids) ?? ''; } catch { progress = ''; }
+      if (progress && (!j.request || childLive)) text = progress;
       if (!text) { try { text = teamJobAnswer(root, j, live); } catch { text = ''; } }
-      // A request its member never closed (its Super was not running when its children finished,
-      // 2026-11-21 Doc): what those children wrote last is the job's answer so far.
       if (!text && j.request) text = await requestChildrenReplies(root, j);
+      if (!text) text = progress;
       ok(res, {
         team: j.id, member: j.member, status: teamJobStatus(root, j, live).status,
         text: wrapUntrusted(vaultNameOf(root), text || '(no answer from the member yet)'),

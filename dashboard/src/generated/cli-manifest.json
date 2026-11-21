@@ -107,10 +107,13 @@
     },
     {
       "path": "agents revert",
-      "desc": "Take a Super Agent amendment back (refused inside a Claude session or an agent run)",
+      "desc": "Take a Super Agent amendment back (inside a session: only the member itself, on his words with --quote)",
       "args": [
         "<slug>",
         "<id>"
+      ],
+      "valueFlags": [
+        "--quote"
       ]
     },
     {
@@ -2605,7 +2608,7 @@
     },
     {
       "path": "learn",
-      "desc": "Store a rule he stated (his preference, this project's rule, or a member's lesson) and print the line to repeat to him",
+      "desc": "Store a rule he stated (his preference, this project's rule, or how one AI Team member works) and print the line to repeat to him",
       "args": [
         "[text]"
       ],
@@ -2648,7 +2651,8 @@
         "--at",
         "--when",
         "--doc",
-        "--scope"
+        "--scope",
+        "--member"
       ]
     },
     {
@@ -2676,7 +2680,10 @@
     {
       "path": "learn list",
       "desc": "The rules he taught: his preferences and this project's rules, with who wrote each",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--member"
+      ]
     },
     {
       "path": "learn show",
@@ -4132,7 +4139,7 @@
     },
     {
       "path": "super delegate",
-      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap (15 live children, the only limit), the job is kept in the pool (`held`)",
+      "desc": "Start a child chat in THIS project and open its card; returns its session id. At the cap (15 live children, the only limit), the job is kept in the pool (`held`). With --worktree/--slug, refused (`worktree_busy`, naming the child) while a live child already works in that worktree",
       "args": [],
       "valueFlags": [
         "--prompt",
@@ -4156,7 +4163,7 @@
     },
     {
       "path": "super end",
-      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks",
+      "desc": "End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks: the answer then carries `refused: true` (several children: `notEnded` and a `warning`), and nothing was ended",
       "args": [
         "[children...]"
       ]
@@ -4388,7 +4395,7 @@
     },
     {
       "path": "super resume",
-      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others",
+      "desc": "Reopen an ended or parked child: the same conversation, as a child again (its card comes back); it starts in the mode, model and effort it had unless you name others. Refused (`worktree_busy`, naming it) while another live child works in its worktree",
       "args": [
         "<child>"
       ],
@@ -4501,7 +4508,7 @@
     },
     {
       "path": "super team amend",
-      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
+      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. On his word (--quote with his words typed in this chat, about the lines it changes) no daily ceiling counts it, and the reply's first field is `AMENDED <id>`: repeat it to him. A global member (every project) changes only from its OWN Super, on his word; a project's Super relays to it with `team ask` instead. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global` (a global member, not on its own word from him)",
       "args": [
         "<member>"
       ],

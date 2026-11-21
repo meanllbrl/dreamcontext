@@ -199,6 +199,7 @@ describe('the Super target', () => {
       expect(tg.texts().filter((t) => t.includes('CLI açılışı'))).toHaveLength(1);
       // An unmarked short text goes too, as the turn's last word: a step before it never does.
       assistant(h, 'Bakıyorum.');
+      h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 'tu9', name: 'Bash', input: { command: 'dreamcontext super state' } }] } });
       assistant(h, 'Onay verdim, iş sürüyor.');
       await quiet();
       expect(tg.texts()).not.toContain('Onay verdim, iş sürüyor.');

@@ -128,9 +128,9 @@ describe("a member's bot talks to the member's own Super", () => {
     const { ref, body } = parseTelegramPrefix(sent[0]);
     expect(body).toBe('bütçeyi kontrol et');
     expect((await readSuperState(root, superIdOfMember(SLUG))).session).toBe(MSID);
-    // A long answer: its start stays open, the rest folds, nothing is lost (owner 2026-11-21,
+    // A long answer (past the ~1,200 visible characters an unmarked answer may show whole): its start stays open, the rest folds, nothing is lost (owner 2026-11-21,
     // "Hepsini uygula", replacing the 2026-11-14 "a member's answer never folds").
-    const long = Array.from({ length: 8 }, (_, i) => `Kampanya ${i + 1}: harcama yerinde, ROAS hedefin üstünde, bütçe aynı kalsın; yarın tekrar bakarım.`).join('\n\n');
+    const long = Array.from({ length: 16 }, (_, i) => `Kampanya ${i + 1}: harcama yerinde, ROAS hedefin üstünde, bütçe aynı kalsın; yarın tekrar bakarım.`).join('\n\n');
     assistant(h, `<!-- re:${ref} -->\n${long}`);
     await vi.waitFor(() => expect(tg.texts().some((t) => t.includes('Kampanya 8'))).toBe(true));
     const answer = tg.texts().filter((t) => t.includes('Kampanya'));

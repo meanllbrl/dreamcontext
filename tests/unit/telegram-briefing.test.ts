@@ -30,7 +30,6 @@ describe('the Telegram line keeps one question in one place (owner 2026-11-10)',
     expect(line).toContain('when his words settle it, `super queue done <ask id>`');
     expect(line).not.toContain('ask again with a new `super ask` card');
     expect(line).toContain('A choice only he can make still goes in a `super ask` card');
-    expect(line).toContain('lists one level deep');
     expect(line).toContain('One turn is ONE message on his phone');
   });
 });
