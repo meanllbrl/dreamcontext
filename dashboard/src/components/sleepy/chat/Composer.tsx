@@ -77,6 +77,7 @@ import './composer.css';
 import { useDictationReady } from '../../../lib/voice/useDictationReady';
 import { HushIcon, MicIcon } from './voiceIcons';
 import { MicSplit } from './MicSplit';
+import { takeMode as readTakeMode, setTakeMode, onTakeMode, type TakeMode } from '../../../lib/voice/takeMode';
 import { micVisible, micSetupSteps, micPressAction } from '../../../lib/voice/micMenu';
 import { useMicPermission } from '../../../lib/voice/micPermission';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
@@ -1659,6 +1660,11 @@ export function Composer({
   const micPermission = useMicPermission(voiceEnabled && isDesktop());
   const micSteps = micSetupSteps({ permission: micPermission, dictationReady, phone: phoneVoice && !isDesktop() });
   const [micMenuOpen, setMicMenuOpen] = useState(false);
+  /** Send a finished take, or paste it into the box (the mic menu's row; shared by every composer). */
+  const [takeModeState, setTakeModeState] = useState<TakeMode>(readTakeMode);
+  const takeModeRef = useRef(takeModeState);
+  takeModeRef.current = takeModeState;
+  useEffect(() => { setTakeModeState(readTakeMode()); return onTakeMode(setTakeModeState); }, []);
   /** Read by the press through a ref: a fresh array each render must not rebuild `startTake`,
    *  which the hotkey listener depends on (a listener rebuilt mid-take would strand the take). */
   const micStepsRef = useRef(micSteps);
@@ -1756,6 +1762,21 @@ export function Composer({
    */
   const onTranscript = useCallback((text: string, take?: string) => {
     const typed = liveRef.current.draft;
+    // PASTE mode (owner, 2026-11-22): the take is inserted at the caret, whatever is in the box
+    // stays, and nothing is sent: the owner fixes the words and sends them.
+    if (takeModeRef.current === 'paste') {
+      const ins = insertTakeAt(typed, lastCaretRef.current, text);
+      setDraft(ins.draft);
+      session.syncDraft(ins.draft);
+      setNavBoth(NO_HISTORY_NAV);
+      lastCaretRef.current = ins.caret;
+      voiceTakeRef.current = !superView && !typed.trim() && take ? { text: ins.draft, ref: take } : null;
+      // Caret after the pasted words, once the new draft is rendered (not on the phone: a focus
+      // there would raise the keyboard under a hands-free take).
+      const ta = taRef.current;
+      if (ta && isDesktop()) requestAnimationFrame(() => { try { ta.focus(); ta.setSelectionRange(ins.caret, ins.caret); } catch { /* detached */ } });
+      return;
+    }
     // Chips in the box (the Super view, plan R2-2): the take is INSERTED at the caret (after a
     // ↩, right after the new chip), never replacing the draft; words typed before the take stay
     // and the auto-send still runs, so "↩, then hold and speak" sends the chip's block with them.
@@ -2911,7 +2932,7 @@ export function Composer({
                 disabled={!canCompose || voice.state === 'transcribing'}
                 title={
                   micSteps.length > 0 && voice.state === 'idle' ? t('micmenu.mic.setup')
-                  : voice.state === 'recording' ? `Recording — ${voice.elapsed}s. Let go to send.`
+                  : voice.state === 'recording' ? `${t(takeModeState === 'paste' ? 'voice.rec.paste' : 'voice.rec.send')} ${voice.elapsed}s`
                     : voice.state === 'transcribing' ? 'Transcribing…'
                           : voice.state === 'too-short' ? 'Hold the button while you speak.'
                             : voice.state === 'silent' ? 'Nothing was heard in that take.'
@@ -2932,6 +2953,9 @@ export function Composer({
             )}
             steps={micSteps}
             permission={micPermission}
+            takeMode={takeModeState}
+            takeModeAvailable={isDesktop()}
+            onTakeMode={setTakeMode}
             readAloudAvailable={(mode === 'assistant' || mode === 'super') && !phoneVoice}
             readAloudOn={readAloud}
             readAloudLabel={mode === 'super' ? t('micmenu.replyWhenSpoken') : t('micmenu.readAloud')}

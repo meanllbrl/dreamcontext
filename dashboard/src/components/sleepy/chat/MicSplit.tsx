@@ -7,7 +7,8 @@ import {
 } from '../../../lib/voice/micMenu';
 import { grantMicPermission, type MicPermission } from '../../../lib/voice/micPermission';
 import { notifyDictationChanged } from '../../../lib/voice/useDictationReady';
-import { MicIcon, SpeakerIcon, HushIcon, DownloadIcon, SlidersIcon } from './voiceIcons';
+import type { TakeMode } from '../../../lib/voice/takeMode';
+import { MicIcon, PasteIcon, SpeakerIcon, HushIcon, DownloadIcon, SlidersIcon } from './voiceIcons';
 
 /**
  * The mic and its options as ONE split button (owner, 2026-11-08, mockup A): the mic on the
@@ -25,6 +26,9 @@ export interface MicSplitProps {
   mic: ReactNode;
   steps: MicStep[];
   permission: MicPermission;
+  takeMode: TakeMode;
+  takeModeAvailable: boolean;
+  onTakeMode: (mode: TakeMode) => void;
   readAloudAvailable: boolean;
   readAloudOn: boolean;
   /** "Reply aloud when I speak" on the Super Agent, "Read replies aloud" on the Assistant. */
@@ -60,9 +64,9 @@ interface DictationHandle {
   error: string | null;
 }
 
-function MicSplitView({ mic, steps, permission, readAloudAvailable, readAloudOn, readAloudLabel, settingsAvailable, open, onOpenChange, onToggleReadAloud, onOpenSettings, dictation }: MicSplitProps & { dictation: DictationHandle | null }) {
+function MicSplitView({ mic, steps, permission, takeMode, takeModeAvailable, onTakeMode, readAloudAvailable, readAloudOn, readAloudLabel, settingsAvailable, open, onOpenChange, onToggleReadAloud, onOpenSettings, dictation }: MicSplitProps & { dictation: DictationHandle | null }) {
   const { t } = useI18n();
-  const items = micMenuItems({ steps, readAloudAvailable, readAloudOn, settingsAvailable });
+  const items = micMenuItems({ steps, takeModeAvailable, readAloudAvailable, readAloudOn, settingsAvailable });
   // Nothing to list (the phone): the plain mic, as before.
   if (items.length === 0) return <>{mic}</>;
   return (
@@ -99,6 +103,19 @@ function MicSplitView({ mic, steps, permission, readAloudAvailable, readAloudOn,
               <MenuRow key={key} rule={rule}>
                 {item.kind === 'step' && item.step === 'permission' && <PermissionRow permission={permission} />}
                 {item.kind === 'step' && item.step === 'dictation' && <DictationRow dictation={dictation} canOpenSettings={settingsAvailable} onOpenSettings={() => { onOpenSettings(); close(); }} />}
+                {item.kind === 'take-mode' && (
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={takeMode === 'paste'}
+                    className="chat-cmp-micmenu-row"
+                    onClick={() => onTakeMode(takeMode === 'paste' ? 'send' : 'paste')}
+                  >
+                    <PasteIcon />
+                    <span className="chat-cmp-micmenu-text"><span>{t('micmenu.paste')}</span><small>{t('micmenu.paste.d')}</small></span>
+                    <span className={`chat-cmp-micmenu-switch${takeMode === 'paste' ? ' is-on' : ''}`} aria-hidden />
+                  </button>
+                )}
                 {item.kind === 'read-aloud' && (
                   <button type="button" role="menuitemcheckbox" aria-checked={item.on} className="chat-cmp-micmenu-row" onClick={onToggleReadAloud}>
                     {item.on ? <SpeakerIcon /> : <HushIcon />}
