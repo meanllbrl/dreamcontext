@@ -132,7 +132,7 @@ function PageDrawerToggleBridge({ page, nonce, onDrawerToggle, onPageChange }: {
     seen.current = nonce;
     // Every instance hears the window's nonce; only the one on screen acts on it.
     if (!isActive) return;
-    if (drawerTogglePanel({ chatOpen, page }) === 'page') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
+    if (drawerTogglePanel({ chatOpen, page, local: !readDeviceShell() }) === 'page') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
     else onDrawerToggle?.();
   }, [nonce, isActive, chatOpen, page, bus, onDrawerToggle]);
   // A drawer floating over a page goes with that page.
@@ -665,6 +665,7 @@ export function ProjectInstance({
     <div
       className="project-instance"
       data-instance={instanceId}
+      data-instance-vault={vault}
       data-shell={newShell ? 'new' : undefined}
       data-active={isActive ? 'true' : undefined}
       data-preparing={preparing && !isActive ? 'true' : undefined}

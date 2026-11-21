@@ -552,3 +552,53 @@
   inset: 0;
   visibility: hidden;
 }
+
+/* ── The local new shell's page tabs (tek-kenar C7): text tabs after the project label. The bar's
+   free space still drags the window (the tabs carry `data-no-drag`). ── */
+
+.ns-tb-picker[data-local="true"] { padding-right: var(--space-2); }
+.ns-tb-divider {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 var(--space-2);
+  background: var(--color-border);
+}
+.ns-tb-tabs { display: flex; align-items: center; min-width: 0; }
+.ns-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.ns-tab {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ns-tab:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.ns-tab[data-on="true"] { background: var(--color-accent-soft); color: var(--color-accent-ink); }
+.ns-tab[data-off="true"] { opacity: 0.6; }
+.ns-tab:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.ns-tab-dot {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+.window-chrome[data-shell="new"][data-touch="true"] .ns-tab { min-height: var(--touch-target); }

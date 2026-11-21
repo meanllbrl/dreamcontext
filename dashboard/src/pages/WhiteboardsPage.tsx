@@ -1,5 +1,8 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { TOGGLE_PAGE_DRAWER_EVENT } from '../lib/uxMode';
+import { createPortal } from 'react-dom';
+import { TOGGLE_PAGE_DRAWER_EVENT, readDeviceShell, useIsNewShell } from '../lib/uxMode';
+import { useChromeSlots } from '../components/layout/chromeSlots';
+import { useChrome } from '../components/layout/WindowChrome';
 import { useI18n } from '../context/I18nContext';
 import { useApi, useInstanceEvent, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
@@ -66,7 +69,12 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
 
 function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   const { t } = useI18n();
-  const { instanceId, vault, bus } = useVault();
+  const { instanceId, vault, bus, isActive } = useVault();
+  // The local new shell (tek-kenar C4): the explorer lives in the window's sidebar, under this
+  // project's row; the page draws no left panel. Device shells and the classic shell keep it here.
+  const inSidebar = useIsNewShell() && !readDeviceShell();
+  const slots = useChromeSlots();
+  const chrome = useChrome();
   // The board open before a reload: the URL hash (see boardHash). There is one URL per window,
   // so only the window's first project reads it back, like Shell's `/lab/` deep link.
   const [openSlug, setOpenSlug] = useState<string | null>(
@@ -87,6 +95,11 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   // once the list says it still exists; else the default board.
   const [remembered] = useState(() => (vault ? readLastBoard(vault) : null));
   const boards = useWhiteboardList();
+  // This project's board list, for its flat list in the sidebar the moment it stops being active.
+  const seedBoards = chrome.seedBoards;
+  useEffect(() => {
+    if (inSidebar && vault && boards.data) seedBoards(vault, boards.data);
+  }, [inSidebar, vault, boards.data, seedBoards]);
   // A board that was deleted while open (or opened after it was): the page moved on to the most
   // recent other board; this says so on the board it moved to, until the owner moves again.
   const [goneNote, setGoneNote] = useState<{ board: string; text: string } | null>(null);
@@ -123,7 +136,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   // The phone never reads or writes the saved `open`: its drawer starts closed, in memory only.
   const [drawer, setDrawer] = useState(false);
   const [wide] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1100);
-  const explorerOpen = phone ? drawer : (prefs.open ?? wide);
+  const explorerOpen = !inSidebar && (phone ? drawer : (prefs.open ?? wide));
   // Who asked for the last show/hide: focus follows the owner's own click (to the explorer's
   // search when shown, back to the show toggle when hidden), never a page load.
   const [shownByOwner, setShownByOwner] = useState(false);
@@ -153,6 +166,21 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
 
   return (
     <div className="wbp-shell" data-phone={phone ? '' : undefined}>
+      {inSidebar && isActive && slots.boards && createPortal(
+        <BoardExplorer
+          variant="embedded"
+          vault={vault}
+          query={chrome.sidebarQuery}
+          footSlot={slots.boardsFoot ?? null}
+          openSlug={openSlug}
+          onOpen={setOpenSlug}
+          prefs={prefs}
+          change={changePrefs}
+          onHide={() => {}}
+          phone={false}
+        />,
+        slots.boards,
+      )}
       {explorerOpen && (
         <>
           {phone && <button type="button" className="wbp-shell-scrim" aria-label={t('whiteboard.explorer.hide')} onClick={() => setExplorerOpen(false)} />}

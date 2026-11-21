@@ -238,7 +238,7 @@ describe('reveal gate: the window wires it', () => {
   const chrome = read('dashboard/src/components/layout/WindowChrome.tsx');
   it('every activation but the gate\'s own commit cancels a pending prepare first', () => {
     expect(chrome).toMatch(/const setActive = useCallback\(\(vault: string\) => \{\s*gate\.cancel\(\);/);
-    expect(chrome).toMatch(/onActivate: \(p\) => \{[\s\S]{0,200}setActiveState\(p\.vault\)/);
+    expect(chrome).toMatch(/onActivate: \(p, why\) => \{[\s\S]{0,700}setActiveState\(p\.vault\)/);
   });
   it('a move back to A, closing B and committing an Option-Tab pick back to A cancel it', () => {
     expect(chrome).toMatch(/if \(vault === activeRef\.current\) \{ gate\.cancel\(\); return; \}/);

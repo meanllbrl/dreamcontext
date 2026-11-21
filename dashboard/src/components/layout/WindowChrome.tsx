@@ -54,8 +54,9 @@ import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
   buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
-  type DeviceChats, type DrawerFacts,
+  sidebarMode, type DeviceChats, type DrawerFacts, type SidebarMode,
 } from './newshell/drawerModel';
+import { useBoardsFanout } from './newshell/boardsFanout';
 import { useDrawerProjects } from '../../hooks/useDrawerProjects';
 import { ApiClient } from '../../api/client';
 import { setMemberEnabled } from '../aiteam/teamModel';
@@ -185,6 +186,10 @@ export interface ChromeApi {
   placeLabel(place: Place): string;
   /** Tek-kenar C2: the project being prepared for a move (its sidebar row shows busy), or null. */
   preparingVault: string | null;
+  /** Tek-kenar C4: the sidebar's "Search boards…", read by the embedded board explorer. */
+  sidebarQuery: string;
+  /** Tek-kenar C4/C6: the active project's board list, so its flat list is ready when it leaves. */
+  seedBoards(vault: string, list: readonly { slug: string; name: string }[]): void;
 }
 
 /**
@@ -221,6 +226,8 @@ const DETACHED_CHROME: ChromeApi = {
   places: null,
   placeLabel: (place: Place) => place.vault,
   preparingVault: null,
+  sidebarQuery: '',
+  seedBoards: () => {},
 };
 
 const ChromeContext = createContext<ChromeApi>(DETACHED_CHROME);
@@ -386,9 +393,16 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const [leftSlot, setLeftSlot] = useState<HTMLElement | null>(null);
   const [rightSlot, setRightSlot] = useState<HTMLElement | null>(null);
   const [railSlot, setRailSlot] = useState<HTMLElement | null>(null);
+  // The local new shell (tek-kenar C4, C7): the page tabs in the bar, the board explorer and its
+  // foot in the sidebar.
+  const [tabsSlot, setTabsSlot] = useState<HTMLElement | null>(null);
+  const [boardsSlot, setBoardsSlot] = useState<HTMLElement | null>(null);
+  const [boardsFootSlot, setBoardsFootSlot] = useState<HTMLElement | null>(null);
   const chromeSlots = useMemo<ChromeSlots>(
-    () => (newShell ? { left: leftSlot, right: rightSlot, rail: railSlot } : { left: leftSlot, right: rightSlot }),
-    [leftSlot, rightSlot, railSlot, newShell],
+    () => (newShell
+      ? { left: leftSlot, right: rightSlot, rail: railSlot, tabs: tabsSlot, boards: boardsSlot, boardsFoot: boardsFootSlot }
+      : { left: leftSlot, right: rightSlot }),
+    [leftSlot, rightSlot, railSlot, tabsSlot, boardsSlot, boardsFootSlot, newShell],
   );
 
   /*
@@ -441,9 +455,12 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (h) => window.clearTimeout(h as number),
       // Acts only on a project still open and mounted; one commit with `preparing = null`.
-      onActivate: (p) => {
+      onActivate: (p, why) => {
         const tab = openRef.current.find((o) => o.vault === p.vault);
         if (!tab || tab.cold) return;
+        // The seamless probe (scripts/verify/tek-kenar-seamless.mjs) sets this list; nothing else does.
+        const log = (window as Window & { __dcReveal?: unknown[] }).__dcReveal;
+        if (Array.isArray(log)) log.push({ vault: p.vault, why, cold: p.cold, ms: Date.now() - p.startedAt, at: performance.now() });
         activeRef.current = p.vault;
         setActiveState(p.vault);
       },
@@ -1132,6 +1149,17 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const [arrivingVault, setArrivingVault] = useState<string | null>(initialIntent ? initialVault : null);
   const activeFactsOnChat = !!(activeVault && drawerFacts[activeVault]?.chatOpen);
   const activeOnChat = activeFactsOnChat || (!!activeVault && activeVault === arrivingVault);
+  /** What each project last showed (its Shell's report while active, or while prepared out of
+   *  sight): the sidebar's mode follows the ACTIVE one's, so it changes once, at activation. */
+  const [shownPages, setShownPages] = useState<Record<string, { page: string; chatOpen: boolean }>>({});
+  const noteShownPage = useCallback((vault: string, page: string, chatOpen: boolean) => {
+    setShownPages((prev) => (prev[vault]?.page === page && prev[vault]?.chatOpen === chatOpen ? prev : { ...prev, [vault]: { page, chatOpen } }));
+  }, []);
+  const activeShown = activeVault ? shownPages[activeVault] : undefined;
+  const sidebarModeNow: SidebarMode = sidebarMode({ onChat: activeOnChat || !!activeShown?.chatOpen, page: activeShown?.page });
+  const navMode = newShell && !deviceShell && sidebarModeNow !== 'chat';
+  const boardsMode = newShell && !deviceShell && sidebarModeNow === 'boards';
+  const [boardQuery, setBoardQuery] = useState('');
   useEffect(() => {
     if (!arrivingVault) return undefined;
     if (drawerFacts[arrivingVault]?.chatOpen) { setArrivingVault(null); return undefined; }
@@ -1165,8 +1193,9 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     if (isMobile && !prev.onChat && activeOnChat && prev.vault === activeVault) return;
     closeOverlay();
   }, [activeOnChat, activeVault, isMobile, closeOverlay]);
-  // Docked beside Chat; floating over any other page (the button never leaves the page) and ≤900.
-  const drawerFloats = narrow || !activeOnChat;
+  // The local new shell (tek-kenar C3): ONE sidebar docked on every page, floating only ≤900. A
+  // device shell keeps dev's rule: docked beside Chat, floating over any other page.
+  const drawerFloats = narrow || (deviceShell && !activeOnChat);
   const docked = !drawerFloats && drawerOpen;
   const drawerVisible = newShell && (docked || (drawerFloats && floatingOpen) || peek);
   const drawerFloating = !docked;
@@ -1178,12 +1207,12 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       // On a page whose side panel the button drives (Whiteboards, Brain) the chat drawer is not
       // what a click would toggle, so it does not peek there.
       const page = document.querySelector('.project-instance[data-active]')?.getAttribute('data-page') ?? '';
-      if (drawerTogglePanel({ chatOpen: activeFactsOnChat, page }) === 'page') return;
+      if (drawerTogglePanel({ chatOpen: activeFactsOnChat, page, local: !deviceShell }) === 'page') return;
       if (!docked && !(drawerFloats && floatingOpen)) setPeek(true);
       return;
     }
     peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setPeek(false); }, PEEK_GRACE_MS);
-  }, [newShell, docked, drawerFloats, floatingOpen, activeFactsOnChat, clearPeekTimer]);
+  }, [newShell, docked, drawerFloats, floatingOpen, activeFactsOnChat, clearPeekTimer, deviceShell]);
   const onDrawerToggle = useCallback(() => {
     clearPeekTimer();
     if (peek) {
@@ -1309,7 +1338,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const drawerFolded = useMemo(() => projectOrder.filter((name) => !drawerExpanded.includes(name)), [projectOrder, drawerExpanded]);
   // A device shell reads no project's roster or team (its drawer is chats only), so no fan-out
   // and no vault-less avatar request.
-  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell && !deviceShell ? drawerExpanded : [], mountedNames, drawerVisible, newShell && !deviceShell ? drawerFolded : [], drawerHidden);
+  // The projects and boards modes show every project folded with its mark: no roster is read open.
+  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(
+    newShell && !deviceShell && !navMode ? drawerExpanded : [], mountedNames, drawerVisible,
+    newShell && !deviceShell ? (navMode ? projectOrder : drawerFolded) : [], drawerHidden);
   // The Mac's running chats, for the chat rows of projects this window has not mounted.
   const { live: liveChats, answered: liveAnswered } = useDrawerChats({ activeVault, drawerVisible, enabled: newShell });
   // A device shell's one published fact: memoized on the read and the tabs, a constant elsewhere.
@@ -1347,6 +1379,14 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       ...(deviceShell ? { device: deviceChats } : {}),
     });
   }, [newShell, drawerProjects, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
+  /** The projects and boards modes' rows: every project folded, the active one too (C3). */
+  const navRows = useMemo(() => {
+    if (!navMode) return [];
+    return buildDrawerRows({ projects: drawerProjects, activeVault, expanded: [], facts: drawerFacts, fanout, collapseAll: true });
+  }, [navMode, drawerProjects, activeVault, drawerFacts, fanout]);
+  // C6: the other listed projects' boards, while boards mode is on screen.
+  const boardsVaults = useMemo(() => projectOrder.filter((n) => n !== activeVault), [projectOrder, activeVault]);
+  const { entries: boardEntries, seed: seedBoards } = useBoardsFanout(boardsMode && drawerVisible, boardsVaults, activeVault);
   /** An Ekip list's switch (`POST /api/agents/:slug/enabled`): the server's answer, and the
    *  project's next read shows it. A refusal (a phone and a member of all projects, a teammate's
    *  member) is said once. */
@@ -1666,11 +1706,12 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const reportShown = useCallback((vault: string, shown: ShownReport) => {
     if (vault !== activeRef.current) return;
     shownByVaultRef.current[vault] = shown;
+    noteShownPage(vault, shown.page, shown.chatOpen);
     const place: Place = shown.chatOpen
       ? { vault, kind: 'chat' }
       : { vault, kind: 'page', page: shown.page, id: shown.item?.id ?? null, label: shown.item?.label ?? null };
     recorder.shown(place, shown.byOwner);
-  }, [recorder]);
+  }, [recorder, noteShownPage]);
   const placeLabel = useCallback((place: Place) => {
     const page = place.kind === 'chat' ? t('nav.chat') : t(PAGE_LABEL_KEY[place.page]);
     return [place.vault, page, place.kind === 'page' ? place.label : null].filter(Boolean).join(' · ');
@@ -1736,9 +1777,11 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       queueDrawerIntent: (vault: string, intent: DrawerIntent) => { void trackedIntent(vault, intent); },
       goToPlace, switchTo, reportShown, history, projects: railProjects, registered: projectOrder, places, placeLabel,
       preparingVault: preparing?.vault ?? null,
+      sidebarQuery: boardQuery,
+      seedBoards,
     }),
     [open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoomLevel, openChatRow, deviceChats, openHistory, dismissFloating, trackedIntent,
-      goToPlace, switchTo, reportShown, history, railProjects, projectOrder, places, placeLabel, preparing?.vault],
+      goToPlace, switchTo, reportShown, history, railProjects, projectOrder, places, placeLabel, preparing?.vault, boardQuery, seedBoards],
   );
   const consumeDrawerIntent = useCallback((vault: string, nonce: number) => {
     gate.consumed(vault, nonce);
@@ -1749,7 +1792,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       return next;
     });
   }, [gate]);
-  const handlePrepared = useCallback((vault: string, report: PrepareReport) => gate.report(vault, report), [gate]);
+  const handlePrepared = useCallback((vault: string, report: PrepareReport) => {
+    noteShownPage(vault, report.page, report.chatOpen);
+    gate.report(vault, report);
+  }, [gate, noteShownPage]);
 
   /*
    * C2: the owner's input belongs to the project on screen. While a prepare is pending, every
@@ -1911,13 +1957,15 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             dark={resolved === 'dark'}
             setLeftSlot={setLeftSlot}
             setRightSlot={setRightSlot}
+            setTabsSlot={setTabsSlot}
             {...(deviceShell ? { device: { tunnel, remote } } : {})}
           />
           {newProjectOpen && <NewProjectFlow onClose={() => setNewProjectOpen(false)} onLand={landNewProject} />}
           {/* [rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
           <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
-            <div className="ns-rail-slot" ref={setRailSlot} />
+            {/* The local new shell has no rail: its pages are the title bar's tabs (tek-kenar C7). */}
+            {deviceShell && <div className="ns-rail-slot" ref={setRailSlot} />}
             {drawerVisible && drawerFloating && !peekOnly && (
               <div className="ns-drawer-scrim" onClick={closeOverlay} aria-hidden="true" />
             )}
@@ -1962,6 +2010,22 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onManage={manageMembers}
                 {...(deviceShell ? { device: true } : {})}
                 {...(tunnel ? { foot: <PhoneDrawerFoot /> } : {})}
+                {...(deviceShell ? {} : {
+                  sidebar: {
+                    mode: sidebarModeNow,
+                    navRows,
+                    boardsOpen: drawerExpanded,
+                    boards: boardEntries,
+                    preparingVault: preparing?.vault ?? null,
+                    boardQuery,
+                    onBoardQuery: setBoardQuery,
+                    onSwitch: (name: string) => switchTo(name),
+                    onOpenBoard: (vault: string, slug: string) => goToPlace({ vault, kind: 'page', page: 'whiteboards', id: slug, label: null }),
+                    onSettings: () => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'settings' }); },
+                    setBoardsSlot,
+                    setBoardsFootSlot,
+                  },
+                })}
               />
             )}
             <div className="window-chrome-body">

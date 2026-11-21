@@ -118,11 +118,13 @@ describe('launcher-ui.json', () => {
   });
 });
 
-describe('the drawer width default (owner 2026-11-03)', () => {
-  it('a drawer nobody sized opens at its narrowest allowed width', () => {
-    expect(client.DRAWER_WIDTH_DEFAULT).toBe(client.DRAWER_WIDTH_MIN);
-    expect(client.drawerWidthOf(null)).toBe(client.DRAWER_WIDTH_MIN);
-    expect(client.drawerWidthOf(undefined)).toBe(client.DRAWER_WIDTH_MIN);
+describe('the sidebar width default (tek-kenar D8d)', () => {
+  it('a sidebar nobody sized opens at 232 px, inside the allowed range', () => {
+    expect(client.DRAWER_WIDTH_DEFAULT).toBe(232);
+    expect(client.DRAWER_WIDTH_DEFAULT).toBeGreaterThanOrEqual(client.DRAWER_WIDTH_MIN);
+    expect(client.DRAWER_WIDTH_DEFAULT).toBeLessThanOrEqual(client.DRAWER_WIDTH_MAX);
+    expect(client.drawerWidthOf(null)).toBe(232);
+    expect(client.drawerWidthOf(undefined)).toBe(232);
   });
   it('a width the owner dragged is his and is kept', () => {
     expect(client.drawerWidthOf(340)).toBe(340);

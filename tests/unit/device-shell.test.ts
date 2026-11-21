@@ -142,7 +142,7 @@ describe('a device shell\'s drawer is chats only', () => {
 
   it('a device shell reads no project roster or team: the fan-out gets no project', () => {
     const src = read('dashboard/src/components/layout/WindowChrome.tsx');
-    expect(src).toMatch(/useDrawerProjects\(newShell && !deviceShell \? drawerExpanded : \[\]/);
+    expect(src).toMatch(/useDrawerProjects\(\s*newShell && !deviceShell && !navMode \? drawerExpanded : \[\]/);
   });
 });
 

@@ -11,6 +11,8 @@ import { UpdateBadge } from '../UpdateBadge';
 import type { Page } from '../Sidebar';
 import { useNavBadges } from '../useNavBadges';
 import { Rail } from './Rail';
+import { PageTabs } from './PageTabs';
+import { readDeviceShell } from '../../../lib/uxMode';
 import { SetupStatusChip } from './SetupStatusChip';
 
 interface NewShellControlsProps {
@@ -41,21 +43,26 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch }: NewSh
   // A phone's title bar holds neither search nor the sleep tracker's face: both are the Mac's.
   const phone = useIsMobile();
   if (!isActive) return null;
+  // The local new shell (tek-kenar C7): pages are tabs in the title bar and search sits on the
+  // right; a device shell keeps the rail and dev's left search.
+  const local = !readDeviceShell();
+  const search = !phone && (
+    <button type="button" className="ns-tb-btn" data-no-drag onClick={onOpenSearch} title={t('shell.search')} aria-label={t('shell.search')} data-testid="ns-search">
+      <SearchIcon size={15} />
+    </button>
+  );
   return (
     <>
-      {slots.rail && createPortal(<Rail activePage={activePage} onNavigate={onNavigate} badges={badges} />, slots.rail)}
+      {!local && slots.rail && createPortal(<Rail activePage={activePage} onNavigate={onNavigate} badges={badges} />, slots.rail)}
+      {local && slots.tabs && createPortal(<PageTabs activePage={activePage} onNavigate={onNavigate} badges={badges} />, slots.tabs)}
       {slots.left && createPortal(
         <>
-          {!phone && (
-            <button type="button" className="ns-tb-btn" data-no-drag onClick={onOpenSearch} title={t('shell.search')} aria-label={t('shell.search')} data-testid="ns-search">
-              <SearchIcon size={15} />
-            </button>
-          )}
+          {!local && search}
           <span className="ns-tb-nav">
-            <button type="button" className="ns-tb-btn" data-no-drag disabled={!history.canBack} onClick={history.back} title={backTitle} aria-label={backTitle} data-testid="ns-back">
+            <button type="button" className="ns-tb-btn" data-no-drag disabled={!history.canBack} onClick={history.back} title={backTitle} aria-label={backTitle} data-testid="ns-back" data-move>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M8.5 3 4.5 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
-            <button type="button" className="ns-tb-btn" data-no-drag disabled={!history.canForward} onClick={history.forward} title={forwardTitle} aria-label={forwardTitle} data-testid="ns-forward">
+            <button type="button" className="ns-tb-btn" data-no-drag disabled={!history.canForward} onClick={history.forward} title={forwardTitle} aria-label={forwardTitle} data-testid="ns-forward" data-move>
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M5.5 3 9.5 7l-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
           </span>
@@ -64,6 +71,7 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch }: NewSh
       )}
       {slots.right && createPortal(
         <>
+          {local && search}
           {/* Only what the phone may read: on the tunnel a control whose route is refused is not
               drawn at all (no local refusal, `window.__dcPhoneRefused` stays 0). */}
           {/* Draws nothing unless something big stops the app (lib/setupStatus.ts). */}

@@ -90,8 +90,9 @@ export interface RevealGateDeps {
   now: () => number;
   setTimer: (fn: () => void, ms: number) => unknown;
   clearTimer: (handle: unknown) => void;
-  /** Make the prepare's project the one on screen (one commit). */
-  onActivate: (p: Prepare) => void;
+  /** Make the prepare's project the one on screen (one commit). `why`: the target was shown and
+   *  settled (`match`), or the bound ran out (`bound`). */
+  onActivate: (p: Prepare, why: 'match' | 'bound') => void;
   /** A prepare ended without activation (cancelled or replaced). */
   onEnd?: (p: Prepare, why: 'cancel' | 'replaced') => void;
   /** The pending prepare changed (started, replaced, ended). */
@@ -133,20 +134,20 @@ export function createRevealGate(deps: RevealGateDeps): RevealGate {
     deps.onChange?.(null);
     return p;
   };
-  const activate = (id: number) => {
+  const activate = (id: number, why: 'match' | 'bound') => {
     const p = cur;
     if (!p || p.id !== id) return;
     stopTimer();
     cur = null;
     frames = 0;
     lastEnded = null;
-    deps.onActivate(p);
+    deps.onActivate(p, why);
     deps.onChange?.(null);
   };
   const arm = (p: Prepare, remaining: number) => {
     stopTimer();
     const id = p.id;
-    timer = deps.setTimer(() => { timer = null; activate(id); }, Math.max(0, remaining));
+    timer = deps.setTimer(() => { timer = null; activate(id, 'bound'); }, Math.max(0, remaining));
   };
 
   return {
@@ -184,7 +185,7 @@ export function createRevealGate(deps: RevealGateDeps): RevealGate {
       if (!p || p.vault !== vault) return;
       if (r.settled && targetShown(p.target, r, p.consumed)) {
         frames += 1;
-        if (frames >= SETTLED_FRAMES) activate(p.id);
+        if (frames >= SETTLED_FRAMES) activate(p.id, 'match');
       } else {
         frames = 0;
       }

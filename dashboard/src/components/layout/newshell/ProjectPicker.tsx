@@ -93,6 +93,7 @@ export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: P
             data-on={r.active ? 'true' : undefined}
             data-focus={i === focused ? 'true' : undefined}
             data-testid={`ns-picker-${r.name}`}
+            data-move={r.active ? undefined : 'true'}
             onMouseEnter={() => setFocused(i)}
             onClick={() => onPick(r.name)}
           >

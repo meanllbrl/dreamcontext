@@ -125,8 +125,11 @@ export const TOGGLE_PAGE_DRAWER_EVENT = 'dc-toggle-page-drawer';
 /** The pages whose side panel can be shown and hidden: the title-bar button and ⌘B drive it. */
 export const PAGES_WITH_PANEL: ReadonlySet<string> = new Set(['whiteboards', 'brain']);
 
-/** What the title-bar drawer button and ⌘B toggle here: the page's own panel, or the chat drawer. */
-export function drawerTogglePanel(o: { chatOpen: boolean; page: string }): 'page' | 'chat-drawer' {
+/** What the title-bar drawer button and ⌘B toggle here: the page's own panel, or the chat drawer.
+ *  The local new shell (`local`: not a device shell) has ONE sidebar on every page, the board
+ *  explorer inside it, so there the button always drives the sidebar (tek-kenar D6). */
+export function drawerTogglePanel(o: { chatOpen: boolean; page: string; local?: boolean }): 'page' | 'chat-drawer' {
+  if (o.local) return 'chat-drawer';
   return !o.chatOpen && PAGES_WITH_PANEL.has(o.page) ? 'page' : 'chat-drawer';
 }
 

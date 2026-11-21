@@ -114,6 +114,9 @@ describe('note 4: the drawer button stays on the page', () => {
     expect(drawerTogglePanel({ chatOpen: false, page: 'brain' })).toBe('page');
     expect(drawerTogglePanel({ chatOpen: false, page: 'tasks' })).toBe('chat-drawer');
     expect(drawerTogglePanel({ chatOpen: true, page: 'whiteboards' })).toBe('chat-drawer');
+    // tek-kenar D6: the local new shell's one sidebar is what the button drives on every page.
+    expect(drawerTogglePanel({ chatOpen: false, page: 'whiteboards', local: true })).toBe('chat-drawer');
+    expect(drawerTogglePanel({ chatOpen: false, page: 'brain', local: true })).toBe('chat-drawer');
   });
   it('the bridge never opens Chat by itself', () => {
     const i = src('dashboard/src/ProjectInstance.tsx');

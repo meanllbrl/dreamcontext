@@ -359,6 +359,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
               role="option"
               aria-selected={i === focused}
               className={`cmdk-row${i === focused ? ' cmdk-row--focused' : ''}`}
+              data-move={vault !== null ? 'true' : undefined}
               onClick={() => go(rows[i])}
               onMouseEnter={() => setFocused(i)}
             >
