@@ -20,7 +20,7 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writ
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isSafeSessionId } from './transcript-locate.js';
-import { promptOwnerText } from './agents/team-roster.js';
+import { RELAUNCH_PREFIX, promptOwnerText } from './agents/team-roster.js';
 import { SUPER_EVENT_PREFIXES } from './super/types.js';
 import { foldAscii } from './fold-ascii.js';
 import { loadPatterns, type PatternDoc } from './patterns.js';
@@ -83,11 +83,12 @@ export function jobText(input: DeliverInput): string {
 
 /**
  * Which surface a prompt-hook turn is: `owner` when it carries his words, `finished` for a task
- * notification or a Super event (ended work being reported), `machine` for anything else.
+ * notification, a Super event (ended work being reported) or a relaunch's continue turn (the job
+ * goes on and will report: its search is gone, its rules stay), `machine` for anything else.
  */
 export function promptSurface(prompt: string): DeliverySurface {
   if (promptOwnerText(prompt) !== null) return 'owner';
-  if (prompt.includes('<task-notification>') || SUPER_EVENT_PREFIXES.some((p) => prompt.startsWith(p))) return 'finished';
+  if (prompt.includes('<task-notification>') || SUPER_EVENT_PREFIXES.some((p) => prompt.startsWith(p)) || prompt.startsWith(RELAUNCH_PREFIX)) return 'finished';
   return 'machine';
 }
 

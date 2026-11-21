@@ -328,9 +328,22 @@ export function teamRouteOf(raw: string | undefined): TeamRoute | null {
  *  (context-watch.ts `handoffContinuePrompt`): server-written, never the owner's words. */
 export const HANDOFF_TURN_PREFIX = 'Handoff: ';
 
+/** The opening every relaunch message of the server shares (super/outbox.ts `RESUME_TEXT`,
+ *  `REASK_TEXT`, `FIRST_PROMPT_LEAD`; a drift test pins it). Mirrored here so the prompt hook does
+ *  not load the outbox's window and chat modules. */
+export const RELAUNCH_PREFIX = '[dreamcontext] The app was restarted';
+/** The line put before a lost first job after a relaunch (outbox.ts `FIRST_PROMPT_LEAD`): the job
+ *  that follows it is the turn's text. */
+export const RELAUNCH_FIRST_LEAD = '[dreamcontext] The app was restarted just after this job was given to you, before it reached you, so nothing of it has run yet. Here it is now:\n\n';
+
 /** The owner's part of a prompt (before the first server-written block), or null for a server-written turn. */
 function ownerPart(prompt: string): string | null {
   if (SUPER_EVENT_PREFIXES.some((p) => prompt.startsWith(p)) || prompt.startsWith(HANDOFF_TURN_PREFIX)) return null;
+  // A relaunch's continue or re-ask turn is the server's fixed text, the same on every restart:
+  // searching on it ran a judged recall p50 ~18 s on each resumed child and picked on the wording.
+  // A lost first job keeps its job text, without the lead.
+  if (prompt.startsWith(RELAUNCH_FIRST_LEAD)) prompt = prompt.slice(RELAUNCH_FIRST_LEAD.length);
+  else if (prompt.startsWith(RELAUNCH_PREFIX)) return null;
   let text = prompt;
   const cut = /(^|\n)(<super-|<owner-|\[super )/.exec(text);
   if (cut) text = text.slice(0, cut.index);
