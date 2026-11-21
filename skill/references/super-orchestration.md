@@ -309,7 +309,7 @@ sending a WhatsApp message → `whatsapp`; email → `apple-mail`; a meeting's n
 `fathom`; product analytics → `posthog`; the browser is always there; anything else → name it from `super state`.
 claude.ai connectors (`mcpConnectors`): Notion → `notion`, Gmail → `gmail`, Slack → `slack`, Calendar →
 `google-calendar`; Claude children only.
-A missed name: the child's `mcp` card gets it at turn end.
+A missed name: the child's briefing lists every set-up server it lacks, and its own `mcp` card gets one at turn end (Codex and Antigravity children too, local servers only); naming it here saves that restart.
 A name in `super state` `mcpSignIn` (or a delegate reply's) needs the OWNER's sign-in, which no child can
 do: tell him once (Settings → MCP → Connect) and hold that job until he has; never delegate it again
 hoping the server appears.

@@ -240,7 +240,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--slug <slug>', 'The worktree and branch name (a-z, 0-9, -)')
     .option('--base <ref>', 'The commit the worktree starts from (default: the repo\'s HEAD)')
     .option('--task <slug>', 'Link its row to this task (state/<slug>.md)')
-    .option('--mcp <names>', 'The MCP servers it may use, comma-separated (`super state` lists them); a child gets none of the others')
+    .option('--mcp <names>', 'The MCP servers it starts with, comma-separated (`super state` lists them); its briefing names the others, which it asks for on its own mcp card')
     .option('--tool <tool>', 'The tool the child runs on: claude (default), codex or antigravity')
     .option('--fast', 'With --worktree: a one-screen look or copy job with nothing on the never-list (price, shown amount, payment, paywall, trial, A/B, redirect, analytics, auth, data, endpoint, store): one short read and one screenshot. The diff still decides; money never takes it')
     .option('--full', 'With --worktree: the owner asked for full verification (tam doğrula); the whole chain whatever the diff');
