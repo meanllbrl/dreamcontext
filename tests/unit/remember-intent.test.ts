@@ -42,4 +42,13 @@ describe('remember-intent (C4, criterion 4)', () => {
     expect(REMEMBER_INTENT_LINE).toContain('repeat its line');
     expect(REMEMBER_INTENT_LINE).not.toContain(String.fromCharCode(0x2014));
   });
+
+  it('third-person cues need the object pronoun, "bir daha" or "kendini" (D4)', () => {
+    for (const t of ["philip'e söyle bunu öğrensin", 'bunu bir daha yapmasın', 'kendini geliştirsin', 'aklında tutsun bunu']) {
+      expect(detectRememberIntent(t), t).toBe(true);
+    }
+    for (const t of ['öğrenci öğrensin diye yazdım', 'bunu öğrenmek istiyorum', 'bir daha bakarız', 'bunu bir daha yapmasın mı?']) {
+      expect(detectRememberIntent(t), t).toBe(false);
+    }
+  });
 });

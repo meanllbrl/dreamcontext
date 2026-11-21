@@ -104,6 +104,48 @@ export function isApiErrorText(md: string): boolean {
     || (/^(?:<!DOCTYPE html|<html)/i.test(t) && /Attention Required!\s*\|\s*Cloudflare/i.test(t));
 }
 
+/**
+ * D12 (plan iyilesme-360): the CLI's usage-limit text as the WHOLE text ("You've hit your 5-hour
+ * limit · resets 12am (Europe/Istanbul)"), anchored so a Super report quoting it inside other
+ * words is an answer and goes as written. Returns its reset as written ('' when it names none),
+ * or null when the text is not that form.
+ */
+const LIMIT_RE = /^(?:Claude AI usage limit reached|You(?:'|’)ve hit your (?:[\w-]+ )*limit|You've reached your usage limit)\b[^\n]*?(?:[·•|,.-]\s*resets?\s+(?:at\s+)?([^\n(]+?))?\s*(?:\(([^)\n]+)\))?\s*[.!]?\s*$/i;
+export function limitTextReset(md: string): { reset: string; zone: string } | null {
+  const t = md.trim();
+  if (!t || t.includes('\n')) return null;
+  const m = LIMIT_RE.exec(t);
+  return m ? { reset: (m[1] ?? '').trim(), zone: (m[2] ?? '').trim() } : null;
+}
+
+/** "12am", "3:30pm", "15:00" → "HH:MM", or null for a form it does not know. */
+export function resetClock(reset: string): string | null {
+  const m = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i.exec(reset.trim());
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = m[2] ? Number(m[2]) : 0;
+  const ap = m[3]?.toLowerCase();
+  if (min > 59 || (ap ? h < 1 || h > 12 : h > 23)) return null;
+  if (ap === 'am') h = h === 12 ? 0 : h;
+  if (ap === 'pm') h = h === 12 ? 12 : h + 12;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** The next time "HH:MM" comes round on this machine's clock (the bot's zone), as epoch ms: the
+ *  once-per key of a reset, so tomorrow's "12am" is a new reset and today's repeat is not. */
+export function nextOccurrence(clock: string, now: number): number {
+  const [h, m] = clock.split(':').map(Number);
+  const d = new Date(now);
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() <= now) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+
+/** The Turkish line that replaces it: when it opens, and "it goes on by itself" only when armed. */
+export function limitLine(clock: string | null, resumes: boolean): string {
+  return `Kullanım sınırına geldik; iş durdu.${clock ? ` Sınır saat ${clock}'de açılıyor.` : ''}${resumes ? ' Açılınca kaldığı yerden sürüyor.' : ''}`;
+}
+
 /** Held text that is only a line before a tool call: what must not reach him when something else
  *  is sent first (a job status, a card, a picture; review r1). Its reply mark is kept, so the
  *  answer that follows still answers his message. Null = the text has substance and goes. */

@@ -36,7 +36,7 @@ import {
   OWNER_WORDS_MAX_AGE_DAYS,
   type OwnerTurnLine,
 } from '../../lib/owner-words.js';
-import { resolveOwnerQuotes } from '../../lib/owner-quote.js';
+import { delegatingKeys, resolveOwnerQuotes } from '../../lib/owner-quote.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { tokenize } from '../../lib/recall.js';
 import { detectRememberIntent } from '../../lib/remember-intent.js';
@@ -358,7 +358,10 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
     return refuse('--by sleep is for a sleep run: no sleep is in progress in this vault (`dreamcontext sleep start` holds it)');
   }
   const actor = actorOf(ctx, bySleep ? 'sleep' : undefined);
-  const keys = conversationKeysFromEnv(ctx.env);
+  // D3: a Super child's own ids plus the Super conversation that delegated it, so a quote of
+  // his words in the Super's chat counts as typed here. A session that is no child adds none.
+  const ownKeys = conversationKeysFromEnv(ctx.env);
+  const keys = [...new Set([...ownKeys, ...delegatingKeys(ctx.contextRoot, ownKeys)])];
 
   let supersedes: RuleSupersedes[] | undefined;
   let doc: string | undefined;

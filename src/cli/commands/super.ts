@@ -215,6 +215,8 @@ const FOR_HELP = 'A member\'s Super only: whose work this is, `owner` or one of 
 const ORIGIN_HELP = 'The owner message this job answers (its <owner-msg ref>); only outside his turn: in his turn it is recorded by itself. Its results come to you awaited=owner origin=<ref>';
 
 /** `--outward` on `delegate`: the one outward step his own message named (owner, 2026-11-12). */
+/** `--rule <id>` (iyilesme-360 D5): his ACTIVE standing rule as his word for a staging step. */
+const RULE_HELP = 'With --outward: the id of his ACTIVE standing rule that covers this staging push, PR or deploy (instead of --origin). Staging only: production, live, release, publish, merge and force are refused (outward_out_of_scope)';
 const OUTWARD_HELP = 'The push, PR or deploy the owner\'s OWN message named, in one line (e.g. "push release/x to origin, open a PR to development"); the child may run exactly that, never a force-push or a default-branch merge. Needs his message: his turn, or --origin <ref>. Kept with the job: its pool row and a --succeeds successor carry it';
 
 const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda';
@@ -262,14 +264,15 @@ export function registerSuperCommand(program: Command): void {
     .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone')
     .option('--origin <ref>', ORIGIN_HELP)
     .option('--outward <step>', OUTWARD_HELP)
+    .option('--rule <id>', RULE_HELP)
     .option('--for <item|owner>', FOR_HELP))
-    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; outward?: string; for?: string }) => {
+    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; outward?: string; rule?: string; for?: string }) => {
       const behind = serverBehindLine(await serverVersion(), dreamcontextVersion());
       if (behind) process.stderr.write(behind);
       const note = o.note !== undefined ? { note: o.note } : {};
       const origin = o.origin !== undefined ? { origin: o.origin } : {};
       const forWho = o.for !== undefined ? { for: o.for } : {};
-      const outward = o.outward !== undefined ? { outward: o.outward } : {};
+      const outward = { ...(o.outward !== undefined ? { outward: o.outward } : {}), ...(o.rule !== undefined ? { rule: o.rule } : {}) };
       if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho });
       if (!o.prompt) return usage('give --prompt, or --from <pool id>');
       const lane = laneOf(o);
@@ -501,12 +504,14 @@ export function registerSuperCommand(program: Command): void {
     .requiredOption('--prompt <text>', 'The job\'s first message, complete and self-contained (at most 16 KB)')
     .option('--note <line>', 'Your note on its row')
     .option('--origin <ref>', ORIGIN_HELP)
-    .option('--outward <step>', OUTWARD_HELP))
-    .action((o: JobOpts & { note?: string; origin?: string; outward?: string }) => {
+    .option('--outward <step>', OUTWARD_HELP)
+    .option('--rule <id>', RULE_HELP))
+    .action((o: JobOpts & { note?: string; origin?: string; outward?: string; rule?: string }) => {
       const lane = laneOf(o);
       if ('error' in lane) return usage(lane.error);
       return run('pool-add', {
         ...jobBody(o), note: o.note, ...(o.origin !== undefined ? { origin: o.origin } : {}), ...(o.outward !== undefined ? { outward: o.outward } : {}),
+        ...(o.rule !== undefined ? { rule: o.rule } : {}),
       });
     });
   p.command('remove <id>')

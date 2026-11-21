@@ -4,6 +4,8 @@
  * change to something that rides in every project must also pass: that his words are ABOUT the
  * lines it changes ({@link quoteCoversChange}).
  */
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { conversationKeysFromEnv, findQuoteTurn, occasion, OWNER_WORDS_MAX_AGE_DAYS, readOwnerTurns, type OwnerTurnLine } from './owner-words.js';
 import { tokenize } from './recall.js';
 import { redactSecrets } from './telegram/format.js';
@@ -132,4 +134,43 @@ export function quoteCoversChange(quote: string, before: string, after: string):
   if (added.length > 0 && sharedTerms(q, added) < 1) return false;
   if (removed.length > 0 && sharedTerms(q, removed) < 1) return false;
   return sharedTerms(q, [...added, ...removed]) >= need;
+}
+
+/** At most this many keys of the delegating Super ride on a child (C3). */
+export const MAX_DELEGATED_BY = 8;
+
+function plainJson(path: string): unknown {
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.isSymbolicLink() || st.size > 8 * 1024 * 1024) return null;
+    return JSON.parse(readFileSync(path, 'utf-8')) as unknown;
+  } catch { return null; }
+}
+
+/**
+ * C3 (plan iyilesme-360 D3): a Super child's quote of its Super's chat is "here". The keys of the
+ * Super conversation that delegated THIS session (`SuperChild.delegatedBy`, stamped by the server
+ * at delegate time and carried on `--succeeds`), read from the main record and every member
+ * Super's record. A session that is no child, an unreadable or linked record: []. Never throws.
+ */
+export function delegatingKeys(contextRoot: string | null | undefined, ownKeys: readonly string[]): string[] {
+  if (!contextRoot || ownKeys.length === 0) return [];
+  const own = new Set(ownKeys.filter(Boolean));
+  const files = [join(contextRoot, 'state', '.super-agent.json')];
+  const members = join(contextRoot, 'state', '.super', 'members');
+  try {
+    if (!lstatSync(members).isSymbolicLink()) {
+      for (const n of readdirSync(members)) if (/^[a-z0-9][a-z0-9-]*\.json$/.test(n) && !n.includes('.read-marks')) files.push(join(members, n));
+    }
+  } catch { /* no member Supers */ }
+  for (const f of files) {
+    const rec = plainJson(f) as { children?: Record<string, { delegatedBy?: unknown }> } | null;
+    const children = rec && typeof rec === 'object' && rec.children && typeof rec.children === 'object' ? rec.children : null;
+    if (!children) continue;
+    for (const [sid, ch] of Object.entries(children)) {
+      if (!own.has(sid) || !ch || !Array.isArray(ch.delegatedBy)) continue;
+      return ch.delegatedBy.filter((k): k is string => typeof k === 'string' && k !== '' && k.length <= 200).slice(0, MAX_DELEGATED_BY);
+    }
+  }
+  return [];
 }

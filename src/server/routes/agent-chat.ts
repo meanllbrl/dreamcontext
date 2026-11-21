@@ -49,7 +49,7 @@ import { globalAgentPath } from '../../lib/agents/scope.js';
 import { automationsRegistryPath } from '../../lib/automations/registry.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import {
-  chatSpawnRoster, collectTeam, memberCallState, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
+  chatSpawnRoster, collectTeam, memberCallState, promptOwnerText, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
 import { refreshSuperTools, superOwnerToolsBlock, toolsBlockFingerprint, toolsBlockNow } from '../../lib/super/tools-block.js';
 import { FIRST_READ_LIVE_BLOCK, SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
@@ -3503,6 +3503,8 @@ export function startChatSession(
       watchRoom: (device: DeviceTag) => mirrors?.room(device) ?? true,
     }),
     closeMirrors: () => { mirrors?.closeAll(MIRROR_CLOSE_ENDED, isSuper ? 'super taken back' : 'child taken back'); },
+    // Read at call time only (the timer is made further down this function).
+    resumeArmed: () => resumeAtReset.armed(),
   } : null;
   if (live) registerLiveChat(live);
   /** A phone joins this Super Agent beside its holder. It reads the turn state like a reattach
@@ -4142,7 +4144,10 @@ export function startChatSession(
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
     // The message this turn answers: a job the super starts in it records it (`origin`). A slash
     // command is no message of his: it answers none.
-    if (isSuper) noteSuperOwnerMsg(chatRegistryId, text.startsWith('/') || serverWritten ? null : tgRef ?? msgRef(text));
+    if (isSuper) {
+      const own = text.startsWith('/') || serverWritten ? null : tgRef ?? msgRef(text);
+      noteSuperOwnerMsg(chatRegistryId, own, own ? { parts: partRefs(text, tgRef ?? undefined), words: promptOwnerText(text) ?? '' } : {});
+    }
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).

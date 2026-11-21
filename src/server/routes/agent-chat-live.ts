@@ -109,6 +109,8 @@ export interface LiveChatEntry {
   mirrorFrame?: (serialised: string) => void;
   /** How many phone mirrors are joined now (0 = no agenda digest is worth computing). */
   mirrorCount?: () => number;
+  /** A continue-at-reset is armed for this pane (D12: Telegram's limit line says it goes on). */
+  resumeArmed?: () => boolean;
   /** A Super child (any chat but the Super and the Assistant): join a remote socket BESIDE the
    *  holder as a WATCH-ONLY mirror (hands-free sekmeler D6). Its set is made on the first watch
    *  and dies with the child. False when the child can no longer take one, or is no child. */
