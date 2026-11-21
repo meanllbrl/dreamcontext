@@ -239,7 +239,7 @@ describe('Auto send (take mode): on sends, off pastes (owner, 2026-11-22)', () =
     for (const k of ['micmenu.autosend', 'micmenu.autosend.d', 'voice.rec.send', 'voice.rec.paste']) {
       expect(i.split(`'${k}':`).length - 1, k).toBe(2);
     }
-    expect(/'(micmenu\.paste|voice\.rec\.(send|paste))[^']*': '[^']*\u2014/.test(i)).toBe(false);
+    expect(/'(micmenu\.autosend|voice\.rec\.(send|paste))[^']*': '[^']*\u2014/.test(i)).toBe(false);
   });
 });
 
