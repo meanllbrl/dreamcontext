@@ -4347,7 +4347,7 @@
     },
     {
       "path": "super room say",
-      "desc": "Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. A `dream-voice` block in the text goes as a voice message. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`, `bad_file`",
+      "desc": "Post the result of a group request the owner approved (its id is in the turn that brought it) to that group, once; the owner gets a copy. Others read it: no private details. A `dream-voice` block in the text goes as a voice message, a `![name](path)` picture as a photo. Refused: `not_your_request` (it went to another Super), `not_approved`, `already_said`, `group_gone`, `bad_file`",
       "args": [
         "<request>",
         "[text]"

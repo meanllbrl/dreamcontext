@@ -1,8 +1,11 @@
 /**
  * A permitted Telegram group's room agent (tg-grup C3, C5, D5-D10).
  *
- * Every addressed message of a permitted group, the owner's included, becomes a turn of THAT room's
- * agent: one `claude -p` in the room envelope ({@link roomAgentArgs}), started in the room's EMPTY
+ * The OWNER's own addressed message (his bound Telegram id) never meets the room agent: it is a turn
+ * of his bot's own Super, as in his private chat (owner 2026-11-21: "zaten ben vermişim sana, niye
+ * benden onayı istiyorsun"): the same session, permission mode, tools and MCP servers, no card; the
+ * result reaches the group through `super room say`. Every other addressed message becomes a turn
+ * of THAT room's agent: one `claude -p` in the room envelope ({@link roomAgentArgs}), started in the room's EMPTY
  * 0700 folder (`rooms/<chatId>/cwd/`), reading only the brain's shared pages through the allow
  * rules (quick-readable.ts) and `memory recall` scoped to them. It never changes anything: a change
  * someone asks for becomes a request the owner approves in his PRIVATE chat; his Onayla writes one
@@ -14,7 +17,7 @@
  * arrive meanwhile fold into the next one; one open request per room, a later one held.
  */
 import { randomBytes } from 'node:crypto';
-import { lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -27,6 +30,9 @@ import { cliAwarePath } from '../../lib/automations/cli-path.js';
 import { killPortable } from '../../lib/proc.js';
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { QUICK_RECALL_SCOPE, QUICK_RECALL_SCOPE_ENV, quickBrainRoot, quickBrainToolArgs, quickCliShimDir } from '../../lib/whiteboards/quick-memory.js';
+import { MEDIA_FILE, readOutbound } from '../../lib/telegram/files.js';
+import { markdownImages } from '../../lib/telegram/format.js';
+import { superMediaRoots } from './media-roots.js';
 import { quickReadable } from '../../lib/whiteboards/quick-readable.js';
 import { resultLine } from '../../lib/whiteboards/quick-edit.js';
 import { readRoom, removeRoom, roomDirs, writeRoom, type RoomFile, type RoomRequest } from '../../lib/telegram/config.js';
@@ -139,8 +145,11 @@ export interface RoomDeps {
   kill?: (pid: number, signal: NodeJS.Signals) => void;
   /** The CLI the room's shim runs (tests: a fake path). */
   cli?: { execPath: string; entry: string | undefined };
-  /** Where a `room say --file` may come from (default: the project folder and the temp folder). */
-  fileRoots?: (root: string) => string[];
+  /** The media-only folders outside the project a `room say` picture may come from: the same ones
+   *  as his private chat (default `superMediaRoots`: linked repos, worktrees, the temp folders). */
+  fileRoots?: (root: string) => string[] | Promise<string[]>;
+  /** The git-ignore probe of the file rule (tests: a folder that is no git repo). */
+  isGitIgnored?: (root: string, rel: string) => boolean;
   /** A result's spoken summary → OGG (default: the hub's, else the Mac's voice). */
   speak?: (text: string) => Promise<SpeakSummaryResult>;
 }
@@ -182,48 +191,71 @@ export function splitEscaped(text: string, max = TG_TEXT_MAX): string[] {
 /** The most one `room say` may attach in all (Telegram's 50 MB per request). */
 export const ROOM_FILES_MAX_BYTES = TG_UPLOAD_MAX_BYTES;
 const PHOTO_EXT: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+const CONTENT_EXT: Record<string, string> = { ...PHOTO_EXT, '.gif': 'image/gif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
 
 /** A file name that holds keys or credentials, whatever folder it is in. */
 const SECRET_NAME_RE = /^(?:\.env(?:\..*)?|\.npmrc|\.netrc|\.pgpass|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|.*credentials.*|.*secrets?\.json|.*\.(?:pem|key|p12|pfx|keychain))$/i;
 
+/** Where a group file may come from: the project, the media-only folders of his private chat, and
+ *  the brain (whose private pages stay closed). */
+export interface RoomFileRules {
+  projectRoot: string;
+  mediaRoots: readonly string[];
+  brain?: string | null;
+  isGitIgnored?: (root: string, rel: string) => boolean;
+}
+
 /**
  * The files a `room say` names, read whole BEFORE anything is sent (a bad one refuses the say, so
- * nothing half-lands). Each is a regular, non-empty file, never a symlink (lstat first), whose real
- * path is inside the project folder or this Mac's temp folder (where a Super's made pictures live);
- * never under a dot folder or itself a dot file (`.git`, `.mcp.json`, `.secrets.json`), never a
- * key or credentials file by name, and inside the brain only a page the room itself may read
- * (`quickReadable`: never `people/`, `lab/`, `tmp/`); together within Telegram's upload size.
+ * nothing half-lands). THE rule of his private chat (`files.ts` `readOutbound`, owner 2026-11-21:
+ * "atabilmesi gerektiğini düşünüyorum"): inside the project, or a picture, clip or PDF from the
+ * folders a Super's screenshots live in (linked repos, worktrees, the temp folders); never a
+ * symlink, a hardlink, `.git`, the secret class or a git-ignored project file. Because others read
+ * the group, also never a dot file or a key file by name, never empty, and inside the brain only a
+ * page the room may read (`quickReadable`: never `people/`, `lab/`, `inbox/`) or a picture, clip or
+ * PDF the Super made under `tmp/` or a task's `state/assets/`; together within Telegram's upload size.
  */
-export function readRoomFiles(paths: readonly string[], allowed: readonly string[], brain?: string | null): { ok: true; files: { file: UploadFile; photo: boolean }[] } | { ok: false; message: string } {
-  // The filesystem's own case (macOS volumes ignore case): a path typed in another case is the same
-  // file, and every containment check below compares the true spelling.
+export function readRoomFiles(paths: readonly string[], rules: RoomFileRules): { ok: true; files: { file: UploadFile; photo: boolean }[] } | { ok: false; message: string } {
   const real = (a: string) => { try { return realpathSync.native(a); } catch { return null; } };
-  const roots = allowed.map(real).filter((a): a is string => !!a);
+  const brainReal = rules.brain ? real(rules.brain) : null;
   const under = (p: string, r: string) => p === r || p.startsWith(r.endsWith(sep) ? r : r + sep);
-  const inside = (p: string) => roots.find((r) => under(p, r)) ?? null;
-  const brainReal = brain ? real(brain) : null;
   const out: { file: UploadFile; photo: boolean }[] = [];
   let total = 0;
   for (const raw of paths) {
-    const p = resolve(raw);
+    const p = resolve(rules.projectRoot, raw);
     const name = basename(p);
     let st;
     try { st = lstatSync(p); } catch { return { ok: false, message: `no such file: ${name}` }; }
     if (st.isSymbolicLink() || !st.isFile()) return { ok: false, message: `not a plain file: ${name}` };
-    const at = real(p);
-    if (!at) return { ok: false, message: `no such file: ${name}` };
-    const root = inside(at);
-    if (!root) return { ok: false, message: `${name} is outside the project and the temp folder` };
-    const rel = relative(root, at).split(sep);
-    if (rel.some((seg) => seg.startsWith('.')) || SECRET_NAME_RE.test(basename(at))) return { ok: false, message: `${name} may not go to a group` };
-    if (brainReal && under(at, brainReal) && !quickReadable(relative(brainReal, at).split(sep).join('/'))) return { ok: false, message: `${name} is a private page of the brain` };
     if (st.size === 0) return { ok: false, message: `${name} is empty` };
-    total += st.size;
+    const r = readOutbound(p, {
+      roots: [rules.projectRoot], projectRoot: rules.projectRoot, mediaRoots: rules.mediaRoots,
+      maxBytes: ROOM_FILES_MAX_BYTES, ...(rules.isGitIgnored ? { isGitIgnored: rules.isGitIgnored } : {}),
+    });
+    if (!r.ok) return { ok: false, message: `${name} may not go to a group (${r.reason})` };
+    const at = real(p) ?? p;
+    if (basename(at).startsWith('.') || SECRET_NAME_RE.test(basename(at))) return { ok: false, message: `${name} may not go to a group` };
+    if (brainReal && under(at, brainReal)) {
+      const rel = relative(brainReal, at).split(sep).join('/');
+      const made = MEDIA_FILE.test(rel) && (rel.startsWith('tmp/') || rel.startsWith('state/assets/'));
+      if (!made && !quickReadable(rel)) return { ok: false, message: `${name} is a private page of the brain` };
+    }
+    total += r.file.data.length;
     if (total > ROOM_FILES_MAX_BYTES) return { ok: false, message: 'the files are larger than Telegram takes (50 MB in all)' };
-    const type = PHOTO_EXT[extname(name).toLowerCase()];
-    out.push({ file: { name, data: readFileSync(at), ...(type ? { contentType: type } : {}) }, photo: !!type });
+    const ext = extname(name).toLowerCase();
+    const type = CONTENT_EXT[ext];
+    out.push({ file: { name: r.file.name, data: r.file.data, ...(type ? { contentType: type } : {}) }, photo: !!PHOTO_EXT[ext] });
   }
   return { ok: true, files: out };
+}
+
+/** A local picture written into a result (`![name](path)`) as in his private chat: its path goes
+ *  with the files, the markup leaves the text. A web picture stays a link. */
+export function picturesOfSay(text: string): { text: string; paths: string[] } {
+  const local = markdownImages(text).filter((i) => !i.web).map((i) => i.src);
+  if (!local.length) return { text, paths: [] };
+  const rest = text.replace(/!\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"\n]*")?\s*\)/g, (m: string, src: string) => (/^(?:https?:)?\/\//i.test(src) ? m : ''));
+  return { text: rest.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim(), paths: [...new Set(local)] };
 }
 
 export class RoomRunner {
@@ -233,6 +265,8 @@ export class RoomRunner {
   /** Request ids being offered or delivered right now: their card is on its way, or the owner
    *  pressed Onayla and the turn is being delivered. Such a request already has its answer path. */
   private inFlight = new Set<string>();
+  /** The owner's own messages of a room, in arrival order (a voice note is heard first). */
+  private ownLine = new Map<string, Promise<void>>();
   constructor(private readonly hub: TelegramHub, private readonly deps: RoomDeps = {}) {}
 
   private keyOf(ab: ActiveBinding, chatId: number): string { return `${ab.key}:${chatId}`; }
@@ -254,11 +288,36 @@ export class RoomRunner {
     const from = msg.from as { id: number; first_name?: string; last_name?: string; username?: string } | undefined;
     const text = typeof msg.text === 'string' ? msg.text : typeof msg.caption === 'string' ? msg.caption : '';
     if (!from) return;
-    // A member's voice note (a reply to the bot) is heard into the turn (D4); never kept anywhere.
     const voice = msg.voice as VoiceNote | undefined;
+    // His own message (his bound Telegram id, never a name): his Super's turn, never the room agent's.
+    if (from.id === ab.binding.userId) { this.own(ab, chatId, from, text.trim(), voice); return; }
+    // A member's voice note (a reply to the bot) is heard into the turn (D4); never kept anywhere.
     if (!text.trim() && voice?.file_id) { this.queue(ab, chatId, { authorId: from.id, author: authorLabel(from), voice }); return; }
     if (!text.trim()) return;
     this.queue(ab, chatId, { authorId: from.id, author: authorLabel(from), text: text.trim() });
+  }
+
+  /**
+   * The owner's own addressed message in a bound group = his message in his private chat (owner
+   * 2026-11-21): it goes to his bot's own Super at once (the same session, permission mode, tools
+   * and MCP servers), no card and no room agent; its words are the job. In arrival order per room.
+   */
+  private own(ab: ActiveBinding, chatId: number, from: { id: number; first_name?: string; last_name?: string; username?: string }, text: string, voice: VoiceNote | undefined): void {
+    if (!this.live(ab, chatId) || (!text && !voice?.file_id)) return;
+    const key = this.keyOf(ab, chatId);
+    const next = (this.ownLine.get(key) ?? Promise.resolve()).then(async () => {
+      let words = text;
+      if (!words && voice?.file_id) {
+        if ((voice.duration ?? 0) > VOICE_MAX_S || (voice.file_size ?? 0) > VOICE_MAX_BYTES) { await this.line(ab, chatId, ROOM_LINES.voiceTooLong); return; }
+        void this.hub.sendRoom(ab, chatId, 'room-typing', '');
+        words = (await this.hear(ab, voice)) ?? '';
+        if (!words) { await this.line(ab, chatId, ROOM_LINES.cannotAnswer); return; }
+      }
+      if (!this.live(ab, chatId)) return;
+      await this.newRequest(ab, chatId, [{ authorId: from.id, author: authorLabel(from), text: words }], '');
+    }).catch(() => this.line(ab, chatId, ROOM_LINES.cannotAnswer).then(() => undefined));
+    this.ownLine.set(key, next);
+    void next.finally(() => { if (this.ownLine.get(key) === next) this.ownLine.delete(key); });
   }
 
   /** A group voice note → its words, through a private temp folder removed at once. Null when it
@@ -639,10 +698,15 @@ export class RoomRunner {
         const root = this.hub.rootOf(ab) ?? caller.root;
         const brainReal = (this.deps.brain ?? quickBrainRoot)(root) ?? root;
         const paths = this.privatePaths(root, brainReal);
-        const files = readRoomFiles(filePaths, (this.deps.fileRoots ?? ((r: string) => [dirname(r), tmpdir()]))(root), brainReal);
+        // Pictures written into the text (`![name](path)`) go as files, as in his private chat.
+        const pics = picturesOfSay(clean);
+        const mediaRoots = await Promise.resolve((this.deps.fileRoots ?? ((r: string) => superMediaRoots(r, this.hub.home)))(root)).catch(() => [] as string[]);
+        const files = readRoomFiles([...filePaths, ...pics.paths.filter((x) => !filePaths.includes(x))], {
+          projectRoot: dirname(root), mediaRoots, brain: brainReal, ...(this.deps.isGitIgnored ? { isGitIgnored: this.deps.isGitIgnored } : {}),
+        });
         if (!files.ok) return { ok: false, status: 400, error: 'bad_file', message: files.message };
         // Its spoken summary (a `dream-voice` block, as in his private chat) goes as a voice.
-        const { text: rest, voice } = voiceAnswer(clean);
+        const { text: rest, voice } = voiceAnswer(pics.text);
         const say = redactPaths(rest, paths).trim();
         const spoken = voice ? { title: redactSecrets(redactPaths(voice.title, paths)).trim(), text: redactSecrets(redactPaths(voice.text, paths)).trim() } : null;
         if (!say && !spoken?.text && !files.files.length) return { ok: false, status: 400, error: 'invalid_args', message: 'nothing left to post once private details are out' };

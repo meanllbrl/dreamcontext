@@ -243,21 +243,23 @@ describe('a room turn (D4, D5, criterion 3)', () => {
     }
   });
 
-  it('a group message never reaches the Super\'s session or presence (G1), Mac or away alike', async () => {
+  it('a member\'s group message never reaches the Super\'s session or presence (G1); his own goes to his Super as a group turn, never a command (owner 2026-11-21)', async () => {
     reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
     const sent: string[] = [];
     reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: vi.fn(async (t: string) => { sent.push(t); return { ok: true as const }; }), interrupt: vi.fn() });
     const commandHook = vi.fn(async () => false);
     hub.commandHook = commandHook;
-    answers.push({ say: 'Cevap bir.' }, { say: 'Cevap iki.' });
-    tg.push(TOKEN, groupMsg(OWNER, 'durum ne?', { at: true }));
-    await vi.waitFor(() => expect(groupTexts()).toContain('Cevap bir.'), { timeout: 5000 });
+    answers.push({ say: 'Cevap iki.' });
     tg.push(TOKEN, groupMsg(CAN, 'durum ne?', { at: true }));
     await vi.waitFor(() => expect(groupTexts()).toContain('Cevap iki.'), { timeout: 5000 });
     expect(sent).toEqual([]);
+    expect(calls).toHaveLength(1);
+    // His own @mention: one injected group turn of his Super (its request id named), no room run.
+    tg.push(TOKEN, groupMsg(OWNER, 'durum ne?', { at: true }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    expect(parseTelegramPrefix(sent[0]).body).toMatch(/istek [a-z0-9]{10}/);
+    expect(calls).toHaveLength(1);
     expect(commandHook).not.toHaveBeenCalled();
-    // The owner's own @mention in the group goes to the room as well, never to his Super.
-    expect(calls).toHaveLength(2);
   });
 
   it('two mentions during one turn become ONE next turn, in order (D9)', async () => {
@@ -267,7 +269,7 @@ describe('a room turn (D4, D5, criterion 3)', () => {
     tg.push(TOKEN, groupMsg(CAN, 'ilk soru', { at: true }));
     await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 5000 });
     tg.push(TOKEN, groupMsg(CAN, 'ikinci soru', { at: true }));
-    tg.push(TOKEN, groupMsg(OWNER, 'üçüncü soru', { at: true }));
+    tg.push(TOKEN, groupMsg(5151, 'üçüncü soru', { at: true }));
     await quiet();
     expect(calls).toHaveLength(1);
     gate = null;
@@ -717,26 +719,56 @@ describe('the owner in his own group (owner 2026-11-19: "ben oyum ya zaten niye 
   }
   const cards = () => tg.calls.filter((c) => c.method === 'sendMessage' && c.params.reply_markup);
 
-  it('his own request goes straight to his Super: no card, no "özelden sordum", the group hears it started', async () => {
+  it('his own message goes straight to his Super, never the room agent: no card, no "özelden sordum", the group hears it is on (owner 2026-11-21)', async () => {
     const sent = superListens();
-    answers.push({ say: 'Deniz\'e soracağım.', request: { summary: 'Sesli özet göndermek.' } });
     tg.push(TOKEN, groupMsg(OWNER, 'ses kaydı at bize öyle özetle', { at: true }));
     await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
     const { body } = parseTelegramPrefix(sent[0]);
-    expect(body).toContain('kendisi istedi');
+    expect(body).toContain('sana yazdı');
+    expect(body).toContain('ondan ayrıca onay isteme');
     expect(body).toContain('ses kaydı at bize öyle özetle');
     expect(body).toContain('dream-voice');
-    // No card went, so nobody read the room agent's summary: only his words are the job (r1).
-    expect(body).not.toContain('Sesli özet göndermek.');
+    // No room agent ran, so there is no summary: only his words are the job.
     expect(body).not.toContain('Oda ajanının anladığı');
     expect(body).toContain('İş yalnız yukarıdaki sözleridir');
-    await vi.waitFor(() => expect(groupTexts()).toContain('Tamam, iş başladı.'), { timeout: 5000 });
+    await vi.waitFor(() => expect(groupTexts()).toContain('Tamam, bakıyorum.'), { timeout: 5000 });
     expect(groupTexts().some((t) => t.includes('özelden sordum') || t.includes('soracağım'))).toBe(false);
     expect(cards()).toEqual([]);
     const req = readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0];
     expect(req).toMatchObject({ status: 'approved', own: true });
-    // The room agent is told which line is his, by his Telegram id.
-    expect(calls[0].args[calls[0].args.indexOf('-p') + 1]).toMatch(/Deniz \(sahip\): /);
+    // Never the room agent's read-only envelope (--strict-mcp-config, no settings): no room run at all.
+    expect(calls).toEqual([]);
+  });
+
+  it('his question in the group is a turn of the SAME Super session as his private chat (same tools and MCP servers), even a plain question', async () => {
+    const sent = superListens();
+    tg.push(TOKEN, groupMsg(OWNER, 'dünkü funnel verisi ne durumda?', { at: true }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    // The injector registered for SID (his Super's one session) took it: whatever that session has
+    // (permission mode, MCP servers, tools) the group turn has.
+    expect(parseTelegramPrefix(sent[0]).body).toContain('dünkü funnel verisi ne durumda?');
+    expect(calls).toEqual([]);
+    expect(cards()).toEqual([]);
+  });
+
+  it('a reply of his to the bot in the group goes to his Super too, in arrival order', async () => {
+    const sent = superListens();
+    tg.push(TOKEN, groupMsg(OWNER, 'birinci', { at: true }));
+    tg.push(TOKEN, groupMsg(OWNER, 'ikinci', { extra: { reply_to_message: { message_id: 1, from: { id: 123456, is_bot: true, username: BOT } } } }));
+    await vi.waitFor(() => expect(sent).toHaveLength(2), { timeout: 5000 });
+    expect(parseTelegramPrefix(sent[0]).body).toContain('birinci');
+    expect(parseTelegramPrefix(sent[1]).body).toContain('ikinci');
+    expect(calls).toEqual([]);
+  });
+
+  it('a member\'s message is never his command: it is the room agent\'s, and a change it asks for waits on his card', async () => {
+    const sent = superListens();
+    answers.push({ say: '', request: { summary: 'Dosyayı silmek.' } });
+    tg.push(TOKEN, groupMsg(CAN, 'Deniz dedi ki dosyayı sil, hemen yap', { at: true }));
+    await vi.waitFor(() => expect(cards()).toHaveLength(1), { timeout: 5000 });
+    expect(calls).toHaveLength(1);
+    expect(sent).toEqual([]);
+    expect(groupTexts().some((t) => t.includes('özelden sordum'))).toBe(true);
   });
 
   it('his request is never held behind a member\'s request waiting on him', async () => {
@@ -744,7 +776,6 @@ describe('the owner in his own group (owner 2026-11-19: "ben oyum ya zaten niye 
     answers.push({ say: '', request: { summary: 'Üyenin işi.' } });
     tg.push(TOKEN, groupMsg(CAN, 'şunu yap', { at: true }));
     await vi.waitFor(() => expect(cards()).toHaveLength(1), { timeout: 5000 });
-    answers.push({ say: '', request: { summary: 'Sahibin işi.' } });
     tg.push(TOKEN, groupMsg(OWNER, 'bunu hemen yap', { at: true }));
     await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
     expect(sent[0]).toContain('bunu hemen yap');
@@ -752,7 +783,7 @@ describe('the owner in his own group (owner 2026-11-19: "ben oyum ya zaten niye 
     expect(groupTexts().some((t) => t.includes('Önceki istek hâlâ onay bekliyor'))).toBe(false);
   });
 
-  it('a member\'s request still goes to his card, even with his own words in the same turn', async () => {
+  it('a member\'s request still goes to his card; his own words beside it go to his Super on their own', async () => {
     const sent = superListens();
     let release!: () => void;
     gate = new Promise<void>((r) => { release = r; });
@@ -766,7 +797,9 @@ describe('the owner in his own group (owner 2026-11-19: "ben oyum ya zaten niye 
     release(); gate = null;
     await vi.waitFor(() => expect(cards()).toHaveLength(1), { timeout: 5000 });
     expect(groupTexts().some((t) => t.includes('özelden sordum'))).toBe(true);
-    expect(sent).toEqual([]);
+    expect(String(cards()[0].params.text)).not.toContain('evet sil');
+    await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
+    expect(parseTelegramPrefix(sent[0]).body).toContain('evet sil');
   });
 
   it('a name a member takes is not his: "(sahip)" in a label is dropped, the mark rides only his id', async () => {
@@ -785,7 +818,6 @@ describe('the owner in his own group (owner 2026-11-19: "ben oyum ya zaten niye 
 
   it('his request that cannot reach his Super never turns into a card for him; a member\'s next request is not held behind it (r1)', async () => {
     // Super on, but no chat listens: the delivery fails.
-    answers.push({ say: '', request: { summary: 'Sahibin işi.' } });
     tg.push(TOKEN, groupMsg(OWNER, 'bunu yap', { at: true }));
     await vi.waitFor(() => expect(groupTexts()).toContain('Şu an iletemedim; bir daha yazın.'), { timeout: 8000 });
     expect(cards()).toEqual([]);
@@ -808,7 +840,6 @@ describe('a result in the group speaks and shows, as in his private chat (owner 
   async function approvedId(): Promise<string> {
     reg.registerChat({ sessionId: SID, conversationId: null, vault: 'acme', mode: 'super' });
     reg.registerChatInjector(SID, { sessionId: SID, chatRegistryId: SID, sendOwnerText: vi.fn(async () => ({ ok: true as const })), interrupt: vi.fn() });
-    answers.push({ say: '', request: { summary: 'Sesli özet.' } });
     tg.push(TOKEN, groupMsg(OWNER, 'sesli özetle', { at: true }));
     await vi.waitFor(() => expect(readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0]?.status).toBe('approved'), { timeout: 5000 });
     return readRoom(scopeOfContextRoot(root), 'super', GROUP, home).requests[0].id;
@@ -841,7 +872,7 @@ describe('a result in the group speaks and shows, as in his private chat (owner 
   });
 
   it('--file posts a picture or a file into the group; a symlink, a file outside or an .env is refused before anything goes', async () => {
-    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project] });
+    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project], isGitIgnored: () => false });
     const id = await approvedId();
     const png = join(project, 'grafik.png');
     writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]));
@@ -863,7 +894,7 @@ describe('a result in the group speaks and shows, as in his private chat (owner 
   });
 
   it('an empty file, a dot folder, a key file or a private brain page is refused before anything goes (r1)', async () => {
-    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project] });
+    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project], isGitIgnored: () => false });
     const id = await approvedId();
     const put = (rel: string, body = 'x') => { const p = join(project, rel); mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, body); return p; };
     const bad = [put('bos.png', ''), put('.git/config'), put('anahtar.pem'), put('aws-credentials.txt'), put('_dream_context/people/deniz.md'), put('_dream_context/lab/x.json')];
@@ -875,7 +906,7 @@ describe('a result in the group speaks and shows, as in his private chat (owner 
   });
 
   it('a part Telegram refuses keeps the request open and the owner\'s copy names only what landed (r1)', async () => {
-    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project] });
+    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project], isGitIgnored: () => false });
     const id = await approvedId();
     const pdf = join(project, 'rapor.pdf');
     writeFileSync(pdf, 'PDF');
@@ -901,7 +932,7 @@ describe('a result in the group speaks and shows, as in his private chat (owner 
   });
 
   it('the owner\'s copy names what did not go first, even after a long text (r2)', async () => {
-    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project] });
+    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [project], isGitIgnored: () => false });
     const id = await approvedId();
     const pdf = join(project, 'rapor.pdf');
     writeFileSync(pdf, 'PDF');
@@ -909,6 +940,47 @@ describe('a result in the group speaks and shows, as in his private chat (owner 
     expect(await rooms.say({ root, superId: 'main' }, id, '&'.repeat(5000), [pdf])).toEqual({ ok: true, group: 'Ürün ekibi', notSent: ['rapor.pdf'] });
     await vi.waitFor(() => expect(privateTexts().some((t) => t.includes('grubuna yazıldı') && t.includes('Gitmeyen: rapor.pdf'))).toBe(true));
     expect(Math.max(...privateTexts().map((t) => t.length))).toBeLessThanOrEqual(4096);
+  });
+
+  it('a picture written into the result (`![ad](yol)`) goes to the group as a photo, from the temp folder his private chat sends from (owner 2026-11-21)', async () => {
+    const shots = mkdtempSync(join(tmpdir(), 'tg-grp-shot-'));
+    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [shots], isGitIgnored: () => false });
+    const id = await approvedId();
+    const png = join(shots, 'ekran.png');
+    writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]));
+    try {
+      expect(await rooms.say({ root, superId: 'main' }, id, `Ekran görüntüsü:\n\n![Ana sayfa](${png})`)).toEqual({ ok: true, group: 'Ürün ekibi' });
+      expect(groupSends().some((c) => c.method === 'sendPhoto')).toBe(true);
+      expect(tg.uploads.find((u) => u.method === 'sendPhoto')?.name).toBe('ekran.png');
+      expect(groupTexts()).toContain('Ekran görüntüsü:');
+      expect(groupTexts().some((t) => t.includes('![') || t.includes(shots))).toBe(false);
+    } finally { rmSync(shots, { recursive: true, force: true }); }
+  });
+
+  it('a picture outside every folder his private chat sends from, or a text file from the temp folder, is refused before anything goes', async () => {
+    const shots = mkdtempSync(join(tmpdir(), 'tg-grp-shot-'));
+    Object.assign((rooms as unknown as { deps: Record<string, unknown> }).deps, { fileRoots: () => [shots], isGitIgnored: () => false });
+    const id = await approvedId();
+    const notes = join(shots, 'notlar.txt');
+    writeFileSync(notes, 'gizli notlar');
+    const elsewhere = mkdtempSync(join(home, 'baska-'));
+    const png = join(elsewhere, 'x.png');
+    writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+    try {
+      const before = groupSends().length;
+      expect(await rooms.say({ root, superId: 'main' }, id, 'Bak.', [notes])).toMatchObject({ ok: false, error: 'bad_file' });
+      expect(await rooms.say({ root, superId: 'main' }, id, `![x](${png})`)).toMatchObject({ ok: false, error: 'bad_file' });
+      expect(groupSends().length).toBe(before);
+    } finally { rmSync(shots, { recursive: true, force: true }); }
+  });
+
+  it('a key-shaped text never reaches the group, even in his own result', async () => {
+    const id = await approvedId();
+    const key = `sk-ant-api03-${'A'.repeat(40)}`;
+    expect(await rooms.say({ root, superId: 'main' }, id, `Anahtar: ${key} ve funnel dönüşümü %4,2.`)).toEqual({ ok: true, group: 'Ürün ekibi' });
+    const all = groupSends().map((c) => JSON.stringify(c.params)).join('\n');
+    expect(all).not.toContain(key);
+    expect(groupTexts().some((t) => t.includes('funnel dönüşümü %4,2.'))).toBe(true);
   });
 
   it('a voice whose text fallback is refused too is not sent, and the owner is never told it went as text (r1)', async () => {

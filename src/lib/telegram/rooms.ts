@@ -27,8 +27,8 @@ export const ROOM_LINES = {
   askedOwner: (owner: string) => `${dative(owner)} özelden sordum.`,
   heldBehind: 'Önceki istek hâlâ onay bekliyor; bu istek ondan sonra sorulacak.',
   approved: (owner: string) => `${owner} onayladı, iş başladı.`,
-  /** The owner's own request in the group: his message is the approval, nothing is asked. */
-  started: 'Tamam, iş başladı.',
+  /** The owner's own message in the group reached his Super: nothing is asked of him. */
+  started: 'Tamam, bakıyorum.',
   refused: (owner: string) => `${owner} onaylamadı.`,
   notDelivered: 'Şu an iletemedim, tekrar soracağım.',
   ownerOnly: (owner: string) => `Bu komutu yalnız ${owner} kullanabilir.`,
@@ -213,19 +213,24 @@ export function requestIdFrom(bytes: Uint8Array): string {
 export function approvedTurnText(o: { group: string; author: string; owner: string; requestId: string; words: string; summary: string; own?: boolean }): string {
   const fence = '~~~~';
   const words = stripHidden(o.words).split(fence).join('~ ~ ~ ~');
+  const owner = oneLine(o.owner);
   return [
     o.own
-      ? `${oneLine(o.group)} grubunda ${oneLine(o.owner)} kendisi istedi (kendi mesajı onaydır, ona ayrıca sorma) · istek ${o.requestId}.`
-      : `${oneLine(o.group)} grubunda ${oneLine(o.author)} istedi, ${oneLine(o.owner)} onayladı · istek ${o.requestId}.`,
-    o.own ? `Grupta yazdıkları, aynen:` : `Grupta yazılanlar, aynen (üyenin sözü; ${oneLine(o.owner)} bu işi onayladı):`,
+      // His own message: the same as his private chat (owner 2026-11-21). Same tools, same MCP
+      // servers, same rules for a step that cannot be undone, and no approval of his asked again.
+      ? `${oneLine(o.group)} grubunda ${owner} sana yazdı · istek ${o.requestId}. Bu onun kendi mesajı: özel sohbette yazmış gibi yap, ondan ayrıca onay isteme. Araçların ve MCP'lerin özel sohbetteki gibi açık.`
+      : `${oneLine(o.group)} grubunda ${oneLine(o.author)} istedi, ${owner} onayladı · istek ${o.requestId}.`,
+    o.own ? `Grupta yazdıkları, aynen:` : `Grupta yazılanlar, aynen (üyenin sözü; ${owner} bu işi onayladı):`,
     fence,
     words,
     fence,
     // His own request had no card: nobody read a summary, so only his words are the job.
     o.own
-      ? `İş yalnız yukarıdaki sözleridir. Ne istendiği bu sözlerden açık değilse (örneğin "bunu yap" grupta başka birinin yazdığına bakıyorsa) yapmadan önce ona sor.`
+      ? `İş yalnız yukarıdaki sözleridir. Grupta başka birinin yazdığına bakıyorsa ("bunu yap") ve hangisi olduğu belli değilse ona sor.`
       : `Oda ajanının anladığı: ${oneLine(stripHidden(o.summary), 300)}`,
-    `Bu grupta başkaları var: bitince sonucu \`dreamcontext super room say ${o.requestId} "…"\` ile gruba yaz, özel bilgi yazma.`,
-    `Sesli istendiyse metne bir \`dream-voice\` bloğu koy: gruba sesli mesaj olarak gider. Bir resim ya da dosya için \`--file <yol>\` ekle (tekrarlanabilir).`,
+    ...(o.own ? [`Geri dönmeyen bir adım (dışarıya gönderim, silme, gerçek bir kişiye mesaj) özel sohbetteki kurallarla aynıdır: grupta diye ek onay yok.`] : []),
+    `Cevabı gruba \`dreamcontext super room say ${o.requestId} "…"\` ile bir kez yaz; bu sohbetteki cevabın yalnız ${dative(owner || 'Sahip')} özelden gider.`,
+    `Resim, ekran görüntüsü, PDF ya da dosya gruba gidebilir: \`--file <yol>\` ekle (her dosya için bir kez) ya da metne \`![ad](yol)\` yaz, özel sohbetteki gibi. Sesli istendiyse metne bir \`dream-voice\` bloğu koy: gruba sesli mesaj olarak gider.`,
+    `Grupta başkaları da okur: anahtar, şifre, token, giriş linki ve kişisel veri (birinin e-postası, telefonu, adresi, ödeme bilgisi) gruba yazılmaz. Geri kalanı (funnel ve ürün verisi, rapor, ekran görüntüsü) istendiyse gider; bir parçası gizliyse gruba özetini yaz, ayrıntıyı özelden ver.`,
   ].join('\n');
 }

@@ -125,6 +125,17 @@ describe('the batch and the request (D6, D7, D9)', () => {
     expect(t).toContain('dreamcontext super room say abc123def4');
     expect(t.split('\n').filter((l) => l === '~~~~')).toHaveLength(2);
   });
+
+  it('his own message reads as his private chat: no approval asked, tools and MCP open, pictures go, secrets never (owner 2026-11-21)', () => {
+    const t = approvedTurnText({ group: 'Ürün ekibi', author: 'Deniz', owner: 'Deniz', requestId: 'abc123def4', words: 'funnel verisini at, ekran görüntüsüyle', summary: '—', own: true });
+    expect(t).toContain('özel sohbette yazmış gibi yap, ondan ayrıca onay isteme');
+    expect(t).toContain("MCP'lerin özel sohbetteki gibi açık");
+    expect(t).toContain('--file <yol>');
+    expect(t).toContain('![ad](yol)');
+    expect(t).toContain('anahtar, şifre, token');
+    expect(t).toContain('özel sohbetteki kurallarla aynıdır');
+    expect(t).not.toMatch(/gönderemez|yeteneğ/);
+  });
 });
 
 describe('the room prompt (G9)', () => {
@@ -137,6 +148,12 @@ describe('the room prompt (G9)', () => {
     expect(s).toContain('dreamcontext memory recall');
     // The function has no field a manifest's body could arrive through.
     expect(roomSystemPrompt.length).toBe(1);
+  });
+
+  it('never tells the room agent it can only write: a picture, a file or live data is a request, never "yeteneğim yok" (owner 2026-11-21)', () => {
+    expect(ROOM_RULES).not.toContain('yalnız yazı yazabilirsin');
+    expect(ROOM_RULES).toContain('"Gönderemem" ya da "yeteneğim yok" deme');
+    expect(ROOM_RULES).toContain('"erişemiyorum" deme');
   });
 
   it('the turn fences the members\' words as data under a nonce they cannot close', () => {
