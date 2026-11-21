@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, MAX_LIVE_CHILDREN, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, queueCounter, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperQueueItem, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
@@ -10,10 +10,18 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
+import { PRESENT_TAB_DRAG, PresentWindow, type WindowTab } from './PresentWindow';
 import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, PresentFrame, SheetTabs, StageControls, StripMarks, stripStartFor, type PresentTab } from './StageParts';
 import { PresentQueue } from './PresentQueue';
+import { StageDock, type DockTileView } from './StageDock';
 import { sendQueueJump } from './queueJump';
+import { StageListSwitch, SuperStatusPill, setStageViewMode, useStageViewMode } from './SuperListView';
+import { dockedAskOf, setDockedAsk } from './superQuestions';
+import { revealAgendaWaiting } from './agendaReveal';
+import { ReportAskDock } from './ReportAskDock';
+import { jobTokensOf, publishJobTokens, requestStopJob, setJobFilter, useJobFilter } from './superJobFilter';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
+import { revealDockedAsk } from './DockedAskRow';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda, type AgendaSize, type ThreadPress } from './SuperAgenda';
 import { useThreadFilter } from './superThreadFilter';
@@ -24,7 +32,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
+import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type DockOptions, type DockTile, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize, PadStatus } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
@@ -43,7 +51,7 @@ import { AppRequestPopup } from './AppRequestPopup';
 import { emitInstance, useVault, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
-import { bandCount, bandHead, freshPending, hasOwnKey, needsOwner, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
+import { stageBandCount, stageBandHead, freshPending, hasOwnKey, isPermission, macPermissionItems, needsOwner, ownerQueueCount, queueHead, rowOf, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { SuperHeadMenu } from './SuperHeadMenu';
 import { SuperAddMenu } from './SuperAddMenu';
 import { MENU_WIDTH } from './superAddMenuModel';
@@ -60,6 +68,9 @@ import './superTone.css';
 
 export { runFlights, prefersReducedMotion, type FlightRun } from './motionRunner';
 export { samePlan } from './StageMotion';
+
+/** How long his Undo stays on the stage: the server's window (src/lib/super/types.ts OWNER_UNDO_MS). */
+const UNDO_MS = 15_000;
 
 export interface SuperSurfaceProps {
   state: SuperStateView;
@@ -84,7 +95,7 @@ export interface SuperSurfaceProps {
   miniRail?: boolean;
   /** A team card shown large: its member's conversation (SuperContainer's `teamConversation`).
    *  Absent while the surface is folded away: it hands the session back to the AI Team page. */
-  teamConversation?: (card: TeamCard) => ReactNode;
+  teamConversation?: (card: TeamCard, tab: boolean) => ReactNode;
   titleFor: (claudeId: string) => string;
   /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
   nameFor?: (claudeId: string) => string;
@@ -118,6 +129,9 @@ export interface SuperSurfaceProps {
   onThread?: (press: ThreadPress) => boolean;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
   onEndChild: (child: string, whenDone: boolean) => void;
+  /** His Undo on "Closed <name>" (super-v3 D2, K4b): the server relaunches it within 15 s.
+   *  Resolves to the refusal's line, or null when it came back. */
+  onUndoEnd?: (child: string) => Promise<string | null>;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
   onKeepChild: (child: string) => void;
   /** His status change on an agenda line, Done included (`POST /api/super/pad`). Absent: read only. */
@@ -193,8 +207,10 @@ export function routineTitleIn(automations: ReadonlyArray<{ slug: string; title?
  * Super dock both draw it; the dock passes no agenda (the agenda is a stage card), no Turn off and
  * no Add. A mini chat (a presentation's) keeps only Add in its ⋯.
  */
-export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who, telegramMember }: {
+export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, onAdd, actions, who, telegramMember, status }: {
   chat: string;
+  /** The status pill and the Stage / List switch (v3 D13), right of the name, before the ⋯. */
+  status?: ReactNode;
   /** A member's stage: its own head (face, name, model) instead of the Super Agent's mark and name. */
   who?: ReactNode;
   agenda?: ReactNode;
@@ -221,6 +237,7 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
         </>
       )}
       {column && agenda}
+      {status}
       {/* A chat folded to the bar hides its head: the ⋯ unmounts with it, so no menu stays open
           (and keeps the arrow keys) out of sight. */}
       {chat !== 'bar' && (column || onAdd || telegramMember) && (
@@ -380,7 +397,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // While held, the stage keeps the view it last drew (another page side by side stays there),
   // or floats when that view names no card any more: nothing moves until the gate opens.
   const drawnView = useRef<SuperView>(state.view);
-  const view = useMemo<SuperView>(() => (halfHeld ? heldFallback(drawnView.current, state.view, state.containers) : state.view), [halfHeld, state.view, state.containers]);
+  // The List view (D13): Today beside the chat as a page, computed here and never written to the
+  // record; only the owner's own Super stage on this Mac has it.
+  const listMode = useStageViewMode();
+  const listAgenda = listMode === 'list' && !remote && !member ? state.containers.find((c) => c.kind === 'agenda')?.id ?? null : null;
+  const view = useMemo<SuperView>(() => (listAgenda ? { mode: 'half', card: listAgenda }
+    : halfHeld ? heldFallback(drawnView.current, state.view, state.containers) : state.view), [listAgenda, halfHeld, state.view, state.containers]);
   useLayoutEffect(() => { drawnView.current = view; });
 
   // ── The plan ──
@@ -396,12 +418,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const items = useMemo(() => {
     const live = new Set(liveJobsKey ? liveJobsKey.split(',') : []);
     const devices = new Map(devicesKey ? devicesKey.split(',').map((e) => e.split('=') as [string, string]) : []);
-    return stageItems(state.containers, state.groups, view, (c) => live.has(c.id), (c) => {
+    const all = stageItems(state.containers, state.groups, view, (c) => live.has(c.id), (c) => {
       const d = devices.get(c.id);
       return isWebDevice(d) ? deviceAspect(d) : undefined;
     }, (c) => pageFitOf(pageFitKey(vault, c.ref)));
+    // The List view (D13, v2 list frame): the chat and Today beside it, nothing else on the stage.
+    return listAgenda ? all.filter((i) => i.id === listAgenda) : all;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fitsVersion: the store's answers changed
-  }, [state.containers, state.groups, view, liveJobsKey, devicesKey, fitsVersion, vault]);
+  }, [state.containers, state.groups, view, liveJobsKey, devicesKey, fitsVersion, vault, listAgenda]);
   // The agenda minimised to its corner pill (owner 2026-10-22 23:44): not a card on the stage
   // (stageItems leaves it out) unless the view shows it side by side or presented.
   const agendaPill = useMemo(() => {
@@ -420,6 +444,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // centre asks, not spins (owner, 2026-10-22). A child's permission stays on the child's card.
   // A chat folded to its bar is drawn as the mini meanwhile, so the question shows (D7).
   const ownerAsk = state.queue.some((q) => needsOwner(q) && q.kind !== 'permission');
+  // On the Mac a child's permission is a card in this chat too (D8, the band no longer carries it),
+  // so it unfolds a folded chat the same way; a remote screen keeps it in its band. The centre's
+  // status stays `ownerAsk`: the permission is the child's, not the Super's (end review 2026-11-20).
+  const chatAsks = ownerAsk || (!props.remote && macPermissionItems(state.queue).length > 0);
   // The layouts the switcher offers: those the presented cards can take (R3(f)).
   const presented = useMemo(() => (view.mode === 'present' ? (view.cards ?? []).filter((id) => state.containers.some((c) => c.id === id)) : []), [view, state.containers]);
   // A selection belongs to one presentation: another card set starts on its first card.
@@ -442,7 +470,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const shownGroup = useMemo(() => presentedGroup(presented, state.groups, state.containers)?.id ?? null, [presented, state.groups, state.containers]);
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
-  const queueUp = !!bandHead(state);
+  // On the Mac a permission is a card in the Super chat (D8), never this band; a remote screen keeps it.
+  const queueUp = !!stageBandHead(state, !!remote);
   // The presentation queue (task super-sahnesinde-sunum-sirasi): its control steps while a queued
   // presentation of 2+ is on screen, and says how many wait once he has left the queue (D2, D7).
   const pq = state.presentQueue;
@@ -453,10 +482,54 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // The bar's measured height (JobBar): the stage plans below its ACTUAL bottom (a wrapped card
   // row is taller than one line), so no card or agenda is ever drawn over it.
   const queueHeight = useQueueHeight(state.session);
+  // ── The v3 Dock (plan super-v3 D1, K1-K3): what waits on the owner and the job the Super talks
+  //    about stay on the stage; the rest docks together when one no longer fits. The last answer
+  //    is kept per stage (a vault switch starts afresh) for K1's hysteresis. ──
+  const dockPrevRef = useRef<{ vault: string | null; docked: boolean }>({ vault: null, docked: false });
+  const needsKey = state.containers.filter((c) => (c.kind === 'chat' && state.queue.some((q) => q.sessionId === c.ref && needsOwner(q)))
+    || (c.kind === 'team' && state.queue.some((q) => q.kind === 'approval' && needsOwner(q) && state.team.some((j) => j.id === c.ref && j.member === q.member)))).map((c) => c.id).join(',');
+  const spokeFocus = useMemo(() => {
+    // K3: the child the Super spoke to last, within 3 minutes.
+    let best: { id: string; at: number } | null = null;
+    for (const c of state.containers) {
+      if (c.kind !== 'chat' || !hasOwnKey(state.children, c.ref)) continue;
+      const at = state.children[c.ref].spokeAt;
+      if (typeof at === 'number' && Date.now() - at < 3 * 60_000 && (!best || at > best.at)) best = { id: c.id, at };
+    }
+    return best?.id ?? null;
+  }, [state.containers, state.children]);
+  const liveCount = liveJobsKey ? liveJobsKey.split(',').length : 0;
+  const poolCount = state.pool?.length ?? 0;
+  const agendaId = state.containers.find((c) => c.kind === 'agenda')?.id ?? null;
+  const dockOpts = useMemo<DockOptions>(() => {
+    const prev = dockPrevRef.current.vault === vault ? dockPrevRef.current.docked : false;
+    return {
+      prev, needs: new Set(needsKey ? needsKey.split(',') : []), focus: spokeFocus, today: agendaPill, agenda: agendaId, pool: poolCount,
+      cap: poolCount > 0 && liveCount >= MAX_LIVE_CHILDREN ? t('superDock.cap').replace('{n}', String(liveCount)).replace('{max}', String(MAX_LIVE_CHILDREN)) : null,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- prev is read, not watched: the plan below records it
+  }, [needsKey, spokeFocus, agendaPill, agendaId, poolCount, liveCount, vault, t, items]);
+  // The window's tabs (K14: its width never under the tabs' floor): the queue on screen, else one.
+  const presentTabCount = qc.showing && pq && pqHead ? pq.items.length : 1;
+  // K8: a Super question about what the window shows is asked under its page, not in the chat.
+  // The plan decides: only the window draws a dock (a filmstrip or a narrow stage has none).
+  const askCandidate = view.mode === 'present'
+    ? dockedAskOf(state.queue, { cards: view.cards ?? [], ...(view.ask ? { ask: view.ask } : {}) }) : null;
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: ownerAsk, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, folded: !sheetOpen }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, ownerAsk, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, sheetOpen],
+    () => planStage(items, view, size, { presentTabCount, askDock: !!askCandidate, dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, railStart, asking: chatAsks, layoutChoices: layoutChoices.length, groupExit: !!shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail, dock: listAgenda ? undefined : dockOpts, folded: !sheetOpen }),
+    [items, view, size, presentTabCount, askCandidate, pinned, props.terminals.length, agendaPill, selected, stripStart, railStart, chatAsks, layoutChoices.length, shownGroup, queueBand, queueUp, queueHeight, narrowPx, centreMin, topped, props.leanRight, props.miniRail, dockOpts, listAgenda, sheetOpen],
   );
+  dockPrevRef.current = { vault, docked: !!plan.jobDock?.docked };
+  // Docked only where the window drew its dock (a wide stage); else the chat keeps the full card.
+  // Docked under the page only while the stage that draws the dock is on screen: folded away (the
+  // off-page Super dock holds this same chat), the chat keeps the full card (end review 2026-11-20).
+  const dockedAsk = props.visible && plan.askDock && askCandidate && superSession ? askCandidate : null;
+  const superScope = superSession?.claudeId ?? null;
+  useEffect(() => {
+    if (!superScope) return undefined;
+    setDockedAsk(superScope, dockedAsk);
+    return () => setDockedAsk(superScope, null);
+  }, [superScope, dockedAsk]);
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
   const stripBig = plan.strip?.big;
@@ -529,14 +602,24 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const origin = c.kind === 'chat' && hasOwnKey(state.children, c.ref) ? (state.children[c.ref] as { workOrigin?: unknown }).workOrigin : undefined;
     return typeof origin === 'string' && origin.startsWith('main:') ? `${title} · ${t('superStage.member.forSuper')}` : title;
   }, [props.titleFor, state.team, state.children, tasks, t]);
+  // The strip's item and the job it is from (frame D: "From <job>"): the shown card's job.
+  const dockedAskItem = dockedAsk ? state.queue.find((q) => q.id === dockedAsk) ?? null : null;
+  // Only a job, never the card's own name again (the title is said once, in its tab).
+  const dockedAskFrom = useMemo(() => {
+    if (!dockedAskItem) return '';
+    const shown = new Set([...(dockedAskItem.read ?? []), ...(view.cards ?? [])]);
+    const job = state.containers.find((c) => shown.has(c.id) && c.forChild)?.forChild;
+    return job ? props.titleFor(job) : '';
+  }, [dockedAskItem, state.containers, view.cards, props.titleFor]);
   /** A team card's job and its status now (the view's `teamLive`); undefined when the job is gone. */
   const teamCardOf = useCallback((c: Container): TeamCard | undefined => {
     if (c.kind !== 'team') return undefined;
     const job = state.team.find((j) => j.id === c.ref);
     if (!job) return undefined;
     const live = state.teamLive?.[job.id];
-    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '', ...(live?.sessionId ? { sessionId: live.sessionId } : {}), ...(live?.resumable ? { resumable: true } : {}) };
-  }, [state.team, state.teamLive]);
+    const approval = state.queue.find((q) => q.kind === 'approval' && q.member === job.member && needsOwner(q));
+    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '', ...(live?.sessionId ? { sessionId: live.sessionId } : {}), ...(live?.resumable ? { resumable: true } : {}), ...(approval ? { approval } : {}) };
+  }, [state.team, state.teamLive, state.queue]);
   /** A remote stage's child (no live session here): the row its status is read from. Null on the Mac. */
   const remoteRowOf = (sid: string): RemoteRow | null => (remote && hasOwnKey(state.children, sid) ? state.children[sid] : null);
   /** A group's cards as its tile shows them: kind, title and (a chat's) live state. */
@@ -678,7 +761,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       const c = byId.get(id);
       if (!c) return;
       if (c.kind === 'web') setLru((prev) => touchLru(prev, id));
-      onLayout(c.place === 'others' ? { cards: [{ id, place: 'float' }], view: { mode: 'half', card: id } } : { view: { mode: 'half', card: id } });
+      // A member opens as a tab in the presentation window (Ü2), never beside the chat as a page.
+      const view = c.kind === 'team' ? { mode: 'present' as const, cards: [id] } : { mode: 'half' as const, card: id };
+      onLayout(c.place === 'others' ? { cards: [{ id, place: 'float' }], view } : { view });
     },
     onToOthers: (id: string) => { if (remote) return; onLayout({ cards: [{ id, place: 'others' }] }); focusAfter(id); },
     onAskAbout: (id: string) => {
@@ -699,11 +784,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (remote) return;
       closeCards([id]); focusAfter(id);
     },
-    onEndSession: (id: string, whenDone: boolean) => {
+    onEndSession: (id: string, whenDone: boolean, undoable?: boolean) => {
       const c = byId.get(id);
       if (c?.kind !== 'chat' || remote) return;
       props.onEndChild(c.ref, whenDone);
       if (!whenDone) focusAfter(id);
+      // An idle job closed by its red light: "Closed <name> · Undo" for the 15 s the server allows.
+      if (undoable && props.onUndoEnd) setUndoEnd({ child: c.ref, name: titleOf(c), at: Date.now() });
     },
     onKeepRunning: (id: string) => {
       const c = byId.get(id);
@@ -759,7 +846,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }
   /** Whether a size can be drawn for this card now: the plan the window draws (its options), asked with that size. */
   const canFit = (id: string, next: ContainerSize, pin?: boolean) => fitsNow(items, view, size, id, next,
-    { terminals: props.terminals.length, agendaPill, asking: ownerAsk, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }, growAt(id, pin));
+    { terminals: props.terminals.length, agendaPill, asking: chatAsks, queueUp, queueHeight, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }, growAt(id, pin));
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 
@@ -770,6 +857,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const backTo = useRef<{ id: string; at: number } | null>(null);
   // When the owner last stepped the queue: only his step scrolls the chat (AC3, D4).
   const queueGestureAt = useRef(0);
+  // The tab drop below names what to mention through the same door as Mention.
+  const askAboutRef = useRef<(id: string) => void>(() => {});
+  askAboutRef.current = actions.onAskAbout;
   const exitPresentation = () => {
     backTo.current = shownGroup ? { id: shownGroup, at: Date.now() } : null;
     // Closing a queued presentation opens the next (the server's rule): the chat follows it (AC3).
@@ -801,6 +891,41 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return c ? titleOf(c) : '';
   };
   // The frame's tabs (owner 2026-11-15, option C): the shown presentation, then the queue after it.
+  // The window's tabs (W3 D14): every presentation in the queue, the one on screen in front; a
+  // tab never shown yet carries the dot. Nothing queued: the one shown is the only tab.
+  const mentionOf = (cards: readonly string[]) => presentedGroup(cards, state.groups, state.containers)?.id ?? cards[0] ?? '';
+  const windowTabs: WindowTab[] = qc.showing && pq && pqHead
+    ? pq.items.map((it, i) => ({ key: it.id, name: itemName(it.cards), count: it.cards.length, front: i === 0, unseen: i > 0 && !it.shown, mention: mentionOf(it.cards) }))
+    : [{ key: 'shown', name: itemName(presented), count: presented.length, front: true, unseen: false, mention: mentionOf(presented) }];
+  const showTab = (key: string) => { if (key !== 'shown') onLayout({ tabs: { op: 'show', items: [key] } }); };
+  // A tab dragged onto the Super's chat lands as its mention chip (W3 D14): the app's own drag
+  // type only, its id resolved against the record (a file or an outside drag is never one).
+  // Native listeners: the chat inside is portaled, so a React drop handler would not see it.
+  const centreRef = useRef<HTMLDivElement>(null);
+  const [tabDrop, setTabDrop] = useState(false);
+  useEffect(() => {
+    const el = centreRef.current;
+    if (!el || remote) return undefined;
+    const ours = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes(PRESENT_TAB_DRAG);
+    const over = (e: DragEvent) => { if (!ours(e)) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'link'; setTabDrop(true); };
+    const leave = (e: DragEvent) => { if (!el.contains(e.relatedTarget as Node | null)) setTabDrop(false); };
+    const drop = (e: DragEvent) => {
+      setTabDrop(false);
+      if (!ours(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      askAboutRef.current(e.dataTransfer?.getData(PRESENT_TAB_DRAG) ?? '');
+    };
+    el.addEventListener('dragover', over);
+    el.addEventListener('dragleave', leave);
+    el.addEventListener('drop', drop);
+    return () => { el.removeEventListener('dragover', over); el.removeEventListener('dragleave', leave); el.removeEventListener('drop', drop); };
+  }, [remote]);
+  const closeTabs = (keys: string[]) => {
+    if (keys.includes('shown')) { exitPresentation(); return; }
+    // Every tab closed: the stage floats, as closing the presentation does.
+    onLayout({ tabs: { op: 'close', items: keys } });
+  };
   const presentTabs: PresentTab[] = qc.showing && pq && pqHead
     ? pq.items.map((it, i) => ({ key: it.id, name: itemName(it.cards), count: it.cards.length, kind: i === 0 ? 'current' as const : i === 1 ? 'next' as const : 'later' as const }))
     : [{ key: 'shown', name: itemName(presented), count: presented.length, kind: 'current' as const }];
@@ -961,6 +1086,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   dragDeps.current = {
     rootRef, layerRef, planRef, stateRef, byId, groupsById, titleOf, onLayout, actions, liftOnTop, setOpenGroup,
     groupWord: t('super.group.word'), onSize: actions.onSize, canFit, noRoom: t('super.size.noRoomDrag'),
+    onGroupRefused: () => setStageNote(t('super.group.bySuper')),
   };
   /** A card clicked in a panel: side by side; a group in Others: back on the stage. */
   const openFromPanel = (id: string) => {
@@ -989,7 +1115,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const c = byId.get(id);
     if (!c) return null;
     if (c.kind === 'chat') {
-      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.get(c.ref) ?? false} remoteChild={remoteRowOf(c.ref)} />;
+      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.get(c.ref) ?? false} askItem={askItems.get(c.ref) ?? null} remoteChild={remoteRowOf(c.ref)} />;
     }
     const team = teamCardOf(c);
     if (team) return <div className="super-panel-tile"><div className="super-panel-clip"><TeamTile card={team} /></div></div>;
@@ -1002,11 +1128,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
   useLiveSession(superSession, () => { const s = chatStatus(superSession); return `${s.kind}|${s.mood}`; });
   const status = superCentreStatus(superSession, ownerAsk);
 
-  const head = bandHead(state);
+  const head = stageBandHead(state, !!remote);
   // What each child's card says it waits on the owner for: a question it asks, or something only he can do.
   const asking = useMemo(() => {
     const m = new Map<string, AsksOwner>();
     for (const q of state.queue.filter(needsOwner)) if (m.get(q.sessionId) !== 'owner') m.set(q.sessionId, q.kind === 'owner' ? 'owner' : 'ask');
+    return m;
+  }, [state.queue]);
+  // The item each waiting card shows (its words and Show): the first one by queueHead's order.
+  const askItems = useMemo(() => {
+    const m = new Map<string, SuperQueueItem>();
+    const open = state.queue.filter(needsOwner).sort((a, b) => (isPermission(b) ? 1 : 0) - (isPermission(a) ? 1 : 0) || a.createdAt - b.createdAt);
+    for (const q of open) if (!m.has(q.sessionId)) m.set(q.sessionId, q);
     return m;
   }, [state.queue]);
   // The centre's event lines read the children's titles and which batches render full: published
@@ -1070,6 +1203,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     // An AI Team approval: its row on the Super's own approval card.
     const asked = state.queue.find((q) => q.id === item);
     if (asked?.kind === 'approval' && asked.member && showMemberApproval(asked.member, rootRef.current ?? document)) return;
+    if (revealDockedAsk(item, rootRef.current)) return;
     if (showQuestionCard(item, superSession?.container)) return;
     document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
@@ -1077,6 +1211,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // drawn by SuperAgenda inside the card's own chrome. Off the stage (closed, in Others, hidden
   // by a page side by side), the centre's head offers it back.
   const agendaCard = state.containers.find((k) => k.kind === 'agenda');
+  // The pill's "N working": live jobs whose row is working, from the record (live status for a v1 record).
+  const workingCount = Object.entries(state.children).filter(([sid, c]) => !c.endedAt && rowOf(c, jobLook.live(sid)) === 'working').length;
   const agendaOnStage = !!agendaCard && !!plan.cards[agendaCard.id] && plan.cards[agendaCard.id].where !== 'others';
   // The owner's press always shows it (end review r1): closed, in Others or in a group, the
   // server brings it back floating, out of its group (and a page side by side or a presentation,
@@ -1097,7 +1233,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // A child's name in an event line: that child side by side.
   const showChildRef = useRef(actions.onSideBySide);
   showChildRef.current = actions.onSideBySide;
+  // The away screen's "Open the stage" (super-v3 D10): the agenda open, the cards floating
+  // around the chat (a presentation is left the way its own exit leaves it).
+  const openStage = () => onLayout(viewMode === 'present' ? { agenda: 'open', ...exitPatch() } : { agenda: 'open', view: { mode: 'float' } });
+  const openStageRef = useRef(openStage);
+  openStageRef.current = openStage;
   useEffect(() => onOpenJobRow((row) => {
+    if (row === 'stage') { openStageRef.current(); return; }
     if (!row.startsWith('c:')) return;
     const c = stateRef.current.containers.find((k) => k.kind === 'chat' && k.ref === row.slice(2));
     if (c) showChildRef.current(c.id);
@@ -1106,6 +1248,20 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // the super chat is there to write in. A narrow stage's open sheet first folds to its tabs, so
   // the composer the chip lands in is in view.
   const onWriteAbout = props.onWriteAbout;
+  // K13: the agenda's job filter and its Stop. A job drawn only as a Dock tile has no card to ask
+  // with: it comes onto the stage first (beside the chat), then its red light runs.
+  const jobFilter = useJobFilter();
+  // What names the filtered job in this record (its lines, items, cards): the chat keeps an owner
+  // message whose About head names one of them. Only main's own stage sets it (never a member's).
+  useEffect(() => {
+    if (member || remote) return;
+    publishJobTokens(jobTokensOf(state, jobFilter), state.session ?? null);
+  }, [member, remote, state, jobFilter]);
+  const stopJob = (child: string) => {
+    if (requestStopJob(child)) return;
+    showChild(child);
+    requestAnimationFrame(() => requestAnimationFrame(() => { requestStopJob(child); }));
+  };
   const writeAbout = onWriteAbout && superSession && superSession.status !== 'closed'
     ? (row: AgendaRow) => {
       // A narrow stage's open sheet folds to its tabs (window state, so a remote screen may too):
@@ -1175,6 +1331,31 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const id = window.setTimeout(() => setApprovalNote(''), 4000);
     return () => window.clearTimeout(id);
   }, [approvalNote]);
+  // One line on the stage about his last gesture (super-v3 D5: a drop that groups nothing).
+  const [stageNote, setStageNote] = useState('');
+  // The job his red light just closed, while Undo can still bring it back (D2, OWNER_UNDO_MS).
+  const [undoEnd, setUndoEnd] = useState<{ child: string; name: string; at: number } | null>(null);
+  useEffect(() => {
+    if (!undoEnd) return undefined;
+    const id = window.setTimeout(() => setUndoEnd(null), Math.max(0, UNDO_MS - (Date.now() - undoEnd.at)));
+    return () => window.clearTimeout(id);
+  }, [undoEnd]);
+  // The toast says "Closed" only once the job really ended: hidden while the end is on its way,
+  // dropped when the server refused it (the card then says "Not ended").
+  const undoFailed = !!undoEnd && props.endFailed.has(undoEnd.child);
+  useEffect(() => { if (undoFailed) setUndoEnd(null); }, [undoFailed]);
+  const undoShown = !!undoEnd && !undoFailed && !props.endPending.has(undoEnd.child);
+  const undoNow = () => {
+    const u = undoEnd;
+    if (!u || !props.onUndoEnd) return;
+    setUndoEnd(null);
+    void props.onUndoEnd(u.child).then((why) => { if (why) setStageNote(why); });
+  };
+  useEffect(() => {
+    if (!stageNote) return undefined;
+    const id = window.setTimeout(() => setStageNote(''), 4000);
+    return () => window.clearTimeout(id);
+  }, [stageNote]);
   const approvalsTop = !member && (approvals.length > 0 || appCards.length > 0 || approvalNote !== '');
   useEffect(() => {
     slotsChangedRef.current();
@@ -1209,6 +1390,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onUpdateIndex={remote ? undefined : (r) => { setIndexPressed(true); answerInbox.mutate({ id: r.id, action: 'update-index' }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: INDEX_KEY }) }); }}
       approvals={agendaApprovals}
       onShowApproval={showApproval}
+      docked={!!plan.jobDock && plan.jobDock.tiles.some((tile) => tile.kind === 'job')}
+      selected={remote ? null : jobFilter}
+      onSelect={remote ? undefined : setJobFilter}
+      onStop={remote ? undefined : stopJob}
+      onAsk={remote ? undefined : actions.onAskAbout}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
       onPadStatus={props.onPadStatus}
       onPadAdd={props.onPadAdd}
@@ -1231,6 +1417,37 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return { id, title: titleOf(c), kind: c.kind, status: tone === null ? undefined : tone === 'starting' ? 'idle' : tone };
   };
   const othersItems: OthersItem[] = plan.others.map(pillItem);
+  /** A Dock tile as the record and the live sessions say (plan super-v3 D11). */
+  const dockViewOf = (tile: DockTile): DockTileView => {
+    const c = byId.get(tile.id);
+    const g = groupsById.get(tile.id);
+    if (!c) return { title: g?.name ?? tile.id };
+    if (c.kind === 'team') {
+      const card = teamCardOf(c);
+      const tone = card?.approval ? 'asking' as const : card?.status === 'running' ? 'working' as const : card?.status === 'asking' ? 'asking' as const : card?.status === 'failed' ? 'stuck' as const : 'idle' as const;
+      return { title: card?.job.member ?? titleOf(c), face: (card?.job.member ?? titleOf(c)).slice(0, 1).toUpperCase(), tone, ...(card?.approval ? { badge: 1 } : {}), line: card?.lastLine || undefined };
+    }
+    if (c.kind === 'chat') {
+      const st = chatStatus(props.sessionFor(c.ref), remoteRowOf(c.ref)).kind;
+      const tone = toneOfStatus(st);
+      const waits = state.queue.filter((q) => q.sessionId === c.ref && needsOwner(q)).length;
+      const dockTone = tile.kind === 'needs' || tone === 'asking' ? 'asking' as const : tone === 'working' ? 'working' as const : remoteRowOf(c.ref)?.row === 'stuck' || state.children[c.ref]?.row === 'stuck' ? 'stuck' as const : 'idle' as const;
+      return {
+        title: titleOf(c), tone: dockTone, ...(waits ? { badge: waits } : {}),
+        line: dockTone === 'working' ? t('superDock.working') : dockTone === 'stuck' ? t('superDock.stuck') : t('superDock.idle'),
+      };
+    }
+    return { title: titleOf(c) };
+  };
+  /** A tile is a door (D11): a job opens as its session window beside the Super, a minimized card
+   *  comes back to the stage (`super float`), Today and the Pool open the agenda. */
+  const openDockTile = (tile: DockTile) => {
+    if (tile.kind === 'today' || tile.kind === 'pool') { openAgenda(); return; }
+    const c = byId.get(tile.id);
+    if (tile.kind === 'mini' && c?.place === 'others' && !remote) { onLayout({ cards: [{ id: tile.id, place: 'float' }] }); return; }
+    if (groupsById.has(tile.id)) { openFromTile(tile.id); return; }
+    actions.onSideBySide(tile.id);
+  };
   const toggleOthers = () => setOpenGroup((o) => (o === 'others' ? null : 'others'));
   // The live jobs with no room on the stage: beside a page or a presentation, or beside Others.
   const moreItems: OthersItem[] = (plan.more?.ids ?? []).filter((id) => byId.has(id)).map(pillItem);
@@ -1254,7 +1471,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {plan.mode === 'float' && !plan.narrow && plan.orbit.length > 0 && <OrbitPath plan={plan} />}
       <StageMotion plan={plan} dragId={drag?.id ?? null} animate={props.visible && motion === 'idle'} rootRef={rootRef} layerRef={layerRef} underRef={underRef}>
         <div
+          ref={centreRef}
           className={`super-centre${pending.has('centre') ? ' super-centre--pending' : ''}`}
+          data-tab-drop={tabDrop ? 'true' : undefined}
+          data-drop-label={tabDrop ? t('super.win.drop') : undefined}
           data-stage-key="centre"
           data-status={status.kind === 'asking' ? 'asking' : status.kind === 'working' ? 'working' : 'idle'}
           data-ask-target={hot === 'centre' ? 'true' : undefined}
@@ -1276,6 +1496,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
                   )}
                 </>
               )}
+              status={!member && !remote ? (
+                <>
+                  <SuperStatusPill working={workingCount} needs={ownerQueueCount(state)}
+                    onWorking={() => setStageViewMode('list')}
+                    onNeeds={() => { if (!agendaOnStage) openAgenda(); revealAgendaWaiting(queueHead(state)?.id ?? null); }} />
+                  <StageListSwitch value={listMode} onChange={setStageViewMode} />
+                </>
+              ) : undefined}
               pending={freshPending(state)}
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
@@ -1329,12 +1557,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
           const placed = ghost ? ghost.plan : plan.cards[c.id];
           // Off the stage (Others, a group): a page card that keeps its page is parked, hidden,
           // under the SAME key, so its frame is never rebuilt (owner 2026-10-22).
-          const off = !placed || placed.where === 'others' || placed.where === 'tab';
+          const off = !placed || placed.where === 'others' || placed.where === 'tab' || placed.where === 'dock';
           const parkedAt = !ghost && off && liveWeb.has(c.id)
             ? lastRectRef.current.get(c.id) : undefined;
           const parked = !!parkedAt;
           const cp = parked ? { ...parkedAt!, where: 'float' as const, z: -1, owner: false } : placed;
-          if (!cp || (!parked && (cp.where === 'others' || cp.where === 'tab'))) return null;
+          if (!cp || (!parked && (cp.where === 'others' || cp.where === 'tab' || cp.where === 'dock'))) return null;
           const cue = ghost ? { kind: 'close' as const } : stageCues.cueFor(c.id);
           const rect = cp.rect;
           return (
@@ -1362,6 +1590,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               browserLive={liveBrowser.has(c.id)}
               viewReady={viewsReady}
               asksOwner={c.kind === 'chat' ? asking.get(c.ref) ?? false : false}
+              askItem={c.kind === 'chat' ? askItems.get(c.ref) ?? null : null}
               shownSlot={shownCard?.id === c.id}
               childTranscript={c.kind === 'chat' ? props.childTranscript : undefined}
               teamConversation={c.kind === 'team' ? props.teamConversation : undefined}
@@ -1387,7 +1616,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         })}
         {state.groups.map((g) => {
           const cp = plan.cards[g.id];
-          if (!cp || cp.where === 'others') return null;
+          if (!cp || cp.where === 'others' || cp.where === 'dock') return null;
           const members = membersOf(g);
           return (
             <SuperGroupCard
@@ -1422,7 +1651,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       {!props.queueElsewhere && <JobBar
         state={state}
         head={head}
-        waiting={bandCount(state)}
+        waiting={stageBandCount(state, !!remote)}
         vault={props.vault}
         rect={plan.queue}
         look={jobLook}
@@ -1444,7 +1673,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
         <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout}
           onExit={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation} leaveQueue={queueBand === 'step' && !shownGroup} toGroup={!!shownGroup} closable={remote ? 0 : shownGroup ? closableIn([shownGroup]).length : 0} onCloseGroup={() => { if (shownGroup) closeGroups([shownGroup]); }} onAsk={shownGroup ? () => actions.onAskAbout(shownGroup) : undefined} />
       )}
-      {plan.presentTabs && plan.layout && (
+      {plan.presentWindow && plan.layout && (
+        <PresentWindow win={plan.presentWindow} tabs={windowTabs} onShow={showTab} onClose={closeTabs}
+          endRoom={plan.controlsInTitle && plan.controls ? plan.presentWindow.x + plan.presentWindow.width - plan.controls.x : 0}
+          onMinimize={queueBand === 'step' && !shownGroup ? () => queueStep('leave') : exitPresentation}
+          onMention={(id) => { if (!remote) actions.onAskAbout(id); }} />
+      )}
+      {plan.askDock && dockedAskItem && superSession && <ReportAskDock key={dockedAskItem.id} rect={plan.askDock} item={dockedAskItem} from={dockedAskFrom} session={superSession} />}
+      {plan.presentTabs && plan.layout && !plan.presentWindow && (
         <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
       )}
       {plan.queueBand && pq && (
@@ -1479,8 +1715,23 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
-      {agendaPill && !plan.agendaInHead && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
-      {!plan.othersInHead && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
+      {agendaPill && plan.pill && !plan.agendaInHead && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
+      {!plan.othersInHead && !listAgenda && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
+      {plan.jobDock && (
+        <StageDock dock={plan.jobDock} viewOf={dockViewOf} onOpen={openDockTile} pool={poolCount} cap={plan.jobDock.cap}
+          todayLine={(() => {
+            const waiting = ownerQueueCount(state);
+            const docked = plan.jobDock.tiles.filter((x) => x.kind === 'job').length;
+            return waiting > 0 ? t('superDock.todayNeeds').replace('{n}', String(waiting)) : t('superDock.todayRunning').replace('{n}', String(docked));
+          })()} />
+      )}
+      {stageNote && !undoShown && <p role="status" className="super-stage-note" data-testid="super-stage-note">{stageNote}</p>}
+      {undoEnd && undoShown && (
+        <p role="status" className="super-stage-note super-stage-note--undo" data-testid="super-undo-end">
+          {t('super.close.closed').replace('{name}', undoEnd.name)}
+          <button type="button" className="super-stage-note-btn" data-testid="super-undo-end-btn" onClick={undoNow}>{t('super.close.undo')}</button>
+        </p>
+      )}
       {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
         // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).

@@ -41,6 +41,8 @@ import { readSuperState, superIdOfMember, updateSuperState } from '../../lib/sup
 import { answerChildQuestion, answerOwnerItem, memberMirrorTarget, superAnswerText, shownKeyOf } from '../../lib/super/answer.js';
 import { answerMemberPick, pickLine, sizeLine } from './member-picks.js';
 import { memberTitle, itemCall } from '../../lib/super/inbox.js';
+import { memberLeadHtml, routineIsApproval } from './member-lines.js';
+import { sendAutomationCard } from './automation-approvals.js';
 import { askSpecFromLegacy, OWNER_CARD_TELEGRAM_LINE, OWNER_CARD_TELEGRAM_RUN_MAC_LINE, type GrantOffer, type GrantSize, type RefusalFact, type SuperAskSpec, type SuperQueueItem } from '../../lib/super/types.js';
 import {
   buildQuestionPicks, OWNER_CARD_NOT_NEEDED_DONE, OWNER_CARD_NOT_NEEDED_LABEL, OWNER_CARD_REMIND_DONE, OWNER_CARD_REMIND_LABEL, OWNER_CARD_RUN_LABEL,
@@ -420,11 +422,29 @@ async function sendItem(hub: TelegramHub, ab: ActiveBinding, superSession: strin
   }
   // A routine stopped on him (K7): its own title and line; approval and review need the change in view.
   if (item.kind === 'routine') {
-    remember(item.id, { ab, messages: await plain(hub, ab, [escapeHtml(`⏰ ${redactSecrets(item.ownerText ?? 'Bir rutin seni bekliyor')}\nMac'te, Agents sayfasında karar verirsin.`)]) });
+    const who = item.member && ab.contextRoot ? memberTitle(ab.contextRoot, item.member) : item.member ?? null;
+    // A member's routine to approve (super-v3 K10): the bold lead line, then the automation's own
+    // card WHOLE (script, schedule, access), Onayla only where that card offers it; the tap
+    // re-checks the manifest hash it was built from (automation-approvals.ts).
+    if (routineIsApproval(item.fact) && item.routine) {
+      const lead = memberLeadHtml(who, who ? 'bir rutin istiyor' : 'Bir rutin onayını bekliyor');
+      const messages = await plain(hub, ab, [`✋ ${lead}`]);
+      remember(item.id, { ab, messages });
+      await sendAutomationCard(hub, ab, item.routine, superSession).catch(() => false);
+      return { ok: true };
+    }
+    const lead = memberLeadHtml(who, item.ownerText ?? 'Bir rutin seni bekliyor');
+    remember(item.id, { ab, messages: await plain(hub, ab, [`⏰ ${lead}\n${escapeHtml("Mac'te, Agents sayfasında karar verirsin.")}`]) });
     return { ok: true };
   }
-  // Approvals (G1) and jobs that need him: shown, answered on the Mac in W2.
-  const line = item.kind === 'approval' ? `✋ Onay bekliyor: ${item.member ?? 'ekip üyesi'}` : `✋ ${item.ownerText ?? 'Bir iş seni bekliyor'}`;
+  // A member's identity or run-power approval: its hashed facts are not drawn here, so the Mac's
+  // witnessed card approves it (super-v3 Ü6). Jobs that need him: shown, answered on the Mac.
+  if (item.kind === 'approval') {
+    const who = item.member && ab.contextRoot ? memberTitle(ab.contextRoot, item.member) : item.member ?? null;
+    remember(item.id, { ab, messages: await plain(hub, ab, [`✋ ${memberLeadHtml(who || 'Bir ekip üyesi', 'onayını bekliyor')}\n${escapeHtml("Mac'te onaylarsın.")}`]) });
+    return { ok: true };
+  }
+  const line = `✋ ${item.ownerText ?? 'Bir iş seni bekliyor'}`;
   remember(item.id, { ab, messages: await plain(hub, ab, [escapeHtml(`${redactSecrets(line)}\n${LINES.waitingOnMac}`)]) });
   return { ok: true };
 }
@@ -487,8 +507,8 @@ async function sendMemberItem(hub: TelegramHub, ab: ActiveBinding, superSession:
     remember(item.id, { ab, messages: (await plain(hub, ab, htmls)).map((m, i) => ({ ...m, question: questions[i]?.question })) }, item);
     return { ok: true };
   }
-  const line = `✋ ${who || 'Bir ekip üyesi'} seni bekliyor${item.ownerText ? `: ${item.ownerText}` : ''}`;
-  remember(item.id, { ab, messages: await plain(hub, ab, [escapeHtml(`${redactSecrets(line)}\n${LINES.waitingOnMac}`)]) }, item);
+  const waitLead = memberLeadHtml(who || 'Bir ekip üyesi', `seni bekliyor${item.ownerText ? `: ${item.ownerText}` : ''}`);
+  remember(item.id, { ab, messages: await plain(hub, ab, [`✋ ${waitLead}\n${escapeHtml(LINES.waitingOnMac)}`]) }, item);
   return { ok: true };
 }
 

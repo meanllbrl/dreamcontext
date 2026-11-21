@@ -17,6 +17,8 @@ export function needsOwnerItem(item: SuperQueueItem): boolean {
   // A Bypass child's permission is its Super's to decide first.
   if (item.kind === 'permission' && item.toSuper === true) return false;
   return item.kind === 'permission' || item.kind === 'owner' || item.kind === 'member' || item.kind === 'routine'
+    // A member's approval (identity or run power, super-v3 K6): his from birth, on the member's card.
+    || (item.kind === 'approval' && !!item.member)
     || item.own === true || item.state === 'escalated'
     || (item.kind === 'question' && item.direct === true && !item.team);
 }

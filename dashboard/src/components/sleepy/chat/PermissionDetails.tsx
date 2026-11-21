@@ -11,15 +11,17 @@ import type { parseEditDiff } from './chatEntities';
  * phone's card, so both read the same. `extra` rides at the foot of the open panel (the chat's
  * "Run here", which belongs next to the command it would run).
  */
-export function PermissionDetails({ command, diff, input, extra }: {
+export function PermissionDetails({ command, diff, input, extra, startOpen = false }: {
   command: string | null;
+  /** Drawn open (the Super chat's Mac permission card, super-v3 D8: the command in its mono box). */
+  startOpen?: boolean;
   diff?: ReturnType<typeof parseEditDiff> | null;
   /** The raw input, drawn only when it is neither a command nor an edit. */
   input?: unknown;
   extra?: ReactNode;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(startOpen);
   const panelId = useId();
   const raw = !command && !diff && input !== undefined ? rawText(input) : '';
   if (!command && !diff && !raw) return null;

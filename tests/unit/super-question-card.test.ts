@@ -324,8 +324,9 @@ describe('the answer: ONE message, in AskUserQuestion\'s answer words', () => {
 describe('ONE question component: the chat\'s own card, no look-alike', () => {
   const card = src('dashboard/src/components/sleepy/super/SuperQuestionCard.tsx');
   it('the super chat mounts SurveyCard (its own ask: an adapter to the super; a child\'s: the child\'s session)', () => {
-    expect(card).toMatch(/<SurveyCard key=\{own\.requestId\} item=\{pending\} session=\{child\} \/>/);
-    expect(card).toMatch(/<SurveyCard key=\{`\$\{item\.id\}:\$\{attempt\}`\} item=\{pending\} session=\{host\} reads=\{reads\} \/>/);
+    // Both keep his picks across a remount (surveyDrafts): the child's under its own chat's key.
+    expect(card).toMatch(/<SurveyCard key=\{own\.requestId\} item=\{pending\} session=\{child\} draftKey=\{surveyDraftKey\(child\.claudeId, own\.requestId\)\} \/>/);
+    expect(card).toMatch(/<SurveyCard key=\{`\$\{item\.id\}:\$\{attempt\}`\} item=\{pending\} session=\{host\} reads=\{reads\} draftKey=\{superAskDraftKey\(item\)\} \/>/);
     // No option buttons, pills or receipts of its own, and no class of its own. The member card
     // below it is another card (uye-bildirim K11: a member's item is answered in place there).
     const question = card.slice(0, card.indexOf('function MemberWaitCard'));

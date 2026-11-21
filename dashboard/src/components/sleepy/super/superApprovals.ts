@@ -75,6 +75,15 @@ export function agendaApprovals(
   return approvals.filter((a) => !asked.has(a.slug));
 }
 
+/** A member card's Approve (super-v3 Ü4): the approval band OPENS that member's row (its fresh,
+ *  witnessed review; its own Approve sends the shown hash). Nothing approves from the card. */
+export const OPEN_APPROVAL_EVENT = 'super:open-approval';
+export function openMemberApproval(member: string): void {
+  if (typeof window === 'undefined' || !member) return;
+  window.dispatchEvent(new CustomEvent(OPEN_APPROVAL_EVENT, { detail: { member } }));
+  window.setTimeout(() => { showMemberApproval(member); }, 0);
+}
+
 /** Bring the card row for a member's approval into view: its own row, else its same-slug job's. */
 export function showMemberApproval(member: string, root?: ParentNode): boolean {
   return showApprovalRow(`agent:${member}`, root) || showApprovalRow(`routine:${member}`, root);

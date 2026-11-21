@@ -28,6 +28,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
+import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, superEntry } from '../../src/lib/super/store.js';
@@ -263,9 +264,14 @@ describe('super resume', () => {
 });
 
 describe('the owner ends a child from its card (POST /api/super/end)', () => {
-  async function ownerEnd(child: string) {
+  // The app's own page with the shell's key (super-v3 K4a, D16): the only door that ends a job.
+  const KEY = 'a1'.repeat(32);
+  async function ownerEnd(child: string, key: string | null = KEY) {
     const r = res();
-    await handleSuperEnd(req({ child }, { origin: 'http://127.0.0.1:4173' }), r, {}, root);
+    setOwnerKey(KEY);
+    try {
+      await handleSuperEnd(req({ child }, { origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin', ...(key ? { [OWNER_KEY_HEADER]: key } : {}) }), r, {}, root);
+    } finally { setOwnerKey(null); }
     return r;
   }
 
@@ -283,6 +289,8 @@ describe('the owner ends a child from its card (POST /api/super/end)', () => {
     makeVault();
     expect((await ownerEnd('nope')).status).toBe(404);
     expect((await ownerEnd(SUPER)).status).toBe(404);
+    // Without the shell's key (a plain browser on this Mac): refused, the job keeps running.
+    expect((await ownerEnd('c1', null)).status).toBe(403);
     delete process.env.DREAMCONTEXT_DESKTOP;
     expect((await ownerEnd('c1')).status).toBe(403);
   });

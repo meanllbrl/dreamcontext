@@ -99,17 +99,16 @@ describe('side by side and present: live jobs stay beside the page', () => {
     });
   }
 
-  it('present on a smaller stage: the centre and the presented cards keep PRESENT_MIN, the rail gives way', () => {
+  it('present on a smaller stage: the chat keeps its floor, the window holds the cards at their floor, the rail gives way', () => {
     const view: SuperView = { mode: 'present', cards: ['image-a', 'image-b', 'image-c', 'image-d'], layout: 'grid' };
     const live = Array.from({ length: 5 }, (_, i) => chat(`l${i}`));
     const record = [...live, pic('a'), pic('b'), pic('c'), pic('d')];
     for (const width of [1040, 1100, 1240]) {
       const p = planStage(stageItems(record, [], view, liveOf(live.map((c) => c.ref))), view, { width, height: 700 });
-      expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.PRESENT_MIN);
+      // K14: the chat never under 520; the window (grid of 4 in two columns) holds each card at FIT_MIN.
+      expect(p.centre.width).toBeGreaterThanOrEqual(520);
       const shown = view.cards!.map((id) => p.cards[id].rect);
-      const region = Math.max(...shown.map((r) => r.x + r.width)) - Math.min(...shown.map((r) => r.x));
-      expect(region).toBeGreaterThanOrEqual(STAGE.PRESENT_MIN - 1);
-      for (const r of shown) expect(r.width).toBeGreaterThanOrEqual((STAGE.PRESENT_MIN - STAGE.GAP) / 2 - 1);
+      for (const r of shown) expect(r.width).toBeGreaterThanOrEqual(STAGE.FIT_MIN.w - 1);
       // Whatever the rail cannot hold leads Others.
       const railed = live.filter((c) => where(p, c.id) === 'float').length;
       expect(p.others.slice(0, live.length - railed).every((id) => id.startsWith('chat-l'))).toBe(true);

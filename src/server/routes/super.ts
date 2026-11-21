@@ -21,8 +21,8 @@ import {
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
-  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
+  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, ownerQueueTabs, type QueueTabOp, withdrawPresent,
+  type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperEndedLine, OWNER_UNDO_MS, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
@@ -70,6 +70,7 @@ import { readUsageLimits, type UsageLimitsResponse } from '../../lib/claude-usag
 import { resolveConfigDir } from '../../lib/claude-accounts.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
+import { allowEntry, appendAllow } from '../../lib/super/allow-log.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
@@ -1392,6 +1393,13 @@ async function markOwnersJob(c: SuperCaller, child: string, b: Record<string, un
     .catch((err) => console.warn(`[super] could not mark ${child} as the owner's job: ${(err as Error).message}`));
 }
 
+/** The Super spoke to `child` now (super-v3 K3): the window's focus job. Best effort: a stamp
+ *  that could not be written never refuses the verb it rides on. */
+async function stampSpoke(c: SuperCaller, child: string, at = Date.now()): Promise<void> {
+  await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) x.spokeAt = at; })
+    .catch((err) => console.warn(`[super] could not stamp ${child} as spoken to: ${(err as Error).message}`));
+}
+
 /** `super resume` for `child`, as the verb itself answers it: the refusal, or how it came back
  *  (with its card outcome, so a card that could not open is not lost on the way). */
 /** THE wake core (`super resume`'s own handler: its window `resume` command, its transcript check
@@ -1657,7 +1665,7 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
   touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
   // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
   // time, so a mockup overwritten at the same path gets its new shape.
-  const aspects = kind === 'image' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
+  const aspects = kind === 'image' || kind === 'pdf' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
   // The child `--for` named left the record meanwhile (an ended one past the history cap):
   // refused, never opened unlinked as if for its job.
   let childGone = false;
@@ -2264,7 +2272,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     let presented: { shown: boolean; at: number; of: number } = { shown: true, at: 1, of: 1 };
     // The presented pictures' shapes, read before the write (image-aspect.ts).
     const aspects = await imageAspects(dirname(c.who.contextRoot),
-      c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
+      c.state.containers.filter((k) => (k.kind === 'image' || k.kind === 'pdf') && ids.includes(k.id)).map((k) => k.ref));
     const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, aspects);
       // A group presented whole comes out of Others: leaving the presentation finds it on the stage.
@@ -2413,6 +2421,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (!ch) return;
       const was = ch.brief;
       ch.brief = line;
+      ch.spokeAt = Date.now();
       if (task) ch.task = task;
       // A card titled from the old brief follows the new one (as a resume would re-title it): an
       // old brief never lingers as a title, where the remote stage could no longer tell it apart.
@@ -2440,6 +2449,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const child = childArg(c, b, res);
     if (!child) return;
     const root = c.who.contextRoot;
+    await stampSpoke(c, child);
     const raw = typeof b.bytes === 'number' && Number.isFinite(b.bytes) && b.bytes > 0;
     const want = raw ? Math.min(b.bytes as number, MAX_READ_BYTES) : DEFAULT_READ_BYTES;
     const path = liveTranscriptPath(root, child);
@@ -2503,6 +2513,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const q of s.queue) if (q.sessionId === child && q.requestId === requestId && q.kind === 'question') q.state = 'done';
+      const x = s.children[child];
+      if (x) x.spokeAt = Date.now();
     });
     ok(res, { child, requestId, answered: true, ...(byServer ? { via: 'server' } : {}) });
   },
@@ -2549,8 +2561,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const byServer = serverDelivers(r, () => answerByServer(child, requestId, (req) => permissionResponse(req, behavior, message)));
     if (!r.ok && !byServer) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
     // The caller's own record (a member's Super closes its own child's item, never main's).
+    const allowedAt = Date.now();
     await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const q of s.queue) if (q.kind === 'permission' && q.sessionId === child && q.requestId === requestId) q.state = 'done';
+      const x = s.children[child];
+      if (!x) return;
+      x.spokeAt = allowedAt;
+      // K5: what it allowed, for the window's "Claude allowed N commands" line (never a deny).
+      if (!deny) appendAllow(x, allowEntry(pq.toolName, pq.fullText ?? pq.text, x.worktree, allowedAt));
     });
     void pumpSuper(superKey(c.who.contextRoot, callerSuper(c)));
     ok(res, { child, requestId, answered: behavior, ...(byServer ? { via: 'server' } : {}) });
@@ -2615,7 +2633,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // The job moved on: the pictures shown for it before now go to Others (tidy.ts).
     const sentAt = Date.now();
     // The message already went in: a stamp that could not be written must not refuse (and resend) it.
-    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) x.sentAt = sentAt; })
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const x = s.children[child]; if (x) { x.sentAt = sentAt; x.spokeAt = sentAt; } })
       .catch((err) => console.warn(`[super] could not stamp ${child}'s send: ${(err as Error).message}`));
     await markOwnersJob(c, child, b);
     ok(res, { child, delivered: typeof how === 'string' ? how : true, ...(byServer ? { via: 'server' } : {}), ...(woke ? { woke: true } : {}), ...(notOpened ?? {}), ...(how === 'queued' ? { waits: SEND_QUEUED_WAITS } : {}) });
@@ -3900,10 +3918,30 @@ export async function retireChildren(contextRoot: string, sids: readonly string[
   return ended;
 }
 
+/** The agenda lines linked to `child`, as they stand (K4c: what the owner's Undo puts back). */
+function linesOf(s: SuperState, child: string): SuperEndedLine[] {
+  return (s.pad ?? []).filter((p) => p.for === child).map((p) => ({
+    id: p.id, section: p.section, ...(p.stage ? { stage: p.stage } : {}), ...(p.by ? { by: p.by } : {}), ...(p.why ? { why: p.why } : {}),
+  }));
+}
+
+/** Put kept lines back exactly (section, stage, by, why); a line closed into its day since stays there. */
+function restoreLines(s: SuperState, lines: readonly SuperEndedLine[]): void {
+  for (const l of lines) {
+    const p = (s.pad ?? []).find((x) => x.id === l.id);
+    if (!p) continue;
+    p.section = l.section;
+    if (l.stage) p.stage = l.stage; else delete p.stage;
+    if (l.by) p.by = l.by; else delete p.by;
+    if (l.why) p.why = l.why; else delete p.why;
+    p.at = Date.now();
+  }
+}
+
 /** Record a child ended (the agent's `super end`, the owner's card close and the retire clock
  *  share it): its card goes, its open queue items close, a done `ended` item records who, when
  *  and its last brief. `guard` (the retire clock): written only while it still holds. */
-async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperState) => boolean): Promise<boolean> {
+async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperState) => boolean, onEnd?: (s: SuperState, x: SuperChild) => void): Promise<boolean> {
   const now = Date.now();
   let done = false;
   /** The card items the end closes (sahip-karti-yerinde K2): their held results go to the Super. */
@@ -3912,7 +3950,10 @@ async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperSt
     const x = s.children[sid];
     if (!x || (guard && !guard(s))) return;
     done = true;
+    // Before anything of the end moves its lines (the owner's door keeps them for his Undo).
+    onEnd?.(s, x);
     x.endedAt = now;
+    delete x.allows;
     // Its job-list row rests in done (Bitti), never stuck or gone.
     setRow(x, 'done', undefined, now);
     const cards = s.containers.filter((k) => k.kind === 'chat' && k.ref === sid).map((k) => k.id);
@@ -4083,15 +4124,11 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   const touch = Array.isArray(body.touch) ? (body.touch as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS + 1) : [];
   const view = body.view;
   const ownerView = readOwnerViewFields(body);
-  // Groups (2026-10-20): `leave` takes cards out of their group, `group` puts cards in one (a
-  // new id makes it, standing where its first card stands), `ungroup` dissolves. A `cards`
-  // entry may name a group: a drop, Others or back, the same as a card.
+  // Groups (2026-10-20): `leave` takes cards out of their group, `ungroup` dissolves. Only the
+  // Super makes a group (super-v3 D5, K9): an owner `group` is refused at every door before any
+  // write, and never applied here. A `cards` entry may name a group: a drop, Others or back.
   const leave = Array.isArray(body.leave) ? (body.leave as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
   const ungroup = Array.isArray(body.ungroup) ? (body.ungroup as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS) : [];
-  const g = body.group && typeof body.group === 'object' && !Array.isArray(body.group) ? body.group as Record<string, unknown> : null;
-  const groupOp = g && typeof g.id === 'string' && Array.isArray(g.cards)
-    ? { id: g.id, cards: (g.cards as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, MAX_CONTAINERS), name: typeof g.name === 'string' ? g.name : undefined }
-    : null;
   // Cards that leave what the view shows: to Others (a group's cards with it), closed,
   // grouped or resized (owner 2026-10-22: a presented card moved to Others stayed presented).
   const unshown = new Set<string>();
@@ -4101,7 +4138,7 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   // he only ends is not a look (the super's own side by side is not his).
   const cardIds = (cards as unknown[]).map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>).id : undefined)).filter((x): x is string => typeof x === 'string');
   const leftFrom = s.groups.filter((g) => g.cards.some((id) => leave.includes(id))).map((g) => g.id);
-  keepOwnerLooked(s, [...touch, ...cardIds, ...(groupOp ? [groupOp.id, ...groupOp.cards] : []), ...leave, ...leftFrom, ...ungroup, ...viewShows(view).slice(0, MAX_CONTAINERS)]);
+  keepOwnerLooked(s, [...touch, ...cardIds, ...leave, ...leftFrom, ...ungroup, ...viewShows(view).slice(0, MAX_CONTAINERS)]);
   // A live job's card the OWNER puts away (Others, a group) stays there until that run is
   // done; one he brings back is the stage's again (live.ts).
   const now = Date.now();
@@ -4146,7 +4183,6 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
     // The card the owner moved last is drawn on top: it goes to the end of the list.
     if (p.order === 'last' && 'kind' in k) s.containers = [...s.containers.filter((x) => x !== k), k];
   }
-  if (groupOp) { applyGroupOp(s, groupOp); hold(groupOp.cards, true); for (const id of groupOp.cards) unshown.add(id); }
   // The one card the owner may (re)open here: the super's agenda (owner 2026-10-22), from
   // the centre's head after he closed it, put it in Others or grouped it: out of its group,
   // floating (his ask; MAX_FLOAT binds only what an agent opens).
@@ -4200,7 +4236,20 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   if (ownerView.presentLayout) notePresentLayout(s);
   // His queue gesture, on the item his window showed (D2, AC2, AC5).
   if (step) ownerQueueStep(s, step.op, step.item, askStillOpen(s));
+  // His tab gesture in the presentation window (W3 D14).
+  const tabs = readQueueTabs(body);
+  if (tabs) ownerQueueTabs(s, tabs.op, tabs.items);
   return s;
+}
+
+/** The owner's tab gesture in a layout body: `{ tabs: { op: show|close, items: [pq…] } }` (W3 D14). */
+export function readQueueTabs(body: Record<string, unknown>): { op: QueueTabOp; items: string[] } | null {
+  const v = body.tabs;
+  const r = v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+  if (!r || (r.op !== 'show' && r.op !== 'close') || !Array.isArray(r.items)) return null;
+  const items = [...new Set(r.items.filter((x): x is string => typeof x === 'string' && PRESENT_ITEM_ID_RE.test(x)))].slice(0, 50);
+  if (!items.length || items.length !== r.items.length) return null;
+  return { op: r.op, items };
 }
 
 /** The owner's queue gesture in a layout body: `{ op: next|leave|resume, item: pq… }`. */
@@ -4274,8 +4323,14 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'pad-add' | 'pad-remove' | 'open' | 'member' | 'owed';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'resume' | 'fresh' | 'seen' | 'pad' | 'pad-add' | 'pad-remove' | 'open' | 'member' | 'owed';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>, superId: SuperId) => Promise<void>;
+
+/** An owner `group` patch, on the window's door and the phone's (super-v3 K9). */
+export const OWNER_GROUP_REFUSAL = { status: 409, error: 'group_by_super', message: 'Claude makes groups: ask in the chat to group these.' } as const;
+export function refuseOwnerGroup(res: ServerResponse): void {
+  sendError(res, OWNER_GROUP_REFUSAL.status, OWNER_GROUP_REFUSAL.error, OWNER_GROUP_REFUSAL.message);
+}
 
 /** The kinds the owner names himself; a file comes as `{ path }`, a chat or a job is the agent's. */
 const OWNER_OPEN_KINDS: readonly string[] = ['web', 'knowledge', 'task', 'insight', 'whiteboard'] satisfies ContainerKind[];
@@ -4359,6 +4414,8 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     // that changes it — the view. It never replaces the list, so an agent `open`, `close`,
     // `half` or a delegated child's card landing between the window's last push and this POST
     // survives it. Unknown ids are ignored; the owner never creates a card here.
+    // Only the Super makes groups (super-v3 D5, K9): refused before anything is written.
+    if (body.group !== undefined) { refuseOwnerGroup(res); return; }
     const cards = body.cards === undefined ? [] : body.cards;
     const closed = body.closed === undefined ? [] : body.closed;
     if (!Array.isArray(cards) || !Array.isArray(closed) || cards.length > MAX_CONTAINERS || closed.length > MAX_CONTAINERS) {
@@ -4386,18 +4443,69 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     await noteOwnerActivity(superKey(contextRoot, superId));
     sendJson(res, 200, { ok: true });
   },
-  end: async (_req, res, contextRoot, body, superId) => {
-    // The owner closed a child's card with "end the session": his window already closed the tab
-    // (his own click, so an adopted chat or a running one is his to end); this records it the
-    // way `super end` does, so the card goes and no relaunch brings the tab back.
+  end: async (req, res, contextRoot, body, superId) => {
+    // The owner ended a child (its red light, "Stop job", or a card's "end the session"; his own
+    // click, so an adopted chat or a running one is his to end). Only from the app's own page with
+    // the shell's key (super-v3 K4a, D16): the window asks FIRST and closes the tab only on
+    // success, so a refused request leaves the job running. Recorded the way `super end` does, so
+    // the card goes and no relaunch brings the tab back; the agenda lines linked to it are kept
+    // as they stood, for his Undo (K4c).
+    if (!fromOwnerPage(req)) { sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can stop a job.') }); return; }
     const child = typeof body.child === 'string' ? body.child : '';
     const current = await readSuperState(contextRoot, superId, superSanitizeOpts());
     if (!SESSION_ID_RE.test(child) || !hasChild(current, child) || child === current.session) {
       sendError(res, 404, 'unknown_child', 'not a child of this project\'s Super Agent');
       return;
     }
-    await recordEnded(superKey(contextRoot, superId), child);
+    await recordEnded(superKey(contextRoot, superId), child, undefined, (s, x) => { x.endedLines = linesOf(s, child); });
     sendJson(res, 200, { state: superStateView(contextRoot, await readSuperState(contextRoot, superId, superSanitizeOpts())) });
+  },
+  resume: async (req, res, contextRoot, body, superId) => {
+    // His Undo on "Closed <name>" (super-v3 K4b): relaunch a child HE ended in the last
+    // OWNER_UNDO_MS. Only from the app's own page with the shell's key; run server-side with
+    // `super resume`'s own core and the live Super's token (as `wakeChildForOwnerCard`), so the
+    // cap, the phone hold, the live-chat case and the transcript check all apply. The window
+    // never resumes on its own. The agenda lines the end kept go back exactly as they stood.
+    if (!fromOwnerPage(req)) { sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can bring a job back.') }); return; }
+    const child = typeof body.child === 'string' ? body.child : '';
+    if (!SESSION_ID_RE.test(child)) { sendError(res, 400, 'invalid_body', 'give { child: <session id> }'); return; }
+    // Decided inside the locked write (the record checked is the one current now); writes nothing.
+    let verdict: 'ok' | 'unknown_child' | 'too_late' | 'not_handed_over' = 'unknown_child';
+    // Taken now: once the resume clears `endedAt`, the record no longer holds them (store.ts).
+    let kept: SuperEndedLine[] = [];
+    const now = Date.now();
+    const state = await writeSuper(contextRoot, superId, (s) => {
+      const x = s.children[child];
+      if (!x || child === s.session) { verdict = 'unknown_child'; return; }
+      if (!s.enabled || !s.session) { verdict = 'not_handed_over'; return; }
+      verdict = x.endedAt !== undefined && now - x.endedAt >= 0 && now - x.endedAt <= OWNER_UNDO_MS ? 'ok' : 'too_late';
+      kept = x.endedLines ?? [];
+    });
+    if (verdict === 'unknown_child') { sendError(res, 404, 'unknown_child', 'not a child of this project\'s Super Agent'); return; }
+    if (verdict === 'not_handed_over') { sendJson(res, 409, { ok: false, error: 'not_handed_over', message: 'Claude is not running this project right now.' }); return; }
+    if (verdict === 'too_late') { sendJson(res, 409, { ok: false, error: 'too_late', message: 'Too late to undo: ask Claude to resume it.' }); return; }
+    if (phoneHeld(child)) { sendJson(res, 409, { ok: false, error: 'phone_held', message: 'It is open on your phone right now.' }); return; }
+    const token = superTokenOfSession(state.session!);
+    const who = token ? identityOf(token) : null;
+    if (!token || !who) { sendJson(res, 409, { ok: false, error: 'not_handed_over', message: 'Claude is not running this project right now.' }); return; }
+    const { json } = await resumeCore({ token, who, superId, state }, { child, force: true });
+    if (json.ok !== true) {
+      const e = typeof json.error === 'string' ? json.error : '';
+      const error = e === 'held' ? 'cap' : e === 'phone_held' ? 'phone_held' : e === 'no_transcript' ? 'no_transcript' : e === 'not_handed_over' ? 'not_handed_over' : 'not_resumed';
+      const message = error === 'cap' ? 'Too many jobs are running: it starts when one finishes, or stop one first.'
+        : error === 'no_transcript' ? 'It cannot come back: its conversation was not saved.'
+          : error === 'phone_held' ? 'It is open on your phone right now.' : 'It could not be brought back.';
+      sendJson(res, 409, { ok: false, error, message });
+      return;
+    }
+    // Its agenda lines as they stood before his end, never a client value (K4c).
+    const after = await writeSuper(contextRoot, superId, (s) => {
+      const x = s.children[child];
+      if (!x) return;
+      restoreLines(s, kept);
+      delete x.endedLines;
+    });
+    sendJson(res, 200, { ok: true, state: superStateView(contextRoot, after) });
   },
   seen: async (_req, res, contextRoot, body, superId) => {
     const marks = ownerSeenMarks(body);
@@ -4409,6 +4517,9 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
   pad: async (req, res, contextRoot, body, superId) => {
+    // His own hand only (super-v3 K4c): the window sends it with the shell's key; Telegram's
+    // /gundem calls `padMove` directly and never comes through here.
+    if (!fromOwnerPage(req)) { sendJson(res, 403, { ok: false, error: 'owner_page_only', message: ownerRefusalMessage(req, 'Only the app\'s own window can change a line.') }); return; }
     // The owner set an agenda line's status by hand (the card's circle, Done, Put back):
     // `by: 'owner'`, so the server never moves it again (pad.ts; pattern: the agent must not undo
     // what the owner did). `{ id, status }` (five values) or the older `{ id, section: now|done }`.
@@ -4596,6 +4707,7 @@ export const handleSuperLayout = ownerRoute('layout');
 export const handleSuperActivity = ownerRoute('activity');
 export const handleSuperRecap = ownerRoute('recap');
 export const handleSuperEnd = ownerRoute('end');
+export const handleSuperResume = ownerRoute('resume');
 export const handleSuperFresh = ownerRoute('fresh');
 export const handleSuperSeen = ownerRoute('seen');
 export const handleSuperPad = ownerRoute('pad');

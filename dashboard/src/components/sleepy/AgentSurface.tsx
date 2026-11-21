@@ -16,14 +16,16 @@ import {
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
 import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
-import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
+import { permAllowKeyOf, publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openMemberMirrors, openOwnerQuestions, sendToSuper, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
 import { ParkedChat } from './ParkedChat';
+import { memberCardOf } from './super/memberQuote';
 import { TeamJobConversation } from './super/TeamJobConversation';
+import { MemberTab } from './super/MemberTab';
 import type { TeamCard } from './super/TeamTile';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -187,7 +189,7 @@ import { SuperDock } from './super/SuperDock';
 import { SUPER_PAGE_OPEN_EVENT, SUPER_PAGE_SEND_EVENT, answerPageSend, publishSuperPresence, useFieldMounted, type SuperPageSendDetail } from '../../lib/superPageBridge';
 import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superPaneReattach, superRowMarks, busyChildren } from './super/sessionHome';
 import { JobBar } from './super/JobBar';
-import { ownerRowKind, publishSessionGrantItems, type SessionGrantItems } from './super/ownerAnswer';
+import { MAIN_RECORD as MAIN_RECORD_ID, ownerRowKind, publishSessionGrantItems, recordOf, type SessionGrantItems } from './super/ownerAnswer';
 import { memberWaitCounts } from '../aiteam/teamModel';
 import { IconButton, chatStatus } from './super/SuperContainer';
 import { DockChip } from './AgentDock';
@@ -202,11 +204,12 @@ import {
   linkOpensSuperStage, superStageOfLink, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
   cardSelectionBlock, selectionQuote, plainJobName,
+  macPermissionItems, allowLogsOf,
 } from './super/superHandover';
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, fetchAgendaDay, fetchAgendaDays, postSuperOwedDrop, postSuperPadAdd, postSuperPadRemove, postSuperPadStatus, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, forSuper, postSuperActivity, postSuperEnd, postSuperResume, postSuperFresh, postSuperLayout, postSuperOpen, fetchAgendaDay, fetchAgendaDays, postSuperOwedDrop, postSuperPadAdd, postSuperPadRemove, postSuperPadStatus, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
@@ -4103,7 +4106,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     <ChildTranscript key={claudeId} claudeId={claudeId}
       parked={sessionListRef.current.some((m) => m.claudeId === claudeId && m.dormant && !!m.parked)} />
   ), []);
-  const renderTeamJob = useCallback((card: TeamCard) => <TeamJobConversation key={card.job.id} card={card} vault={vault ?? ''} />, [vault]);
+  // In the presentation window a member is its tab (Ü2, MemberTab): chat UI, so mounted from here.
+  const renderTeamJob = useCallback((card: TeamCard, tab: boolean) => {
+    const convo = <TeamJobConversation key={card.job.id} card={card} vault={vault ?? ''} />;
+    return tab ? <MemberTab card={card} conversation={convo} /> : convo;
+  }, [vault]);
   // The super chat draws the Super Agent's questions to the owner as cards (superQuestions.ts,
   // owner 2026-10-21 "soruyu hep chatta sorsun"). They read the record's open questions from
   // here, where the record lives whether or not the stage is up; no live record = static cards.
@@ -4143,6 +4150,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     .map((q) => [q.id, q.state, q.requestId ?? '', q.ownerText ?? '', (q.options ?? []).join('\u0002'), q.kind === 'question' ? chatByClaudeId(q.sessionId)?.id ?? '' : '',
       (q.read ?? []).map((id) => { const c = superContainers?.find((k) => k.id === id); return c ? `${id}=${c.place}=${readTitle(c)}` : ''; }).join('\u0002')].join('\u0003'))
     .join('\u0001');
+  // The Mac's own permission cards and allow lines (super-v3 D8): a remote screen keeps them in
+  // its band (the Mac answers), so it publishes none.
+  const superPermissions = useMemo(() => (remoteDesktop || isMobile ? [] : macPermissionItems(superQueue ?? [])), [remoteDesktop, isMobile, superQueue]);
+  const superAllows = useMemo(() => (remoteDesktop || isMobile ? [] : allowLogsOf(superState?.children)), [remoteDesktop, isMobile, superState?.children]);
+  const superRecord = recordOf(superState);
+  const permAllowKey = permAllowKeyOf(superPermissions, superAllows, superRecord);
   const publishedQuestionSid = useRef<string | null>(null);
   useEffect(() => {
     const prev = publishedQuestionSid.current;
@@ -4157,10 +4170,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       {
         open: openSuperQuestions, ...(isMain ? { members: mainMemberMirrors } : {}), superSession: superChatSession, sessionFor: chatByClaudeId, readsOf,
         cards: superSlotCards, titleFor: slotTitleFor, pausedFor: slotPausedFor,
+        permissions: superPermissions, allows: superAllows, record: superRecord,
       },
-      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}\u0007${slotCardKey(superSlotCards)}\u0007${slotPausedKey}`,
+      `${superQuestionKey}\u0004${superChatSession?.id ?? ''}\u0006${isMain ? memberMirrorKey : ''}\u0007${slotCardKey(superSlotCards)}\u0007${slotPausedKey}\u0008${permAllowKey}`,
     );
-  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey, superSlotCards, slotTitleFor, slotPausedFor, slotPausedKey]);
+  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf, activeSuperId, mainMemberMirrors, memberMirrorKey, superSlotCards, slotTitleFor, slotPausedFor, slotPausedKey, superPermissions, superAllows, superRecord, permAllowKey]);
   // Withdrawn with this surface (a project going cold): no card keeps a dead session.
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
@@ -4169,8 +4183,15 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // is now and bring one back with the stage's own moves: a card side by side (as a question's
   // report card does, above), a group presented whole (the group's "Open all"), from Others too.
   const superGroups = superState?.groups;
+  const superTeam = superState?.team;
+  // The cards in front now (presented, or side by side): their tiles do not read "Show again".
+  const stageViewNow = superState?.view;
+  const superFrontKey = stageViewNow?.mode === 'present' ? (stageViewNow.cards ?? []).join(',')
+    : stageViewNow?.mode === 'half' && stageViewNow.card ? stageViewNow.card : '';
+  const superFront = useMemo(() => (superFrontKey ? superFrontKey.split(',') : []), [superFrontKey]);
   const superStageKey = (superContainers ?? []).map((k) => `${k.id}=${k.place}=${k.title ?? ''}`).join('\u0001')
-    + '\u0002' + (superGroups ?? []).map((g) => `${g.id}=${g.place}=${g.name}=${g.cards.join(',')}`).join('\u0001');
+    + '\u0002' + (superGroups ?? []).map((g) => `${g.id}=${g.place}=${g.name}=${g.cards.join(',')}`).join('\u0001')
+    + '\u0003' + superFrontKey;
   const publishedStageSid = useRef<string | null>(null);
   // The owner's own open (declared further down): a closed card's tile opens it again.
   const openCardRef = useRef<(body: SuperOpenBody) => Promise<{ id: string; groupId: string | null }>>(async () => { throw new Error('no stage'); });
@@ -4181,36 +4202,37 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (!superQuestionSid) return;
     const containers = superContainers ?? [];
     const groups = superGroups ?? [];
-    const now = { containers, groups };
+    const now = { containers, groups, shown: superFront };
     const bring = (target: { card: string } | { group: string }) => {
       const patch = bringPatch(target, now, (g) => groupPresentCards({ cards: [...g.cards] }, containers));
       if (patch) editLayoutRef.current(patch);
     };
     const reopen = async (cards: readonly KnownCard[]) => {
       const ids: string[] = [];
-      const groupIds = new Set<string | null>();
       for (const card of cards) {
         const body = reopenBody(card);
         if (!body) continue;
         try {
           const r = await openCardRef.current(body);
           if (!ids.includes(r.id)) ids.push(r.id);
-          groupIds.add(r.groupId);
         } catch { /* refused (stage full, file gone): the rest still open */ }
       }
       if (!ids.length) return false;
       if (ids.length === 1) { editLayoutRef.current({ view: { mode: 'half', card: ids[0] } }); return true; }
-      // Several came back as the group they were: the server's own picture chain grouped them,
-      // else they are put together again, and the group is presented whole.
-      const one = groupIds.size === 1 ? [...groupIds][0] : null;
-      const shown = ids.slice(0, MAX_FILMSTRIP);
-      editLayoutRef.current(one
-        ? { view: { mode: 'present', cards: shown } }
-        : { group: { id: `grp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, cards: ids }, view: { mode: 'present', cards: shown } });
+      // Several are presented together. Only Claude makes groups (super-v3 D5): the server's
+      // own picture chain may have grouped them again; the owner's patch never carries one.
+      editLayoutRef.current({ view: { mode: 'present', cards: ids.slice(0, MAX_FILMSTRIP) } });
       return true;
     };
-    publishSuperStage(superQuestionSid, { now, bring, reopen }, superStageKey);
-  }, [superQuestionSid, superStageKey, superContainers, superGroups]);
+    const showMember = (member: string) => {
+      const id = memberCardOf(member, superTeam ?? [], containers);
+      const c = id ? containers.find((k) => k.id === id) : undefined;
+      if (!id || !c) return false;
+      editLayoutRef.current({ ...(c.place === 'others' ? { cards: [{ id, place: 'float' as const }] } : {}), view: { mode: 'present', cards: [id] } });
+      return true;
+    };
+    publishSuperStage(superQuestionSid, { now, bring, reopen, showMember }, superStageKey);
+  }, [superQuestionSid, superStageKey, superContainers, superGroups, superFront, superTeam]);
   useEffect(() => () => {
     if (publishedStageSid.current) publishSuperStage(publishedStageSid.current, null);
   }, []);
@@ -4234,6 +4256,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const mainQuestionSid = activeSuperId !== MAIN_SUPER && mainSuperState?.enabled ? mainSuperState.session : null;
   const mainOpenQuestions = useMemo(() => openOwnerQuestions(mainSuperState?.queue ?? []), [mainSuperState?.queue]);
   const mainQuestionKey = mainOpenQuestions.map((q) => [q.id, q.state, q.requestId ?? '', q.ownerText ?? '', (q.options ?? []).join('\u0002')].join('\u0003')).join('\u0001');
+  const mainPermissions = useMemo(() => (remoteDesktop || isMobile ? [] : macPermissionItems(mainSuperState?.queue ?? [])), [remoteDesktop, isMobile, mainSuperState?.queue]);
+  const mainAllows = useMemo(() => (remoteDesktop || isMobile ? [] : allowLogsOf(mainSuperState?.children)), [remoteDesktop, isMobile, mainSuperState?.children]);
+  const mainPermAllowKey = permAllowKeyOf(mainPermissions, mainAllows, MAIN_RECORD_ID);
   useEffect(() => {
     if (!mainQuestionSid) return;
     publishSuperQuestions(
@@ -4242,10 +4267,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       {
         open: mainOpenQuestions, members: mainMemberMirrors, superSession: mainChatSession, sessionFor: chatByClaudeId, readsOf: () => [],
         cards: mainSlotCards, titleFor: slotTitleFor, pausedFor: slotPausedFor,
+        permissions: mainPermissions, allows: mainAllows, record: MAIN_RECORD_ID,
       },
-      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}\u0007${slotCardKey(mainSlotCards)}\u0007${slotPausedKey}`,
+      `${mainQuestionKey}\u0004${mainChatSession?.id ?? ''}\u0005main\u0006${memberMirrorKey}\u0007${slotCardKey(mainSlotCards)}\u0007${slotPausedKey}\u0008${mainPermAllowKey}`,
     );
-  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey, mainSlotCards, slotTitleFor, slotPausedFor, slotPausedKey]);
+  }, [mainQuestionSid, mainQuestionKey, mainOpenQuestions, mainChatSession, chatByClaudeId, superQuestionSid, mainMemberMirrors, memberMirrorKey, mainSlotCards, slotTitleFor, slotPausedFor, slotPausedKey, mainPermissions, mainAllows, mainPermAllowKey]);
   const mainPublishedRef = useRef<string | null>(null);
   mainPublishedRef.current = mainQuestionSid ?? mainPublishedRef.current;
   useEffect(() => () => {
@@ -4857,6 +4883,19 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }
     endChildNow(child);
   }, [chatByClaudeId, endChildNow]);
+  // His Undo on "Closed <name>" (super-v3 K4b): the server relaunches it with `super resume`'s own
+  // core and puts its agenda lines back; this window never resumes on its own. The refusal's own
+  // line (cap, too late, on the phone) is what the stage says.
+  const undoEndChild = useCallback(async (child: string): Promise<string | null> => {
+    const sid = superIdOfChildHere(child);
+    try {
+      const st = await postSuperResume(forSuper(scopedApi, sid), child);
+      if (st) setSuperRecordFor(sid, sid === activeSuperIdRef.current ? withPendingEdits(st) : st);
+      return null;
+    } catch (err: unknown) {
+      return err instanceof Error && err.message ? err.message : 'It could not be brought back.';
+    }
+  }, [scopedApi, setSuperRecordFor, superIdOfChildHere]);
   // "Move to Others" after "End when done": the owner's latest word keeps it running.
   const keepChildRunning = useCallback((child: string) => {
     setEndPending((prev) => without(prev, child));
@@ -7488,6 +7527,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onWriteAbout={writeAboutRow}
             onThread={threadRow}
             onEndChild={endChildFromCard}
+            onUndoEnd={isMacPhoneSurface() ? undefined : undoEndChild}
             onKeepChild={keepChildRunning}
             onPadStatus={isMacPhoneSurface() ? undefined : setAgendaStatus}
             // His own lines need the shell's key: a browser dashboard has none, so no add box there.

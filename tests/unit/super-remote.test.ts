@@ -289,6 +289,14 @@ describe('the remote stage routes', () => {
     expect((await request(mainPort, 'POST', '/api/agent/super-stage/seen', h, '{"children":[{"id":"kid","at":1}]}')).status).toBe(403);
   });
 
+  it('refuse an owner group before the allowlist and before any write (super-v3 K9: 409 group_by_super)', async () => {
+    await seed({ enabled: true, containers: [{ id: 'chat-a', kind: 'chat', ref: 'kid-a', shape: 'tall', place: 'float' }, { id: 'task-b', kind: 'task', ref: 'acme-task', shape: 'square', place: 'float' }] });
+    const before = readFileSync(join(root, SUPER_STATE_REL), 'utf-8');
+    const r = await phone('POST', '/api/agent/super-stage/layout', { group: { id: 'grp-mine', cards: ['chat-a', 'task-b'] } });
+    expect([r.status, JSON.parse(r.body).error]).toEqual([409, 'group_by_super']);
+    expect(readFileSync(join(root, SUPER_STATE_REL), 'utf-8')).toBe(before);
+  });
+
   it('refuse a project that is not handed over (409 not_handed_over), writing nothing', async () => {
     await seed({ enabled: false });
     expect((await phone('GET', '/api/agent/super-stage')).status).toBe(409);
@@ -306,7 +314,7 @@ describe('the remote stage routes', () => {
     expect(JSON.parse(r.body)).toMatchObject({ vault: PROJECT, enabled: true, session: 'sess-1' });
   });
 
-  it('every refused key is 400 and changes nothing; the answer carries no details', async () => {
+  it('every refused key is 400 (a group 409, super-v3 K9) and changes nothing; the answer carries no details', async () => {
     await seed({ enabled: true, containers: [{ id: 'a', kind: 'task', ref: 't', shape: 'square', place: 'float' }] as never });
     const before = readFileSync(join(root, SUPER_STATE_REL), 'utf-8');
     for (const body of [
@@ -315,7 +323,7 @@ describe('the remote stage routes', () => {
       { exit: { cards: ['a'], closing: ['a'] } },
     ]) {
       const r = await phone('POST', '/api/agent/super-stage/layout', body);
-      expect(r.status, JSON.stringify(body)).toBe(400);
+      expect(r.status, JSON.stringify(body)).toBe('group' in body ? 409 : 400);
       expect(Object.keys(JSON.parse(r.body)).sort()).toEqual(['error', 'message']);
     }
     expect(readFileSync(join(root, SUPER_STATE_REL), 'utf-8')).toBe(before);

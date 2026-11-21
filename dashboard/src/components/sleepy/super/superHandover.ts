@@ -219,6 +219,8 @@ export function needsOwner(item: SuperQueueItem): boolean {
   // Super's own question, permission or wait) are his from birth too; an `owner` item covers a
   // refused command and a stalled member as well (their waits, `refusal` and `stalled`).
   return item.kind === 'permission' || item.kind === 'owner' || item.kind === 'member' || item.kind === 'routine'
+    // A member's approval (identity or run power, super-v3 K6): his from birth, on the member's card.
+    || (item.kind === 'approval' && !!item.member)
     || item.own === true || item.state === 'escalated' || directChildQuestion(item);
 }
 
@@ -234,7 +236,7 @@ export function ownerWaitOf(item: SuperQueueItem): 'refusal' | 'stalled' | null 
 
 /** A permission of his, a child's or a member's (the mirror of a member's permission), or a
  *  refused command (a job stopped dead until he answers): the head of the line. */
-function isPermission(item: SuperQueueItem): boolean {
+export function isPermission(item: SuperQueueItem): boolean {
   return item.kind === 'permission' || (item.kind === 'member' && item.of === 'permission') || ownerWaitOf(item) === 'refusal';
 }
 
@@ -274,6 +276,38 @@ export function bandHead(state: Pick<SuperState, 'queue'> | null | undefined): S
 }
 export function bandCount(state: Pick<SuperState, 'queue'> | null | undefined): number {
   return (state?.queue ?? []).filter((it) => needsOwner(it) && bandItem(it)).length;
+}
+
+/** The STAGE's top band (super-v3 D8): on the Mac a permission is a card in the Super chat
+ *  (SuperQuestionTail, Allow once first), never this band; a remote screen keeps it in the band,
+ *  where it says the Mac answers. The off-page dock keeps `bandHead`. */
+function stageBandItem(remote: boolean) { return (it: SuperQueueItem) => bandItem(it) && (remote || !isMacPermissionCard(it)); }
+
+/** A child's permission the Mac draws as a card in the Super chat (D8). One he already allowed,
+ *  waiting for its call to run (`allowed`), stays the band's "allowed, waiting" line. */
+function isMacPermissionCard(it: SuperQueueItem): boolean {
+  return it.kind === 'permission' && !it.allowed;
+}
+
+/** The permissions the Mac's Super chat draws as cards (D8), oldest first. */
+export function macPermissionItems(queue: readonly SuperQueueItem[]): SuperQueueItem[] {
+  return queue.filter((it) => isMacPermissionCard(it) && needsOwner(it)).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** The jobs whose Super allowed commands on its own (K5), for the chat's folded line (D8). */
+export function allowLogsOf(children: Readonly<Record<string, Pick<SuperChild, 'allows' | 'endedAt'>>> | undefined): { sessionId: string; entries: NonNullable<SuperChild['allows']> }[] {
+  const out: { sessionId: string; entries: NonNullable<SuperChild['allows']> }[] = [];
+  for (const [sessionId, ch] of Object.entries(children ?? {})) {
+    if (ch.endedAt !== undefined || !ch.allows?.length) continue;
+    out.push({ sessionId, entries: ch.allows });
+  }
+  return out.sort((a, b) => (a.entries[a.entries.length - 1].at - b.entries[b.entries.length - 1].at));
+}
+export function stageBandHead(state: Pick<SuperState, 'queue'> | null | undefined, remote: boolean): SuperQueueItem | null {
+  return queueHead(state ? { queue: state.queue.filter(stageBandItem(remote)) } : state);
+}
+export function stageBandCount(state: Pick<SuperState, 'queue'> | null | undefined, remote: boolean): number {
+  return (state?.queue ?? []).filter((it) => needsOwner(it) && stageBandItem(remote)(it)).length;
 }
 
 /** Items whose alarm this window already raised, per project: the strip remounts (the stage is
@@ -609,7 +643,7 @@ function bridgeModelChip(m: string, effort: string | undefined | null): { name: 
 export type AgendaSection = 'waiting' | 'now' | 'done';
 export const AGENDA_SECTIONS: readonly AgendaSection[] = ['waiting', 'now', 'done'];
 /** `needsYou`: a child waiting on something only the owner can do (an unrun run card, a secret, a checklist). */
-export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou' | 'refusal' | 'stalled' | 'routine';
+export type AgendaChip = 'permission' | 'question' | 'ask' | 'queued' | 'needsYou' | 'refusal' | 'stalled' | 'routine' | 'approval';
 /** A row's section: one of the notepad's three, or the unanswered lines above them (owed.ts). */
 export type AgendaRowSection = AgendaSection | 'unanswered';
 export interface AgendaRow {
@@ -854,6 +888,15 @@ export function superNotepad(state: { queue: NotepadQueueItem[]; pad?: SuperStat
       out.waiting.push({
         key: `q:${q.id}`, section: 'waiting', item: q.id, member: q.member ?? '', text: look.memberTitleFor?.(q.member ?? '') || (q.member ?? ''),
         line: q.of === 'permission' ? '' : (q.ownerText ?? ''), chip: memberChip(q), at: q.createdAt, ...(q.allowed ? { allowed: true as const } : {}),
+      });
+      continue;
+    }
+    // A member's approval (super-v3 Ü4, T5): named by the member, with its face; pressing it opens
+    // the witnessed approval row (never the member's page).
+    if (q.kind === 'approval' && q.member) {
+      out.waiting.push({
+        key: `q:${q.id}`, section: 'waiting', item: q.id, member: q.member, text: look.memberTitleFor?.(q.member) || q.member,
+        line: q.ownerText ?? '', chip: 'approval', at: q.createdAt,
       });
       continue;
     }
@@ -1455,6 +1498,31 @@ export function doingOf(items: ReadonlyArray<{ kind: string; name?: string; inpu
     return { verb: 'tool', subject: name };
   }
   return null;
+}
+
+/** The last command a child ran, as the card's mono line (v3 frame 03): a shell command whole,
+ *  else the tool and its short subject. Empty when it has run nothing yet. */
+export function lastCommandOf(items: ReadonlyArray<{ kind: string; name?: string; input?: unknown }>, max = 120): string {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind !== 'tool' || !it.name) continue;
+    const input = it.input && typeof it.input === 'object' ? it.input as Record<string, unknown> : {};
+    if (it.name === 'Bash') return oneLine(input.command, max);
+    if (it.name === 'Edit' || it.name === 'Write' || it.name === 'MultiEdit') return oneLine(`edit ${shortPath(input.file_path)}`, max);
+    if (it.name === 'Read') return oneLine(`read ${shortPath(input.file_path)}`, max);
+    if (it.name === 'Grep' || it.name === 'Glob') return oneLine(`grep ${oneLine(input.pattern, max)}`, max);
+    if (it.name === 'WebFetch') return oneLine(`fetch ${oneLine(input.url, max)}`, max);
+    return oneLine(it.name, max);
+  }
+  return '';
+}
+
+/** What a waiting card says it waits on (D7): the question as asked, one line. Empty for a
+ *  permission (the card reads the child's own pending command) and for an item with no words. */
+export function cardAskLine(item: Pick<SuperQueueItem, 'kind' | 'ask' | 'ownerText' | 'text'>): string {
+  if (item.kind === 'permission') return '';
+  const q = item.ask?.questions?.[0]?.question;
+  return oneLine(q || item.ownerText || item.text || '', 140);
 }
 
 /** What a child runs in the background: shells and agents still running (the card's chip). */

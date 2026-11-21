@@ -86,17 +86,22 @@ import { chatAgentFor } from '../../lib/chatAgentBinding';
 import type { SuperId, SuperQueueItem } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { MemberWaitCard, SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
+import { SuperAwayTiles } from './super/SuperAwayTiles';
 import { OwnerCardSlot } from './super/OwnerCardSlot';
 import { anchorOwnerCards, NOTHING_TIMED, ownerCardItemsOf, placedByTime, placeOwnerCards, tailHolds } from './super/cardPlacement';
 import { SuperEventLine } from './super/SuperEventLine';
+import { MemberQuoteCard } from './super/MemberQuoteCard';
+import { memberAnswersOf } from './super/memberQuote';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { SuperLiveLine, SuperStepsLine } from './super/SuperStepsLine';
 import { RunLiveLine } from './super/RunLiveLine';
 import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
+import { keepJobTurns, setJobFilter, useJobFilterFor } from './super/superJobFilter';
 import { answerForCards, sameTurnCards, turnCardsByAnswer, type TurnCards } from '../../lib/turnCards';
 import { onQueueJump } from './super/queueJump';
 import { JumpToLatest } from './chat/JumpToLatest';
+import { QuestionStrip } from './super/QuestionStrip';
 import { isOwnSend } from './chat/ownSend';
 import { lineHostOf, useSuperUnread } from './super/useSuperUnread';
 import { useUnreadJump } from './super/useUnreadJump';
@@ -616,7 +621,7 @@ function AutomationQuestionComposerLock() {
  */
 /** "Reconnecting…" only once the session has been connecting for {@link RECONNECT_CHIP_DELAY_MS}:
  *  a drop that heals in a second never flashes it. A flap back to open hides it at once. */
-function ReconnectingChipWhenDue({ connecting, claudeId }: { connecting: boolean; claudeId: string }) {
+function ReconnectingChipWhenDue({ connecting, claudeId, inRow = false }: { connecting: boolean; claudeId: string; inRow?: boolean }) {
   const [due, setDue] = useState(false);
   useEffect(() => {
     if (!connecting) { setDue(false); return; }
@@ -631,7 +636,7 @@ function ReconnectingChipWhenDue({ connecting, claudeId }: { connecting: boolean
     wasShown.current = shown;
     recordPhoneEvent('chip', claudeId, { reason: shown ? 'shown' : 'hidden' });
   }, [shown, claudeId]);
-  return shown ? <ReconnectingChip /> : null;
+  return shown ? <ReconnectingChip inRow={inRow} /> : null;
 }
 
 function SuperReadOnlyLine({ finished }: { finished: boolean }) {
@@ -849,6 +854,8 @@ export function ChatPane({
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
   // The Super chat's question view: its open questions and the owner cards its children left.
   const superQuestionView = useSuperQuestions(superView ? session.claudeId : null);
+  // The agenda's job filter (super-v3 D9, K11): this Super chat narrowed to one job's turns.
+  const jobFilter = useJobFilterFor(session.mode === 'super' && !session.superMirror ? session.claudeId : null);
   // The one rule of where an owner card is drawn (cardPlacement.ts): every one in its place in the
   // transcript, where it arrived, waiting or settled; it scrolls with the chat like any message.
   const placedOwnerCards = useMemo(() => placeOwnerCards(ownerCardItemsOf(superQuestionView)).all, [superQuestionView]);
@@ -2414,7 +2421,16 @@ export function ChatPane({
       const request = requestTurnOf(item.text, superCtx?.requests);
       if (request) return <SuperRequestBlock key={item.id} turn={request} itemId={item.id} />;
       if (group && superCtx) {
-        const line = <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        const eventLine = <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        // A member's answer in this turn (super-v3 Ü3): its quote card under the line, from the
+        // server's own lines, so the Super only says what it means.
+        const answers = memberAnswersOf(item.text);
+        const line = answers.length ? (
+          <div key={item.id} className="super-event-with-quotes">
+            {eventLine}
+            {answers.map((a) => <MemberQuoteCard key={`${item.id}-${a.item}`} answer={a} at={item.ts ?? Date.now()} session={session} />)}
+          </div>
+        ) : eventLine;
         // A member's turn for main Super: marked "Super için" (never the owner's to answer).
         if (group.batch && superCtx.mainBatches?.includes(group.batch)) {
           return (
@@ -2594,6 +2610,8 @@ export function ChatPane({
     // The phone's mirror draws them too (its cards come from /api/agent/super-questions).
     if (superView) for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
     if (superView) drawnForCards.push(...drawn);
+    // Narrowed to a job: its turns only; an open question card's anchor always stays (K11).
+    if (jobFilter) kept = keepJobTurns(kept, jobFilter, new Set(questionCards.keys()));
     return kept;
   };
   const historySlice = viewHistory.slice(historyFrom);
@@ -3227,13 +3245,21 @@ export function ChatPane({
           team={{ parties: drawnParties, runsOf: liveRunsOf, onDrillIn: handleDrillIn, inView: teamInView }}
         />
       )}
+      {jobFilter && (
+        <div className="chat-job-filter" role="status" data-testid="super-job-filter-bar">
+          <span className="chat-job-filter-text">{t('super.filter.showing').replace('{name}', superCtx?.titleFor(jobFilter) || t('super.filter.thisJob'))}</span>
+          <button type="button" className="chat-job-filter-all" onClick={() => setJobFilter(null)}>{t('super.filter.showAll')}</button>
+        </div>
+      )}
       <BrowserHostProvider value={browserHost}>
       <SelectionScope handler={selectionHandler}>
       {thread && threadFilter && threadSid && (
         <SuperThreadChip sessionId={threadSid} label={threadFilter.key.label} count={thread.count} onClear={() => clearThreadFilter(threadSid, 'user')} onLabel={() => requestRowDetail(projectBus, threadFilter.rowKey)} />
       )}
       <div className={superView ? 'chat-transcript chat-transcript--super' : 'chat-transcript'}>
-        <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
+        {/* The connection's state stands in the composer's bottom row when there is a composer:
+            floated over the transcript it covered the first thing in it (a heading, a message). */}
+        {!composerDrawn && <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />}
                 <div
           className="chat-scroll"
           ref={scrollRef}
@@ -3399,7 +3425,8 @@ export function ChatPane({
                 onOpenFile={handleOpenFile}
               />
             )}
-            {isEmpty && !bare && <EmptyState hero={emptyHero} onChip={readOnly ? undefined : (text) => { session.send(text); }} />}
+            {/* The Super's empty screen with jobs to tell him about (super-v3 D10): the away tiles. */}
+            {isEmpty && !bare && (session.mode === 'super' && !session.superMirror ? <SuperAwayTiles session={session} fallback={<EmptyState hero={emptyHero} onChip={readOnly ? undefined : (text) => { session.send(text); }} />} /> : <EmptyState hero={emptyHero} onChip={readOnly ? undefined : (text) => { session.send(text); }} />)}
             {/* An agenda row with nothing linked to it (D5): said, with the way back. */}
             {thread?.empty && threadSid && <SuperThreadEmpty onBack={() => clearThreadFilter(threadSid, 'user')} />}
             {/* The window's ceiling, made visible and operable. Scrolling to the top does
@@ -3499,6 +3526,8 @@ export function ChatPane({
             onClose={closeFind}
           />
         )}
+        {/* One copy of a question (super-v3 D7): Show from a stage card lands here; scrolled away, one line says it waits. */}
+        <QuestionStrip scrollRef={scrollRef} enabled={session.mode === 'super' && !session.superMirror} />
         <JumpToLatest
           shown={!atBottom}
           below={superView ? superUnread.below : 0}
@@ -3636,7 +3665,10 @@ export function ChatPane({
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}
-          checkoutChip={bare ? undefined : <CheckoutChips shelf={shelf} onOpenUrl={openExternalUrl} />}
+          checkoutChip={<>
+            <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} inRow />
+            {bare ? null : <CheckoutChips shelf={shelf} onOpenUrl={openExternalUrl} />}
+          </>}
           // The Super view: a ↩ drops a reference chip into the text (several per message); a
           // reply chip's "Go to message" lands on the message it names.
           superView={superView}

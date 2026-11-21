@@ -96,6 +96,8 @@ export function AgendaRowView({ entry, actions, size, label, mark, line, chips, 
   /** One hover action; absent handler = that action is not drawn. */
   onHover: Partial<Record<HoverAction, () => void>>;
   testId?: string;
+  /** An AI Team member's face in place of the kind mark (super-v3 Ü4, T5). */
+  face?: ReactNode;
 }) {
   const { t } = useI18n();
   const r = entry.row;

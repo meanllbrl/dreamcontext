@@ -16,7 +16,7 @@ import { crewHandle, dropOwnerWait, getChat, markOwnerAllowed, pendingRequest, t
 import { sendHubCommand, sendSuperCommand, superTokenOfSession, tokenOfSession } from '../window-control.js';
 import { isReservedId, okMember, readSuperState, superIdOfMember, superKey } from './store.js';
 import {
-  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, sendRewriteTurn, grantCtx, itemCall, type CallBirth, mootSuperCall, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
+  ALLOWED_WAITING_TEXT, ALLOW_TURN_HEAD, directQuestion, noteAwayTelegramAnswer, sendRewriteTurn, grantCtx, itemCall, type CallBirth, mootSuperCall, newQueueId, noteAllowedOnce, ownerCardItemsLeft, ownerItems, permissionCall, projectOfRoot, pumpSuper, superSanitizeOpts, superVaultName, writeSuper,
 } from './inbox.js';
 import { addToOutbox } from './outbox.js';
 import { sameShellCommand } from './owner-wait.js';
@@ -525,7 +525,11 @@ export async function answerOwnerItem(root: string, req: OwnerAnswerRequest): Pr
   if (answering.has(lock)) return fail('already_answered', MSG.answered);
   answering.add(lock);
   try {
-    return await answerLocked(root, superId, req);
+    const r = await answerLocked(root, superId, req);
+    // His answer from Telegram while away, counted once on main's record (a member's item is
+    // answered through main's mirror, which recurses here with the member's record).
+    if (r.ok && req.via === 'telegram' && superId === 'main') await noteAwayTelegramAnswer(root);
+    return r;
   } finally {
     answering.delete(lock);
   }

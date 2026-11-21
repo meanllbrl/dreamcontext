@@ -140,6 +140,8 @@
 /* Hovered, it keeps the same look (the tint alone, never the grey hover beneath it). */
 .super-agenda-row[data-thread='on']:hover { background: transparent; }
 .super-agenda-row[data-thread='on'] .super-agenda-name { font-weight: var(--font-weight-medium); }
+/* The header pill's "needs you" landed here (D13): a short waiting ring, still under reduced motion. */
+.super-agenda-row[data-flash='true'] { box-shadow: inset 0 0 0 2px var(--mood-waiting); }
 .agenda-mark {
   width: 24px;
   height: 28px;
@@ -650,3 +652,11 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 /* A floating card's hover buttons sit over the head row and a little under it (6 px top + 34 px,
    the head is 36): the lines start below them, and the last line ends above the resize corner. */
 .super-card-frame[data-where='float'] .super-agenda { padding-top: var(--space-2); padding-bottom: 20px; }
+/* Docked (super-v3 D9): one row for the running jobs the Dock already lists. */
+.super-agenda-dockrow {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); margin: var(--space-1) 0 var(--space-2);
+  border-radius: var(--radius-md); background: var(--color-bg-secondary);
+  font-size: var(--font-size-sm); color: var(--color-text-secondary);
+}
+.super-agenda-dockrow-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); flex: none; }

@@ -382,3 +382,72 @@ export function sendToSuper(s: Pick<ChatSession, 'status' | 'busy' | 'steer' | '
   if (s.busy) return s.steer(text) || s.send(text);
   return s.send(text);
 }
+
+/** The window event that asks the Super chat to scroll to an open question (super-v3 K13). */
+export const REVEAL_QUESTION_EVENT = 'super:reveal-question';
+
+/** A stage card's "Asked in the chat · Show" (D7): the chat (W2.A) listens and scrolls to it. */
+export function revealQuestion(itemId: string): void {
+  if (typeof window === 'undefined' || !itemId) return;
+  window.dispatchEvent(new CustomEvent(REVEAL_QUESTION_EVENT, { detail: { itemId } }));
+}
+
+// ─── Where a question is asked (super-v3 K8, D7) ──────────────────────────────
+
+/** What the presentation window shows now: its cards and the question it was opened for. */
+export interface WindowFront { cards: readonly string[]; ask?: string }
+
+/**
+ * Where an open question is drawn (pure): 'report' when it is a Super `ask` about what the
+ * window shows (one of its `read` cards is in the window, or the window was opened with it,
+ * `--show`), else 'chat'. Owner 2026-11-20: "o sağdaki raporda mı sorsa bunları".
+ */
+export function askHome(item: Pick<SuperQueueItem, 'id' | 'kind' | 'read'>, front: WindowFront | null): 'report' | 'chat' {
+  if (!front || item.kind !== 'ask') return 'chat';
+  if (front.ask === item.id) return 'report';
+  const shown = new Set(front.cards);
+  return (item.read ?? []).some((id) => shown.has(id)) ? 'report' : 'chat';
+}
+
+/** The ONE question docked under the window's page: the oldest open one homed there. Every other
+ *  question stays in the chat, so exactly one full card is drawn for each. */
+export function dockedAskOf(queue: readonly SuperQueueItem[], front: WindowFront | null): string | null {
+  if (!front) return null;
+  return openOwnerQuestions(queue).find((q) => askHome(q, front) === 'report' && decisionChoices(q) !== null)?.id ?? null;
+}
+
+/** The most choices a decision strip draws as one-tap chips (approved frame D-sunum-karar draws 3; K8 allows up to 4). */
+export const DECISION_MAX_CHOICES = 4;
+
+/**
+ * A question the strip under the report can ask (approved frame D, owner 2026-11-20 "Maket D'yi
+ * birebir yap"): ONE question, one pick, 1-4 short choices with no preview. Its question and its
+ * choices; null for anything richer, which the chat asks with its full card instead.
+ */
+export function decisionChoices(item: Pick<SuperQueueItem, 'ask' | 'ownerText' | 'options'>): { question: string; choices: string[] } | null {
+  const spec = askSpecOf(item);
+  if (spec.questions.length !== 1) return null;
+  const q = spec.questions[0];
+  if (q.multiSelect || q.options.length < 1 || q.options.length > DECISION_MAX_CHOICES) return null;
+  if (q.options.some((o) => o.preview || !o.label.trim())) return null;
+  if (new Set(q.options.map((o) => o.label.trim())).size !== q.options.length) return null;
+  return { question: q.question, choices: q.options.map((o) => o.label) };
+}
+
+/** The docked question of each Super chat (its claude id): the chat then draws one row for it. */
+const dockedAsks = new Map<string, string>();
+const dockedListeners = new Set<() => void>();
+
+export function setDockedAsk(scope: string, item: string | null): void {
+  if ((dockedAsks.get(scope) ?? null) === item) return;
+  if (item) dockedAsks.set(scope, item); else dockedAsks.delete(scope);
+  for (const fn of [...dockedListeners]) fn();
+}
+
+export function useDockedAsk(scope: string | null | undefined): string | null {
+  return useSyncExternalStore(
+    (fn) => { dockedListeners.add(fn); return () => { dockedListeners.delete(fn); }; },
+    () => (scope ? dockedAsks.get(scope) ?? null : null),
+    () => (scope ? dockedAsks.get(scope) ?? null : null),
+  );
+}

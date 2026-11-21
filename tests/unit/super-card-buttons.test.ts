@@ -12,6 +12,8 @@ const SRC = (f: string) => readFileSync(join(__dirname, '..', '..', 'dashboard',
 const CSS = SRC('components/sleepy/super/SuperSurface.css').replace(/\/\*[\s\S]*?\*\//g, '');
 const CONTAINER = SRC('components/sleepy/super/SuperContainer.tsx');
 const GROUP = SRC('components/sleepy/super/SuperGroupCard.tsx');
+const LIGHTS = SRC('components/sleepy/super/CardLights.tsx');
+const WINDOW = SRC('components/sleepy/super/PresentWindow.tsx');
 
 const half = { where: 'half', rect: { x: 400, y: 20, width: 620, height: 700 } };
 
@@ -38,26 +40,35 @@ describe('the close menu closes when its card stops being where it opened', () =
   });
 });
 
-describe('the close menu offers Minimise where the card can be minimised', () => {
-  it('a Minimise row, only for a card that is not floating, that minimises and closes the menu', () => {
-    expect(CONTAINER).toMatch(/\{!floating && \(\s*<button[^>]*data-testid="super-close-minimize"\s*onClick=\{\(\) => \{ setCloseAsk\(false\); props\.onMinimize\(c\.id\); \}\}>\s*\{t\('super\.card\.minimize'\)\}/);
+describe('the red light (super-v3 D2): a running job asks "Send to Dock / Stop job", an idle one stops with Undo', () => {
+  it('the sheet appears only for a busy job; an idle one ends at once, undoable', () => {
+    expect(CONTAINER).toContain("asksOnClose ? (childBusy ? setCloseAsk((v) => !v) : props.onEndSession(c.id, false, true)) : props.onClose(c.id)");
+    expect(CONTAINER).toMatch(/data-testid="super-close-others"[\s\S]*?props\.onKeepRunning\(c\.id\); props\.onToOthers\(c\.id\);[\s\S]*?t\('super\.close\.toDock'\)/);
+    expect(CONTAINER).toMatch(/data-testid="super-close-end"[\s\S]*?props\.onEndSession\(c\.id, false\);[\s\S]*?t\('super\.close\.stopJob'\)/);
+    expect(CONTAINER).not.toContain('super-close-minimize');
   });
 });
 
 describe('the Mac window controls: red close, yellow minimise, green full screen (owner 2026-11-08)', () => {
   it('every card draws the three lights in that order, top left, with no word sliding out', () => {
-    expect(CONTAINER).toContain("{one('close', close)}\n      {/* Yellow only where it works: an inert grey dot is not drawn (owner 2026-11-08). */}\n      {minimize.onClick && one('minimize', minimize)}\n      {one('zoom', zoom)}");
+    expect(LIGHTS).toContain("{one('close', close)}\n      {/* Yellow only where it works: an inert grey dot is not drawn (owner 2026-11-08). */}\n      {minimize.onClick && one('minimize', minimize)}\n      {zoom && one('zoom', zoom)}");
+    // The presentation window draws the same lights, never a second set (end review 2026-11-20).
+    expect(WINDOW).toContain('<CardLights inline');
+    expect(WINDOW).not.toContain('super-win-light');
     expect(CONTAINER).not.toContain('super-icon-btn-caption');
     expect(CSS).not.toContain('super-icon-btn--caption');
     expect(CSS).toMatch(/\.super-card-lights \{[^}]*position: absolute;[^}]*top: 6px;[^}]*left: 8px;/);
   });
-  it('a large card minimises on yellow and opens full screen on green; a floating card has yellow off and green brings it back', () => {
-    expect(CONTAINER).toContain("minimize={floating ? { label: t('super.card.minimize') } : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}");
+  it('a large card minimises on yellow and opens full screen on green; a floating card\'s yellow sends it to the Dock (super-v3 D2) and green brings it back', () => {
+    expect(CONTAINER).toContain("{ label: t('super.card.toDock'), onClick: () => props.onToOthers(c.id), testId: 'super-card-to-dock' }");
+    expect(CONTAINER).toContain(": { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}");
+    // The separate full-screen button is gone: green is full screen (no ⤢ left).
+    expect(CONTAINER).not.toContain('<IconButton icon="fullscreen"');
     expect(CONTAINER).toContain("? { label: t('super.card.sideBySide'), onClick: () => props.onSideBySide(c.id), testId: 'super-card-restore' }");
     expect(CONTAINER).toContain(": { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}");
   });
   it('minimise is not drawn where it has no action; another control that does not apply stays off and disabled', () => {
-    expect(CONTAINER).toContain('disabled={off}');
+    expect(LIGHTS).toContain('disabled={off}');
     expect(CSS).toMatch(/\.super-light:disabled \.super-light-dot \{ background: var\(--color-bg-tertiary\);/);
   });
   it('the colours are always on; the glyphs come on hover and on keyboard focus', () => {
@@ -67,8 +78,8 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
   it('each light is a 24 px target with a name, a tooltip and a focus ring', () => {
     expect(CSS).toMatch(/\.super-light \{[^}]*width: 24px;[^}]*height: 24px;/);
     expect(CSS).toContain('.super-light:focus-visible { outline: 2px solid var(--color-accent);');
-    expect(CONTAINER).toMatch(/className=\{`super-light super-light--\$\{tone\}`\}[\s\S]*?aria-label=\{l\.label\}[\s\S]*?title=\{l\.label\}/);
-    expect(CONTAINER).toContain("role=\"group\" aria-label={t('super.card.controls')}");
+    expect(LIGHTS).toMatch(/className=\{`super-light super-light--\$\{tone\}`\}[\s\S]*?aria-label=\{l\.label\}[\s\S]*?title=\{l\.label\}/);
+    expect(LIGHTS).toContain("role=\"group\" aria-label={t('super.card.controls')}");
   });
   it('a large card head starts after the lights and stops before its three trailing buttons', () => {
     expect(CSS).toContain(":is(.super-card-head, .super-card-large-head) { padding-left: 88px; padding-right: 112px; }");
@@ -109,11 +120,11 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
     expect(CSS).toMatch(/\.super-close-choice \{\s*position: absolute;\s*top: 38px;\s*right: 6px;/);
   });
   it('no lights on a mini or thumb tile, and none left behind while a closed card fades', () => {
-    expect(CONTAINER).toMatch(/\{!thumb && !plan\.mini && \(\s*<CardLights/);
+    expect(CONTAINER).toMatch(/\{!thumb && !plan\.mini && !plan\.inWindow && \(\s*<CardLights/);
     expect(CSS).toContain(".super-card-frame[data-cue='close'] .super-card-actions,\n.super-card-frame[data-cue='close'] .super-card-lights { display: none; }");
   });
   it('an off light carries no test id, so nothing finds a dead control by name', () => {
-    expect(CONTAINER).toContain('data-testid={off ? undefined : l.testId}');
+    expect(LIGHTS).toContain('data-testid={off ? undefined : l.testId}');
   });
   it('the ⋯ of a small tile names everything it holds', () => {
     expect(CONTAINER).toContain("label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')}");
@@ -130,7 +141,7 @@ describe('the Mac window controls: red close, yellow minimise, green full screen
 
 describe('a rail mini tile is one button, with no toolbar on hover', () => {
   it('no hover buttons and no resize handle on a mini tile', () => {
-    expect(CONTAINER).toContain('{!thumb && !plan.mini && <div className="super-card-actions">');
+    expect(CONTAINER).toContain('{!thumb && !plan.mini && !plan.inWindow && <div className="super-card-actions">');
     expect(CONTAINER).toContain('{floating && !plan.mini && props.onPressResize && (');
   });
   it('the tile shows it is clickable and carries its name as the tooltip', () => {

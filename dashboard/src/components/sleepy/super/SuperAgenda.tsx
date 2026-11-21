@@ -25,6 +25,7 @@ import { AgendaDayNav, AgendaWeekStrip } from './AgendaDayNav';
 import { searchDays, searchSources } from './agendaSearch';
 import { AgendaFind } from './AgendaFind';
 import type { AgendaDay } from './superApi';
+import { REVEAL_AGENDA_WAITING_EVENT, clearPendingReveal, revealFallback, showFirstWaitingRow, takePendingReveal } from './agendaReveal';
 import './SuperAgenda.css';
 
 export type { AgendaSize } from './AgendaRow';
@@ -88,7 +89,7 @@ const toMidnight = (now: number) => { const d = new Date(now); d.setHours(24, 0,
  * Nothing polls: the record is pushed; a day's archived Done lines come from `loadDay` (today's
  * merge on open, on a day change and after a pad change).
  */
-export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onThread, threadRowKey = null, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, loadDays, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra }: {
+export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wide = false, canShowChild, canOpenMember = true, remote = false, readOnly = false, onShowChild, onShowQuestion, onWriteAbout, onThread, threadRowKey = null, onPadStatus, onPadAdd, onPadRemove, loadDay, onDropOwed, loadDays, taskRows = [], onOpenTask, recallRows = [], syncRows = [], onUpdateIndex, indexUpdate = 'idle', approvals = [], onShowApproval, extra, docked = false }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these read. */
   state: Pick<SuperState, 'queue' | 'pad' | 'owed'> & { children?: Readonly<Record<string, SuperChild>> };
   /** The drawn size (small, medium, large, wide) or the full / side-by-side view. */
@@ -135,6 +136,14 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
   canOpenMember?: boolean;
   /** The phone: a refused command cannot be allowed from its web view. */
   remote?: boolean;
+  /** super-v3 K13 seams (W2.A draws them): the running jobs are in the Dock (Today shows one
+   *  "Running N · in the Dock" row); the row tapped as the chat's job filter; a tap selects or
+   *  clears; Stop is the red light's flow on that job; Ask is the existing About path. */
+  docked?: boolean;
+  selected?: string | null;
+  onSelect?: (id: string | null) => void;
+  onStop?: (child: string) => void;
+  onAsk?: (id: string) => void;
 }) {
   const { t, locale } = useI18n();
   const size: AgendaSize = sizeProp ?? (variant === 'tile' ? (wide ? 'medium' : 'small') : 'full');
@@ -228,10 +237,20 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
 
   const notepad = superNotepad(state, look, now);
   const unanswered = superUnanswered(state, now);
-  const groups = todayGroups({
+  const allGroups = todayGroups({
     notepad, unanswered, pad, routeDone: dayData[today]?.done ?? null,
     approvals, taskRows, recallRows, syncRows, children: state.children, now,
   });
+  // Docked (super-v3 D9): the Dock already lists the running jobs, so Today does not relist them:
+  // their lines leave the Super's and his own sections and one row says "Running N · in the Dock".
+  const running = (child: string | undefined) => {
+    const c = child ? state.children?.[child] : undefined;
+    return !!c && c.endedAt === undefined && (c.row === 'working' || c.row === undefined);
+  };
+  const dockedRunning = docked ? Object.values(state.children ?? {}).filter((c) => running(c.sessionId)).length : 0;
+  const groups = dockedRunning
+    ? { ...allGroups, super: allGroups.super.filter((x) => !running(x.row?.for)), mine: allGroups.mine.filter((x) => !running(x.row?.for)) }
+    : allGroups;
   const past = day !== today ? dayGroups(day, pad, dayData[day]?.done ?? null) : null;
   // Every count and the bar describe the day on screen (review r1): a past day's from its lines.
   const progress = past
@@ -281,6 +300,23 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     window.addEventListener(VIEW_EVENT, on);
     return () => window.removeEventListener(VIEW_EVENT, on);
   }, []);
+  // The header pill's "needs you" (D13, v3-4): show the first pink row; medium's filter turns to
+  // waiting first. A request made just before this agenda mounted (the press opened it) is taken.
+  useEffect(() => {
+    if (readOnly) return undefined;
+    let frame = 0;
+    const show = (headId: string | null) => {
+      clearPendingReveal();
+      setFilter('waiting');
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => { if (!showFirstWaitingRow(rootRef.current)) revealFallback(headId); }); });
+    };
+    const on = (e: Event) => show(((e as CustomEvent).detail?.headId as string | null | undefined) ?? null);
+    window.addEventListener(REVEAL_AGENDA_WAITING_EVENT, on);
+    const early = takePendingReveal();
+    if (early) show(early.headId);
+    return () => { window.removeEventListener(REVEAL_AGENDA_WAITING_EVENT, on); cancelAnimationFrame(frame); };
+  }, [readOnly]);
   // A refused write (C8): its words and the line it belongs to (absent = the card's). Shown where
   // he is looking at every size: that line's detail when it is open, else the card's error line;
   // the add box shows its own (review r1, action-failure-shown-where-he-looks).
@@ -327,11 +363,11 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
       if (canOpenMember && !showApprovalRow(`routine:${r.routine}`)) requestOpenAgents({ slug: r.member || r.routine });
       return;
     }
-    if (r.member) { if (canOpenMember) requestOpenAgents({ slug: r.member }); return; }
+    if (r.member && r.chip !== 'approval') { if (canOpenMember) requestOpenAgents({ slug: r.member }); return; }
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }
     onShowQuestion(r.item);
   };
-  const fallbackActs = (r: AgendaRow) => (r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
+  const fallbackActs = (r: AgendaRow) => (r.chip === 'approval' ? true : r.member || r.routine ? canOpenMember : showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
   const questionClickable = (r: AgendaRow) => !!r.item && ((cardItem(r) && ownerSlotMounted(r.item)) || fallbackActs(r));
 
   const fmtTime = useCallback((ms: number) => {
@@ -585,7 +621,13 @@ export function SuperAgenda({ state, look, size: sizeProp, variant = 'full', wid
     const empty = TODAY_GROUPS.every((g) => groups[g].length === 0);
     return (
       <div className="agenda-groups" {...listHandlers}>
-        {empty && <div className="super-agenda-empty">{t('super.agenda.emptyHint')}</div>}
+        {empty && !dockedRunning && <div className="super-agenda-empty">{t('super.agenda.emptyHint')}</div>}
+        {dockedRunning > 0 && (
+          <div className="super-agenda-dockrow" data-testid="super-agenda-running-dock">
+            <span className="super-agenda-dockrow-dot" aria-hidden />
+            {t('super.agenda.runningDock').replace('{n}', String(dockedRunning))}
+          </div>
+        )}
         {TODAY_GROUPS.map((g) => {
           const rows = order(groups[g]);
           if (!rows.length) return null;

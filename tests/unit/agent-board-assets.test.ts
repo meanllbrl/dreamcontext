@@ -424,9 +424,10 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * the Asking section (`ASK_RULES_SHORT`, lib/ask-rules.ts: a card only when the work is truly
    * blocked, the two kind lists word for word). No briefing line said when NOT to ask, and plain
    * chats asked half as many cards again as the Super. Ceiling 12,400 → 13,500; actual 13,443.
+   * 2026-11-20 (super-v3 K7, local cut): the `jobs` view line and its example (+141). Ceiling -> 13,700.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(13500);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(13700);
   });
 
   /**
@@ -437,7 +438,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13443)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13584)).toBeLessThanOrEqual(20);
   });
 
   /**

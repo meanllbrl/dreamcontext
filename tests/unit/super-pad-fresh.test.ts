@@ -22,6 +22,8 @@ import { markPadTold, padDayStart, padNotice, padRolledOff, padStale, settlePad 
 import { PAD_STALE_MS, emptySuperState, type SuperChild, type SuperPadItem, type SuperState } from '../../src/lib/super/types.js';
 import { SUPER_OWNER_HANDLERS, SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 import { superNotepad } from '../../dashboard/src/components/sleepy/super/superHandover.js';
+import { OWNER_KEY_HEADER, setOwnerKey } from '../../src/server/owner-key.js';
+import type { IncomingMessage } from 'node:http';
 
 const SESSION = 'sess-pad';
 const KID = 'kid-1';
@@ -231,9 +233,16 @@ async function verb(name: keyof typeof SUPER_VERB_HANDLERS, body: Record<string,
   await SUPER_VERB_HANDLERS[name](caller, body, r);
   return r;
 }
+// His own hand comes from the app's own page with the shell's key (super-v3 K4c).
+const OWNER_KEY = 'a1'.repeat(32);
+const OWNER_REQ = {
+  headers: { host: '127.0.0.1:4173', origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin', 'content-type': 'application/json', [OWNER_KEY_HEADER]: OWNER_KEY },
+  url: '/', method: 'POST', socket: { remoteAddress: '127.0.0.1' },
+} as unknown as IncomingMessage;
 async function ownerPad(body: Record<string, unknown>) {
   const r = res();
-  await SUPER_OWNER_HANDLERS.pad({} as never, r, root, body);
+  setOwnerKey(OWNER_KEY);
+  try { await SUPER_OWNER_HANDLERS.pad(OWNER_REQ, r, root, body); } finally { setOwnerKey(null); }
   return r;
 }
 const result = (r: { json: Record<string, unknown> }) => r.json.result as Record<string, unknown>;

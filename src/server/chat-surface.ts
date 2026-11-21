@@ -255,6 +255,12 @@ only from that command's \`Shown:\` line, never "on your screen" otherwise.
 {"type":"app-request","id":"0b1d3c97-6daf-4943-96d5-8614e7d0960e"}
 \`\`\`
 
+**Your jobs' status** (Super Agent): one sentence on what changed, then this; rows come from the record.
+
+\`\`\`dream-view
+{"type":"jobs"}
+\`\`\`
+
 **An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.
 
 \`\`\`dream-view

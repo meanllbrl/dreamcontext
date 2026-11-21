@@ -2,9 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { OpenStageButton, TeamHeadTitle } from './TeamHelpers';
 import { useI18n } from '../../../context/I18nContext';
+import { CardLights, type Light } from './CardLights';
 import { useVaultId } from '../../../context/VaultContext';
 import { pageFitKey, setPageFit } from '../../../lib/pageFit';
-import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type MemberCardRef, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
+import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type MemberCardRef, type SuperChild, type SuperQueueItem, type SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
 import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
 import { DocumentReader } from '../../appLink/DocumentReader';
@@ -20,6 +21,7 @@ import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
 import { AgentCard, ChatTile, type AsksOwner } from './AgentCard';
+import { STOP_JOB_EVENT } from './superJobFilter';
 import { InsightCard } from './InsightCard';
 import { backgroundOf, toneOfStatus } from './superHandover';
 import { KindTile, ResolvedTitle, TaskPageHead } from './SuperTiles';
@@ -145,7 +147,7 @@ export interface SuperCardActions {
   onClose: (id: string) => void;
   /** A CHILD CHAT card's close: end its session (`whenDone`: once its turn ends), the same end
    *  `super end` does. Other cards close at once (`onClose`). */
-  onEndSession: (id: string, whenDone: boolean) => void;
+  onEndSession: (id: string, whenDone: boolean, undoable?: boolean) => void;
   /** "Move to Others" from that choice: the child keeps running (a pending end is dropped). */
   onKeepRunning: (id: string) => void;
   onMinimize: (id: string) => void;
@@ -187,6 +189,8 @@ export interface SuperContainerProps extends SuperCardActions {
   /** The hand-over has landed: a non-chat card may mount its view (SuperSurface). */
   viewReady: boolean;
   asksOwner: AsksOwner;
+  /** The first item waiting on the owner about this card's child (its words and Show). */
+  askItem?: SuperQueueItem | null;
   /** This card hosts the shown chat's slot (the half card, or the first presented chat). */
   shownSlot: boolean;
   /** A shown child with no live chat (finished, or a dormant tab after a relaunch): its saved
@@ -195,7 +199,7 @@ export interface SuperContainerProps extends SuperCardActions {
   childTranscript?: (claudeId: string) => ReactNode;
   /** `team`, shown large: its member's conversation (AgentStage's AgentConversation), a render
    *  prop for the same reason. */
-  teamConversation?: (card: TeamCard) => ReactNode;
+  teamConversation?: (card: TeamCard, tab: boolean) => ReactNode;
   /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   /** A card held over this one: releasing groups them (2026-10-20). */
@@ -269,7 +273,23 @@ export function SuperContainer(props: SuperContainerProps) {
     openedAt.current = placeKey;
     setCloseAsk(false);
   }, [placeKey]);
-  const onCloseClick = () => (asksOnClose ? setCloseAsk((v) => !v) : props.onClose(c.id));
+  // The red light (super-v3 D2): a job that works, asks or runs background tasks asks first
+  // ("Send to Dock" / "Stop job"); an idle one stops at once, with Undo on the stage.
+  const onCloseClick = () => (asksOnClose ? (childBusy ? setCloseAsk((v) => !v) : props.onEndSession(c.id, false, true)) : props.onClose(c.id));
+  // The agenda's Stop on this card's job runs the same red light (D9).
+  const stopRef = useRef(onCloseClick);
+  stopRef.current = () => (childBusy ? setCloseAsk(true) : props.onEndSession(c.id, false, true));
+  useEffect(() => {
+    if (c.kind !== 'chat' || props.remote) return undefined;
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ child: string; handled: boolean }>).detail;
+      if (!d || d.child !== c.ref || d.handled || props.parked) return;
+      d.handled = true;
+      stopRef.current();
+    };
+    window.addEventListener(STOP_JOB_EVENT, on);
+    return () => window.removeEventListener(STOP_JOB_EVENT, on);
+  }, [c.kind, c.ref, props.remote, props.parked]);
   // A page's frame allowed and shown (its trust gate passed): from then on it may open full screen.
   const [allowedHref, setAllowedHref] = useState<string | null>(null);
   const full = fullscreenOf(c, props.title, allowedHref);
@@ -335,6 +355,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-kind={c.kind}
       data-open-stage={c.kind === 'team' && props.team && !props.remote ? 'true' : undefined}
       data-where={plan.where}
+      data-in-window={plan.inWindow ? 'true' : undefined}
       data-shape={plan.shape}
       data-size={floating ? drawnSize : undefined}
       data-mini={plan.mini ? 'true' : undefined}
@@ -342,7 +363,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-side={floating ? props.side : undefined}
       data-owner={plan.owner ? 'true' : undefined}
       data-status={status ? glowOf(status) : undefined}
-      data-super-tone={status ? toneOfStatus(status.kind) : props.team ? toneOfStatus(teamRingKind(teamStatusOf(props.team))) : undefined}
+      data-super-tone={status ? toneOfStatus(status.kind) : props.team ? toneOfStatus(props.team.approval ? 'asking' : teamRingKind(teamStatusOf(props.team))) : undefined}
       data-drop-target={props.dropTarget ? 'card' : undefined}
       data-cue={props.cue?.kind}
       inert={props.cue?.kind === 'close' || props.parked || plan.hidden ? true : undefined}
@@ -392,17 +413,21 @@ export function SuperContainer(props: SuperContainerProps) {
       {/* Top left, the Mac window controls (owner 2026-11-08): red close, yellow minimise, green
           full screen, always in colour, their glyphs shown on hover and focus. A floating card is
           already small: its yellow is off and its green brings it back side by side. */}
-      {!thumb && !plan.mini && (
+      {/* In the presentation window its tab and the window's own lights stand for these. */}
+      {!thumb && !plan.mini && !plan.inWindow && (
         <CardLights
           floating={floating}
           close={closeLight}
-          minimize={floating ? { label: t('super.card.minimize') } : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}
+          // Yellow sends a floating card to the Dock (super-v3 D2; a job keeps running there).
+          minimize={floating
+            ? (props.remote || c.kind === 'agenda' || c.kind === 'member' ? { label: t('super.card.minimize') } : { label: t('super.card.toDock'), onClick: () => props.onToOthers(c.id), testId: 'super-card-to-dock' })
+            : { label: t('super.card.minimize'), onClick: () => props.onMinimize(c.id), testId: 'super-card-minimize' }}
           zoom={floating
             ? { label: t('super.card.sideBySide'), onClick: () => props.onSideBySide(c.id), testId: 'super-card-restore' }
             : { label: t('super.card.fullscreen'), onClick: openFull, testId: 'super-card-fullscreen' }}
         />
       )}
-      {!thumb && !plan.mini && <div className="super-card-actions">
+      {!thumb && !plan.mini && !plan.inWindow && <div className="super-card-actions">
         {floating ? (
           <>
             {/* A 160 px tile holds the lights and two buttons: To Others joins size and full
@@ -414,10 +439,7 @@ export function SuperContainer(props: SuperContainerProps) {
             {small ? (
               <IconButton icon="more" label={props.remote ? t('super.card.more') : t('super.card.moreWithOthers')} onClick={() => setMenu((m) => (m ? null : 'more'))} testId="super-card-more" expanded={!!menu} />
             ) : (
-              <>
-                <IconButton icon="size" label={t('super.size.label')} onClick={() => setMenu((m) => (m === 'size' ? null : 'size'))} testId="super-card-size-btn" expanded={menu === 'size'} />
-                {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen" />}
-              </>
+              <IconButton icon="size" label={t('super.size.label')} onClick={() => setMenu((m) => (m === 'size' ? null : 'size'))} testId="super-card-size-btn" expanded={menu === 'size'} />
             )}
           </>
         ) : (
@@ -425,10 +447,6 @@ export function SuperContainer(props: SuperContainerProps) {
             {/* A member card's way to its member's own stage (owner 2026-11-15): in the head, not
                 at its foot. Not from the phone, which opens no stage here. */}
             {c.kind === 'team' && props.team && !props.remote && <OpenStageButton member={props.team.job.member} />}
-            {/* The same card keeps the same buttons side by side and presented as floating (owner
-                2026-11-19, "no action buttons in the presentation"): To Others, ask, full screen.
-                Size stays a floating card's own (its yellow light already floats it). */}
-            {!props.remote && <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => props.onToOthers(c.id)} testId="super-card-to-others-btn" />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
             {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen-btn" />}
           </>
@@ -440,13 +458,6 @@ export function SuperContainer(props: SuperContainerProps) {
           drawn={drawnSize}
           canFit={props.canFit ?? (() => true)}
           onPick={(size) => { setMenu(null); props.onSize(c.id, size); }}
-          onFullscreen={menu === 'more' && openFull ? () => {
-            // The viewer gives focus back to what had it when it opened: the ⋯ button, not the
-            // menu item about to unmount (which would leave focus on <body>).
-            frameRef.current?.querySelector<HTMLElement>('[data-testid="super-card-more"]')?.focus();
-            setMenu(null);
-            openFull();
-          } : undefined}
           onToOthers={menu === 'more' && !props.remote ? () => { setMenu(null); props.onToOthers(c.id); } : undefined}
           onSideBySide={menu === 'more' && c.kind === 'agenda' ? () => { setMenu(null); props.onSideBySide(c.id); } : undefined}
           onClose={() => setMenu(null)}
@@ -467,21 +478,16 @@ export function SuperContainer(props: SuperContainerProps) {
       {closeAsk && (
         <div className="super-close-choice" role="group" aria-label={t('super.close.ask')} data-testid="super-close-choice"
           onPointerDown={(e) => e.stopPropagation()}>
-          <span className="super-close-choice-q">{t('super.close.ask')}</span>
-          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-close-end"
-            onClick={() => { setCloseAsk(false); props.onEndSession(c.id, childBusy); }}>
-            {childBusy ? t('super.close.endWhenDone') : t('super.close.end')}
-          </button>
+          {/* macOS Terminal's sheet (super-v3 D2): the job is still running. */}
+          <span className="super-close-choice-q">{t('super.close.askRunning')}</span>
           <button type="button" className="super-close-choice-btn" data-testid="super-close-others"
             onClick={() => { setCloseAsk(false); props.onKeepRunning(c.id); props.onToOthers(c.id); }}>
-            {t('super.close.toOthers')}
+            {t('super.close.toDock')}
           </button>
-          {!floating && (
-            <button type="button" className="super-close-choice-btn" data-testid="super-close-minimize"
-              onClick={() => { setCloseAsk(false); props.onMinimize(c.id); }}>
-              {t('super.card.minimize')}
-            </button>
-          )}
+          <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-close-end"
+            onClick={() => { setCloseAsk(false); props.onEndSession(c.id, false); }}>
+            {t('super.close.stopJob')}
+          </button>
         </div>
       )}
       {props.endPending && !closeAsk && (
@@ -574,51 +580,7 @@ export function AskButton({ label, onClick, testId = 'super-card-ask' }: { label
   );
 }
 
-/** One window control. No `onClick` = the control does not apply here: drawn off and disabled. */
-export type Light = { label: string; onClick?: () => void; testId?: string; expanded?: boolean };
-
-const LIGHT_GLYPHS = {
-  close: <path d="M4.1 4.1l3.8 3.8M7.9 4.1L4.1 7.9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />,
-  minimize: <path d="M3.4 6h5.2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />,
-  zoom: <path d="M3.7 8V3.7H8z M8.3 4v4.3H4z" fill="currentColor" />,
-} as const;
-
-/**
- * The Mac window controls of a stage card (owner 2026-11-08): red close, yellow minimise, green
- * full screen, always in colour; hover or keyboard focus on the row shows the glyph in each dot.
- * The dot is 12 px, the button around it 24 px, so every control is a full-size target.
- */
-export function CardLights({ close, minimize, zoom, floating }: { close: Light; minimize: Light; zoom: Light; floating?: boolean }) {
-  const { t } = useI18n();
-  const one = (tone: keyof typeof LIGHT_GLYPHS, l: Light) => {
-    const off = !l.onClick;
-    return (
-      <button
-        type="button"
-        className={`super-light super-light--${tone}`}
-        data-testid={off ? undefined : l.testId}
-        aria-label={l.label}
-        aria-expanded={l.expanded}
-        title={l.label}
-        disabled={off}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); l.onClick?.(); }}
-      >
-        <span className="super-light-dot" aria-hidden>
-          {!off && <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>{LIGHT_GLYPHS[tone]}</svg>}
-        </span>
-      </button>
-    );
-  };
-  return (
-    <div className={floating ? 'super-card-lights super-card-lights--float' : 'super-card-lights'} role="group" aria-label={t('super.card.controls')} data-testid="super-card-lights">
-      {one('close', close)}
-      {/* Yellow only where it works: an inert grey dot is not drawn (owner 2026-11-08). */}
-      {minimize.onClick && one('minimize', minimize)}
-      {one('zoom', zoom)}
-    </div>
-  );
-}
+export { CardLights, type Light } from './CardLights';
 
 type BodyProps = SuperContainerProps & { status: SessionStatusInfo | null; onFrameAllowed: (href: string) => void };
 
@@ -686,8 +648,8 @@ function FloatBody(p: BodyProps): ReactNode {
     <div className="super-card-body" data-inert="true">
       {c.kind === 'chat'
         ? (SIZE_UNITS[size].h > 1
-          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
-          : <ChatTile session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} />)
+          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} askItem={p.askItem} status={p.status!} tall />
+          : <ChatTile session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} askItem={p.askItem} status={p.status!} />)
         : c.kind === 'browser'
           ? <BrowserCard sessionId={p.browserSessionId} live={!!p.browserLive} large={false} />
           : c.kind === 'team' && p.team
@@ -789,10 +751,13 @@ function LargeBody(p: BodyProps): ReactNode {
       <CardHead kind={c.kind} title={p.title} container={c} team={p.team} />
       <div className="super-card-large-body">
         {c.kind === 'chat'
-          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
+          ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} askItem={p.askItem} status={p.status!} tall />
           : c.kind === 'team' && p.team
             // The job's own session, the way a child's card shows one.
-            ? (p.viewReady && !p.parked ? p.teamConversation?.(p.team) ?? viewFor(p) : null)
+            ? (p.viewReady && !p.parked
+              // In the presentation window it is the member's tab (Ü2): who, the switch, the conversation.
+              ? p.teamConversation?.(p.team, !!p.plan.inWindow) ?? viewFor(p)
+              : null)
           : zoomsInPlace(c)
             // A picture or a live browser zooms where it is (owner 2026-10-22); a page does in WebCardBody.
             ? <ZoomPane key={c.id}>{viewFor(p)}</ZoomPane>

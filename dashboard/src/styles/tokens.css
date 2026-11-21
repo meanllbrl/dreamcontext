@@ -321,6 +321,11 @@
      (AgentTerminal.css) and the mascot itself (SleepyMascot.css). */
   --mood-sleeping: #7d8cff;   /* calm indigo */
   --mood-waiting: #ff5fc4;    /* magenta — finished & waving for you */
+  /* Waiting as INK on paper ("Answer", "Needs you", the waiting count). The swatch is 2.73:1
+     as text on white; this is 7.48 on bg and 6.27 on bg-tertiary. Dots, rings and borders keep
+     the swatch. `--mood-waiting-on` is text ON the swatch (a badge): 6.62:1, both themes. */
+  --mood-waiting-ink: #a10f6e;
+  --mood-waiting-on: #2a0a1f;
 
   /* ─── Priority Colors ─── */
   --color-priority-critical: hsl(0 72% 51%);
@@ -516,6 +521,7 @@
   --color-error: #ff5a5f;
   --color-error-subtle: rgba(255, 90, 95, 0.14);
   --color-warning-ink: var(--color-warning);    /* 8.9:1 on the dark card */
+  --mood-waiting-ink: var(--mood-waiting);      /* 6.56 / 6.01 / 4.89 on bg / card / chip */
   --color-text-placeholder: var(--color-text-tertiary); /* 6.3:1 on #1c1f2a */
   --color-caution: #ffae3b;
   /* Electric Blue lifted for dark contrast, the same way `--color-accent` is. */

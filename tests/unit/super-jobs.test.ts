@@ -181,10 +181,10 @@ describe('the ONE status tone (owner 2026-10-21)', () => {
     // Every frame carries its chat's tone itself (a tall card, a live chat, a tile alike: frontend
     // review Major 1 and its re-check), so no rule looks into a frame with :has().
     // The frame carries its chat's tone, or its AI Team job's (a team card), itself.
-    expect(read(`${SUPER}/SuperContainer.tsx`)).toMatch(/data-super-tone=\{status \? toneOfStatus\(status\.kind\) : props\.team \? toneOfStatus\(teamRingKind\(teamStatusOf\(props\.team\)\)\) : undefined\}/);
+    expect(read(`${SUPER}/SuperContainer.tsx`)).toMatch(/data-super-tone=\{status \? toneOfStatus\(status\.kind\) : props\.team \? toneOfStatus\(props\.team\.approval \? 'asking' : teamRingKind\(teamStatusOf\(props\.team\)\)\) : undefined\}/);
     expect(tone).not.toMatch(/:has\(/);
     expect(read(`${SUPER}/SuperSurface.css`).replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/data-super-tone[^{]*:has\(|:has\([^)]*data-super-tone/);
-    expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}>/);
+    expect(read(`${SUPER}/AgentCard.tsx`)).toMatch(/<div className="super-card" data-kind=\{status\.kind\} data-super-tone=\{toneOfStatus\(status\.kind\)\}[ >]/);
   });
 
   it('every consumer reads --tone, and keeps its state word', () => {
@@ -231,7 +231,7 @@ describe('the bar asks no question at all (owner 2026-11-13: "şu tip soru bile 
     expect(bar).not.toMatch(/askAnswerText|super-ask-option|super-job-option|QuestionHead|super-queue-answer/);
     expect(read(`${SUPER}/JobBar.css`)).not.toMatch(/super-job-option/);
     // The band's head and count skip questions; the stage and the dock band both read them.
-    expect(read(`${SUPER}/SuperSurface.tsx`)).toMatch(/const head = bandHead\(state\);/);
+    expect(read(`${SUPER}/SuperSurface.tsx`)).toMatch(/const head = stageBandHead\(state, !!remote\);/);
     expect(read('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/head=\{bandHead\(superState\)\}\n\s*waiting=\{bandCount\(superState\)\}/);
   });
 });

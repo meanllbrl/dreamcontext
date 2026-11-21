@@ -1,12 +1,12 @@
 /**
  * The presentation layouts' geometry (plan-r2 D6, D7, D13, D14): every preset at three stage
  * sizes keeps its rects inside the content, never overlaps a shown card, the centre, the bands,
- * the queue pill or the agenda pill; spotlight gives the card at least two thirds of the width with
- * the agent as a mini square bottom-left; the chat bar hands the card the full width; a filmstrip's
+ * the queue pill or the agenda pill; on a wide stage spotlight, compare, grid and review draw in a
+ * window as wide as what it shows (K14, W3) beside the chat's full-height column; a filmstrip's
  * thumbs are one row; compare's two cards are equal; a narrow stage is a sheet over a composer bar.
  */
 import { describe, it, expect } from 'vitest';
-import { STAGE, planStage, type Rect, type StageItem, type StagePlan } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { PRESENT_WIN, STAGE, planStage, type Rect, type StageItem, type StagePlan } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import type { PresentLayout, SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const STAGES = [{ width: 1384, height: 844 }, { width: 1864, height: 1004 }, { width: 1000, height: 800 }];
@@ -69,39 +69,42 @@ describe('every preset at every stage size', () => {
 
 describe('the wide stage (not narrow)', () => {
   for (const stage of STAGES.slice(0, 2)) {
-    it(`spotlight at ${stage.width}: the chat the whole left column, the card at least 2/3 of the content`, () => {
+    it(`spotlight at ${stage.width}: the chat the whole left column, the card in a desktop-wide window at the right`, () => {
       const p = plan('spotlight', items(1), stage);
-      expect(p.chat).toBe('mini');
-      expect(p.centre.width).toBeGreaterThanOrEqual(300);
-      expect(p.centre.width).toBeLessThanOrEqual(380);
-      expect(p.centre.height).toBeGreaterThanOrEqual(320);
+      expect(p.chat).toBe('column');
+      const win = p.presentWindow!;
+      // Desktop width, as far as the chat's floor allows (K14: the chat never under CHAT_MIN).
+      expect(win.width).toBe(Math.min(PRESENT_WIN.DESK_W, p.free.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN));
+      expect(p.centre.width).toBeGreaterThanOrEqual(PRESENT_WIN.CHAT_MIN);
       expect(p.centre.height).toBeCloseTo(p.free.height, 5);
       expect(p.centre.x).toBe(p.free.x);
-      expect(p.centre.y + p.centre.height).toBeCloseTo(p.free.y + p.free.height, 5);
+      expect(win.x).toBeCloseTo(p.centre.x + p.centre.width + STAGE.GAP, 5);
+      expect(win.x + win.width).toBeCloseTo(p.free.x + p.free.width, 5);
+      expect(p.presentFrame).toEqual(win);
       const c = p.cards.c0.rect;
-      expect(c.width).toBeGreaterThanOrEqual(0.66 * p.free.width);
-      expect(c.x).toBeCloseTo(p.centre.x + p.centre.width + STAGE.GAP, 5);
-      expect(c.height).toBeCloseTo(p.free.height, 5);
+      expect(c).toEqual({ x: win.x, y: win.y + PRESENT_WIN.TITLE_H, width: win.width, height: win.height - PRESENT_WIN.TITLE_H });
     });
 
-    it(`the chat bar at ${stage.width}: the card spans the content width; a question open draws the mini`, () => {
-      for (const [layout, list] of CASES.filter(([l]) => l === 'spotlight' || l === 'filmstrip' || l === 'review')) {
-        const p = plan(layout, list, stage, { chat: 'bar' });
-        expect(p.chat).toBe('bar');
-        expect(p.centre.height).toBe(STAGE.CHAT_BAR_H);
-        const big = layout === 'filmstrip' ? p.strip!.big : layout === 'review' ? 'web' : list[0].id;
-        expect(p.cards[big].rect.width).toBeCloseTo(p.free.width, 5);
-        expect(plan(layout, list, stage, { chat: 'bar' }, { asking: true }).chat).toBe('mini');
+    it(`the chat bar at ${stage.width}: only a filmstrip folds the chat (its big card spans the content); the window never does`, () => {
+      const [, film] = CASES.find(([l]) => l === 'filmstrip')!;
+      const p = plan('filmstrip', film, stage, { chat: 'bar' });
+      expect(p.chat).toBe('bar');
+      expect(p.centre.height).toBe(STAGE.CHAT_BAR_H);
+      expect(p.cards[p.strip!.big].rect.width).toBeCloseTo(p.free.width, 5);
+      expect(plan('filmstrip', film, stage, { chat: 'bar' }, { asking: true }).chat).toBe('mini');
+      // The window keeps the chat a readable column (frame 07c): a stored bar is ignored there.
+      for (const layout of ['spotlight', 'compare', 'review'] as const) {
+        const list = layout === 'spotlight' ? items(1) : layout === 'compare' ? items(2) : REVIEW;
+        expect(plan(layout, list, stage, { chat: 'bar' }).chat).toBe('column');
       }
-      // Compare and grid have no mini: a stored bar is ignored there.
-      expect(plan('compare', items(2), stage, { chat: 'bar' }).chat).toBe('column');
     });
   }
 
-  it('the expected first look at a 1440 window (stage 1384): spotlight card about 930-1010 px', () => {
-    const w = plan('spotlight', items(1), STAGES[0]).cards.c0.rect.width;
-    expect(w).toBeGreaterThanOrEqual(930);
-    expect(w).toBeLessThanOrEqual(1010);
+  it('the expected first look at a 1440 window (stage 1384): a desktop card in a window that leaves the chat its 520, then 820 on a wider stage', () => {
+    const p = plan('spotlight', items(1), STAGES[0]);
+    expect(p.centre.width).toBe(PRESENT_WIN.CHAT_MIN);
+    expect(p.presentWindow!.width).toBeCloseTo(p.free.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN, 5);
+    expect(plan('spotlight', items(1), STAGES[1]).presentWindow!.width).toBe(PRESENT_WIN.DESK_W);
   });
 
   it('filmstrip: one row holding a slot for every card in a fixed order; the agenda is never the big one; selecting never reorders', () => {
@@ -154,7 +157,7 @@ describe('the wide stage (not narrow)', () => {
     expect(c.cards.c0.rect.width).toBeCloseTo(c.cards.c1.rect.width, 5);
     expect(c.chat).toBe('column');
     const r = plan('review', REVIEW, STAGES[0]);
-    expect(r.cards.web.rect.y).toBe(r.free.y);
+    expect(r.cards.web.rect.y).toBe(r.presentWindow!.y + PRESENT_WIN.TITLE_H);
     expect(r.cards.chat.rect.y).toBeCloseTo(r.cards.br.rect.y, 5);
     expect(r.cards.chat.rect.y).toBeGreaterThan(r.cards.web.rect.y + r.cards.web.rect.height);
     expect(r.cards.web.rect.width).toBeGreaterThan(r.cards.chat.rect.width);

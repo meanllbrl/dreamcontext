@@ -7,7 +7,8 @@ import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { OwnerCardSlot } from './OwnerCardSlot';
 import { ownerCardItemsOf, placeOwnerCards } from './cardPlacement';
 import { surveyDraftKey } from '../chat/surveyDrafts';
-import { RemotePermission } from './SuperPermissionCard';
+import { MacPermission, RemotePermission, SuperAllowsLine } from './SuperPermissionCard';
+import { DockedAskRow } from './DockedAskRow';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { requestOpenAgents } from '../../../lib/openAgents';
@@ -19,7 +20,7 @@ import {
   MAIN_RECORD, allowAnswer, allowedWaiting, callOf, declineAnswer, grantChoices, rewriteAnswer, ownerRowKind, useOwnerAnswer, visibleText,
 } from './ownerAnswer';
 import {
-  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText, superAlreadyText,
+  askPendingOf, askQuestionsOf, cardState, childQuestionOf, memberItemText, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText, superAlreadyText, useDockedAsk,
   type AskRef,
 } from './superQuestions';
 
@@ -38,22 +39,28 @@ import {
  * question, and the answer stands in the transcript as the card's receipt (`SuperAnswerReceipt`).
  * A send that wrote nothing remounts the card, so it can be answered again.
  */
-export function SuperQuestionCard({ ask, session }: {
+export function SuperQuestionCard({ ask, session, place = 'chat' }: {
   ask: AskRef & { live: boolean };
   /** The super chat this card is drawn in. */
   session: ChatSession;
+  /** 'dock': drawn under the window's page (ReportAskDock, K8). In the chat, a question docked
+   *  there is one row: one full card per question on this Mac. */
+  place?: 'chat' | 'dock';
 }) {
   const view = useSuperQuestions(session.claudeId);
+  const docked = useDockedAsk(session.claudeId);
   if (cardState(ask.item, ask.live, view) !== 'open' || !view) return null;
   const item = view.open.find((q) => q.id === ask.item);
   if (!item) return null;
+  if (place === 'chat' && docked === item.id) return <DockedAskRow item={item} />;
   return (
     <OpenQuestion
       item={item}
       superSession={view.superSession ?? session}
       child={item.kind === 'question' ? view.sessionFor(item.sessionId) : undefined}
       remote={view.remote}
-      reads={item.kind === 'ask' ? view.readsOf?.(item) : undefined}
+      // Docked under its report, the report is right above it: no "To read" line.
+      reads={item.kind === 'ask' && place === 'chat' ? view.readsOf?.(item) : undefined}
     />
   );
 }
@@ -100,7 +107,8 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
     // The child's own AskUserQuestion, answered through the child's own session. The super's
     // words lead as the context strip when the child gave none.
     const pending: PendingQuestion = own.title || !item.ownerText ? own : { ...own, title: item.ownerText };
-    return wrap(<SurveyCard key={own.requestId} item={pending} session={child} />);
+    // The same draft key the child's own chat uses: his picks follow the question between them.
+    return wrap(<SurveyCard key={own.requestId} item={pending} session={child} draftKey={surveyDraftKey(child.claudeId, own.requestId)} />);
   }
   // The child is here but no longer asks this (its answer just went out; the record follows):
   // nothing to draw, never a second way to answer it.
@@ -148,7 +156,16 @@ function OpenAsk({ item, superSession, child, remote, reads }: {
     answerQuestion: (_requestId, questions, picked, notes) => { send(superAnswerText(item, questions, picked, notes)); return true; },
     answer: (_requestId, opts) => { send(opts.message === ALREADY_ANSWERED_MESSAGE ? superAlreadyText(item) : superUnclearText(item, opts.message ?? '')); return true; },
   };
-  return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} />);
+  // The picks outlive the card (surveyDrafts): the same question drawn in the chat or docked under
+  // the report, remounted by a fold, a minimise, a resize or a refused send, comes back with his
+  // picks. Its own namespace, so the Super chat's `result` sweep (keyed by real request ids) never
+  // drops it; the store's cap retires it (end review 2026-11-20).
+  return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} draftKey={superAskDraftKey(item)} />);
+}
+
+/** Where a Super question's picks are kept across remounts (one key wherever it is drawn). */
+export function superAskDraftKey(item: Pick<SuperQueueItem, 'id' | 'sessionId'>): string {
+  return surveyDraftKey(`super-ask:${item.sessionId}`, item.id);
 }
 
 const NONE_PLACED: ReadonlySet<string> = new Set();
@@ -181,7 +198,10 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
   const waiting = new Set(placeOwnerCards(ownerCardItemsOf(view)).tail.filter((q) => !placedCards.has(q.id)).map((q) => q.id));
   const members = (view.members ?? []).filter((q) => (q.card ? waiting.has(q.id) : !placedCards.has(q.id)) && shows(q));
   const cards = (view.cards ?? []).filter((q) => waiting.has(q.id) && shows(q));
-  if (!rest.length && !members.length && !cards.length) return null;
+  // The Mac's own permissions (D8): a card each, under everything else that waits, Allow once first.
+  const permissions = view.permissions ?? [];
+  const allows = (view.allows ?? []).filter((a) => a.entries.length > 0);
+  if (!rest.length && !members.length && !cards.length && !permissions.length && !allows.length) return null;
   return (
     <>
       {rest.map((q) => (
@@ -200,6 +220,17 @@ export function SuperQuestionTail({ session, anchored, placedCards = NONE_PLACED
         />
       ))}
       {members.map((q) => <MemberWaitCard key={`member-${q.id}`} item={q} paused={!!view.pausedFor?.(q.sessionId)} />)}
+      {allows.map((a) => <SuperAllowsLine key={`allows-${a.sessionId}`} entries={a.entries} title={view.titleFor?.(a.sessionId) ?? ''} />)}
+      {permissions.map((q) => (
+        <MacPermission
+          key={`perm-${q.id}:${q.requestId ?? ''}`}
+          item={q}
+          child={view.sessionFor(q.sessionId)}
+          title={view.titleFor?.(q.sessionId) || ''}
+          scope={session.claudeId}
+          {...(view.record ? { record: view.record } : {})}
+        />
+      ))}
     </>
   );
 }
@@ -303,7 +334,7 @@ function MemberWaitBody({ item, name, slug, hasPhoto }: { item: SuperQueueItem; 
   return (
     <div className="chat-viewcard chat-agentthread" data-testid="super-member-card" data-item={item.id} data-member={slug} data-of={item.of} data-row={row}>
       <CardHeader
-        glyph={<AgentAvatar slug={slug} title={name} hasPhoto={hasPhoto} size={22} />}
+        glyph={<AgentAvatar slug={slug} title={name} hasPhoto={hasPhoto} size={22} of="agent" />}
         title={t(title).replace('{name}', name)}
       />
       {allowed ? (

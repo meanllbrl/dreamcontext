@@ -1,0 +1,121 @@
+/* The v3 Dock (plan super-v3 K2): values from super-jakob-v3/kaynak/v3.css `.dock`, `.dtile`, `.dsep`
+   and super-ux-denetim/kaynak/uye.css `.dtile.mt`. Geometry comes from the plan (inline rects);
+   colour carries state (pink waits on the owner), motion carries mode (the walking light runs). */
+.sdock {
+  position: absolute;
+  z-index: var(--sz-dock, 300);
+  box-sizing: border-box;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--color-bg-secondary) 78%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--color-border-hover);
+  box-shadow: var(--shadow-xl);
+}
+.sdock-row { position: absolute; inset: 0; overflow: visible; border-radius: inherit; }
+.sdock[data-scrolls] .sdock-row {
+  overflow-x: auto; overflow-y: visible; scrollbar-width: none;
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.sdock[data-scrolls] .sdock-row::-webkit-scrollbar { display: none; }
+.sdock-inner { position: relative; }
+.sdock-sep { position: absolute; background: var(--color-border-hover); }
+
+.sdock-tile {
+  position: absolute; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 10px 8px; border-radius: 14px; text-align: left; cursor: pointer;
+  background: var(--color-bg); border: 1px solid var(--color-border); color: var(--color-text);
+  font: inherit; transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.sdock-tile:hover, .sdock-tile:focus-visible { transform: translateY(-6px) scale(1.04); border-color: var(--color-border-hover); box-shadow: var(--shadow-xl); z-index: 2; outline: none; }
+.sdock-tile:focus-visible { box-shadow: 0 0 0 2px var(--color-border-focus), var(--shadow-xl); }
+.sdock-tile::after { content: ''; position: absolute; left: 50%; bottom: -6px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--color-text-tertiary); }
+.sdock-tile[data-kind='mini']::after, .sdock-tile[data-kind='pool']::after, .sdock-tile[data-kind='today']::after { display: none; }
+
+.sdock-head { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.sdock-ti { font-size: 12.5px; font-weight: 600; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sdock-two { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 15px; font-size: 12px; }
+.sdock-ln { font-size: 11.5px; line-height: 16px; color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: auto; }
+.sdock-wait { color: var(--mood-waiting-ink); }
+
+.sdock-ring { flex: none; }
+.sdock-ring .tr { stroke: var(--color-border-hover); }
+.sdock-ring .fg { stroke: var(--color-success); }
+.sdock-ring[data-tone='working'] { animation: sdock-spin 1.6s linear infinite; }
+.sdock-ring[data-tone='asking'] .fg { stroke: var(--mood-waiting); }
+.sdock-ring[data-tone='stuck'] .fg { stroke: var(--color-error); }
+.sdock-ring[data-tone='idle'] .fg { stroke: var(--color-text-tertiary); }
+
+/* The walking light: a working job's mode (never a progress amount: no estimates, D4). */
+.sdock-walk { position: relative; height: 3px; border-radius: 2px; background: var(--color-border); overflow: hidden; margin-top: auto; }
+.sdock-walk i { position: absolute; top: 0; bottom: 0; width: 34%; border-radius: 2px; background: var(--color-success); animation: sdock-walk 1.8s ease-in-out infinite; }
+
+.sdock-tile[data-kind='needs'] {
+  border-color: color-mix(in srgb, var(--mood-waiting) 70%, var(--color-border));
+  box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--mood-waiting) 60%, transparent);
+}
+.sdock-badge {
+  position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px;
+  background: var(--mood-waiting); color: var(--mood-waiting-on); font-size: 11.5px; font-weight: 700; display: grid; place-items: center;
+  box-shadow: 0 0 0 2px var(--color-bg-secondary);
+}
+
+.sdock-tile[data-compact] { padding: 8px 6px; align-items: center; text-align: center; }
+.sdock-tile[data-compact] .sdock-ti { font-size: 11px; line-height: 14px; font-weight: 500; }
+
+.sdock-tile[data-kind='member'] { padding: 8px 6px 6px; align-items: center; text-align: center; gap: 2px; }
+.sdock-tile[data-kind='member'] .sdock-ti { font-size: 11.5px; line-height: 14px; margin-top: 2px; max-width: 100%; }
+.sdock-tile[data-kind='member'] .sdock-ln { font-size: 10.5px; color: var(--color-text-tertiary); margin-top: 0; max-width: 100%; }
+.sdock-face {
+  width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  font-size: 13px; font-weight: 700; color: var(--color-text); background: var(--color-bg-tertiary);
+  box-shadow: 0 0 0 2px var(--color-text-tertiary);
+}
+.sdock-face[data-tone='working'] { box-shadow: 0 0 0 2px var(--color-success); }
+.sdock-face[data-tone='asking'] { box-shadow: 0 0 0 2px var(--mood-waiting); }
+
+.sdock-tile[data-kind='mini'] { padding: 4px; display: block; overflow: hidden; }
+.sdock-thumb { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 10px; overflow: hidden; background: var(--color-bg-tertiary); }
+.sdock-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.sdock-thumb-title { font-size: 11px; line-height: 14px; padding: 0 6px; color: var(--color-text-secondary); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-align: center; }
+
+.sdock-tile[data-kind='pool'] { align-items: center; justify-content: center; text-align: center; padding: 6px; }
+.sdock-cap { white-space: normal; font-size: 10.5px; line-height: 13px; margin-top: 2px; }
+
+@keyframes sdock-spin { to { transform: rotate(360deg); } }
+@keyframes sdock-walk { 0% { left: -34%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .sdock-ring[data-tone='working'], .sdock-walk i { animation: none; }
+  .sdock-walk i { left: 0; width: 100%; opacity: 0.5; }
+  .sdock-tile { transition: none; }
+}
+
+/* One line about the owner's last gesture (super-v3 D5: a drop groups nothing), above the Dock. */
+.super-stage-note {
+  position: absolute;
+  left: 50%;
+  bottom: 124px;
+  transform: translateX(-50%);
+  z-index: 60;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.super-stage-note--undo { pointer-events: auto; display: inline-flex; align-items: center; gap: var(--space-3); }
+.super-stage-note-btn {
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.super-stage-note-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }

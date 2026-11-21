@@ -190,7 +190,7 @@ export interface FormatOptions {
 export function hubDrawsFence(lang: string, body: string): boolean {
   if (lang === 'dream-html' || lang === 'dream-actions') return true;
   if (lang !== 'dream-view') return false;
-  try { return ['insight', 'agent-thread', 'automation', 'app-request'].includes(String((JSON.parse(body) as { type?: unknown }).type)); } catch { return false; }
+  try { return ['insight', 'agent-thread', 'automation', 'app-request', 'jobs'].includes(String((JSON.parse(body) as { type?: unknown }).type)); } catch { return false; }
 }
 
 function safeHref(raw: string): string | null {

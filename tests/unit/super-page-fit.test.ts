@@ -3,7 +3,7 @@
  * with no measured width, a device width or an owner's size keeps today's card to the pixel.
  */
 import { describe, it, expect } from 'vitest';
-import { STAGE, fitCard, planStage, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { PRESENT_WIN, STAGE, fitCard, planStage, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { MAX_PAGE_FITS, PAGE_FIT_KEY, pageFitKey, pageFitOf, readPageFit, setPageFit } from '../../dashboard/src/lib/pageFit.js';
 import { deviceAspect } from '../../dashboard/src/lib/webDevice.js';
 import type { SuperContainer, SuperView } from '../../dashboard/src/lib/superTypes.js';
@@ -40,14 +40,15 @@ describe('a measured page sets its card', () => {
   it('compare: two measured pages hold their width, one unmeasured keeps the old split', () => {
     const view = present(['a', 'b'], 'compare');
     const cs = [web('a'), web('b')];
-    const narrowPage = 400;
+    // Two pages narrower than the desktop window together: the window holds both at their width.
+    const narrowPage = 300;
     const p = plan(cs, view, () => narrowPage);
     expect(p.cards.a.rect.width).toBe(narrowPage + CHROME);
     expect(p.cards.b.rect.width).toBe(narrowPage + CHROME);
     const free = plan(cs, view, none);
     expect(p.centre.width).toBeGreaterThan(free.centre.width);
     expect(plan(cs, view, (c) => (c.id === 'a' ? narrowPage : undefined)).cards.a.rect).toEqual(free.cards.a.rect);
-    // Wider than the slots there are: the old split, never a chat under its width.
+    // Wider than the chat's floor leaves: the desktop window's split, never a chat under its width.
     expect(plan(cs, view, fitted).cards.a.rect).toEqual(free.cards.a.rect);
   });
 
@@ -83,9 +84,9 @@ describe('what keeps the width it has', () => {
     expect(plan([web('a')], view, () => 3000).cards.a.rect).toEqual(today.cards.a.rect);
   });
 
-  it('a folded chat, a filmstrip and a narrow stage', () => {
+  it('a folded chat (the window ignores it), a filmstrip and a narrow stage', () => {
     const folded = { ...view, chat: 'bar' } as SuperView;
-    expect(plan([web('a')], folded, fitted).cards.a.rect).toEqual(plan([web('a')], folded, none).cards.a.rect);
+    expect(plan([web('a')], folded, fitted).cards.a.rect).toEqual(plan([web('a')], view, fitted).cards.a.rect);
     const film = present(['a', 'b'], 'filmstrip');
     expect(plan([web('a'), web('b')], film, fitted).cards.a.rect).toEqual(plan([web('a'), web('b')], film, none).cards.a.rect);
     const phone = { width: 390, height: 780 };
@@ -122,44 +123,56 @@ describe('a web page with a device picked takes the device shape in a presentati
   const spotlight = present(['a'], 'spotlight');
   const shapeOf = (r: { width: number; height: number }) => (r.width - STAGE.CARD_CHROME.w) / (r.height - STAGE.CARD_CHROME.h);
 
-  it('spotlight + phone: a narrow tall card, the chat takes the width it frees', () => {
+  // K14 (W3): a device page sets its window's width (a phone's at the body's height, a desktop's
+  // at desktop width) and keeps its shape in the body; the chat is the column left of the window.
+  const winRight = (p: ReturnType<typeof shaped>) => p.presentWindow!.x + p.presentWindow!.width;
+  const inWin = (p: ReturnType<typeof shaped>, r: { x: number; y: number; width: number; height: number }) => {
+    const w = p.presentWindow!;
+    return r.x >= w.x - 0.5 && r.y >= w.y + PRESENT_WIN.TITLE_H - 0.5 && r.x + r.width <= w.x + w.width + 0.5 && r.y + r.height <= w.y + w.height + 0.5;
+  };
+
+  it('spotlight + phone: a narrow tall card in a narrow window, the chat takes the width it frees', () => {
     const p = shaped([web('a')], spotlight, PHONE);
     const free = shaped([web('a')], spotlight, undefined);
     expect(shapeOf(p.cards.a.rect)).toBeCloseTo(PHONE, 6);
     expect(p.cards.a.rect.height).toBeCloseTo(free.cards.a.rect.height, 6);
     expect(p.cards.a.rect.width).toBeLessThan(free.cards.a.rect.width / 2);
+    expect(p.presentWindow!.width).toBeLessThan(free.presentWindow!.width);
     expect(p.centre.width).toBeGreaterThan(free.centre.width);
-    expect(p.centre.x + p.centre.width + STAGE.GAP).toBeCloseTo(p.cards.a.rect.x, 6);
-    expect(p.cards.a.rect.x + p.cards.a.rect.width).toBeCloseTo(free.cards.a.rect.x + free.cards.a.rect.width, 6);
+    expect(p.centre.x + p.centre.width + STAGE.GAP).toBeCloseTo(p.presentWindow!.x, 6);
+    expect(winRight(p)).toBeCloseTo(winRight(free), 6);
+    expect(inWin(p, p.cards.a.rect)).toBe(true);
     expect(p.cards.a.fitted).toBeUndefined();
   });
 
-  it('spotlight + desktop: a wide card, the chat narrows to its floor and no further', () => {
+  it('spotlight + desktop: a wide card in the desktop window, the chat keeps its floor', () => {
     const p = shaped([web('a')], spotlight, DESKTOP);
     const free = shaped([web('a')], spotlight, undefined);
-    expect(p.centre.width).toBe(STAGE.MINI_MIN_W);
-    expect(p.centre.width).toBeLessThan(free.centre.width);
-    expect(p.cards.a.rect.width).toBeGreaterThan(free.cards.a.rect.width);
+    expect(p.presentWindow).toEqual(free.presentWindow);
+    expect(p.centre).toEqual(free.centre);
+    expect(p.centre.width).toBeGreaterThanOrEqual(PRESENT_WIN.CHAT_MIN);
     expect(shapeOf(p.cards.a.rect)).toBeCloseTo(DESKTOP, 6);
+    expect(inWin(p, p.cards.a.rect)).toBe(true);
   });
 
-  it('spotlight, no device: today\'s card and chat to the pixel', () => {
+  it('spotlight, no device: the desktop window, the card its whole body, the chat the rest', () => {
     const p = shaped([web('a')], spotlight, undefined);
-    expect(p.centre.width).toBe(Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * WIDE.width)));
+    expect(p.presentWindow!.width).toBe(PRESENT_WIN.DESK_W);
+    expect(p.centre.width).toBe(p.free.width - STAGE.GAP - PRESENT_WIN.DESK_W);
+    const w = p.presentWindow!;
+    expect(p.cards.a.rect).toEqual({ x: w.x, y: w.y + PRESENT_WIN.TITLE_H, width: w.width, height: w.height - PRESENT_WIN.TITLE_H });
   });
 
-  it('a folded chat: the card sits in shape in the middle of the stage, the bar keeps its width', () => {
+  it('a folded chat: the window keeps the chat a column (frame 07c), the card still in shape', () => {
     const folded = { ...spotlight, chat: 'bar' } as SuperView;
     const p = shaped([web('a')], folded, PHONE);
-    const free = shaped([web('a')], folded, undefined);
-    expect(p.chat).toBe('bar');
-    expect(p.cards.a.rect).toEqual(fitCard(free.cards.a.rect, PHONE));
-    expect(p.centre).toEqual(free.centre);
+    expect(p.chat).toBe('column');
+    expect(p.cards.a.rect).toEqual(shaped([web('a')], spotlight, PHONE).cards.a.rect);
   });
 
-  it('a question open over a folded chat: the mini is back and the card still in shape', () => {
+  it('a question open over a folded chat: the chat column, the card still in shape', () => {
     const p = shaped([web('a')], { ...spotlight, chat: 'bar' } as SuperView, PHONE, { asking: true });
-    expect(p.chat).toBe('mini');
+    expect(p.chat).toBe('column');
     expect(shapeOf(p.cards.a.rect)).toBeCloseTo(PHONE, 6);
   });
 

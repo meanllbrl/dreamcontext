@@ -306,9 +306,9 @@ describe('the owner\'s own hand', () => {
     expect(s.containers[0].heldAt).toBeUndefined();
   });
 
-  it('a live card he grouped stays in his group, also when he floats the group back from Others', async () => {
-    write({ containers: [chat('w'), pic(1)], children: { w: child('w', { row: 'working' }) } as SuperState['children'] });
-    await layout({ group: { id: 'grp-mine', cards: [cid('w'), 'image-p1'], name: 'Mine' } });
+  it('a live card in a group stays in it, also when he floats the group back from Others', async () => {
+    // Only the Super makes groups (super-v3 D5): the group is the Super's, his hand moves it.
+    write({ containers: [chat('w'), pic(1)], groups: [{ id: 'grp-mine', name: 'Mine', cards: [cid('w'), 'image-p1'], place: 'float' }], children: { w: child('w', { row: 'working' }) } as SuperState['children'] });
     await layout({ cards: [{ id: 'grp-mine', place: 'others' }] });
     await layout({ cards: [{ id: 'grp-mine', place: 'float' }] });
     const s = await readSuperState(root);

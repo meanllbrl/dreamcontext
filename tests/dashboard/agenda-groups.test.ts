@@ -136,7 +136,7 @@ describe('rowActions (C8): the one source of what a row may do', () => {
     expect(G.rowActions(ent('line', true, { section: 'done', author: 'owner' }))).toEqual({ mark: 'status', menu: true, press: 'detail', hover: ['ask'], detail: 'full', remove: false });
     // An archived line, today's or a past day's: check, Ask, read-only detail, never the menu.
     expect(G.rowActions(ent('line', false, { section: 'done' }))).toEqual({ mark: 'check', menu: false, press: 'detail', hover: ['ask'], detail: 'readonly', remove: false });
-    expect(G.rowActions(ent('question', false))).toEqual({ mark: 'icon', menu: false, press: 'legacy', hover: ['ask'], detail: 'none', remove: false });
+    expect(G.rowActions(ent('question', false))).toEqual({ mark: 'icon', menu: false, press: 'legacy', hover: ['ask', 'stop'], detail: 'none', remove: false });
     expect(G.rowActions(ent('owed', false)).hover).toEqual(['notNeeded', 'ask']);
     for (const k of ['approval', 'task', 'recall', 'sync']) {
       expect(G.rowActions(ent(k, false)), k).toEqual({ mark: 'icon', menu: false, press: 'legacy', hover: [], detail: 'none', remove: false });

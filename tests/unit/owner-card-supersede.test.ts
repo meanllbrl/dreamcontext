@@ -269,10 +269,15 @@ describe('the drawer\'s Super mark and the agenda count from ONE rule', () => {
     { id: '12', sessionId: 'c', kind: 'ask', state: 'pending', createdAt: 1, own: true },
     { id: '13', sessionId: 'c', kind: 'done', state: 'pending', createdAt: 1 },
     { id: '14', sessionId: 'c', kind: 'owner-result', state: 'pending', createdAt: 1 },
+    // super-v3 K6: a member's approval is his; one with no member is not counted.
+    { id: '15', sessionId: 'c', kind: 'approval', state: 'pending', createdAt: 1, member: 'sage' } as never,
+    { id: '16', sessionId: 'c', kind: 'approval', state: 'pending', createdAt: 1 },
   ];
 
   it('the server\'s copy agrees with the window\'s needsOwner on every kind', () => {
     for (const q of items) expect([q.id, needsOwnerItem(q)]).toEqual([q.id, needsOwner(q)]);
+    expect(needsOwner(items.find((q) => q.id === '15')!)).toBe(true);
+    expect(needsOwner(items.find((q) => q.id === '16')!)).toBe(false);
   });
 
   it('a card he acted on lights no Super mark (it used to: the old copy counted any open owner item)', () => {

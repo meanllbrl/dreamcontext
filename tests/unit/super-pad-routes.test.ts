@@ -1,6 +1,6 @@
 /**
  * Task ajanda-gunluk C6, criteria 9-11: the owner's agenda routes. Add and remove need the shell's
- * owner key (else `owner_page_only`); a status change works without it but leaves no mark; his
+ * owner key (else `owner_page_only`), and so does a status change (super-v3 K4c); his
  * add never takes over a Super line; remove refuses a Done line; a refused add answers
  * `pad_full`; a delegate whose note is refused still starts its child with `noteRefused`;
  * `agenda-day` refuses a malformed date and returns a past day; Done on a running job's line
@@ -126,14 +126,17 @@ describe('his add and remove need the owner key', () => {
 });
 
 describe('his status changes', () => {
-  it('five statuses (and the older section body); a mark only with the key', async () => {
+  it('five statuses (and the older section body); without the key nothing moves (super-v3 K4c)', async () => {
     seed({ pad: [line('n1'), line('n2')], padSeq: 2 });
-    expect((await owner('pad', { id: 'n1', status: 'almost-done' }, PAGE)).status).toBe(200);
-    expect((await pad()).find((p) => p.id === 'n1')).toMatchObject({ stage: 'almost', by: 'owner' });
+    const refused = await owner('pad', { id: 'n1', status: 'almost-done' }, PAGE);
+    expect([refused.status, refused.json.error]).toEqual([403, 'owner_page_only']);
+    expect((await pad()).find((p) => p.id === 'n1')).not.toHaveProperty('by');
     expect((await readSuperState(root)).ownerMarks).toBeUndefined();
+    expect((await owner('pad', { id: 'n1', status: 'almost-done' })).status).toBe(200);
+    expect((await pad()).find((p) => p.id === 'n1')).toMatchObject({ stage: 'almost', by: 'owner' });
     expect((await owner('pad', { id: 'n2', section: 'done' })).status).toBe(200);
     expect((await pad()).find((p) => p.id === 'n2')).toMatchObject({ section: 'done', by: 'owner' });
-    expect((await readSuperState(root)).ownerMarks).toEqual([expect.objectContaining({ key: 'pad:n2', from: 'in-progress', to: 'done' })]);
+    expect((await readSuperState(root)).ownerMarks).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'pad:n2', from: 'in-progress', to: 'done' })]));
     expect((await owner('pad', { id: 'n2', status: 'later' })).status).toBe(400);
     expect((await owner('pad', { id: 'n9', status: 'done' })).json.error).toBe('unknown_note');
   });

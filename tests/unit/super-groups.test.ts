@@ -252,15 +252,14 @@ describe('close --group / --all-groups (the agent)', () => {
 });
 
 describe('the owner\'s layout PATCH', () => {
-  it('a card dropped on another makes a group where the target stood; a drop on a group joins it', async () => {
-    makeVault();
-    let r = await layout({ group: { id: 'grp-own-1', cards: ['chat-c', 'chat-b'], name: 'Grup 1' } });
-    expect(r.status).toBe(200);
-    let s = await state();
-    expect(s.groups).toEqual([{ id: 'grp-own-1', name: 'Grup 1', cards: ['chat-c', 'chat-b'], place: 'float', pos: { x: 0.9, y: 0.1 } }]);
-    r = await layout({ group: { id: 'grp-own-1', cards: ['task-d'] } });
-    s = await state();
-    expect(s.groups[0].cards).toEqual(['chat-c', 'chat-b', 'task-d']);
+  it('a card dropped on another makes no group: only the Super groups (super-v3 D5, K9)', async () => {
+    makeVault({ groups: [{ id: 'grp-1', name: 'One', cards: ['chat-a', 'chat-b'], place: 'float' }] });
+    let r = await layout({ group: { id: 'grp-own-1', cards: ['chat-c', 'task-d'], name: 'Grup 1' } });
+    expect(r.status).toBe(409);
+    expect(r.json.error).toBe('group_by_super');
+    r = await layout({ group: { id: 'grp-1', cards: ['task-d'] } });
+    expect(r.status).toBe(409);
+    expect((await state()).groups).toEqual([{ id: 'grp-1', name: 'One', cards: ['chat-a', 'chat-b'], place: 'float' }]);
   });
 
   it('a card dragged out of a group lands where it was dropped; Ungroup dissolves', async () => {

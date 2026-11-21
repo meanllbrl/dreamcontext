@@ -31,6 +31,9 @@ import { RULE_ID_RE, undoRule } from '../../lib/rules-store.js';
 import { ownerLine } from '../../cli/commands/learn.js';
 import { locateRule } from '../routes/learned.js';
 import { sendAutomationCard } from './automation-approvals.js';
+import { jobsLines, jobsRows } from '../../lib/super/jobs-view.js';
+import { needsOwnerItem } from '../../lib/super/owner-needs.js';
+import type { SuperState } from '../../lib/super/types.js';
 
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
 const VIDEO_FILE = /\.(mp4|m4v|mov|webm)$/i;
@@ -81,11 +84,20 @@ export function actionsMessage(body: string, tunnelHost: string | null = null): 
   return out;
 }
 
-/** A `dream-view` the hub draws (insight, agent-thread, automation, app-request) as one line. */
-export function viewLine(body: string): string | null {
+/** A `dream-view` the hub draws (insight, agent-thread, automation, app-request, jobs) as text.
+ *  `jobs` reads the bound Super's record its caller passes (plan super-v3 K7): up to 5 lines,
+ *  waiting first; null without a record. Plain text: the caller escapes it. */
+export function viewLine(body: string, state: Pick<SuperState, 'children' | 'queue' | 'team' | 'containers'> | null = null): string | null {
   let v: Obj | null;
   try { v = obj(JSON.parse(body)); } catch { return null; }
   if (!v) return null;
+  if (v.type === 'jobs') {
+    if (!state) return null;
+    const ids = Array.isArray(v.ids) ? v.ids.filter((x): x is string => typeof x === 'string') : undefined;
+    const sum = jobsRows(state, needsOwnerItem as (q: unknown) => boolean, ids);
+    const head = `${sum.total} iş · ${sum.waiting} seni bekliyor · ${sum.running} sürüyor · ${sum.done} bitti`;
+    return [head, ...jobsLines(sum, 5)].map((l) => cleanTitle(l, 200)).join('\n');
+  }
   const id = cleanTitle(String(v.id ?? v.slug ?? ''), 60);
   if (v.type === 'insight') return `Insight: ${id || 'kart'} (Mac'te)`;
   if (v.type === 'agent-thread') return `${id || 'Üye'}: konuşma Mac'te`;
@@ -231,7 +243,7 @@ export async function sendAnswerBlocks(hub: TelegramHub, ab: ActiveBinding, text
       // An automation's approval card: the whole card with Onayla / Reddet (automation-approvals.ts).
       const auto = automationViewSlug(b.body);
       if (auto !== null) { await sendAutomationCard(hub, ab, auto, sessionId).catch(() => false); continue; }
-      const line = viewLine(b.body);
+      const line = viewLine(b.body, /"type"\s*:\s*"jobs"/.test(b.body) ? await hub.readBound(ab).catch(() => null) : null);
       if (line) await hub.reply(ab, line);
     }
   }

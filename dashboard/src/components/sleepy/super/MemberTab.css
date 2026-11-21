@@ -1,0 +1,36 @@
+/* A member's tab in the presentation window (super-v3 Ü2, frame T2-sonra). */
+.super-member-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.super-member-tab-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.super-member-tab-face { position: relative; flex: none; display: inline-flex; }
+.super-member-tab-names { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.super-member-tab-name { font-weight: 600; color: var(--color-text-primary); }
+.super-member-tab-meta { font-size: var(--font-size-sm); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-member-tab-switch {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+}
+.super-member-tab-switch button {
+  border: 0;
+  background: none;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.super-member-tab-switch button[aria-selected='true'] { background: var(--color-bg); color: var(--color-text-primary); }
+.super-member-tab-switch button:disabled { cursor: default; opacity: 0.6; }
+.super-member-tab-switch button i { font-style: normal; margin-left: var(--space-1); color: var(--color-text-tertiary); }
+.super-member-tab-switch button[data-waiting='true'] i { color: var(--mood-waiting-ink); }
+.super-member-tab-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: var(--space-3) var(--space-4) 0; }

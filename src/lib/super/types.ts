@@ -162,7 +162,7 @@ export interface SuperContainer {
   forAt?: number;
   /** A picture's width/height (3 decimals), read by the SERVER from the file's header whenever
    *  an agent opens, presents or asks with it (image-aspect.ts); never written by the owner's
-   *  layout. Images only, in [ASPECT_MIN, ASPECT_MAX]; absent = unknown (drawn as today). */
+   *  layout. Pictures and PDFs (the first page) only, in [ASPECT_MIN, ASPECT_MAX]; absent = unknown. */
   aspect?: number;
 }
 
@@ -423,6 +423,8 @@ export interface PresentItem {
   /** The picture question this item shows (ask-show.ts). */
   ask?: string;
   at: number;
+  /** It has been on screen once (W3 D14): a tab never shown carries the background dot. */
+  shown?: true;
 }
 
 export interface PresentQueue {
@@ -480,6 +482,7 @@ function showHead(s: Pick<SuperState, 'view' | 'presentQueue'>): void {
   if (!q || !head) { s.view = { mode: 'float' }; if (q) { delete q.showing; q.seen = 0; } return; }
   s.view = presentItemView(head);
   q.showing = head.id;
+  head.shown = true;
 }
 
 /** Is the owner looking at something a new presentation must not replace (D1, D6)? Any
@@ -569,6 +572,40 @@ export function presentCards(
 /** A picture question that is still open with the owner: its item waits instead of leaving (AC4). */
 export type AskStillOpen = (ask: string) => boolean;
 
+/** The owner's gestures on the presentation window's tabs (W3 D14). */
+export type QueueTabOp = 'show' | 'close';
+
+/**
+ * His tab gesture: `show` brings a waiting tab to the front (the one he looked at stays as a
+ * tab behind it); `close` takes the named tabs away, the front one included (then the next
+ * opens, or the stage floats). A closed tab is his: its picture question stays in the chat.
+ * Unknown ids are skipped. Returns whether anything changed. Mutates `s`.
+ */
+export function ownerQueueTabs(s: Pick<SuperState, 'view' | 'presentQueue'>, op: QueueTabOp, ids: readonly string[]): boolean {
+  const q = s.presentQueue;
+  if (!q || !q.items.length) return false;
+  if (op === 'show') {
+    const it = q.items.find((x) => x.id === ids[0]);
+    if (!it) return false;
+    if (it === q.items[0] && headShowing(s)) return false;
+    q.items = [it, ...q.items.filter((x) => x !== it)];
+    showHead(s);
+    return true;
+  }
+  const drop = new Set(ids);
+  const front = headShowing(s) ? q.items[0] : undefined;
+  const left = q.items.filter((x) => !drop.has(x.id));
+  if (left.length === q.items.length) return false;
+  q.seen += q.items.length - left.length;
+  q.items = left;
+  if (front && drop.has(front.id)) {
+    delete q.showing;
+    if (left.length) showHead(s);
+    else { s.view = { mode: 'float' }; q.seen = 0; }
+  } else if (!left.length) { delete q.showing; q.seen = 0; }
+  return true;
+}
+
 /**
  * The owner's queue gesture (D2, AC2, AC5), guarded by the item his window showed: `next` (also
  * closing the presentation) passes the head and opens the next, `leave` passes it and floats the
@@ -651,6 +688,7 @@ export function settlePresentQueue(
     items.push({
       id: r.id, cards, ...(layout ? { layout } : {}), ...(layout && r.layoutBy === 'owner' ? { layoutBy: 'owner' as const } : {}),
       ...(typeof r.ask === 'string' && QUEUE_ID_RE.test(r.ask) ? { ask: r.ask } : {}), at,
+      ...(r.shown === true ? { shown: true as const } : {}),
     });
   }
   const num = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < max ? Math.floor(v) : 0);
@@ -856,7 +894,41 @@ export interface SuperChild {
    *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
    *  and clears this. At most MAX_SENT. */
   sent?: string[];
+  /** When the Super last spoke to it (`brief`, `send`, `answer`, `read`, `allow`; epoch ms, plan
+   *  super-v3 K3): the window's focus job is the newest. Server-written. */
+  spokeAt?: number;
+  /** What the Super allowed it (K5), newest last: `summary` = the redacted one-line command (or a
+   *  tool name and target), at most MAX_ALLOW_SUMMARY chars; bounded by MAX_ALLOWS_BYTES stored
+   *  bytes per child (oldest dropped); cleared when it ends; never in the remote view. */
+  allows?: SuperAllowEntry[];
+  /** The agenda lines linked to it as they stood when the OWNER ended it (K4c): Undo (the owner's
+   *  resume door) puts back exactly these, never a client value. Cleared on resume. */
+  endedLines?: SuperEndedLine[];
 }
+
+/** The owner's absence (D13 recap, super-v3 D10): `since` the first event while he was away,
+ *  `until` the newest, `viaTelegram` how many of his items he answered from Telegram meanwhile. */
+export interface SuperAway { since: number | null; events: number; until?: number; viaTelegram?: number }
+
+/** One command the Super allowed a child (K5). `inFolder` = it stayed inside the job's own folder. */
+export interface SuperAllowEntry { at: number; summary: string; inFolder?: boolean }
+export const MAX_ALLOW_SUMMARY = 300;
+export const MAX_ALLOWS_BYTES = 64 * 1024;
+/** An agenda line's place before the owner's end (K4c). */
+export interface SuperEndedLine { id: string; section: PadSection; stage?: PadStage; by?: 'auto' | 'owner'; why?: PadAutoWhy }
+/** The newest allow entries that fit MAX_ALLOWS_BYTES (K5: bounded by stored bytes, never by count). */
+export function boundAllows(list: readonly SuperAllowEntry[]): SuperAllowEntry[] {
+  const out: SuperAllowEntry[] = [];
+  let bytes = 0;
+  for (let i = list.length - 1; i >= 0; i--) {
+    bytes += Buffer.byteLength(JSON.stringify(list[i]), 'utf8') + 1;
+    if (bytes > MAX_ALLOWS_BYTES) break;
+    out.unshift(list[i]);
+  }
+  return out;
+}
+/** How long after the owner's end his Undo may relaunch the job (K4b). */
+export const OWNER_UNDO_MS = 15_000;
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
  *  still owns a worktree (it leaves when `super worktree remove` clears it). */
@@ -1581,7 +1653,7 @@ export interface SuperState {
   queue: SuperQueueItem[];
   notes: Record<string, SuperNote>;
   /** The owner's absence, for the return recap (D13). */
-  away: { since: number | null; events: number };
+  away: SuperAway;
   /** Automatic cards the owner closed, not reopened automatically for a while (G5). */
   dismissed: SuperDismissed[];
   /** Jobs kept for later (plan r4 D9). Absent in an older record = none. */
@@ -2418,8 +2490,9 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
  * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-17, tg-cift-metin): after `super ask`, never re-say the answer already given before it in other words. Rev 54 (2026-11-18, soru-azaltma): a card only when the work is truly blocked, ruled by kind (`lib/ask-rules.ts`); a clear choice is taken and said in one line; no start card for work he asked for or approved, a plan that changes no screen is built without his yes; a child's question is the Super's first; no line that a question waits, the summary in one place, an open card never asked again. Rev 55 (2026-11-20, hafiza-konu-skill): a brief names the project skill that covers the job; in the same field a project skill comes before a user-level one.
 
+ * Rev 56 (2026-11-20, local cut yerel-20kas): the super-v3 stage verbs (jobs view, Dock, tabs, away cards) join the hafiza-konu-skill and soru-azaltma rules.
  */
-export const SUPER_BRIEF_REV = 55;
+export const SUPER_BRIEF_REV = 56;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

@@ -2473,3 +2473,30 @@ video.chat-msg-user-media-el { cursor: default; }
    and nothing to press. */
 .chat-cmp-hl-img.is-sent[data-state='gone'] { cursor: default; opacity: 0.62; }
 .chat-cmp-hl-img.is-sent[data-state='gone']:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+
+/* ── The Super's own allows (super-v3 D8): one folded line under its messages ──────── */
+.super-allows { align-self: flex-start; max-width: var(--chat-card-width, min(680px, 100%)); }
+.super-allows-head {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+.super-allows-who { color: var(--color-text); font-weight: 600; }
+.super-allows-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.super-allows-toggle:hover { color: var(--color-text); }
+.super-allows-toggle:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.super-allows-list { margin: var(--space-2) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-1); }
+.super-allows-list code { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-secondary); overflow-wrap: anywhere; }

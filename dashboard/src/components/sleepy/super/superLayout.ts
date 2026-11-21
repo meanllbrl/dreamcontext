@@ -167,7 +167,7 @@ export const TOUCH_REMOTE_CENTRE_MIN = 480;
 export const PHONE_STAGE_PX = 640;
 
 /** Where a card is drawn this time (its record may say otherwise: overflow is drawn, not written). */
-export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
+export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab' | 'dock';
 
 /** How the agent's chat is drawn: the centre window, the mini square, or its composer bar. */
 export type ChatDraw = 'column' | 'mini' | 'bar';
@@ -192,6 +192,9 @@ export interface CardPlan {
   /** Presented at its page's own width (StageItem.fit): the page is laid out in the card, never
    *  at the desktop width and scaled down to it. */
   fitted?: boolean;
+  /** Drawn in the presentation window's body (W3 D14): the window's tab names it and closes it,
+   *  so the card draws no title bar of its own. */
+  inWindow?: boolean;
 }
 
 /** A filmstrip's strip (owner 2026-10-29: "every time I select one, it swaps places"): every
@@ -263,6 +266,14 @@ export interface StagePlan {
    *  the tab strip left of `controls` naming what is shown and what comes next. */
   presentFrame?: Rect;
   presentTabs?: Rect;
+  /** A wide stage's presentation window (K14, W3): as wide as what it shows, the chat's column at
+   *  its left; `presentFrame` is this window and `presentTabs` its title row. */
+  presentWindow?: Rect;
+  /** The question docked in the window under its page (K8): the window's full width, its foot. */
+  askDock?: Rect;
+  /** The controls ride in the presentation window's title row (a window over the Dock): the
+   *  title row keeps their width free at its right end. */
+  controlsInTitle?: boolean;
   /** The presentation queue's control in the top band (D7, D2): `step` left of `controls` while a
    *  queued presentation is on screen, `wait` at the band's right end while presentations wait
    *  off screen. `short`: the narrow band's form (D10). */
@@ -274,6 +285,9 @@ export interface StagePlan {
   more?: { rect: Rect; ids: string[] };
   /** The one-line rail while it holds more jobs than fit: a window of `visible` from `start`. */
   rail?: { rect: Rect; start: number; visible: number; total: number };
+  /** The v3 Dock at the stage's foot (plan super-v3 K2): its tiles, drawn by StageDock. Only when
+   *  the window plans with `dock` and something is in it. Its cards are drawn `where: 'dock'`. */
+  jobDock?: JobDock;
 }
 
 /** A side's orbit: x = x0 + dir * depth * (1 - ((y - cy) / ymax)^2), through tile centres. */
@@ -356,7 +370,7 @@ export function stageItems(
     if (c.min && !shown.has(c.id)) return;
     const live = c.kind === 'chat' && isLive(c);
     const page = c.kind === 'web' ? pageAspect(c) : undefined;
-    const aspect = c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect
+    const aspect = (c.kind === 'image' || c.kind === 'pdf') && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect
       : typeof page === 'number' && Number.isFinite(page) && page > 0 ? page : undefined;
     const fit = c.kind === 'web' && !aspect && c.sizeBy !== 'owner' ? pageFit(c) : undefined;
     if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(c.sizeBy ? { sizeBy: c.sizeBy } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}), ...(fit ? { fit } : {}) });
@@ -374,6 +388,9 @@ export interface PlanOptions {
   dragging?: { id: string; rect: Rect } | null;
   /** Terminal pills in the dock: the bottom band is reserved for them. */
   terminals?: number;
+  /** The job Dock stands under a window (present or side by side): it takes the bottom band's
+   *  place, so the band is never reserved too and the window reaches down to the Dock (K8 frame D). */
+  dockBelow?: boolean;
   /** The minimised agenda's id: its pill holds the bottom band's left end (the band is reserved). */
   agendaPill?: string | null;
   /** The card the owner made big (filmstrip) or picked in a narrow sheet's tabs; the first when
@@ -390,6 +407,12 @@ export interface PlanOptions {
   layoutChoices?: number;
   /** The presentation shows one group whole: its close and minimize buttons replace the exit. */
   groupExit?: boolean;
+  /** The presentation window's tab count (the shown presentation and those queued after it):
+   *  the window never draws narrower than its tabs (K14). Absent = 1. */
+  presentTabCount?: number;
+  /** A Super question about what the window shows waits (K8 `askHome` = 'report'): the window
+   *  keeps a dock under its page for it. */
+  askDock?: boolean;
   /** The presentation queue's control (superTypes `queueCounter`): `step` while a queued
    *  presentation of 2+ is on screen, `wait` while presentations wait off screen. */
   queueBand?: 'step' | 'wait';
@@ -965,7 +988,9 @@ export function controlsWidth(choices: number, group: boolean): number {
 }
 
 /** The frame around the presented cards and the tab strip from its left edge to the controls. */
-function presentFrameOf(f: Frame, controls: Rect, cards: Record<string, { rect: Rect; where: CardWhere }>, strip: StripPlan | undefined, sheetTabs: Rect | undefined): Pick<StagePlan, 'presentFrame' | 'presentTabs'> {
+function presentFrameOf(f: Frame, controls: Rect, cards: Record<string, { rect: Rect; where: CardWhere }>, strip: StripPlan | undefined, sheetTabs: Rect | undefined, win?: Rect): Pick<StagePlan, 'presentFrame' | 'presentTabs'> {
+  // The window (K14): its own rect is the frame, its title row the tabs.
+  if (win) return { presentFrame: win, presentTabs: { x: win.x, y: win.y, width: win.width, height: PRESENT_WIN.TITLE_H } };
   // Everything the presentation draws: its cards, a filmstrip's marked slot, a narrow sheet's tab row.
   const shown = Object.values(cards).filter((c) => c.where === 'present' || c.where === 'thumb' || c.where === 'sheet').map((c) => c.rect);
   if (strip?.current) shown.push(strip.current);
@@ -1117,7 +1142,7 @@ export function fitArrange(region: Rect, items: readonly Pick<StageItem, 'aspect
  * The stage for these cards and this view at this size. Pure: the same input always draws the
  * same screen. A card that does not fit is DRAWN in Others; the record is never touched.
  */
-export function planStage(
+function planStageCore(
   containers: readonly StageItem[],
   view: SuperView,
   stage: { width: number; height: number },
@@ -1128,7 +1153,7 @@ export function planStage(
   // inside that plan.
   if (opts.dragging) {
     const { dragging, ...still } = opts;
-    const free = planStage(containers, view, stage, still);
+    const free = planStageCore(containers, view, stage, still);
     const v = VARIANT.get(free);
     const seats = SEATS.get(free);
     // The order that seated his cards in that plan too (a reclaimed sized card ranks there).
@@ -1221,6 +1246,8 @@ function planStageOnce(
     VARIANT.set(p, { band, opts: { agendaCap: opts.agendaCap, ownerAside: opts.ownerAside } });
     return p;
   };
+  // Under a Dock the band is released only while it holds nothing of its own (terminal pills, the agenda pill).
+  if (opts.dockBelow && !narrow && !(opts.terminals ?? 0) && !opts.agendaPill) return tag(planWith(containers, view, stage, opts, false), false);
   if (!narrow && !(opts.terminals ?? 0) && !opts.agendaPill && containers.length > 0) {
     const tall = planWith(containers, view, stage, opts, false);
     if (tall.others.length === 0 && !tall.more) return tag(tall, false);
@@ -1254,10 +1281,19 @@ function planWith(
   // A page side by side or a presentation keeps its bands: it is drawn over the chat's head, and
   // its exits live there.
   const phone = stage.width > 0 && stage.width < PHONE_STAGE_PX && view.mode === 'float';
-  let f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
+  const f0 = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
     phone ? { queue: !!opts.queueUp, terminals: (opts.terminals ?? 0) > 0 } : undefined, opts.queueUp ? opts.queueHeight ?? STAGE.BAND : STAGE.BAND);
-  const narrow = f.width < (opts.narrowPx ?? NARROW_STAGE_PX);
+  const narrow = f0.width < (opts.narrowPx ?? NARROW_STAGE_PX);
   const ids = new Set(list.map((c) => c.id));
+  // A presentation window over the Dock (K8, approved frame D; Super 2026-11-20 "tam yüksekliği
+  // alsın"): no top band either; the window and the chat start one margin under the stage's top and
+  // the controls ride in the window's title row (`inTitle` below). Only while the top band holds
+  // nothing else: a job item there (queueUp) keeps the band, and the window stays under it.
+  const presentN = view.mode === 'present' ? new Set((view.cards ?? []).filter((id) => ids.has(id))).size : 0;
+  const liftTop = !!opts.dockBelow && !opts.queueUp && !narrow && !phone && presentN > 0 && drawnLayout(view.layout, presentN) !== 'filmstrip';
+  let f: Frame = liftTop
+    ? { ...f0, content: { ...f0.content, y: STAGE.MARGIN, height: f0.content.height + f0.content.y - STAGE.MARGIN }, free: { ...f0.free, y: STAGE.MARGIN, height: f0.free.height + f0.free.y - STAGE.MARGIN } }
+    : f0;
   // An item's place in the RECORD (a group stands at its first card's), not in this list: a
   // grouping removes cards from the list and must not move any other card to the other side.
   const z = new Map(list.map((c, i) => [c.id, c.slot ?? i] as const));
@@ -1274,13 +1310,13 @@ function planWith(
     others.push(c.id);
   };
   const finish = (centre: Rect, centreWidth: number, mode: SuperView['mode'], unit = { left: 0, right: 0 }, orbit: OrbitArc[] = [],
-    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls'>> = {}): StagePlan => {
+    extra: Partial<Pick<StagePlan, 'layout' | 'chat' | 'tabs' | 'strip' | 'controls' | 'presentWindow' | 'askDock' | 'controlsInTitle'>> = {}): StagePlan => {
     // The waiting queue's control holds the band's right end off a presentation.
     const fRow = rowDy ? { ...f, bandTop: f.bandTop + rowDy } : f;
     const qb = queueBandRect(fRow, opts.queueBand, mode);
     // A presentation's row of its own leaves the question's bar the band's whole width.
     const bandRight = rowDy ? undefined : qb ? qb.rect : extra.controls;
-    const framed = extra.controls && mode === 'present' ? presentFrameOf(fRow, extra.controls, cards, extra.strip, extra.tabs?.rect) : {};
+    const framed = extra.controls && mode === 'present' ? presentFrameOf(fRow, extra.controls, cards, extra.strip, extra.tabs?.rect, extra.presentWindow) : {};
     // Others in record order, whatever order they were sent there in; a live job leads it (a
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
@@ -1359,7 +1395,7 @@ function planWith(
   /** The card a measured page needs, chrome included; absent = it takes what it is given. */
   const pageWidth = (id: string): number | undefined => {
     const fit = list.find((x) => x.id === id)?.fit;
-    return fit ? Math.max(fit + STAGE.CARD_CHROME.w + STAGE.WIDGET_BORDER_W, STAGE.FIT_MIN.w) : undefined;
+    return fit ? measuredCardWidth(fit) : undefined;
   };
 
   // A narrow stage never splits the screen between a card and the chat (owner 2026-11-17): what
@@ -1484,96 +1520,93 @@ function planWith(
 
     // A wide stage keeps the live jobs beside the presentation; the layouts draw in what they leave.
     const content = besideRail(ordered, true);
-    if (layout === 'compare' || layout === 'grid') {
-      // The centre as a left column, the cards in a grid on the right (as before layouts); the
-      // centre's share is of what the rail leaves (the rail narrows the centre and the cards alike).
-      // The chat's floor gives way (down to REGION_MIN) only so two cards keep FIT_MIN side by side
-      // (a 968 px touch stage).
-      const share = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
-      const plainW = Math.max(STAGE.REGION_MIN, Math.min(share, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
-      // A one-line rail hands its width to the chat; two cards keep FIT_MIN side by side.
-      const w = railSaved ? Math.max(plainW, Math.min(Math.max(plainW + railSaved, STAGE.PRESENT_MIN), content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w)) : plainW;
-      const items = ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect }));
-      const regionAt = (cw: number): Rect => ({ x: content.x + cw + STAGE.GAP, y: content.y, width: content.width - cw - STAGE.GAP, height: content.height });
-      // Every card a measured page: the region is as wide as they need, the chat takes the rest.
-      const needs = ordered.map(pageWidth);
-      let chatW = w;
-      if (needs.every((n) => n !== undefined)) {
-        const cols = new Set(fitArrange(regionAt(w), items).slots.map((r) => r.x)).size;
-        const need = cols * Math.max(...(needs as number[])) + (cols - 1) * STAGE.GAP;
-        chatW = Math.max(w, content.width - STAGE.GAP - need);
+    if (layout !== 'filmstrip') {
+      // The window (K14, W3): as wide as what it shows, at the right; the chat keeps a full-height
+      // column at its left, never under CHAT_MIN. Its layout draws in the window's body, under the
+      // title row that holds the tabs.
+      const itemOf = (id: string) => list.find((x) => x.id === id);
+      const items = ordered.map(itemOf);
+      const pictures = items.filter((it) => it?.kind === 'image');
+      // A question about what it shows is a thin decision strip in the window's foot (K8, approved
+      // frame D): the page keeps the window's height above it and scrolls inside.
+      const askH = opts.askDock ? PRESENT_WIN.ASK_H : 0;
+      const bodyH = Math.max(0, content.height - PRESENT_WIN.TITLE_H - (askH ? askH + PRESENT_WIN.ASK_INSET_B * 2 : 0));
+      const room = content.width - STAGE.GAP - PRESENT_WIN.CHAT_MIN;
+      // Two or more cards side by side keep their floor as far as the chat's floor allows: the chat
+      // then gives way down to REGION_MIN only, as it did beside the cards before (a 968 px touch stage).
+      const floorCap = content.width - STAGE.GAP - STAGE.REGION_MIN;
+      // Review: the child's page big on top (its site, else its browser), its other cards in a row
+      // under it at their floor; the window takes the page's shape at the height the row leaves it.
+      const page = layout === 'review' ? ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0] : ordered[0];
+      const rest = layout === 'review' ? ordered.filter((id) => id !== page) : [];
+      const rowH = rest.length ? Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * bodyH)) : 0;
+      const pageH = Math.max(0, bodyH - (rest.length ? rowH + STAGE.GAP : 0));
+      // Compare with every card a measured page: the window holds both at their width, when the
+      // chat keeps its floor beside it; wider than that, the desktop window and its split.
+      const pages = layout === 'compare' ? ordered.map(pageWidth) : [];
+      const pagesW = pages.length > 1 && pages.every((w) => w !== undefined)
+        ? pages.length * Math.max(...(pages as number[])) + (pages.length - 1) * STAGE.GAP : undefined;
+      const shape: PresentContent = layout === 'review' || ordered.length === 1 ? contentShape(itemOf(page))
+        : pagesW !== undefined && pagesW <= room ? { kind: 'desk', width: pagesW }
+          : pictures.length === ordered.length
+            ? (pictures.every((p) => p?.aspect !== undefined && p.aspect < 1) ? { kind: 'album' } : { kind: 'albumdesk' })
+            : { kind: 'desk' };
+      const cardsFloor = (layout === 'compare' || layout === 'grid') && ordered.length > 1 ? Math.min(ordered.length, 2) * STAGE.FIT_MIN.w + STAGE.GAP
+        : rest.length ? rest.length * (STAGE.FIT_MIN.w + STAGE.GAP) - STAGE.GAP : 0;
+      // Controls in the title row: the tabs' floor makes room for them too.
+      const titleFloor = liftTop ? Math.min(PRESENT_WIN.TABS_BASE + (opts.presentTabCount ?? 1) * PRESENT_WIN.TAB_W + cw, room) : 0;
+      const pw = Math.max(presentWidth(shape, pageH, opts.presentTabCount ?? 1, room), Math.min(cardsFloor, floorCap), askH ? Math.min(PRESENT_WIN.ASK_MIN_W, room) : 0, titleFloor);
+      const win: Rect = { x: content.x + content.width - pw, y: content.y, width: pw, height: content.height };
+      const inTitle: Rect | undefined = liftTop
+        ? { x: win.x + win.width - PRESENT_WIN.CONTROLS_INSET - Math.min(cw, pw), y: win.y + (PRESENT_WIN.TITLE_H - STAGE.BAND) / 2, width: Math.min(cw, pw), height: STAGE.BAND }
+        : undefined;
+      const body: Rect = { x: win.x, y: win.y + PRESENT_WIN.TITLE_H, width: pw, height: bodyH };
+      const centre: Rect = { x: content.x, y: content.y, width: Math.max(0, content.width - STAGE.GAP - pw), height: content.height };
+      const askDock: Rect | undefined = askH
+        ? { x: win.x + PRESENT_WIN.ASK_INSET_X, y: win.y + win.height - PRESENT_WIN.ASK_INSET_B - askH, width: Math.max(0, pw - 2 * PRESENT_WIN.ASK_INSET_X), height: askH }
+        : undefined;
+      const extra = { layout, chat: 'column' as const, controls: inTitle ?? controls, presentWindow: win, ...(inTitle ? { controlsInTitle: true } : {}), ...(askDock ? { askDock } : {}) };
+      // A picture or a device page keeps its shape in the body (the window is already about its
+      // width; the height decides the rest). A card the owner sized fills it.
+      const lead = itemOf(page);
+      const keep = lead && lead.sizeBy !== 'owner' && lead.aspect && (lead.kind === 'image' || lead.kind === 'web') ? lead.aspect : undefined;
+      // A measured page the window holds at its width is laid out there, never scaled (StageItem.fit).
+      const need = pageWidth(page);
+      const fitted = layout !== 'compare' && layout !== 'grid' && need !== undefined && pw >= need - 0.5;
+      if (layout === 'compare' || layout === 'grid') {
+        const { rects } = fitArrange(body, ordered.map((id) => ({ aspect: itemOf(id)?.aspect })));
+        ordered.forEach((id, k) => place(id, rects[k], 'present'));
+      } else {
+        const top: Rect = { x: body.x, y: body.y, width: body.width, height: pageH };
+        place(page, keep ? fitCard(top, keep) : top, 'present');
+        const rw = rest.length ? (body.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
+        rest.forEach((id, k) => place(id, { x: body.x + k * (rw + STAGE.GAP), y: body.y + body.height - rowH, width: rw, height: rowH }, 'present'));
       }
-      const centre: Rect = { x: content.x, y: content.y, width: chatW, height: content.height };
-      const { rects } = fitArrange(regionAt(chatW), items);
-      ordered.forEach((id, k) => place(id, rects[k], 'present'));
-      for (const c of list) if (!cards[c.id]) toOthers(c);
-      return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat: 'column', controls });
+      if (fitted) cards[page] = { ...cards[page], fitted };
+      for (const id of ordered) if (cards[id]) cards[id] = { ...cards[id], inWindow: true };
+      for (const k of list) if (!cards[k.id]) toOthers(k);
+      return finish(centre, centre.width, 'present', undefined, undefined, extra);
     }
 
-    // Spotlight, filmstrip, review: the agent is a mini square bottom-left (or its composer bar,
-    // when the owner folded it and no question of his is open), the cards take the rest.
+    // Filmstrip (the owner has not decided its chat yet, 2026-11-20 01:25: unchanged): the agent is
+    // a mini square bottom-left (or its composer bar, when he folded it and no question of his is
+    // open), the big card and its strip take the rest.
     const c = content;
     const chat: ChatDraw = view.chat === 'bar' && !opts.asking ? 'bar' : 'mini';
     const plainMiniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
     // With a one-line rail the chat reads at its comfortable width, and the cards keep their floor.
     const gain = railSaved ? STAGE.MINI_RAIL_W_WIDE - STAGE.MINI_RAIL_W : 0;
-    const roomyMiniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN - gain) + gain) : plainMiniW;
-    // The review's page, or the one big card: narrower than what the cards are left, a measured
-    // page gives the rest to the chat beside it (a chat folded to its bar has no use for it).
-    // A review's row keeps its cards at their floor under it.
-    const page = layout === 'review' ? ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0] : ordered[0];
-    const rowFloor = layout === 'review' && ordered.length > 1 ? (ordered.length - 1) * (STAGE.FIT_MIN.w + STAGE.GAP) - STAGE.GAP : 0;
-    const pageNeed = layout !== 'filmstrip' && chat === 'mini' ? pageWidth(page) : undefined;
-    const fitted = pageNeed !== undefined && c.width - roomyMiniW - STAGE.GAP > Math.max(pageNeed, rowFloor);
-    const reviewRowH = (h: number) => Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * h));
-    // A web page with a device width picked (owner 2026-10-31), as half does: the CARD takes the
-    // device's shape and the chat the width that leaves, down to its own floor. Its page has no
-    // measured width (stageItems), so this and `fitted` never meet. A folded chat wants no width:
-    // the card sits in the middle of what it leaves.
-    const pageItem = list.find((x) => x.id === page);
-    const device = layout !== 'filmstrip' && pageItem?.kind === 'web' ? pageItem.aspect : undefined;
-    // One portrait picture in the spotlight (owner 2026-11-07) hugs its shape the same way, but only
-    // ever GIVES width: the chat never drops under its own width.
-    const pic = layout === 'spotlight' && !device ? pictureAspect(page) : undefined;
-    const shape = device ?? pic;
-    const deviceW = shape && chat === 'mini'
-      ? Math.min(c.width - STAGE.GAP - (device ? STAGE.MINI_MIN_W : roomyMiniW), Math.max(
-        Math.min(STAGE.FIT_MIN.w, c.width / 2),
-        rowFloor,
-        ((layout === 'review' ? c.height - reviewRowH(c.height) - STAGE.GAP : c.height) - STAGE.CARD_CHROME.h) * shape + STAGE.CARD_CHROME.w,
-      ))
-      : undefined;
-    const pageRect = (r: Rect): Rect => (shape ? fitCard(r, shape) : r);
-    const miniW = deviceW !== undefined ? c.width - STAGE.GAP - deviceW : fitted ? c.width - STAGE.GAP - Math.max(pageNeed, rowFloor) : roomyMiniW;
+    const miniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN - gain) + gain) : plainMiniW;
     // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
-    const miniH = c.height;
     const centre: Rect = chat === 'bar'
       ? { x: c.x, y: c.y + c.height - STAGE.CHAT_BAR_H, width: miniW, height: STAGE.CHAT_BAR_H }
-      : { x: c.x, y: c.y + c.height - miniH, width: miniW, height: miniH };
+      : { x: c.x, y: c.y, width: miniW, height: c.height };
     const main: Rect = chat === 'bar'
       ? { x: c.x, y: c.y, width: c.width, height: Math.max(0, c.height - STAGE.CHAT_BAR_H - STAGE.GAP) }
       : { x: c.x + miniW + STAGE.GAP, y: c.y, width: Math.max(0, c.width - miniW - STAGE.GAP), height: c.height };
-    const extra = { layout, chat, controls };
-    if (layout === 'filmstrip') {
-      const st = strip(main);
-      for (const k of list) if (!cards[k.id]) toOthers(k);
-      return finish(centre, centre.width, 'present', undefined, undefined, { ...extra, strip: st });
-    }
-    if (layout === 'review') {
-      // The child's page big on top (its site, else its browser), its other cards in a row under it.
-      const rest = ordered.filter((id) => id !== page);
-      const rowH = reviewRowH(main.height);
-      place(page, pageRect({ x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - rowH - STAGE.GAP) }), 'present');
-      const rw = rest.length ? (main.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
-      rest.forEach((id, k) => place(id, { x: main.x + k * (rw + STAGE.GAP), y: main.y + main.height - rowH, width: rw, height: rowH }, 'present'));
-      if (fitted) cards[page] = { ...cards[page], fitted };
-      for (const k of list) if (!cards[k.id]) toOthers(k);
-      return finish(centre, centre.width, 'present', undefined, undefined, extra);
-    }
-    place(ordered[0], pageRect(main), 'present');
-    if (fitted) cards[page] = { ...cards[page], fitted };
+    const st = strip(main);
     for (const k of list) if (!cards[k.id]) toOthers(k);
-    return finish(centre, centre.width, 'present', undefined, undefined, extra);
+    return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat, controls, strip: st });
   }
 
   // ── narrow: the centre takes the width, every card is in Others ──
@@ -1915,11 +1948,15 @@ export interface LayoutPatch extends OwnerViewFields {
    *  the item his window showed. The server answers with the next view; nothing is laid over the
    *  push meanwhile (the window does not know the next item's layout). */
   queue?: QueueStep;
+  /** His gesture on the presentation window's tabs (W3 D14): bring one to the front, close some. */
+  tabs?: QueueTabs;
 }
 
 /** A queue gesture: `next` passes the shown item and opens the next, `leave` passes it and floats
  *  the stage with the rest waiting, `resume` opens the first waiting one. */
 export interface QueueStep { op: 'next' | 'leave' | 'resume'; item: string }
+/** A tab gesture: `show` brings `items[0]` to the front, `close` takes `items` away. */
+export interface QueueTabs { op: 'show' | 'close'; items: string[] }
 
 /** How often the window reports the owner's look at an open group or a full-screen card, through
  *  `pollMs` and never slower than twice this (Light mode): inside the server's grace either way
@@ -1940,7 +1977,7 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
   // A look changes nothing on the stage: the state stays as the server sent it (its view's
   // `auto` mark too, which a rebuilt view would drop for the length of a request).
   // A queue step alone is the server's to answer: nothing to draw ahead of it.
-  if (Object.keys(patch).every((k) => k === 'touch' || k === 'queue')) return state;
+  if (Object.keys(patch).every((k) => k === 'touch' || k === 'queue' || k === 'tabs')) return state;
   const st = { containers: state.containers.map((c) => ({ ...c })), groups: (state.groups ?? []).map((g) => ({ ...g, cards: [...g.cards] })) };
   // Cards that leave what the view shows (the server's rule): to Others, resized, grouped, closed.
   const unshown = new Set<string>();
@@ -2072,4 +2109,322 @@ export function agentShowsNew(prev: SuperView, next: SuperView): boolean {
   const cardsOf = (v: SuperView) => (v.mode === 'half' && v.card ? [v.card] : v.mode === 'present' ? v.cards ?? [] : []);
   const before = new Set(cardsOf(prev));
   return cardsOf(next).some((id) => !before.has(id));
+}
+
+// ─── The Dock (Super v3 "denge", plan super-v3 K1/K2) ─────────────────────────────
+
+/** The Dock's geometry, the approved mockups' own (super-jakob-v3/kaynak/v3.css `.dock`, `.dtile`,
+ *  `.dsep`; super-ux-denetim/kaynak/uye.css `.dtile.mt`); pinned by super-dock-oracle.test.ts. */
+export const DOCK = {
+  /** From the stage's bottom edge to the Dock's. */
+  INSET: 16,
+  PAD: 8,
+  GAP: 8,
+  BORDER: 1,
+  /** A separator: 1 px with 2 px of margin on each side (plus the row's gap). */
+  SEP_W: 1,
+  SEP_M: 2,
+  /** Tile heights: a wide tile, a compact (or member) tile. */
+  H: 72,
+  H_COMPACT: 80,
+  /** A job or needs-you tile; 134 while minis show or a window holds the stage. */
+  W: 150,
+  W_TIGHT: 134,
+  /** A needs-you tile in a crowd with no Team tiles (review frame B). */
+  W_NEEDS_CROWD: 136,
+  W_TODAY: 112,
+  W_MINI: 112,
+  W_MEMBER: 84,
+  W_COMPACT: 70,
+  W_POOL: 70,
+  /** Past this many jobs and needs-you tiles, job tiles go compact (b-stage.js `crowd`). */
+  CROWD: 10,
+  /** The Dock never comes closer than this to the stage's sides. */
+  SIDE: 12,
+  /** The gap kept between the stage's content and the Dock's top. */
+  ABOVE: 16,
+} as const;
+
+export type DockKind = 'today' | 'needs' | 'member' | 'job' | 'mini' | 'pool';
+export interface DockTile { id: string; kind: DockKind; rect: Rect; compact: boolean }
+export interface JobDock {
+  rect: Rect;
+  tiles: DockTile[];
+  /** Each separator's rect, in row order. */
+  seps: Rect[];
+  /** The first tile past the Dock's right edge while the row scrolls (at rest it shows from 0); null = it all fits. */
+  scrollFrom: number | null;
+  /** The live jobs moved off the stage (D1): the window keeps it as `prev` for the next plan. */
+  docked: boolean;
+  /** "N of 15 running" while the live cap is hit and the pool holds jobs (rides the Pool tile). */
+  cap?: string;
+}
+
+/** What goes in the Dock, in its order (D11): Today, needs you, Team, jobs, minimized, Pool. */
+export interface DockSet {
+  today?: string | null;
+  needs: readonly string[];
+  members: readonly string[];
+  jobs: readonly string[];
+  minis: readonly string[];
+  /** Jobs the pool keeps waiting (the Pool tile shows only with rows). */
+  pool?: number;
+  cap?: string | null;
+}
+
+/**
+ * K1: the Dock switch by FIT, with hysteresis (owner pick via the review). Docked the moment the
+ * live jobs need more room than the side columns have; back to floating only once the room holds
+ * them plus two more cards. Pure: `prev` is the window's last answer.
+ */
+export function dockDecision(prev: boolean, fit: { need: number; room: number; card: number }): boolean {
+  if (fit.need <= 0) return false;
+  if (fit.need > fit.room) return true;
+  return prev ? fit.room < fit.need + 2 * fit.card : false;
+}
+
+/**
+ * K14: the presentation window is as wide as what it shows (plan super-v3, the mockup's `pwFor`,
+ * super-jakob-v3/kaynak/parts/b-stage.js:172). What a tab shows, by shape: a phone shot or a PDF
+ * page fitted to the window's height plus its chrome, a session or member conversation at reading
+ * width, an album of pictures, a desktop page or anything else at desktop width.
+ */
+export type PresentContent =
+  | { kind: 'phone'; aspect: number }
+  | { kind: 'pdf'; aspect: number }
+  | { kind: 'session' | 'album' | 'albumdesk' }
+  /** `width`: a project page's own measured width (its card's), else desktop width. */
+  | { kind: 'desk'; width?: number };
+
+export const PRESENT_WIN = {
+  /** The window's title row (lights, tabs, Mention): the body is the window less this. */
+  TITLE_H: 44,
+  /** Chrome around a fitted phone shot (its caption and side room) and a PDF page (page bar). */
+  PHONE_PAD_H: 40, PHONE_CHROME_W: 180,
+  PDF_PAD_H: 32, PDF_CHROME_W: 64,
+  SESSION_W: 600, ALBUM_W: 520, ALBUM_DESK_W: 760, DESK_W: 820,
+  /** The tab strip's floor: 160 for the lights and actions plus 170 per tab. */
+  TABS_BASE: 160, TAB_W: 170,
+  /** The chat beside the window never reads narrower than this. */
+  CHAT_MIN: 520,
+  /** The decision strip in the window's foot (K8, approved frame D-sunum-karar): its height (two
+   *  lines over a row of 30 px chips), its inset from the window's sides and foot, and the window
+   *  never narrower than the strip reads. */
+  ASK_H: 96, ASK_INSET_X: 16, ASK_INSET_B: 14, ASK_MIN_W: 460,
+  /** Controls riding in the title row (a window over the Dock): their inset from its right edge. */
+  CONTROLS_INSET: 6,
+  /** A PDF with no measured page: A4 (595 x 842). */
+  A4: 595 / 842,
+} as const;
+
+/** The card a measured page needs, chrome and border included (planStage's pageWidth). */
+export function measuredCardWidth(fit: number): number {
+  return Math.max(fit + STAGE.CARD_CHROME.w + STAGE.WIDGET_BORDER_W, STAGE.FIT_MIN.w);
+}
+
+/** What one presented card shows, for K14 (a card the layout knows nothing about reads as desktop). */
+export function contentShape(item: Pick<StageItem, 'kind' | 'aspect' | 'fit' | 'sizeBy'> | undefined, pictures = 0): PresentContent {
+  if (!item) return { kind: 'desk' };
+  // A card the owner sized keeps no shape of its own: its window is desktop width.
+  if (item.sizeBy === 'owner') return { kind: 'desk' };
+  if (item.kind === 'web' && !item.aspect && item.fit) return { kind: 'desk', width: Math.min(PRESENT_WIN.DESK_W, measuredCardWidth(item.fit)) };
+  if (item.kind === 'group') return pictures > 0 ? { kind: 'album' } : { kind: 'desk' };
+  if (item.kind === 'chat' || item.kind === 'team' || item.kind === 'member') return { kind: 'session' };
+  if (item.kind === 'pdf') return { kind: 'pdf', aspect: item.aspect && item.aspect > 0 ? item.aspect : PRESENT_WIN.A4 };
+  // A portrait picture or a web page given a phone's width is a phone shot; a landscape one a desktop.
+  if ((item.kind === 'image' || item.kind === 'web') && item.aspect && item.aspect < 1) return { kind: 'phone', aspect: item.aspect };
+  return { kind: 'desk' };
+}
+
+/**
+ * The window's width for `content` in a window whose body is `bodyH` tall with `tabs` tabs, never
+ * under the tabs' floor and never more than `room` (what leaves the chat its CHAT_MIN).
+ */
+export function presentWidth(content: PresentContent, bodyH: number, tabs: number, room = Infinity): number {
+  const W = PRESENT_WIN;
+  const want = content.kind === 'session' ? W.SESSION_W
+    : content.kind === 'album' ? W.ALBUM_W
+      : content.kind === 'albumdesk' ? W.ALBUM_DESK_W
+        : content.kind === 'pdf' ? Math.round(Math.max(0, bodyH - W.PDF_PAD_H) * content.aspect) + W.PDF_CHROME_W
+          : content.kind === 'phone' ? Math.round(Math.max(0, bodyH - W.PHONE_PAD_H) * content.aspect) + W.PHONE_CHROME_W
+            : content.kind === 'desk' ? content.width ?? W.DESK_W : W.DESK_W;
+  const floor = W.TABS_BASE + Math.max(1, tabs) * W.TAB_W;
+  return Math.max(0, Math.min(Math.max(want, floor), room));
+}
+
+type DockSpec = { id: string; kind: DockKind; w: number; h: number; compact: boolean } | { sep: true };
+
+/**
+ * K2: the Dock's tiles for one set on a stage, one pure function (StageDock draws it, never
+ * re-measured in CSS). `tight`: minis show or a window holds the stage (134 wide tiles). Too wide
+ * for the stage it steps down: job tiles compact, needs tiles compact, Today and minis compact,
+ * then the row scrolls (`scrollFrom`), the needs-you tiles first at rest. Never wraps, never drops a tile.
+ */
+export function dockTiles(set: DockSet, stage: { width: number; height: number }, mode: { tight: boolean }): { rect: Rect; tiles: DockTile[]; seps: Rect[]; scrollFrom: number | null } {
+  const D = DOCK;
+  const crowd = set.needs.length + set.jobs.length > D.CROWD;
+  const withTeam = set.members.length > 0;
+  const max = Math.max(0, stage.width - 2 * D.SIDE);
+  const build = (step: number): DockSpec[] => {
+    const jobsCompact = crowd || step >= 1;
+    const needsCompact = (crowd && withTeam) || step >= 2;
+    const smallCompact = step >= 3;
+    const wide = mode.tight ? D.W_TIGHT : D.W;
+    const tile = (id: string, kind: DockKind, compact: boolean, w: number): DockSpec => ({ id, kind, w: compact ? D.W_COMPACT : w, h: compact ? D.H_COMPACT : D.H, compact });
+    const lead: DockSpec[] = [
+      ...(set.today ? [tile(set.today, 'today', smallCompact, D.W_TODAY)] : []),
+      ...set.needs.map((id) => tile(id, 'needs', needsCompact, crowd ? D.W_NEEDS_CROWD : wide)),
+    ];
+    const groups: DockSpec[][] = [
+      lead,
+      set.members.map((id) => ({ id, kind: 'member' as const, w: D.W_MEMBER, h: D.H_COMPACT, compact: false })),
+      set.jobs.map((id) => tile(id, 'job', jobsCompact, wide)),
+      set.minis.map((id) => tile(id, 'mini', smallCompact, D.W_MINI)),
+      (set.pool ?? 0) > 0 ? [tile('pool', 'pool', false, D.W_POOL)] : [],
+    ];
+    // A separator after the needs-you tiles (in a crowd, frame B), after the Team tiles, before the
+    // minis and before the Pool: each only when both sides hold tiles.
+    const out: DockSpec[] = [];
+    groups.forEach((g, i) => {
+      if (!g.length) return;
+      const sep = out.length > 0 && (i === 1 || i >= 3 || (i === 2 && (withTeam || (crowd && set.needs.length > 0))));
+      if (sep) out.push({ sep: true });
+      out.push(...g);
+    });
+    return out;
+  };
+  const widthOf = (specs: DockSpec[]) => specs.reduce((sum, s) => sum + ('sep' in s ? D.SEP_W + 2 * D.SEP_M : s.w), 0)
+    + Math.max(0, specs.length - 1) * D.GAP + 2 * D.PAD + 2 * D.BORDER;
+  let step = 0;
+  let specs = build(0);
+  while (widthOf(specs) > max && step < 3) specs = build(++step);
+  const tall = Math.max(D.H, ...specs.map((s) => ('sep' in s ? 0 : s.h)));
+  const height = tall + 2 * D.PAD + 2 * D.BORDER;
+  const width = Math.min(widthOf(specs), max);
+  const rect: Rect = { x: Math.floor((stage.width - width) / 2), y: stage.height - D.INSET - height, width, height };
+  const tiles: DockTile[] = [];
+  const seps: Rect[] = [];
+  const bottom = rect.y + height - D.BORDER - D.PAD;
+  const right = rect.x + rect.width - D.BORDER - D.PAD;
+  let x = rect.x + D.BORDER + D.PAD;
+  let scrollFrom: number | null = null;
+  for (const s of specs) {
+    if ('sep' in s) {
+      seps.push({ x: x + D.SEP_M, y: rect.y + D.BORDER + D.PAD + 4, width: D.SEP_W, height: tall - 8 });
+      x += D.SEP_W + 2 * D.SEP_M + D.GAP;
+      continue;
+    }
+    const r: Rect = { x, y: bottom - s.h, width: s.w, height: s.h };
+    if (scrollFrom === null && r.x + r.width > right + 1e-6) scrollFrom = tiles.length;
+    tiles.push({ id: s.id, kind: s.kind, rect: r, compact: s.compact });
+    x += s.w + D.GAP;
+  }
+  return { rect, tiles, seps, scrollFrom };
+}
+
+/** The Dock inputs a v3 window passes `planStage`. */
+export interface DockOptions {
+  /** The window's last `jobDock.docked` (K1's hysteresis). */
+  prev: boolean;
+  /** Cards that wait on the owner: they stay on the stage AND have a tile (needs-you, first). */
+  needs: ReadonlySet<string>;
+  /** The job the Super is talking about (K3): stays on the stage with a tile. */
+  focus?: string | null;
+  /** The agenda's id while it is minimized: its Today tile replaces the corner pill. */
+  today?: string | null;
+  /** The agenda's id, shown as Today while a window holds the stage. */
+  agenda?: string | null;
+  pool?: number;
+  cap?: string | null;
+}
+
+const probeItem = (n: number, slot: number): StageItem => ({ id: `__dock_probe_${n}`, kind: 'chat', shape: 'square', place: 'float', slot, live: true });
+
+/**
+ * The stage, planned. With `opts.dock` (the v3 window) the float and present stages put their
+ * overflow in the Dock instead of Others, the rail or the "more" pill (K2). The record is never
+ * written: an owner-placed card's `pos` comes back untouched when floating returns. Narrow and
+ * phone stages, and callers without `dock`, are planned exactly as before.
+ */
+export function planStage(
+  containers: readonly StageItem[],
+  view: SuperView,
+  stage: { width: number; height: number },
+  opts: PlanOptions & { dock?: DockOptions } = {},
+): StagePlan {
+  const { dock: d, ...rest } = opts;
+  const narrow = Math.max(0, stage.width) < (opts.narrowPx ?? NARROW_STAGE_PX);
+  if (!d || narrow) return planStageCore(containers, view, stage, rest);
+  const isJob = (c: StageItem) => !!c.live && c.kind === 'chat' && c.place === 'float';
+  const isMember = (c: StageItem) => c.kind === 'team' && c.place === 'float';
+  const jobs = containers.filter(isJob);
+  const jobIds = new Set(jobs.map((c) => c.id));
+  // A presentation or a session window holds the stage: every job has a tile (the rail is retired).
+  const windowed = view.mode !== 'float';
+  const base = planStageCore(containers, view, stage, rest);
+  const fits = (p: StagePlan, ids: Iterable<string>) => [...ids].every((id) => p.cards[id]?.where === 'float');
+  let docked: boolean;
+  if (windowed) docked = jobs.length > 0 || containers.some(isMember);
+  else {
+    const need = jobs.length;
+    let room = need - 1;
+    if (need > 0 && fits(base, jobIds)) {
+      room = need;
+      const top = Math.max(-1, ...containers.map((c) => c.slot ?? 0));
+      const probes = [probeItem(0, top + 1), probeItem(1, top + 2)];
+      const { dragging: _held, ...still } = rest;
+      const p2 = planStageCore([...containers, ...probes], view, stage, still);
+      if (fits(p2, [...jobIds, ...probes.map((x) => x.id)])) room = need + 2;
+    }
+    docked = dockDecision(d.prev, { need, room, card: 1 });
+  }
+  // A card in front (presented, or side by side) is never docked: it is what the window shows
+  // (a member's tab, Ü2; a job's session window).
+  const front = new Set(view.mode === 'present' ? view.cards ?? [] : view.mode === 'half' && view.card ? [view.card] : []);
+  const stays = (c: StageItem) => front.has(c.id) || (!windowed && (d.needs.has(c.id) || c.id === d.focus));
+  const dockedJobs = docked ? jobs.filter((c) => !stays(c)) : [];
+  const dockedMembers = docked ? containers.filter((c) => isMember(c) && !stays(c)) : [];
+  const needs = docked ? jobs.filter((c) => d.needs.has(c.id)).map((c) => c.id) : [];
+  const away = new Set([...dockedJobs, ...dockedMembers].map((c) => c.id));
+  const today = d.today ?? (windowed && docked ? d.agenda ?? null : null);
+  const setOf = (minis: readonly string[]): DockSet => ({
+    today, needs, members: dockedMembers.map((c) => c.id),
+    jobs: dockedJobs.filter((c) => !d.needs.has(c.id)).map((c) => c.id),
+    minis: minis.filter((id) => !needs.includes(id) && !away.has(id)),
+    pool: d.pool ?? 0, cap: d.cap ?? null,
+  });
+  const tightOf = (minis: readonly string[]) => ({ tight: windowed || minis.length > 0 });
+  // Not docked: the stage is the plan it always was; what it drew in Others is minimized.
+  let inner = base;
+  if (away.size) {
+    const kept = containers.filter((c) => !away.has(c.id));
+    const plan1 = (h: number) => planStageCore(kept, view, { width: stage.width, height: Math.max(0, stage.height - h - DOCK.INSET) }, windowed ? { ...rest, dockBelow: true } : rest);
+    const first = dockTiles(setOf([]), stage, tightOf([]));
+    inner = plan1(first.rect.height);
+    const again = dockTiles(setOf(inner.others), stage, tightOf(inner.others));
+    if (again.rect.height !== first.rect.height) inner = plan1(again.rect.height);
+  }
+  // Beside a window only what was minimized is a mini (the rest waits behind the window, as before).
+  const stacked = new Set(containers.filter((c) => c.place === 'others').map((c) => c.id));
+  const set = setOf([...inner.others, ...(inner.more?.ids ?? [])].filter((id) => !windowed || stacked.has(id)));
+  const empty = !set.today && !set.needs.length && !set.members.length && !set.jobs.length && !set.minis.length && !(set.pool ?? 0);
+  if (empty) return base;
+  const geo = dockTiles(set, stage, tightOf(set.minis));
+  const cards: Record<string, CardPlan> = { ...inner.cards };
+  for (const t of geo.tiles) {
+    if (t.kind === 'today' || t.kind === 'pool') continue;
+    // A needs-you job drawn on the stage stays there; its tile is a door to it.
+    if (t.kind === 'needs' && cards[t.id]?.where === 'float') continue;
+    const item = containers.find((c) => c.id === t.id);
+    cards[t.id] = { id: t.id, rect: t.rect, where: 'dock', shape: item?.shape ?? 'square', owner: false, z: base.cards[t.id]?.z ?? 0 };
+  }
+  // The content never runs under the Dock: the chat stops a gap above it.
+  const limit = geo.rect.y - DOCK.ABOVE;
+  const centre = inner.centre.y + inner.centre.height > limit ? { ...inner.centre, height: Math.max(0, limit - inner.centre.y) } : inner.centre;
+  const { more: _more, ...plain } = inner;
+  return {
+    ...plain, height: stage.height, centre, cards, others: [], othersInHead: false,
+    ...(today ? { pill: null, agendaInHead: false } : {}),
+    jobDock: { ...geo, docked, ...(set.cap && (set.pool ?? 0) > 0 ? { cap: set.cap } : {}) },
+  };
 }

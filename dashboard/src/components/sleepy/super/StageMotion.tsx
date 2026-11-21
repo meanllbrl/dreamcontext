@@ -65,7 +65,9 @@ export class StageMotion extends Component<StageMotionProps> {
     for (const el of Array.from(root.querySelectorAll<HTMLElement>('[data-stage-key]'))) {
       const key = el.dataset.stageKey ?? '';
       if (!key) continue;
-      const where = key === 'centre' ? 'centre' : prev.plan.cards[key]?.where ?? 'float';
+      const w = key === 'centre' ? 'centre' : prev.plan.cards[key]?.where ?? 'float';
+      // A Dock tile is flown like a card in Others (it shrinks into its tile).
+      const where = w === 'dock' ? 'others' : w;
       before.set(key, { rect: this.run?.standInRect(key, origin) ?? rectIn(el, origin), where });
     }
     for (const id of prev.plan.others) before.set(id, { rect: prev.plan.othersRect, where: 'others' });
@@ -90,7 +92,7 @@ export class StageMotion extends Component<StageMotionProps> {
     if (snap.snap || !root) return;
     const p = this.props.plan;
     const after = new Map<string, StageBox>([['centre', { rect: p.centre, where: 'centre' }]]);
-    for (const c of Object.values(p.cards)) after.set(c.id, { rect: c.rect, where: c.where });
+    for (const c of Object.values(p.cards)) after.set(c.id, { rect: c.rect, where: c.where === 'dock' ? 'others' : c.where });
     if (p.pill && !after.has(p.pill)) after.set(p.pill, { rect: p.agendaPill, where: 'others' });
     const reduced = prefersReducedMotion();
     const light = isLightMode();

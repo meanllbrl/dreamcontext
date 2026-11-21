@@ -55,7 +55,10 @@ describe('the chip rides in the composer row, right after the +', () => {
 
   it('the pane hands the chip to the composer and tells the shelf to leave it out', () => {
     const pane = read(CHAT_PANE);
-    expect(pane).toMatch(/checkoutChip=\{bare \? undefined : <CheckoutChips shelf=\{shelf\}/);
+    expect(pane).toMatch(/\{bare \? null : <CheckoutChips shelf=\{shelf\}/);
+    // The connection's chip rides the same row (it covered the transcript's top floated over it).
+    expect(pane).toMatch(/<ReconnectingChipWhenDue connecting=\{session\.status === 'connecting'\} claudeId=\{session\.claudeId\} inRow \/>/);
+    expect(pane).toMatch(/\{!composerDrawn && <ReconnectingChipWhenDue /);
     expect(pane).toContain('checkoutInComposer={composerDrawn}');
   });
 });

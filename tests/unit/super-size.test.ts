@@ -397,16 +397,14 @@ describe('owner 2026-10-22 13:19: a card that leaves the stage leaves the presen
     expect(onDisk().view).toEqual({ mode: 'float' });
   });
 
-  it('closed, resized or grouped by the owner: out of the presentation; a half page floats', async () => {
+  it('closed or resized by the owner: out of the presentation; a half page floats', async () => {
     makeVault({ view: PRES });
     await layout({ closed: ['task-a'] });
     expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
     makeVault({ view: PRES });
     await layout({ cards: [{ id: 'task-b', size: 'large' }] });
     expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-a'], layout: 'spotlight' });
-    makeVault({ view: PRES });
-    await layout({ group: { id: 'grp-n', cards: ['task-a', 'task-c'] } });
-    expect(onDisk().view).toEqual({ mode: 'present', cards: ['task-b'], layout: 'spotlight' });
+    // An owner `group` is refused before any write (super-v3 K9, super-owner-group-refused.test.ts).
     makeVault({ view: { mode: 'half', card: 'task-a' } });
     await layout({ cards: [{ id: 'task-a', place: 'others' }] });
     expect(onDisk().view).toEqual({ mode: 'float' });

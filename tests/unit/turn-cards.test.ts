@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  showAgain,
   bringPatch, cardName, cardsOfCall, isProjectFileCard, reopenBody, jsonObjectsIn, sameTurnCards, turnCardsByAnswer, turnTiles,
   type StageNow, type TurnItem,
 } from '../../dashboard/src/lib/turnCards.js';
@@ -200,6 +201,23 @@ describe('turnTiles: the turn against the stage as it is now', () => {
     expect(isProjectFileCard({ kind: 'web', ref: 'reports/plan.html' })).toBe(true);
     expect(isProjectFileCard({ kind: 'web', ref: 'https://acme.example/plan' })).toBe(false);
     expect(isProjectFileCard({ kind: 'task', ref: 'launch-banner' })).toBe(false);
+  });
+
+  it('Show again: a closed card, a group not in front and a docked card say it; what is in sight does not', () => {
+    const now = stage();
+    const tiles = turnTiles(turn, now);
+    // Nothing in front: the docked page and the docked group read Show again.
+    expect(tiles.map((t) => showAgain(t, now))).toEqual([true, true]);
+    // The group presented: its tile is in sight.
+    const presented = stage({ shown: ['image-b1', 'image-b2'] });
+    expect(turnTiles(turn, presented).map((t) => showAgain(t, presented))).toEqual([true, false]);
+    // The page side by side, out of the Dock: in sight.
+    const half = stage({ containers: [{ id: 'web-a1', kind: 'web', ref: 'reports/plan.html', place: 'float' }], groups: [], shown: ['web-a1'] });
+    expect(turnTiles(turn, half).map((t) => [t.kind, showAgain(t, half)])).toEqual([['card', false], ['reopen', true]]);
+    // A card floating on the stage is in sight; with no stage known nothing says Show again.
+    const float = stage({ containers: [{ id: 'web-a1', kind: 'web', ref: 'reports/plan.html', place: 'float' }] });
+    expect(showAgain(turnTiles(turn, float)[0], float)).toBe(false);
+    expect(turnTiles(turn, null).some((t) => showAgain(t, null))).toBe(false);
   });
 
   it('with no stage record (a fresh session, the phone) every known card is drawn from the turn', () => {

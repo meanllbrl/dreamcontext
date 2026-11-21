@@ -3,7 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { useVaultId } from '../../../context/VaultContext';
 import { agentFileUrl } from '../../../api/client';
 import { cardGlyph } from '../../../lib/cardMention';
-import { cardName, isProjectFileCard, turnTiles, type KnownCard, type TurnCards, type TurnTile } from '../../../lib/turnCards';
+import { cardName, isProjectFileCard, showAgain, turnTiles, type KnownCard, type TurnCards, type TurnTile } from '../../../lib/turnCards';
 import type { SuperContainer as Container } from '../../../lib/superTypes';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { PictureChip } from '../chat/ComposerRefLayer';
@@ -85,8 +85,11 @@ export function TurnCardTiles({ turn, superSid, onOpenFile }: {
           );
         }
         const click = clickOf(tile);
+        // Out of sight on the stage (closed, a group not in front, in the Dock): the chip says so.
+        const again = onStage && !!click && showAgain(tile, stage!.now);
         const hint = !click ? name
           : !onStage ? t('super.turnCards.full')
+          : again ? t('super.turnCards.showAgainHint')
           : tile.kind === 'reopen' ? t('super.turnCards.reopen')
           : t(tile.kind === 'group' ? 'super.turnCards.present' : 'super.turnCards.bring');
         const img = thumbOf(cards);
@@ -94,13 +97,14 @@ export function TurnCardTiles({ turn, superSid, onOpenFile }: {
         return (
           <span key={tile.key} className="super-turn-chip" data-testid="super-turn-card"
             data-card={tile.kind === 'group' ? tile.group.id : tile.kind === 'card' ? tile.card.id : first.id}
-            data-reopen={tile.kind === 'reopen' ? 'true' : undefined}>
+            data-reopen={tile.kind === 'reopen' ? 'true' : undefined}
+            data-again={again ? 'true' : undefined}>
             <PictureChip
               sent
               img={img}
               icon={img ? undefined : cardGlyph(kind)}
               lead={GLYPH_IMAGE}
-              rest={` ${name}${count > 1 ? ` · ${count}` : ''}`}
+              rest={` ${name}${count > 1 ? ` · ${count}` : ''}${again ? ` · ${t('super.turnCards.showAgain')}` : ''}`}
               state={click ? 'ready' : 'gone'}
               title={`${name}. ${hint}`}
               onOpen={click ?? undefined}
