@@ -43,6 +43,7 @@ import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval, registerProject } from '../../lib/automations/registry.js';
 import { raiseLaneIntentToFull, writeLaneIntent } from '../../lib/lane-intent.js';
 import { opsBlock, readOpsCard } from '../../lib/ops-card.js';
+import { startChildHeadless } from '../headless-child.js';
 import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
@@ -1128,6 +1129,14 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         do: `The Mac is slow to open the chat (the window did not answer in ${Math.round((delegateAnswerMs + delegateGraceMs) / 1000)} s). The start is NOT lost: when the window opens it, by ${clock(pending.until)}, it is recorded by itself and shows in \`dreamcontext super state\`. Do not delegate this job again before then. ${poolable ? 'If it has not opened by then, it waits in the pool with the reason (a full pool keeps nothing: then delegate it again).' : 'If it has not opened by then, delegate it again (a prompt over 16 KB is not kept in the pool).'}`,
       });
       return;
+    }
+    // No window to send the frame to at all (the app's window closed): the server starts the
+    // child itself, with the same fields (plan sirket-yavaslik D12). Not a hand-over: its old
+    // child keeps the work until a window is there.
+    if (!r.ok && r.error === 'no_window' && r.sent === false && !succeeds) {
+      const h = await startChildHeadless({ contextRoot: root, prompt: firstPrompt, mode: job.mode, model: job.model, effort: job.effort, mcp: job.mcp ?? [], tool: job.tool, member: memberOfSuperId(c.superId) });
+      appendOpenLog('delegate_headless', { superId: c.superId, ok: h.ok, ...(h.ok ? { child: h.sessionId } : { why: h.why }) });
+      if (h.ok && SESSION_ID_RE.test(h.sessionId)) { ok(res, { ...(await recordStart(h.sessionId)), headless: true }); return; }
     }
     if (!r.ok || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
       // Unconfirmed: the window timed out (it may still have opened the child) or answered
@@ -3153,7 +3162,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Its new process is this resume's doing, never the owner reopening it (inbox noteChatStarted).
     noteResuming(child, true);
     try {
-      const r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+      let r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
+      // No window at all: the server reopens its own recorded child itself (plan sirket-yavaslik D12).
+      if (!r.ok && r.error === 'no_window' && r.sent === false && ch.endedAt === undefined) {
+        const h = await startChildHeadless({ contextRoot: root, resumeId: child, mode, model, effort, mcp: ch.mcp ?? [], tool: ch.tool, member: memberOfSuperId(c.superId) });
+        if (h.ok) r = { ok: true, result: undefined };
+      }
       if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 502, r.error, 'the window could not reopen the child'); return; }
       // What the window ACTUALLY started it with: a parked tab comes back as it was parked, so
       // the record holds that, never a request the window did not apply. An older window that
