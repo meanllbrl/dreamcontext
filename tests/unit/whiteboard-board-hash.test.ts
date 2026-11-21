@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from '../../dashboard/src/pages/whiteboards/boardHash.js';
 
 describe('the board in the URL hash', () => {
@@ -31,5 +33,22 @@ describe('the board in the URL hash', () => {
     expect(parseBoardHash(`#wb=${'a'.repeat(65)}`)).toBeNull();
     expect(formatBoardHash('Bad Slug', '#other=1')).toBe('#other=1');
     expect(formatBoardHash(null)).toBe('');
+  });
+});
+
+describe('the board a reload lands back on (navigation B)', () => {
+  it('is the hash as the window loaded, until a board page writes the hash', async () => {
+    const mod = await import('../../dashboard/src/pages/whiteboards/boardHash.js');
+    // No window in the root vitest run: nothing was loaded.
+    expect(mod.loadBoardHash()).toBeNull();
+    mod.forgetLoadBoardHash();
+    expect(mod.loadBoardHash()).toBeNull();
+  });
+
+  it('the window\'s first project reads it only through loadBoardHash, and a write forgets it', () => {
+    const page = readFileSync(join(__dirname, '../../dashboard/src/pages/WhiteboardsPage.tsx'), 'utf8');
+    expect(page).toContain("instanceId === 'inst-1' ? loadBoardHash() : null");
+    expect(page).not.toContain('parseBoardHash(window.location.hash)');
+    expect(page).toMatch(/if \(!isActive\) return;\s*forgetLoadBoardHash\(\);\s*writeHash\(formatBoardHash\(slug, window\.location\.hash\)\);/);
   });
 });
