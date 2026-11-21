@@ -104,7 +104,7 @@ export function checkRemoteLayout(body: Record<string, unknown>): { patch: Recor
     // The presentation queue's step, the same on every screen (AC7): seen here is seen there.
     const step = readQueueStep({ queue: body.queue });
     const q = rec(body.queue);
-    if (!step || !q || !onlyKeys(q, ['op', 'item'])) bad('queue is { op: "next" | "leave" | "resume", item: "pq…" }');
+    if (!step || !q || !onlyKeys(q, ['op', 'item'])) bad('queue is { op: "next" | "leave" | "resume" | "drop", item: "pq…" }');
     patch.queue = { op: step!.op, item: step!.item };
   }
   if (body.agenda !== undefined) {

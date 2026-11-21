@@ -25,11 +25,6 @@ function isOpen(q: SuperQueueItem | undefined): boolean {
   return !!q && q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question');
 }
 
-/** Is this question still open with the owner (the queue's AC4: an unanswered one waits)? */
-export function askStillOpen(s: Pick<SuperState, 'queue'>): (ask: string) => boolean {
-  return (ask) => isOpen(s.queue.find((q) => q.id === ask));
-}
-
 /** What the view shows right now, and what a queued presentation still has to show. */
 function shownNow(s: SuperState): Set<string> {
   const v = s.view;

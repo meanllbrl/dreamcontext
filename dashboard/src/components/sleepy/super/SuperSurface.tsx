@@ -24,7 +24,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
+import { LOOK_RENEW_MS, agentShowsNew, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type QueueStep, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize, PadStatus } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { SelectionScope } from '../chat/SelectionBar';
@@ -778,7 +778,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     onLayout(exitPatch());
   };
   // ── The presentation queue's gestures (AC2, AC5): each names the item his window showed ──
-  const queueStep = (op: 'next' | 'leave' | 'resume') => {
+  const queueStep = (op: QueueStep['op']) => {
     if (!pq || !pqHead) return;
     // Only a step that opens a presentation marks his gesture: "Finish" on the last opens none (D4).
     if (op === 'resume' || (op === 'next' && pq.items.length > 1)) queueGestureAt.current = Date.now();
@@ -1448,7 +1448,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         <PresentFrame frame={plan.presentFrame} strip={plan.presentTabs} tabs={presentTabs} onNext={() => queueStep('next')} />
       )}
       {plan.queueBand && pq && (
-        <PresentQueue rect={plan.queueBand.rect} short={plan.queueBand.short} waiting={pq.items.map((i) => itemName(i.cards))} onResume={() => queueStep('resume')} />
+        <PresentQueue rect={plan.queueBand.rect} short={plan.queueBand.short} waiting={pq.items.map((i) => itemName(i.cards))} onResume={() => queueStep('resume')} onDismiss={() => queueStep('drop')} />
       )}
       {plan.strip && (
         <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />

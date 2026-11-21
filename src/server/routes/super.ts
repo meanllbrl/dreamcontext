@@ -21,7 +21,7 @@ import {
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, OWED_ID_RE, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_OPEN_REQUESTS, QUEUE_ID_RE, parseWorkOrigin, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, PAD_STATUSES, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
-  PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
+  PRESENT_ITEM_ID_RE, QUEUE_STEP_OPS, notePresentLayout, ownerQueueStep, withdrawPresent, type QueueStepOp,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { armTeamJobWatches, askOwnerToApprove, cancelTeamJob, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamJobUnsaid, teamPostsDue, teamProgressRead, type RequestChildFact, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
@@ -80,8 +80,8 @@ import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
-import { askShowState, askStillOpen, recordAskShow } from '../../lib/super/ask-show.js';
-import { askWarning, planReportRefusal } from '../../lib/super/ask-summary.js';
+import { askShowState, askStillOpen, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
+import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
@@ -4465,16 +4465,16 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   // A layout picked on a queued item is that item's own (D8): the queue does not move.
   if (ownerView.presentLayout) notePresentLayout(s);
   // His queue gesture, on the item his window showed (D2, AC2, AC5).
-  if (step) ownerQueueStep(s, step.op, step.item, askStillOpen(s));
+  if (step) ownerQueueStep(s, step.op, step.item);
   return s;
 }
 
-/** The owner's queue gesture in a layout body: `{ op: next|leave|resume, item: pq… }`. */
-export function readQueueStep(body: Record<string, unknown>): { op: 'next' | 'leave' | 'resume'; item: string } | null {
+/** The owner's queue gesture in a layout body: `{ op: next|leave|resume|drop, item: pq… }`. */
+export function readQueueStep(body: Record<string, unknown>): { op: QueueStepOp; item: string } | null {
   const v = body.queue;
   const r = v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
-  if (!r || (r.op !== 'next' && r.op !== 'leave' && r.op !== 'resume') || typeof r.item !== 'string' || !PRESENT_ITEM_ID_RE.test(r.item)) return null;
-  return { op: r.op, item: r.item };
+  if (!r || !(QUEUE_STEP_OPS as readonly unknown[]).includes(r.op) || typeof r.item !== 'string' || !PRESENT_ITEM_ID_RE.test(r.item)) return null;
+  return { op: r.op as QueueStepOp, item: r.item };
 }
 
 

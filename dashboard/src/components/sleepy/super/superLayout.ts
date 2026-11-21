@@ -1918,8 +1918,9 @@ export interface LayoutPatch extends OwnerViewFields {
 }
 
 /** A queue gesture: `next` passes the shown item and opens the next, `leave` passes it and floats
- *  the stage with the rest waiting, `resume` opens the first waiting one. */
-export interface QueueStep { op: 'next' | 'leave' | 'resume'; item: string }
+ *  the stage with the rest waiting, `resume` opens the first waiting one, `drop` (the waiting
+ *  strip's ✕) takes the first waiting one off the queue unseen. */
+export interface QueueStep { op: 'next' | 'leave' | 'resume' | 'drop'; item: string }
 
 /** How often the window reports the owner's look at an open group or a full-screen card, through
  *  `pollMs` and never slower than twice this (Light mode): inside the server's grace either way
