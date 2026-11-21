@@ -74,10 +74,10 @@ describe('1 · framed turn: the subject in the frame reaches recall', () => {
 
   // REGRESSED since 0.41.20 (24f62d121: ownerWords cuts every aboutHeads block out of the query).
   // Waits for product fix 1 (the frame subject goes back into the query or to the judge as context).
-  it.fails('agenda line', () => { expect(ask(FRAMED.agenda)).toContain(SUBJECT_DOC.rel); });
-  it.fails('reply quote', () => { expect(ask(FRAMED.reply)).toContain(SUBJECT_DOC.rel); });
-  it.fails('card quote', () => { expect(ask(FRAMED.card)).toContain(SUBJECT_DOC.rel); });
-  it.fails('task header', () => { expect(ask(FRAMED.task)).toContain(SUBJECT_DOC.rel); });
+  it('agenda line', () => { expect(ask(FRAMED.agenda)).toContain(SUBJECT_DOC.rel); });
+  it('reply quote', () => { expect(ask(FRAMED.reply)).toContain(SUBJECT_DOC.rel); });
+  it('card quote', () => { expect(ask(FRAMED.card)).toContain(SUBJECT_DOC.rel); });
+  it('task header', () => { expect(ask(FRAMED.task)).toContain(SUBJECT_DOC.rel); });
 });
 
 describe('2 · number-only owner turn: the covering skill is named', () => {
@@ -88,7 +88,7 @@ describe('2 · number-only owner turn: the covering skill is named', () => {
 
   // NEVER BUILT: the hook only says "review the skills", never which one. A turn that is only a phone
   // number gives the agent no word to match the catalogue on. Waits for product fix 2 (name the skill).
-  it.fails('the hook names the matching skill', () => {
+  it('the hook names the matching skill', () => {
     addSkill(CONTACT_SKILL);
     expect(ask(NUMBER_TURN)).toContain(CONTACT_SKILL.name);
   });
@@ -116,7 +116,7 @@ describe('3 · turn N>1 of a long session: the skill reminder survives', () => {
 
   // REGRESSED since 0.41.20 (24f62d121: the gate prints in full once per session, then
   // CONTEXT_GATE_REMINDER, which has no skill in it). Waits for product fix 2.
-  it.fails('turn 3 still tells the agent to use a skill', () => {
+  it('turn 3 still tells the agent to use a skill', () => {
     addSkill(VIDEO_SKILL);
     const e = longSession();
     ask('how does the Northwind invoice export work', 'long-2', e);
@@ -125,7 +125,7 @@ describe('3 · turn N>1 of a long session: the skill reminder survives', () => {
     expect(ask(VIDEO_TURN, 'long-2', e)).toMatch(/(?<!-)\bskills?\b/i);
   });
 
-  it.fails('turn 3 names the strongly matching skill', () => {
+  it('turn 3 names the strongly matching skill', () => {
     addSkill(VIDEO_SKILL);
     const e = longSession();
     ask('how does the Northwind invoice export work', 'long-3', e);
