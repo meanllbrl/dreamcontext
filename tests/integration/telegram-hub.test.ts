@@ -20,6 +20,7 @@ import { bindingDir, readBinding, scopeOfContextRoot } from '../../src/lib/teleg
 import { parseTelegramPrefix } from '../../src/lib/telegram/contract.js';
 import { _openEventTurnForTests, markSuperEventTurn, superTurnEnded } from '../../src/lib/super/inbox.js';
 import { noteSuperSend } from '../../src/lib/super/owner-wait.js';
+import { takeUndelivered } from '../../src/lib/super/undelivered.js';
 import { noteOwnerAtMac } from '../../src/lib/telegram/back-at-mac.js';
 import { deliverHubResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 
@@ -172,6 +173,22 @@ describe('the Super target', () => {
       return { h, ref };
     }
     const quiet = () => new Promise((r) => setTimeout(r, 50));
+
+    it('a refused section names its own refs; its marked re-send from a turn that is not his goes to the phone (super-sessiz-kalmaz D5)', async () => {
+      const { h } = await onTelegram();
+      takeUndelivered(SID);
+      tg.failing.set('sendMessage', 400);
+      h.userSent(''); // an event turn: no words of his
+      assistant(h, '<!-- re:abc123 -->\nRapor hazır: üç bölüm, iki grafik, bir özet tablo.');
+      const lines: string[] = [];
+      await vi.waitFor(() => { lines.push(...takeUndelivered(SID)); expect(lines.some((l) => l.includes('refs=abc123'))).toBe(true); }, { timeout: 5000 });
+      tg.failing.delete('sendMessage');
+      turnEnd(h);
+      // The note's own turn (not his Telegram turn): the marked, shorter re-send reaches him.
+      h.userSent('');
+      assistant(h, '<!-- re:abc123 -->\nRapor hazır.');
+      await vi.waitFor(() => expect(tg.texts()).toContain('Rapor hazır.'), { timeout: 5000 });
+    });
 
     it('a job result under a Mac ref, written on a later event turn, reaches Telegram once', async () => {
       const { h } = await onTelegram();

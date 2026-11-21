@@ -223,7 +223,7 @@ export function registerSuperCommand(program: Command): void {
     .description('The project\'s Super Agent: delegate to child chats, arrange their cards, answer the queue (only from the Super Agent chat)');
 
   s.command('state')
-    .description('Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
+    .description('Children (each with its live status: working | idle | background | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts')
     .option('--brief', 'Only the children and the open queue (plus pool, live team jobs, warnings): what a fresh session needs before it acts')
     .action((opts: { brief?: boolean }) => (opts.brief
       ? callSuper('state', {}).then((r) => print(briefCallResult(r)))

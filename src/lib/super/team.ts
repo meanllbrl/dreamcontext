@@ -9,6 +9,7 @@ import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, t
 import { runChatSession } from '../automations/run-chat.js';
 import { countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
+import { owedClock } from './owed.js';
 import { memberTeamCardId, superEntry, superIdOfMember } from './store.js';
 
 /**
@@ -763,4 +764,57 @@ function lastAgentLine(entries: ThreadEntry[]): string {
 function firstLine(text: string, max: number): string {
   const line = text.split('\n').map((s) => s.trim()).find(Boolean) ?? '';
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+// ─── Progress of a running team job (super-sessiz-kalmaz C7, D3b) ─────────────────
+
+/** A team job's status now, through the live say-job source the route registered: what the
+ *  progress rule reads in the sweep's probe pass (never inside a write draft). Null on a failure. */
+export function teamJobStatusNow(contextRoot: string, job: SuperTeamJob): TeamJobStatus | null {
+  try { return teamJobStatus(contextRoot, job, liveSource ? liveSource(contextRoot, job) : null).status; } catch { return null; }
+}
+
+/** What a running team job shows of itself: since when it runs, its newest activity, its last
+ *  1-2 own posts after its start (a reply: only after it got the member's lock). `queued` (ms):
+ *  it waits behind the member's current work. Facts of THIS job only. */
+export interface TeamJobProgressFacts { status: TeamJobStatus; since?: number; lastAt?: number; lines: string[]; queued?: number }
+
+export function teamJobProgress(contextRoot: string, job: SuperTeamJob, now = Date.now()): TeamJobProgressFacts | null {
+  const live = liveSource ? liveSource(contextRoot, job) : null;
+  let status: TeamJobStatus;
+  try { status = teamJobStatus(contextRoot, job, live).status; } catch { return null; }
+  if (status === 'queued') return { status, queued: job.startedAt, lines: [] };
+  if (job.request) return { status, since: job.liveSince ?? job.startedAt, lines: [] };
+  if (status !== 'running') return { status, lines: [] };
+  let after: ThreadEntry[] = [];
+  try { ({ after } = jobThread(contextRoot, job)); } catch { after = []; }
+  const liveReply = live?.kind === 'reply' ? live : null;
+  const window = job.jobKind === 'reply' ? replyWindow(job, liveReply, after) : after;
+  const since = job.jobKind === 'reply' ? (liveReply?.deliveredAt ?? job.deliveredAt ?? job.startedAt) : job.startedAt;
+  let lastAt = since;
+  for (const e of window) { const ms = entryMs(e.id); if (Number.isFinite(ms) && ms > lastAt && ms <= now) lastAt = ms; }
+  const posts = window.filter((e) => e.kind === 'agent' && e.text.trim()).slice(-2).map((e) => firstLine(plainPostText(e.text), 300));
+  return { status, since, lastAt, lines: posts };
+}
+
+/** One child of a member's Super doing main's request (`super read <team-job>` on a request). */
+export interface RequestChildFact { sid: string; row?: string; since: number; last: string }
+
+/**
+ * What `super read <team-job>` says while the job has not ended (D3b), or null when it has (the
+ * member's answer is the read then). A running run or reply: since, last activity, its last 1-2
+ * own lines; waiting for the member: "queued behind the member's current work since HH:MM"; a
+ * running request: the member record's children doing it. Null once it is not running or queued
+ * (the caller reads the answer, else says "(no answer from the member yet)").
+ */
+export function teamProgressRead(contextRoot: string, job: SuperTeamJob, now = Date.now(), requestChildren: readonly RequestChildFact[] = []): string | null {
+  const p = teamJobProgress(contextRoot, job, now);
+  if (!p) return null;
+  if (p.queued !== undefined) return `Queued behind the member's current work since ${owedClock(p.queued)}.`;
+  if (p.status !== 'running') return null;
+  if (job.request) {
+    if (!requestChildren.length) return `Running since ${owedClock(p.since ?? job.startedAt)}; no child of the member works on it yet.`;
+    return [`Running since ${owedClock(p.since ?? job.startedAt)}; the member's children on it:`, ...requestChildren.map((c) => `- child=${c.sid}${c.row ? ` row=${c.row}` : ''} since=${owedClock(c.since)}${c.last ? ` last: ${firstLine(c.last, 300)}` : ''}`)].join('\n');
+  }
+  return [`Running since ${owedClock(p.since ?? job.startedAt)}, last activity ${owedClock(p.lastAt ?? p.since ?? job.startedAt)}.`, ...p.lines.map((l) => `- ${l}`)].join('\n');
 }

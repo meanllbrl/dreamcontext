@@ -4427,7 +4427,7 @@
     },
     {
       "path": "super state",
-      "desc": "Children (each with its live status: working | idle | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
+      "desc": "Children (each with its live status: working | idle | background | asking | ended | parked | gone; brief, last line, elapsed, worktree/branch), cards and view, queue and machine facts",
       "args": []
     },
     {

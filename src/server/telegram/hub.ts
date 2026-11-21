@@ -48,7 +48,7 @@ import { telegramHold } from '../../lib/super/owner-text-gate.js';
 import { noteUndelivered } from '../../lib/super/undelivered.js';
 import type { OwnerLanguage } from '../../lib/super/owner-language.js';
 import { superTokenOfSession, sendHubCommand } from '../../lib/window-control.js';
-import { msgRef } from '../../lib/super/types.js';
+import { MSG_REF_RE, msgRef } from '../../lib/super/types.js';
 import {
   CALLBACK_DATA_RE, MEMBER_TELEGRAM_COMMANDS, PAIRING_TTL_MS, TELEGRAM_COMMANDS, TG_ALLOWED_UPDATES, TG_REF_RE,
   TURN_ROUTABLE_MS, TYPING_EVERY_MS, telegramSideSource, withTelegramRef,
@@ -84,6 +84,12 @@ type Obj = Record<string, unknown>;
 
 /** A Super answer Telegram refused, said back to the Super (undelivered.ts). */
 const LOST_TEXT = 'One of your answers did not reach his phone: Telegram refused the message. It is on the Mac only.';
+/** The refused section's own refs on its undelivered line (super-sessiz-kalmaz D5): the note
+ *  tells the Super to re-send it under the first one, the only way it reaches the phone. */
+const lostText = (refs: readonly string[]): string => {
+  const own = [...new Set(refs.filter((r) => MSG_REF_RE.test(r)))];
+  return own.length ? `${LOST_TEXT} refs=${own.join(',')}` : LOST_TEXT;
+};
 /** A turn whose only text was held (owner-text-gate.ts) waits this long for the Super's corrected
  *  answer before it says "ended silent": the correction turn may never be written (a turn that did
  *  not end cleanly, the answer to a feedback turn), and then he must still hear something. */
@@ -1866,7 +1872,7 @@ export class TelegramHub implements TelegramHubApi {
       try {
         return await this.onceThisTurn(ab, sessionId, all, refs, turn, cards, () => this.answerFor(turns, ab!, all, sessionId, { ref: msgRef(text), quote: all, answers: turns[0]?.ref }, this.extrasMode(), [...refs, ...turns.map((t) => t.ref)]));
       } catch (e) {
-        noteUndelivered(sessionId, 'text', LOST_TEXT);
+        noteUndelivered(sessionId, 'text', lostText(refs));
         throw e;
       }
     }
@@ -1889,7 +1895,7 @@ export class TelegramHub implements TelegramHubApi {
       tried = true;
       if (hold(s.text)) continue;
       // One section that does not land does not stop the next.
-      try { if (await this.onceThisTurn(ab, sessionId, s.text, s.refs, turn, cards, () => this.answerFor(turns, ab!, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)]))) sent = true; } catch { noteUndelivered(sessionId, 'text', LOST_TEXT); continue; }
+      try { if (await this.onceThisTurn(ab, sessionId, s.text, s.refs, turn, cards, () => this.answerFor(turns, ab!, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)]))) sent = true; } catch { noteUndelivered(sessionId, 'text', lostText(s.refs)); continue; }
     }
     // A section tried (landed or not) is this text's one way out: never sent again as a whole.
     if (tried || sections.some((s) => s.refs.length)) return sent;

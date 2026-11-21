@@ -849,6 +849,15 @@ export interface SuperChild {
    *  Its next delivered event item carries them (`sent=`), opens one result debt holding them,
    *  and clears this. At most MAX_SENT. */
   sent?: string[];
+  /** When its row last moved INTO `working` from done, stuck, gone, waiting or none (never from
+   *  `asking`: a question it asked does not restart its job), epoch ms (`setRow`). The progress
+   *  clock's start (super-sessiz-kalmaz C4); absent = `startedAt`. */
+  workingSince?: number;
+  /** When the Super last told the owner about this job (a section under its origin, or under one
+   *  of his messages), epoch ms: the progress clock restarts (C4). */
+  toldAt?: number;
+  /** When a written `progress` delivery last named it, epoch ms (C3). */
+  progressAt?: number;
 }
 
 /** Ended children the record keeps (newest first); older ones drop out of it, except one that
@@ -917,6 +926,12 @@ job or asking: K6). Both are the server's facts, never an agent's words.
 `nudge` (K6): the server's one solo turn into a member Super that stopped without closing its
 request or asking ("close it with team done, or ask properly"). In the MEMBER's queue; never
 mirrored, never counted on any surface.
+`progress` (super-sessiz-kalmaz D2): the owner waits on jobs and has heard nothing about them for
+PROGRESS_DUE_MS while he is present (his newest message within OWNER_PRESENT_MS). Derived by the
+sweep from facts only, in MAIN's record only: ONE pending item names every due job (`progress.jobs`),
+its `sessionId` the Super's own. Pruned again at delivery (a job no longer live or due is dropped,
+an empty item is never delivered); a written delivery stamps each named job's `progressAt`. It
+opens no result debt and never moves a child's `sent` list.
 `routine` (K7): something a routine (an automation) waits on the owner for, derived from disk by
 `syncRoutineNeeds`, the ONLY writer that opens or closes it: a pending question, an approval or
 review, a blocked or orphaned run, a light run's denials, an unanswered owner card. In MAIN's
@@ -924,7 +939,7 @@ queue, never a `member` mirror: `routine` names it, `fact` the fact on disk it s
 is derived from both), `member` the routine's member only when it has one, `ownerText` its line,
 `shown` once it has rung (a coalesced fact never rings twice).
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note', 'progress'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -1074,7 +1089,16 @@ export interface SuperQueueItem {
   /** A `member-note` about a request of main's (`--for <item>`) whose team job answers an owner
    *  message: that message's ref, so the Super's text about it stands under it. Server-written. */
   origin?: string;
+  /** A `progress` item's jobs (super-sessiz-kalmaz C3): each a child or a team job, with the ref
+   *  its section opens with (its origin, else `owedRef(item.id)`). Server-written. */
+  progress?: { jobs: ProgressJob[] };
 }
+
+/** One job a `progress` item names: a child (`child`) or a team job (`team`), never both. */
+export interface ProgressJob { child?: string; team?: string; ref: string }
+/** The longest list one progress item holds (a hidden bound on a record field, never a rule:
+ *  the facts decide which jobs are due). */
+export const MAX_PROGRESS_JOBS = 40;
 
 // ─── Owner cards a child leaves, done where the owner is (sahip-karti-yerinde K1-K7; MIRRORED in
 // dashboard/src/lib/superTypes.ts, pinned by tests/unit/owner-card-types.test.ts) ──────────────
@@ -1465,6 +1489,13 @@ export interface SuperTeamJob {
   /** A job given to the member's OWN Super (plan-r10 1, Wave 2): the `request` item's id in the
    *  member's record. Its card and status read that record; no thread holds it. */
   request?: string;
+  /** When the sweep first read it `running` (epoch ms): the progress clock's start
+   *  (super-sessiz-kalmaz C4). Kept across `asking`; cleared on `queued`, `done` or `failed`. */
+  liveSince?: number;
+  /** When the Super last told the owner about it, and when a written `progress` delivery last
+   *  named it (epoch ms), as on a child. */
+  toldAt?: number;
+  progressAt?: number;
 }
 
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
@@ -2409,10 +2440,10 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts). Rev 33 (2026-11-08): a skipped or NOT-on-screen present is never
  * claimed as shown; he is told where it is. Rev 34 (2026-11-09): bold the few words his eye must
- * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-17, tg-cift-metin): after `super ask`, never re-say the answer already given before it in other words. Rev 54 (2026-11-18, soru-azaltma): a card only when the work is truly blocked, ruled by kind (`lib/ask-rules.ts`); a clear choice is taken and said in one line; no start card for work he asked for or approved, a plan that changes no screen is built without his yes; a child's question is the Super's first; no line that a question waits, the summary in one place, an open card never asked again.
+ * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-17, tg-cift-metin): after `super ask`, never re-say the answer already given before it in other words. Rev 54 (2026-11-18, soru-azaltma): a card only when the work is truly blocked, ruled by kind (`lib/ask-rules.ts`); a clear choice is taken and said in one line; no start card for work he asked for or approved, a plan that changes no screen is built without his yes; a child's question is the Super's first; no line that a question waits, the summary in one place, an open card never asked again. Rev 55 (2026-11-21, super-sessiz-kalmaz): while he waits, the step it is on and a time left ONLY from a real measurement (no measurement, no time; a plan or approval summary never); a deploy started by a merge or push is watched until live or failed; `super state` reads `background` for a child whose background work still runs; `event=progress` gets one line each under its ref.
 
  */
-export const SUPER_BRIEF_REV = 54;
+export const SUPER_BRIEF_REV = 55;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

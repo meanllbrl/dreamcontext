@@ -24,7 +24,7 @@ import {
   PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
+import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, teamProgressRead, type RequestChildFact, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
 import { ensureMemberSuper } from '../../lib/super/member-birth.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
@@ -42,7 +42,7 @@ import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
-  agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
+  agendaMissing, backgroundBusy, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach, settleOwnerReach } from '../../lib/super/owner-question.js';
@@ -54,7 +54,7 @@ import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
 import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteMemberToMain, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
-import { ownerMessageGist } from '../../lib/super/owed.js';
+import { owedClock, ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, outwardLine, type OutwardGrant } from '../../lib/super/outward.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
@@ -2007,10 +2007,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const testsOf = childTestMinutes(now);
     for (const [sid, ch] of Object.entries(c.state.children)) {
       const e = getChat(sid);
-      const live = liveChildStatus(ch, e ? activityOf(e, now) : null, parkedSince(sid) !== null);
+      const bg = !!e && backgroundBusy(e, now);
+      const live = liveChildStatus(ch, e ? activityOf(e, now) : null, parkedSince(sid) !== null, bg);
       const { line: last, limit } = childLastLine(e?.lastAssistantText ?? [], live);
+      const bgSince = live === 'background' && e?.lastTurn ? Date.parse(e.lastTurn.endedAt) : Number.NaN;
       const row = {
         status: live,
+        // Its turn ended, its background work did not (super-sessiz-kalmaz D3a): how many and since when.
+        ...(live === 'background' ? { background: { count: e?.backgroundTasks ?? 0, ...(Number.isFinite(bgSince) ? { since: owedClock(bgSince) } : {}) } } : {}),
         // What it runs on: the tool (absent in the record = Claude) and the model its own
         // `system/init` reported, else the one it was started with (`default`: not known yet).
         tool: ch.tool ?? 'claude',
@@ -2398,7 +2402,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const root = c.who.contextRoot;
       const live = liveSayJob(root, j);
       let text = '';
-      try { text = teamJobAnswer(root, j, live); } catch { text = ''; }
+      // While it runs or waits, the facts of THIS job (super-sessiz-kalmaz D3b); after, its answer.
+      try { text = teamProgressRead(root, j, Date.now(), j.request ? await requestChildren(root, j) : []) ?? ''; } catch { text = ''; }
+      if (!text) { try { text = teamJobAnswer(root, j, live); } catch { text = ''; } }
       ok(res, {
         team: j.id, member: j.member, status: teamJobStatus(root, j, live).status,
         text: wrapUntrusted(vaultNameOf(root), text || '(no answer from the member yet)'),
@@ -3652,9 +3658,26 @@ function childStatus(sid: string, now = Date.now()): string {
   return e ? activityOf(e, now) : 'gone';
 }
 
+/** The member's children doing main's request `j.request` (its record's `main:<req>` work). */
+async function requestChildren(root: string, j: SuperTeamJob): Promise<RequestChildFact[]> {
+  if (!j.request) return [];
+  let s: SuperState;
+  try { s = await readSuperState(root, superIdOfMember(j.member), superSanitizeOpts()); } catch { return []; }
+  const out: RequestChildFact[] = [];
+  for (const [sid, ch] of Object.entries(s.children)) {
+    if (ch.endedAt !== undefined || ch.workOrigin !== `main:${j.request}`) continue;
+    const texts = getChat(sid)?.lastAssistantText ?? [];
+    out.push({ sid, ...(ch.row ? { row: ch.row } : {}), since: ch.workingSince ?? ch.startedAt, last: texts[texts.length - 1] ?? '' });
+  }
+  return out;
+}
+
 /** What `super state` says a child is: the registry's activity while a process runs it, else
- *  `ended` (super end), `parked` (its tab is dormant) or `gone`. Never null. */
-export function liveChildStatus(ch: Pick<SuperChild, 'endedAt'>, activity: string | null, parked: boolean): string {
+ *  `ended` (super end), `parked` (its tab is dormant) or `gone`. Never null. An idle child whose
+ *  background work still holds it (`backgroundBusy`) is `background`, never idle (D3a: a reviewer
+ *  running in the background read as idle, and the Super nudged a child that was never stuck). */
+export function liveChildStatus(ch: Pick<SuperChild, 'endedAt'>, activity: string | null, parked: boolean, background = false): string {
+  if (activity === 'idle' && background) return 'background';
   if (activity && activity !== 'gone') return activity;
   if (ch.endedAt !== undefined) return 'ended';
   return parked ? 'parked' : 'gone';
