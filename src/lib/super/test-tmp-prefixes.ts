@@ -235,6 +235,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-codex-dies-',
   'dc-codex-id-',
   'dc-codex-kit-',
+  'dc-codex-lean-home-',
   'dc-codex-notice-',
   'dc-codex-orphans-',
   'dc-codex-outside-',

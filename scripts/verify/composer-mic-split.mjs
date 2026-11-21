@@ -106,10 +106,10 @@ try {
     const readyRows = await menuRows(page);
     row.readyMenu = readyRows;
     check(row, 'ready menu lists spoken replies (Super only) then Voice settings',
-      JSON.stringify(readyRows) === JSON.stringify(mode === 'super' ? ['Reply aloud when I speak', 'Voice settings…'] : ['Voice settings…']), JSON.stringify(readyRows));
+      JSON.stringify(readyRows) === JSON.stringify(mode === 'super' ? ['Paste into the box', 'Reply aloud when I speak', 'Voice settings…'] : ['Paste into the box', 'Voice settings…']), JSON.stringify(readyRows));
     row.shots.readyMenu = await shot(page, `${id}-ready-menu`);
     if (mode === 'super') {
-      await page.locator('[role="menuitemcheckbox"]').click();
+      await page.locator('[role="menuitemcheckbox"]', { hasText: 'Reply aloud' }).click();
       await sleep(150);
       check(row, 'the switch turns spoken replies off (stored, dot gone)',
         await page.evaluate(() => localStorage.getItem('dreamcontext-read-aloud')) === '0' && await page.locator('.chat-cmp-micdot.is-speaking').count() === 0);
