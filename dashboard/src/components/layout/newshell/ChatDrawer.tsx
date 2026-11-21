@@ -19,6 +19,10 @@ const DRAG_START_PX = 4;
 
 export interface ChatDrawerProps {
   rows: DrawerProjectRow[];
+  /** Navigation B: the project rail beside the drawer carries the other projects, so the drawer
+   *  lists only the open one (`rows` holds just it): no Projects header, search, drag, fold or
+   *  hidden group, and no New project row (the rail's "+" is that). */
+  single?: boolean;
   width: number;
   /** Floats over the page with a scrim (≤900) or slides from the top (≤600). */
   floating: boolean;
@@ -268,7 +272,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const searchRef = useRef<HTMLInputElement>(null);
   const searching = !!search?.trim();
   // A search reaches every project, hidden ones too, in one flat list.
-  const split = splitHiddenRows(p.rows, p.hidden ?? []);
+  const split = p.single ? { shown: p.rows, hidden: [] as DrawerProjectRow[] } : splitHiddenRows(p.rows, p.hidden ?? []);
   const shownRows = searching ? filterProjectRows(p.rows, search!) : split.shown;
   const hiddenRows = searching ? [] : split.hidden;
   const listRef = useRef<DrawerProjectRow[]>(shownRows);
@@ -281,7 +285,14 @@ export function ChatDrawer(p: ChatDrawerProps) {
   useEffect(() => { if (search !== null) searchRef.current?.focus(); }, [search !== null]);
 
   /** One project row with its children; `inGroup` = drawn inside the Hidden group (no drag). */
-  const projectRow = (row: DrawerProjectRow, i: number, inGroup: boolean) => (
+  const projectRow = (row: DrawerProjectRow, i: number, inGroup: boolean) => p.single ? (
+          <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}>
+            <div className="ns-dr-sec ns-dr-sec--project" data-testid="drawer-project-label">
+              <span>{row.name}</span>
+            </div>
+            <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>
+          </div>
+  ) : (
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
             data-menu-open={menu?.kind === 'new-chat' && menu.name === row.name ? 'true' : undefined}
             data-hidden-project={inGroup ? row.name : undefined}
@@ -483,7 +494,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           <span className="ns-dr-t">{t('shell.drawer.newWindow')}</span>
           {!p.device && <kbd className="ns-dr-kbd">⌘N</kbd>}
         </button>
-        {!p.device && (
+        {!p.device && !p.single && (
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row" onClick={p.onNewProject}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4l1.5 1.5h5.5v6.5h-11zM8 7.8v3M6.5 9.3h3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newProject')}</span>
@@ -500,6 +511,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
         </button>
         )}
 
+        {!p.single && (
         <div className="ns-dr-sec" data-searching={search !== null ? 'true' : undefined}>
           {search === null ? <span>{t('shell.drawer.projects')}</span> : (
             <input ref={searchRef} type="search" className="ns-dr-search" data-testid="drawer-project-search" value={search}
@@ -521,6 +533,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
             )}
           </span>
         </div>
+        )}
         {searching && shownRows.length === 0 && <div className="ns-dr-empty" data-testid="drawer-project-nomatch">{t('shell.drawer.noProjectMatch')}</div>}
         {shownRows.map((row, i) => projectRow(row, i, false))}
         {drag && drag.over >= shownRows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}

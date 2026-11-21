@@ -1277,7 +1277,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   // read while the drawer OR the rail is on screen. With the drawer hidden only the marks are read
   // (every far project as folded, under the same cap and timeouts): no roster for a list nobody sees.
   const railOn = newShell && !deviceShell;
-  const marksOnly = railOn && !drawerVisible;
+  // The drawer lists only the open project (the rail carries the others), so it needs no roster
+  // of any other project: their marks alone are read, exactly as with the drawer closed.
+  const singleProject = railOn && !phoneNarrow;
+  const marksOnly = railOn && (!drawerVisible || singleProject);
   const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(
     newShell && !deviceShell && !marksOnly ? drawerExpanded : [],
     mountedNames,
@@ -1316,14 +1319,14 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const drawerRows = useMemo(() => {
     if (!newShell) return [];
     return buildDrawerRows({
-      projects: drawerProjects,
+      projects: singleProject ? drawerProjects.filter((p) => p.name === activeVault) : drawerProjects,
       activeVault,
-      expanded: drawerExpanded,
+      expanded: singleProject ? [activeVault] : drawerExpanded,
       facts: drawerFacts,
       fanout,
       ...(deviceShell ? { device: deviceChats } : {}),
     });
-  }, [newShell, drawerProjects, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
+  }, [newShell, singleProject, drawerProjects, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
   // The Global ekip row (plan-r10 1f): the members of all projects over every listed project.
   const globalTeam = useMemo(() => {
     if (!newShell) return null;
@@ -1863,6 +1866,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             {drawerVisible && (
               <ChatDrawer
                 rows={drawerRows}
+                {...(singleProject ? { single: true } : {})}
                 width={drawerWidth}
                 floating={drawerFloating}
                 onHover={onDrawerHover}

@@ -816,3 +816,6 @@
 .ns-dr-project[data-menu-open="true"] .ns-dr-acts { background: inherit; pointer-events: auto; }
 .ns-dr-project[data-menu-open="true"] .ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0.85; }
 .ns-dr-project[data-menu-open="true"] .ns-dr-end { visibility: hidden; }
+
+/* Single-project drawer (Navigation B): the open project's name is a quiet label over its chats. */
+.ns-dr-sec--project { justify-content: flex-start; }

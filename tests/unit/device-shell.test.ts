@@ -230,7 +230,7 @@ describe('the device shell\'s chrome', () => {
 
   it('no New project, Relations, Open in window, Close project or drag in the drawer and picker', () => {
     const d = read('dashboard/src/components/layout/newshell/ChatDrawer.tsx');
-    expect(d).toMatch(/\{!p\.device && \(\s*<button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row"/);
+    expect(d).toMatch(/\{!p\.device && !p\.single && \(\s*<button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row"/);
     expect(d).toMatch(/\{!p\.device && \(\s*<button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-relations"/);
     expect(d).toMatch(/onPointerDown=\{p\.device \? undefined : /);
     expect(d).toMatch(/\{!p\.device && \(\s*<>[\s\S]{0,900}p\.onOpenInWindow[\s\S]{0,400}p\.onCloseProject/);
