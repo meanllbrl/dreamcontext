@@ -154,7 +154,8 @@ describe('ownerLedgerSurface: which chats keep a ledger', () => {
     ['the Assistant', { ...chat, mode: 'assistant', isAssistant: true }, null],
     ['a board card', { ...chat, card: true }, null],
     ['an app chat', { ...chat, app: true }, null],
-    ["a member's own chat", { ...chat, member: true }, null],
+    // His words to that member (plan global-uye-ogrenme D7b): the member learns on them.
+    ["a member's own chat", { ...chat, member: true }, 'member'],
   ] as const)('%s', (_row, input, want) => {
     expect(ownerLedgerSurface(input)).toBe(want);
   });
@@ -243,11 +244,11 @@ describe('writeOwnerTurn: every call names its source', () => {
     expect(codeLines(AGENT_CHAT).filter((l) => /Buffer\.from\(JSON\.stringify\(\{ type: 'user'/.test(l))).toEqual([]);
   });
 
-  it('appendOwnerTurn has one caller in the whole server and CLI: writeOwnerTurn (the hook, member threads and runs never write)', () => {
+  it('appendOwnerTurn has two callers: writeOwnerTurn and the relay writer (D7c, a line already in the ledger); the hook, member threads and runs never write', () => {
     const callers = walk(join(ROOT, 'src'))
       .filter((p) => !p.endsWith(join('lib', 'owner-words.ts')))
       .flatMap((p) => codeLines(readFileSync(p, 'utf-8')).filter((l) => l.includes('appendOwnerTurn(')).map(() => p.slice(ROOT.length + 1)));
-    expect(callers).toEqual(['src/server/routes/agent-chat.ts']);
+    expect(callers.sort()).toEqual(['src/lib/super/owner-relay.ts', 'src/server/routes/agent-chat.ts']);
     const at = AGENT_CHAT.indexOf('appendOwnerTurn(ownerTurnLine(');
     const def = AGENT_CHAT.indexOf('const writeOwnerTurn = (raw: string, source: OwnerTurnSource)');
     const next = AGENT_CHAT.indexOf('\n  };\n', def);

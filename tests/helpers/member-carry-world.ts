@@ -8,6 +8,7 @@
  * B the member chat briefing (`prepareAgentChat`), C a child (SubagentStart, a Task dispatch, a
  * `super delegate` child's own start and first turn).
  */
+import { msgRef } from '../../src/lib/super/types.js';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -128,6 +129,8 @@ export function ownerSays(w: World, own: string, keys: string[], opts: { vault?:
     keys,
     session: keys[0] ?? '',
     own,
+    // The ref his `<owner-msg>` carries (agent-chat.ts writes it on every ledger line, C4).
+    ref: msgRef(own),
   }, { home: w.home });
   return turn;
 }

@@ -997,6 +997,10 @@ export interface SuperQueueItem {
    *  <card> →", owner 2026-10-30). Server-written by `super ask`; at most MAX_ASK_READS. */
   read?: string[];
   /** A `request`'s job (main Super's words: untrusted for the member) or a `reply`'s answer. */
+  /** A `request` that answers one of his messages (plan global-uye-ogrenme C5): that message as the
+   *  ASKING Super's conversation recorded it in the ledger (server-filled, never the Super's text).
+   *  Shown to the member in an `<owner-relay>` block; one relay ledger line is written at delivery. */
+  owner?: { ref: string; turn: string; via: 'composer' | 'phone' | 'telegram'; own: string; at: string; vault: string; session: string };
   text?: string;
   /** A `request`'s per-job model, effort and light flag (`team ask --model/--effort/--light`):
    *  for the child the member opens for it, never the member's own. */

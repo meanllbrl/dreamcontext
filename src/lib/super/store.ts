@@ -504,6 +504,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(isRequest && typeof q.model === 'string' && sanitizeModel(q.model) ? { model: q.model } : {}),
       ...(isRequest && typeof q.effort === 'string' && (JOB_EFFORTS as readonly string[]).includes(q.effort) ? { effort: q.effort } : {}),
       ...(isRequest && q.light === true ? { light: true as const } : {}),
+      ...(isRequest ? cleanRelayedOwner(q.owner) : {}),
       ...(result ? { result } : {}),
       ...(acceptedAt !== undefined && acceptedAt >= 0 ? { acceptedAt } : {}),
       ...(answers ? { answers } : {}),
@@ -1661,4 +1662,18 @@ export function resetSuperIndex(): void {
   clearing.clear();
   locks.clear();
   pendingArm.clear();
+}
+
+/** A request's relayed owner message (C5), re-validated whole, or nothing. */
+function cleanRelayedOwner(raw: unknown): { owner?: NonNullable<SuperQueueItem['owner']> } {
+  if (!raw || typeof raw !== 'object') return {};
+  const o = raw as Record<string, unknown>;
+  const s = (v: unknown, max: number): string | null => (typeof v === 'string' && v.length <= max ? v : null);
+  const ref = s(o.ref, 6);
+  const turn = s(o.turn, 128);
+  const own = s(o.own, MAX_REQUEST_TEXT);
+  const at = s(o.at, 40);
+  const via = o.via === 'composer' || o.via === 'phone' || o.via === 'telegram' ? o.via : null;
+  if (!ref || !/^[0-9a-z]{6}$/.test(ref) || !turn || !own || !at || Number.isNaN(Date.parse(at)) || !via) return {};
+  return { owner: { ref, turn, via, own, at, vault: s(o.vault, 4096) ?? '', session: s(o.session, 256) ?? '' } };
 }

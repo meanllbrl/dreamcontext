@@ -1175,11 +1175,13 @@ export function superOwnerWordsOf(
 }
 
 /** The chat kind the ledger names (`surface`), or null for a chat whose turns are never his
- *  typed words in the sense of D15 (the Assistant, a board card, an app, a member's own chat). */
+ *  typed words in the sense of D15 (the Assistant, a board card, an app). A member's own chat is
+ *  his words to that member (plan global-uye-ogrenme D7b): `member`. */
 export function ownerLedgerSurface(o: {
   mode: string; isAssistant: boolean; card: boolean; app: boolean; member: boolean; superChild: boolean; bridgeTool: string | null;
 }): string | null {
-  if (o.isAssistant || o.card || o.app || o.member) return null;
+  if (o.isAssistant || o.card || o.app) return null;
+  if (o.member) return 'member';
   if (o.bridgeTool === 'codex' || o.bridgeTool === 'antigravity') return o.bridgeTool;
   if (o.superChild) return 'child';
   return o.mode || 'plain';
@@ -1188,9 +1190,12 @@ export function ownerLedgerSurface(o: {
 /** One ledger line (contract A): every id the server has for the chat in `keys`, deduped. */
 export function ownerTurnLine(o: {
   source: { via: OwnerTurnVia; own: string }; vault: string; surface: string; keys: readonly string[]; session: string;
-  at?: string; turn?: string;
+  at?: string; turn?: string; ref?: string; parts?: readonly string[];
 }): OwnerTurnLine {
   return {
+    // The ref his `<owner-msg>` carries for this very turn (C4): what a `team ask --origin` names.
+    ...(o.ref ? { ref: o.ref } : {}),
+    ...(o.parts && o.parts.length ? { parts: [...o.parts] } : {}),
     at: o.at ?? new Date().toISOString(),
     turn: o.turn ?? newOwnerTurnId(),
     vault: o.vault,
@@ -4002,6 +4007,7 @@ export function startChatSession(
         appendOwnerTurn(ownerTurnLine({
           source: ledgerSource, vault: ledgerVault, surface: ledgerSurface,
           keys: ledgerKeys(), session: ledgerSession(),
+          ref: tgRef ?? msgRef(text), parts: partRefs(text, tgRef ?? undefined),
         }));
       } catch (err) { console.warn(`[agent-chat] owner turn not written to the ledger: ${(err as Error).message}`); }
     }

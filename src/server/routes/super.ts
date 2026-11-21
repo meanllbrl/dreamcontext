@@ -39,6 +39,7 @@ import { getAutomation } from '../../lib/automations/store.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import { AmendmentRefused, amendMember, approvedTargets } from '../../lib/agents/amendments.js';
 import { quoteTypedHere } from '../../lib/owner-quote.js';
+import { findRelayedTurn } from '../../lib/super/owner-relay.js';
 import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval } from '../../lib/automations/registry.js';
@@ -1806,11 +1807,14 @@ async function teamAskRequest(
   try { settings = call.manifest ?? settings; } catch { /* its own pick stands */ }
   const used = spawnModel(settings as Parameters<typeof spawnModel>[0], override);
   const requestId = newQueueId();
+  // His message this job answers (C5): only as THIS Super's conversation recorded it in the ledger.
+  const relayed = originRef && c.state.session ? findRelayedTurn(originRef, c.state.session) : null;
   let queued = false;
   await writeSuper(root, memberId, (s) => {
     if (!s.session || openRequests(s) >= MAX_OPEN_REQUESTS) return;
     s.queue.push({
       id: requestId, sessionId: s.session, kind: 'request', state: 'pending', createdAt: Date.now(), text,
+      ...(relayed ? { owner: relayed } : {}),
       ...(override?.model ? { model: override.model } : {}), ...(override?.effort ? { effort: override.effort } : {}),
       ...(light ? { light: true as const } : {}),
     });
@@ -1834,6 +1838,8 @@ async function teamAskRequest(
   void pumpSuper(root, memberId);
   ok(res, {
     job: job.id, member, request: requestId, queued: true, status: 'queued',
+    // Whether his message rides to the member as his own words (`<owner-relay>`), and why not.
+    ...(originRef ? { relayed: !!relayed, ...(relayed ? {} : { relay: 'his message was not found in this Super\'s conversation (a ref from an earlier session finds none): the member reads your text only' }) } : {}),
     ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}), ...(light ? { light: true } : {}),
   });
 }

@@ -236,7 +236,8 @@ export function ownerWordsBlock(contextRoot: string, since: string | null, opts:
   const notes: string[] = [];
   const { views } = storeViews(contextRoot, home, notes);
   const cited = new Set(views.flatMap((v) => v.cited_turns));
-  const lines: OwnerTurnLine[] = readOwnerTurns({ home, vault: dirname(contextRoot), ...(since ? { since } : {}) });
+  // A relay line (D7c) carries a turn already here into a member's conversation: never a second saying.
+  const lines: OwnerTurnLine[] = readOwnerTurns({ home, vault: dirname(contextRoot), ...(since ? { since } : {}) }).filter((t) => !t.relay_of);
   const turns = lines.map((t) => ({
     turn: t.turn, at: t.at, via: t.via, occasion: occasion(t),
     text: headTail(t.own, OWNER_WORD_TURN_MAX), length: t.own.length,

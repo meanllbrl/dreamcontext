@@ -18,9 +18,11 @@ import {
   sessionStart, surfaceC, surfaceF, surfaceS, surfaceT, type World,
 } from '../helpers/member-carry-world.js';
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
+import { appendRelayLine, findRelayedTurn, ownerRelayBlock } from '../../src/lib/super/owner-relay.js';
+import { msgRef } from '../../src/lib/super/types.js';
 
 const ALL = process.env.MEMBER_CARRY_ALL === '1';
-const W2_TODO = new Set<string>(['E4']);
+const W2_TODO = new Set<string>([]);
 const exam = (id: string, title: string, fn: () => void): void => {
   if (!ALL && W2_TODO.has(id)) it.todo(`${id} ${title} (W2)`);
   else it(`${id} ${title}`, fn, 120_000);
@@ -124,11 +126,15 @@ describe('member-carry exam', () => {
     const sup = newSid('super-kestrel');
     const quote = 'Mira\'ya söyle: raporda önce sonuç yazsın';
     ownerSays(w, quote, [sup], { vault: w.project('kestrel'), surface: 'super' });
-    // The relay (W2): the team ask carries his message's ref; the member's conversation gets a
-    // relay ledger line. Before W2 nothing of his words reaches Mira's conversation.
+    // The relay (W2): the team ask carries his message's ref; the server finds it in THIS Super's
+    // conversation and, at delivery, writes one relay ledger line keyed to Mira's conversation.
     const sid = newSid('mira-kestrel');
-    const relay = dc(w, w.project('kestrel'), ['super', 'relay-test-hook', '--from', sup, '--to', sid], plainEnv(sup));
-    void relay;
+    const found = findRelayedTurn(msgRef(quote), sup, { home: w.home });
+    expect(found?.own).toBe(quote);
+    expect(findRelayedTurn(msgRef(quote), newSid('other-super'), { home: w.home }), 'another chat\'s ref is no relay').toBeNull();
+    expect(ownerRelayBlock(found!)).toContain(quote);
+    expect(appendRelayLine(found!, 'req-e4', [sid], { home: w.home })).toBe(true);
+    expect(appendRelayLine(found!, 'req-e4', [sid], { home: w.home }), 'written once').toBe(false);
     const r = dc(w, w.project('kestrel'), ['learn', 'Raporda önce sonuç yazılır', '--scope', 'member', '--quote', quote], memberEnv('mira', sid));
     expect(learnedStatus(r), `${r.out}\n${r.err}`).toBe('active');
     expect(surfaceT(w, 'lumen', memberEnv('mira', newSid('mira-lumen')))).toContain(learnedId(r)!);
