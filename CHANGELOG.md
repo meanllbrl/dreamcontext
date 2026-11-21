@@ -4,6 +4,10 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **One sidebar on the Mac.** The left sidebar lists every project on every page: on Chat it shows each project's chats, on Whiteboards each project's boards, elsewhere the projects themselves. Clicking another project's row or board opens it in one click, and the window shows it only once it is ready, so nothing flickers. The sidebar is a little wider by default (232 px instead of 200) and can still be resized.
+- **Page tabs.** The page icon strip is gone on the Mac: Chat, Tasks, Insights, Whiteboards and Apps are tabs in the title bar, everything else is under More. The project name in the title bar opens the project picker. The phone and tablet layouts are unchanged.
+- **Where you were.** Back and forward, the palette and the picker work across projects, and each project reopens on the page and item you left.
+
 ## [0.41.23] - 2026-11-19
 
 Beta on 0.41.22: everything in 0.41.22, plus new surfaces not yet tried by many people. Local build; not published.
