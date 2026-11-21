@@ -1009,6 +1009,9 @@ export interface SuperQueueItem {
   acceptedAt?: number;
   /** A `reply`: the member's `ask` item it answers. */
   answers?: string;
+  /** A `reply` that tells the member the Super Agent cancelled its request (`super team cancel`):
+   *  stop its work; the request is closed, nothing more to report. */
+  cancels?: true;
   /** Whose work this item is about (plan-r10 1, owner `wnfvtj`): absent = the owner's (as today). */
   workOrigin?: SuperWorkOrigin;
   /** A `permission` of a child the owner runs in Bypass (`permissionGoesToSuper`): the Super
@@ -1449,8 +1452,13 @@ export interface SuperTeamJob {
    *  record after a restart. Set when the job is given, cleared by its done or stuck. */
   open?: true;
   /** A stuck its watch concluded itself: the member left the AI Team, or its turn was lost with
-   *  the server (no record of an ending, nothing running it). */
+   *  the server (no record of an ending, nothing running it); or the Super Agent cancelled it
+   *  (`super team cancel`). Final: nothing about the job is told again. */
   concluded?: TeamJobConclusion;
+  /** The one-line notes about a request job already told to the super (`noteRequestToMain`: quiet
+   *  for 30 minutes, never started, the member off or unapproved). On the record, so a restart
+   *  never tells the same note again (Tilki 2026-11-21: one "has not closed" line per restart). */
+  saidNotes?: TeamSaidNote[];
   /** The newest post of this job's run the super was given (on the chain's first job): every post
    *  reaches it once, whichever event carries it. */
   toldPost?: string;
@@ -1470,7 +1478,11 @@ export interface SuperTeamJob {
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
 export type TeamJobEvent = 'done' | 'stuck' | 'question';
 /** Why a team job's watch concluded it stuck (`SuperTeamJob.concluded`). */
-export type TeamJobConclusion = 'gone' | 'lost';
+export type TeamJobConclusion = 'gone' | 'lost' | 'cancelled';
+export const TEAM_JOB_CONCLUSIONS: readonly TeamJobConclusion[] = ['gone', 'lost', 'cancelled'];
+/** A request job's one-time notes (`SuperTeamJob.saidNotes`). */
+export type TeamSaidNote = 'stale' | 'unstarted' | 'off' | 'unapproved';
+export const TEAM_SAID_NOTES: readonly TeamSaidNote[] = ['stale', 'unstarted', 'off', 'unapproved'];
 
 /** What a team job's card and `super state` say, read from the member's thread. */
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'asking', 'done', 'failed'] as const;
@@ -2353,7 +2365,7 @@ export const SUPER_VERBS = [
   'answer', 'allow', 'send', 'queue-list', 'queue-ask', 'queue-done', 'queue-allow', 'merge', 'worktree-list', 'worktree-remove',
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
-  'clean', 'team-ask', 'team-amend',
+  'clean', 'team-ask', 'team-amend', 'team-cancel',
   'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep', 'note-status',
   // A member's Super closes main's request; main answers a member's question (plan-r10 1).
   'team-done', 'team-answer',

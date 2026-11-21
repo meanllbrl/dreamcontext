@@ -421,6 +421,11 @@ export function registerSuperCommand(program: Command): void {
     .description('A member\'s Super only: close a request the Super Agent gave you, with its result in a few lines. The Super Agent hears it as one event. Refused: `already_done` (it is closed), `unknown_item`, `member_only` (the project\'s Super Agent has no requests)')
     .action((item: string, result: string) => run('team-done', { item, result }));
 
+  team.command('cancel <job>')
+    .description('The project\'s Super Agent only: close a team job you gave that will not end by itself (its member was deleted, it is no longer wanted, it sits "working" with nothing behind it). Its card reads failed ("Cancelled by the Super Agent"), nothing about it is told again, and the member\'s own request closes with it; nothing is deleted. A member gone from the AI Team is concluded by itself. Refused: `unknown_team` (404), `already_closed` (409, its done or stuck was told), `main_only` (403)')
+    .option('--why <line>', 'Why, in a line: the member\'s request carries it as its result')
+    .action((job: string, o: { why?: string }) => run('team-cancel', { job, ...(o.why ? { why: o.why } : {}) }));
+
   team.command('tell <message>')
     .description('An AI Team member only (its own chat, which is its Super): tell the project\'s Super Agent something on your own, whether or not it gave you a job (the owner says "tell the Super"). It hears it as one event (event=member-note), as your words, never the owner\'s, and acts on it or tells the owner when it needs him; nothing goes to Telegram by itself. Refused: `member_only` (403, from the project\'s Super Agent), `super_off` (409, it is not running: tell the owner yourself), `unknown_item` (404, a --for that is not its request to you)')
     .option('--for <item>', 'One of the Super Agent\'s requests to you (`super state`), when the message is about that job')

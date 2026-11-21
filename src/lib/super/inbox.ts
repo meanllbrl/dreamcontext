@@ -63,7 +63,7 @@ import {
   MEMBER_ITEM_OF, type MemberItemOf, type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
   ROUTINE_FACT_RE, SAFETY_REWRITE_REASON, isSafetyRefusal, type GrantOffer, type GrantSize, type RefusalFact,
-  MAX_OWNER_RESULT_TEXT, MAX_REQUEST_TEXT, type OwnerCardHandle, type OwnerDeliverOutcome, type OwnerDeliveryState, type OwnerReceiptEntry, type OwnerResultFact,
+  MAX_OWNER_RESULT_TEXT, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, TEAM_SAID_NOTES, type SuperTeamJob, type TeamSaidNote, type OwnerCardHandle, type OwnerDeliverOutcome, type OwnerDeliveryState, type OwnerReceiptEntry, type OwnerResultFact,
 } from './types.js';
 
 /**
@@ -2360,6 +2360,12 @@ function requestItemLines(vault: string, item: SuperQueueItem): string[] {
     // running (K5): his words, delivered as soon as it attached.
     return [`- item=${item.id} event=reply${item.answers ? ` answers=${item.answers}` : ''} from=owner`, item.text ?? ''];
   }
+  if (item.kind === 'reply' && item.cancels) {
+    return [
+      `- item=${item.id} event=cancel request=${item.workOrigin?.startsWith('main:') ? item.workOrigin.slice(5) : ''} from=super`,
+      wrapUntrusted(vault, `${REQUEST_FROM}, cancelled: ${item.text ?? ''}`),
+    ];
+  }
   if (item.kind === 'reply') {
     return [
       `- item=${item.id} event=reply${item.answers ? ` answers=${item.answers}` : ''} from=super`,
@@ -2374,6 +2380,7 @@ function requestItemLines(vault: string, item: SuperQueueItem): string[] {
 
 /** The member's instructions for one request or reply turn: in full, never the one-line rule. */
 export const REQUEST_LAST_LINE = `This is work the Super Agent gave you (main Super), not the owner's: it is shown on your stage as "${REQUEST_FROM}". Do it through your children when it is real work (\`super delegate --for <item>\`, passing any model= and effort= above to them; at most two at once, more wait in your pool), and answer in text as you go. A question about it goes to the Super Agent (\`super ask --for <item>\`), never the owner. When it is finished, close it: \`dreamcontext super team done <item> "<the result in a few lines>"\`.`;
+export const CANCEL_LAST_LINE = `The Super Agent cancelled that request: it is closed. Stop its work now (\`super end\` each child you opened for it), start nothing more for it and do not \`team done\` it. When something it did matters to the Super Agent (a change already made, a send already gone), tell it with \`super team tell "<what>"\`.`;
 export const REPLY_LAST_LINE = `The Super Agent answered your question about its request. Go on with that request (its item is named in your question), and close it with \`dreamcontext super team done <item> "<result>"\` when it is finished.`;
 /** A reply to a question the member put to the OWNER (`super team answer` on its mirror). */
 export const REPLY_OWNER_ASK_LINE = `The Super Agent answered the question you asked the owner, from what he already told it: these are the Super Agent's words, not his. Go on when that settles it; when your instructions need HIS own word (an approval only he gives), ask him again with \`super ask\`.`;
@@ -2390,7 +2397,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
   }
   if (item.kind === 'request' || item.kind === 'reply') {
     // A request turn shows the full text framed (exempt from the one-line BATCH_LAST_LINE rule).
-    return [`[super events] batch=${batch} items=1`, ...requestItemLines(vault, item), item.kind === 'request' ? REQUEST_LAST_LINE : isMainWork(item.workOrigin) ? REPLY_LAST_LINE : item.workOrigin === 'owner' ? REPLY_FROM_OWNER_LINE : REPLY_OWNER_ASK_LINE].join('\n');
+    return [`[super events] batch=${batch} items=1`, ...requestItemLines(vault, item), item.kind === 'request' ? REQUEST_LAST_LINE : item.cancels ? CANCEL_LAST_LINE : isMainWork(item.workOrigin) ? REPLY_LAST_LINE : item.workOrigin === 'owner' ? REPLY_FROM_OWNER_LINE : REPLY_OWNER_ASK_LINE].join('\n');
   }
   if (item.kind === 'handover') {
     const ids = Object.keys(state.children);
@@ -2478,7 +2485,10 @@ function staleItem(state: SuperState, q: SuperQueueItem, root?: string): boolean
   if (q.kind === 'owed') return owedStillOpen(state, q.owed).length === 0;
   const row = state.children[q.sessionId]?.row;
   return (q.kind === 'question' && !stillAsking(q))
-    || (q.kind === 'done' && row !== 'done')
+    // A finished child whose process then closed (done -> gone) is still finished: its done is news
+    // until told (2026-11-21, Doc: the member's Super was not running when its children finished,
+    // their done was dropped when their chats closed, and the job's answer never reached main).
+    || (q.kind === 'done' && row !== 'done' && row !== 'gone')
     || (q.kind === 'stuck' && row !== 'stuck')
     || (q.kind === 'gone' && isLive(getChat(q.sessionId)))
     // A restart notice is news until its child is gone or ended (it may resume and finish first).
@@ -4034,6 +4044,10 @@ async function pumpOnce(key: string): Promise<void> {
 
 /** When each super's last turn ended (the 30-minute fallback reads it). In memory. */
 const lastTurnEnd = new Map<string, number>();
+/** When this process started: a super with no turn end seen yet counts its quiet from here, never
+ *  from 0 (2026-11-21, this Mac and Tilki: every relaunch told main "has not closed this job" in its
+ *  first second, before the member's cut-off children were even back). */
+let inboxStartedAt = Date.now();
 /** Whose work each super session's running turn is: `owner` (his message), or main's request. */
 const turnOrigins = new Map<string, SuperWorkOrigin>();
 /** Requests main Super was already told are waiting on an off or unapproved member (per key + id). */
@@ -4148,16 +4162,33 @@ export async function noteRequestToMain(memberKey: string, requestId: string, no
           : note === 'question' ? `A child of ${title} asks about this job and ${title}'s Super left it twice: ${text}`
             : note === 'unstarted' ? `${title} has not started this job: no window is open to start its Super; it starts when the app shows the project.`
             : `${title} has not closed this job; last line: ${text || '(none)'}`;
+  // Told once per job, on the record (a restart never tells it again, Tilki 2026-11-21).
+  const once = (TEAM_SAID_NOTES as readonly string[]).includes(note) ? note as TeamSaidNote : null;
   // Nothing to tell when main gave no such job (or is off): its record is not even written.
   let cur: SuperState;
   try { cur = await readSuperState(root, superSanitizeOpts()); } catch { return false; }
   const owed = cur.team.find((j) => j.request === requestId && j.member === slug);
-  if (!cur.enabled || !cur.session || !owed || (note === 'done' && owed.told === 'done')) return false;
+  if (!cur.enabled || !cur.session || !owed || (note !== 'done' && requestJobClosed(owed)) || (note === 'done' && owed.told === 'done') || (once && owed.saidNotes?.includes(once))) return false;
   let added = false;
   await writeSuper(root, (s) => {
     if (!s.enabled || !s.session) return;
     const job = s.team.find((j) => j.request === requestId && j.member === slug);
     if (!job) return;
+    // A job that ended (done, cancelled, its member gone) hears no more notes; a result that
+    // still comes is news, told once as an answer, never dropped and never reopening it.
+    if (note === 'done' && job.told === 'done') return;
+    const late = requestJobClosed(job);
+    if (late && note !== 'done') return;
+    if (late) {
+      s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'done', state: 'pending', createdAt: Date.now(), team: job.id, partial: true, text: `After this job was closed, ${title} still sent its result: ${text}` });
+      countEvent(s);
+      added = true;
+      return;
+    }
+    if (once) {
+      if (job.saidNotes?.includes(once)) return;
+      job.saidNotes = [...(job.saidNotes ?? []), once];
+    }
     if (note === 'done') {
       if (job.told === 'done') return;
       job.told = 'done';
@@ -4169,13 +4200,35 @@ export async function noteRequestToMain(memberKey: string, requestId: string, no
     }
     s.queue.push({
       id: newQueueId(), sessionId: s.session, kind: 'done', state: 'pending', createdAt: Date.now(), team: job.id,
-      ...(note === 'done' ? {} : { partial: true as const }), ...(line ? { text: line } : {}),
+      ...(note === 'done' ? {} : { partial: true as const }),
+      ...(line ? { text: note === 'stale' ? `${line} (\`super read ${job.id}\` reads what its children wrote)` : line } : {}),
     });
     countEvent(s);
     added = true;
   });
   if (added) void pumpSuper(root);
   return added;
+}
+
+/**
+ * Close request `id` in a member's record with `result`, and everything of the member's that waits
+ * on it: its questions to main about it (an open one would refuse every later ask, `ask_open`).
+ * The ONE way a request closes: `team done` and `team cancel` both run it. False when it is not
+ * an open request there.
+ */
+export function closeMemberRequestDraft(s: SuperState, id: string, result: string): boolean {
+  const q = s.queue.find((x) => x.id === id && x.kind === 'request');
+  if (!q || q.state === 'done') return false;
+  q.state = 'done';
+  q.result = result.slice(0, MAX_REQUEST_RESULT);
+  for (const a of s.queue) if (a.kind === 'ask' && a.state !== 'done' && a.workOrigin === `main:${id}`) a.state = 'done';
+  return true;
+}
+
+/** A request job main was told the end of (done) or that ended without its member (concluded:
+ *  gone, cancelled): nothing about it is told again. */
+function requestJobClosed(job: SuperTeamJob): boolean {
+  return job.told === 'done' || job.concluded !== undefined;
 }
 
 export type MemberNoteResult = 'told' | 'super_off' | 'unknown_item';
@@ -4227,7 +4280,7 @@ export function noteRequestDone(contextRoot: string, slug: string, requestId: st
 export function checkQuietRequests(key: string, s: SuperState, now = Date.now()): void {
   if (!s.member || !s.enabled) return;
   checkUnstartedRequests(key, s, now);
-  const lastTurn = lastTurnEnd.get(key) ?? 0;
+  const lastTurn = lastTurnEnd.get(key) ?? inboxStartedAt;
   if (now - lastTurn < REQUEST_QUIET_MS) return;
   const liveChild = Object.keys(s.children).some((sid) => s.children[sid].endedAt === undefined && isLive(getChat(sid)));
   if (liveChild) return;
@@ -4801,9 +4854,12 @@ async function addGone(root: string, sid: string, seenExit = false): Promise<voi
     // Already reported gone (and not started since): nothing new to say (field 2026-10-21).
     // A child that never started has said why; `gone` would only erase that.
     if (ch.row === 'gone') return;
+    // It finished and its done is not told yet: the done says it all (its chat closing is no news).
+    const doneWaits = ch.row === 'done' && s.queue.some((q) => q.sessionId === sid && q.kind === 'done' && q.state === 'pending');
     resolveAnswered(s, sid, null);
     closeOwnerItems(s, sid);
     setRow(s.children[sid], 'gone');
+    if (doneWaits) return;
     if (s.queue.some((q) => q.sessionId === sid && q.kind === 'gone' && q.state === 'pending')) return;
     s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'gone', state: 'pending', createdAt: Date.now() });
     countEvent(s);
@@ -5234,6 +5290,11 @@ async function startMemberSupers(root: string, opts: { parked?: (sessionId: stri
   }
 }
 
+/** Tests only: when "this process" started (the quiet fallback's clock with no turn end seen). */
+export function _setInboxStartedAtForTests(ms: number): void {
+  inboxStartedAt = ms;
+}
+
 /** Tests only: the inbox the bridge attached for a super session. */
 export function _superInboxFor(sessionId: string): SuperInbox | null {
   return inboxOf(sessionId) ?? null;
@@ -5278,6 +5339,8 @@ export function _resetSuperInbox(): void {
   pumping.clear();
   again.clear();
   lastTurnEnd.clear();
+  // Tests run on their own clocks (from 0): a reset starts "this process" at 0, as before.
+  inboxStartedAt = 0;
   turnOrigins.clear();
   offTold.clear();
   staleTold.clear();
