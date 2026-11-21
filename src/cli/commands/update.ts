@@ -24,6 +24,8 @@ import {
 import { guardedFileIsUnchanged, isGuardedSkillPath, type GuardedInstallResult } from '../../lib/core-guarded-skill.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
 import { adoptLocalPending } from '../../lib/automations/adopt-local.js';
+import { ensureAgentsGitignore, listAgents } from '../../lib/agents/store.js';
+import { shareAgentRules } from '../../lib/automations/sharing.js';
 import { pruneRetiredPacks, pruneStoppedSkills, retireExcalidraw } from '../../lib/retired-packs.js';
 import { ensureCodex } from '../ensure-codex.js';
 import { refreshStaleDispatcher, type RefreshDispatcherResult } from '../../lib/automations/launchd.js';
@@ -360,6 +362,13 @@ export function registerUpdateCommand(program: Command): void {
           if (existsSync(contextRoot)) {
             const { adopted } = adoptLocalPending(contextRoot);
             if (adopted.length > 0) info(`Approved on this Mac (made here, it waited under the old rule): ${adopted.join(', ')}.`);
+            // A project member's rules file is private like its agent file (D1); a shared member's travels with it.
+            if (existsSync(join(contextRoot, 'agents'))) {
+              try {
+                ensureAgentsGitignore(contextRoot);
+                for (const agent of listAgents(contextRoot)) if (agent.shared) shareAgentRules(contextRoot, agent.slug);
+              } catch (err) { warn(`Member rules ignore block: ${(err as Error).message}`); }
+            }
           }
         }
 

@@ -80,8 +80,9 @@ import { bm25Search, docKey, loadSkillDocs, namedProjectSkills, queryTermCount, 
 import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, recallTurn, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
 import {
-  actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, promptSurface,
+  actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, newSinceLines, promptSurface, stampSession,
 } from '../../lib/rules-delivery.js';
+import { sessionMember } from '../../lib/agents/session-member.js';
 import { HOOK_OUTPUT_MAX_CHARS } from '../../lib/snapshot-budget.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
@@ -3048,6 +3049,8 @@ export function registerHookCommand(program: Command): void {
       // The prompt hook's once-per-session blocks print in full again on the next prompt: a fresh,
       // resumed, cleared or compacted session no longer holds the first copy in its context.
       if (sid) resetSessionOnce(sid);
+      // D5: the snapshot below delivers every rule in force; later ones are "new since" on a turn.
+      if (sid) stampSession(sid);
 
       // Codex has its own limit and splitter; a session with no id has nothing to key the parts on.
       const claudeHook = hookTool() !== 'codex';
@@ -3487,7 +3490,7 @@ export function registerHookCommand(program: Command): void {
         if (act && sid) {
           const actRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
           const reason = actRoot
-            ? actRefusal(act, deliverForTurn(actRoot, { ...input, tool_name: toolName, tool_input: toolInput, surface: 'act' }))
+            ? actRefusal(act, deliverForTurn(actRoot, { ...input, tool_name: toolName, tool_input: toolInput, surface: 'act' }, { member: sessionMember(process.env, actRoot) }))
             : null;
           if (reason && firstActInSession(sid, act)) {
             deny(reason);
@@ -3546,7 +3549,7 @@ export function registerHookCommand(program: Command): void {
         try {
           const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
           if (!dRoot || typeof toolInput.prompt !== 'string') return null;
-          const prompt = appendToDispatch(toolInput.prompt, deliverForTurn(dRoot, { ...input, surface: 'dispatch' }));
+          const prompt = appendToDispatch(toolInput.prompt, deliverForTurn(dRoot, { ...input, surface: 'dispatch' }, { member: sessionMember(process.env, dRoot) }));
           return prompt ? { ...toolInput, prompt } : null;
         } catch { return null; }
       };
@@ -3638,7 +3641,7 @@ export function registerHookCommand(program: Command): void {
       let rules: string | null = null;
       try {
         const room = HOOK_OUTPUT_MAX_CHARS - (briefing?.length ?? 0) - (brainNote?.length ?? 0) - 200;
-        if (room > 300) rules = helperLines(deliverForTurn(root, { ...(input ?? {}), surface: 'child' }, { max: room }));
+        if (room > 300) rules = helperLines(deliverForTurn(root, { ...(input ?? {}), surface: 'child' }, { max: room, member: sessionMember(process.env, root) }));
       } catch { rules = null; }
       const body = [briefing, rules].filter(Boolean).join('\n\n');
       if (!body) process.exit(0);
@@ -3776,8 +3779,13 @@ export function registerHookCommand(program: Command): void {
       try {
         const surface = promptSurface(rawPrompt);
         if (surface !== 'machine') {
-          const lines = momentLines(deliverForTurn(root, { ...input, surface }));
+          const member = sessionMember(process.env, root);
+          const lines = momentLines(deliverForTurn(root, { ...input, surface }, { member }));
           if (lines) console.log(lines);
+          // D5: a rule written while this session was open, on its very next turn.
+          const sidNow = typeof input.session_id === 'string' ? input.session_id : '';
+          const fresh = sidNow ? newSinceLines(root, sidNow, { member }) : null;
+          if (fresh) console.log(fresh);
         }
       } catch { /* the rules are also in the session-start block */ }
 

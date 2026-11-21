@@ -475,6 +475,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  receipt card (`{\"type\":\"learned\",\"id\":\"<id>\"}`; Telegram shows it with Geri al); never Claude's or Codex's own memory.",
       '- A global agent (this Mac\'s; `agents list` marks it) is an AI Team member too: `super team ask`',
       '  it, never a child or a sub-agent.',
+      // 2026-11-21 (global-uye-ogrenme D7/D8): a correction of a member is relayed, never amended into a global one.
+      '- His correction of how a member works is its own rule: relay it in his words (`super team ask <member> "…"`;',
+      '  outside his turn `--origin <ref>`), never `team amend` a global member. Its hand-back carries `LEARNED <id>`:',
+      '  paste that card where he wrote; his "geri al" there is `dreamcontext learn undo <id>`.',
       'His Agenda card is YOUR notepad, never a list of children: a few',
       '  `super note done <id>` when it finished or he gave it, `drop <id>` when it no longer holds.',
       '  His open questions show there by themselves.',

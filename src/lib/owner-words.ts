@@ -41,6 +41,13 @@ export interface OwnerTurnLine {
   session: string;
   /** ONLY what he typed. */
   own: string;
+  /** The `<owner-msg>` ref the server computed for this very turn (plan global-uye-ogrenme C4). */
+  ref?: string;
+  /** Its part refs, for a message with two or more parts. */
+  parts?: string[];
+  /** A relay line (D7c): the original turn this line carries into a member's conversation. Never
+   *  a new saying: readers that count his turns skip it. */
+  relay_of?: string;
 }
 
 /** Whole month files older than this (after the month ended) are removed by {@link pruneOwnerWords}. */
@@ -93,8 +100,13 @@ export function normalizeOwnerTurn(raw: unknown): OwnerTurnLine | null {
     keys: cleanKeys(r.keys),
     session: str(r.session) ? r.session.trim() : '',
     own: r.own.length > OWN_MAX_CHARS ? r.own.slice(0, OWN_MAX_CHARS) : r.own,
+    ...(str(r.ref) && REF_RE.test(r.ref) ? { ref: r.ref } : {}),
+    ...(Array.isArray(r.parts) && r.parts.some((p) => str(p) && REF_RE.test(p)) ? { parts: r.parts.filter((p): p is string => str(p) && REF_RE.test(p)).slice(0, 32) } : {}),
+    ...(str(r.relay_of) && r.relay_of.trim() ? { relay_of: r.relay_of.trim() } : {}),
   };
 }
+
+const REF_RE = /^[0-9a-z]{6}$/;
 
 function isSymlink(path: string): boolean {
   try { return lstatSync(path).isSymbolicLink(); } catch { return false; }

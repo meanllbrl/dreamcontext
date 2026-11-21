@@ -30,6 +30,7 @@ import {
 } from '../../lib/people-store.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { preferencesBlock } from '../../lib/rules-delivery.js';
+import { sessionMember } from '../../lib/agents/session-member.js';
 import { loadStatuses, loadTaskOverride, renderOverrideBriefing, hasCustomStatuses } from '../../lib/overrides.js';
 import { DEFAULT_STATUSES, isActive, isTerminal, statusKeys, statusKind, type StatusDef } from '../../lib/task-status.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
@@ -1403,7 +1404,7 @@ export function measureSnapshot(
   // compaction because the snapshot is. Never in a peer's snapshot: its rules are its own.
   const pushPreferences = (): void => {
     let block: string | null = null;
-    try { block = preferencesBlock(root); } catch { block = null; }
+    try { block = preferencesBlock(root, { member: sessionMember(process.env, root) }); } catch { block = null; }
     if (block) { parts.push(block); parts.push(''); }
   };
   if (activePerson) {

@@ -8,27 +8,35 @@
  *   line 1  LEARNED <id> <status> <scope>
  *   line 2  his line, in Turkish, no command in it (repeat it verbatim)
  *
+ * Three stores (plan global-uye-ogrenme D1): `me` (him, every project), `project` (this product),
+ * `member` (how one AI Team member works, every project it works in). In a member's session
+ * `--member` defaults to that member, and its process writes only its OWN store (`own_member_only`).
+ * An agent only ADDS or NARROWS a member's rules (create, replace, same, keep on his word; undo,
+ * supersede): an edit or a move is his, at his own shell or through one `run` card (D2).
+ *
  * Idempotency, one rule for every caller: the same cited turns with the same text return the
  * first receipt; a call whose quotes all resolve to turns an existing record already cites, and
  * whose text clears the twin bar against it, IS that record (a retry, a forwarded line, a sleep run
  * repeated after a failure); a different text citing the same turn is a new record.
  */
-import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { readGitIdentity } from '../../lib/git-sync/git.js';
-import { isAgentSession } from '../../lib/owner-guard-cli.js';
+import { ownerProcess, sessionMember, sessionMemberSlug } from '../../lib/agents/session-member.js';
+import { memberScope, globalAgentExists } from '../../lib/agents/scope.js';
+import { ensureAgentsGitignore, getAgent } from '../../lib/agents/store.js';
+import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import {
   conversationKeysFromEnv,
   findQuoteTurn,
-  occasion,
   readOwnerTurns,
   OWNER_WORDS_MAX_AGE_DAYS,
   type OwnerTurnLine,
 } from '../../lib/owner-words.js';
+import { resolveOwnerQuotes } from '../../lib/owner-quote.js';
 import { resolveActivePerson } from '../../lib/people-resolve.js';
 import { tokenize } from '../../lib/recall.js';
 import { detectRememberIntent } from '../../lib/remember-intent.js';
@@ -61,8 +69,16 @@ import {
   weeklySayings,
   applyStatusOp,
   eventsOf,
+  locateIn,
+  memberStoreRef,
+  memberStoreRefs,
+  visibleStores,
   withStore,
+  MEMBER_EDIT_REFUSAL,
   type Actor,
+  type MemberGate,
+  type MemberStoreRef,
+  type RuleLocator,
   type AtTag,
   type RuleBy,
   type RuleEdit,
@@ -92,8 +108,6 @@ export interface LearnContext {
   turns?: OwnerTurnLine[];
   /** git `user.email` for a first personal store; read from git when undefined. */
   gitEmail?: string | null;
-  /** `--scope member`: delegate to `automations learn <slug> --lesson`. */
-  delegateMember?: (slug: string, lesson: string) => number;
 }
 
 export interface LearnOutcome {
@@ -101,7 +115,7 @@ export interface LearnOutcome {
   lines: string[];
   id?: string;
   status?: RuleStatus;
-  scope?: RuleScope | 'member';
+  scope?: RuleScope;
 }
 
 export interface LearnFlags {
@@ -129,13 +143,45 @@ function refuse(...lines: string[]): LearnOutcome {
   return { code: 1, lines: lines.map((l, i) => (i === 0 ? `REFUSED: ${l}` : l)) };
 }
 
-function actorOf(ctx: LearnContext, by?: RuleBy): Actor {
+function actorOf(ctx: LearnContext, by?: RuleBy): Actor & { owner: boolean } {
   const keys = conversationKeysFromEnv(ctx.env);
+  const owner = ownerProcess(ctx.env);
   return {
-    by: by ?? (isAgentSession(ctx.env) ? 'agent' : 'owner'),
+    by: by ?? (owner ? 'owner' : 'agent'),
     conversation: keys[0] ?? '',
     now: ctx.now,
+    owner,
   };
+}
+
+/** The locator every by-id verb reads (C1): this project, his store where shown, every member store. */
+function locator(ctx: LearnContext): RuleLocator {
+  return visibleStores(ctx.contextRoot, ctx.home);
+}
+
+/** The member a `--scope member` call means, or why not. */
+function resolveMember(ctx: LearnContext, flag: string | undefined): { slug: string; scope: 'global' | 'project' } | string {
+  const slug = (flag ?? '').trim() || sessionMember(ctx.env, ctx.contextRoot, ctx.home)?.slug || '';
+  if (!slug) return '--scope member needs --member <slug> (or run it in that member\'s own session)';
+  if (!isSafeAutomationSlug(slug)) return `"${slug}" is not a member slug`;
+  const scope = ctx.contextRoot ? memberScope(ctx.contextRoot, slug, ctx.home) : (globalAgentExists(slug, ctx.home) ? 'global' : null);
+  if (!scope) return `no member "${slug}" here (\`dreamcontext agents list\`)`;
+  return { slug, scope };
+}
+
+/**
+ * One writer per member (D2): a member's process (its chat, Super, child or run) writes only its own
+ * store. A session with no member (the main Super, a plain chat, his shell) may write any member's.
+ */
+export function ownMemberRefusal(ctx: LearnContext, target: string): string | null {
+  const self = sessionMemberSlug(ctx.env);
+  if (!self || self === target) return null;
+  return `own_member_only: this is ${self}'s session; it writes only ${self}'s rules, not ${target}'s. Tell the Super, which can relay it to ${target}.`;
+}
+
+/** The gate facts of a member write (C1): who, and whether his words were typed here. */
+function gateOf(ctx: LearnContext, quotes: readonly string[], here: boolean, replacedText?: string): MemberGate {
+  return { actor: { owner: ownerProcess(ctx.env) }, quote: { text: quotes.join(' '), here }, ...(replacedText !== undefined ? { replacedText } : {}) };
 }
 
 function ledger(ctx: LearnContext): OwnerTurnLine[] {
@@ -144,8 +190,12 @@ function ledger(ctx: LearnContext): OwnerTurnLine[] {
   return readOwnerTurns({ home: ctx.home, since });
 }
 
-function storeRef(ctx: LearnContext, scope: RuleScope): StoreRef {
+function storeRef(ctx: LearnContext, scope: RuleScope, member?: { slug: string; scope: 'global' | 'project' }): StoreRef {
   if (scope === 'me') return personalStoreRef(ctx.home);
+  if (scope === 'member') {
+    if (!member) throw new RulesStoreError('scope member needs its member', 'refused');
+    return memberStoreRef(member, ctx.contextRoot, ctx.home);
+  }
   if (!ctx.contextRoot) throw new RulesStoreError('scope project needs a vault: run it inside a project with _dream_context/', 'refused');
   return projectStoreRef(ctx.contextRoot, ctx.home);
 }
@@ -153,10 +203,13 @@ function storeRef(ctx: LearnContext, scope: RuleScope): StoreRef {
 // ─── The owner's line ───────────────────────────────────────────────────────
 
 /** Line 2 of the receipt: his language, no command in it. */
-export function ownerLine(v: RuleView, replacedHeadline?: string): string {
+export function ownerLine(v: RuleView, replacedHeadline?: string, memberTitle?: string): string {
   switch (v.status) {
     case 'active': {
-      const where = v.scope === 'me' ? 'senin tercihlerin, her projede' : 'bu projenin kuralları';
+      const where = v.scope === 'me' ? 'senin tercihlerin, her projede'
+        : v.scope === 'member' ? `${memberTitle || v.member || 'üye'}'nın kuralı, her projede`
+          : 'bu projenin kuralları';
+      if (v.scope === 'member') return `Kaydedildi: "${v.headline}" · ${where}${replacedHeadline ? ` · eskisi saklandı: "${replacedHeadline}"` : ''} · yanlışsa geri al de`;
       const old = replacedHeadline ? ` · eskisi saklandı: "${replacedHeadline}"` : '';
       return `Kaydedildi: "${v.headline}" · ${where}${old} · yanlışsa "geri al" de`;
     }
@@ -171,12 +224,48 @@ export function ownerLine(v: RuleView, replacedHeadline?: string): string {
   }
 }
 
-function receipt(_ctx: LearnContext, v: RuleView, opts: { replaced?: string; notice?: string | null } = {}): LearnOutcome {
+function memberTitleOf(ctx: LearnContext, slug: string | undefined): string {
+  if (!slug || !ctx.contextRoot) return slug ?? '';
+  try { return getAgent(ctx.contextRoot, slug, ctx.home)?.title || slug; } catch { return slug; }
+}
+
+function receipt(ctx: LearnContext, v: RuleView, opts: { replaced?: string; notice?: string | null; extra?: string[] } = {}): LearnOutcome {
   // Line 2 is repeated verbatim on Telegram and in a terminal; in the app's chat the agent pastes the
   // `learned` card instead (C9), which reads the record by the id on line 1.
-  const lines = [`LEARNED ${v.id} ${v.status} ${v.scope}`, ownerLine(v, opts.replaced)];
+  const lines = [`LEARNED ${v.id} ${v.status} ${v.scope}`, ownerLine(v, opts.replaced, v.scope === 'member' ? memberTitleOf(ctx, v.member) : undefined)];
   if (opts.notice) lines.push(opts.notice);
+  lines.push(...(opts.extra ?? []));
   return { code: 0, lines, id: v.id, status: v.status, scope: v.scope };
+}
+
+/**
+ * D9: the member's instruction lines (its prompt and soul) that share the most terms with a new
+ * rule, as one notice: when his new word changes such a line, the agent amends it in the same turn.
+ */
+export function instructionLinesNotice(ctx: LearnContext, slug: string, headline: string, text: string): string | null {
+  if (!ctx.contextRoot) return null;
+  let agent: ReturnType<typeof getAgent> = null;
+  try { agent = getAgent(ctx.contextRoot, slug, ctx.home); } catch { agent = null; }
+  if (!agent) return null;
+  const want = termSet(headline, text);
+  const scored: { line: string; field: string; shared: number }[] = [];
+  for (const [field, body] of [['prompt', agent.prompt ?? ''], ['soul', agent.soul ?? '']] as const) {
+    for (const raw of body.split(/\n|(?<=[.!?])\s+/)) {
+      const line = oneLine(raw);
+      if (!line) continue;
+      let shared = 0;
+      for (const t of new Set(tokenize(line))) if ([...want].some((w) => w === t || (w.length >= 4 && t.length >= 4 && w.slice(0, 4) === t.slice(0, 4)))) shared += 1;
+      if (shared > 0) scored.push({ line, field, shared });
+    }
+  }
+  if (scored.length === 0) return null;
+  const top = Math.max(...scored.map((x) => x.shared));
+  const lines = scored.filter((x) => x.shared === top).slice(0, 3);
+  return [
+    `Your instruction (${lines.map((l) => l.field).join(', ')}) has a line this rule touches:`,
+    ...lines.map((l) => `  "${l.line}"`),
+    `If his new word changes it, amend that line in this turn on his words: \`dreamcontext agents edit ${slug} --${lines[0]!.field} "<the new text>" --quote "<his words>"\`.`,
+  ].join('\n');
 }
 
 // ─── Twins ──────────────────────────────────────────────────────────────────
@@ -238,11 +327,15 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
   const text = oneLine(rawText ?? '');
   if (!text) return refuse('the rule text is empty');
 
+  let member: { slug: string; scope: 'global' | 'project' } | undefined;
   if (scope === 'member') {
-    if (!flags.member) return refuse('--scope member needs --member <slug>');
-    const run = ctx.delegateMember ?? defaultDelegateMember;
-    const code = run(flags.member, text);
-    return { code: code === 0 ? 0 : 1, lines: [], scope: 'member' };
+    const m = resolveMember(ctx, flags.member);
+    if (typeof m === 'string') return refuse(m);
+    const own = ownMemberRefusal(ctx, m.slug);
+    if (own) return refuse(own);
+    member = m;
+  } else if (flags.member) {
+    return refuse('--member goes with --scope member');
   }
 
   const pinned = [flags.same, flags.replaces, flags.new ? 'new' : undefined].filter(Boolean);
@@ -282,8 +375,9 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
   if (scope === 'me') {
     const email = ctx.gitEmail !== undefined ? ctx.gitEmail
       : readGitIdentity(ctx.contextRoot ? dirname(ctx.contextRoot) : process.cwd()).email;
+    // D10: never refused for want of an email; a `local_owner` store says how to add his once.
     if (!ensureMeFile(ctx.home, email)) {
-      return refuse('there is no personal store: no ~/.dreamcontext/me/me.json and no git user.email on this Mac');
+      return refuse('~/.dreamcontext/me is a link: the personal store is refused there');
     }
   }
 
@@ -293,174 +387,259 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
     const vault = dirname(ctx.contextRoot);
     turns = turns.filter((t) => !t.vault || t.vault === vault || sameRealPath(t.vault, vault));
   }
-  const cache = new Map<string, string[]>();
   /**
-   * Resolve every quote to its ledger turn and run the gate. `prefer`: turns to look past first
-   * (`--same` cites a turn its rule does not cite yet, so saying it again in the same words counts).
+   * Resolve every quote to its ledger turn (owner-quote.ts, D13) and run the gate. `prefer`: turns
+   * to look past first (`--same` cites a turn its rule does not cite yet).
    */
   const resolveQuotes = (prefer: ReadonlySet<string> = new Set<string>()) => {
-    const fresh = prefer.size > 0 ? turns.filter((t) => !prefer.has(t.turn)) : turns;
-    const used = new Set<string>();
-    const resolved = rawQuotes.map((q) => {
-      // Two quotes of one call name two turns when they can (his two sayings of one rule).
-      const pools = [fresh.filter((t) => !used.has(t.turn)), fresh, turns];
-      let hit = findQuoteTurn(q, pools[0]!, bySleep ? [] : keys, cache);
-      for (const pool of pools.slice(1)) { if (hit.turn) break; hit = findQuoteTurn(q, pool, bySleep ? [] : keys, cache); }
-      if (hit.turn) used.add(hit.turn.turn);
-      return { q, ...hit };
-    });
-    const quotes: RuleQuote[] = resolved.map((r) => ({
-      text: cleanQuote(r.q),
+    const set = resolveOwnerQuotes(rawQuotes, { keys: bySleep ? [] : keys, turns, prefer });
+    const quotes: RuleQuote[] = set.quotes.map((r) => ({
+      text: cleanQuote(r.text),
       turn: r.turn?.turn ?? '',
       via: r.turn?.via ?? '',
-      occasion: r.turn ? occasion(r.turn) : '',
+      occasion: r.occasion,
     }));
-    const allResolved = resolved.every((r) => r.turn !== null);
     let gate: 'active' | 'proposed';
     if (bySleep) {
-      const occasions = new Set(resolved.map((r) => (r.turn ? occasion(r.turn) : '')).filter(Boolean));
-      const explicit = resolved.some((r) => r.turn && detectRememberIntent(r.turn.own));
-      gate = allResolved && (occasions.size >= 2 || explicit) ? 'active' : 'proposed';
+      const occasions = new Set(set.quotes.map((r) => r.occasion).filter(Boolean));
+      const explicit = set.quotes.some((r) => r.turn && detectRememberIntent(r.turn.own));
+      gate = set.allResolved && (occasions.size >= 2 || explicit) ? 'active' : 'proposed';
     } else {
-      gate = keys.length > 0 && resolved.every((r) => r.here) ? 'active' : 'proposed';
+      gate = set.allHere ? 'active' : 'proposed';
     }
     const cited = [...new Set(quotes.map((q) => q.turn).filter(Boolean))];
-    return { quotes, allResolved, gate, cited };
+    return { quotes, allResolved: set.allResolved, gate, cited, allHere: set.allHere };
   };
   const base = resolveQuotes();
 
   let ref: StoreRef;
-  try { ref = storeRef(ctx, scope); } catch (e) { return refuse((e as Error).message); }
+  try { ref = storeRef(ctx, scope, member); } catch (e) { return refuse((e as Error).message); }
   let person = '';
   if (ctx.contextRoot) { try { person = resolveActivePerson(ctx.contextRoot).slug ?? ''; } catch { person = ''; } }
 
-  type Out = { outcome?: LearnOutcome; view?: RuleView; replaced?: string };
-  let done: { result: Out; notice: string | null };
+  // D11: a twin in ANOTHER visible store is refused with its id and scope (never a twin across stores).
+  // A `--replaces` may name a rule of another store: it is read there first (gate (a) reads its text).
+  let crossReplace: { ref: StoreRef; view: RuleView } | null = null;
   try {
-    done = withStore<Out>(ref, (store) => {
-      const views = store.rules.map((r) => ({ rec: r, v: deriveRule(r, ctx.now) }));
-      const sameTarget = flags.same ? findRecord(store, flags.same) : undefined;
-      const { quotes, allResolved, gate, cited } = sameTarget
-        ? resolveQuotes(new Set(deriveRule(sameTarget, ctx.now).cited_turns))
-        : base;
-      const stamp = (): Pick<RuleEvent, 'eid' | 'at' | 'by' | 'conversation'> => ({
-        eid: newEventId(), at: ctx.now.toISOString(), by: actor.by, conversation: actor.conversation,
-      });
-      const noop = (v: RuleView): { result: Out; changed: boolean } => ({ result: { view: v }, changed: false });
-
-      // D5d: a sleep run never learns again from sayings he undid.
-      if (bySleep && cited.length > 0) {
-        const held = views.find(({ v }) => v.status === 'undone' && !v.moved_to && cited.some((t) => v.cited_turns.includes(t)));
-        if (held) return { result: { outcome: refuse(`he undid ${held.v.id} ("${held.v.headline}"), which cites the same words`) }, changed: false };
+    const others = locator(ctx).refs().filter((r) => r.file !== ref.file && (r.scope !== 'me' || !ctx.contextRoot || personalRulesVisible(ctx.contextRoot, ctx.home).visible));
+    if (flags.replaces && !findRecord(readStore(ref), flags.replaces)) {
+      for (const o of others) {
+        const rec = findRecord(readStore(o), flags.replaces);
+        if (rec && !deriveRule(rec, ctx.now).moved_to) { crossReplace = { ref: o, view: deriveRule(rec, ctx.now) }; break; }
       }
+      if (crossReplace?.ref.scope === 'member') {
+        const own = ownMemberRefusal(ctx, crossReplace.ref.member!.slug);
+        if (own) return refuse(own);
+      }
+      // An agent never narrows a rule every agent follows (his `me` or the project's) into one
+      // member's: that is his own shell's move. He said it again, or it is for this member only.
+      if (crossReplace && crossReplace.ref.scope !== 'member' && scope === 'member' && !ownerProcess(ctx.env)) {
+        const v = crossReplace.view;
+        return refuse(
+          `${v.id} is a ${v.scope} rule every agent follows; a member's rule never replaces it. He said it again: --scope ${v.scope} --same ${v.id}. His word is for this member only: --new (it rides beside it). It changes for everyone: --scope ${v.scope} --replaces ${v.id}.`,
+        );
+      }
+    }
+    if (!flags.new && !flags.same && !flags.replaces) {
+      const visibleOthers = others.filter((o) => o.scope !== 'member' || o.member?.slug === member?.slug || scope !== 'member');
+      const twins: string[] = [];
+      for (const o of visibleOthers) {
+        if (o.scope === 'member' && o.member?.slug !== member?.slug) continue;
+        for (const v of deriveAll(readStore(o), ctx.now)) {
+          if ((v.status === 'active' || v.status === 'proposed') && !v.moved_to && twinScore(headline, text, v) >= TWIN_BAR) {
+            twins.push(`  ${v.id}  ${v.status}  ${v.scope}${v.member ? ` (${v.member})` : ''}  "${v.headline}"`);
+          }
+        }
+      }
+      if (twins.length > 0) {
+        return refuse(
+          `this reads like a rule already stored in another store. Answer with one of: --same <id> with that rule's --scope (he said it again; it stays in force where it is), --new (a different rule)${scope === 'member' ? ', or --replaces <id> only for a rule of this member\'s own store' : ', or --replaces <id> (his new word replaces it; it may name a rule of another store)'}.`,
+          ...twins,
+        );
+      }
+    }
+  } catch (e) {
+    return storeFailure(e);
+  }
 
-      // (1) The same cited turns with the same text: the first receipt.
-      const sameText = (v: RuleView, rec: RuleRecord): boolean => {
-        const first = eventsOf(rec).find((e) => e.op === 'create' || e.op === 'replace');
-        return foldText(v.text) === foldText(text) || (!!first?.text && foldText(first.text) === foldText(text));
-      };
+  type Out = { outcome?: LearnOutcome; rec?: RuleRecord; replaced?: string };
+  let done: { result: Out; notice: string | null; gated: { id: string; reason: string }[] };
+  const body = (store: ReturnType<typeof readStore>): { result: Out; changed: boolean } => {
+    const views = store.rules.map((r) => ({ rec: r, v: deriveRule(r, ctx.now) }));
+    const sameTarget = flags.same ? findRecord(store, flags.same) : undefined;
+    const { quotes, allResolved, gate, cited } = sameTarget
+      ? resolveQuotes(new Set(deriveRule(sameTarget, ctx.now).cited_turns))
+      : base;
+    const stamp = (): Pick<RuleEvent, 'eid' | 'at' | 'by' | 'conversation'> => ({
+      eid: newEventId(), at: ctx.now.toISOString(), by: actor.by, conversation: actor.conversation,
+    });
+    const noop = (rec: RuleRecord): { result: Out; changed: boolean } => ({ result: { rec }, changed: false });
+
+    // D5d: a sleep run never learns again from sayings he undid.
+    if (bySleep && cited.length > 0) {
+      const held = views.find(({ v }) => v.status === 'undone' && !v.moved_to && cited.some((t) => v.cited_turns.includes(t)));
+      if (held) return { result: { outcome: refuse(`he undid ${held.v.id} ("${held.v.headline}"), which cites the same words`) }, changed: false };
+    }
+
+    // (1) The same cited turns with the same text: the first receipt.
+    const sameText = (v: RuleView, rec: RuleRecord): boolean => {
+      const first = eventsOf(rec).find((e) => e.op === 'create' || e.op === 'replace');
+      return foldText(v.text) === foldText(text) || (!!first?.text && foldText(first.text) === foldText(text));
+    };
+    for (const { rec, v } of views) {
+      if (v.moved_to) continue;
+      const creatingTurns = [...new Set(v.sayings.filter((s) => s.creating && s.turn).map((s) => s.turn))];
+      const sameTurns = cited.length > 0
+        ? creatingTurns.length === cited.length && cited.every((t) => creatingTurns.includes(t))
+        : creatingTurns.length === 0;
+      if (sameTurns && sameText(v, rec)) {
+        if (v.status === 'undone') return { result: { outcome: refuse(`he undid ${v.id} ("${v.headline}")`) }, changed: false };
+        if (v.status === 'proposed' && gate === 'active') {
+          rec.events.push({ ...stamp(), op: 'same', status: 'active', quotes });
+          return { result: { rec }, changed: true };
+        }
+        return noop(rec);
+      }
+    }
+
+    // (2) Every quote resolves to turns an existing record already cites, and the text is its twin: it IS that record.
+    if (allResolved && cited.length > 0) {
       for (const { rec, v } of views) {
         if (v.moved_to) continue;
-        const creatingTurns = [...new Set(v.sayings.filter((s) => s.creating && s.turn).map((s) => s.turn))];
-        const sameTurns = cited.length > 0
-          ? creatingTurns.length === cited.length && cited.every((t) => creatingTurns.includes(t))
-          : creatingTurns.length === 0;
-        if (sameTurns && sameText(v, rec)) {
-          if (v.status === 'undone') return { result: { outcome: refuse(`he undid ${v.id} ("${v.headline}")`) }, changed: false };
-          if (v.status === 'proposed' && gate === 'active') {
-            rec.events.push({ ...stamp(), op: 'same', status: 'active', quotes });
-            return { result: { view: deriveRule(rec, ctx.now) }, changed: true };
-          }
-          return noop(v);
+        if (!cited.every((t) => v.cited_turns.includes(t))) continue;
+        if (twinScore(headline, text, v) < TWIN_BAR) continue;
+        if (v.status === 'undone') return { result: { outcome: refuse(`he undid ${v.id} ("${v.headline}"), which cites the same words`) }, changed: false };
+        if (v.status === 'proposed' && gate === 'active') {
+          rec.events.push({ ...stamp(), op: 'same', status: 'active', quotes });
+          return { result: { rec }, changed: true };
         }
+        return noop(rec);
       }
+    }
 
-      // (2) Every quote resolves to turns an existing record already cites, and the text is its twin: it IS that record.
-      if (allResolved && cited.length > 0) {
-        for (const { rec, v } of views) {
-          if (v.moved_to) continue;
-          if (!cited.every((t) => v.cited_turns.includes(t))) continue;
-          if (twinScore(headline, text, v) < TWIN_BAR) continue;
-          if (v.status === 'undone') return { result: { outcome: refuse(`he undid ${v.id} ("${v.headline}"), which cites the same words`) }, changed: false };
-          if (v.status === 'proposed' && gate === 'active') {
-            rec.events.push({ ...stamp(), op: 'same', status: 'active', quotes });
-            return { result: { view: deriveRule(rec, ctx.now) }, changed: true };
-          }
-          return noop(v);
-        }
-      }
+    if (flags.same) {
+      const rec = findRecord(store, flags.same);
+      if (!rec) return { result: { outcome: refuse(`no rule ${flags.same} in the ${scope} store${member ? ` of ${member.slug}` : ''}`) }, changed: false };
+      const target = deriveRule(rec, ctx.now);
+      if (target.moved_to) return { result: { outcome: refuse(`${rec.id} moved to the ${target.moved_to} store`) }, changed: false };
+      // Every quote already one of its sayings: a retry, nothing new.
+      if (allResolved && cited.every((t) => target.cited_turns.includes(t))) return noop(rec);
+      rec.events.push({ ...stamp(), op: 'same', status: gate, quotes });
+      return { result: { rec }, changed: true };
+    }
 
-      if (flags.same) {
-        const rec = findRecord(store, flags.same);
-        if (!rec) return { result: { outcome: refuse(`no rule ${flags.same} in the ${scope} store`) }, changed: false };
-        const target = deriveRule(rec, ctx.now);
-        if (target.moved_to) return { result: { outcome: refuse(`${rec.id} moved to the ${target.moved_to} store`) }, changed: false };
-        // Every quote already one of its sayings: a retry, nothing new.
-        if (allResolved && cited.every((t) => target.cited_turns.includes(t))) return noop(target);
-        rec.events.push({ ...stamp(), op: 'same', status: gate, quotes });
-        return { result: { view: deriveRule(rec, ctx.now) }, changed: true };
-      }
+    const create = (op: 'create' | 'replace', refId?: string): RuleRecord => ({
+      id: newRuleId(),
+      scope,
+      ...(member ? { member: member.slug } : {}),
+      created: { at: ctx.now.toISOString(), by: actor.by, person },
+      events: [{
+        ...stamp(),
+        op,
+        status: gate,
+        headline,
+        text,
+        ...(says ? { says } : {}),
+        ...(when ? { when } : {}),
+        ...(atTag ? { at_tag: atTag } : {}),
+        ...(doc ? { doc } : {}),
+        ...(supersedes && supersedes.length ? { supersedes } : {}),
+        quotes,
+        ...(refId ? { ref: refId } : {}),
+      }],
+    });
 
-      const create = (op: 'create' | 'replace', refId?: string): RuleRecord => ({
-        id: newRuleId(),
-        scope,
-        created: { at: ctx.now.toISOString(), by: actor.by, person },
-        events: [{
-          ...stamp(),
-          op,
-          status: gate,
-          headline,
-          text,
-          ...(says ? { says } : {}),
-          ...(when ? { when } : {}),
-          ...(atTag ? { at_tag: atTag } : {}),
-          ...(doc ? { doc } : {}),
-          ...(supersedes && supersedes.length ? { supersedes } : {}),
-          quotes,
-          ...(refId ? { ref: refId } : {}),
-        }],
-      });
-
-      if (flags.replaces) {
-        const old = findRecord(store, flags.replaces);
-        if (!old) return { result: { outcome: refuse(`no rule ${flags.replaces} in the ${scope} store`) }, changed: false };
-        const ov = deriveRule(old, ctx.now);
-        const rec = create('replace', old.id);
-        // The one place that decides status (rules-store applyStatusOp): it refuses a rule already
-        // replaced or moved, and a later undo gives the old rule back the status it had, never more.
-        const step = applyStatusOp(store, old.id, 'supersede', actor, { ref: rec.id, scope });
-        if (!step.ok) return { result: { outcome: refuse(step.reason) }, changed: false };
+    if (flags.replaces) {
+      if (crossReplace) {
+        // The new record here; the supersede in the old store after this write lands (never nested).
+        if (crossReplace.view.status === 'superseded') return { result: { outcome: refuse(`${crossReplace.view.id} was already replaced by ${crossReplace.view.superseded_by}: replace that one`) }, changed: false };
+        const rec = create('replace', crossReplace.view.id);
         store.rules.push(rec);
-        return { result: { view: deriveRule(rec, ctx.now), replaced: ov.headline }, changed: true };
+        return { result: { rec, replaced: crossReplace.view.headline }, changed: true };
       }
-
-      if (!flags.new) {
-        const twins = views
-          .filter(({ v }) => (v.status === 'active' || v.status === 'proposed') && twinScore(headline, text, v) >= TWIN_BAR)
-          .map(({ v }) => v);
-        if (twins.length > 0) {
-          return {
-            result: {
-              outcome: refuse(
-                'this reads like a rule already stored. Answer with one of: --same <id> (he said it again), --replaces <id> (his new word replaces it), --new (a different rule).',
-                ...twins.map((v) => `  ${v.id}  ${v.status}  "${v.headline}"`),
-              ),
-            },
-            changed: false,
-          };
-        }
-      }
-
-      const rec = create('create');
+      const old = findRecord(store, flags.replaces);
+      if (!old) return { result: { outcome: refuse(`no rule ${flags.replaces} in any store here`) }, changed: false };
+      const ov = deriveRule(old, ctx.now);
+      const rec = create('replace', old.id);
+      // The one place that decides status (rules-store applyStatusOp): it refuses a rule already
+      // replaced or moved, and a later undo gives the old rule back the status it had, never more.
+      const step = applyStatusOp(store, old.id, 'supersede', actor, { ref: rec.id, scope });
+      if (!step.ok) return { result: { outcome: refuse(step.reason) }, changed: false };
       store.rules.push(rec);
-      return { result: { view: deriveRule(rec, ctx.now) }, changed: true };
-    }, { now: ctx.now });
+      return { result: { rec, replaced: ov.headline }, changed: true };
+    }
+
+    if (!flags.new) {
+      const twins = views
+        .filter(({ v }) => (v.status === 'active' || v.status === 'proposed') && twinScore(headline, text, v) >= TWIN_BAR)
+        .map(({ v }) => v);
+      if (twins.length > 0) {
+        return {
+          result: {
+            outcome: refuse(
+              'this reads like a rule already stored. Answer with one of: --same <id> (he said it again), --replaces <id> (his new word replaces it), --new (a different rule).',
+              ...twins.map((v) => `  ${v.id}  ${v.status}  "${v.headline}"`),
+            ),
+          },
+          changed: false,
+        };
+      }
+    }
+
+    const rec = create('create');
+    store.rules.push(rec);
+    return { result: { rec }, changed: true };
+  };
+  try {
+    if (member) {
+      // The ignore entry exists before the first write of a project member's store (D1, SG5).
+      // His verbatim quotes never land in a file git could sync: no ignore entry, no write.
+      if (member.scope === 'project' && ctx.contextRoot) { try { ensureAgentsGitignore(ctx.contextRoot); } catch (e) { return refuse(`the member rules file cannot be kept out of git (${(e as Error).message}): nothing was written`); } }
+      const replacedText = crossReplace ? crossReplace.view.text : flags.replaces ? (() => {
+        const r = findRecord(readStore(ref), flags.replaces!);
+        return r ? deriveRule(r, ctx.now).text : '';
+      })() : undefined;
+      done = withStore<Out>(ref as MemberStoreRef, body, { now: ctx.now, gate: gateOf(ctx, rawQuotes, base.allHere, replacedText) });
+    } else {
+      done = withStore<Out>(ref, body, { now: ctx.now });
+    }
   } catch (e) {
     return storeFailure(e);
   }
 
   if (done.result.outcome) return done.result.outcome;
-  return receipt(ctx, done.result.view!, { replaced: done.result.replaced, notice: done.notice });
+  const view = deriveRule(done.result.rec!, ctx.now);
+  const extra: string[] = done.gated.filter((g) => g.id === view.id).map((g) => `Proposed, not in force: ${g.reason}.`);
+
+  // The cross-store supersede, in the old rule's own store (D11). If it fails, the old rule stays
+  // active beside the new one and the receipt says so: nothing is lost.
+  // A replacement still waiting for his card leaves the old rule in force: his keep supersedes it.
+  if (crossReplace && done.result.rec && view.status === 'proposed') {
+    extra.push(`The rule it replaces (${crossReplace.view.id}) stays in force until his card keeps this one.`);
+  } else if (crossReplace && done.result.rec && view.status === 'active') {
+    try {
+      const fn = (store: ReturnType<typeof readStore>): { result: string | null; changed: boolean } => {
+        const step = applyStatusOp(store, crossReplace!.view.id, 'supersede', actor, { ref: view.id, scope: crossReplace!.ref.scope });
+        return { result: step.ok ? null : step.reason, changed: step.ok };
+      };
+      const r = crossReplace.ref.scope === 'member'
+        ? withStore<string | null>(crossReplace.ref as MemberStoreRef, fn, { now: ctx.now, gate: gateOf(ctx, rawQuotes, base.allHere) })
+        : withStore<string | null>(crossReplace.ref, fn, { now: ctx.now });
+      if (r.result) extra.push(`The old rule ${crossReplace.view.id} (${crossReplace.ref.scope}) is still active beside this one: ${r.result}.`);
+      else extra.push(`It replaces ${crossReplace.view.id} of the ${crossReplace.ref.scope === 'me' ? 'personal' : crossReplace.ref.scope} store.`);
+    } catch (e) {
+      extra.push(`The old rule ${crossReplace.view.id} (${crossReplace.ref.scope}) is still active beside this one: ${(e as Error).message}.`);
+    }
+  } else if (view.status === 'proposed' && view.replaces) {
+    extra.push(member && !ownerProcess(ctx.env)
+      ? `The rule it replaces (${view.replaces}) stays in force until his card keeps this one.`
+      : `The rule it replaces (${view.replaces}) is paused until his card.`);
+  }
+  if (member && (view.status === 'active' || view.status === 'proposed')) {
+    const n = instructionLinesNotice(ctx, member.slug, view.headline, view.text);
+    if (n) extra.push(n);
+  }
+  return receipt(ctx, view, { replaced: done.result.replaced, notice: done.notice, extra });
 }
 
 /**
@@ -489,31 +668,29 @@ function storeFailure(e: unknown): LearnOutcome {
   return refuse((e as Error).message);
 }
 
-function defaultDelegateMember(slug: string, lesson: string): number {
-  const res = spawnSync(process.execPath, [process.argv[1]!, 'automations', 'learn', slug, '--lesson', lesson], { stdio: 'inherit' });
-  return res.status ?? 1;
-}
 
 // ─── Finding a rule by id ───────────────────────────────────────────────────
 
 function refsOf(ctx: LearnContext): StoreRef[] {
-  const refs: StoreRef[] = [];
-  if (ctx.contextRoot) refs.push(projectStoreRef(ctx.contextRoot, ctx.home));
-  refs.push(personalStoreRef(ctx.home));
-  return refs;
+  return locator(ctx).refs();
 }
 
+/** The store holding `id`, through the one locator (C1): this project, his store, every member store. */
 export function locateRule(ctx: LearnContext, id: string): { ref: StoreRef; view: RuleView } | null {
-  for (const ref of refsOf(ctx)) {
-    const store = readStore(ref);
-    const rec = findRecord(store, id);
-    if (rec) {
-      const view = deriveRule(rec, ctx.now);
-      if (view.moved_to) continue;
-      return { ref, view };
-    }
-  }
-  return null;
+  const found = locateIn(locator(ctx), id, ctx.now);
+  return found ? { ref: found.ref, view: found.view } : null;
+}
+
+/** Which store, in words, for a receipt read from a session that may not be the rule's own. */
+function storeName(ref: StoreRef): string {
+  if (ref.scope === 'me') return 'his preferences';
+  if (ref.scope === 'member') return `${ref.member?.slug ?? 'a member'}'s rules`;
+  return 'this project\'s rules';
+}
+
+/** A member store is written only by that member's own process or a session with no member (D2). */
+function memberWriteRefusal(ctx: LearnContext, ref: StoreRef): string | null {
+  return ref.scope === 'member' && ref.member ? ownMemberRefusal(ctx, ref.member.slug) : null;
 }
 
 // ─── undo / keep / drop / edit ──────────────────────────────────────────────
@@ -530,9 +707,13 @@ export function learnUndo(id: string, ctx: LearnContext): LearnOutcome {
   try {
     const found = locateRule(ctx, id);
     if (!found) return refuse(`no rule ${id}`);
-    const r = undoRule(found.ref, id, actorOf(ctx));
+    const own = memberWriteRefusal(ctx, found.ref);
+    if (own) return refuse(own);
+    const r = undoRule(found.ref, id, actorOf(ctx), { locate: locator(ctx) });
     if (!r.ok) return refuse(r.reason);
     const lines = [`UNDONE ${id} ${found.ref.scope}`, `Geri alındı: "${r.rule.headline}"${restoredLine(r.restored)}`];
+    // From a session that is not the rule's own (the main Super undoing a member's rule): say which store.
+    if (found.ref.scope === 'member' && sessionMemberSlug(ctx.env) !== found.ref.member?.slug) lines.push(`It was one of ${storeName(found.ref)}.`);
     if (r.notice) lines.push(r.notice);
     return { code: 0, lines, id, status: r.rule.status, scope: found.ref.scope };
   } catch (e) { return storeFailure(e); }
@@ -577,11 +758,13 @@ export function learnKeep(id: string, ctx: LearnContext, quote?: string): LearnO
   try {
     const found = locateRule(ctx, id);
     if (!found) return refuse(`no rule ${id}`);
-    if (isAgentSession(ctx.env)) {
+    const own = memberWriteRefusal(ctx, found.ref);
+    if (own) return refuse(own);
+    if (!ownerProcess(ctx.env)) {
       const why = hisWordAbout(found.view, quote, KEEP_WORD, ctx);
       if (why) return refuse(why);
     }
-    const r = keepRule(found.ref, id, actorOf(ctx));
+    const r = keepRule(found.ref, id, actorOf(ctx), { locate: locator(ctx), gate: gateOf(ctx, quote ? [quote] : [], true) });
     if (!r.ok) return refuse(r.reason);
     return receipt(ctx, r.rule, { notice: r.notice });
   } catch (e) { return storeFailure(e); }
@@ -592,19 +775,21 @@ export function learnDrop(id: string, ctx: LearnContext, quote?: string): LearnO
   try {
     const found = locateRule(ctx, id);
     if (!found) return refuse(`no rule ${id}`);
-    if (isAgentSession(ctx.env)) {
+    const own = memberWriteRefusal(ctx, found.ref);
+    if (own) return refuse(own);
+    if (!ownerProcess(ctx.env)) {
       const why = hisWordAbout(found.view, quote, DROP_WORD, ctx);
       if (why) return refuse(why);
     }
-    const r = dropRule(found.ref, id, actorOf(ctx));
+    const r = dropRule(found.ref, id, actorOf(ctx), { locate: locator(ctx) });
     if (!r.ok) return refuse(r.reason);
-    const lines = [`DROPPED ${id} ${found.ref.scope}`, `Atıldı: "${r.rule.headline}"`];
+    const lines = [`DROPPED ${id} ${found.ref.scope}`, `Atıldı: "${r.rule.headline}"${restoredLine(r.restored)}`];
     if (r.notice) lines.push(r.notice);
     return { code: 0, lines, id, status: r.rule.status, scope: found.ref.scope };
   } catch (e) { return storeFailure(e); }
 }
 
-export interface EditFlags { headline?: string; text?: string; says?: string; at?: string; doc?: string; when?: string; scope?: string }
+export interface EditFlags { headline?: string; text?: string; says?: string; at?: string; doc?: string; when?: string; scope?: string; member?: string }
 
 export function learnEdit(id: string, flags: EditFlags, ctx: LearnContext): LearnOutcome {
   try {
@@ -621,14 +806,29 @@ export function learnEdit(id: string, flags: EditFlags, ctx: LearnContext): Lear
     };
     if (flags.doc !== undefined && !ctx.contextRoot) return refuse('--doc names a file in a vault: run inside one');
     const actor = actorOf(ctx);
+    // Daralt (D2): an agent never edits or moves a member's rule; his shell (or his `run` card) does.
+    const touchesMember = found.ref.scope === 'member' || flags.scope === 'member';
+    if (touchesMember && !actor.owner) return refuse(MEMBER_EDIT_REFUSAL);
+    if (flags.member !== undefined && flags.scope !== 'member') return refuse('--member goes with --scope member');
     let r: StatusChange;
     if (flags.scope !== undefined && flags.scope !== found.ref.scope) {
-      if (flags.scope !== 'me' && flags.scope !== 'project') return refuse('--scope must be me or project');
-      if (flags.scope === 'me') {
-        const email = ctx.gitEmail !== undefined ? ctx.gitEmail : readGitIdentity(ctx.contextRoot ? dirname(ctx.contextRoot) : process.cwd()).email;
-        if (!ensureMeFile(ctx.home, email)) return refuse('there is no personal store: no ~/.dreamcontext/me/me.json and no git user.email');
+      if (flags.scope !== 'me' && flags.scope !== 'project' && flags.scope !== 'member') return refuse('--scope must be me, project or member');
+      let target: StoreRef;
+      if (flags.scope === 'member') {
+        const m = resolveMember(ctx, flags.member);
+        if (typeof m === 'string') return refuse(m);
+        if (m.scope === 'project' && ctx.contextRoot) { try { ensureAgentsGitignore(ctx.contextRoot); } catch (e) { return refuse(`the member rules file cannot be kept out of git (${(e as Error).message}): nothing was moved`); } }
+        target = storeRef(ctx, 'member', m);
+      } else {
+        if (flags.scope === 'me') {
+          const email = ctx.gitEmail !== undefined ? ctx.gitEmail : readGitIdentity(ctx.contextRoot ? dirname(ctx.contextRoot) : process.cwd()).email;
+          if (!ensureMeFile(ctx.home, email)) return refuse('~/.dreamcontext/me is a link: the personal store is refused there');
+        }
+        target = storeRef(ctx, flags.scope);
       }
-      r = moveRule(found.ref, storeRef(ctx, flags.scope), id, edit, actor);
+      r = moveRule(found.ref, target, id, edit, actor);
+    } else if (found.ref.scope === 'member' && flags.member !== undefined && flags.member !== found.ref.member?.slug) {
+      return refuse('a rule moves from one member to another only as a new rule on his words (`--replaces <id>`)');
     } else {
       r = editRule(found.ref, id, edit, actor);
     }
@@ -655,9 +855,12 @@ function describe(v: RuleView, contextRoot: string | null): string[] {
   return lines;
 }
 
-export function learnList(ctx: LearnContext, opts: { me?: boolean; project?: boolean; all?: boolean } = {}): { lines: string[]; rules: RuleView[] } {
-  const showMe = opts.me || !opts.project;
-  const showProject = (opts.project || !opts.me) && !!ctx.contextRoot;
+export function learnList(ctx: LearnContext, opts: { me?: boolean; project?: boolean; all?: boolean; member?: string } = {}): { lines: string[]; rules: RuleView[] } {
+  const only = opts.me || opts.project || opts.member !== undefined;
+  const showMe = opts.me || !only;
+  const showProject = (opts.project || !only) && !!ctx.contextRoot;
+  // A member's rules: the one named, else this session's own member (never another member's by default).
+  const memberSlug = opts.member !== undefined ? opts.member.trim() : (!only ? sessionMemberSlug(ctx.env) : '');
   const lines: string[] = [];
   const all: RuleView[] = [];
   const section = (title: string, ref: StoreRef): void => {
@@ -677,6 +880,14 @@ export function learnList(ctx: LearnContext, opts: { me?: boolean; project?: boo
     }
   }
   if (showProject) section('This project\'s rules', projectStoreRef(ctx.contextRoot!, ctx.home));
+  if (memberSlug) {
+    const m = resolveMember(ctx, memberSlug);
+    if (typeof m === 'string') lines.push(`Member rules: ${m}`);
+    else {
+      try { section(`${memberTitleOf(ctx, m.slug)}'s rules, every project it works in`, memberStoreRef(m, ctx.contextRoot, ctx.home)); }
+      catch (e) { lines.push(`${m.slug}'s rules: ${(e as Error).message}`); }
+    }
+  }
   return { lines, rules: all };
 }
 
@@ -757,11 +968,14 @@ function print(out: LearnOutcome, json?: boolean): void {
 }
 
 export function registerLearnCommand(program: Command): void {
+  /** `learn` itself takes `--json`, so commander hands a subcommand's `--json` to the parent: read both. */
+  const wantsJson = (opts: { json?: boolean }, cmd: { parent?: { opts(): { json?: boolean } } | null }): boolean =>
+    Boolean(opts.json || cmd.parent?.opts().json);
   const learnCmd = program
     .command('learn')
     .argument('[text]', 'The rule, one line, never stricter than his words')
-    .description('Store a rule he stated (his preference, this project\'s rule, or a member\'s lesson) and print the line to repeat to him')
-    .option('--scope <scope>', 'me (how to work with him in general, every project) | project (one product or project) | member')
+    .description('Store a rule he stated (his preference, this project\'s rule, or how one AI Team member works) and print the line to repeat to him')
+    .option('--scope <scope>', 'me (how to work with him in general, every project) | project (one product or project) | member (how this member works, every project it works in)')
     .option('--quote <words>', 'His words the rule comes from, copied verbatim (repeatable)', collect, [])
     .option('--headline <text>', 'The rule itself in at most 60 characters')
     .option('--says <phrases>', 'Other ways he says it, in his languages, split by |')
@@ -772,7 +986,7 @@ export function registerLearnCommand(program: Command): void {
     .option('--new', 'A different rule from the near-twins learn found')
     .option('--supersedes <path>', 'A file whose text says the opposite (path or path::"excerpt"; repeatable)', collect, [])
     .option('--doc <path>', 'A long-form pattern in this vault the rule links to')
-    .option('--member <slug>', 'With --scope member: the member whose lesson this is')
+    .option('--member <slug>', 'With --scope member: the member whose rule this is (default: this session\'s member)')
     .option('--by <who>', 'sleep (a sleep run proposing from his words)')
     .option('--json', 'Machine-readable receipt')
     .action((text: string | undefined, opts: LearnFlags & { json?: boolean }) => {
@@ -785,9 +999,11 @@ export function registerLearnCommand(program: Command): void {
     .description('The rules he taught: his preferences and this project\'s rules, with who wrote each')
     .option('--me', 'Only his preferences')
     .option('--project', 'Only this project\'s rules')
+    .option('--member <slug>', 'Only this member\'s rules (default in a member session: its own, beside his and this project\'s)')
     .option('--all', 'Also replaced and undone rules')
     .option('--json', 'Machine-readable')
-    .action((opts: { me?: boolean; project?: boolean; all?: boolean; json?: boolean }) => {
+    .action((opts: { me?: boolean; project?: boolean; all?: boolean; member?: string; json?: boolean }, cmd: { parent?: { opts(): { json?: boolean } } | null }) => {
+      opts.json = wantsJson(opts, cmd);
       const out = learnList(liveContext(), opts);
       if (opts.json) console.log(JSON.stringify(out.rules, null, 2));
       else for (const l of out.lines) console.log(l);
@@ -798,7 +1014,8 @@ export function registerLearnCommand(program: Command): void {
     .argument('<id>', 'Rule id')
     .description('One rule with its history')
     .option('--json', 'Machine-readable')
-    .action((id: string, opts: { json?: boolean }) => {
+    .action((id: string, opts: { json?: boolean }, cmd: { parent?: { opts(): { json?: boolean } } | null }) => {
+      opts.json = wantsJson(opts, cmd);
       const ctx = liveContext();
       const found = locateRule(ctx, id);
       if (!found) { console.error(`REFUSED: no rule ${id}`); process.exitCode = 1; return; }
@@ -828,7 +1045,8 @@ export function registerLearnCommand(program: Command): void {
     .option('--at <tag>', `${AT_TAGS.join('|')}`)
     .option('--when <sentence>', 'New situation sentence')
     .option('--doc <path>', 'New linked pattern')
-    .option('--scope <scope>', 'Move to me or project')
+    .option('--scope <scope>', 'Move to me, project or member (his shell only for a member rule)')
+    .option('--member <slug>', 'With --scope member: the member whose store it moves to')
     .action((id: string, opts: EditFlags) => print(learnEdit(id, opts, liveContext())));
 
   learnCmd

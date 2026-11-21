@@ -49,6 +49,7 @@ import { ASK_HIS_KINDS } from '../ask-rules.js';
 import { detectOwnerLanguage, withOwnerLanguage, type OwnerLanguage } from './owner-language.js';
 import { isServerTurnText } from '../usage-readers.js';
 import { MAX_LEAN_MCP, MCP_NAME_RE } from './lean-mcp.js';
+import { appendRelayLine, learnedOnRelay, ownerRelayBlock } from './owner-relay.js';
 import {
   closeByMarks, cutGist, decideOwed, dropDebt, mergeSent, openDebts, openMessageDebt, openResultDebt, owedClock, owedForMessage, owedRef, owedStillOpen, replyMarkRefs, noteSaid, saidHead, stampOwedSince,
   type OwedEnd,
@@ -2411,6 +2412,8 @@ function requestItemLines(vault: string, item: SuperQueueItem): string[] {
   return [
     `- item=${item.id} event=request from=super${item.model ? ` model=${item.model}` : ''}${item.effort ? ` effort=${item.effort}` : ''}${item.light ? ' light' : ''}`,
     wrapUntrusted(vault, `${REQUEST_FROM}: ${item.text ?? ''}`),
+    // His own message this job answers, as his chat recorded it (D7c): server-built, outside the fence.
+    ...(item.kind === 'request' && item.owner ? [ownerRelayBlock(item.owner)] : []),
   ];
 }
 
@@ -4054,6 +4057,8 @@ async function pumpOnce(key: string): Promise<void> {
       return;
     }
     blockedSince.delete(key);
+    // His relayed words enter the member's conversation as one ledger line, once per request (D7c).
+    for (const q of items) if (q.kind === 'request' && q.owner) appendRelayLine(q.owner, q.id, [session]);
     // Taken in the same tick the write was confirmed: every end numbered after this one is this
     // turn's (or a later one's), every end before it belongs to an earlier turn.
     const seq = endSeq;
@@ -4338,7 +4343,11 @@ export async function noteMemberToMain(contextRoot: string, slug: string, text: 
 
 /** `super team done` (the member's own verb): main hears the result once. */
 export function noteRequestDone(contextRoot: string, slug: string, requestId: string, result: string): Promise<boolean> {
-  return noteRequestToMain(superKey(contextRoot, superIdOfMember(slug)), requestId, 'done', result);
+  // Every rule it learned on his relayed words, named by the server (D7d), never left to its memory.
+  const learned = learnedOnRelay(contextRoot, slug, requestId);
+  const told = learned.filter((l) => !result.includes(l.split(' ').slice(0, 2).join(' ')));
+  const withReceipt = told.length ? `${told.join('\n')}\n${result}` : result;
+  return noteRequestToMain(superKey(contextRoot, superIdOfMember(slug)), requestId, 'done', withReceipt);
 }
 
 /**

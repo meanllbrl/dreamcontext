@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { acquireFileLock } from './file-lock.js';
 import { keyPath } from './real-path.js';
 
@@ -88,9 +88,24 @@ export function updateLocalJson<T extends object>(
   mutate: (current: T) => T | null,
   home?: string,
 ): T | null {
-  const path = filePath(projectRoot, name, home);
-  const dir = localDir(projectRoot, home);
+  return updateJsonAt(filePath(projectRoot, name, home), fallback, mutate);
+}
+
+/** Read one record file at a path the CALLER has checked (machine-local, under `~/.dreamcontext/`). Never throws. */
+export function readJsonAt<T extends object>(path: string, fallback: T): T {
+  return readParsed(path, fallback);
+}
+
+/**
+ * {@link updateLocalJson} for a record at a path the CALLER has checked (a global member's own
+ * folder): the same PID lock, atomic write and 0600 file. Its folder is created 0700 and must not be
+ * a symlink.
+ */
+export function updateJsonAt<T extends object>(path: string, fallback: T, mutate: (current: T) => T | null): T | null {
+  const dir = dirname(path);
   ensureDir(dir);
+  if (lstatSync(dir).isSymbolicLink()) throw new Error(`The record folder ${dir} is a symlink.`);
+  const name = basename(path);
   const lock = `${path}.lock`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   while (!acquireFileLock(lock, Date.now(), LOCK_STALE_MS, { verifyPidLiveness: true })) {

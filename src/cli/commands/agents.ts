@@ -21,6 +21,7 @@ import { assertCanSetPhoto, readPhotoFile, removeAgentPhotoFiles, storeAgentPhot
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
 import { AmendmentRefused, amendMember, assertOwnMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
 import { localWriteStamps, memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
+import { quoteCoversChange, quoteTypedHere } from '../../lib/owner-quote.js';
 import { describePendingChange, pendingChangeSentence } from '../../lib/agents/pending-change.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
@@ -77,6 +78,17 @@ const SELF_APPROVAL_ENVS = ['CLAUDECODE', AGENT_SELF_ENV, 'DREAMCONTEXT_AUTOMATI
  *  must not be one shell line away from approving the agent itself. */
 export const SELF_APPROVAL_REFUSAL =
   'Approving is the owner\'s step, and this is a Claude session or an agent run. He approves it on its card in the chat or on the AI Team page.';
+
+/** The receipt line of a member's change to its own instruction (D8), in his language. */
+export function amendedReceipt(contextRoot: string, slug: string, a: { changes: { before: string; after: string }[]; waits?: true }): string {
+  const had = new Set(a.changes.flatMap((c) => c.before.split('\n').map((l) => l.trim())));
+  const first = a.changes.flatMap((c) => c.after.split('\n').map((l) => l.trim())).find((l) => l && !had.has(l)) ?? '';
+  const what = first.length > 80 ? `${first.slice(0, 79)}…` : first || 'bir satır çıkarıldı';
+  const where = getAgent(contextRoot, slug)?.scope === 'global' ? 'her projede' : 'bu projede';
+  return a.waits
+    ? `Talimat değişikliği onayını bekliyor: "${what}" · ${where} · kartı onaylarsan geçerli olur`
+    : `Talimatım güncellendi: "${what}" · ${where} · yanlışsa "geri al" de`;
+}
 
 /**
  * A guard against ACCIDENTAL self-approval — not a security boundary (a session
@@ -458,12 +470,14 @@ export function registerAgentsCommand(program: Command): void {
           const ownSuper = memberSuperProcess() === slug && Object.keys(extra).length === 0;
           const a = amendMember(root, {
             member: slug, by: ownSuper ? 'super' : actor as Exclude<typeof actor, 'owner'>, self,
-            ...(opts.quote ? { quote: opts.quote } : {}),
+            ...(opts.quote ? { quote: opts.quote, ownerQuote: { here: quoteTypedHere(opts.quote) } } : {}),
             why: `edited with \`dreamcontext agents edit\` from ${ownSuper ? 'its own Super chat' : actor === 'session' ? 'a chat session' : 'a background run'}`,
             ...(prompt !== undefined ? { prompt } : {}),
             ...(newSoul !== undefined ? { soul: newSoul } : {}),
             extra,
           });
+          console.log(`AMENDED ${a.id}${a.waits ? ' waits' : ''}`);
+          console.log(amendedReceipt(root, slug, a));
           success(`Saved "${slug}". ${SESSION_EDIT_REFUSAL}${a.waits ? ' This one waits for that card.' : ''}`);
           return;
         }
@@ -519,13 +533,22 @@ export function registerAgentsCommand(program: Command): void {
     .command('revert')
     .argument('<slug>', 'Agent slug')
     .argument('<id>', 'Amendment id (`agents amendments <slug>`)')
-    .description('Take a Super Agent amendment back (refused inside a Claude session or an agent run)')
-    .action((slug: string, id: string) => {
-      if (refuseSelfApproval(process.env)) return;
+    .description('Take a Super Agent amendment back (inside a session: only the member itself, on his words with --quote)')
+    .option('--quote <words>', 'His words in this conversation asking to take it back (a member\'s own session)')
+    .action((slug: string, id: string, opts: { quote?: string }) => {
       const root = ensureContextRoot();
+      const { actor, self } = memberActorFromEnv();
+      if (inSession(process.env)) {
+        // D8: the member itself takes its own change back on his words, typed here, about those lines.
+        const entry = listAmendments(dirname(root), slug).find((a) => a.id === id);
+        const ok = !!opts.quote && self === slug && actor !== 'agent' && !!entry
+          && quoteTypedHere(opts.quote) && entry.changes.every((c) => quoteCoversChange(opts.quote!, c.after, c.before));
+        if (!ok) { if (refuseSelfApproval(process.env)) return; }
+      }
       try {
-        revertAmendment(root, slug, id);
+        const done = revertAmendment(root, slug, id, { by: inSession(process.env) ? actor : 'owner' });
         settleApprovalQuestions(root, slug);
+        console.log(`AMENDED ${done.id} reverted`);
         success(`Took ${id} back: "${slug}" reads as it did before.`);
       } catch (err) {
         fail(err);

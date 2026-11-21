@@ -75,6 +75,8 @@ import {
   AGENTS_DIR,
   AGENTS_GITIGNORE_ENTRIES,
   AGENTS_GITIGNORE_ENTRIES_ROOT,
+  AGENT_RULES_GITIGNORE_ENTRIES,
+  AGENT_RULES_GITIGNORE_ENTRIES_ROOT,
   DEFAULT_CALL_SETTINGS,
   type AgentCallSettings,
   type AgentIdentityPatch,
@@ -367,6 +369,10 @@ export function ensureAgentsGitignore(contextRoot: string): void {
   try {
     ensureGitignoreEntries(contextRoot, [...AGENTS_GITIGNORE_ENTRIES], { comment });
     ensureGitignoreEntries(dirname(contextRoot), [...AGENTS_GITIGNORE_ENTRIES_ROOT], { comment });
+    // A project member's rules: their own block (D1), before the first rules file is written.
+    const rules = 'dreamcontext agents — member rules, private by default (shared ones are negated below)';
+    ensureGitignoreEntries(contextRoot, [...AGENT_RULES_GITIGNORE_ENTRIES], { comment: rules });
+    ensureGitignoreEntries(dirname(contextRoot), [...AGENT_RULES_GITIGNORE_ENTRIES_ROOT], { comment: rules });
   } catch (err) {
     throw new AutomationError(`An agent file cannot be written: a governing .gitignore could not be ensured (${(err as Error).message}).`);
   }
