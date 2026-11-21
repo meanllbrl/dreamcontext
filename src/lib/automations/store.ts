@@ -996,8 +996,11 @@ export function lessonTwinScore(a: string, b: string): number {
 /** Of two near-twin lessons, the text that already holds every term of the other; null when each
  *  adds a term the other lacks (two facts: both are kept). */
 function lessonKeeps(oldText: string, newText: string): string | null {
-  const a = lessonTerms(oldText);
-  const b = lessonTerms(newText);
+  // Every word counts here, stop words and short ones too: "not", "no", "do" change a lesson.
+  const words = (t: string): Set<string> => new Set(t.replace(TIMES_RE, '').toLocaleLowerCase('tr').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9ı]+/).filter(Boolean));
+  const a = words(oldText);
+  const b = words(newText);
   const newAdds = [...b].some((t) => !a.has(t));
   const oldAdds = [...a].some((t) => !b.has(t));
   if (newAdds && oldAdds) return null;

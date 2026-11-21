@@ -139,6 +139,11 @@ describe('recordLesson', () => {
     const both = addLesson([{ date: '2026-07-27', text: 'Use pnpm never npm for installs in this repo always' }],
       { date: '2026-07-28', text: 'Use pnpm never npm for installs in this repo with force' });
     expect(both).toHaveLength(2);
+    // A negation is a word too: the newer word is kept, never the old one it reverses.
+    const not = addLesson([{ date: '2026-07-27', text: 'Run the migrations before deploy' }], { date: '2026-07-28', text: 'Do not run the migrations before deploy' });
+    expect(not[0]!.text).toBe('Do not run the migrations before deploy (×2)');
+    const no = addLesson([{ date: '2026-07-27', text: 'Use the cache on staging builds' }], { date: '2026-07-28', text: 'No, do not use the cache on staging builds' });
+    expect(no[0]!.text).toBe('No, do not use the cache on staging builds (×2)');
   });
 
   it('two lessons that differ in a number are two facts, never twins', () => {

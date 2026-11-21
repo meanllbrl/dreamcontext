@@ -938,7 +938,8 @@ function supersedeReplaced(locate: RuleLocator, rule: RuleView, actor: Actor): s
   if (!rule.replaces || rule.status !== 'active') return null;
   try {
     const found = locateIn(locate, rule.replaces, actor.now);
-    if (!found || found.view.status !== 'active') return null;
+    if (!found) return `${rule.replaces} could not be found from here: it is still active beside it.`;
+    if (found.view.status !== 'active') return null;
     const { result } = storeWrite<Step>(found.ref, (store) => {
       const step = applyStatusOp(store, rule.replaces!, 'supersede', actor, { ref: rule.id, scope: found.ref.scope });
       return { result: step, changed: step.ok };
