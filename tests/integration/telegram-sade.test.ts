@@ -194,6 +194,31 @@ describe("a job's status is one message, edited in place (AC5)", () => {
     expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2);
     expect(tg.sent().length).toBe(n + 1);
   });
+
+  it('a retry of an older state racing the "done" edit never leaves the job running (review r3)', async () => {
+    await start();
+    const { h } = await hisMessage('işi başlat');
+    const n = tg.sent().length;
+    const block = (info: string, now: string) => assistant(h, `\`\`\`dream-status ${info}\nRapor işi\n${now}\n\`\`\``);
+    block('rapor', 'Veri okunuyor');
+    await vi.waitFor(() => expect(tg.sent().length).toBe(n + 1), { timeout: 5000 });
+    tg.failOnce.set('editMessageText', 429);
+    block('rapor', 'Testler çalışıyor');
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(1), { timeout: 5000 });
+    await quiet();
+    // The done edit is slow; the timer's retry fires while it is on its way.
+    tg.slowMethods.set('editMessageText', 300);
+    block('rapor done', 'Bitti');
+    await new Promise((r) => setTimeout(r, 50));
+    await hub.tickSade();
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText').length).toBeGreaterThanOrEqual(2), { timeout: 5000 });
+    await quiet(); await quiet();
+    await hub.tickSade();
+    const edits = tg.calls.filter((c) => c.method === 'editMessageText');
+    expect(String(edits.at(-1)!.params.text)).toContain('Bitti');
+    expect(edits.slice(1).some((c) => String(c.params.text).includes('Testler çalışıyor'))).toBe(false);
+    expect(tg.sent().length).toBe(n + 1);
+  });
 });
 
 describe('warnings (AC5)', () => {

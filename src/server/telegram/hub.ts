@@ -315,7 +315,9 @@ export class TelegramHub implements TelegramHubApi {
    *  one message). `interim` = a tool call came after it. Memory only. */
   private held = new Map<string, { text: string; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark: SuperTurnMark; interim: boolean; timer: ReturnType<typeof setTimeout> | null }>();
   /** `${binding}:${job id}` → that job's one status message (telegram-sade). Memory only. */
-  private statusMsgs = new Map<string, { messageId: number; html: string; at: number; pending?: string }>();
+  private statusMsgs = new Map<string, { messageId?: number; shown: string; want: string; at: number }>();
+  /** Per status message: its draws, one at a time (`drawStatus`). */
+  private statusChains = new Map<string, Promise<boolean>>();
   /** Per bot: the agenda pin's look in progress (`refreshPin` runs one at a time). */
   private pinChains = new Map<string, Promise<void>>();
   /** `${binding}|${sentence}` → when that notice last went (`noticeOnce`). */
@@ -1654,31 +1656,61 @@ export class TelegramHub implements TelegramHubApi {
     const key = `${ab.key}:${b.id}`;
     const html = jobStatusHtml(b.lines, b.done);
     const had = this.statusMsgs.get(key);
-    if (had && had.html === html) return true;
-    if (had) {
-      const edit = await editInPlace(ab, had.messageId, html);
-      if (edit === 'ok') { this.statusMsgs.set(key, { messageId: had.messageId, html, at: this.now() }); return true; }
-      // A slow or refused edit may still have landed: never a second status message for it. What
-      // it should show waits, and the next look (`tickSade`) edits it again (review r2: a failed
-      // "done" edit left the job running on his phone).
-      if (edit === 'failed') { this.statusMsgs.set(key, { ...had, pending: html, at: this.now() }); return false; }
-    } else if (!(this.onTelegram(ab) || this.telegramTurnOf(sessionId) || this.deps.handsfree?.streamsTo(ab.scope, ab.target))) return false;
-    const sent = await this.send(ab, html, SILENT).catch(() => null);
-    if (!sent || !Number.isSafeInteger(sent.message_id)) return false;
-    this.statusMsgs.set(key, { messageId: sent.message_id, html, at: this.now() });
+    if (had) { had.want = html; had.at = this.now(); }
+    else {
+      if (!(this.onTelegram(ab) || this.telegramTurnOf(sessionId) || this.deps.handsfree?.streamsTo(ab.scope, ab.target))) return false;
+      this.statusMsgs.set(key, { shown: '', want: html, at: this.now() });
+    }
     for (const [k, v] of this.statusMsgs) if (this.now() - v.at > NOTICE_ONCE_MS) this.statusMsgs.delete(k);
-    return true;
+    return this.drawStatus(ab, key);
   }
 
-  /** A job status edit that failed on a timeout or a 429: tried again until it lands or the message
-   *  is gone (then the next block of that job sends a new one). */
+  /**
+   * The ONE writer of a job's status message (review r3: a retry and a new block raced and the
+   * phone ended on an older state). Each message has what it should show (`want`) and what Telegram
+   * confirmed (`shown`); its draws run one at a time and always read the entry fresh, so the last
+   * block wins. A timeout or a 429 leaves `want` waiting for the next look (`tickSade`); a message
+   * Telegram says is gone is sent again; never a second message otherwise. True when the message
+   * shows `want` now.
+   */
+  private drawStatus(ab: ActiveBinding, key: string): Promise<boolean> {
+    const run = async (): Promise<boolean> => {
+      for (let guard = 0; guard < 5; guard++) {
+        const e = this.statusMsgs.get(key);
+        if (!e || !this.serving(ab)) return false;
+        if (e.messageId !== undefined && e.shown === e.want) return true;
+        const target = e.want;
+        if (e.messageId !== undefined) {
+          const edit = await editInPlace(ab, e.messageId, target);
+          if (edit === 'failed') return false;
+          const now = this.statusMsgs.get(key);
+          if (!now) return false;
+          if (edit === 'gone') { if (now.messageId === e.messageId) { now.messageId = undefined; now.shown = ''; } continue; }
+          if (now.messageId === e.messageId) now.shown = target;
+          continue;
+        }
+        const sent = await this.send(ab, target, SILENT).catch(() => null);
+        if (!sent || !Number.isSafeInteger(sent.message_id)) return false;
+        const now = this.statusMsgs.get(key);
+        if (!now) return false;
+        now.messageId = sent.message_id; now.shown = target;
+      }
+      return false;
+    };
+    const next = (this.statusChains.get(key) ?? Promise.resolve(false)).then(run, run).catch(() => false);
+    this.statusChains.set(key, next);
+    void next.then(() => { if (this.statusChains.get(key) === next) this.statusChains.delete(key); });
+    return next;
+  }
+
+  /** Status messages still waiting on an edit that failed (a timeout, a 429): drawn again. */
   private async retryStatusEdits(ab: ActiveBinding): Promise<void> {
     if (!this.serving(ab)) return;
     for (const [key, v] of [...this.statusMsgs]) {
-      if (!v.pending || !key.startsWith(`${ab.key}:`)) continue;
-      const edit = await editInPlace(ab, v.messageId, v.pending);
-      if (edit === 'ok') this.statusMsgs.set(key, { messageId: v.messageId, html: v.pending, at: this.now() });
-      else if (edit === 'gone') this.statusMsgs.delete(key);
+      if (!key.startsWith(`${ab.key}:`)) continue;
+      // A message that could not be edited for a day is let go (a blocked bot, a chat gone).
+      if (this.now() - v.at > NOTICE_ONCE_MS) { this.statusMsgs.delete(key); continue; }
+      if (v.messageId !== undefined && v.shown !== v.want) await this.drawStatus(ab, key);
     }
   }
 
