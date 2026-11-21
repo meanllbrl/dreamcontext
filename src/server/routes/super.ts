@@ -80,8 +80,8 @@ import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
-import { askShowState, askStillOpen, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
-import { askWarning, planReportRefusal, planTextWarning } from '../../lib/super/ask-summary.js';
+import { askShowState, recordAskShow } from '../../lib/super/ask-show.js';
+import { askWarning, planReportRefusal } from '../../lib/super/ask-summary.js';
 import { offCardReferences, offCardRefusal } from '../../lib/card-standalone.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
