@@ -31,6 +31,7 @@ import { killPortable } from '../../lib/proc.js';
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { QUICK_RECALL_SCOPE, QUICK_RECALL_SCOPE_ENV, quickBrainRoot, quickBrainToolArgs, quickCliShimDir } from '../../lib/whiteboards/quick-memory.js';
 import { MEDIA_FILE, readOutbound } from '../../lib/telegram/files.js';
+import { inboundTurnText, pickInboundMedia, saveInbound } from '../../lib/telegram/inbound.js';
 import { markdownImages } from '../../lib/telegram/format.js';
 import { superMediaRoots } from './media-roots.js';
 import { quickReadable } from '../../lib/whiteboards/quick-readable.js';
@@ -235,8 +236,16 @@ export function readRoomFiles(paths: readonly string[], rules: RoomFileRules): {
     if (!r.ok) return { ok: false, message: `${name} may not go to a group (${r.reason})` };
     const at = real(p) ?? p;
     if (basename(at).startsWith('.') || SECRET_NAME_RE.test(basename(at))) return { ok: false, message: `${name} may not go to a group` };
-    if (brainReal && under(at, brainReal)) {
-      const rel = relative(brainReal, at).split(sep).join('/');
+    // Under a dot folder (`.claude/`, `.vscode/`, `.cursor/`: settings, MCP configs) only a picture,
+    // clip or PDF, the way his private chat sends a worktree's screenshots.
+    if (r.file.rel.split('/').slice(0, -1).some((seg) => seg.startsWith('.')) && !MEDIA_FILE.test(at)) return { ok: false, message: `${name} may not go to a group` };
+    // Inside ANY brain (this project's, or a worktree's or a linked repo's copy of `_dream_context/`):
+    // only a page the room may read, or a picture, clip or PDF the Super made under `tmp/` or a
+    // task's `state/assets/`.
+    const segs = (brainReal && under(at, brainReal) ? ['_dream_context', ...relative(brainReal, at).split(sep)] : at.split(sep));
+    const bi = segs.lastIndexOf('_dream_context');
+    if (bi >= 0) {
+      const rel = segs.slice(bi + 1).join('/');
       const made = MEDIA_FILE.test(rel) && (rel.startsWith('tmp/') || rel.startsWith('state/assets/'));
       if (!made && !quickReadable(rel)) return { ok: false, message: `${name} is a private page of the brain` };
     }
@@ -254,7 +263,8 @@ export function readRoomFiles(paths: readonly string[], rules: RoomFileRules): {
 export function picturesOfSay(text: string): { text: string; paths: string[] } {
   const local = markdownImages(text).filter((i) => !i.web).map((i) => i.src);
   if (!local.length) return { text, paths: [] };
-  const rest = text.replace(/!\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"\n]*")?\s*\)/g, (m: string, src: string) => (/^(?:https?:)?\/\//i.test(src) ? m : ''));
+  // The markup as `markdownImages` reads it: `<a path with spaces>`, or a path with (balanced) parentheses.
+  const rest = text.replace(/!\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g, (m: string, a?: string, b?: string) => (/^(?:https?:)?\/\//i.test(a ?? b ?? '') ? m : ''));
   return { text: rest.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim(), paths: [...new Set(local)] };
 }
 
@@ -290,7 +300,7 @@ export class RoomRunner {
     if (!from) return;
     const voice = msg.voice as VoiceNote | undefined;
     // His own message (his bound Telegram id, never a name): his Super's turn, never the room agent's.
-    if (from.id === ab.binding.userId) { this.own(ab, chatId, from, text.trim(), voice); return; }
+    if (from.id === ab.binding.userId) { this.own(ab, chatId, msg, from); return; }
     // A member's voice note (a reply to the bot) is heard into the turn (D4); never kept anywhere.
     if (!text.trim() && voice?.file_id) { this.queue(ab, chatId, { authorId: from.id, author: authorLabel(from), voice }); return; }
     if (!text.trim()) return;
@@ -299,22 +309,38 @@ export class RoomRunner {
 
   /**
    * The owner's own addressed message in a bound group = his message in his private chat (owner
-   * 2026-11-21): it goes to his bot's own Super at once (the same session, permission mode, tools
-   * and MCP servers), no card and no room agent; its words are the job. In arrival order per room.
+   * 2026-11-21): it goes to his bot's own Super (the same session, permission mode, tools and MCP
+   * servers), no card and no room agent. Its turn text is built exactly as his private chat builds
+   * it (`inboundTurnText`): a forward, a quote, a replied-to message and a caption are labelled
+   * data, never his instruction; a picture, a file or a document he sends is saved and named by its
+   * path; a voice note is heard. Nothing he sends meets silence. In arrival order per room.
    */
-  private own(ab: ActiveBinding, chatId: number, from: { id: number; first_name?: string; last_name?: string; username?: string }, text: string, voice: VoiceNote | undefined): void {
-    if (!this.live(ab, chatId) || (!text && !voice?.file_id)) return;
+  private own(ab: ActiveBinding, chatId: number, msg: Obj, from: { id: number; first_name?: string; last_name?: string; username?: string }): void {
+    if (!this.live(ab, chatId)) return;
     const key = this.keyOf(ab, chatId);
+    const arrivedAt = this.hub.now();
     const next = (this.ownLine.get(key) ?? Promise.resolve()).then(async () => {
-      let words = text;
-      if (!words && voice?.file_id) {
+      const root = this.hub.rootOf(ab);
+      if (!root) { await this.line(ab, chatId, ROOM_LINES.cannotAnswer); return; }
+      const paths: string[] = [];
+      let spoken: string | null = null;
+      const media = pickInboundMedia(msg);
+      if (media && (media.kind === 'voice' || media.kind === 'audio')) {
+        const voice = { file_id: media.fileId, file_size: media.fileSize, duration: (msg[media.kind] as VoiceNote | undefined)?.duration };
         if ((voice.duration ?? 0) > VOICE_MAX_S || (voice.file_size ?? 0) > VOICE_MAX_BYTES) { await this.line(ab, chatId, ROOM_LINES.voiceTooLong); return; }
         void this.hub.sendRoom(ab, chatId, 'room-typing', '');
-        words = (await this.hear(ab, voice)) ?? '';
-        if (!words) { await this.line(ab, chatId, ROOM_LINES.cannotAnswer); return; }
+        spoken = await this.hear(ab, voice);
+        if (!spoken && !msg.text && !msg.caption) { await this.line(ab, chatId, ROOM_LINES.cannotAnswer); return; }
+      } else if (media) {
+        const saved = await saveInbound({ transport: ab.transport, contextRoot: root, media, now: this.hub.now() });
+        if (saved.ok) paths.push(saved.path);
+        else { await this.line(ab, chatId, saved.line); if (!msg.text && !msg.caption) return; }
       }
+      let text = inboundTurnText(msg, paths);
+      if (spoken) text = `${spoken}${text ? `\n\n${text}` : ''}`;
+      if (!text.trim()) { await this.line(ab, chatId, ROOM_LINES.cannotAnswer); return; }
       if (!this.live(ab, chatId)) return;
-      await this.newRequest(ab, chatId, [{ authorId: from.id, author: authorLabel(from), text: words }], '');
+      await this.newRequest(ab, chatId, [{ authorId: from.id, author: authorLabel(from), text }], '', arrivedAt);
     }).catch(() => this.line(ab, chatId, ROOM_LINES.cannotAnswer).then(() => undefined));
     this.ownLine.set(key, next);
     void next.finally(() => { if (this.ownLine.get(key) === next) this.ownLine.delete(key); });
@@ -485,7 +511,7 @@ export class RoomRunner {
 
   // ── Requests (C5, D6, D7, D9) ──
 
-  private async newRequest(ab: ActiveBinding, chatId: number, batch: RoomLine[], summary: string): Promise<void> {
+  private async newRequest(ab: ActiveBinding, chatId: number, batch: RoomLine[], summary: string, arrivedAt?: number): Promise<void> {
     const sup = this.hub.superOf(ab);
     if (!sup) { await this.line(ab, chatId, ROOM_LINES.cannotAnswer); return; }
     const owner = await this.hub.ownerNameOf(ab);
@@ -503,10 +529,11 @@ export class RoomRunner {
       superId: sup.id,
       authorId: last.authorId,
       authorLabel: last.author,
-      // Stored as the owner's card shows them: the turn Onayla sends is the text he read.
-      words: asShown(batchWords(batch)),
+      // A member's: stored as the owner's card shows them (the turn Onayla sends is the text he
+      // read). His own goes to his Super as written, as in his private chat: no card shows it.
+      words: own ? batchWords(batch) : asShown(batchWords(batch)),
       summary: asShown(summary) || '—',
-      at: this.hub.now(),
+      at: arrivedAt ?? this.hub.now(),
     };
     if (own) req.own = true;
     // An own request left open by a restart mid-delivery has nobody to close it: it goes too.
@@ -640,7 +667,8 @@ export class RoomRunner {
     const record = readRoom(ab.scope, ab.target, chatId, this.hub.home);
     const req = record.requests.find((q) => q.id === requestId);
     if (!req || req.status !== 'open' || !this.live(ab, chatId)) return;
-    if (!consentable(req, title)) {
+    // Consent matches display for a CARD; his own message had none, and goes as he wrote it.
+    if (!req.own && !consentable(req, title)) {
       req.status = 'refused'; req.words = ''; writeRoom(ab.scope, ab.target, record, this.hub.home);
       await this.line(ab, chatId, ROOM_LINES.unshowable);
       this.inFlight.delete(requestId);
@@ -649,7 +677,9 @@ export class RoomRunner {
     }
     const session = await this.hub.sessionOfBound(ab);
     const text = approvedTurnText({ group: title, author: req.authorLabel, owner, requestId: req.id, words: req.words, summary: req.summary, own: req.own === true });
-    const ok = session ? await this.hub.injectText(ab, this.hub.syntheticUpdateId(), text, session, { kind: 'room-request', requestId: req.id }) : false;
+    // His own message waits for a closed Super as his private message does (on `ab.chain`, the one
+    // caller allowed to hold); a member's approved request keeps the button path's fail-fast.
+    const ok = session ? await this.hub.injectText(ab, this.hub.syntheticUpdateId(), text, session, { kind: 'room-request', requestId: req.id }, '', req.own ? { arrivedAt: req.at } : null) : false;
     const now = readRoom(ab.scope, ab.target, chatId, this.hub.home);
     const cur = now.requests.find((q) => q.id === requestId);
     if (!cur || cur.status !== 'open') return;
@@ -668,6 +698,8 @@ export class RoomRunner {
       return;
     }
     cur.status = 'approved';
+    // His words are in his Super's turn now; the room keeps no copy of them.
+    if (cur.own) cur.words = '';
     writeRoom(ab.scope, ab.target, now, this.hub.home);
     await this.line(ab, chatId, cur.own ? ROOM_LINES.started : ROOM_LINES.approved(owner));
     this.inFlight.delete(requestId);
@@ -701,7 +733,8 @@ export class RoomRunner {
         // Pictures written into the text (`![name](path)`) go as files, as in his private chat.
         const pics = picturesOfSay(clean);
         const mediaRoots = await Promise.resolve((this.deps.fileRoots ?? ((r: string) => superMediaRoots(r, this.hub.home)))(root)).catch(() => [] as string[]);
-        const files = readRoomFiles([...filePaths, ...pics.paths.filter((x) => !filePaths.includes(x))], {
+        const named = new Set(filePaths.map((f) => resolve(dirname(root), f)));
+        const files = readRoomFiles([...filePaths, ...pics.paths.filter((x) => !named.has(resolve(dirname(root), x)))], {
           projectRoot: dirname(root), mediaRoots, brain: brainReal, ...(this.deps.isGitIgnored ? { isGitIgnored: this.deps.isGitIgnored } : {}),
         });
         if (!files.ok) return { ok: false, status: 400, error: 'bad_file', message: files.message };
