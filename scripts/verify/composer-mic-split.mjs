@@ -106,7 +106,7 @@ try {
     const readyRows = await menuRows(page);
     row.readyMenu = readyRows;
     check(row, 'ready menu lists spoken replies (Super only) then Voice settings',
-      JSON.stringify(readyRows) === JSON.stringify(mode === 'super' ? ['Paste into the box', 'Reply aloud when I speak', 'Voice settings…'] : ['Paste into the box', 'Voice settings…']), JSON.stringify(readyRows));
+      JSON.stringify(readyRows) === JSON.stringify(mode === 'super' ? ['Auto send', 'Reply aloud when I speak', 'Voice settings…'] : ['Auto send', 'Voice settings…']), JSON.stringify(readyRows));
     row.shots.readyMenu = await shot(page, `${id}-ready-menu`);
     if (mode === 'super') {
       await page.locator('[role="menuitemcheckbox"]', { hasText: 'Reply aloud' }).click();
