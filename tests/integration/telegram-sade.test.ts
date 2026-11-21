@@ -173,6 +173,27 @@ describe("a job's status is one message, edited in place (AC5)", () => {
     await quiet();
     expect(tg.sent().length).toBe(n + 1);
   });
+
+  it('a "done" edit that fails on a 429 is tried again on the next look, never a second message (review r2)', async () => {
+    await start();
+    const { h } = await hisMessage('işi başlat');
+    const n = tg.sent().length;
+    assistant(h, '```dream-status rapor\nRapor işi\nVeri okunuyor\n```');
+    await vi.waitFor(() => expect(tg.sent().length).toBe(n + 1), { timeout: 5000 });
+    const mid = (tg.sent()[n].result as { message_id: number }).message_id;
+    tg.failOnce.set('editMessageText', 429);
+    assistant(h, '```dream-status rapor done\nRapor işi\nBitti\n```');
+    await vi.waitFor(() => expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(1), { timeout: 5000 });
+    await quiet();
+    await hub.tickSade();
+    const edits = tg.calls.filter((c) => c.method === 'editMessageText');
+    expect(edits).toHaveLength(2);
+    expect(edits[1].params.message_id).toBe(mid);
+    expect(String(edits[1].params.text)).toContain('Bitti');
+    await hub.tickSade();
+    expect(tg.calls.filter((c) => c.method === 'editMessageText')).toHaveLength(2);
+    expect(tg.sent().length).toBe(n + 1);
+  });
 });
 
 describe('warnings (AC5)', () => {

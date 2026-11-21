@@ -315,7 +315,7 @@ export class TelegramHub implements TelegramHubApi {
    *  one message). `interim` = a tool call came after it. Memory only. */
   private held = new Map<string, { text: string; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark: SuperTurnMark; interim: boolean; timer: ReturnType<typeof setTimeout> | null }>();
   /** `${binding}:${job id}` → that job's one status message (telegram-sade). Memory only. */
-  private statusMsgs = new Map<string, { messageId: number; html: string; at: number }>();
+  private statusMsgs = new Map<string, { messageId: number; html: string; at: number; pending?: string }>();
   /** Per bot: the agenda pin's look in progress (`refreshPin` runs one at a time). */
   private pinChains = new Map<string, Promise<void>>();
   /** `${binding}|${sentence}` → when that notice last went (`noticeOnce`). */
@@ -1658,14 +1658,28 @@ export class TelegramHub implements TelegramHubApi {
     if (had) {
       const edit = await editInPlace(ab, had.messageId, html);
       if (edit === 'ok') { this.statusMsgs.set(key, { messageId: had.messageId, html, at: this.now() }); return true; }
-      // A slow or refused edit may still have landed: never a second status message for it.
-      if (edit === 'failed') return false;
+      // A slow or refused edit may still have landed: never a second status message for it. What
+      // it should show waits, and the next look (`tickSade`) edits it again (review r2: a failed
+      // "done" edit left the job running on his phone).
+      if (edit === 'failed') { this.statusMsgs.set(key, { ...had, pending: html, at: this.now() }); return false; }
     } else if (!(this.onTelegram(ab) || this.telegramTurnOf(sessionId) || this.deps.handsfree?.streamsTo(ab.scope, ab.target))) return false;
     const sent = await this.send(ab, html, SILENT).catch(() => null);
     if (!sent || !Number.isSafeInteger(sent.message_id)) return false;
     this.statusMsgs.set(key, { messageId: sent.message_id, html, at: this.now() });
     for (const [k, v] of this.statusMsgs) if (this.now() - v.at > NOTICE_ONCE_MS) this.statusMsgs.delete(k);
     return true;
+  }
+
+  /** A job status edit that failed on a timeout or a 429: tried again until it lands or the message
+   *  is gone (then the next block of that job sends a new one). */
+  private async retryStatusEdits(ab: ActiveBinding): Promise<void> {
+    if (!this.serving(ab)) return;
+    for (const [key, v] of [...this.statusMsgs]) {
+      if (!v.pending || !key.startsWith(`${ab.key}:`)) continue;
+      const edit = await editInPlace(ab, v.messageId, v.pending);
+      if (edit === 'ok') this.statusMsgs.set(key, { messageId: v.messageId, html: v.pending, at: this.now() });
+      else if (edit === 'gone') this.statusMsgs.delete(key);
+    }
   }
 
   /** He asked for voice on this bot today and has not asked for text since. */
@@ -1677,6 +1691,7 @@ export class TelegramHub implements TelegramHubApi {
   async tickSade(): Promise<void> {
     for (const ab of [...this.active.values()]) {
       if (ab.disabled) continue;
+      await this.retryStatusEdits(ab).catch(() => {});
       await this.refreshPin(ab).catch(() => {});
       await this.flushNight(ab).catch(() => {});
     }
