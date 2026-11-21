@@ -34,10 +34,11 @@ import {
 import { manifestHash } from '../../src/lib/automations/registry.js';
 import {
   AutomationError,
-  PATTERN_LESSON_LIMIT,
-  PATTERN_LESSON_MAX_CHARS,
   PATTERN_PLAYBOOK_MAX_CHARS,
+  PATTERN_VIEW_LESSON_CHARS,
 } from '../../src/lib/automations/types.js';
+import { addLesson, lessonTwinScore } from '../../src/lib/automations/store.js';
+import { patternView } from '../../src/lib/automations/runner.js';
 
 let projectRoot: string;
 let root: string;
@@ -89,21 +90,48 @@ describe('recordLesson', () => {
     expect(readPattern(after).lessons.map((l) => l.text)).toEqual(['second', 'first']);
   });
 
-  it('caps the ledger COUNT — the oldest lesson falls off', () => {
+  // D6 (plan global-uye-ogrenme; owner: no regression in memory, no count caps): nothing is dropped.
+  it.each([25, 100, 500])('keeps every one of %i lessons, newest first; the prompt view folds by size', (n) => {
     make();
-    for (let i = 0; i < PATTERN_LESSON_LIMIT + 5; i++) {
+    for (let i = 0; i < n; i++) {
       recordLesson(root, 'digest', { lesson: `lesson ${i}`, now: new Date('2026-07-27T10:00:00') });
     }
-    const lessons = readPattern(getAutomation(root, 'digest')!).lessons;
-    expect(lessons).toHaveLength(PATTERN_LESSON_LIMIT);
-    expect(lessons[0].text).toBe(`lesson ${PATTERN_LESSON_LIMIT + 4}`); // newest survived
-    expect(lessons.some((l) => l.text === 'lesson 0')).toBe(false); // oldest dropped
+    const m = getAutomation(root, 'digest')!;
+    const lessons = readPattern(m).lessons;
+    expect(lessons).toHaveLength(n);
+    expect(lessons[0].text).toBe(`lesson ${n - 1}`);
+    expect(lessons.some((l) => l.text === 'lesson 0')).toBe(true);
+    const view = patternView(m.pattern, 'digest');
+    expect(view).toContain(`lesson ${n - 1}`);
+    if (n === 500) expect(view).toMatch(/\d+ older notes: `dreamcontext automations pattern digest`/);
   });
 
-  it('caps each lesson SIZE — a count cap is not a size cap', () => {
+  it('keeps a long lesson whole in the file; only the view cuts it', () => {
     make();
-    const updated = recordLesson(root, 'digest', { lesson: 'x'.repeat(PATTERN_LESSON_MAX_CHARS * 3) });
-    expect(readPattern(updated).lessons[0].text.length).toBeLessThanOrEqual(PATTERN_LESSON_MAX_CHARS);
+    const long = `start ${'x'.repeat(PATTERN_VIEW_LESSON_CHARS * 3)} end`;
+    const updated = recordLesson(root, 'digest', { lesson: long });
+    expect(readPattern(updated).lessons[0].text).toBe(long);
+    const view = patternView(updated.pattern, 'digest');
+    expect(view).not.toContain(' end');
+    expect(view).toContain('start ');
+  });
+
+  it('a near-twin lesson updates the stored one (×N) instead of a new line', () => {
+    make();
+    recordLesson(root, 'digest', { lesson: 'Run the build before the screenshot step', now: new Date('2026-07-27T10:00:00') });
+    recordLesson(root, 'digest', { lesson: 'unrelated note about the port', now: new Date('2026-07-27T10:00:00') });
+    const after = recordLesson(root, 'digest', { lesson: 'run the build before every screenshot step', now: new Date('2026-07-28T10:00:00') });
+    const lessons = readPattern(after).lessons;
+    expect(lessons).toHaveLength(2);
+    expect(lessons[0].text).toBe('Run the build before the screenshot step (×2)');
+    expect(lessons[0].date).toBe('2026-07-28');
+    const third = addLesson(lessons, { date: '2026-07-29', text: 'run the build before the screenshot step' });
+    expect(third[0]!.text).toMatch(/\(×3\)$/);
+  });
+
+  it('two lessons that differ in a number are two facts, never twins', () => {
+    expect(lessonTwinScore('lesson number 0', 'lesson number 1')).toBe(0);
+    expect(lessonTwinScore('Ders 01: kurgusal çalışma notu 1', 'Ders 02: kurgusal çalışma notu 2')).toBe(0);
   });
 
   it('caps the playbook SIZE too', () => {

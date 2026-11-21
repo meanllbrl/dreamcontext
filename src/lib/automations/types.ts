@@ -1377,14 +1377,17 @@ export const APPROVAL_DIFF_FIELDS = [
 // because this text is prepended to every single run's prompt — an unbounded
 // pattern would quietly eat the context the actual job needs.
 
-/** Newest-first lesson ledger depth; older lessons fall off the end. */
-export const PATTERN_LESSON_LIMIT = 20;
-/** Per-lesson character ceiling — a lesson is one line, not an essay. */
-export const PATTERN_LESSON_MAX_CHARS = 300;
+/**
+ * No lesson is ever dropped or cut on WRITE (plan global-uye-ogrenme D6; owner: no regression in
+ * memory, no count caps): a near-twin lesson merges into the stored one (`×N`) instead. Only the
+ * prompt VIEW is bounded, by size ({@link PATTERN_VIEW_LESSON_CHARS}, {@link PATTERN_VIEW_MAX_CHARS}),
+ * newest first, and one line names `automations pattern <slug>`, which prints every lesson whole.
+ */
+export const PATTERN_VIEW_LESSON_CHARS = 600;
+/** Room the lessons take in a prompt; past it, one "N older notes" line. */
+export const PATTERN_VIEW_MAX_CHARS = 8_000;
 /** Playbook prose ceiling. */
 export const PATTERN_PLAYBOOK_MAX_CHARS = 4_000;
-/** Belt-and-braces ceiling on the whole rendered `## Pattern` section. */
-export const PATTERN_SECTION_MAX_CHARS = 12_000;
 /** The manifest heading the pattern lives under. */
 export const PATTERN_HEADING = 'Pattern';
 /** The heading an agent's soul lives under (agent file, or a legacy manifest). */

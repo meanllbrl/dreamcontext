@@ -112,19 +112,18 @@ describe('learn: scopes and the receipt (criterion 1)', () => {
     expect(JSON.parse(readFileSync(join(home, '.dreamcontext', 'me', 'me.json'), 'utf-8')).emails).toEqual(['robin@orchard.test']);
   });
 
-  it('scope me with no me.json and no git email is refused with the reason', () => {
+  it('scope me with no me.json and no git email still stores the rule (D10: never refused)', () => {
     const r = run('Chart titles in Turkish', { scope: 'me', quote: ['x y z'] }, ctx(SUPER_ENV, [], { gitEmail: null }));
-    expect(r.code).toBe(1);
-    expect(r.lines[0]).toMatch(/no personal store/);
+    expect(r.code).toBe(0);
+    expect(r.scope).toBe('me');
+    expect(JSON.parse(readFileSync(join(home, '.dreamcontext', 'me', 'me.json'), 'utf-8'))).toEqual({ emails: [], local_owner: true });
+    expect(readStore(personalStoreRef(home)).rules.map((x) => x.id)).toContain(r.id);
   });
 
-  it('scope member delegates to automations learn and writes no record', () => {
-    const calls: Array<[string, string]> = [];
-    const r = run('Check the feed before posting', { scope: 'member', member: 'scout' }, ctx(SUPER_ENV, [], {
-      delegateMember: (slug, lesson) => { calls.push([slug, lesson]); return 0; },
-    }));
-    expect(r.code).toBe(0);
-    expect(calls).toEqual([['scout', 'Check the feed before posting']]);
+  it('scope member with no member here is refused, and writes no record', () => {
+    const r = run('Check the feed before posting', { scope: 'member', member: 'scout', quote: ['x y'] }, ctx(SUPER_ENV, []));
+    expect(r.code).toBe(1);
+    expect(r.lines[0]).toMatch(/no member "scout"/);
     expect(existsSync(join(root, RULES_JSON_REL))).toBe(false);
   });
 

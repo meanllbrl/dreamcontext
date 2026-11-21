@@ -62,11 +62,8 @@ import {
   negationIsEffective,
   PATTERN_HEADING,
   SOUL_HEADING,
-  PATTERN_LESSON_LIMIT,
-  PATTERN_LESSON_MAX_CHARS,
   PATTERN_LESSONS_HEADING,
   PATTERN_PLAYBOOK_MAX_CHARS,
-  PATTERN_SECTION_MAX_CHARS,
   REVIEW_MODES,
   AUTOMATION_REPLIES,
   storedReply,
@@ -957,18 +954,58 @@ export function parsePattern(section: string): AutomationPattern {
   return { playbook: playbookLines.join('\n').trim(), lessons };
 }
 
-/** Render a pattern back to its `## Pattern` section body (heading excluded).
- *  Enforces every cap at the point of WRITE, so an over-long pattern can never
- *  reach the file, whatever the caller passed. */
+/** Render a pattern back to its `## Pattern` section body (heading excluded). Every lesson is
+ *  kept whole (D6): only the playbook prose has a ceiling; the prompt's VIEW is bounded instead. */
 export function renderPattern(p: AutomationPattern): string {
   const playbook = truncateChars(p.playbook, PATTERN_PLAYBOOK_MAX_CHARS);
-  const lessons = p.lessons
-    .slice(0, PATTERN_LESSON_LIMIT)
-    .map((l) => `- **[${l.date}]** ${truncateChars(oneLine(l.text), PATTERN_LESSON_MAX_CHARS)}`);
+  const lessons = p.lessons.map((l) => `- **[${l.date}]** ${oneLine(l.text)}`);
   const parts: string[] = [];
   if (playbook) parts.push(playbook);
   if (lessons.length > 0) parts.push(PATTERN_LESSONS_HEADING, ...lessons);
-  return truncateChars(parts.join('\n\n'), PATTERN_SECTION_MAX_CHARS);
+  return parts.join('\n\n');
+}
+
+// ─── Twin lessons (D6: merge, never a cap) ───────────────────────────────────
+
+const TIMES_RE = /\s*\(×(\d+)\)$/;
+/** Stricter than a rule's twin bar: two notes that differ in one word are often two facts. */
+const LESSON_TWIN_BAR = 0.8;
+const LESSON_STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'not', 'bir', 've', 'ile', 'için', 'icin', 'bu', 'da', 'de', 'ki', 'ama', 'gibi', 'daha', 'çok', 'cok']);
+
+function lessonTerms(text: string): Set<string> {
+  return new Set(text.replace(TIMES_RE, '').toLocaleLowerCase('tr').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9ı]+/).filter((w) => w.length >= 3 && !LESSON_STOP.has(w)));
+}
+
+/** The numbers a lesson names ("port 5173", "step 2"): two lessons with different numbers are two facts. */
+function lessonNumbers(text: string): string {
+  return (text.replace(TIMES_RE, '').match(/\d+/g) ?? []).join(',');
+}
+
+/** How much of the smaller lesson two lessons share (0..1); 0 under two shared terms or when their numbers differ. */
+export function lessonTwinScore(a: string, b: string): number {
+  if (lessonNumbers(a) !== lessonNumbers(b)) return 0;
+  const x = lessonTerms(a);
+  const y = lessonTerms(b);
+  let shared = 0;
+  for (const t of x) if (y.has(t)) shared += 1;
+  if (shared < 2) return 0;
+  return shared / Math.min(x.size, y.size);
+}
+
+/**
+ * Add a lesson newest-first. A near-twin of a stored lesson updates THAT lesson instead (its date
+ * and a `×N` count, moved to the top), so the same note said again never piles up and nothing is
+ * dropped. Pure.
+ */
+export function addLesson(lessons: readonly PatternLesson[], lesson: PatternLesson): PatternLesson[] {
+  const text = oneLine(lesson.text);
+  const i = lessons.findIndex((l) => lessonTwinScore(l.text, text) >= LESSON_TWIN_BAR);
+  if (i < 0) return [{ date: lesson.date, text }, ...lessons];
+  const old = lessons[i]!;
+  const n = Number(TIMES_RE.exec(old.text)?.[1] ?? '1') + 1;
+  const merged = { date: lesson.date, text: `${old.text.replace(TIMES_RE, '')} (×${n})` };
+  return [merged, ...lessons.slice(0, i), ...lessons.slice(i + 1)];
 }
 
 /** The automation's pattern, already parsed. Empty when it has never learned. */
@@ -1040,7 +1077,7 @@ export function writeLessonToFile(path: string, currentPattern: string, input: R
   const next: AutomationPattern = {
     playbook: playbook === undefined ? current.playbook : playbook,
     lessons: lesson
-      ? [{ date: localDateStamp(input.now ?? new Date()), text: lesson }, ...current.lessons]
+      ? addLesson(current.lessons, { date: localDateStamp(input.now ?? new Date()), text: lesson })
       : current.lessons,
   };
 

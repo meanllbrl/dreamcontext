@@ -30,6 +30,8 @@ import {
   type RuleEvent,
   type RuleRecord,
   type RulesStoreFile,
+  restoreReplaced,
+  visibleStores,
 } from '../../src/lib/rules-store.js';
 import { loadPatterns, syncPatternShims } from '../../src/lib/patterns.js';
 
@@ -208,9 +210,9 @@ describe('rules-store: status changes', () => {
     old.events.push(ev({ at: '2026-11-02T10:00:00.000Z', op: 'supersede', ref: neu.id }));
     writeStore(ref, { version: 1, rules: [old, neu] });
     const actor = { by: 'owner' as const, conversation: '' };
-    const r = undoRule(ref, neu.id, actor);
+    const r = undoRule(ref, neu.id, actor, { locate: visibleStores(ctx, home) });
     expect(r.ok && r.restored?.id).toBe(old.id);
-    const again = undoRule(ref, neu.id, actor);
+    const again = undoRule(ref, neu.id, actor, { locate: visibleStores(ctx, home) });
     expect(again.ok).toBe(false);
     expect(!again.ok && again.reason).toMatch(/already undone/);
   });
@@ -223,8 +225,10 @@ describe('rules-store: status changes', () => {
     const store = readStore(ref);
     const actor = { by: 'agent' as const, conversation: 'c', now: new Date('2026-11-02T11:00:00Z') };
     expect(applyStatusOp(store, old.id, 'supersede', actor, { ref: neu.id }).ok).toBe(true);
-    const step = applyStatusOp(store, neu.id, 'undo', { ...actor, now: new Date('2026-11-02T12:00:00Z') });
-    expect(step.ok && step.restored?.status).toBe('proposed');
+    const later = { ...actor, now: new Date('2026-11-02T12:00:00Z') };
+    expect(applyStatusOp(store, neu.id, 'undo', later).ok).toBe(true);
+    // The give-back is its own step (releaseReplaced, in whichever store the old rule lives).
+    expect(restoreReplaced(store, old.id, neu.id, later)?.status).toBe('proposed');
     expect(deriveRule(findRecord(store, old.id)!).status).toBe('proposed');
   });
 
@@ -237,7 +241,9 @@ describe('rules-store: status changes', () => {
     const store: RulesStoreFile = { version: 1, rules: [old, neu] };
     const actor = { by: 'agent' as const, conversation: 'c', now: new Date('2026-11-02T11:00:00Z') };
     expect(applyStatusOp(store, old.id, 'supersede', actor, { ref: neu.id }).ok).toBe(true);
-    applyStatusOp(store, neu.id, 'undo', { ...actor, now: new Date('2026-11-02T12:00:00Z') });
+    const later = { ...actor, now: new Date('2026-11-02T12:00:00Z') };
+    applyStatusOp(store, neu.id, 'undo', later);
+    restoreReplaced(store, old.id, neu.id, later);
     expect(deriveRule(findRecord(store, old.id)!).status).toBe('undone');
   });
 
@@ -254,9 +260,9 @@ describe('rules-store: status changes', () => {
     const ref = projectStoreRef(ctx, home);
     const rec = record({}, [ev({ status: 'proposed', headline: 'Short replies', text: 'Short replies', quotes: [] })]);
     writeStore(ref, { version: 1, rules: [rec] });
-    const r = keepRule(ref, rec.id, { by: 'owner', conversation: '' });
+    const r = keepRule(ref, rec.id, { by: 'owner', conversation: '' }, { locate: visibleStores(ctx, home) });
     expect(r.ok && r.rule.status).toBe('active');
-    expect(keepRule(ref, rec.id, { by: 'owner', conversation: '' }).ok).toBe(false);
+    expect(keepRule(ref, rec.id, { by: 'owner', conversation: '' }, { locate: visibleStores(ctx, home) }).ok).toBe(false);
   });
 });
 
@@ -286,9 +292,18 @@ describe('rules-store: personal visibility (C2)', () => {
     expect(r.line).toMatch(/not shown/);
   });
 
-  it('no me.json and no git email: no personal store', () => {
-    expect(ensureMeFile(home, null)).toBeNull();
-    expect(existsSync(join(home, '.dreamcontext', 'me', 'me.json'))).toBe(false);
+  it('no me.json and no git email: a local_owner store, shown in a vault with no roster (D10)', () => {
+    expect(ensureMeFile(home, null)).toEqual({ emails: [], local_owner: true });
+    expect(existsSync(join(home, '.dreamcontext', 'me', 'me.json'))).toBe(true);
+    expect(personalRulesVisible(ctx, home).visible).toBe(true);
+  });
+
+  it('a local_owner store in a vault with a roster says how to add his email', () => {
+    ensureMeFile(home, null);
+    roster(['sam@orchard.test']);
+    const v = personalRulesVisible(ctx, home);
+    expect(v.visible).toBe(false);
+    expect(v.line).toMatch(/names no email yet/);
   });
 });
 

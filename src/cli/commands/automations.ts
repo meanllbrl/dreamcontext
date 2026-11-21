@@ -20,7 +20,6 @@ import {
   MAX_TIMEOUT_MINUTES,
   DEFAULT_CATCHUP_HOURS,
   MAX_CATCHUP_HOURS,
-  PATTERN_LESSON_LIMIT,
   AGENT_SELF_ENV,
   type Weekday,
   type EffortLevel,
@@ -1586,7 +1585,7 @@ export function registerAutomationsCommand(program: Command): void {
         console.log(chalk.dim('  No lessons recorded yet.'));
         return;
       }
-      console.log(`  ${chalk.dim(`Lessons (${pattern.lessons.length}/${PATTERN_LESSON_LIMIT}, newest first)`)}`);
+      console.log(`  ${chalk.dim(`Lessons (${pattern.lessons.length}, newest first, every one kept)`)}`);
       for (const lesson of pattern.lessons) {
         console.log(`    ${chalk.dim(`[${lesson.date}]`)} ${lesson.text}`);
       }
@@ -1627,7 +1626,7 @@ export function registerAutomationsCommand(program: Command): void {
         const pattern = readPattern(updated);
         success(`Pattern updated for "${slug}".`);
         if (opts.lesson) {
-          console.log(chalk.dim(`  lessons: ${pattern.lessons.length}/${PATTERN_LESSON_LIMIT}${pattern.lessons.length >= PATTERN_LESSON_LIMIT ? ' (oldest dropping off)' : ''}`));
+          console.log(chalk.dim(`  lessons: ${pattern.lessons.length} (none is dropped; the same note again counts ×N)`));
         }
         if (playbook !== undefined) console.log(chalk.dim('  playbook rewritten.'));
       } catch (err) {

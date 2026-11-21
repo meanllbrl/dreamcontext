@@ -12,7 +12,9 @@ import type { ChatSession } from '../chatSession';
  *  the server. `learned-routes.test.ts` pins the key set. */
 export interface LearnedCardFacts {
   id: string;
-  scope: 'me' | 'project';
+  scope: 'me' | 'project' | 'member';
+  /** A member rule's member slug. */
+  member: string | null;
   status: 'active' | 'proposed' | 'superseded' | 'undone' | 'invalid';
   headline: string;
   text: string;
@@ -109,7 +111,7 @@ export function LearnedCard({ spec, session, report }: {
         title={f.headline || t('chat.learned.title')}
         aside={<span className="chat-learnedcard-state" data-state={f.status}>{t(`chat.learned.state.${f.status}`)}</span>}
       />
-      <p className="chat-learnedcard-scope">{t(f.scope === 'me' ? 'chat.learned.scope.me' : 'chat.learned.scope.project')}</p>
+      <p className="chat-learnedcard-scope">{t(f.scope === 'me' ? 'chat.learned.scope.me' : f.scope === 'member' ? 'chat.learned.scope.member' : 'chat.learned.scope.project')}</p>
       {f.quote && (
         <blockquote className="chat-learnedcard-quote">
           <span>“{f.quote.text}”</span>

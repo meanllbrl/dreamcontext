@@ -1,4 +1,5 @@
 import { dirname } from 'node:path';
+import { buildMemberRulesBlock } from '../member-rules-block.js';
 import { approvedTarget } from '../automations/registry.js';
 import { getRunTarget, isSafeAutomationSlug } from '../automations/store.js';
 import { identityOnly } from '../agents/compose.js';
@@ -195,7 +196,7 @@ export function parseChatAgent(agent: unknown): string | null {
 }
 
 /** An agent's system-prompt append in a Chat tab. Same order as the card's, for the same reason. */
-export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null, recent: string = '', home: BoardScope | null = null): string {
+export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null, recent: string = '', home: BoardScope | null = null, rules: string = ''): string {
   const soul = buildSoulBlock(m);
   const pattern = buildPatternBlock(m);
   const learning = buildTurnLearningDirective(m);
@@ -229,6 +230,8 @@ export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | nul
     ...(soul ? ['', soul] : []),
     '',
     levelBrief(m.autonomy ?? DEFAULT_AGENT_AUTONOMY),
+    // His corrections of how this member works (D4): rules in force, never among the notes.
+    ...(rules ? ['', rules] : []),
     ...(pattern ? ['', pattern] : []),
     ...(learning ? ['', learning] : []),
     ...(recent ? ['', recent] : []),
@@ -302,7 +305,7 @@ export function prepareAgentChat(
     contextRoot,
     target,
     (scope): Record<string, string> => (scope ? { [CARD_AGENT_ENV]: slug, [CARD_BOARD_ENV]: scope.board } : {}),
-    (m, scope, homeView) => agentChatBriefing(m, scope, agentRecentBlock(contextRoot, slug, opts.excludeSession ?? null), homeView),
+    (m, scope, homeView) => agentChatBriefing(m, scope, agentRecentBlock(contextRoot, slug, opts.excludeSession ?? null), homeView, buildMemberRulesBlock(contextRoot, slug, home)),
     home,
   );
   // The level decides the mode, on the server, from the approved manifest: the pane's own
