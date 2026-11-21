@@ -59,7 +59,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '2.0', develop: '1.8', train: '0.1',
+  basic: '1.0', plan: '2.0', develop: '1.9', train: '0.1',
 };
 
 /**
@@ -327,13 +327,7 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
   if the repo has it, no build. SAME script red 3 times → STOP. A check already green on the same
   code prints its receipt instead of running (\`--fresh\` re-runs); no \`| tail\`, use \`--tail N\`.
 - **\`builder lane\` picks the process**; light = one \`reviewer\`, who reads the security too, browser only for a visible
-  change, no own script. \`fast\` (only when the Super opened the worktree with \`--fast\` AND the diff is look or
-  copy only, never money) = one short read (ONE \`reviewer\`, model sonnet, effort low, one round),
-  \`builder test --related\` + type-checks, ONE screenshot on the local dev server with \`dreamcontext shots <url>\`
-  (or the ops card's \`shots_script\`), no script of your own, no project QA member; your last reply ends with the
-  line \`builder lane\` prints.
-- **CI:** never \`gh run watch\`, \`gh pr checks --watch\` or a polling loop: \`dreamcontext ci wait <run-id>\` (or
-  \`--branch <b>\`) with the Bash tool's \`timeout: 600000\`; exit 4 = still running, run the same command again.
+  change, no own script. \`fast\` (a worktree the Super opened \`--fast\`): exactly the process \`builder lane\` prints.
 - **Never stop between waves to ask whether to go on, and never end your turn while a judge
   you started runs.** The owner is not your scheduler.
 - **Judges you do not control:** after the last wave, the end review the diff picks
@@ -672,15 +666,10 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
   \`git push\` and never merge into the default branch yourself. A push, PR or deploy HIS own message
   named is the child's: \`delegate --outward "<that step>"\` (outside his turn \`--origin <ref>\`); never a
-  force-push or a default-branch merge. You never wait on CI and never run a browser yourself: the child
-  waits (\`ci wait\`) and reports, so his next message never queues behind a watch.
-- **Fast or full, before you write the brief.** One screen or one component, look or copy only, and
-  nothing on the never-list (price, a shown amount, payment, PSP, paywall, subscription or trial logic or
-  text, A/B assignment, a redirect, an analytics or pixel event, login or auth, a data migration, a new
-  endpoint, store or release) → \`delegate --worktree … --fast\`. In doubt: no flag. His message says
-  "tam doğrula", "tam doğrulama" or "tam test" → \`--full\`. He says it about a fast job already done:
-  \`super update <child> --full\` (it runs) or \`super resume <child> --full\` (finished or parked); a fast
-  result reaches him with one screenshot and its "tam doğrula" line, a money job never with that line.
+  force-push or a default-branch merge.
+- **Fast or full:** one screen, look or copy only, no money, A/B, redirect, analytics, auth, migration,
+  endpoint or release → \`delegate --worktree … --fast\`; in doubt, no flag. "tam doğrula" / "tam test" →
+  \`--full\` (a fast job already given: \`super update|resume <child> --full\`).
 - A brief over a line is a file (\`_dream_context/tmp/super-prompts/<slug>/brief.md\`),
   \`--prompt\` one plain line naming it: an inline heredoc or \`$(cat …)\` is refused in an auto-mode project.
 - At most ${member ? MAX_MEMBER_LIVE_CHILDREN : MAX_LIVE_CHILDREN} children run at once; beyond that \`delegate\` answers \`held\` and keeps the job

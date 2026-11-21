@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
-  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, type WindowIdentity, type WindowResult,
+  WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, windowGone, type WindowIdentity, type WindowResult,
 } from '../../lib/window-control.js';
 import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
@@ -1133,7 +1133,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // No window to send the frame to at all (the app's window closed): the server starts the
     // child itself, with the same fields (plan sirket-yavaslik D12). Not a hand-over: its old
     // child keeps the work until a window is there.
-    if (!r.ok && r.error === 'no_window' && r.sent === false && !succeeds) {
+    // Only a window that is really gone: one reconnecting opens the tab itself (AC14).
+    if (!r.ok && r.error === 'no_window' && r.sent === false && !succeeds && windowGone(c.token)) {
       const h = await startChildHeadless({ contextRoot: root, prompt: firstPrompt, mode: job.mode, model: job.model, effort: job.effort, mcp: job.mcp ?? [], tool: job.tool, member: memberOfSuperId(c.superId) });
       appendOpenLog('delegate_headless', { superId: c.superId, ok: h.ok, ...(h.ok ? { child: h.sessionId } : { why: h.why }) });
       if (h.ok && SESSION_ID_RE.test(h.sessionId)) { ok(res, { ...(await recordStart(h.sessionId)), headless: true }); return; }
@@ -3164,7 +3165,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     try {
       let r = await sendSuperCommand(c.token, 'resume', { child, mode, model: model ?? '', effort: effort ?? '', title: ch.brief });
       // No window at all: the server reopens its own recorded child itself (plan sirket-yavaslik D12).
-      if (!r.ok && r.error === 'no_window' && r.sent === false && ch.endedAt === undefined) {
+      if (!r.ok && r.error === 'no_window' && r.sent === false && ch.endedAt === undefined && windowGone(c.token)) {
         const h = await startChildHeadless({ contextRoot: root, resumeId: child, mode, model, effort, mcp: ch.mcp ?? [], tool: ch.tool, member: memberOfSuperId(c.superId) });
         if (h.ok) r = { ok: true, result: undefined };
       }

@@ -1124,7 +1124,7 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's heavy slots (every repo together; read from its cores and memory at each ask, 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, 5 = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's 78 = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files",
+      "desc": "Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's steps (every repo together, the fast line counted in: at most 2 at once, fewer when its cores or memory are short, 1 at serious or critical heat, critical memory pressure or a load past the cores), smaller first; a check that already passed on the same code prints its receipt instead of running (exit: the command's, 75 = the wait ran out, nothing ran, the place is kept, or 77 = past the repeat limit or a RED full-suite record (rerun its files: builder test --failed), nothing ran, 5 = a full suite, or a browser check of the built app, needs a fresh build first; a verify script's 78 = HARNESS, it stopped in its own setup, and the run is not counted). A whole-suite run keeps a record of its red files",
       "args": [
         "[command...]"
       ],
@@ -1363,6 +1363,24 @@
         "--type",
         "--scope",
         "--grep"
+      ]
+    },
+    {
+      "path": "ci",
+      "desc": "Continuous integration from an agent session, without holding it past the shell tool's ceiling",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "ci wait",
+      "desc": "Wait for a CI run to finish, polling gh run view (never gh run watch): exit 0 = green, 1 = red (failed jobs and the failed log, as data), 4 = still running after the slice (run the same command again), 2 = bad input or no gh. In an agent session a call stops at 540s, before the 600 s tool ceiling. Never reruns a run",
+      "args": [
+        "[run-id]"
+      ],
+      "valueFlags": [
+        "--branch",
+        "--sha",
+        "--slice"
       ]
     },
     {
@@ -3306,6 +3324,25 @@
       ]
     },
     {
+      "path": "ops",
+      "desc": "The project's working-facts card: staging and preview URLs, basic-auth variable NAMES, the screenshot script (data only, never a command)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "ops set",
+      "desc": "Write one field of the card; each is checked (no secrets, no login in a URL, a tracked script)",
+      "args": [
+        "<key>",
+        "<value...>"
+      ]
+    },
+    {
+      "path": "ops show",
+      "desc": "Print the card's fields that pass their checks (a field that fails is left out)",
+      "args": []
+    },
+    {
       "path": "patterns",
       "desc": "Browse project patterns, sync their \"/\" entries, and test what a prompt triggers",
       "args": [],
@@ -3745,6 +3782,21 @@
         "--platforms",
         "--packs",
         "--multi-product"
+      ]
+    },
+    {
+      "path": "shots",
+      "desc": "Screenshot one URL at a phone and a desktop width and list its console errors, through the browser limit and the machine's browser slots (exit 0 = shots and no console error, 1 = the page failed or logged errors, 2 = bad input or no playwright, 77 = past the limit, NOTHING ran, 75 = no slot came free)",
+      "args": [
+        "<url>"
+      ],
+      "valueFlags": [
+        "--width",
+        "--out",
+        "--wait-for",
+        "--script",
+        "--because",
+        "--max-wait"
       ]
     },
     {

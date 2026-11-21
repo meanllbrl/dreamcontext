@@ -77,7 +77,7 @@ export async function startChildHeadless(o: HeadlessChildOpts): Promise<Headless
   try {
     (startOverride ?? startChatSession)(sock as unknown as import('ws').WebSocket, projectRoot, {
       // The vault's switch as the window reads it: only `bypass` is bypass, auto never is.
-      bypass: rosterPermissionMode(contextRoot) === 'bypass',
+      bypass: rosterPermissionMode(contextRoot) === 'bypass', serverStarted: true,
       sessionId: o.resumeId ? '' : sessionId, resumeId: o.resumeId ?? '',
       model: o.model ?? '', effort: o.effort ?? '', mode: o.mode as 'basic',
       account: '', initialPrompt: o.prompt ?? '', deferPrompt: false, vault: o.vault || basename(projectRoot),

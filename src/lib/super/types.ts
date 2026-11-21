@@ -2437,6 +2437,10 @@ export const MAX_READ_BYTES = 256 * 1024;
 /** After a server restart, a recorded child absent from the registry has this long to register
  *  again before it is reported `gone` (D7). */
 export const READOPT_GRACE_MS = 2 * 60_000;
+/** The same grace for a child the relaunch cut off MID-JOB (`resuming`): its tab may take longer
+ *  than {@link READOPT_GRACE_MS} to come back on a loaded Mac, and a child read as gone that early
+ *  had its job delegated a second time (AC14, owner 2026-11-21: two sessions of one job). */
+export const READOPT_RESUME_GRACE_MS = 10 * 60_000;
 /** A delegated child that opened no chat by now is reported gone, not left `working`. */
 export const CHILD_ARRIVE_MS = 60_000;
 

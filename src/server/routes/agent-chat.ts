@@ -2058,6 +2058,9 @@ async function readAccountForDecision(dir: string): Promise<ProbeOutcome> {
 
 interface ChatSpawnOpts {
   bypass: boolean;
+  /** Started by the server on a socket nobody holds (headless-super.ts, headless-child.ts): no
+   *  window stands behind it until one adopts it. */
+  serverStarted?: boolean;
   sessionId: string;
   resumeId: string;
   model: string;
@@ -2335,6 +2338,8 @@ export function startChatSession(
   // reattach after a dropped socket); every send below reads it at call time, so output flows
   // to whichever socket currently owns the child.
   let ws = initialWs;
+  /** A window socket held this chat at some point (a server start has none until one adopts it). */
+  let windowSeen = requested.serverStarted !== true;
   /** The device whose socket drives this child — per SOCKET: set by whichever phone socket
    *  binds it, cleared when a desktop socket adopts it, kept across a detach. */
   let ownerDevice: DeviceTag | null = socketDevice.get(initialWs) ?? null;
@@ -3045,6 +3050,7 @@ export function startChatSession(
         if (ws.readyState !== ws.OPEN) return false;
         try { ws.send(JSON.stringify({ type: '_meta', ...frame })); return true; } catch { return false; }
       },
+      windowAway: () => (!windowSeen ? Infinity : detached ? Date.now() - detachedAt : 0),
       vault: opts.vault ?? basename(projectRoot),
       contextRoot,
       sessionId: chatRegistryId,
@@ -4417,6 +4423,7 @@ export function startChatSession(
     }
     stopPing();
     ws = next;
+    windowSeen = true;
     // Per socket: a phone socket makes its device the owner, a desktop socket clears it.
     const phoneHadIt = ownerDevice?.store === 'mac';
     ownerDevice = socketDevice.get(next) ?? null;
