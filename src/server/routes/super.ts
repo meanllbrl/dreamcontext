@@ -3,7 +3,7 @@ import { scheduleVerb } from '../super-schedule.js';
 import { appendOpenLog } from '../../lib/window-open-log.js';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
@@ -90,7 +90,7 @@ import { listClaudeAccounts } from '../../lib/claude-accounts.js';
 import { readStatusCache } from '../../lib/mcp-live.js';
 import {
   WorktreeRefused, createChildWorktree, discardFreshWorktree, git, mergeChildren, removeChildWorktree, repoOfWorktree,
-  worktreeStatus, type CreatedWorktree,
+  worktreeStatus, plannedChildWorktree, type CreatedWorktree,
 } from '../../lib/super/worktrees.js';
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { expandChildRefs } from '../../lib/super/child-ref.js';
@@ -1007,6 +1007,29 @@ function safeCodexStartModel(): string {
   } catch { return ''; }
 }
 
+/**
+ * The live child that already works in this worktree (its path or its `super/<slug>` branch), or
+ * null: one worktree, one live session. `except` is the child being resumed. Two sessions writing
+ * the same tree overwrote each other (21 Kas: a restart resume and a new child briefed into the
+ * same worktree), so a second one is refused and names the first.
+ */
+function liveChildInWorktree(s: Pick<SuperState, 'children' | 'queue'>, where: { path?: string; branch?: string }, except?: string): string | null {
+  const samePath = (a?: string) => !!a && !!where.path && normalize(a) === normalize(where.path);
+  for (const [sid, ch] of Object.entries(s.children)) {
+    if (sid === except) continue;
+    if (!samePath(ch.worktree) && !(where.branch && ch.branch === where.branch)) continue;
+    if (isLiveChat(sid) || childIsLive(s, sid)) return sid;
+  }
+  return null;
+}
+
+/** 409 `worktree_busy`: the worktree already has a live child; the way on is that child, never a second one. */
+function refuseWorktreeBusy(res: ServerResponse, holder: string, where: { path?: string; branch?: string }, verb: 'delegate' | 'resume'): void {
+  refuse(res, 409, 'worktree_busy',
+    `child ${holder} already works in ${where.path ?? where.branch}; a second session there would overwrite it. Message it with \`dreamcontext super send ${holder} "<text>"\`, or \`dreamcontext super end ${holder}\` first (it must be idle), then ${verb} again`,
+    { worktreeBusy: true, child: holder, ...(where.path ? { worktree: where.path } : {}), ...(where.branch ? { branch: where.branch } : {}) });
+}
+
 /** What a server-started delegate adds (plan ilk-acilis C15): never set by an agent verb. */
 interface DelegateExtra {
   /** Never pooled: the held branch refuses, and a start that never opens keeps nothing. */
@@ -1026,6 +1049,12 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
   // No --model: the tool's own default (an Antigravity account's choice included); the model it
   // really runs on reaches the record from its first `system/init` (agent-chat.ts noteChildModel).
   const job: Job = jobIn.effort || jobIn.tool === 'antigravity' ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
+  // One worktree, one live session: refused before anything is made, pooled or counted.
+  if (job.worktree) {
+    const planned = plannedChildWorktree({ projectRoot: dirname(root), repo: job.worktree, slug: job.slug });
+    const holder = planned ? liveChildInWorktree(c.state, planned, succeeds) : null;
+    if (planned && holder) { refuseWorktreeBusy(res, holder, planned, 'delegate'); return; }
+  }
   // D11: the cap is the ONLY hold on a NEW delegation (calls in flight count too). The
   // machine's facts never hold (owner, 2026-10-21): `super state` shows them as information.
   // The vault-wide count is read FIRST (its records); no await between the cap check and the
@@ -3190,7 +3219,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       }
       const results = [];
       for (const r of mine) results.push(await endChild(c, r.sid, false));
-      ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+      ok(res, endAnswer(results));
       return;
     }
     const raw = Array.isArray(b.children) ? b.children : typeof b.child === 'string' ? [b.child] : [];
@@ -3206,10 +3235,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     for (const id of ids) results.push(await endChild(c, id, force));
     if (results.length === 1 && !results[0].ended) {
       const r = results[0];
-      refuse(res, 409, r.reason ?? 'refused', r.message ?? 'the child was not ended', { child: r.child, ...(r.background ? { background: r.background } : {}) });
+      refuse(res, 409, r.reason ?? 'refused', r.message ?? 'the child was not ended', { refused: true, ended: false, child: r.child, ...(r.background ? { background: r.background } : {}) });
       return;
     }
-    ok(res, { ended: results.filter((x) => x.ended).map((x) => x.child), refused: results.filter((x) => !x.ended) });
+    ok(res, endAnswer(results));
   },
 
   resume: async (c, b, res) => {
@@ -3254,6 +3283,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       await markOwnersJob(c, child, b);
       ok(res, { child, resumed: false, running: true, ...cardOutcome(container, child, after) });
       return;
+    }
+    // One worktree, one live session: a child parked in a worktree another live child works in
+    // stays parked. Only this verb: a restart's window restore and 'continue' turns do not pass here.
+    if (ch.worktree || ch.branch) {
+      const holder = liveChildInWorktree(c.state, { path: ch.worktree, branch: ch.branch }, child);
+      if (holder) { refuseWorktreeBusy(res, holder, { path: ch.worktree, branch: ch.branch }, 'resume'); return; }
     }
     const mode = str(b.mode) ?? ch.mode ?? 'basic';
     if (!(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }
@@ -3862,6 +3897,15 @@ const END_REFUSALS: Partial<Record<ParkOutcome, string>> = {
 
 /** An idle child's window to leave on stdin EOF before it is cut. A forced end gives none. */
 const END_EXIT_GRACE_MS = 2000;
+
+/** `end`'s answer for several children: a refusal is never silent, `refused` lists them and `notEnded` + `warning` say so. */
+function endAnswer(results: EndResult[]): Record<string, unknown> {
+  const refused = results.filter((x) => !x.ended);
+  return {
+    ended: results.filter((x) => x.ended).map((x) => x.child), refused,
+    ...(refused.length ? { notEnded: true, warning: `${refused.length} child${refused.length === 1 ? ' was' : 'ren were'} NOT ended (${refused.map((x) => `${x.child}: ${x.reason ?? 'refused'}`).join('; ')}): they still run` } : {}),
+  };
+}
 
 interface EndResult { child: string; ended: boolean; reason?: string; message?: string; background?: number; noProcess?: boolean }
 
