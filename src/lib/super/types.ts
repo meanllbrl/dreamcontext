@@ -1515,6 +1515,8 @@ export interface SuperPoolItem {
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
   tool?: SuperChildTool;
+  /** `delegate --fast|--full`: written into the worktree when the job starts (lane-intent.ts). */
+  laneIntent?: 'fast' | 'full';
   /** The push, PR or deploy his own message named, checked when the job was kept (outward.ts):
    *  it starts with the job, however late, never re-read from the owed ledger. */
   outward?: OutwardGrant;

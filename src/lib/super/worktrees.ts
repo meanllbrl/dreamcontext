@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import { homedir } from 'node:os';
-import { normalize } from 'node:path';
+import { join, normalize } from 'node:path';
 import { resolveLinkedRepos } from '../linked-repos.js';
 import { worktreeIsolationAllowed } from '../worktree-gate.js';
 import { safeChildPath } from '../../server/safe-path.js';
@@ -178,6 +178,76 @@ async function isMerged(repoPath: string, branch: string): Promise<boolean> {
   return r.stdout.split('\n').map((s) => s.trim()).some((b) => b && b !== branch);
 }
 
+// ─── node_modules (plan sirket-yavaslik D11) ────────────────────────────────────
+
+/** How long the clone may take before it is given up and its half removed. */
+export const NODE_MODULES_CLONE_MS = 25_000;
+const LOCKFILE = 'package-lock.json';
+
+export interface NodeModulesSeed { seeded: boolean; why: string }
+
+/**
+ * The installed packages of the hidden lockfile npm keeps in node_modules agree with the
+ * lockfile: every package it lists has the lockfile's version, and it lists nearly all of them
+ * (a platform's optional packages are never installed).
+ */
+export function installMatchesLock(lockText: string, hiddenText: string): boolean {
+  try {
+    const lock = (JSON.parse(lockText) as { packages?: Record<string, { version?: string; optional?: boolean }> }).packages ?? {};
+    const hidden = (JSON.parse(hiddenText) as { packages?: Record<string, { version?: string }> }).packages ?? {};
+    const wanted = Object.entries(lock).filter(([k, v]) => k.startsWith('node_modules/') && !v.optional);
+    const have = Object.keys(hidden);
+    if (have.length === 0 || wanted.length === 0) return false;
+    if (!have.every((k) => lock[k] !== undefined && lock[k].version === hidden[k].version)) return false;
+    return wanted.filter(([k]) => hidden[k] !== undefined).length >= wanted.length * 0.9;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A new worktree gets the source checkout's root node_modules as an APFS clone (`cp -c`), when the
+ * install provably fits it: the source's lockfile hashes to the blob at the worktree's start commit
+ * and its node_modules agrees with that lockfile. Anything else (not macOS, another lockfile, a
+ * stale install, a clone that fails or runs long) does nothing but say why; the child installs as
+ * it does today. Never a symlink: a child's `npm i` must never write into the source checkout.
+ * Measured 2026-11-21: children searched for node_modules and playwright in every worktree.
+ */
+export async function seedNodeModules(sourcePath: string, worktreePath: string, sha: string, o: { platform?: NodeJS.Platform; timeoutMs?: number } = {}): Promise<NodeModulesSeed> {
+  if ((o.platform ?? process.platform) !== 'darwin') return { seeded: false, why: 'not macOS (no APFS clone)' };
+  const src = join(sourcePath, 'node_modules');
+  try {
+    const st = await fsp.lstat(src);
+    if (!st.isDirectory()) return { seeded: false, why: 'the source node_modules is not a folder' };
+  } catch { return { seeded: false, why: 'no node_modules in the source checkout' }; }
+  try { await fsp.lstat(join(worktreePath, 'node_modules')); return { seeded: false, why: 'the worktree already has node_modules' }; } catch { /* free */ }
+  let lockText: string;
+  try { lockText = await fsp.readFile(join(sourcePath, LOCKFILE), 'utf-8'); } catch { return { seeded: false, why: `no ${LOCKFILE} in the source checkout` }; }
+  const here = (await git(sourcePath, ['hash-object', '--', LOCKFILE])).stdout.trim();
+  const there = (await git(sourcePath, ['rev-parse', '--verify', '--quiet', `${sha}:${LOCKFILE}`])).stdout.trim();
+  if (!here || here !== there) return { seeded: false, why: `${LOCKFILE} differs between the source checkout and the worktree's start` };
+  let hidden: string;
+  try { hidden = await fsp.readFile(join(src, '.package-lock.json'), 'utf-8'); } catch { return { seeded: false, why: 'node_modules has no .package-lock.json' }; }
+  if (!installMatchesLock(lockText, hidden)) return { seeded: false, why: 'the source node_modules is stale against its lockfile' };
+  const dest = join(worktreePath, 'node_modules');
+  const ok = await new Promise<boolean>((done) => {
+    execFile('cp', ['-c', '-R', src, dest], { timeout: o.timeoutMs ?? NODE_MODULES_CLONE_MS }, (err) => done(!err));
+  });
+  if (!ok) {
+    await fsp.rm(dest, { recursive: true, force: true }).catch(() => undefined);
+    return { seeded: false, why: 'the APFS clone failed or ran past its time; removed' };
+  }
+  return { seeded: true, why: 'cloned from the source checkout' };
+}
+
+/** Seed and log one line; never fails the worktree it was asked for. */
+async function seedQuietly(sourcePath: string, worktreePath: string, sha: string): Promise<void> {
+  try {
+    const r = await seedNodeModules(sourcePath, worktreePath, sha);
+    process.stderr.write(`[super] node_modules for ${worktreePath}: ${r.seeded ? 'cloned' : `not cloned (${r.why})`}\n`);
+  } catch { /* a nicety */ }
+}
+
 // ─── Create ─────────────────────────────────────────────────────────────────────
 
 export interface CreatedWorktree { path: string; branch: string; repo: string; repoPath: string; base: string }
@@ -208,6 +278,7 @@ export async function createChildWorktree(o: {
   catch (err) { if (err instanceof WorktreeRefused) throw err; }
   await fsp.mkdir(root, { recursive: true });
   await gitOk(repo.path, [...lazy, 'worktree', 'add', ...(o.noCheckout ? ['--no-checkout'] : []), '-b', branch, path, sha], 'git worktree add');
+  await seedQuietly(repo.path, path, sha);
   return { path, branch, repo: repo.name, repoPath: repo.path, base: sha };
 }
 
@@ -242,6 +313,7 @@ export async function attachChildWorktree(o: {
   if (await branchExists(repo.path, branch, ['--no-lazy-fetch'])) {
     // Re-attaching a branch the agent wrote, with a config the agent could write: no checkout here.
     await gitOk(repo.path, ['--no-lazy-fetch', 'worktree', 'add', '--no-checkout', path, branch], 'git worktree add');
+    await seedQuietly(repo.path, path, `refs/heads/${branch}`);
     return { path, branch, repo: repo.name, repoPath: repo.path, base: null, created: false, added: true };
   }
   const created = await createChildWorktree({ projectRoot: o.projectRoot, repo: repo.name, slug: o.slug, base: o.base, home: o.home, noCheckout: true });
@@ -327,10 +399,12 @@ export async function mergeChildren(o: {
     await fsp.mkdir(root, { recursive: true });
     if (await branchExists(repo.path, target)) {
       await gitOk(repo.path, ['worktree', 'add', path, target], 'git worktree add');
+      await seedQuietly(repo.path, path, `refs/heads/${target}`);
     } else {
       const main = entries[0];
       const startSha = (await gitOk(main?.path ?? repo.path, ['rev-parse', '--verify', 'HEAD^{commit}'], 'git rev-parse')).trim();
       await gitOk(repo.path, ['worktree', 'add', '-b', target, path, startSha], 'git worktree add');
+      await seedQuietly(repo.path, path, startSha);
     }
     worktree = path;
   }

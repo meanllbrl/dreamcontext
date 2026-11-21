@@ -832,6 +832,7 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
       ...(j.base ? { base: j.base } : {}),
       ...(j.mcp ? { mcp: j.mcp } : {}),
       ...(j.tool ? { tool: j.tool } : {}),
+      ...(j.laneIntent ? { laneIntent: j.laneIntent } : {}),
       ...(p.held === true ? { held: true } : {}),
       ...(p.maybeStarted === true ? { maybeStarted: true } : {}),
     };
