@@ -75,7 +75,9 @@ test('AC2 modes: projects on Tasks, boards on Whiteboards, chats on Chat', async
   await expect(page.getByTestId('drawer-chat-row')).toHaveCount(0);
   await expect(page.getByTestId('sidebar-brand')).toBeVisible();
   await expect(page.getByTestId('sidebar-settings')).toBeVisible();
-  await expect(page.getByTestId('ns-picker-btn')).toHaveCount(0);
+  // No 'acme ▾' picker: the project label stays (it opens the picker) but carries no caret.
+  await expect(page.getByTestId('ns-picker-btn')).toHaveAttribute('data-local', 'true');
+  await expect(page.locator('[data-testid="ns-picker-btn"] .ns-tb-caret')).toHaveCount(0);
 
   await tab(page, 'whiteboards').click();
   await expect.poll(() => mode(page)).toBe('boards');
@@ -112,38 +114,52 @@ test('AC3 one click: same page in B, a board row of B, Chat on Chat, the item le
   await board.click();
   await expectActive(page, { vault: 'pocket-ledger', page: 'whiteboards', item: slug });
 
-  // Chat on Chat.
+  // Chat on Chat: on Chat the sidebar's rows are the chat drawer's own (a row folds), so the move
+  // is ⌘N, which follows the sidebar order.
   await tab(page, 'chat').click();
   await expect(tab(page, 'chat')).toHaveAttribute('data-on', 'true');
-  await row(page, 'orbit').click();
+  const order = await page.locator('[data-drawer-project]:not([data-hidden-project])').evaluateAll((els) => els.map((e) => e.getAttribute('data-drawer-project')));
+  await page.keyboard.press(`Meta+${order.indexOf('orbit') + 1}`);
   await expectActive(page, { vault: 'orbit' });
   await expect(tab(page, 'chat')).toHaveAttribute('data-on', 'true');
   await expect.poll(() => mode(page)).toBe('chat');
 });
 
 test('AC5 back and forward walk places across projects', async ({ page }) => {
+  // A place is recorded once it stayed on screen 400 ms (navRecorder SETTLE_MS: a quick hop is
+  // not a stop), so each stop here dwells like a person would.
+  const stay = () => page.waitForTimeout(600);
   await open(page);
   await tab(page, 'tasks').click();
   await expectActive(page, { vault: 'proj', page: 'tasks' });
+  await stay();
   await row(page, 'northwind').click();
   await expectActive(page, { vault: 'northwind', page: 'tasks' });
+  await stay();
   await tab(page, 'whiteboards').click();
   await expectActive(page, { vault: 'northwind', page: 'whiteboards' });
+  await stay();
   await row(page, 'orbit').click();
   await expectActive(page, { vault: 'orbit', page: 'whiteboards' });
+  await stay();
 
   await page.getByTestId('ns-back').click();
   await expectActive(page, { vault: 'northwind', page: 'whiteboards' });
+  await stay();
   await page.getByTestId('ns-back').click();
   await expectActive(page, { vault: 'northwind', page: 'tasks' });
+  await stay();
   await page.getByTestId('ns-forward').click();
   await expectActive(page, { vault: 'northwind', page: 'whiteboards' });
-  // A fast double back walks two places.
+  await stay();
   await page.getByTestId('ns-forward').click();
   await expectActive(page, { vault: 'orbit', page: 'whiteboards' });
+  await stay();
+  // A fast double back walks two places.
   await page.getByTestId('ns-back').click();
   await page.getByTestId('ns-back').click();
   await expectActive(page, { vault: 'northwind', page: 'tasks' });
+  await stay();
 });
 
 test('AC6 keys: ⌘2 follows the sidebar order and pressed twice keeps one switch; ⌘K reaches another project', async ({ page }) => {
@@ -163,8 +179,10 @@ test('AC6 keys: ⌘2 follows the sidebar order and pressed twice keeps one switc
   // ⌘K finds northwind's task and opens it there.
   await page.keyboard.press('Meta+k');
   await page.keyboard.type('Approve beta list');
-  await page.waitForTimeout(2500);
-  await page.keyboard.press('Enter');
+  // The open project's own hits come first; northwind's group lands below them.
+  const hit = page.locator('.cmdk-row', { has: page.getByTestId('cmdk-row-vault') }).filter({ hasText: 'Approve beta list' }).first();
+  await hit.waitFor({ timeout: 12_000 });
+  await hit.click();
   await expectActive(page, { vault: 'northwind', page: 'tasks' });
 });
 
