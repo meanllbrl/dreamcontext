@@ -76,7 +76,7 @@ import { bindingsByConversation, consumeOnce, listGrants } from '../../lib/grant
 import type { Grant } from '../../lib/grants/types.js';
 import { grantRoots } from '../../lib/t3-bridge/policy.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, docKey, namedProjectSkills, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { bm25Search, docKey, loadSkillDocs, namedProjectSkills, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, recallTurn, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
 import {
@@ -84,7 +84,7 @@ import {
 } from '../../lib/rules-delivery.js';
 import { HOOK_OUTPUT_MAX_CHARS } from '../../lib/snapshot-budget.js';
 import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
-import { buildCorpusCached, loadSkillDocsCached } from '../../lib/recall-corpus-cache.js';
+import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
 } from '../../lib/patterns.js';
@@ -3766,7 +3766,7 @@ export function registerHookCommand(program: Command): void {
       const ownerText = promptOwnerText(rawPrompt);
       const query = recallQuery(rawPrompt);
       // Recall and the skills check also read what the turn points at (an agenda line, a replied
-      // message, a card: `recallTurn`), so a short "shall we move to the video" under a line recalls on that line.
+      // message, a card: `recallTurn`), so "videoya geçelim" under a line recalls on that line.
       const turn = recallTurn(rawPrompt);
       // He asked for a rule to be remembered (learning loop C4): one must-print cue, on his own words
       // only. It writes nothing (the hook never writes the owner-words ledger) and makes no rule active.
@@ -3935,9 +3935,8 @@ export function registerHookCommand(program: Command): void {
           // The owner's words and the subject his turn points at (recallTurn: no Super roster or tools
           // block, no notification, no wrapper line, no paths). Null: a machine turn, no recall at all.
           // An automation's fire prompt is the runner's text, the same on every fire: no recall, no peers.
-          const recallTurnNow = isAutomationFirePrompt(rawPrompt) ? null : turn;
-          if (recallTurnNow !== null) {
-            const prompt = recallTurnNow.search;
+          if (turn !== null && !isAutomationFirePrompt(rawPrompt)) {
+            const prompt = turn.search;
             const recallMode = resolveRecallMode(root);
 
             if (recallMode !== 'off') {
@@ -3948,12 +3947,12 @@ export function registerHookCommand(program: Command): void {
               // The owner's previous turn (the judge reads it), then this turn becomes the previous one.
               // His words only: a subject he pointed at never reaches the judge as his previous turn.
               const prevOwner = promptSessionId ? readPrevOwnerTurn(promptSessionId) : null;
-              if (promptSessionId && recallTurnNow.words) writePrevOwnerTurn(promptSessionId, recallTurnNow.words);
+              if (promptSessionId && turn.words) writePrevOwnerTurn(promptSessionId, turn.words);
 
               const judge = judgeFor(recallMode);
               let judged: JudgedPromptRecall | null = null;
               if (judge !== null) {
-                judged = await judgedPromptRecall(recallTurnNow.words, prevOwner, root, recallMode, judge, { seen, about: recallTurnNow.about });
+                judged = await judgedPromptRecall(turn.words, prevOwner, root, recallMode, judge, { seen, about: turn.about });
                 const r = judged.result;
                 if (process.env.DREAMCONTEXT_RECALL_TIMING === '1') {
                   console.error(JSON.stringify({ judged: r.outcome, channel: r.channel, shown: r.shown.length, picked: r.hits.length, searchMs: r.searchMs, judgeMs: r.judgeMs, usd: r.usd }));
@@ -4216,8 +4215,7 @@ export function registerHookCommand(program: Command): void {
           const prompt = turn?.search ?? null;
           if (prompt !== null) {
             const skillsRoot = join(process.cwd(), '.claude', 'skills');
-            // Each unchanged SKILL.md from the vault's cache: a warm turn re-reads none of them.
-            const docs = loadSkillDocsCached(skillsRoot, join(root, '.recall-cache'));
+            const docs = loadSkillDocs(skillsRoot);
             if (docs.length > 0 && bm25Search(prompt, docs, 5).some(h => h.score >= SKILL_SCORE_THRESHOLD)) {
               gatedSkills = true;
             }
