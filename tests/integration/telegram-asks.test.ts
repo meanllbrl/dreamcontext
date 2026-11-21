@@ -54,7 +54,7 @@ beforeEach(async () => {
   reg._resetChatRegistry(); resetWindowControl(); _resetTelegramAsks(); _resetOwnerQuestions();
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
   handsfreeOn = true;
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => handsfreeOn } });
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => handsfreeOn } });
   unwire = wireTelegramAsks(hub);
   await hub.start();
   const start = await hub.beginPairing({ scope: scopeOfContextRoot(root), target: 'super', token: TOKEN, projectName: vault, contextRoot: root });

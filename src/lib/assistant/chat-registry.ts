@@ -839,6 +839,14 @@ export function registerChat(init: {
       if (topLevel && (frame.type === 'assistant' || frame.type === 'stream_event') && (e.status === 'idle' || e.status === 'starting')) {
         setStatus(e, 'working');
       }
+      // Whether the text just written was the turn's last word or a line before a tool call
+      // (telegram-sade: only the turn's answer reaches his phone, as ONE message).
+      // An `assistant` frame says it AFTER its own text went out (below), so the text it carries
+      // is the one a tool call follows.
+      if (topLevel && frame.type === 'stream_event') {
+        const hint = turnHintOf(frame);
+        if (hint) emitTurnHint(e.sessionId, hint);
+      }
       if (topLevel && frame.type === 'user') {
         for (const id of blockIds(frame, 'tool_result')) openTools.delete(id);
         syncTools();
@@ -886,6 +894,8 @@ export function registerChat(init: {
           if (e.lastAssistantText.length > TEXT_RING) e.lastAssistantText.splice(0, e.lastAssistantText.length - TEXT_RING);
           e.updatedAt = new Date().toISOString();
         }
+        const hint = turnHintOf(frame);
+        if (hint) emitTurnHint(e.sessionId, hint);
         return;
       }
       if (frame.type === 'result' && topLevel) {
@@ -1079,6 +1089,7 @@ export function _resetChatRegistry(): void {
   waitOrigins.clear();
   waitTurns.clear();
   assistantListeners.clear();
+  turnHintListeners.clear();
   userSentListeners.clear();
   injectors.clear();
   injectorListeners.clear();
@@ -1103,6 +1114,34 @@ export function onChatAssistantText(fn: (sessionId: string, text: string) => voi
 function emitAssistantText(sessionId: string, text: string): void {
   for (const fn of [...assistantListeners]) {
     try { fn(sessionId, text); } catch { /* a listener's failure is its own */ }
+  }
+}
+
+/** What a top-level frame says about the text before it: a tool call follows (`tool`), or the
+ *  model ended its message (`end`). Null = nothing either way. */
+export function turnHintOf(frame: Record<string, unknown>): 'tool' | 'end' | null {
+  if (frame.type === 'assistant') {
+    const content = (frame.message as { content?: unknown } | undefined)?.content;
+    return Array.isArray(content) && content.some((b) => (b as { type?: unknown })?.type === 'tool_use') ? 'tool' : null;
+  }
+  if (frame.type !== 'stream_event') return null;
+  const ev = frame.event as { type?: unknown; content_block?: { type?: unknown }; delta?: { stop_reason?: unknown } } | undefined;
+  if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use') return 'tool';
+  if (ev?.type === 'message_delta' && ev.delta?.stop_reason === 'end_turn') return 'end';
+  return null;
+}
+
+const turnHintListeners = new Set<(sessionId: string, hint: 'tool' | 'end') => void>();
+
+/** Be told when a chat's model starts a tool call or ends its message (telegram-sade's one answer). */
+export function onChatTurnHint(fn: (sessionId: string, hint: 'tool' | 'end') => void): () => void {
+  turnHintListeners.add(fn);
+  return () => { turnHintListeners.delete(fn); };
+}
+
+function emitTurnHint(sessionId: string, hint: 'tool' | 'end'): void {
+  for (const fn of [...turnHintListeners]) {
+    try { fn(sessionId, hint); } catch { /* a listener's failure is its own */ }
   }
 }
 

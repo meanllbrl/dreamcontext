@@ -53,7 +53,7 @@ beforeEach(async () => {
   telegramReactionNotes.clear();
   tg = new FakeTelegram();
   tg.addBot(TOKEN, 'acme_super_bot');
-  hub = new TelegramHub({
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0,
     home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {},
     vaults: () => [{ name: 'acme', contextRoot: root }], openLink: () => {}, injectorWaitMs: 300,
   });

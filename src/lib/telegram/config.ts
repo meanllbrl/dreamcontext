@@ -349,6 +349,31 @@ export function writeTurns(dir: string, file: TurnsFile, home: string = homedir(
   writeTelegramJson(join(dir, 'turns.json'), { v: 1, turns: file.turns }, home);
 }
 
+/** A bot's quiet-chat state (telegram-sade): its pinned agenda message and the night's results
+ *  waiting for the morning, so a restart neither pins a second agenda nor loses a night result. */
+export interface SadeFile {
+  v: 1;
+  pin?: { messageId: number; html: string };
+  night?: { at: number; md: string }[];
+}
+
+export function readSade(dir: string, home: string = homedir()): SadeFile {
+  const r = readTelegramJson(join(dir, 'sade.json'), home);
+  const v = r.ok && r.value && typeof r.value === 'object' ? (r.value as Record<string, unknown>) : {};
+  const pin = v.pin as { messageId?: unknown; html?: unknown } | undefined;
+  const night = Array.isArray(v.night) ? v.night.filter((e): e is { at: number; md: string } => !!e && typeof e === 'object'
+    && typeof (e as { at?: unknown }).at === 'number' && typeof (e as { md?: unknown }).md === 'string') : [];
+  return {
+    v: 1,
+    ...(pin && Number.isSafeInteger(pin.messageId) && typeof pin.html === 'string' ? { pin: { messageId: pin.messageId as number, html: pin.html } } : {}),
+    ...(night.length ? { night } : {}),
+  };
+}
+
+export function writeSade(dir: string, file: SadeFile, home: string = homedir()): void {
+  writeTelegramJson(join(dir, 'sade.json'), file, home);
+}
+
 export function readForward(dir: string, home: string = homedir()): ForwardFile {
   const r = readTelegramJson(join(dir, 'forward.json'), home);
   const list = r.ok && r.value && typeof r.value === 'object' ? (r.value as { routines?: unknown }).routines : null;

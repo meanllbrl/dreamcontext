@@ -86,7 +86,7 @@ beforeEach(async () => {
   setOwnerCardRemindBanner((title, body, link) => { banners.push({ title, body, link }); return true; });
   await writeState({});
   tg = new FakeTelegram(); tg.addBot(TOKEN, 'acme_super_bot');
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => true } });
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: vault, contextRoot: root }], injectorWaitMs: 300, handsfree: { streamsTo: () => false, isOn: () => true } });
   unwireAsks = wireTelegramAsks(hub);
   unwireRuns = wireRunCards(hub, { phoneOrigin: () => 'https://abc.trycloudflare.com', streams: () => false });
   await hub.start();
