@@ -107,13 +107,13 @@ function MicSplitView({ mic, steps, permission, takeMode, takeModeAvailable, onT
                   <button
                     type="button"
                     role="menuitemcheckbox"
-                    aria-checked={takeMode === 'paste'}
+                    aria-checked={takeMode === 'send'}
                     className="chat-cmp-micmenu-row"
-                    onClick={() => onTakeMode(takeMode === 'paste' ? 'send' : 'paste')}
+                    onClick={() => onTakeMode(takeMode === 'send' ? 'paste' : 'send')}
                   >
                     <PasteIcon />
-                    <span className="chat-cmp-micmenu-text"><span>{t('micmenu.paste')}</span><small>{t('micmenu.paste.d')}</small></span>
-                    <span className={`chat-cmp-micmenu-switch${takeMode === 'paste' ? ' is-on' : ''}`} aria-hidden />
+                    <span className="chat-cmp-micmenu-text"><span>{t('micmenu.autosend')}</span><small>{t('micmenu.autosend.d')}</small></span>
+                    <span className={`chat-cmp-micmenu-switch${takeMode === 'send' ? ' is-on' : ''}`} aria-hidden />
                   </button>
                 )}
                 {item.kind === 'read-aloud' && (
