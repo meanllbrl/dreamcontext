@@ -681,7 +681,13 @@ export function settlePresentQueue(
   if (showing) {
     const head = items[0];
     if (head?.id === showing && viewShowsItem(view, head)) q.showing = showing;
-    else if (rawIds.includes(showing) && !retired.has(showing) && !items.some((i) => i.id === showing)) {
+    else if (head?.id === showing) {
+      // He saw it and left it another way (a chat side by side, his own presentation, a group):
+      // it is passed, never back in the queue as unseen (owner 2026-11-21: "eski sunumlar ekran
+      // açılınca sürekli önüme çıkıyor"). What he moved to stays; the rest keep waiting.
+      q.items.shift();
+      q.seen += 1;
+    } else if (rawIds.includes(showing) && !retired.has(showing) && !items.some((i) => i.id === showing)) {
       // The item on screen lost its cards (closed): it is passed, and the next opens. Only when
       // the stage was left floating by it, never over another view.
       if (view.mode === 'float') {

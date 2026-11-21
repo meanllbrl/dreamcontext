@@ -12,6 +12,8 @@
  *      the strip "1 presentation waiting · Fiyat" with Continue and a ✕;
  *  T2  the field case: Continue opens the question's page, closing it empties the queue while the
  *      question stays open: no strip comes back;
+ *  T5  he leaves a shown presentation another way (a page side by side): it never returns, the
+ *      reopened screen names only what he has not seen;
  *  T4  a restart with a stale item (waiting since yesterday) on the record: no strip;
  *  every state shot in dark and light; zero page errors and console errors.
  *
@@ -209,6 +211,36 @@ try {
   ok('✕: the strip leaves', await until(async () => (await pq(page).count()) === 0, 10000));
   ok('✕: the record\'s queue is empty and nothing was presented', waiting().length === 0 && record().view.mode !== 'present', JSON.stringify({ q: record().presentQueue, v: record().view }));
   await shot(page, '3-carpi');
+
+  console.log('\n── T5 a presentation he saw and left another way never comes back (owner 2026-11-21)');
+  await send(page, 'GO-PRESENT 1');
+  ok('T5: page 1 opens', await until(async () => at(1).test(await count(page)), 20000), await count(page));
+  await page.waitForTimeout(1200);
+  await send(page, 'GO-PRESENT 3');
+  ok('T5: page 3 waits behind it', await until(async () => waiting().length === 2, 20000), JSON.stringify(record().presentQueue));
+  await page.waitForTimeout(800);
+  {
+    // He leaves page 1 without a queue button: page 2 side by side, the patch the window sends.
+    const ids5 = JSON.parse(readFileSync(IDS, 'utf-8'));
+    const st = await page.evaluate(async (card) => (await fetch('/api/super/layout', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'proj' },
+      body: JSON.stringify({ view: { mode: 'half', card } }),
+    })).status, ids5[1]);
+    ok('T5: the side-by-side gesture lands', st < 300, String(st));
+    ok('T5: page 1 left the queue as seen, page 3 still waits', waiting().length === 1 && waiting()[0].cards[0] === ids5[2], JSON.stringify(record().presentQueue));
+    // The screen opens again: only page 3 is waiting.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    ok('T5: the stage shows after reopening', await openStage(page));
+    await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'proj' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
+    ok('T5: the strip names page 3 only', await until(async () => { const t = await pq(page).innerText().catch(() => ''); return /Logo/.test(t) && !/Odeme|Ödeme/.test(t); }, 10000), await pq(page).innerText().catch(() => ''));
+    await shot(page, '5-yeniden-acilis');
+    await page.locator('[data-testid="super-pq-resume"]').click();
+    ok('T5: Continue opens page 3', await until(async () => at(3).test(await count(page)), 10000), await count(page));
+    await page.waitForTimeout(600);
+    await exit(page);
+    await page.waitForTimeout(2500);
+    ok('T5: passing page 3 leaves no strip and an empty queue (page 1 never returns)', (await pq(page).count()) === 0 && waiting().length === 0, JSON.stringify(record().presentQueue));
+  }
 
   await send(page, 'GO-PRESENT 1');
   ok('page 1 opens at once', await until(async () => at(1).test(await count(page)), 20000), await count(page));

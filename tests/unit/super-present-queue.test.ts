@@ -246,14 +246,48 @@ describe('the store and a remote screen (AC7)', () => {
     });
     expect(st.presentQueue).toEqual({ items: [{ id: 'pq1', cards: ['image-a'], at: T }, { id: 'pq3', cards: ['image-b'], at: T }], seen: 0, seq: 3, showing: 'pq1' });
   });
-  it('another view drops "showing" but keeps the item unseen', () => {
+  it('another view passes the item it showed (seen), the rest keep waiting, his view stays', () => {
     const st = sanitizeSuperState({
+      v: SUPER_STATE_VERSION, containers: [img('image-a'), img('image-b'), img('image-c')],
+      view: { mode: 'half', card: 'image-c' },
+      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: T }, { id: 'pq2', cards: ['image-b'], at: T }], seen: 0, seq: 2, showing: 'pq1' },
+    });
+    expect(st.presentQueue).toEqual({ items: [{ id: 'pq2', cards: ['image-b'], at: T }], seen: 1, seq: 2 });
+    expect(st.view).toEqual({ mode: 'half', card: 'image-c' });
+    // Alone, it leaves the queue entirely: no "1 presentation waiting" for one he already saw.
+    const lone = sanitizeSuperState({
       v: SUPER_STATE_VERSION, containers: [img('image-a'), img('image-b')],
       view: { mode: 'half', card: 'image-b' },
       presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: T }], seen: 0, seq: 1, showing: 'pq1' },
     });
+    expect(queueCounter(lone.presentQueue)).toMatchObject({ waiting: 0 });
+    expect(lone.view).toEqual({ mode: 'half', card: 'image-b' });
+  });
+  it('a head never shown keeps waiting under another view', () => {
+    const st = sanitizeSuperState({
+      v: SUPER_STATE_VERSION, containers: [img('image-a'), img('image-b')],
+      view: { mode: 'half', card: 'image-b' },
+      presentQueue: { items: [{ id: 'pq1', cards: ['image-a'], at: T }], seen: 0, seq: 1 },
+    });
     expect(st.presentQueue).toEqual({ items: [{ id: 'pq1', cards: ['image-a'], at: T }], seen: 0, seq: 1 });
-    expect(st.view).toEqual({ mode: 'half', card: 'image-b' });
+  });
+  it('the field case (owner 2026-11-21): a presentation he saw and left by opening a chat never comes back', () => {
+    let s = stage({ containers: [img('image-a'), img('image-b'), img('image-c')] });
+    presentCards(s, ['image-a']);
+    presentCards(s, ['image-b']);
+    s = store(s);
+    // He looks at [a], then opens another card side by side (not a queue button).
+    s = store(applyOwnerLayout(s, { view: { mode: 'half', card: 'image-c' } }));
+    expect(s.presentQueue?.items.map((i) => i.cards)).toEqual([['image-b']]);
+    // Back on the stage, Continue opens [b]; passing it ends the queue. [a] never returns
+    // (the old record kept it as unseen and opened it again here).
+    s = store(applyOwnerLayout(s, { view: { mode: 'float' } }));
+    ownerQueueStep(s, 'resume', s.presentQueue!.items[0].id);
+    expect(s.view.cards).toEqual(['image-b']);
+    ownerQueueStep(s, 'next', s.presentQueue!.items[0].id);
+    s = store(s);
+    expect(s.view).toEqual({ mode: 'float' });
+    expect(queueCounter(s.presentQueue)).toMatchObject({ waiting: 0 });
   });
   it('an item whose question is over, or gone from the queue, leaves on the next read', () => {
     const SID = '11111111-2222-4333-8444-555555555555';
