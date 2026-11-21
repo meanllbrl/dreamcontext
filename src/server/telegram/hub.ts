@@ -66,7 +66,7 @@ import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripRep
 import { SILENT, cardAbout, closedCardHtml, jobStatusHtml, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import {
   API_DOWN_LINE, HELD_CAP_MS, NOTICE_ONCE_MS, OWNER_ACTIVE_MS, TEXT_GRACE_MS, agendaPinHtml, asksForText, dayOf, isApiErrorText, isNight,
-  mergeHeld, nightDigestMarkdown, picturesOnly, statusBlocks, voiceFromText, type StatusBlock,
+  mergeHeld, nightDigestMarkdown, picturesOnly, statusBlocks, voiceFromText, chatterRemains, isOnlyMarks, type StatusBlock,
 } from './sade.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
@@ -277,6 +277,19 @@ interface TgTurn {
  *  its chat by then (-1 until read, in line with the sends before it). */
 export interface SuperTurnSpan { startedAt: number; before: number }
 
+/**
+ * Edits one of the hub's own messages in place: 'ok' (also when nothing changed), 'gone' (Telegram
+ * says the message is not there or can no longer be edited: a new one may replace it), 'failed'
+ * (a timeout, a 429, a network blip: the edit may still have landed, so nothing replaces it).
+ */
+async function editInPlace(ab: ActiveBinding, messageId: number, html: string): Promise<'ok' | 'gone' | 'failed'> {
+  return ab.transport.editMessageText(ab.binding.chatId, messageId, html).then(() => 'ok' as const, (err) => {
+    const m = String((err as Error)?.message ?? err);
+    if (/not modified/i.test(m)) return 'ok' as const;
+    return /message to edit not found|message can't be edited|message_id_invalid|message not found/i.test(m) ? 'gone' as const : 'failed' as const;
+  });
+}
+
 export class TelegramHub implements TelegramHubApi {
   readonly home: string;
   readonly now: () => number;
@@ -303,6 +316,8 @@ export class TelegramHub implements TelegramHubApi {
   private held = new Map<string, { text: string; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark: SuperTurnMark; interim: boolean; timer: ReturnType<typeof setTimeout> | null }>();
   /** `${binding}:${job id}` → that job's one status message (telegram-sade). Memory only. */
   private statusMsgs = new Map<string, { messageId: number; html: string; at: number }>();
+  /** Per bot: the agenda pin's look in progress (`refreshPin` runs one at a time). */
+  private pinChains = new Map<string, Promise<void>>();
   /** `${binding}|${sentence}` → when that notice last went (`noticeOnce`). */
   private noticeSeen = new Map<string, number>();
   /** Per binding: the day he asked for voice there (`dayOf`), until he asks for text. */
@@ -748,10 +763,13 @@ export class TelegramHub implements TelegramHubApi {
     const key = `${ab.key}|${sentence}`;
     const last = this.noticeSeen.get(key);
     if (last !== undefined && this.now() - last < NOTICE_ONCE_MS) return false;
+    // Claimed while it is on its way (a second call does not send it twice), kept only once it
+    // LANDED: a failed send must not hide the warning for a day (review r1).
     this.noticeSeen.set(key, this.now());
     if (this.noticeSeen.size > 500) this.noticeSeen.delete(this.noticeSeen.keys().next().value as string);
-    await this.notice(ab, kind, sentence, loud);
-    return true;
+    const landed = await this.send(ab, noticeHtml(kind, sentence), loud ? {} : SILENT).then(() => true, () => false);
+    if (!landed && this.noticeSeen.get(key) !== undefined) this.noticeSeen.delete(key);
+    return landed;
   }
 
   // ── Inbound ──
@@ -1105,6 +1123,11 @@ export class TelegramHub implements TelegramHubApi {
    * A failed text send throws, as `sendMarkdown` does; the voice never throws.
    */
   async sendAnswer(ab: ActiveBinding, md: string, sessionId: string | null, reply: { ref: string; quote?: string; answers?: string } | undefined, blocks: 'hub' | 'mac', replyRefs: readonly (string | null | undefined)[] = []): Promise<boolean> {
+    return (await this.sendAnswerSpoken(ab, md, sessionId, reply, blocks, replyRefs)).landed;
+  }
+
+  /** `sendAnswer`, also saying whether a voice was sent (its block, or a voice day's own words). */
+  private async sendAnswerSpoken(...[ab, md, sessionId, reply, blocks, replyRefs = []]: Parameters<TelegramHub['sendAnswer']>): Promise<{ landed: boolean; voiced: boolean }> {
     let { text, voice } = voiceAnswer(md);
     // A voice day (he asked for voice there today): an answer with no block speaks its own words,
     // its one bold line beside it (Doc 2026-11-21, item 7).
@@ -1125,15 +1148,16 @@ export class TelegramHub implements TelegramHubApi {
       });
       landed = spoke || landed;
     }
-    return landed;
+    return { landed, voiced: !!voice };
   }
 
-  /** `sendAnswer` for a Super text of these turns: once it returns, a text carrying a `dream-voice`
-   *  block marks them voiced (the voice reply lands its voice or its line + text; a text send that
-   *  throws never reached it), read at turn end. */
+  /** `sendAnswer` for a Super text of these turns: once it returns, an answer that had a voice to
+   *  send (its `dream-voice` block, or a voice day speaking its words; review r1) marks them voiced
+   *  (the voice reply lands its voice or its line + text; a text send that throws never reached
+   *  it), read at turn end. */
   private async answerFor(turns: readonly TgTurn[], ...args: Parameters<TelegramHub['sendAnswer']>): Promise<boolean> {
-    const landed = await this.sendAnswer(...args);
-    if (voiceAnswer(args[1]).voice) for (const t of turns) t.voiced = true;
+    const { landed, voiced } = await this.sendAnswerSpoken(...args);
+    if (voiced) for (const t of turns) t.voiced = true;
     return landed;
   }
 
@@ -1404,7 +1428,7 @@ export class TelegramHub implements TelegramHubApi {
     if (!key) return;
     const ab = this.active.get(key);
     // A card, the turn's end or the chat's end: the text this turn wrote goes first, in order.
-    if (entry.status === 'asking' || entry.status === 'idle' || entry.status === 'gone') this.flushHeld(entry.sessionId);
+    if (entry.status === 'asking' || entry.status === 'idle' || entry.status === 'gone') this.flushHeld(entry.sessionId, entry.status === 'asking');
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
     if (entry.status === 'gone') {
       this.turnSpans.delete(entry.sessionId);
@@ -1544,7 +1568,7 @@ export class TelegramHub implements TelegramHubApi {
   queueSend(sessionId: string, send: (turns: TgTurn[]) => Promise<boolean>, fromHold = false): void {
     // Anything else this chat sends (a card, a picture, a turn's end) goes after the text the turn
     // already wrote: the held text is let out first, in order.
-    if (!fromHold) this.flushHeld(sessionId);
+    if (!fromHold) this.flushHeld(sessionId, true);
     const turns = this.turnsOf(sessionId);
     const next = (this.textChains.get(sessionId) ?? Promise.resolve())
       .then(() => send(turns))
@@ -1563,8 +1587,9 @@ export class TelegramHub implements TelegramHubApi {
       this.queueSend(sessionId, async () => {
         const ab = this.bindingOfSession(sessionId);
         if (!ab || ab.disabled || !(this.onTelegram(ab) || this.telegramTurnOf(sessionId))) return false;
-        await this.noticeOnce(ab, 'warn', API_DOWN_LINE, true);
-        return true;
+        // Spoken only when it went now: a turn whose line was already said today stays silent,
+        // and its end says so (review r1: he must still learn his message got no answer).
+        return this.noticeOnce(ab, 'warn', API_DOWN_LINE, true);
       });
       return;
     }
@@ -1600,12 +1625,23 @@ export class TelegramHub implements TelegramHubApi {
     h.timer.unref?.();
   }
 
-  /** The held text of this chat goes now, through the one sender, in order. */
-  private flushHeld(sessionId: string): void {
+  /**
+   * The held text of this chat goes now, through the one sender, in order. `beforeOther` = it is
+   * let out because something else goes (a job status, a card, a picture): a line written before
+   * a tool call that is only chatter ("Bakıyorum.") does not go then (review r1, AC2); it stays
+   * held as its reply mark alone, so the answer after it still answers his message. A held text
+   * of reply marks only never goes.
+   */
+  private flushHeld(sessionId: string, beforeOther = false): void {
     const h = this.held.get(sessionId);
     if (!h) return;
+    if (beforeOther && h.interim) {
+      const mark = chatterRemains(h.text);
+      if (mark !== null) { h.text = mark; return; }
+    }
     this.held.delete(sessionId);
     if (h.timer) clearTimeout(h.timer);
+    if (isOnlyMarks(h.text)) return;
     this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, h.text, { turns, inputs: h.inputs, mark: h.mark }), true);
   }
 
@@ -1620,8 +1656,10 @@ export class TelegramHub implements TelegramHubApi {
     const had = this.statusMsgs.get(key);
     if (had && had.html === html) return true;
     if (had) {
-      const edited = await ab.transport.editMessageText(ab.binding.chatId, had.messageId, html).then(() => true, (err) => /not modified/i.test(String((err as Error)?.message ?? err)));
-      if (edited) { this.statusMsgs.set(key, { messageId: had.messageId, html, at: this.now() }); return true; }
+      const edit = await editInPlace(ab, had.messageId, html);
+      if (edit === 'ok') { this.statusMsgs.set(key, { messageId: had.messageId, html, at: this.now() }); return true; }
+      // A slow or refused edit may still have landed: never a second status message for it.
+      if (edit === 'failed') return false;
     } else if (!(this.onTelegram(ab) || this.telegramTurnOf(sessionId) || this.deps.handsfree?.streamsTo(ab.scope, ab.target))) return false;
     const sent = await this.send(ab, html, SILENT).catch(() => null);
     if (!sent || !Number.isSafeInteger(sent.message_id)) return false;
@@ -1650,6 +1688,15 @@ export class TelegramHub implements TelegramHubApi {
    * only once the agenda holds something while he is away; kept up to date from then on.
    */
   async refreshPin(ab: ActiveBinding): Promise<void> {
+    // One at a time per bot (review r1: the timer and a turn's end both saw no pin and both pinned).
+    const prev = this.pinChains.get(ab.key) ?? Promise.resolve();
+    const next = prev.then(() => this.refreshPinNow(ab)).catch(() => {});
+    this.pinChains.set(ab.key, next);
+    await next;
+    if (this.pinChains.get(ab.key) === next) this.pinChains.delete(ab.key);
+  }
+
+  private async refreshPinNow(ab: ActiveBinding): Promise<void> {
     // A stopped or replaced hub does nothing (a turn's end queued this before `stop`): it would read
     // the project's state after it is gone and send on a binding no longer served.
     if (ab.target !== 'super' || !ab.contextRoot || !this.serving(ab)) return;
@@ -1663,12 +1710,17 @@ export class TelegramHub implements TelegramHubApi {
     const html = agendaPinHtml(s.pad, this.now()) ?? (file.pin ? '📌 <b>Gündem</b>\n<i>Şu an süren iş yok.</i>' : null);
     if (!html || file.pin?.html === html) return;
     if (file.pin) {
-      const ok = await ab.transport.editMessageText(ab.binding.chatId, file.pin.messageId, html).then(() => true, (err) => /not modified/i.test(String((err as Error)?.message ?? err)));
-      if (ok) { writeSade(dir, { ...readSade(dir, this.home), pin: { messageId: file.pin.messageId, html } }, this.home); return; }
+      const edit = await editInPlace(ab, file.pin.messageId, html);
+      if (edit === 'ok') { writeSade(dir, { ...readSade(dir, this.home), pin: { messageId: file.pin.messageId, html } }, this.home); return; }
+      // A slow or refused edit may still have landed: the next look tries again, never a second pin.
+      if (edit === 'failed') return;
     } else if (!this.ownerAway()) return;
+    const old = file.pin?.messageId;
     const sent = await this.send(ab, html, SILENT).catch(() => null);
     if (!sent || !Number.isSafeInteger(sent.message_id)) return;
     writeSade(dir, { ...readSade(dir, this.home), pin: { messageId: sent.message_id, html } }, this.home);
+    // The old pin (deleted by him, or too old to edit) is unpinned: ONE pinned agenda.
+    if (old !== undefined) await ab.transport.call('unpinChatMessage', { chat_id: ab.binding.chatId, message_id: old }).catch(() => {});
     await ab.transport.call('pinChatMessage', { chat_id: ab.binding.chatId, message_id: sent.message_id, disable_notification: true }).catch(() => {});
   }
 

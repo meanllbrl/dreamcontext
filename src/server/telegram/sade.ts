@@ -95,12 +95,25 @@ export function mergeHeld(prev: string, next: string, betweenCalls: boolean): st
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
-/** A model or network failure the CLI wrote as the turn's text (never words for him). */
+/** A model or network failure the CLI wrote as the turn's text (never words for him): the CLI
+ *  writes it as the WHOLE text, so only a text that OPENS with it counts. Super prose that quotes
+ *  an error ("Stripe webhook'u API Error: 429 döndü") is an answer and goes (review r1). */
 export function isApiErrorText(md: string): boolean {
   const t = md.trim();
-  if (t.length > 600) return false;
-  return /\bAPI Error:\s*\d{3}\b/i.test(t) || /^Failed to authenticate\b/i.test(t) || /Attention Required!\s*\|\s*Cloudflare/i.test(t)
-    || /^(?:Request timed out|Connection error|overloaded_error)\b/i.test(t);
+  return /^(?:API Error:\s*\d{3}\b|Failed to authenticate\b|Request timed out\b|Connection error\b|overloaded_error\b)/i.test(t)
+    || (/^(?:<!DOCTYPE html|<html)/i.test(t) && /Attention Required!\s*\|\s*Cloudflare/i.test(t));
+}
+
+/** Held text that is only a line before a tool call: what must not reach him when something else
+ *  is sent first (a job status, a card, a picture; review r1). Its reply mark is kept, so the
+ *  answer that follows still answers his message. Null = the text has substance and goes. */
+export function chatterRemains(md: string): string | null {
+  return isChatter(md) ? openingMark(md) : null;
+}
+
+/** Nothing in it but reply marks. */
+export function isOnlyMarks(md: string): boolean {
+  return splitReplySections(md).every((s) => !s.text.trim());
 }
 
 // ─── Job status blocks ──────────────────────────────────────────────────────

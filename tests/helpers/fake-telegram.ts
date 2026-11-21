@@ -18,6 +18,8 @@ export class FakeTelegram {
   failing = new Map<string, number>();
   /** Methods that fail exactly once more each (method → error_code), then work. */
   failOnce = new Map<string, number>();
+  /** The description a `failOnce` error carries (method → Telegram's words), default "failed once". */
+  failOnceWhy = new Map<string, string>();
   /** File ids whose download is slow (ms). */
   slowFiles = new Map<string, number>();
   /** Methods that answer this many ms late (any method but getUpdates). */
@@ -63,7 +65,7 @@ export class FakeTelegram {
     const fail = this.failing.get(method);
     if (fail) return res(fail, { ok: false, error_code: fail, description: 'failed' });
     const once = this.failOnce.get(method);
-    if (once) { this.failOnce.delete(method); return res(once, { ok: false, error_code: once, description: 'failed once' }); }
+    if (once) { this.failOnce.delete(method); return res(once, { ok: false, error_code: once, description: this.failOnceWhy.get(method) ?? 'failed once' }); }
     switch (method) {
       case 'getMe': return ok({ id: bot.id, is_bot: true, username: bot.username, first_name: bot.username });
       case 'getWebhookInfo': return ok({ url: this.webhook });

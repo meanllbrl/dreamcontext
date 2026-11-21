@@ -133,6 +133,12 @@ describe('what counts as a line between tool calls (AC2)', () => {
     // The golden set (Doc's dc-b): clauses joined by a comma and "sonra" are still only work.
     for (const t of ["Önceki oturumda ne istediğini buluyorum, sonra doğru PDF'i hazırlayacağım.", "Onayladığın değişikliklerin PDF'ini hazırlıyorum."]) expect(isChatter(t)).toBe(true);
     for (const t of ['Evet, raporu yarın hazırlayacağım çünkü veri eksik.', 'Hayır, bunu yapmayacağım.']) expect(isChatter(t)).toBe(false);
+    // Review r1: only a text that OPENS with the CLI's error is one.
+    const { isApiErrorText } = await import('../../src/server/telegram/sade.js');
+    expect(isApiErrorText('API Error: 403 Attention Required! | Cloudflare')).toBe(true);
+    expect(isApiErrorText(`API Error: 403 <!DOCTYPE html>${'x'.repeat(2000)}`)).toBe(true);
+    expect(isApiErrorText("Stripe webhook'u API Error: 429 döndü, yarın tekrar denenir.")).toBe(false);
+    expect(isApiErrorText('Sayfada "Attention Required! | Cloudflare" yazıyor, VPN kapatınca açıldı.')).toBe(false);
     for (const t of ['Evet, bu normal.', 'Bunu öneriyorum.', 'Hazır: testler geçti.', '![a](x.png) Bakıyorum.']) expect(isChatter(t)).toBe(false);
     // Dropped only when a tool call came after it; its reply mark rides on the answer.
     expect(mergeHeld('<!-- re:abc123 -->\nBakıyorum.', 'Bitti.', true)).toBe('<!-- re:abc123 -->\nBitti.');

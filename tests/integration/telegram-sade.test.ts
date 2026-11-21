@@ -41,9 +41,9 @@ async function superState(pad: SuperPadItem[] = []): Promise<void> {
 const drained = () => new Promise((r) => setTimeout(r, 40));
 const quiet = () => new Promise((r) => setTimeout(r, 60));
 
-async function start(grace = 0): Promise<void> {
+async function start(grace = 0, extra: Partial<ConstructorParameters<typeof TelegramHub>[0]> = {}): Promise<void> {
   hub = new TelegramHub({
-    textGraceMs: grace, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, now: () => clock,
+    ...extra, textGraceMs: grace, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, now: () => clock,
     vaults: () => [{ name: 'acme', contextRoot: root }], openLink: () => {}, injectorWaitMs: 300,
   });
   await hub.start();
@@ -135,6 +135,24 @@ describe('one turn, one message (AC2)', () => {
   });
 });
 
+describe('a line before a tool call never goes because something else was sent (review r1)', () => {
+  it('"Bakıyorum.", a tool call, a status block, the answer: the status message and ONE answer, no "Bakıyorum."', async () => {
+    await start(5_000);
+    const { h, ref } = await hisMessage();
+    const n = tg.texts().length;
+    assistant(h, `<!-- re:${ref} -->\nBakıyorum.`);
+    toolCall(h);
+    assistant(h, '```dream-status rapor\nRapor işi\nVeri okunuyor\n```');
+    await vi.waitFor(() => expect(tg.texts().slice(n).some((t) => t.includes('Rapor işi'))).toBe(true), { timeout: 5000 });
+    assistant(h, '**Rapor hazır.**');
+    result(h);
+    await vi.waitFor(() => expect(answers(n).some((t) => t.includes('Rapor hazır.'))).toBe(true), { timeout: 5000 });
+    await quiet();
+    expect(tg.texts().slice(n).some((t) => t.includes('Bakıyorum'))).toBe(false);
+    expect(answers(n).filter((t) => !t.includes('Rapor işi'))).toEqual(['<b>Rapor hazır.</b>']);
+  });
+});
+
 describe("a job's status is one message, edited in place (AC5)", () => {
   it('three blocks of the same job: one silent send, then two edits of that message; done turns it into its result', async () => {
     await start();
@@ -167,6 +185,39 @@ describe('warnings (AC5)', () => {
     expect(tg.texts().slice(n)).toHaveLength(1);
     clock += 25 * 60 * 60 * 1000;
     expect(await hub.noticeOnce(ab, 'warn', 'Pil düşük; Mac uyuyabilir, işler durabilir.', true)).toBe(true);
+  });
+
+  it('a notice whose send failed is not counted as said: the next one goes (review r1)', async () => {
+    await start();
+    const ab = hub.active.get(keyOf(scopeOfContextRoot(root), 'super'))!;
+    tg.failOnce.set('sendMessage', 500);
+    expect(await hub.noticeOnce(ab, 'warn', 'Isı yüksek; Mac yavaşlayabilir.', true)).toBe(false);
+    expect(await hub.noticeOnce(ab, 'warn', 'Isı yüksek; Mac yavaşlayabilir.', true)).toBe(true);
+  });
+
+  it('the second outage turn the same day is not silent: its end says it got no answer (review r1)', async () => {
+    await start();
+    const first = await hisMessage();
+    first.h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'API Error: 403 Attention Required! | Cloudflare' }] } });
+    result(first.h);
+    await vi.waitFor(() => expect(tg.texts().some((t) => t.includes(API_DOWN_LINE.slice(0, 20)))).toBe(true), { timeout: 5000 });
+    await quiet();
+    const n = tg.texts().length;
+    const second = await hisMessage('cevap ver');
+    second.h.observe({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'API Error: 403 Attention Required! | Cloudflare' }] } });
+    result(second.h);
+    await vi.waitFor(() => expect(tg.texts().slice(n).some((t) => t.includes('cevap yazmadan bitti'))).toBe(true), { timeout: 5000 });
+    expect(tg.texts().slice(n).some((t) => t.includes(API_DOWN_LINE.slice(0, 20)))).toBe(false);
+  });
+
+  it('a short answer that quotes another service\'s error is an answer, not an outage (review r1)', async () => {
+    await start();
+    const { h, ref } = await hisMessage();
+    const n = tg.texts().length;
+    assistant(h, `<!-- re:${ref} -->\nÖdeme sağlayıcısının webhook'u API Error: 429 döndü, yarın tekrar denenir.`);
+    result(h);
+    await vi.waitFor(() => expect(answers(n).some((t) => t.includes('429 döndü'))).toBe(true), { timeout: 5000 });
+    expect(tg.texts().slice(n).some((t) => t.includes(API_DOWN_LINE.slice(0, 20)))).toBe(false);
   });
 
   it('a raw API error the CLI wrote never reaches his phone: one Turkish line instead, once', async () => {
@@ -236,9 +287,46 @@ describe('the pinned agenda (AC10, owner 17:31)', () => {
     expect(tg.sent('pinChatMessage')).toHaveLength(1);
     expect(tg.sent().length).toBe(n + 1);
   });
+
+  it('a failed edit (timeout, 429) never makes a second pin; a pin Telegram says is gone is replaced and the old one unpinned (review r1)', async () => {
+    await start();
+    await hisMessage();
+    await superState([{ id: 'n1', section: 'now', text: 'Birinci iş', at: clock }]);
+    const n = tg.sent().length;
+    // The timer and a turn's end at the same moment: one pin.
+    await Promise.all([hub.tickSade(), hub.refreshPin(hub.active.get(keyOf(scopeOfContextRoot(root), 'super'))!)]);
+    expect(tg.sent().length).toBe(n + 1);
+    expect(tg.sent('pinChatMessage')).toHaveLength(1);
+    const first = (tg.sent()[n].result as { message_id: number }).message_id;
+    await superState([{ id: 'n1', section: 'now', text: 'İkinci iş', at: clock }]);
+    tg.failOnce.set('editMessageText', 429);
+    await hub.tickSade();
+    expect(tg.sent().length).toBe(n + 1);
+    expect(tg.sent('pinChatMessage')).toHaveLength(1);
+    tg.failOnce.set('editMessageText', 400);
+    tg.failOnceWhy.set('editMessageText', 'Bad Request: message to edit not found');
+    await hub.tickSade();
+    expect(tg.sent().length).toBe(n + 2);
+    expect(tg.sent('unpinChatMessage').map((c) => c.params.message_id)).toEqual([first]);
+    expect(tg.sent('pinChatMessage')).toHaveLength(2);
+  });
 });
 
 describe('a voice day (AC7)', () => {
+  it('a voice-day turn whose answer was spoken from its words does not end with "no voice was sent" (review r1)', async () => {
+    const spoken: string[] = [];
+    await start(0, { speakSummary: async (t: string) => { spoken.push(t); return { ok: true as const, ogg: Buffer.from('OggS-fake'), seconds: 9 }; } });
+    const ab = hub.active.get(keyOf(scopeOfContextRoot(root), 'super'))!;
+    (hub as unknown as { voiceDays: Map<string, string> }).voiceDays.set(ab.key, dayOf(clock));
+    const { h, ref } = await hisMessage('rapor ne durumda?');
+    const n = tg.calls.length;
+    assistant(h, `<!-- re:${ref} -->\n**Rapor hazır.**\n\nÜç sayfa açıldı, hepsi doğru.`);
+    result(h);
+    await vi.waitFor(() => expect(tg.calls.slice(n).some((c) => c.method === 'sendVoice')).toBe(true), { timeout: 5000 });
+    await quiet(); await quiet();
+    expect(tg.texts().some((t) => t.includes('ses kaydı yoktu'))).toBe(false);
+  });
+
   it('after he asked for voice, the next answer with no voice block is still spoken', async () => {
     const spoken: string[] = [];
     hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, speakSummary: async (t) => { spoken.push(t); return { ok: true, ogg: Buffer.from('OggS-fake'), seconds: 9 }; } });
