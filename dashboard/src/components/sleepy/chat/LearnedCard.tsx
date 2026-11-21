@@ -111,7 +111,9 @@ export function LearnedCard({ spec, session, report }: {
         title={f.headline || t('chat.learned.title')}
         aside={<span className="chat-learnedcard-state" data-state={f.status}>{t(`chat.learned.state.${f.status}`)}</span>}
       />
-      <p className="chat-learnedcard-scope">{t(f.scope === 'me' ? 'chat.learned.scope.me' : f.scope === 'member' ? 'chat.learned.scope.member' : 'chat.learned.scope.project')}</p>
+      <p className="chat-learnedcard-scope">{f.scope === 'member' && f.member
+        ? SLOT(t('chat.learned.scope.memberNamed'), { member: f.member })
+        : t(f.scope === 'me' ? 'chat.learned.scope.me' : f.scope === 'member' ? 'chat.learned.scope.member' : 'chat.learned.scope.project')}</p>
       {f.quote && (
         <blockquote className="chat-learnedcard-quote">
           <span>“{f.quote.text}”</span>

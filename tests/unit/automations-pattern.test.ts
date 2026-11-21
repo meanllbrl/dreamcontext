@@ -123,10 +123,22 @@ describe('recordLesson', () => {
     const after = recordLesson(root, 'digest', { lesson: 'run the build before every screenshot step', now: new Date('2026-07-28T10:00:00') });
     const lessons = readPattern(after).lessons;
     expect(lessons).toHaveLength(2);
-    expect(lessons[0].text).toBe('Run the build before the screenshot step (×2)');
+    // The new one adds "every": its text is kept, never the shorter old one (nothing it adds is lost).
+    expect(lessons[0].text).toBe('run the build before every screenshot step (×2)');
     expect(lessons[0].date).toBe('2026-07-28');
     const third = addLesson(lessons, { date: '2026-07-29', text: 'run the build before the screenshot step' });
     expect(third[0]!.text).toMatch(/\(×3\)$/);
+  });
+
+  it('a lesson that extends an old one keeps the extension; two that each add a word are both kept', () => {
+    const one = addLesson([{ date: '2026-07-27', text: 'Deploy fails on the staging branch' }],
+      { date: '2026-07-28', text: 'Deploy fails on the staging branch: run the migrations first, then retry' });
+    expect(one).toEqual([{ date: '2026-07-28', text: 'Deploy fails on the staging branch: run the migrations first, then retry (×2)' }]);
+    const shorter = addLesson(one, { date: '2026-07-29', text: 'deploy fails on the staging branch' });
+    expect(shorter[0]!.text).toBe('Deploy fails on the staging branch: run the migrations first, then retry (×3)');
+    const both = addLesson([{ date: '2026-07-27', text: 'Use pnpm never npm for installs in this repo always' }],
+      { date: '2026-07-28', text: 'Use pnpm never npm for installs in this repo with force' });
+    expect(both).toHaveLength(2);
   });
 
   it('two lessons that differ in a number are two facts, never twins', () => {

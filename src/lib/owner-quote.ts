@@ -126,7 +126,9 @@ export function quoteCoversChange(quote: string, before: string, after: string):
   const changeTerms = new Set(tokenize([...added, ...removed].join(' ')));
   // Two shared terms only when something is removed (a guard line); an addition needs one.
   const need = removed.length > 0 ? Math.min(2, changeTerms.size) : Math.min(1, changeTerms.size);
-  if (need === 0) return true;
+  // A change with no term the tokenizer reads (another script, symbols only) is not shown to be
+  // about his words: not covered (it waits for his card), never waved through.
+  if (need === 0) return false;
   if (added.length > 0 && sharedTerms(q, added) < 1) return false;
   if (removed.length > 0 && sharedTerms(q, removed) < 1) return false;
   return sharedTerms(q, [...added, ...removed]) >= need;

@@ -993,6 +993,17 @@ export function lessonTwinScore(a: string, b: string): number {
   return shared / Math.min(x.size, y.size);
 }
 
+/** Of two near-twin lessons, the text that already holds every term of the other; null when each
+ *  adds a term the other lacks (two facts: both are kept). */
+function lessonKeeps(oldText: string, newText: string): string | null {
+  const a = lessonTerms(oldText);
+  const b = lessonTerms(newText);
+  const newAdds = [...b].some((t) => !a.has(t));
+  const oldAdds = [...a].some((t) => !b.has(t));
+  if (newAdds && oldAdds) return null;
+  return newAdds ? newText : oldText;
+}
+
 /**
  * Add a lesson newest-first. A near-twin of a stored lesson updates THAT lesson instead (its date
  * and a `×N` count, moved to the top), so the same note said again never piles up and nothing is
@@ -1000,11 +1011,13 @@ export function lessonTwinScore(a: string, b: string): number {
  */
 export function addLesson(lessons: readonly PatternLesson[], lesson: PatternLesson): PatternLesson[] {
   const text = oneLine(lesson.text);
-  const i = lessons.findIndex((l) => lessonTwinScore(l.text, text) >= LESSON_TWIN_BAR);
+  const i = lessons.findIndex((l) => lessonTwinScore(l.text, text) >= LESSON_TWIN_BAR && lessonKeeps(l.text, text) !== null);
   if (i < 0) return [{ date: lesson.date, text }, ...lessons];
   const old = lessons[i]!;
   const n = Number(TIMES_RE.exec(old.text)?.[1] ?? '1') + 1;
-  const merged = { date: lesson.date, text: `${old.text.replace(TIMES_RE, '')} (×${n})` };
+  // The kept text is the one that holds every term of both: a new lesson that extends the old one
+  // (the fix, a new "never") replaces its text; a merge never drops a word either side added.
+  const merged = { date: lesson.date, text: `${lessonKeeps(old.text, text)!.replace(TIMES_RE, '')} (×${n})` };
   return [merged, ...lessons.slice(0, i), ...lessons.slice(i + 1)];
 }
 

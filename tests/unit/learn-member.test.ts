@@ -130,27 +130,50 @@ describe('one writer per member, agents only add (criterion 3)', () => {
     expect(deriveRule(readStore(projectStoreRef(root, home)).rules.find((x) => x.id === p.id)!).moved_to).toBe('member');
   });
 
-  it('a cross-store --replaces supersedes the old rule; undo and drop of the new one give it back', () => {
+  it('a cross-store --replaces (his own shell) supersedes the old rule; undo of the new one gives it back', () => {
     const pq = 'reports start with the result';
     const old = learn('Reports start with the result', { scope: 'project', quote: [pq] }, ctx(plainEnv('p10'), [said(pq, ['p10'])]));
-    const q = 'scout, your reports start with the result and one number';
-    const neu = learn('Reports start with the result and one number', { scope: 'member', replaces: old.id, quote: [q] }, ctx(memberEnv('scout', 's10'), [said(q, ['s10'])]));
-    expect(neu.status, neu.lines.join('\n')).toBe('active');
     const oldNow = (): string => deriveRule(readStore(projectStoreRef(root, home)).rules.find((x) => x.id === old.id)!).status;
+    const q = 'scout, your reports start with the result and one number';
+    // An agent in Scout's session never narrows a project rule into Scout's own: refused, with his three answers.
+    const agent = learn('Reports start with the result and one number', { scope: 'member', member: 'scout', replaces: old.id, quote: [q] }, ctx(memberEnv('scout', 's10'), [said(q, ['s10'])]));
+    expect(agent.code).toBe(1);
+    expect(agent.lines[0]).toMatch(/every agent follows.*--scope project --same .*--new.*--scope project --replaces/);
+    expect(oldNow()).toBe('active');
+    // His own shell may.
+    // His own shell may (his words not typed in a chat here: it waits for his keep, the old rule rides on).
+    const neu = learn('Reports start with the result and one number', { scope: 'member', member: 'scout', replaces: old.id, quote: [q] }, ctx({}, []));
+    expect(neu.status, neu.lines.join('\n')).toBe('proposed');
+    expect(oldNow()).toBe('active');
+    expect(learnKeep(neu.id!, ctx({}, [])).code).toBe(0);
     expect(oldNow()).toBe('superseded');
-    const u = learnUndo(neu.id!, ctx(memberEnv('scout', 's10'), []));
+    const u = learnUndo(neu.id!, ctx({}, []));
     expect(u.code, u.lines.join('\n')).toBe(0);
     expect(u.lines[1]).toMatch(/eskisi yeniden geçerli/);
     expect(oldNow()).toBe('active');
+  });
 
-    // A replacement still proposed (his words not typed here), dropped: the old rule comes back too.
-    const q2 = 'results first, then the chart';
-    const p2 = learn('Results first, then the chart', { scope: 'member', replaces: old.id, quote: [q2] }, ctx(memberEnv('scout', 's11'), [said(q2, ['elsewhere'])]));
-    expect(p2.status).toBe('proposed');
-    expect(oldNow()).toBe('superseded');
-    const d = learnDrop(p2.id!, ctx({}, []));
-    expect(d.code, d.lines.join('\n')).toBe(0);
+  it('a replacement the gate holds leaves the old rule in force; his keep supersedes it, a drop leaves it', () => {
+    const q1 = 'wren, build every funnel with a single price screen';
+    const old = learn('Every funnel has a single price screen', { scope: 'member', quote: [q1] }, ctx(memberEnv('wren', 's20'), [said(q1, ['s20'])]));
+    expect(old.status, old.lines.join('\n')).toBe('active');
+    const wren = (): ReturnType<typeof readStore> => readStore(memberStoreRef({ slug: 'wren', scope: 'global' }, root, home));
+    const oldNow = (): string => deriveRule(wren().rules.find((x) => x.id === old.id)!).status;
+    // His words do not touch the new text (a global member's rule): held for his card, the old one rides on.
+    const q2 = 'thanks, that looks fine';
+    const held = learn('Funnels end on a quiz screen', { scope: 'member', replaces: old.id, quote: [q2] }, ctx(memberEnv('wren', 's21'), [said(q2, ['s21'])]));
+    expect(held.status, held.lines.join('\n')).toBe('proposed');
+    expect(held.lines.join('\n'), held.lines.join('\n')).toMatch(/stays in force until his card/);
     expect(oldNow()).toBe('active');
+    const k = learnKeep(held.id!, ctx({}, []));
+    expect(k.code, k.lines.join('\n')).toBe(0);
+    expect(oldNow()).toBe('superseded');
+    // Another held one, dropped: the rule it named was never out of force.
+    const q3 = 'ok';
+    const held2 = learn('Funnels end on a long quiz screen', { scope: 'member', replaces: held.id, quote: [q3] }, ctx(memberEnv('wren', 's22'), [said(q3, ['s22'])]));
+    expect(held2.status).toBe('proposed');
+    expect(learnDrop(held2.id!, ctx({}, [])).code).toBe(0);
+    expect(deriveRule(wren().rules.find((x) => x.id === held.id)!).status).toBe('active');
   });
 
   it('a Codex-format member run is not the owner: its keep of a rule it created needs his word', () => {

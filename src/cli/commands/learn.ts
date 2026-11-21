@@ -431,6 +431,14 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
         const own = ownMemberRefusal(ctx, crossReplace.ref.member!.slug);
         if (own) return refuse(own);
       }
+      // An agent never narrows a rule every agent follows (his `me` or the project's) into one
+      // member's: that is his own shell's move. He said it again, or it is for this member only.
+      if (crossReplace && crossReplace.ref.scope !== 'member' && scope === 'member' && !ownerProcess(ctx.env)) {
+        const v = crossReplace.view;
+        return refuse(
+          `${v.id} is a ${v.scope} rule every agent follows; a member's rule never replaces it. He said it again: --scope ${v.scope} --same ${v.id}. His word is for this member only: --new (it rides beside it). It changes for everyone: --scope ${v.scope} --replaces ${v.id}.`,
+        );
+      }
     }
     if (!flags.new && !flags.same && !flags.replaces) {
       const visibleOthers = others.filter((o) => o.scope !== 'member' || o.member?.slug === member?.slug || scope !== 'member');
@@ -445,7 +453,7 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
       }
       if (twins.length > 0) {
         return refuse(
-          `this reads like a rule already stored in another store. Answer with one of: --replaces <id> (his new word replaces it; it may name a rule of another store), --new (a different rule)${scope === 'member' ? '' : ', or --same <id> in its own scope'}.`,
+          `this reads like a rule already stored in another store. Answer with one of: --same <id> with that rule's --scope (he said it again; it stays in force where it is), --new (a different rule)${scope === 'member' ? ', or --replaces <id> only for a rule of this member\'s own store' : ', or --replaces <id> (his new word replaces it; it may name a rule of another store)'}.`,
           ...twins,
         );
       }
@@ -585,7 +593,8 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
   try {
     if (member) {
       // The ignore entry exists before the first write of a project member's store (D1, SG5).
-      if (member.scope === 'project' && ctx.contextRoot) { try { ensureAgentsGitignore(ctx.contextRoot); } catch { /* the write below still checks its paths */ } }
+      // His verbatim quotes never land in a file git could sync: no ignore entry, no write.
+      if (member.scope === 'project' && ctx.contextRoot) { try { ensureAgentsGitignore(ctx.contextRoot); } catch (e) { return refuse(`the member rules file cannot be kept out of git (${(e as Error).message}): nothing was written`); } }
       const replacedText = crossReplace ? crossReplace.view.text : flags.replaces ? (() => {
         const r = findRecord(readStore(ref), flags.replaces!);
         return r ? deriveRule(r, ctx.now).text : '';
@@ -604,7 +613,10 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
 
   // The cross-store supersede, in the old rule's own store (D11). If it fails, the old rule stays
   // active beside the new one and the receipt says so: nothing is lost.
-  if (crossReplace && done.result.rec && (view.status === 'active' || view.status === 'proposed')) {
+  // A replacement still waiting for his card leaves the old rule in force: his keep supersedes it.
+  if (crossReplace && done.result.rec && view.status === 'proposed') {
+    extra.push(`The rule it replaces (${crossReplace.view.id}) stays in force until his card keeps this one.`);
+  } else if (crossReplace && done.result.rec && view.status === 'active') {
     try {
       const fn = (store: ReturnType<typeof readStore>): { result: string | null; changed: boolean } => {
         const step = applyStatusOp(store, crossReplace!.view.id, 'supersede', actor, { ref: view.id, scope: crossReplace!.ref.scope });
@@ -614,12 +626,14 @@ export function learn(rawText: string, flags: LearnFlags, ctx: LearnContext): Le
         ? withStore<string | null>(crossReplace.ref as MemberStoreRef, fn, { now: ctx.now, gate: gateOf(ctx, rawQuotes, base.allHere) })
         : withStore<string | null>(crossReplace.ref, fn, { now: ctx.now });
       if (r.result) extra.push(`The old rule ${crossReplace.view.id} (${crossReplace.ref.scope}) is still active beside this one: ${r.result}.`);
-      else extra.push(`It replaces ${crossReplace.view.id} of the ${crossReplace.ref.scope === 'me' ? 'personal' : crossReplace.ref.scope} store${view.status === 'proposed' ? ', which is paused until his card' : ''}.`);
+      else extra.push(`It replaces ${crossReplace.view.id} of the ${crossReplace.ref.scope === 'me' ? 'personal' : crossReplace.ref.scope} store.`);
     } catch (e) {
       extra.push(`The old rule ${crossReplace.view.id} (${crossReplace.ref.scope}) is still active beside this one: ${(e as Error).message}.`);
     }
   } else if (view.status === 'proposed' && view.replaces) {
-    extra.push(`The rule it replaces (${view.replaces}) is paused until his card.`);
+    extra.push(member && !ownerProcess(ctx.env)
+      ? `The rule it replaces (${view.replaces}) stays in force until his card keeps this one.`
+      : `The rule it replaces (${view.replaces}) is paused until his card.`);
   }
   if (member && (view.status === 'active' || view.status === 'proposed')) {
     const n = instructionLinesNotice(ctx, member.slug, view.headline, view.text);
@@ -803,7 +817,7 @@ export function learnEdit(id: string, flags: EditFlags, ctx: LearnContext): Lear
       if (flags.scope === 'member') {
         const m = resolveMember(ctx, flags.member);
         if (typeof m === 'string') return refuse(m);
-        if (m.scope === 'project' && ctx.contextRoot) { try { ensureAgentsGitignore(ctx.contextRoot); } catch { /* the write still checks its paths */ } }
+        if (m.scope === 'project' && ctx.contextRoot) { try { ensureAgentsGitignore(ctx.contextRoot); } catch (e) { return refuse(`the member rules file cannot be kept out of git (${(e as Error).message}): nothing was moved`); } }
         target = storeRef(ctx, 'member', m);
       } else {
         if (flags.scope === 'me') {

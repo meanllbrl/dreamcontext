@@ -523,11 +523,20 @@ function gateAddedEvents(ref: MemberStoreRef, before: Map<string, Set<string>>, 
         if (risks.length > 0) throw new RulesStoreError(`${rec.id} reads like an instruction from outside (${risks.join('; ')}): only his card keeps it`, 'refused');
         continue;
       }
-      if (e.status !== 'active') continue;
-      const verdict = memberWriteGate(old, view, ref, gate);
-      if (verdict.status === 'proposed') {
-        e.status = 'proposed';
-        notes.push({ id: rec.id, reason: verdict.reason ?? 'it waits for his card' });
+      if (e.status === 'active') {
+        const verdict = memberWriteGate(old, view, ref, gate);
+        if (verdict.status === 'proposed') {
+          e.status = 'proposed';
+          notes.push({ id: rec.id, reason: verdict.reason ?? 'it waits for his card' });
+        }
+      }
+      // A replacement that waits for his card (held here, or his words not typed here) never takes
+      // the old rule out of force: the supersede this write added is dropped, and his keep of the
+      // new one writes it then (statusChange).
+      if (e.op === 'replace' && e.ref && e.status === 'proposed') {
+        const replaced = findRecord(store, e.ref);
+        const hadOld = replaced ? before.get(replaced.id) : undefined;
+        if (replaced) replaced.events = eventsOf(replaced).filter((x) => hadOld?.has(x.eid) || !(x.op === 'supersede' && x.ref === rec.id));
       }
     }
   }
@@ -877,7 +886,8 @@ export interface RuleLocator {
 export function locateIn(locator: RuleLocator, id: string, now?: Date): { ref: StoreRef; rec: RuleRecord; view: RuleView } | null {
   for (const ref of locator.refs()) {
     let store: RulesStoreFile;
-    try { store = readStore(ref); } catch (e) { if (e instanceof RulesStoreError && e.code === 'unsafe') continue; throw e; }
+    // One store that cannot be read (unsafe, or a hand-broken file) never hides the others' rules.
+    try { store = readStore(ref); } catch (e) { if (e instanceof RulesStoreError && (e.code === 'unsafe' || e.code === 'unreadable')) continue; throw e; }
     const rec = findRecord(store, id);
     if (!rec) continue;
     const view = deriveRule(rec, now);
@@ -922,12 +932,33 @@ export function releaseReplaced(locate: RuleLocator, rule: RuleView, actor: Acto
   }
 }
 
+/** His keep of a replacement the gate held: the rule it replaces leaves force now (it stayed in
+ *  force while the new one waited). Null when there is nothing to do; a failure is said, never thrown. */
+function supersedeReplaced(locate: RuleLocator, rule: RuleView, actor: Actor): string | null {
+  if (!rule.replaces || rule.status !== 'active') return null;
+  try {
+    const found = locateIn(locate, rule.replaces, actor.now);
+    if (!found || found.view.status !== 'active') return null;
+    const { result } = storeWrite<Step>(found.ref, (store) => {
+      const step = applyStatusOp(store, rule.replaces!, 'supersede', actor, { ref: rule.id, scope: found.ref.scope });
+      return { result: step, changed: step.ok };
+    }, actor.now, NARROWING_GATE);
+    return result.ok ? `It now replaces ${rule.replaces}.` : `${rule.replaces} is still active beside it: ${result.reason}.`;
+  } catch (e) {
+    return `${rule.replaces} is still active beside it: ${(e as Error).message}.`;
+  }
+}
+
 function statusChange(ref: StoreRef, id: string, op: StatusOp, actor: Actor, opts: StatusOpts): StatusChange {
   const { result, notice } = storeWrite<Step>(ref, (store) => {
     const step = applyStatusOp(store, id, op, actor, { scope: ref.scope });
     return { result: step, changed: step.ok };
   }, actor.now, opts.gate);
   if (!result.ok) return result;
+  if (op === 'keep') {
+    const took = supersedeReplaced(opts.locate, result.rule, actor);
+    return { ...result, notice: [notice, took].filter(Boolean).join(' ') || null };
+  }
   if (op !== 'undo' && op !== 'drop') return { ...result, notice };
   const back = releaseReplaced(opts.locate, result.rule, actor);
   const note = [notice, back.failed ?? null].filter(Boolean).join(' ') || null;
