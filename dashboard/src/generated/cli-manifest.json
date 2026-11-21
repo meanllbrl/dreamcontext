@@ -3748,6 +3748,24 @@
       ]
     },
     {
+      "path": "shares",
+      "desc": "Live links (one app or one whiteboard over its own tunnel): list and close them. Opening one is the owner's click in the app",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "shares close",
+      "desc": "Close a live link now (its guests see \"Bu paylaşım kapandı\"); `all` closes every one",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "shares list",
+      "desc": "List live links: what is shared, state, people connected, password yes/no (never the link)",
+      "args": []
+    },
+    {
       "path": "sleep",
       "desc": "Track sleep debt and consolidation state",
       "args": [],

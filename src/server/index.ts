@@ -357,6 +357,8 @@ import { warmLoginPath } from '../lib/tool-finder.js';
 import { startProjectCatchUpJob } from './project-catch-up-job.js';
 import { startBrainAutoSyncJob } from './brain-auto-sync-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
+import { registerShareRoutes } from './routes/shares.js';
+import { closeAllShares, sweepShareDirs } from './shares/registry.js';
 import { setThermalSource } from '../lib/voice/whisperPressure.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
 import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
@@ -397,6 +399,8 @@ export function buildRouter(): Router {
   router.get('/api/handsfree/phone', handleHandsfreePhone);
   // Mac mode (hands-free from this laptop through a tunnel): the main listener's panel routes.
   registerHandsfreeMacRoutes(router);
+  // Live links: one app or one board over its own quick tunnel (src/server/routes/shares.ts).
+  registerShareRoutes(router);
   // Telegram bindings (W2): page-called under /api/telegram, Rust-called under their own prefixes.
   registerTelegramRoutes(router);
   // Version-skew heal: ensure-dashboard shuts a stale server down through this.
@@ -1217,7 +1221,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/shares','/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/card-ticket', '/api/agent/cards', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check', '/api/apps/requests/card', '/api/telegram-pairing', '/api/telegram-forward', '/api/telegram-creation', '/api/telegram-readopt', '/api/telegram-manager', '/api/mac-owner'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1697,6 +1701,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // open across the relaunch (K2, kart-alta-yapisma-2).
         noteServerStopping();
         console.log('\n  Shutting down...');
+        // Live links first (before the app runtimes and gateways they hold): every share's
+        // cloudflared is killed (SIGKILL after 3 s), awaited below inside the 5 s exit.
+        const sharesDone = closeAllShares('shutdown').catch(() => undefined);
         unpublishDesktopServer();
         stopAppsSweeper();
         stopAllRuntimes();
@@ -1712,7 +1719,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
-        void macDone.finally(() => {
+        void Promise.all([macDone, sharesDone]).finally(() => {
           // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
           // when this server exits — SIGKILL from the parent would skip this, but a
           // graceful SIGTERM or the parent-death watchdog both route through here.
@@ -1749,6 +1756,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // self-update moves, so a global strictly newer than this process is an upgrade too.
       startUpgradeReadyWatch(dreamcontextVersion(), () => readyVersionOnDisk());
       startOrphanSweep();
+      // Live links are memory-only: what a dead server left in ~/.dreamcontext/shares goes.
+      try { sweepShareDirs(); } catch { /* best-effort */ }
       // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
       pruneTakes();
       // The retired per-routine Telegram channel's token files: deleted once, here.

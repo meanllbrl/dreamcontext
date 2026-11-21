@@ -10,7 +10,7 @@ import { UUID_RE } from '../../lib/agent-session-map.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { CHAT_MODES, DEFAULT_CHAT_MODE, type ChatMode } from '../chat-modes.js';
 import { assistantExists, assistantProjectRoot, isAssistantVault } from '../../lib/assistant/home.js';
-import { isMacExposed, isPhoneSocket } from '../phone-origin.js';
+import { isMacExposed, isPhoneSocket, isTunnelSocket } from '../phone-origin.js';
 import { isSameOriginAsHost } from '../remote-access.js';
 
 /**
@@ -29,7 +29,7 @@ import { isSameOriginAsHost } from '../remote-access.js';
  *  `claude`-spawning upgrade/route enforces alongside the desktop check. A Mac-mode PHONE
  *  socket is never loopback, although cloudflared dials it from 127.0.0.1 (phone-origin.ts). */
 export function isLoopback(req: IncomingMessage): boolean {
-  if (isPhoneSocket(req)) return false;
+  if (isTunnelSocket(req)) return false;
   const remote = req.socket?.remoteAddress || '';
   return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
 }

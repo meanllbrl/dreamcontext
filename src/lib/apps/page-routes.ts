@@ -43,6 +43,8 @@ export function deniedForEveryone(path: string): boolean {
   return /^\/api\/automations\/threads\/say(\/|$)/.test(path)
     || /^\/api\/automations\/[^/]+\/thread\/reply(\/|$)/.test(path)
     || /^\/api\/apps(\/|$)/.test(path)
+    // Live links (tunel-paylasim C10): no app lists, opens, reads back or closes a share.
+    || /^\/api\/shares(\/|$)/.test(path)
     // The quick edit spends the owner's Claude account and writes his boards (plan
     // tahta-hizli-duzenle D14). Anchored, so a board slugged `quick-edit` stays readable.
     || /^\/api\/whiteboards\/quick-edit\/status$/.test(path)

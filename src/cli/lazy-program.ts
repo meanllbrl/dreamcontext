@@ -101,6 +101,7 @@ const LOADERS = new Map<string, Loader>([
   ['notify', async () => (await import('./commands/notify.js')).registerNotifyCommand],
   ['apps', async () => (await import('./commands/apps.js')).registerAppsCommand],
   ['handsfree', async () => (await import('./commands/handsfree.js')).registerHandsfreeCommand],
+  ['shares', async () => (await import('./commands/shares.js')).registerSharesCommand],
   ['t3-chat', t3],
   ['t3-run', t3],
   ['t3-account', t3],
