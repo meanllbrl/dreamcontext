@@ -4,7 +4,7 @@ import { telegramHub } from '../telegram/hub.js';
 import { deleteRoutine } from '../member-delete.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { conditionFacts, sendIfConditionUnseen, shownWitness } from './condition-witness.js';
@@ -1686,26 +1686,30 @@ export async function receivePhoto(req: IncomingMessage, res: ServerResponse): P
  * gate refuses anything not sitting directly inside the photos directory. A
  * 404 here is what the card renders initials for.
  *
- * `no-store` because a photo is replaced in place at a stable URL — a cached
- * one would leave the owner looking at the picture they just changed.
+ * Revalidated, never stored blind: see `sendPhotoFile`.
  */
 export async function handleAutomationsPhotoGet(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
   try {
     const manifest = isSafeAutomationSlug(params.slug) ? getAutomation(contextRoot, params.slug) : null;
-    sendPhotoFile(res, manifest ? resolveMemberPhoto(contextRoot, manifest.agent || manifest.slug, manifest.photo) : null);
+    sendPhotoFile(res, manifest ? resolveMemberPhoto(contextRoot, manifest.agent || manifest.slug, manifest.photo) : null, req);
   } catch {
     sendError(res, 404, 'no_photo', 'This agent has no photo.');
   }
 }
 
 /** Serve a photo already resolved through `resolveAutomationPhoto` (the only
- *  gate that keeps a synced `photo` string from naming an arbitrary file), or 404. */
-export function sendPhotoFile(res: ServerResponse, abs: string | null): void {
+ *  gate that keeps a synced `photo` string from naming an arbitrary file), or 404.
+ *
+ *  `no-cache` + an ETag of the file's mtime and size, never `no-store`: a photo is replaced in
+ *  place at a stable URL, so the browser must ask before reusing it, but an unchanged one answers
+ *  304 with no body. `no-store` re-sent the whole file (often 0.5-1 MB) on every mount, so every
+ *  page change blanked each face in the side panel until it landed again (owner 2026-11-21). */
+export function sendPhotoFile(res: ServerResponse, abs: string | null, req?: IncomingMessage): void {
   if (!abs) {
     sendError(res, 404, 'no_photo', 'This agent has no photo.');
     return;
@@ -1717,11 +1721,19 @@ export function sendPhotoFile(res: ServerResponse, abs: string | null): void {
     sendError(res, 404, 'no_photo', 'This agent has no photo.');
     return;
   }
+  const st = statSync(abs);
+  const etag = `"${Math.round(st.mtimeMs).toString(36)}-${st.size.toString(36)}"`;
+  if (req?.headers['if-none-match'] === etag) {
+    res.writeHead(304, { ETag: etag, 'Cache-Control': 'private, no-cache' });
+    res.end();
+    return;
+  }
   const bytes = readFileSync(abs);
   res.writeHead(200, {
     'Content-Type': type,
     'Content-Length': bytes.length,
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'private, no-cache',
+    ETag: etag,
   });
   res.end(bytes);
 }

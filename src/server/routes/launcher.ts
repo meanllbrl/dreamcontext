@@ -1682,9 +1682,10 @@ export async function handleLauncherLogo(
       // A logo may be an SVG: navigated to directly it stays inert (no script, opaque origin).
       'Content-Security-Policy': "default-src 'none'; sandbox",
       'X-Content-Type-Options': 'nosniff',
-      // Same short TTL as the peer logo: a swapped file shows on the next launch,
-      // repeat renders within a session stay free.
-      'Cache-Control': 'private, max-age=300',
+      // `ts` is the file's mtime (the status payload's `logoStamp`): a replaced logo gets a new
+      // URL, so a stamped one is kept for good and never re-downloaded on a page change (owner
+      // 2026-11-21). An unstamped request keeps the short TTL of the peer logo.
+      'Cache-Control': url.searchParams.has('ts') ? 'private, max-age=31536000, immutable' : 'private, max-age=300',
     });
     res.end(bytes);
   } catch (err) {

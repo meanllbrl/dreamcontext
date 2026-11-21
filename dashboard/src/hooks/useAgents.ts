@@ -7,6 +7,8 @@ export type AgentAutonomy = 'balanced' | 'free';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import { isConditionUnseen } from './useAutomations';
+import { bumpPhotoEpoch } from '../components/agents/photoEpoch';
+import { shrinkPhoto } from '../lib/shrinkPhoto';
 
 /**
  * Agents: the dashboard's read and write surface over `/api/agents*` (`src/server/routes/agents.ts`).
@@ -300,8 +302,8 @@ export function useUploadAgentIdentityPhoto() {
   const api = useApi();
   return useMutation({
     mutationFn: ({ slug, bytes }: { slug: string; bytes: Blob }) =>
-      api.postBytes<{ agent: AgentSummary }>(`/agents/${encodeURIComponent(slug)}/photo`, bytes).then((r) => r.agent),
-    onSuccess: (_agent, { slug }) => invalidateAgent(queryClient, slug),
+      shrinkPhoto(bytes).then((small) => api.postBytes<{ agent: AgentSummary }>(`/agents/${encodeURIComponent(slug)}/photo`, small)).then((r) => r.agent),
+    onSuccess: (_agent, { slug }) => { bumpPhotoEpoch(); invalidateAgent(queryClient, slug); },
   });
 }
 
