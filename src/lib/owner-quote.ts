@@ -4,7 +4,7 @@
  * change to something that rides in every project must also pass: that his words are ABOUT the
  * lines it changes ({@link quoteCoversChange}).
  */
-import { findQuoteTurn, occasion, type OwnerTurnLine } from './owner-words.js';
+import { conversationKeysFromEnv, findQuoteTurn, occasion, OWNER_WORDS_MAX_AGE_DAYS, readOwnerTurns, type OwnerTurnLine } from './owner-words.js';
 import { tokenize } from './recall.js';
 import { redactSecrets } from './telegram/format.js';
 
@@ -65,6 +65,23 @@ export function resolveOwnerQuotes(
     allResolved: quotes.length > 0 && quotes.every((q) => q.turn !== null),
     allHere: ctx.keys.length > 0 && quotes.length > 0 && here.every(Boolean),
   };
+}
+
+/**
+ * G1 for one caller's quote (`agents edit`/`revert`, the `team-amend` route): was it typed in the
+ * conversation `env` (or `keys`) names, relays included. Never throws: unreadable = not here.
+ */
+export function quoteTypedHere(quote: string, opts: { env?: NodeJS.ProcessEnv; keys?: readonly string[]; home?: string; now?: Date } = {}): boolean {
+  try {
+    const keys = opts.keys ?? conversationKeysFromEnv(opts.env ?? process.env);
+    if (keys.length === 0 || !oneLine(quote)) return false;
+    const now = opts.now ?? new Date();
+    const since = new Date(now.getTime() - OWNER_WORDS_MAX_AGE_DAYS * 86_400_000).toISOString();
+    const turns = readOwnerTurns({ ...(opts.home ? { home: opts.home } : {}), since });
+    return resolveOwnerQuotes([quote], { keys, turns }).allHere;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Is he talking about these lines ────────────────────────────────────────

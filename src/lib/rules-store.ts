@@ -30,7 +30,7 @@ import {
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { withFileLockSync } from './file-lock.js';
-import { amendmentRisks } from './agents/amendments.js';
+import { amendmentRisks, REMOVAL_RISKS } from './agents/amendments.js';
 import { globalAgentHome, listGlobalAgentSlugs } from './agents/scope.js';
 import { isSafeAutomationSlug } from './agents/slot.js';
 import { quoteCoversChange } from './owner-quote.js';
@@ -467,7 +467,6 @@ export function rideText(v: Pick<RuleView, 'headline' | 'text' | 'says' | 'when'
   return [v.headline, v.text, ...v.says, v.when].filter(Boolean).join('\n');
 }
 
-const REMOVAL_RISKS = /^(?:removing the whole text|replacing most of the text|changing or removing a line)/;
 
 /**
  * THE gate of a member store (D2): what an event an agent added may be. Never runs for his own

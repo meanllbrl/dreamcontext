@@ -38,6 +38,7 @@ import { agentActivity, automationJobById, currentReplyJob, runIsActive, whenRep
 import { getAutomation } from '../../lib/automations/store.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import { AmendmentRefused, amendMember, approvedTargets } from '../../lib/agents/amendments.js';
+import { quoteTypedHere } from '../../lib/owner-quote.js';
 import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval } from '../../lib/automations/registry.js';
@@ -3303,8 +3304,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const a = amendMember(root, {
         member, why: text(b.why) ?? '', prompt: text(b.prompt), soul: text(b.soul), job: text(b.job), routine: str(b.routine), session: c.who.sessionId,
         self: memberOfSuperId(c.superId), quote: text(b.quote),
+        // G1 (D13): his words typed in THIS Super's conversation, relays included.
+        ...(text(b.quote) ? { ownerQuote: { here: quoteTypedHere(text(b.quote)!, { keys: [c.who.sessionId].filter((k): k is string => !!k) }) } } : {}),
       });
       ok(res, {
+        receipt: `AMENDED ${a.id}${a.waits ? ' waits' : ''}`,
         amendment: a.id,
         changed: a.changes.map((x) => (x.routine ? `${x.routine}:${x.field}` : x.field)),
         approved: approvedTargets(root, member),

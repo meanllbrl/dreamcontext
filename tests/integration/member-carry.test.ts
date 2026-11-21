@@ -20,7 +20,7 @@ import {
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
 
 const ALL = process.env.MEMBER_CARRY_ALL === '1';
-const W2_TODO = new Set<string>(['E4', 'E10', 'E12']);
+const W2_TODO = new Set<string>(['E4']);
 const exam = (id: string, title: string, fn: () => void): void => {
   if (!ALL && W2_TODO.has(id)) it.todo(`${id} ${title} (W2)`);
   else it(`${id} ${title}`, fn, 120_000);
@@ -199,7 +199,7 @@ describe('member-carry exam', () => {
     const quote = 'bunu talimatına yaz: fiyat ekranında önce faydayı yaz';
     ownerSays(w, quote, [sid], { vault: w.project('kestrel'), surface: 'member' });
     const show = dc(w, w.project('kestrel'), ['agents', 'show', 'mira', '--json']);
-    const prompt = (JSON.parse(show.out) as { prompt: string }).prompt;
+    const prompt = (JSON.parse(show.out) as { agent: { prompt: string } }).agent.prompt;
     const r = dc(w, w.project('kestrel'), ['agents', 'edit', 'mira', '--prompt', `${prompt}\nFiyat ekranında önce faydayı yaz.`, '--quote', quote], memberEnv('mira', sid));
     expect(`${r.out}\n${r.err}`).toMatch(/AMENDED \S+/);
     expect(whoYouAre(surfaceB('lumen', 'mira'))).toContain('Fiyat ekranında önce faydayı yaz.');
@@ -225,7 +225,7 @@ describe('member-carry exam', () => {
     expect(r.id, r.out).not.toBeNull();
     expect(r.out, 'the receipt names the instruction line it touches').toContain('Harcama ve staging her zaman sorulur');
     const show = dc(w, w.project('kestrel'), ['agents', 'show', 'mira', '--json']);
-    const prompt = (JSON.parse(show.out) as { prompt: string }).prompt;
+    const prompt = (JSON.parse(show.out) as { agent: { prompt: string } }).agent.prompt;
     const ed = dc(w, w.project('kestrel'), ['agents', 'edit', 'mira', '--prompt', prompt.replace(' Harcama ve staging her zaman sorulur.', ' Harcama 1 doların altındaysa sorulmaz.'), '--quote', 'bir doların altını bana sorma, harcamayı yap'], memberEnv('mira', r.sid));
     expect(`${ed.out}\n${ed.err}`).toMatch(/AMENDED \S+/);
     const b = surfaceB('lumen', 'mira');
