@@ -112,7 +112,7 @@ describe('the hub adapter', () => {
     const replies: string[] = [];
     const buttons: string[][][] = [];
     const ab = { key: `${VIA.scope}/super`, scope: VIA.scope, target: 'super', projectName: 'acme' };
-    return { replies, buttons, hub: { active: new Map([[ab.key, ab]]), reply: async (_a: unknown, l: string) => { replies.push(l); }, notice: async (_a: unknown, _k: string, l: string) => { replies.push(l); }, sendButtons: async (_a: unknown, _h: string, l: string[][]) => { buttons.push(l); return 'id'; } } as never };
+    return { replies, buttons, hub: { active: new Map([[ab.key, ab]]), reply: async (_a: unknown, l: string) => { replies.push(l); }, notice: async (_a: unknown, _k: string, l: string) => { replies.push(l); }, noticeOnce: async (_a: unknown, _k: string, l: string) => { replies.push(l); return true; }, sendButtons: async (_a: unknown, _h: string, l: string[][]) => { buttons.push(l); return 'id'; } } as never };
   }
   function fakeSession(over: Partial<Record<string, unknown>> = {}) {
     let on = false; let via: typeof VIA | null = null; let channel: 'telegram' | 'full' | null = null;

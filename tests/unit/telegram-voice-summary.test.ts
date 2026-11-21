@@ -33,7 +33,7 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 function setup(target: string, speak: (t: string) => Promise<SpeakSummaryResult>, contextRoot: string | null = null) {
   const log: Sent[] = [];
   const spoken: string[] = [];
-  const hub = new TelegramHub({ home, speakSummary: async (t) => { spoken.push(t); return speak(t); } });
+  const hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, speakSummary: async (t) => { spoken.push(t); return speak(t); } });
   const ab = {
     key: `0123456789abcdef/${target}`, scope: '0123456789abcdef', target,
     binding: { v: 1, token: 't', botId: 1, botUsername: 'b', chatId: 777, userId: 777, boundAt: '' },

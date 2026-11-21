@@ -31,18 +31,22 @@ describe('the Telegram line keeps one question in one place (owner 2026-11-10)',
     expect(line).not.toContain('ask again with a new `super ask` card');
     expect(line).toContain('A choice only he can make still goes in a `super ask` card');
     expect(line).toContain('lists one level deep');
+    expect(line).toContain('One turn is ONE message on his phone');
   });
 });
 
-describe('one Telegram writing rule for every surface (owner 2026-11-14, B2)', () => {
+describe('one Telegram writing rule for every surface (owner 2026-11-14, B2; short since 2026-11-21)', () => {
   it('the Super briefing (main and every member) carries the shared rule word for word', () => {
     expect(SUPER_TELEGRAM_LINE).toContain(TELEGRAM_WRITING_RULE);
     expect(superBriefing()).toContain(TELEGRAM_WRITING_RULE);
   });
 
   it('names each element with its one job', () => {
-    for (const piece of ['ONE bold line', 'bold head on its own line', 'ONE blank line between groups', '`inline code`', '`>` quote', 'fenced code block', '`**Ayrıntı**`', 'No tables']) {
+    for (const piece of ['ONE bold line', 'at most three short sentences', 'ONE blank line between them', 'No heads, no bullet groups', '`inline code`', '`>` quote', 'fenced code block', '`**Ayrıntı**`', 'never dropped', 'No tables']) {
       expect(TELEGRAM_WRITING_RULE).toContain(piece);
     }
+    // Doc 2026-11-21 (K1): the report shape the old rule asked for is gone.
+    expect(TELEGRAM_WRITING_RULE).not.toContain('bold head');
+    expect(TELEGRAM_WRITING_RULE).not.toContain('bullets under it');
   });
 });

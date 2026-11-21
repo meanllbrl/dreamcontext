@@ -48,6 +48,7 @@ import {
 } from '../../lib/telegram/contract.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes, type AskCardQuestion, type DrawnOption } from '../../lib/telegram/ask-format.js';
 import { escapeHtml, redactSecrets } from '../../lib/telegram/format.js';
+import { cardAbout, closedCardHtml } from '../../lib/telegram/system-lines.js';
 import { agendaItemBlock } from '../../lib/telegram/headers.js';
 import { LINES, NOT_SHOWN_WHOLE_LINE, shownWhole, visibleCommand, type ActiveBinding, type SuperTurnSpan, type TelegramHub } from './hub.js';
 import { richQuestionsOf, type RichAsks } from './rich-asks.js';
@@ -183,8 +184,9 @@ function remember(itemId: string, copy: Copy, item?: SuperQueueItem): void {
  *  A close that carries no answer (the record closed it: a message of his taken as the answer,
  *  a new session, a hand-over) says only that the card closed, never that he answered it
  *  (owner 2026-11-10: a card stamped "Cevaplandı" while the Super still waited on him). */
-export function closedCopyLine(pick: string | null): string {
-  return pick ? `<b>✓ Cevaplandı: ${escapeHtml(redactSecrets(pick).slice(0, 300))}</b>` : '<i>Bu kart kapandı.</i>';
+export function closedCopyLine(pick: string | null, about = ''): string {
+  // ONE line once closed (telegram-sade, Doc C3): the question goes, the answer and its subject stay.
+  return pick ? closedCardHtml(`✓ Cevaplandı: ${pick.replace(/\s+/g, ' ')}`, about) : closedCardHtml('Bu kart kapandı', about);
 }
 
 /** Closed elsewhere: each message of its copy says how, buttons gone. */
@@ -193,16 +195,17 @@ async function closeCopy(hub: TelegramHub, itemId: string, answers: Record<strin
   if (!c) return;
   copies.delete(itemId);
   if (c.askId) rich?.close(c.askId);
-  const all = answers ? Object.values(answers).join('\n') : '';
+  const all = answers ? Object.values(answers).filter(Boolean).join(' · ') : '';
   for (const m of c.messages) {
     if (!m.messageId) continue;
-    const pick = answers && m.question ? answers[m.question] ?? '' : c.messages.length === 1 ? all : '';
-    await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n${closedCopyLine(pick || null)}`);
+    // One message holds the whole card (a rich ask, telegram-sade): its line carries every answer.
+    const pick = c.messages.length === 1 ? all : answers && m.question ? answers[m.question] ?? '' : '';
+    await hub.closeAnswered(c.ab, m.messageId, closedCopyLine(pick || null, cardAbout(m.html)));
   }
 }
 
-/** What an old copy of a card ends with once the card was sent again at the bottom. */
-export const MOVED_COPY_LINE = '<i>↓ Bu soru aşağıda yeniden soruldu.</i>';
+/** What an old copy of a card becomes when Telegram will not delete it (older than 48 h). */
+export const MOVED_COPY_LINE = '<i>↓ Aşağıda yeniden soruldu.</i>';
 
 /**
  * A question card buried under later messages comes back to the bottom (owner 2026-11-16: "bana
@@ -244,9 +247,12 @@ async function resurfaceBuried(hub: TelegramHub, ab: ActiveBinding, superSession
       continue;
     }
     if (c.askId) rich?.close(c.askId);
+    // The old copy is deleted (telegram-sade, Doc C3: 37 "aşağıda yeniden soruldu" copies stayed
+    // whole); only one Telegram will not delete becomes a single line.
     for (const m of c.messages) {
       if (!m.messageId || (live.has(m.messageId) && !hub.buttonsLive(c.ab, m.messageId))) continue;
-      await hub.closeAnswered(c.ab, m.messageId, `${m.html}\n\n${MOVED_COPY_LINE}`).catch(() => false);
+      if (await hub.deleteMessage(c.ab, m.messageId)) continue;
+      await hub.closeAnswered(c.ab, m.messageId, MOVED_COPY_LINE).catch(() => false);
     }
     appendAskLog(hub.home, `${id} ${item.kind} resent below (later messages buried it)`);
   }

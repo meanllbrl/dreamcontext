@@ -64,7 +64,7 @@ beforeEach(async () => {
   writeFileSync(join(root, 'agents', 'ua-manager.md'), '---\ntitle: UA Manager · Kampanya yöneticisi\n---\n## Prompt\n\nYou run UA.\n');
   tg = new FakeTelegram(); tg.addBot(MANAGER, 'acme_mgr_bot'); tg.addBot(MEMBER, 'ua_bot');
   tg.addBot('555:NEWTOKENNEWTOKENNEWTOKENNEWTOKEN12', 'ua_manager_x1y2_bot');
-  hub = new TelegramHub({ home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
+  hub = new TelegramHub({ textGraceMs: 0, sadeTickMs: 0, home, fetchImpl: tg.fetch, pollTimeoutS: 0, sleep: async () => {}, vaults: () => [{ name: 'acme', contextRoot: root }] });
   wireManager(hub);
   await hub.start();
   setTelegramHub(hub);

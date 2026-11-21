@@ -185,10 +185,10 @@ export function handsfreeAdapter(session: () => HandsfreeSessionLike, opts: Hand
         if (e.type === 'ended') {
           // Only an end he did not cause is news (the link dropped, the app quit, it failed to
           // open); closing it himself, or coming back to the Mac, gets no note.
-          if (!OWN_ENDS.has(e.reason)) void hub.notice(ab, 'warn', HF_LINES.ended(REASONS[e.reason] ?? e.reason, e.keyed), true);
+          if (!OWN_ENDS.has(e.reason)) void hub.noticeOnce(ab, 'warn', HF_LINES.ended(REASONS[e.reason] ?? e.reason, e.keyed), true);
         }
-        else if (e.type === 'batteryFloor') void hub.notice(ab, 'warn', HF_LINES.battery, true);
-        else if (e.type === 'heat') void hub.notice(ab, 'warn', HF_LINES.heat, true);
+        else if (e.type === 'batteryFloor') void hub.noticeOnce(ab, 'warn', HF_LINES.battery, true);
+        else if (e.type === 'heat') void hub.noticeOnce(ab, 'warn', HF_LINES.heat, true);
         else if (e.type === 'url') void hub.notice(ab, 'phone', HF_LINES.newLink(e.origin), true);
       });
     },

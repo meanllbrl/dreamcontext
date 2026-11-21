@@ -34,7 +34,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
-  chatInjector, getChat, onChatAssistantText, onChatChange, onChatInjector, onChatUserSent, telegramRefs,
+  chatInjector, getChat, onChatAssistantText, onChatChange, onChatInjector, onChatTurnHint, onChatUserSent, telegramRefs,
   type ChatEntry, type PendingQuestion,
 } from '../../lib/assistant/chat-registry.js';
 import { appLinkForContextRoot } from '../../lib/app-link.js';
@@ -56,8 +56,8 @@ import {
   type TelegramHubApi, type TelegramScope, type TelegramStatusRow, type TelegramTarget, type TurnRecord,
 } from '../../lib/telegram/contract.js';
 import {
-  bindingDir, isValidScope, isValidTarget, isValidToken, listBindings, readBinding, readPollState, readTurns,
-  redactToken, removeBindingDir, scopeOfContextRoot, withKeptGroups, writeBinding, writePollState, writeTurns,
+  bindingDir, isValidScope, isValidTarget, isValidToken, listBindings, readBinding, readPollState, readSade, readTurns,
+  redactToken, removeBindingDir, scopeOfContextRoot, withKeptGroups, writeBinding, writePollState, writeSade, writeTurns,
 } from '../../lib/telegram/config.js';
 import { writeAwayState } from '../../lib/telegram/away-state.js';
 import { onOwnerAtMac } from '../../lib/telegram/back-at-mac.js';
@@ -69,7 +69,11 @@ import { TelegramTransport, type FetchLike, type UploadFile } from '../../lib/te
 import { TelegramPoller, type PollStateIO, type UpdateDisposition } from '../../lib/telegram/poller.js';
 import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
 import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
-import { SILENT, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
+import { SILENT, cardAbout, closedCardHtml, jobStatusHtml, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
+import {
+  API_DOWN_LINE, HELD_CAP_MS, NOTICE_ONCE_MS, OWNER_ACTIVE_MS, TEXT_GRACE_MS, agendaPinHtml, asksForText, dayOf, isApiErrorText, isNight,
+  mergeHeld, nightDigestMarkdown, picturesOnly, statusBlocks, voiceFromText, chatterRemains, isOnlyMarks, type StatusBlock,
+} from './sade.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
 import { appendAskLog } from './ask-log.js';
 import { asksForVoice, voiceAnswer } from '../../lib/telegram/voice-block.js';
@@ -225,6 +229,10 @@ export interface HubDeps {
   speakSummary?: (text: string) => Promise<SpeakSummaryResult>;
   /** The owner's language for a Super session (default inbox.ts `superKnownLanguage`; tests inject). */
   ownerLanguage?: (sessionId: string) => OwnerLanguage | null;
+  /** How long a Super text waits for a tool call or its end before it goes (default `TEXT_GRACE_MS`). */
+  textGraceMs?: number;
+  /** How often the agenda pins and the night's results are looked at (default 30 s; 0 = never, tests call `tickSade`). */
+  sadeTickMs?: number;
 }
 
 export type BindingKey = string; // `${scope}/${target}`
@@ -291,6 +299,19 @@ interface TgTurn {
  *  its chat by then (-1 until read, in line with the sends before it). */
 export interface SuperTurnSpan { startedAt: number; before: number }
 
+/**
+ * Edits one of the hub's own messages in place: 'ok' (also when nothing changed), 'gone' (Telegram
+ * says the message is not there or can no longer be edited: a new one may replace it), 'failed'
+ * (a timeout, a 429, a network blip: the edit may still have landed, so nothing replaces it).
+ */
+async function editInPlace(ab: ActiveBinding, messageId: number, html: string): Promise<'ok' | 'gone' | 'failed'> {
+  return ab.transport.editMessageText(ab.binding.chatId, messageId, html).then(() => 'ok' as const, (err) => {
+    const m = String((err as Error)?.message ?? err);
+    if (/not modified/i.test(m)) return 'ok' as const;
+    return /message to edit not found|message can't be edited|message_id_invalid|message not found/i.test(m) ? 'gone' as const : 'failed' as const;
+  });
+}
+
 export class TelegramHub implements TelegramHubApi {
   readonly home: string;
   readonly now: () => number;
@@ -327,6 +348,20 @@ export class TelegramHub implements TelegramHubApi {
    *  chat (`onOwnerAtMac`, owner 2026-11-09) mark every binding `mac`. Memory only: a restarted
    *  server starts off Telegram (fails toward fewer sends). */
   private presence = new Map<BindingKey, { via: 'telegram' | 'mac'; at: number }>();
+  /** Per Super chat: its turn's text waiting for the turn's last word (telegram-sade: one turn,
+   *  one message). `interim` = a tool call came after it. Memory only. */
+  private held = new Map<string, { text: string; inputs: { telegram: Set<string>; mac: boolean } | undefined; mark: SuperTurnMark; turn: number; cards: number; ask: { landed: boolean; inTurn?: boolean } | undefined; interim: boolean; timer: ReturnType<typeof setTimeout> | null }>();
+  /** `${binding}:${job id}` → that job's one status message (telegram-sade). Memory only. */
+  private statusMsgs = new Map<string, { messageId?: number; shown: string; want: string; at: number }>();
+  /** Per status message: its draws, one at a time (`drawStatus`). */
+  private statusChains = new Map<string, Promise<boolean>>();
+  /** Per bot: the agenda pin's look in progress (`refreshPin` runs one at a time). */
+  private pinChains = new Map<string, Promise<void>>();
+  /** `${binding}|${sentence}` → when that notice last went (`noticeOnce`). */
+  private noticeSeen = new Map<string, number>();
+  /** Per binding: the day he asked for voice there (`dayOf`), until he asks for text. */
+  private voiceDays = new Map<BindingKey, string>();
+  private sadeTimer: ReturnType<typeof setInterval> | null = null;
   /** Prompts already sent (requestId), so a re-emitted `asking` does not send twice. */
   private sentPrompts = new Set<string>();
   private unsubs: Array<() => void> = [];
@@ -348,6 +383,7 @@ export class TelegramHub implements TelegramHubApi {
       onChatAssistantText((sid, text) => this.queueAssistantText(sid, text)),
       onChatChange((c) => this.onChatChange(c.entry, c.from)),
       onChatUserSent((sid, _text, source) => this.noteUserSent(sid, source)),
+      onChatTurnHint((sid, hint) => this.onTurnHint(sid, hint)),
       onOwnerAtMac((at) => this.backAtMac(at)),
       telegramRefs.onTelegramRefDropped((id, ref, written) => this.onRefDropped(id, ref, written)),
       telegramRefs.onTelegramRefWritten((id, ref) => this.onRefWritten(id, ref)),
@@ -357,6 +393,8 @@ export class TelegramHub implements TelegramHubApi {
       this.activate(row.scope, row.target, row.read.binding);
     }
     this.manager?.start();
+    const tickMs = this.deps.sadeTickMs ?? 30_000;
+    if (tickMs > 0) { this.sadeTimer = setInterval(() => { void this.tickSade().catch(() => {}); }, tickMs); this.sadeTimer.unref?.(); }
     // Every bot already bound is brought up to date once per start: a bot bound before a release
     // that added a profile field (the Super's command menu, 2026-11-08) gets it here.
     void (async () => { for (const ab of [...this.active.values()]) await this.syncProfile(ab); })();
@@ -426,6 +464,10 @@ export class TelegramHub implements TelegramHubApi {
     for (const p of this.pairings.values()) p.poller.stop();
     for (const t of this.turns.values()) if (t.typing) clearInterval(t.typing);
     this.turns.clear();
+    if (this.sadeTimer) clearInterval(this.sadeTimer);
+    this.sadeTimer = null;
+    for (const h of this.held.values()) if (h.timer) clearTimeout(h.timer);
+    this.held.clear();
     this.pairings.clear();
     this.started = false;
   }
@@ -736,9 +778,9 @@ export class TelegramHub implements TelegramHubApi {
    *  answer paths call `answerExtras`); every other caller (notices) keeps "Mac'te" lines.
    *  `reply.answers`: the owner turn this text answers; when he wrote again since, the first
    *  message is a native Telegram reply to his (B2). */
-  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string; answers?: string }, blocks: 'hub' | 'mac' = 'mac', fold = false): Promise<void> {
-    // No bot's conversation folds (owner 2026-11-14, B2): a Super's words, a member's own Super's
-    // words and every question read whole. Only a routine's forwarded result folds (member-forward.ts).
+  async sendMarkdown(ab: ActiveBinding, md: string, reply?: { ref: string; quote?: string; answers?: string }, blocks: 'hub' | 'mac' = 'mac', fold: boolean | 'answer' = false): Promise<void> {
+    // A Super's answer folds its `**Ayrıntı**` quote, never the answer or a state line (`'answer'`,
+    // owner 2026-11-21, replacing the 2026-11-14 "never folds"); a question reads whole; a routine's forwarded result folds long.
     const first = this.replyParamsFor(ab, reply?.answers);
     let n = 0;
     for (const html of toTelegramMessages(redactSecrets(md), { blocks, fold })) {
@@ -755,6 +797,21 @@ export class TelegramHub implements TelegramHubApi {
    *  `loud` (the owner has to do something). The only way the hub says a warning or a state. */
   async notice(ab: ActiveBinding, kind: NoticeKind, sentence: string, loud = false): Promise<void> {
     await this.send(ab, noticeHtml(kind, sentence), loud ? {} : SILENT).catch(() => {});
+  }
+
+  /** `notice`, but the same sentence on the same bot goes at most once a day (Doc 2026-11-21:
+   *  the same hands-free, battery and error lines came up to 20 times). True when it went now. */
+  async noticeOnce(ab: ActiveBinding, kind: NoticeKind, sentence: string, loud = false): Promise<boolean> {
+    const key = `${ab.key}|${sentence}`;
+    const last = this.noticeSeen.get(key);
+    if (last !== undefined && this.now() - last < NOTICE_ONCE_MS) return false;
+    // Claimed while it is on its way (a second call does not send it twice), kept only once it
+    // LANDED: a failed send must not hide the warning for a day (review r1).
+    this.noticeSeen.set(key, this.now());
+    if (this.noticeSeen.size > 500) this.noticeSeen.delete(this.noticeSeen.keys().next().value as string);
+    const landed = await this.send(ab, noticeHtml(kind, sentence), loud ? {} : SILENT).then(() => true, () => false);
+    if (!landed && this.noticeSeen.get(key) !== undefined) this.noticeSeen.delete(key);
+    return landed;
   }
 
   // ── Inbound ──
@@ -1362,10 +1419,21 @@ export class TelegramHub implements TelegramHubApi {
    * A failed text send throws, as `sendMarkdown` does; the voice never throws.
    */
   async sendAnswer(ab: ActiveBinding, md: string, sessionId: string | null, reply: { ref: string; quote?: string; answers?: string } | undefined, blocks: 'hub' | 'mac', replyRefs: readonly (string | null | undefined)[] = []): Promise<boolean> {
-    const { text, voice } = voiceAnswer(md);
+    return (await this.sendAnswerSpoken(ab, md, sessionId, reply, blocks, replyRefs)).landed;
+  }
+
+  /** `sendAnswer`, also saying whether a voice was sent (its block, or a voice day's own words). */
+  private async sendAnswerSpoken(...[ab, md, sessionId, reply, blocks, replyRefs = []]: Parameters<TelegramHub['sendAnswer']>): Promise<{ landed: boolean; voiced: boolean }> {
+    let { text, voice } = voiceAnswer(md);
+    // A voice day (he asked for voice there today): an answer with no block speaks its own words,
+    // its one bold line beside it (Doc 2026-11-21, item 7).
+    if (!voice && this.voiceDayOn(ab)) {
+      const spoken = voiceFromText(text);
+      if (spoken) { voice = spoken.voice; text = `**${spoken.line.replace(/\*/g, '')}**${picturesOnly(text)}`; }
+    }
     let landed = false;
     if (text.trim()) {
-      await this.sendMarkdown(ab, text, reply ? { ...reply, quote: reply.quote === md ? text : reply.quote } : undefined, blocks);
+      await this.sendMarkdown(ab, text, reply ? { ...reply, quote: reply.quote === md ? text : reply.quote } : undefined, blocks, 'answer');
       landed = true;
     }
     if (text.trim()) await this.answerExtras?.(ab, text, sessionId ?? '').catch(() => {});
@@ -1376,15 +1444,16 @@ export class TelegramHub implements TelegramHubApi {
       });
       landed = spoke || landed;
     }
-    return landed;
+    return { landed, voiced: !!voice };
   }
 
-  /** `sendAnswer` for a Super text of these turns: once it returns, a text carrying a `dream-voice`
-   *  block marks them voiced (the voice reply lands its voice or its line + text; a text send that
-   *  throws never reached it), read at turn end. */
+  /** `sendAnswer` for a Super text of these turns: once it returns, an answer that had a voice to
+   *  send (its `dream-voice` block, or a voice day speaking its words; review r1) marks them voiced
+   *  (the voice reply lands its voice or its line + text; a text send that throws never reached
+   *  it), read at turn end. */
   private async answerFor(turns: readonly TgTurn[], ...args: Parameters<TelegramHub['sendAnswer']>): Promise<boolean> {
-    const landed = await this.sendAnswer(...args);
-    if (voiceAnswer(args[1]).voice) {
+    const { landed, voiced } = await this.sendAnswerSpoken(...args);
+    if (voiced) {
       for (const t of turns) t.voiced = true;
       const sid = args[2];
       if (landed && sid) this.voicedCount.set(sid, (this.voicedCount.get(sid) ?? 0) + 1);
@@ -1450,7 +1519,10 @@ export class TelegramHub implements TelegramHubApi {
     const rec: TurnRecord = { ref, updateId, chatId: ab.binding.chatId, sessionId, firstAt: this.now() };
     writeTurns(dir, { v: 1, turns: [...fresh, rec].slice(-500) }, this.home);
     this.superSessions.set(sessionId, ab.key);
-    this.beginTurn(ab, ref, sessionId, !as && asksForVoice(own)); // his own words only, never a card's question
+    // A voice day starts with his asking for voice there and ends with his asking for text.
+    if (!as && asksForText(own)) this.voiceDays.delete(ab.key);
+    else if (!as && asksForVoice(own)) this.voiceDays.set(ab.key, dayOf(this.now()));
+    this.beginTurn(ab, ref, sessionId, !as && (asksForVoice(own) || this.voiceDayOn(ab))); // his own words only, never a card's question
     // `own` only for a message he wrote (`deliver`); a card tap, a run report or a schedule has none.
     const r = await inj.sendOwnerText(withTelegramRef(ref, text), { ref, source: as ? as.kind : 'telegram-text', ...(!as && own.trim() ? { own } : {}) });
     if (!r.ok) {
@@ -1463,6 +1535,8 @@ export class TelegramHub implements TelegramHubApi {
     // A run report or a scheduled job is the app's, not a message he wrote: it moves no presence.
     if (!as) {
       this.presence.set(ab.key, { via: 'telegram', at: this.now() });
+      // He is writing: the night's results come now, before his answer.
+      void this.flushNight(ab, true).catch(() => {});
       try { this.deps.handsfree?.onPresence?.(this, ab.key, 'telegram'); } catch { /* best-effort */ }
       this.flushAway();
       writeAwayState(this.ownerAway(), this.home, this.now());
@@ -1653,6 +1727,8 @@ export class TelegramHub implements TelegramHubApi {
     const key = this.superSessions.get(entry.sessionId);
     if (!key) return;
     const ab = this.active.get(key);
+    // A card, the turn's end or the chat's end: the text this turn wrote goes first, in order.
+    if (entry.status === 'asking' || entry.status === 'idle' || entry.status === 'gone') this.flushHeld(entry.sessionId, entry.status === 'asking');
     if (entry.status === 'asking' && entry.pendingQuestion && ab) void this.sendPrompt(ab, entry.sessionId, entry.pendingQuestion).catch(() => {});
     if ((entry.status === 'working' || entry.status === 'starting') && !this.turnStartedAt.has(entry.sessionId)) this.turnStartedAt.set(entry.sessionId, Date.now());
     if ((entry.status === 'idle' || entry.status === 'gone') && from !== entry.status) {
@@ -1691,6 +1767,8 @@ export class TelegramHub implements TelegramHubApi {
           return false;
         });
       }
+      // The agenda pin follows what the turn moved.
+      if (ab && !ab.disabled) this.queueSend(entry.sessionId, async () => { await this.refreshPin(ab).catch(() => {}); return false; });
       // Every text of this turn was emitted before its `result`: the ones still sending are here.
       const sending = this.textChains.get(entry.sessionId);
       for (const t of [...this.turns.values()]) {
@@ -1818,7 +1896,10 @@ export class TelegramHub implements TelegramHubApi {
    * says a message LANDED on Telegram (a failed send leaves the turn silent, so its end says so).
    * The turn's end waits on this chain before it judges.
    */
-  queueSend(sessionId: string, send: (turns: TgTurn[]) => Promise<boolean>): void {
+  queueSend(sessionId: string, send: (turns: TgTurn[]) => Promise<boolean>, fromHold = false): void {
+    // Anything else this chat sends (a card, a picture, a turn's end) goes after the text the turn
+    // already wrote: the held text is let out first, in order.
+    if (!fromHold) this.flushHeld(sessionId, true);
     const turns = this.turnsOf(sessionId);
     const next = (this.textChains.get(sessionId) ?? Promise.resolve())
       .then(() => send(turns))
@@ -1858,20 +1939,232 @@ export class TelegramHub implements TelegramHubApi {
   }
 
   /** One Super text: its turn's inputs read now, as it is written, never after a send. */
-  private queueAssistantText(sessionId: string, text: string): void {
+  private queueAssistantText(sessionId: string, raw: string): void {
     const inputs = this.turnInputs.get(sessionId);
     const mark = superTurnMark(sessionId);
     const ask = this.askInTurn.get(sessionId);
     const turn = turnOf(sessionId);
     const cards = this.textsSent.cardsOf(sessionId, turn);
+    // A raw model or network error is never words for him: one plain sentence, once a day.
+    if (isApiErrorText(raw)) {
+      this.queueSend(sessionId, async () => {
+        const ab = this.bindingOfSession(sessionId);
+        if (!ab || ab.disabled || !(this.onTelegram(ab) || this.telegramTurnOf(sessionId))) return false;
+        // Spoken only when it went now: a turn whose line was already said today stays silent,
+        // and its end says so (review r1: he must still learn his message got no answer).
+        return this.noticeOnce(ab, 'warn', API_DOWN_LINE, true);
+      });
+      return;
+    }
+    // A job's status block is its one message, edited in place, at once (never held).
+    const { rest: text, blocks } = statusBlocks(raw);
+    for (const b of blocks) this.queueSend(sessionId, () => this.jobStatus(sessionId, b));
+    if (!text.trim()) return;
+    // Hands-free streaming reads every text as it comes.
+    const bound = this.bindingOfSession(sessionId);
+    if (bound && this.deps.handsfree?.streamsTo(bound.scope, bound.target)) {
+      this.queueSend(sessionId, (turns) => this.onAssistantText(sessionId, text, { turns, inputs, mark, turn, cards }));
+      return;
+    }
+    // One turn, one message: the text waits for the turn's last word (a tool call after it makes
+    // it a line between calls; the end of the message, the turn's end or another send lets it out).
+    const prev = this.held.get(sessionId);
+    if (prev?.timer) clearTimeout(prev.timer);
+    const h = { text: prev ? mergeHeld(prev.text, text, prev.interim) : text, inputs, mark, turn, cards, ask, interim: false, timer: null as ReturnType<typeof setTimeout> | null };
+    this.held.set(sessionId, h);
+    h.timer = setTimeout(() => this.flushHeld(sessionId), this.deps.textGraceMs ?? TEXT_GRACE_MS);
+    h.timer.unref?.();
+  }
+
+  /** The model started a tool call (the held text is a line between calls: it waits for the
+   *  answer, at most `HELD_CAP_MS`) or ended its message (the held text is the answer: it goes). */
+  private onTurnHint(sessionId: string, hint: 'tool' | 'end'): void {
+    const h = this.held.get(sessionId);
+    if (!h) return;
+    if (hint === 'end') { this.flushHeld(sessionId); return; }
+    if (h.timer) clearTimeout(h.timer);
+    h.interim = true;
+    h.timer = setTimeout(() => this.flushHeld(sessionId), HELD_CAP_MS);
+    h.timer.unref?.();
+  }
+
+  /**
+   * The held text of this chat goes now, through the one sender, in order. `beforeOther` = it is
+   * let out because something else goes (a job status, a card, a picture): a line written before
+   * a tool call that is only chatter ("Bakıyorum.") does not go then (review r1, AC2); it stays
+   * held as its reply mark alone, so the answer after it still answers his message. A held text
+   * of reply marks only never goes.
+   */
+  private flushHeld(sessionId: string, beforeOther = false): void {
+    const h = this.held.get(sessionId);
+    if (!h) return;
+    if (beforeOther && h.interim) {
+      const mark = chatterRemains(h.text);
+      if (mark !== null) { h.text = mark; return; }
+    }
+    this.held.delete(sessionId);
+    if (h.timer) clearTimeout(h.timer);
+    if (isOnlyMarks(h.text)) return;
     this.queueSend(sessionId, (turns) => {
       // Owner 2026-11-18 ("tekrara düşme"): on his phone the card IS the question. A short line,
       // with no reply mark, the turn writes after its own ask landed ("seçimlerini bekliyorum") only says it again;
       // the Super's prompt forbids it, and here it never reaches Telegram (the Mac still draws
       // it). A real report after the card (owner-prose length) still goes.
-      if (ask?.landed && text.trim().length < OWNER_PROSE_MIN_CHARS && !splitReplySections(text).some((s) => s.refs.length)) return Promise.resolve(false);
-      return this.onAssistantText(sessionId, text, { turns, inputs, mark, turn, cards });
-    });
+      if (h.ask?.landed && h.text.trim().length < OWNER_PROSE_MIN_CHARS && !splitReplySections(h.text).some((s) => s.refs.length)) return Promise.resolve(false);
+      return this.onAssistantText(sessionId, h.text, { turns, inputs: h.inputs, mark: h.mark, turn: h.turn, cards: h.cards });
+    }, true);
+  }
+
+  /** One job's status message (telegram-sade, owner 2026-11-21 17:15): sent once, silently, and
+   *  edited in place on every later block of the same id; a new one only when the old one cannot
+   *  be edited any more. Sent at first only while he is on Telegram or in a Telegram turn. */
+  private async jobStatus(sessionId: string, b: StatusBlock): Promise<boolean> {
+    const ab = this.bindingOfSession(sessionId);
+    if (!ab || !this.serving(ab)) return false;
+    const key = `${ab.key}:${b.id}`;
+    const html = jobStatusHtml(b.lines, b.done);
+    const had = this.statusMsgs.get(key);
+    if (had) { had.want = html; had.at = this.now(); }
+    else {
+      if (!(this.onTelegram(ab) || this.telegramTurnOf(sessionId) || this.deps.handsfree?.streamsTo(ab.scope, ab.target))) return false;
+      this.statusMsgs.set(key, { shown: '', want: html, at: this.now() });
+    }
+    for (const [k, v] of this.statusMsgs) if (this.now() - v.at > NOTICE_ONCE_MS) this.statusMsgs.delete(k);
+    return this.drawStatus(ab, key);
+  }
+
+  /**
+   * The ONE writer of a job's status message (review r3: a retry and a new block raced and the
+   * phone ended on an older state). Each message has what it should show (`want`) and what Telegram
+   * confirmed (`shown`); its draws run one at a time and always read the entry fresh, so the last
+   * block wins. A timeout or a 429 leaves `want` waiting for the next look (`tickSade`); a message
+   * Telegram says is gone is sent again; never a second message otherwise. True when the message
+   * shows `want` now.
+   */
+  private drawStatus(ab: ActiveBinding, key: string): Promise<boolean> {
+    const run = async (): Promise<boolean> => {
+      for (let guard = 0; guard < 5; guard++) {
+        const e = this.statusMsgs.get(key);
+        if (!e || !this.serving(ab)) return false;
+        if (e.messageId !== undefined && e.shown === e.want) return true;
+        const target = e.want;
+        if (e.messageId !== undefined) {
+          const edit = await editInPlace(ab, e.messageId, target);
+          if (edit === 'failed') return false;
+          const now = this.statusMsgs.get(key);
+          if (!now) return false;
+          if (edit === 'gone') { if (now.messageId === e.messageId) { now.messageId = undefined; now.shown = ''; } continue; }
+          if (now.messageId === e.messageId) now.shown = target;
+          continue;
+        }
+        const sent = await this.send(ab, target, SILENT).catch(() => null);
+        if (!sent || !Number.isSafeInteger(sent.message_id)) return false;
+        const now = this.statusMsgs.get(key);
+        if (!now) return false;
+        now.messageId = sent.message_id; now.shown = target;
+      }
+      return false;
+    };
+    const next = (this.statusChains.get(key) ?? Promise.resolve(false)).then(run, run).catch(() => false);
+    this.statusChains.set(key, next);
+    void next.then(() => { if (this.statusChains.get(key) === next) this.statusChains.delete(key); });
+    return next;
+  }
+
+  /** Status messages still waiting on an edit that failed (a timeout, a 429): drawn again. */
+  private async retryStatusEdits(ab: ActiveBinding): Promise<void> {
+    if (!this.serving(ab)) return;
+    for (const [key, v] of [...this.statusMsgs]) {
+      if (!key.startsWith(`${ab.key}:`)) continue;
+      // A message that could not be edited for a day is let go (a blocked bot, a chat gone).
+      if (this.now() - v.at > NOTICE_ONCE_MS) { this.statusMsgs.delete(key); continue; }
+      if (v.messageId !== undefined && v.shown !== v.want) await this.drawStatus(ab, key);
+    }
+  }
+
+  /** He asked for voice on this bot today and has not asked for text since. */
+  voiceDayOn(ab: ActiveBinding): boolean {
+    return this.voiceDays.get(ab.key) === dayOf(this.now());
+  }
+
+  /** The pinned agenda and the night's results, looked at on a timer (and at a turn's end). */
+  async tickSade(): Promise<void> {
+    for (const ab of [...this.active.values()]) {
+      if (ab.disabled) continue;
+      await this.retryStatusEdits(ab).catch(() => {});
+      await this.refreshPin(ab).catch(() => {});
+      await this.flushNight(ab).catch(() => {});
+    }
+  }
+
+  /**
+   * The ONE pinned agenda message of a Super bot (owner 2026-11-21 17:31): drawn from the Super's
+   * agenda card, edited in place when it changes (an edit never rings), pinned silently once. Made
+   * only once the agenda holds something while he is away; kept up to date from then on.
+   */
+  async refreshPin(ab: ActiveBinding): Promise<void> {
+    // One at a time per bot (review r1: the timer and a turn's end both saw no pin and both pinned).
+    const prev = this.pinChains.get(ab.key) ?? Promise.resolve();
+    const next = prev.then(() => this.refreshPinNow(ab)).catch(() => {});
+    this.pinChains.set(ab.key, next);
+    await next;
+    if (this.pinChains.get(ab.key) === next) this.pinChains.delete(ab.key);
+  }
+
+  private async refreshPinNow(ab: ActiveBinding): Promise<void> {
+    // A stopped or replaced hub does nothing (a turn's end queued this before `stop`): it would read
+    // the project's state after it is gone and send on a binding no longer served.
+    if (ab.target !== 'super' || !ab.contextRoot || !this.serving(ab)) return;
+    const dir = bindingDir(ab.scope, ab.target, this.home);
+    let file = readSade(dir, this.home);
+    // No pin yet and he is at the Mac: nothing to make, nothing to read.
+    if (!file.pin && !this.ownerAway()) return;
+    const s = await readSuperState(ab.contextRoot).catch(() => null);
+    if (!s?.enabled || !this.serving(ab)) return;
+    file = readSade(dir, this.home);
+    const html = agendaPinHtml(s.pad, this.now()) ?? (file.pin ? '📌 <b>Gündem</b>\n<i>Şu an süren iş yok.</i>' : null);
+    if (!html || file.pin?.html === html) return;
+    if (file.pin) {
+      const edit = await editInPlace(ab, file.pin.messageId, html);
+      if (edit === 'ok') { writeSade(dir, { ...readSade(dir, this.home), pin: { messageId: file.pin.messageId, html } }, this.home); return; }
+      // A slow or refused edit may still have landed: the next look tries again, never a second pin.
+      if (edit === 'failed') return;
+    } else if (!this.ownerAway()) return;
+    const old = file.pin?.messageId;
+    const sent = await this.send(ab, html, SILENT).catch(() => null);
+    if (!sent || !Number.isSafeInteger(sent.message_id)) return;
+    writeSade(dir, { ...readSade(dir, this.home), pin: { messageId: sent.message_id, html } }, this.home);
+    // The old pin (deleted by him, or too old to edit) is unpinned: ONE pinned agenda.
+    if (old !== undefined) await ab.transport.call('unpinChatMessage', { chat_id: ab.binding.chatId, message_id: old }).catch(() => {});
+    await ab.transport.call('pinChatMessage', { chat_id: ab.binding.chatId, message_id: sent.message_id, disable_notification: true }).catch(() => {});
+  }
+
+  /** It is night and he is not writing: results of turns he did not open wait for the morning. */
+  private nightHolds(ab: ActiveBinding): boolean {
+    if (!isNight(this.now()) || this.deps.handsfree?.streamsTo(ab.scope, ab.target)) return false;
+    const p = this.presence.get(ab.key);
+    return !(p && p.via === 'telegram' && this.now() - p.at < OWNER_ACTIVE_MS);
+  }
+
+  private holdForMorning(ab: ActiveBinding, md: string): void {
+    const dir = bindingDir(ab.scope, ab.target, this.home);
+    const f = readSade(dir, this.home);
+    writeSade(dir, { ...f, night: [...(f.night ?? []), { at: this.now(), md }] }, this.home);
+  }
+
+  /** The night's results as ONE message, once the night is over or he writes. */
+  async flushNight(ab: ActiveBinding, force = false): Promise<boolean> {
+    if (!this.serving(ab)) return false;
+    const dir = bindingDir(ab.scope, ab.target, this.home);
+    const f = readSade(dir, this.home);
+    if (!f.night?.length || (!force && this.nightHolds(ab))) return false;
+    writeSade(dir, { v: 1, ...(f.pin ? { pin: f.pin } : {}) }, this.home);
+    try { return await this.sendAnswer(ab, nightDigestMarkdown(f.night), null, undefined, this.extrasMode()); } catch {
+      // Not sent: kept for the next look.
+      const now = readSade(dir, this.home);
+      writeSade(dir, { ...now, night: [...f.night, ...(now.night ?? [])] }, this.home);
+      return false;
+    }
   }
 
   /** True when a message of this text landed on Telegram. */
@@ -1923,20 +2216,27 @@ export class TelegramHub implements TelegramHubApi {
       return false;
     }
     // On Telegram, every owner-facing section goes, whatever ref it opens with (a job's result
-    // under a Mac ref, an owed answer); each section once, through this one sender.
+    // under a Mac ref, an owed answer), and they go TOGETHER as one message (Doc 2026-11-21: 913
+    // bubbles came within 3 s of the one before), a reply to the first message they answer.
     const wide = this.onTelegram(ab);
-    let sent = false;
-    let tried = false;
-    for (const s of sections) {
-      const hit = s.refs.find((r) => this.routable(ab!, r));
-      if ((!hit && !wide) || !s.text.trim()) continue;
-      tried = true;
-      if (hold(s.text)) continue;
-      // One section that does not land does not stop the next.
-      try { if (await this.onceThisTurn(ab, sessionId, s.text, s.refs, turn, cards, () => this.answerFor(turns, ab!, s.text, sessionId, { ref: msgRef(text), quote: s.text, answers: hit ?? turns[0]?.ref }, this.extrasMode(), [hit, ...s.refs, ...turns.map((t) => t.ref)]))) sent = true; } catch { noteUndelivered(sessionId, 'text', LOST_TEXT); continue; }
+    const going = sections.map((s) => ({ s, hit: s.refs.find((r) => this.routable(ab!, r)) })).filter(({ s, hit }) => (hit || wide) && s.text.trim());
+    if (going.length) {
+      // A section in the wrong language is held, never sent (owner-text-gate.ts); the rest go together.
+      const sending = going.filter(({ s }) => !hold(s.text));
+      // A section tried (landed or not) is this text's one way out: never sent again as a whole.
+      if (!sending.length) return false;
+      const body = sending.map(({ s }) => s.text.trim()).join('\n\n');
+      // A result of a turn he did not open, at night while he is not writing: the morning's message.
+      if (!turns.length && this.nightHolds(ab)) { this.holdForMorning(ab, body); return true; }
+      const hit = sending.find((g) => g.hit)?.hit;
+      const refs = sending.flatMap(({ s }) => s.refs);
+      try {
+        return await this.onceThisTurn(ab, sessionId, body, refs, turn, cards, () => this.answerFor(turns, ab!, body, sessionId, { ref: msgRef(text), quote: body, answers: hit ?? turns[0]?.ref }, this.extrasMode(),
+          [hit, ...refs, ...turns.map((t) => t.ref)]));
+      } catch { noteUndelivered(sessionId, 'text', LOST_TEXT); return false; }
     }
-    // A section tried (landed or not) is this text's one way out: never sent again as a whole.
-    if (tried || sections.some((s) => s.refs.length)) return sent;
+    // A section with a ref that is not his to see here: this text's one way out was that.
+    if (sections.some((s) => s.refs.length)) return false;
     // No `re:` section: the whole text, only when the turn held Telegram text alone.
     if (!turns.length || inputs?.mac || !text.trim() || hold(text)) return false;
     try {
@@ -2023,6 +2323,13 @@ export class TelegramHub implements TelegramHubApi {
     return ab.transport.editMessageText(ab.binding.chatId, messageId, html).then(() => true, () => false);
   }
 
+  /** A message of the hub's gone from the chat (an old copy of a card sent again below), its
+   *  buttons with it. False when Telegram refuses (a bot may delete its own message for 48 h). */
+  async deleteMessage(ab: ActiveBinding, messageId: number): Promise<boolean> {
+    for (const b of [...this.buttons.values()]) if (b.key === ab.key && b.messageId === messageId) this.buttons.delete(b.id);
+    return ab.transport.call('deleteMessage', { chat_id: ab.binding.chatId, message_id: messageId }).then(() => true, () => false);
+  }
+
   /** A multi-select toggle (P4): the message's buttons re-drawn under a FRESH record bound to the
    *  same message and text; the records it replaces die. Only the hub edits its own messages. */
   async reissueButtons(ab: ActiveBinding, messageId: number, labels: string[][], rec: Omit<ButtonRecord, 'id' | 'botId' | 'chatId' | 'messageId' | 'textHash' | 'options'>, data?: Obj): Promise<string | null> {
@@ -2068,7 +2375,8 @@ export class TelegramHub implements TelegramHubApi {
     }
     await ab.transport.answerCallbackQuery(id, answer ?? undefined).catch(() => {});
     if (answer && rec!.singleUse) {
-      await ab.transport.editMessageText(ab.binding.chatId, rec!.messageId, `${escapeHtml(String(message?.text ?? ''))}\n\n${escapeHtml(answer)}`).catch(() => {});
+      // The card becomes ONE line: what he picked, and what it was about (telegram-sade, Doc C3).
+      await ab.transport.editMessageText(ab.binding.chatId, rec!.messageId, closedCardHtml(answer, cardAbout(String(message?.text ?? '')))).catch(() => {});
     }
   }
 

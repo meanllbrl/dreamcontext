@@ -16,17 +16,63 @@ function clip(text: string, max: number): string {
   return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : one;
 }
 
-/** The transcript echo: a small label, then the words in one expandable italic quote, so the
- *  bubble shows two lines and opens on tap. */
+/** The transcript echo (owner 2026-11-21: "sesli yankı kalabilir… collapsible; tıklamazsam küçük
+ *  kalır"): ONE folded quote whose first line is the "🎙 Duyduğum" label, the words after it on a
+ *  single line, so the closed bubble stays small and a tap opens the whole transcript. */
 export function voiceEchoHtml(spoken: string): string {
-  const body = Array.from(spoken.trim()).slice(0, VOICE_ECHO_MAX).join('');
-  return `🎙 <i>Duyduğum</i>\n<blockquote expandable><i>${escapeHtml(body)}</i></blockquote>`;
+  const body = Array.from(spoken.replace(/\s+/g, ' ').trim()).slice(0, VOICE_ECHO_MAX).join('');
+  return `<blockquote expandable>🎙 <i>Duyduğum:</i> ${escapeHtml(body)}</blockquote>`;
 }
 
 /** A job row: icon first, the name in italic, the status word after a dot. No bold. */
 export function statusLineHtml(state: StatusState, name: string, note?: string): string {
   const extra = note ? ` · ${escapeHtml(note)}` : '';
   return `${STATUS_GLYPH[state]} <i>${escapeHtml(clip(name, STATUS_NAME_MAX))}</i> · ${STATUS_LABEL[state]}${extra}`;
+}
+
+/** A closed card shows at most this many visible characters. */
+export const CLOSED_CARD_MAX = 60;
+
+/** What a card is about, from its own text: its first line, the "❓" and bold gone. */
+export function cardAbout(textOrHtml: string): string {
+  const plain = textOrHtml.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  return (plain.split('\n').find((l) => l.trim()) ?? '').replace(/^[\s❓🔐✋⏰]+/u, '').trim();
+}
+
+/**
+ * A card once it is closed (Doc 2026-11-21, C3: 155 closed cards stayed in the chat in full): ONE
+ * line, at most 60 visible characters, what happened in bold and what it was about after it
+ * ("✓ Cevaplandı: Yeşil · Hangi renk?"). The question itself is gone; the answer stays.
+ */
+export function closedCardHtml(head: string, about = ''): string {
+  const h = clip(redactSecrets(head), CLOSED_CARD_MAX);
+  const room = CLOSED_CARD_MAX - Array.from(h).length - 3;
+  const a = about && room >= 8 ? clip(redactSecrets(about), room) : '';
+  return `<b>${escapeHtml(h)}</b>${a ? ` · <i>${escapeHtml(a)}</i>` : ''}`;
+}
+
+/** A job status message holds at most this many visible characters (its oldest steps go first). */
+export const JOB_STATUS_MAX = 1200;
+
+/**
+ * One job's status message (owner 2026-11-21: "bir mesaj at, o işe çalışılıyor; gelişme oldu mu
+ * o mesajı güncelliyor"), drawn from the Super's `dream-status` block: the job's name in bold,
+ * what is being done now, then one ✓ line per finished step; done = the name and its result
+ * line. The hub sends it once and edits that same message in place (silently) on every update.
+ */
+export function jobStatusHtml(lines: readonly string[], done: boolean): string {
+  const clean = lines.map((l) => redactSecrets(l).replace(/^\s*(?:[-*•]|✓|✔|✅|⏳|\d{1,2}[.)])\s*/u, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const name = clip(clean[0] ?? 'İş', STATUS_NAME_MAX);
+  const now = clean[1] ? clip(clean[1], 160) : '';
+  if (done) return `✅ <b>${escapeHtml(name)}</b>${now ? `\n${escapeHtml(now)}` : ''}`;
+  const steps = clean.slice(2).map((s) => `✓ ${escapeHtml(clip(s, 120))}`);
+  const head = `⏳ <b>${escapeHtml(name)}</b>${now ? `\n<i>${escapeHtml(now)}</i>` : ''}`;
+  // The newest steps stay when it grows long: a status says where the job is now.
+  let shown = steps;
+  let cut = false;
+  const size = (rows: readonly string[]): number => Array.from([head, ...rows].join('\n').replace(/<[^>]+>/g, '')).length;
+  while (shown.length && size(shown) > JOB_STATUS_MAX) { shown = shown.slice(1); cut = true; }
+  return [head, ...(cut ? ['✓ …'] : []), ...shown].join('\n');
 }
 
 /** A permission prompt (the Super's own and a child's, one shape): the ask in bold on its own
