@@ -330,7 +330,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
     const frames: Array<Record<string, unknown>> = [];
     const first = wc.mintWindowToken({ send: (f) => { frames.push(f); return true; }, vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super' });
     const res = fakeRes();
-    const done = handleSuperVerb(fakeReq(first.token, { prompt: 'build it', worktree: 'product', slug: 'late' }), res, { verb: 'delegate' });
+    const done = handleSuperVerb(fakeReq(first.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'late' }), res, { verb: 'delegate' });
     await vi.waitFor(() => expect(frames.some((f) => f.subtype === 'super_command')).toBe(true), { timeout: 10_000 });
     const cmd = frames.find((f) => f.subtype === 'super_command') as { id: string };
     // The super process dies; the window answers on the respawned process's socket.
@@ -367,7 +367,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
     const res = fakeRes();
     const timeouts: number[] = [];
     (res as unknown as { setTimeout: (ms: number) => void }).setTimeout = (ms) => { timeouts.push(ms); };
-    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'orphan' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(sup.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'orphan' }), res, { verb: 'delegate' });
     expect(res.status).toBe(409);
     expect(res.json).toMatchObject({ error: 'delegate_unconfirmed', worktreeRemoved: path });
     expect(existsSync(path)).toBe(false);
@@ -391,7 +391,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
       vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
     });
     const res = fakeRes();
-    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'wrote' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(sup.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'wrote' }), res, { verb: 'delegate' });
     expect(res.json).toMatchObject({ error: 'delegate_unconfirmed', worktree: path, branch: 'super/wrote' });
     expect(existsSync(path)).toBe(true);
     expect(g(repo, 'branch', '--list', 'super/wrote')).toContain('super/wrote');
@@ -405,7 +405,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
       vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
     });
     const res = fakeRes();
-    await handleSuperVerb(fakeReq(sup.token, { prompt: 'build it', worktree: 'product', slug: 'threw' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(sup.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'threw' }), res, { verb: 'delegate' });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(existsSync(path)).toBe(false);
     expect(g(repo, 'branch', '--list', 'super/threw')).toBe('');
@@ -424,7 +424,7 @@ describe('delegate --worktree when the super process ends mid-command (M4)', () 
       vault: 'product', contextRoot: root, sessionId: 'sup-1', mode: 'super',
     });
     const res = fakeRes();
-    await handleSuperVerb(fakeReq(dead.token, { prompt: 'build it', worktree: 'product', slug: 'never' }), res, { verb: 'delegate' });
+    await handleSuperVerb(fakeReq(dead.token, { model: 'sonnet', prompt: 'build it', worktree: 'product', slug: 'never' }), res, { verb: 'delegate' });
     expect(res.status).toBe(409);
     expect(res.json.error).toBe('no_window');
     expect(atSend).toEqual({ worktree: true, branch: expect.stringContaining('super/never') });

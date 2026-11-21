@@ -49,7 +49,7 @@ let drops: string;
 let token = '';
 const SUPER = 'sup-1';
 const MIN = 60_000;
-const job = { prompt: 'Read and follow _dream_context/tmp/super-prompts/orbit-hero/brief.md', brief: 'Orbit hero · basic sonnet/medium', mode: 'basic' };
+const job = { model: 'sonnet', prompt: 'Read and follow _dream_context/tmp/super-prompts/orbit-hero/brief.md', brief: 'Orbit hero · basic sonnet/medium', mode: 'basic' };
 
 function pic(name: string): string {
   const p = join(drops, name);

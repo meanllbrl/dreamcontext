@@ -149,12 +149,14 @@ export type PolicyVerdict =
  * grants, plus his current turn's message on update/resume: S1). A Claude child needs a model; a
  * Fable model needs his word; an effort above the mode's default needs `--risk`, `--full` or his
  * word. `lowerOnModeSwitch` (a mode change into develop): an unallowed effort is lowered to the
- * default and said, not refused. Codex and Antigravity keep their own defaults. Pure.
+ * default and said, not refused. `modelKept`: an existing child with no recorded model keeps its
+ * tab's. Codex and Antigravity keep their own defaults. Pure.
  */
-export function childPolicy(s: PolicyIn, words: readonly string[], opts: { lowerOnModeSwitch?: boolean } = {}): PolicyVerdict {
+export function childPolicy(s: PolicyIn, words: readonly string[], opts: { lowerOnModeSwitch?: boolean; modelKept?: boolean } = {}): PolicyVerdict {
   if (s.tool === 'codex' || s.tool === 'antigravity') return { ok: true, model: s.model ?? '', effort: s.effort ?? '', allowedBy: 'flags', skipped: true };
   const model = (s.model ?? '').trim();
-  if (!model) return { ok: false, error: 'model_required', message: MODEL_REQUIRED_LINE };
+  // A running or parked child whose model the record never learned keeps the one its tab runs (update, resume).
+  if (!model && !opts.modelKept) return { ok: false, error: 'model_required', message: MODEL_REQUIRED_LINE };
   const said = words.map(foldTr);
   if (/fable/i.test(model) && !said.some((w) => FABLE_WORD_RE.test(w))) {
     return { ok: false, error: 'model_refused', message: 'Fable runs only when his own words name it: use `--model opus` (architecture or a unit that failed once on Opus: ask him)' };

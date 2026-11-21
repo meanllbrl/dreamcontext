@@ -699,7 +699,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   money, data migration, plans \`opus\` \`high\`. On \`--tool codex|antigravity\` the same rows, that tool's small, mid, large model (small: read-only research only).
 - Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (\`--risk contract|money|migration|security\`),
   never develop. Develop \`medium\`; security, money or data migration develop \`--effort high --risk <kind>\`
-  (else \`effort_refused\`; no \`--model\` is \`model_required\`, Fable only on his word). Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,
+  (else \`effort_refused\`; no \`--model\` is \`model_required\`). Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,
   analysis, content \`medium\`.
 - \`card: "not_opened"\` (delegate, resume, adopt) or a \`no-card\` warning in \`super state\`: the
   child RUNS unseen. Never delegate it again: \`super close\` a card he no longer needs, then
@@ -714,6 +714,8 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 - **Fast or full:** one screen, look or copy only, no money, A/B, redirect, analytics, auth, migration,
   endpoint or release → \`delegate --worktree … --fast\`; in doubt, no flag. "tam doğrula" / "tam test" →
   \`--full\` (a fast job already given: \`super update|resume <child> --full\`).
+- "Ready" only with its proof: \`Board: updated <slug>\`, 390 px shots of the live URL, his \`ref/\` pictures
+  beside \`result-<n>.png\`. A \`[usage]\` line: new non-urgent children wait or go sonnet; tell him once.
 - At most ${member ? MAX_MEMBER_LIVE_CHILDREN : MAX_LIVE_CHILDREN} children run at once; beyond that \`delegate\` answers \`held\` and keeps the job
   in the pool. Later work: \`super pool add\`; a slot frees: \`super delegate --from <id>\` (check
   \`super state\` first). The cap is the only limit on children: all of \`super state\`'s

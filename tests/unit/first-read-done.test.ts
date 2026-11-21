@@ -138,7 +138,7 @@ describe('no verb that starts work in the first read\'s result turn', () => {
     _openEventTurnForTests('sup-1', 'b-1', root);
     expect([...FIRST_READ_BARRED_VERBS].sort()).toEqual(['delegate', 'pool-add', 'resume', 'schedule', 'send', 'team-ask']);
     for (const v of FIRST_READ_BARRED_VERBS) {
-      const r = await verb(v, { prompt: 'Build the export.' });
+      const r = await verb(v, { model: 'sonnet', prompt: 'Build the export.' });
       expect(r.status, v).toBe(403);
       expect(r.json.error, v).toBe('first_read_turn');
     }
@@ -148,7 +148,7 @@ describe('no verb that starts work in the first read\'s result turn', () => {
 
   it('another batch does not refuse them', async () => {
     _openEventTurnForTests('sup-1', 'b-9', root);
-    const r = await verb('delegate', { prompt: 'Build the export.' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'Build the export.' });
     expect(r.json.error).not.toBe('first_read_turn');
   });
 });

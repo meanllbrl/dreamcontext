@@ -3567,7 +3567,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
       const grant = turnGrant(c, originArg.ref);
       const v = childPolicy({ tool: ch.tool, mode, model, effort, risk: rk.risk ?? ch.context?.policy?.risk }, jobWords(ch.context, grant),
-        { lowerOnModeSwitch: !!str(b.mode) && mode === 'develop' && (ch.mode ?? 'basic') !== 'develop' });
+        { lowerOnModeSwitch: !!str(b.mode) && !str(b.effort) && mode !== (ch.mode ?? 'basic'), modelKept: true });
       if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
       if (!v.skipped) { effort = v.effort; policyCtx = withPolicy(ch.context, v, grant); }
     }
@@ -3661,8 +3661,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 409, 'adopted', 'that is the owner\'s own chat; change it only when he asks, with --force');
       return;
     }
-    // C10 on the settings the call leaves (his chats are outside the policy). A mode switch into
-    // develop that keeps an effort nothing allows lowers it, as its own step before the respawn.
+    // C10 on the settings the call leaves (his chats are outside the policy). A mode switch that
+    // keeps an effort nothing allows for the new mode lowers it, as its own step before the respawn.
     let effortStep = effort;
     let policyCtx: JobContext | undefined;
     if (!ch.adopted) {
@@ -3673,7 +3673,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const grant = turnGrant(c, originArg.ref);
       const nextMode = mode ?? ch.mode ?? 'basic';
       const v = childPolicy({ tool: ch.tool, mode: nextMode, model: model ?? ch.model, effort: effort ?? ch.effort, risk: rk.risk ?? ch.context?.policy?.risk },
-        jobWords(ch.context, grant), { lowerOnModeSwitch: !!mode && nextMode === 'develop' && (ch.mode ?? 'basic') !== 'develop' });
+        jobWords(ch.context, grant), { lowerOnModeSwitch: !!mode && !effort && nextMode !== (ch.mode ?? 'basic'), modelKept: true });
       if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
       if (!v.skipped) {
         if (v.effortLowered) effortStep = v.effort;

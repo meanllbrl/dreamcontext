@@ -90,7 +90,7 @@ async function verb(name: string, body: Record<string, unknown>): Promise<{ stat
 }
 /** What agent-chat.ts writeOwnerTurn does for an owner message to the Super. */
 const ownerWrites = (text: string) => { markSuperEventTurn(SUPER, false); noteSuperOwnerMsg(SUPER, msgRef(text)); };
-const job = { prompt: 'Read and follow _dream_context/tmp/super-prompts/orbit-release/brief.md', brief: 'Orbit release · basic sonnet/medium', mode: 'basic' };
+const job = { model: 'sonnet', prompt: 'Read and follow _dream_context/tmp/super-prompts/orbit-release/brief.md', brief: 'Orbit release · basic sonnet/medium', mode: 'basic' };
 
 describe('delegate --outward: his own message named the push, PR or deploy', () => {
   it('in his turn: the child is told the step, his words and the limits', async () => {
@@ -167,7 +167,7 @@ describe('delegate --outward: his own message named the push, PR or deploy', () 
     ownerWrites(ASK);
     expect((await verb('delegate', { ...job, outward: STEP })).status).toBe(200);
     markSuperEventTurn(SUPER, true);
-    const next = await verb('delegate', { prompt: 'Carry on the Orbit release from its handoff file', brief: 'Orbit release 2', mode: 'basic', succeeds: 'child-1' });
+    const next = await verb('delegate', { model: 'sonnet', prompt: 'Carry on the Orbit release from its handoff file', brief: 'Orbit release 2', mode: 'basic', succeeds: 'child-1' });
     expect(next.status).toBe(200);
     expect(sent.prompts[1]).toContain(`you may run exactly it: «${STEP}».`);
     // C3: both children carry the delegating Super chat's key, the successor through --succeeds.

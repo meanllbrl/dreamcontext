@@ -60,8 +60,11 @@ describe('childPolicy (pure)', () => {
     expect(childPolicy({ mode: 'plan', model: 'opus', effort: 'high' }, [])).toMatchObject({ ok: true, allowedBy: 'flags' });
     expect(childPolicy({ mode: 'plan', model: 'opus', effort: 'xhigh' }, [])).toMatchObject({ ok: false, error: 'effort_refused' });
   });
-  it('a switch into develop lowers an unallowed effort and says so', () => {
+  it('a mode switch lowers an effort the new mode does not allow, and says so', () => {
     expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'high' }, [], { lowerOnModeSwitch: true })).toMatchObject({ ok: true, effort: 'medium', effortLowered: true });
+  });
+  it('an existing child with no recorded model keeps its tab\'s on update or resume', () => {
+    expect(childPolicy({ mode: 'basic' }, [], { modelKept: true })).toMatchObject({ ok: true, model: '' });
   });
   it('Codex and Antigravity keep their own defaults', () => {
     expect(childPolicy({ mode: 'develop', tool: 'codex' }, [])).toMatchObject({ ok: true, skipped: true });
@@ -126,10 +129,10 @@ describe('the verbs apply it (criterion 14)', () => {
   });
 
   it('a pool row made before this build (no context) starts as today', async () => {
-    const s = { ...emptySuperState(), session: SUPER, enabled: true, pool: [{ id: 'p1', title: 'Old row', prompt: 'Old job prompt, from before', hash: 'x', createdAt: 1, mode: 'develop' }] };
+    const s = { ...emptySuperState(), session: SUPER, enabled: true, pool: [{ id: 'p-old1', title: 'Old row', prompt: 'Old job prompt, from before', hash: 'x', createdAt: 1, mode: 'develop' }] };
     writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(s));
     resetSuperIndex();
     markSuperEventTurn(SUPER, true);
-    expect((await verb('delegate', { from: 'p1' })).status).toBe(200);
+    expect((await verb('delegate', { from: 'p-old1' })).status).toBe(200);
   });
 });

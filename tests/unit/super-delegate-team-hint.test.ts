@@ -110,7 +110,7 @@ function orbit(team: boolean): void {
 describe('super delegate and the AI Team', () => {
   it('a member\'s field: the child starts AND the answer names the member and how to hand it over', async () => {
     orbit(true);
-    const r = await verb('delegate', { prompt: 'Run the signup funnel test end to end and report what broke.', brief: 'signup funnel test', mode: 'basic' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'Run the signup funnel test end to end and report what broke.', brief: 'signup funnel test', mode: 'basic' });
     expect(r.status).toBe(200);
     expect(commands()).toHaveLength(1);
     const hint = String(result(r).teamHint);
@@ -120,14 +120,14 @@ describe('super delegate and the AI Team', () => {
 
   it('no hint for a typo fix, a member waiting for approval, a team-less project, or a pooled job', async () => {
     orbit(true);
-    expect(result(await verb('delegate', { prompt: 'Fix the typo in the onboarding title.', brief: 'typo', mode: 'basic' }))).not.toHaveProperty('teamHint');
-    expect(result(await verb('delegate', { prompt: "Rewrite the pricing funnel's first three screens.", brief: 'pricing screens', mode: 'basic' }))).not.toHaveProperty('teamHint');
-    const id = result(await verb('pool-add', { prompt: 'Run the signup funnel test end to end.', brief: 'funnel test', mode: 'basic' })).pooled as string;
+    expect(result(await verb('delegate', { model: 'sonnet', prompt: 'Fix the typo in the onboarding title.', brief: 'typo', mode: 'basic' }))).not.toHaveProperty('teamHint');
+    expect(result(await verb('delegate', { model: 'sonnet', prompt: "Rewrite the pricing funnel's first three screens.", brief: 'pricing screens', mode: 'basic' }))).not.toHaveProperty('teamHint');
+    const id = result(await verb('pool-add', { model: 'sonnet', prompt: 'Run the signup funnel test end to end.', brief: 'funnel test', mode: 'basic' })).pooled as string;
     expect(result(await verb('delegate', { from: id }))).not.toHaveProperty('teamHint');
   });
 
   it('a team-less project never gets one', async () => {
     orbit(false);
-    expect(result(await verb('delegate', { prompt: "What's this month's revenue? Run the signup funnel test.", brief: 'revenue', mode: 'basic' }))).not.toHaveProperty('teamHint');
+    expect(result(await verb('delegate', { model: 'sonnet', prompt: "What's this month's revenue? Run the signup funnel test.", brief: 'revenue', mode: 'basic' }))).not.toHaveProperty('teamHint');
   });
 });
