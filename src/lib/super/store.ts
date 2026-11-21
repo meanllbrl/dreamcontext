@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, PAD_STAGES, cleanPadText, MAX_OWNER_MARKS_BYTES, OWNER_MARK_KEY_RE, OWNER_MARK_KINDS, type OwnerMark, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
-  MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
+  MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, TEAM_JOB_CONCLUSIONS, TEAM_SAID_NOTES, type TeamJobConclusion, type TeamSaidNote, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_SAID, MAX_OWED_SAID_HEAD, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
   MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
@@ -509,6 +509,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(result ? { result } : {}),
       ...(acceptedAt !== undefined && acceptedAt >= 0 ? { acceptedAt } : {}),
       ...(answers ? { answers } : {}),
+      ...(isReply && q.cancels === true ? { cancels: true as const } : {}),
       ...(workOrigin ? { workOrigin } : {}),
       ...(owedAt !== undefined && owedAt >= 0 ? { owedAt } : {}),
       ...(owedIds.length ? { owed: owedIds } : {}),
@@ -629,6 +630,12 @@ export function okMember(slug: string): boolean {
 const RUN_ID_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{1,20}Z$/;
 const ENTRY_ID_RE = /^[A-Za-z0-9._:-]{1,80}$/;
 
+/** A job's told notes from disk: known ones only, each once. */
+function saidNotesOf(raw: unknown[]): { saidNotes?: TeamSaidNote[] } {
+  const said = TEAM_SAID_NOTES.filter((n) => raw.includes(n));
+  return said.length ? { saidNotes: [...said] } : {};
+}
+
 function sanitizeTeam(raw: unknown): SuperTeamJob[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperTeamJob[] = [];
@@ -659,7 +666,8 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(j.told === 'done' || j.told === 'stuck' || j.told === 'question' ? { told: j.told } : {}),
       ...(j.told === 'question' && typeof j.toldQuestion === 'string' && ENTRY_ID_RE.test(j.toldQuestion) ? { toldQuestion: j.toldQuestion } : {}),
       ...(j.open === true ? { open: true as const } : {}),
-      ...(j.concluded === 'gone' || j.concluded === 'lost' ? { concluded: j.concluded } : {}),
+      ...(typeof j.concluded === 'string' && (TEAM_JOB_CONCLUSIONS as readonly string[]).includes(j.concluded) ? { concluded: j.concluded as TeamJobConclusion } : {}),
+      ...(Array.isArray(j.saidNotes) ? saidNotesOf(j.saidNotes) : {}),
       ...(typeof j.toldPost === 'string' && ENTRY_ID_RE.test(j.toldPost) ? { toldPost: j.toldPost } : {}),
       ...(finite(j.toldEndAt) !== undefined ? { toldEndAt: finite(j.toldEndAt) } : {}),
       ...(typeof j.followUpOf === 'string' && TEAM_JOB_ID_RE.test(j.followUpOf) ? { followUpOf: j.followUpOf } : {}),

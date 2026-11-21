@@ -9,10 +9,10 @@ import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop
 import {
   WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, superTokenOfSession, windowDeadline, windowGone, type WindowIdentity, type WindowResult,
 } from '../../lib/window-control.js';
-import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
+import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superRecordPath, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
 import type { OwnerWakeOutcome } from '../../lib/super/types.js';
-import { batchHasFirstReadDone, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
+import { batchHasFirstReadDone, closeMemberRequestDraft, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
 import { firstReadLockHeld, mintCrewTicket, mintFirstReadTicket, noteDelegating, releaseFirstReadLock, takeFirstReadLock, vaultDelegating } from '../../lib/super/delegating.js';
 import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
 import {
@@ -24,7 +24,7 @@ import {
   PRESENT_ITEM_ID_RE, notePresentLayout, ownerQueueStep, withdrawPresent,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type PadStatus, type PadRef, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperQueueItem, type SuperId, type SuperState, type SuperWorkOrigin, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
+import { armTeamJobWatches, askOwnerToApprove, cancelTeamJob, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamJobUnsaid, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
 import { ensureMemberSuper } from '../../lib/super/member-birth.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
@@ -2023,6 +2023,7 @@ const MAIN_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: strin
   'team-answer': { error: 'main_only', message: 'only the project\'s Super Agent answers a member\'s question' },
   adopt: { error: 'main_only', message: 'a member\'s Super never adopts a chat: open your own children with `super delegate`' },
   schedule: { error: 'main_only', message: 'only the project\'s Super Agent sets the owner\'s scheduled jobs' },
+  'team-cancel': { error: 'main_only', message: 'only the project\'s Super Agent cancels a job it gave a member; you close yours with `super team done`' },
 };
 const MEMBER_ONLY_VERBS: Partial<Record<SuperVerb, { error: string; message: string }>> = {
   'team-done': { error: 'member_only', message: 'only a member\'s Super closes the request it was given' },
@@ -2051,11 +2052,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const q = s.queue.find((x) => x.id === id && x.kind === 'request');
       if (!q) return;
       if (q.state === 'done') { already = true; return; }
-      q.state = 'done';
-      q.result = result.slice(0, MAX_REQUEST_RESULT);
       // Its questions to main close with it: a later ask to main is never stuck on ask_open.
-      for (const a of s.queue) if (a.kind === 'ask' && a.state !== 'done' && a.workOrigin === `main:${id}`) a.state = 'done';
-      closed = true;
+      closed = closeMemberRequestDraft(s, id, result);
     });
     if (already) { refuse(res, 409, 'already_done', 'that request is already closed'); return; }
     if (!closed) { refuse(res, 404, 'unknown_item', 'that request is gone'); return; }
@@ -2517,6 +2515,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const live = liveSayJob(root, j);
       let text = '';
       try { text = teamJobAnswer(root, j, live); } catch { text = ''; }
+      // A request its member never closed (its Super was not running when its children finished,
+      // 2026-11-21 Doc): what those children wrote last is the job's answer so far.
+      if (!text && j.request) text = await requestChildrenReplies(root, j);
       ok(res, {
         team: j.id, member: j.member, status: teamJobStatus(root, j, live).status,
         text: wrapUntrusted(vaultNameOf(root), text || '(no answer from the member yet)'),
@@ -3491,6 +3492,48 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
   },
 
+  'team-cancel': async (c, b, res) => {
+    // `super team cancel <job>` (Tilki 2026-11-21: a deleted member's job read "working" for 16
+    // days and nothing could close it): the Super closes a job it gave, open or never ended. Its
+    // member's request closes with it when its record holds one; nothing is deleted.
+    const id = str(b.job);
+    const root = c.who.contextRoot;
+    const j = id && TEAM_JOB_ID_RE.test(id) ? c.state.team.find((x) => x.id === id) : undefined;
+    if (!j) { refuse(res, 404, 'unknown_team', 'name one of your team jobs (`dreamcontext super state` lists them under `team`)'); return; }
+    const why = oneLine(typeof b.why === 'string' ? b.why : '').slice(0, MAX_BRIEF);
+    // A headless run still going would end unheard: its member's work goes on, so it ends first.
+    if (!j.request && (sayJobRuns(liveSayJob(root, j)) || runIsActive(agentActivity(root, j.member), j.runId))) {
+      refuse(res, 409, 'still_running', 'its member\'s run is still going: wait for its ending (its event comes by itself)');
+      return;
+    }
+    let cancelled = false;
+    await writeSuper(root, c.superId, (s) => { if (cancelTeamJob(s, j.id)) cancelled = true; });
+    if (!cancelled) { refuse(res, 409, 'already_closed', 'that job already ended: its done or stuck was told'); return; }
+    // The member's own request closes too (with what waits on it). A member already working on it
+    // hears the cancel as its own event, so it stops; what it already did it tells main itself.
+    let requestClosed = false;
+    let memberTold = false;
+    const memberId = superIdOfMember(j.member);
+    if (j.request && existsSync(superRecordPath(root, memberId))) {
+      const request = j.request;
+      const line = why ? `Cancelled by the Super Agent: ${why}` : 'Cancelled by the Super Agent.';
+      try {
+        await writeSuper(root, memberId, (s) => {
+          const q = s.queue.find((x) => x.id === request && x.kind === 'request');
+          const started = !!q && (q.state === 'delivered' || q.acceptedAt !== undefined);
+          if (!closeMemberRequestDraft(s, request, line)) return;
+          requestClosed = true;
+          if (!started || !s.session) return;
+          s.queue.push({ id: newQueueId(), sessionId: s.session, kind: 'reply', state: 'pending', createdAt: Date.now(), text: `${j.brief}. ${line}`.slice(0, MAX_REQUEST_TEXT), workOrigin: `main:${request}`, cancels: true });
+          memberTold = true;
+        });
+      } catch { /* main's job is closed; the member's record keeps its request */ }
+      if (memberTold) void pumpSuper(root, memberId);
+    }
+    void pumpSuper(root);
+    ok(res, { job: j.id, member: j.member, cancelled: true, ...(j.request ? { requestClosed, memberTold } : {}) });
+  },
+
   'team-ask': async (c, b, res) => {
     // A job for one of THIS project's AI Team members: a `request` in the member's OWN Super
     // (`teamAskRequest`, live since Wave 3), its one conversation and main's one card for it
@@ -3696,7 +3739,7 @@ const suspect = new Map<string, 'gone' | 'lost'>();
  */
 function watchTeamJob(root: string, teamJobId: string): void {
   const key = `${root}\u0000${teamJobId}`;
-  if (jobWatches.has(key)) return;
+  if (jobWatches.has(key) || unsaidRead.has(key)) return;
   const t = setInterval(() => {
     void checkTeamJob(root, teamJobId)
       // An ending told stops this watch; the record may still want the late-post one.
@@ -3716,13 +3759,26 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   const s = await readSuperState(root, superSanitizeOpts());
   const j = s.team.find((x) => x.id === teamJobId);
   if (!j || !s.enabled || !s.session) return false;
+  const key = `${root}\u0000${teamJobId}`;
+  // A request job: its member's own Super tells its ending. The one ending only this watch sees is
+  // its member gone from the AI Team (on a second tick in a row): stuck, told once, final.
+  if (j.request) {
+    if (!teamJobOwed(j)) return false;
+    if (memberScope(root, j.member) !== null) { suspect.delete(key); return true; }
+    if (suspect.get(key) !== 'gone') { suspect.set(key, 'gone'); return true; }
+    suspect.delete(key);
+    await teamJobSettled(root, teamJobId, undefined, 'gone');
+    return false;
+  }
+  // An old record never owed an event (before `open`): nobody waits for its ending, so it is never
+  // told; a member gone or a turn lost only stops it reading "running". Read once per process.
+  if (teamJobUnsaid(j)) return settleUnsaid(root, j, key);
   // Its ending was told: only a late post can still come.
   if (!teamJobOwed(j)) {
     if (!teamJobTrailing(j)) return false;
     if (teamPostsDue(root, s, j)) await teamJobPosted(root, teamJobId);
     return true;
   }
-  const key = `${root}\u0000${teamJobId}`;
   const live = liveSayJob(root, j);
   const end = teamJobEnding(root, j, live);
   // Two endings only the watch can see, each on a second tick in a row: the member is gone (the
@@ -3751,6 +3807,56 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   }
   await teamJobSettled(root, teamJobId);
   return end.kind === null || end.kind === 'question';
+}
+
+/** The last reply of each of a member's children that worked on main's request `j.request`
+ *  (`workOrigin: main:<request>`), newest first, each headed by its brief; '' when none wrote one. */
+async function requestChildrenReplies(root: string, j: SuperTeamJob): Promise<string> {
+  let m: SuperState;
+  try { m = await readSuperState(root, superIdOfMember(j.member), superSanitizeOpts()); } catch { return ''; }
+  const kids = Object.values(m.children)
+    .filter((ch) => ch.workOrigin === `main:${j.request}`)
+    .sort((a, b) => b.startedAt - a.startedAt);
+  const parts: string[] = [];
+  let used = 0;
+  for (const ch of kids) {
+    const path = liveTranscriptPath(root, ch.sessionId);
+    if (!path) continue;
+    let reply = '';
+    try { reply = (await readLastReply(path)).text; } catch { reply = ''; }
+    if (!reply) continue;
+    const part = `The member has not closed this job; its child (${ch.brief}) wrote last:\n\n${reply}`;
+    if (used + part.length > MAX_READ_BYTES) continue;
+    parts.push(part);
+    used += part.length;
+  }
+  return parts.join('\n\n---\n\n');
+}
+
+/** Old records already read this process (`teamJobUnsaid`): never watched again until a restart. */
+const unsaidRead = new Set<string>();
+
+/** One tick of an old record's read: its thread ended it (nothing to do), or, on a second tick in
+ *  a row, its member is gone or nothing runs it: concluded quietly (no event), so its card and
+ *  `super state` read failed. False once it is settled either way. */
+async function settleUnsaid(root: string, j: SuperTeamJob, key: string): Promise<boolean> {
+  const live = liveSayJob(root, j);
+  // Ended in its thread (done or failed): that ending stands, whatever became of its member.
+  const status = teamJobStatus(root, j, live).status;
+  if (status === 'done' || status === 'failed') { suspect.delete(key); unsaidRead.add(key); return false; }
+  const seen = memberScope(root, j.member) === null ? 'gone'
+    : teamJobEnding(root, j, live).kind === null && !runIsActive(agentActivity(root, j.member), j.runId) && !sayJobRuns(live) ? 'lost'
+    : null;
+  // Still running (its run holds the member), or asking: it keeps its watch.
+  if (!seen) return true;
+  if (suspect.get(key) !== seen) { suspect.set(key, seen); return true; }
+  suspect.delete(key);
+  unsaidRead.add(key);
+  await writeSuper(root, (s) => {
+    const x = s.team.find((y) => y.id === j.id);
+    if (x && teamJobUnsaid(x)) x.concluded = seen;
+  });
+  return false;
 }
 
 /** A post no ending carries becomes its own event. */

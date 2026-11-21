@@ -178,8 +178,19 @@ export function teamJobOwed(j: SuperTeamJob): boolean {
  *  memory, the record survives a restart and an answer days later. */
 export function armTeamJobWatches(contextRoot: string, s: Pick<SuperState, 'team' | 'enabled' | 'session'>): void {
   if (!jobWatcher || !s.enabled || !s.session) return;
-  // A request job is the member's own Super's: no thread to watch (its events come from team done).
-  for (const j of s.team) if (!j.request && (teamJobOwed(j) || teamJobTrailing(j))) jobWatcher(contextRoot, j.id);
+  // A request job's events come from its member's own Super (team done): its watch only asks
+  // whether the member is still in the AI Team (Tilki 2026-11-21: a deleted member's job read
+  // "working" for 16 days). An old record that was never owed an event is read once more, so a
+  // job whose member or turn is gone stops reading "running".
+  for (const j of s.team) {
+    if (j.request ? teamJobOwed(j) : (teamJobOwed(j) || teamJobTrailing(j) || teamJobUnsaid(j))) jobWatcher(contextRoot, j.id);
+  }
+}
+
+/** A job from before `open` existed whose ending nothing ever told or concluded: its status is
+ *  read from its thread, so a member gone or a turn lost reads "running" until its watch looks. */
+export function teamJobUnsaid(j: SuperTeamJob): boolean {
+  return !j.request && j.open !== true && j.told === undefined && j.concluded === undefined && j.outcome === undefined;
 }
 
 /** How long a job whose ending was told is still read for a late post (a background wait that
@@ -483,14 +494,17 @@ export function teamJobEnding(contextRoot: string, job: SuperTeamJob, live: Live
 /** A team job's status and last line as the card and `super state` show them: the same reading
  *  as the super's events (a run that asked reads asking, never done), the thread for the rest. */
 export function teamJobStatus(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): { status: TeamJobStatus; lastLine: string } {
-  if (job.request) return requestJobStatus(contextRoot, job);
-  // A stuck its watch concluded (gone, lost with the server) stays what the super was told.
+  // A stuck its watch concluded (gone, lost with the server) or the Super cancelled stays what the
+  // super was told, a request job's too (its member's record may still hold the request open).
   if (job.concluded) return { status: 'failed', lastLine: CONCLUDED_LINES[job.concluded] };
+  if (job.request) return requestJobStatus(contextRoot, job);
   const row = teamJobLive(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status: TeamJobStatus = end.kind === 'question' ? 'asking'
     : end.kind === 'done' ? 'done'
     : end.kind === 'stuck' ? 'failed'
+    // Told stuck already (an older record, before `concluded`): never "running" again.
+    : job.told === 'stuck' ? 'failed'
     : row.status === 'queued' ? 'queued' : 'running';
   return { status, lastLine: end.lastLine ?? row.lastLine };
 }
@@ -499,7 +513,25 @@ export function teamJobStatus(contextRoot: string, job: SuperTeamJob, live: Live
 export const CONCLUDED_LINES: Record<TeamJobConclusion, string> = {
   gone: 'The member is no longer in the AI Team.',
   lost: 'Outcome unknown: its turn ended with no record (the server stopped during it).',
+  cancelled: 'Cancelled by the Super Agent.',
 };
+
+/**
+ * `super team cancel`: the Super Agent closes a job of its own that is still open. Final, as a
+ * concluded stuck is: nothing about it is told again, its pending items close, and its card reads
+ * failed with the cancel line. Nothing is deleted. Returns false for a job that already ended.
+ */
+export function cancelTeamJob(s: SuperState, jobId: string, now = Date.now()): boolean {
+  const job = s.team.find((j) => j.id === jobId);
+  if (!job || job.concluded || job.told === 'done' || job.told === 'stuck') return false;
+  job.concluded = 'cancelled';
+  job.told = 'stuck';
+  delete job.toldQuestion;
+  delete job.open;
+  job.toldEndAt = now;
+  for (const q of s.queue) if (q.team === jobId && q.state !== 'done') q.state = 'done';
+  return true;
+}
 
 /** What a team job's ending tells the super now (`teamJobEnding`'s kind). */
 export function teamJobEvent(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): TeamJobEvent | null {
@@ -699,7 +731,7 @@ function itemPosts(contextRoot: string, s: Pick<SuperState, 'team'>, job: SuperT
  * answers (`super team answer`), or asks the owner as its own question.
  */
 function requestJobLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, job: SuperTeamJob, q: SuperQueueItem): string[] {
-  const status = q.kind === 'question' ? 'asking' : requestJobStatus(contextRoot, job).status;
+  const status = q.kind === 'question' ? 'asking' : job.concluded ? 'failed' : requestJobStatus(contextRoot, job).status;
   const event = q.kind === 'question' ? 'question' : q.partial ? 'answer' : q.kind;
   const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${event} from=member-super${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
   if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));
@@ -708,6 +740,8 @@ function requestJobLines(contextRoot: string, vault: string, s: Pick<SuperState,
     lines.push(`  This member's Super asks YOU, about the job you gave it: answer with \`dreamcontext super team answer ${q.id} "<answer>"\`; if only the owner can say, ask him with your own \`super ask\` (never forward the member).`);
     return lines;
   }
+  // Its watch concluded it (the member left the AI Team): the server's own line, nothing to fence.
+  if (q.kind === 'stuck' && job.concluded) lines.push(`  ${CONCLUDED_LINES[job.concluded]} The job is closed; nothing more will come of it.`);
   if (q.text) lines.push(...answerLines(vault, job, q.text));
   return lines;
 }
