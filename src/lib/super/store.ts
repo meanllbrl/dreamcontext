@@ -8,7 +8,7 @@ import {
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, TEAM_JOB_CONCLUSIONS, TEAM_SAID_NOTES, type TeamJobConclusion, type TeamSaidNote, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   MAX_OWED_CLOSED, MAX_OWED_MSG_GIST, MAX_OWED_OPEN, MAX_OWED_SAID, MAX_OWED_SAID_HEAD, MAX_SENT, MEMBER_ITEM_OF, OWED_ID_RE, SENT_RE, type SuperOwed,
-  MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
+  MAX_REFUSAL_INPUT, MAX_REFUSAL_REASON, REFUSAL_SOURCES, REFUSAL_WORD_RE, ROUTINE_FACT_RE, MAX_PROGRESS_JOBS, type ProgressJob, GRANT_SIZES, type GrantOffer, type GrantSize, type RefusalFact,
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
@@ -172,6 +172,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v);
 const cap = (v: unknown, n: number): string | undefined => (typeof v === 'string' ? v.slice(0, n) : undefined);
 const finite = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+const nonNegative = (v: unknown): number | undefined => { const n = finite(v); return n !== undefined && n >= 0 ? n : undefined; };
 // eslint-disable-next-line no-control-regex
 const stripControls = (s: string) => s.replace(/[\u0000-\u001f\u007f]/g, ' ');
 
@@ -358,6 +359,11 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
       if (v !== undefined && v >= 0) child[k] = k === 'finishedAt' ? v : Math.min(v, Date.now());
     }
     if (child.seenAt === undefined) delete child.seenMarkedAt;
+    // The progress clock's stamps (super-sessiz-kalmaz C2), field by field: malformed is dropped.
+    for (const k of ['workingSince', 'toldAt', 'progressAt'] as const) {
+      const v = finite(c[k]);
+      if (v !== undefined && v >= 0) child[k] = v;
+    }
     const sent = cleanSent(c.sent);
     if (sent.length) child.sent = sent;
     out[key] = child;
@@ -466,6 +472,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ? [...new Set(q.owed.filter((x): x is string => typeof x === 'string' && OWED_ID_RE.test(x)))].slice(0, MAX_OWED_OPEN)
       : [];
     if (q.kind === 'owed' && !owedIds.length) continue;
+    // A `progress` item's jobs (super-sessiz-kalmaz C3): each a child or a team job with a
+    // well-formed ref; an item left with none is dropped (nothing to say), never thrown.
+    const progress = q.kind === 'progress' ? cleanProgressJobs(q.progress) : undefined;
+    if (q.kind === 'progress' && (!progress || q.sessionId !== session)) continue;
     // An ask's report cards, while it is open (nothing points at them after his answer).
     const read = isAsk && q.state !== 'done' && Array.isArray(q.read)
       ? [...new Set(q.read.filter((r): r is string => typeof r === 'string' && CONTAINER_ID_RE.test(r)))].slice(0, MAX_ASK_READS)
@@ -528,6 +538,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(remindAt !== undefined && remindAt >= 0 ? { remindAt } : {}),
       ...(delivery ? { delivery } : {}),
       ...(ownerResult ? { ownerResult } : {}),
+      ...(progress ? { progress: { jobs: progress } } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
@@ -636,6 +647,25 @@ function saidNotesOf(raw: unknown[]): { saidNotes?: TeamSaidNote[] } {
   return said.length ? { saidNotes: [...said] } : {};
 }
 
+/** A `progress` item's job list, cleaned job by job; undefined when none survives. */
+function cleanProgressJobs(raw: unknown): ProgressJob[] | undefined {
+  if (!isRecord(raw) || !Array.isArray(raw.jobs)) return undefined;
+  const out: ProgressJob[] = [];
+  const seen = new Set<string>();
+  for (const j of raw.jobs) {
+    if (!isRecord(j) || typeof j.ref !== 'string' || !MSG_REF_RE.test(j.ref)) continue;
+    const child = typeof j.child === 'string' && okSessionId(j.child) ? j.child : undefined;
+    const team = typeof j.team === 'string' && TEAM_JOB_ID_RE.test(j.team) ? j.team : undefined;
+    if (!child === !team) continue;
+    const key = child ?? `team:${team}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...(child ? { child } : { team }), ref: j.ref });
+    if (out.length >= MAX_PROGRESS_JOBS) break;
+  }
+  return out.length ? out : undefined;
+}
+
 function sanitizeTeam(raw: unknown): SuperTeamJob[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperTeamJob[] = [];
@@ -673,6 +703,10 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(typeof j.followUpOf === 'string' && TEAM_JOB_ID_RE.test(j.followUpOf) ? { followUpOf: j.followUpOf } : {}),
       ...(j.by === 'super' && typeof j.followUpOf === 'string' ? { by: 'super' as const } : {}),
       ...(typeof j.request === 'string' && QUEUE_ID_RE.test(j.request) ? { request: j.request } : {}),
+      // The progress clock's stamps (super-sessiz-kalmaz C2): malformed or negative is dropped.
+      ...(nonNegative(j.liveSince) !== undefined ? { liveSince: nonNegative(j.liveSince) } : {}),
+      ...(nonNegative(j.toldAt) !== undefined ? { toldAt: nonNegative(j.toldAt) } : {}),
+      ...(nonNegative(j.progressAt) !== undefined ? { progressAt: nonNegative(j.progressAt) } : {}),
     });
   }
   // Over the cap the oldest follow-ups go first; a member's current root never does (plan-r10 1b).

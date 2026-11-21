@@ -25,7 +25,7 @@ import { SCHEDULE_LINE, fireClock, quotedJob, scheduleDataLines, scheduleJob } f
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
-import { armTeamJobWatches, awaitedTeamItem, setMemberWaitSource, setRequestSource, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
+import { armTeamJobWatches, awaitedTeamItem, setMemberWaitSource, setRequestSource, staleTeamItem, teamItemLines, teamJobProgress, teamJobStatusNow, teamLiveRows } from './team.js';
 import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
 import { MAX_OWNER_MARKS_BLOCK, OWNER_MARKS_RULE, dropCarriedMarks, markHead } from './owner-marks.js';
 import { superRestoreHold } from './restore.js';
@@ -63,7 +63,7 @@ import {
   MEMBER_ITEM_OF, type MemberItemOf, type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
   ROUTINE_FACT_RE, SAFETY_REWRITE_REASON, isSafetyRefusal, type GrantOffer, type GrantSize, type RefusalFact,
-  MAX_OWNER_RESULT_TEXT, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, TEAM_SAID_NOTES, type SuperTeamJob, type TeamSaidNote, type OwnerCardHandle, type OwnerDeliverOutcome, type OwnerDeliveryState, type OwnerReceiptEntry, type OwnerResultFact,
+  MAX_OWNER_RESULT_TEXT, MAX_REQUEST_RESULT, MAX_REQUEST_TEXT, MAX_PROGRESS_JOBS, TEAM_SAID_NOTES, type ProgressJob, type TeamJobStatus, type SuperTeamJob, type TeamSaidNote, type OwnerCardHandle, type OwnerDeliverOutcome, type OwnerDeliveryState, type OwnerReceiptEntry, type OwnerResultFact,
 } from './types.js';
 
 /**
@@ -346,6 +346,9 @@ export function setRow(ch: SuperChild, row: ChildRow, reason?: StuckReason, now 
   if (finished(row)) {
     if (ch.row === undefined ? ch.finishedAt === undefined : !finished(ch.row)) ch.finishedAt = now;
   }
+  // The progress clock (super-sessiz-kalmaz C2): a job starts again when it moves into working
+  // from anything but `asking` (a question it asked is a pause of the same job, never a new one).
+  if (row === 'working' && ch.row !== 'asking') ch.workingSince = now;
   ch.row = row;
   ch.rowAt = now;
   if (row === 'stuck' && reason) ch.stuckReason = reason; else delete ch.stuckReason;
@@ -1278,6 +1281,7 @@ async function settleCarried(key: string): Promise<boolean> {
           clearFresh(it.sessionId);
           continue;
         }
+        if (pureExit && progressItem(it)) { progressExitDraft(s, it, Date.now()); continue; }
         if (pureExit) {
           const exits = (it.exits ?? 0) + 1;
           it.exits = exits;
@@ -1832,8 +1836,11 @@ export function superSaid(sessionId: string, text: string): Promise<void> {
   const cached = lastStates.get(keyOf(root));
   if (!refs.length && cached && !openDebts(cached).length) return Promise.resolve();
   return track(writeSuper(root, (s) => {
-    if (!openDebts(s).length) return;
     const now = Date.now();
+    // He heard about these jobs: their progress clocks restart (C4 i, ii), BEFORE and whatever
+    // the debts say (an answer under a job's origin when nothing is owed still told him).
+    if (refs.length && s.session === sessionId) stampToldDraft(s, refs, now);
+    if (!openDebts(s).length) return;
     if (refs.length) closeByMarks(s, refs, s.owedSeq ?? 0, now);
     noteSaid(s, text, now);
   }));
@@ -1974,7 +1981,7 @@ setOutwardSink((sessionId, what, toolUseId) => {
 
 /** How the super agent writes to the owner (plan r4 D13). Shipped to every user: worded for
  *  anyone juggling many things, it names no condition. */
-export const OWNER_VOICE = 'in the language the owner writes to you in, never the language of this note, in plain words, one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths, commands or inside jargon unless he asks, what still runs said plainly, never with a time, a choice he must make asked in a `super ask` card and never only as a question in your text (the text says in one line that one waits, except a plan or work he approves: then the text gives its summary first, as long as it needs); name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
+export const OWNER_VOICE = 'in the language the owner writes to you in, never the language of this note, in plain words, one subject, the result or what you need from him first, 2-4 short sentences, no ids, hashes, paths, commands or inside jargon unless he asks, what still runs said plainly with the step it is on (a rough time left only when a real measurement gives it, such as its earlier runs, a test count or the usual length of a CI run, never a guess: no measurement, no time; never in a plan or approval summary), a choice he must make asked in a `super ask` card and never only as a question in your text (the text says in one line that one waits, except a plan or work he approves: then the text gives its summary first, as long as it needs); name any irreversible or outward action (a push, a merge, a delete, a message sent) in plain words';
 
 /** The last line of every `[super events]` turn. Silence is the rule for events: the owner
  *  reads the job list, and an event turn shows him as one line. A model asked to write "nothing
@@ -2085,6 +2092,8 @@ function memberDecisionLines(root: string, item: SuperQueueItem): string[] {
 
 /** A done/stuck/gone item of a job the owner waits on: its result goes to him. */
 function awaitedItem(s: SuperState, item: SuperQueueItem): boolean {
+  // A progress item is no result (C5): it opens no result debt.
+  if (progressItem(item)) return false;
   if (item.team) return awaitedTeamItem(s, item);
   if (firstReadDoneItem(s, item)) return true;
   return (item.kind === 'done' || item.kind === 'stuck' || item.kind === 'gone') && s.children[item.sessionId]?.awaited === true;
@@ -2118,7 +2127,7 @@ function itemDebt(s: Pick<SuperState, 'owed'>, itemId: string): SuperOwed | unde
 
 /** What a child sent out that this item must tell: its open debt's (a re-delivery), else the child's own. */
 function itemSent(s: SuperState, item: SuperQueueItem): string[] {
-  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation' || item.kind === 'restarted' || item.kind === 'schedule' || item.kind === 'parked' || item.kind === 'owner-result' || item.kind === 'member-note') return [];
+  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation' || item.kind === 'restarted' || item.kind === 'schedule' || item.kind === 'parked' || item.kind === 'owner-result' || item.kind === 'member-note' || progressItem(item)) return [];
   const debt = itemDebt(s, item.id);
   if (debt?.sent?.length) return debt.sent;
   return s.children[item.sessionId]?.sent ?? [];
@@ -2135,7 +2144,7 @@ function itemRef(s: SuperState, item: SuperQueueItem): string {
 /** Is this item one the Super must tell the owner (and so a debt)? Awaited, or its child sent
  *  something out; never main Super's work, never an item older than the ledger. */
 function owesItem(s: SuperState, q: SuperQueueItem): boolean {
-  if (q.owedAt !== undefined || !ownerFacing(s, q)) return false;
+  if (q.owedAt !== undefined || !ownerFacing(s, q) || progressItem(q)) return false;
   if (q.createdAt < (s.owedSince ?? Number.POSITIVE_INFINITY)) return false;
   if (!BATCHED.has(q.kind) && !q.team) return false;
   return awaitedItem(s, q) || itemSent(s, q).length > 0;
@@ -2245,6 +2254,7 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   if (item.kind === 'request' || item.kind === 'reply') return requestItemLines(vault, item);
   if (item.kind === 'member') return memberItemLines(rootOf(root), vault, item);
   if (item.kind === 'member-note') return memberNoteLines(rootOf(root), vault, item);
+  if (progressItem(item)) return progressItemLines(root, vault, s, item, now);
   if (item.kind === 'routine') {
     return [`- item=${item.id} event=routine routine=${item.routine ?? ''}${item.member ? ` member=${item.member}` : ''}`, wrapUntrusted(vault, `Waits on the owner for: ${item.ownerText ?? ''}`)];
   }
@@ -2328,6 +2338,7 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
     ...(items.some((it) => it.kind === 'owner-result') ? [OWNER_RESULT_LINE] : []),
     ...(items.some((it) => it.kind === 'member') ? [MEMBER_LINE] : []),
     ...(items.some((it) => it.kind === 'member-note') ? [MEMBER_NOTE_LINE] : []),
+    ...(items.some(progressItem) ? [PROGRESS_LINE] : []),
     ...(items.some((it) => it.kind === 'permission') ? [PERMISSION_LINE] : []),
     ...(items.some((it) => it.kind === 'automation') ? [AUTOMATION_LINE] : []),
     ...(items.some((it) => it.kind === 'schedule') ? [SCHEDULE_LINE] : []),
@@ -2480,7 +2491,8 @@ const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, owed: 
 // A `routine` (K7) waits on the owner; the Super hears it in a batch like any item of his.
 // `parked` and `owner-result` (sahip-karti-yerinde K2, K6): a child paused while a card waits on
 // the owner, and the owner's own result on a child's card; each one an event line in a batch.
-const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted', 'schedule', 'member', 'routine', 'parked', 'owner-result', 'member-note']);
+// `progress` (super-sessiz-kalmaz): the owner waits on jobs and has heard nothing; an owner batch.
+const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted', 'schedule', 'member', 'routine', 'parked', 'owner-result', 'member-note', 'progress']);
 /** Every kind the pump writes as a turn into the Super's session (a solo turn or a batch): each
  *  one ends with the owner-language line (`withOwnerLanguage`). Exported for the kind-walk test. */
 export const SUPER_TURN_KINDS: readonly QueueKind[] = [...Object.keys(SOLO) as QueueKind[], ...BATCHED];
@@ -2500,6 +2512,9 @@ function staleItem(state: SuperState, q: SuperQueueItem, root?: string): boolean
   if (q.kind === 'owner-result') return false;
   // A member's note is news until told (no child, no row to move on).
   if (q.kind === 'member-note') return false;
+  // A progress item is re-checked job by job at delivery (C3), never "moved on". A Super session
+  // rotation drops it (its sessionId is the old session, store.ts); the next sweep re-derives it.
+  if (q.kind === 'progress') return false;
   if (q.kind === 'parked') return isLive(getChat(q.sessionId));
   // A nudge is moot once its request closed or its member already asks or waits on him.
   if (q.kind === 'nudge') {
@@ -3599,8 +3614,10 @@ export function notStalledReason(s: SuperState, e: ChatEntry | null, now = Date.
   if (!e || e.status !== 'idle') return 'its turn has not ended';
   if (e.lastTurn?.interrupted) return 'interrupted';
   if (e.lastTurn?.limited) return 'a usage limit switch';
-  if (Object.keys(s.children).some((sid) => s.children[sid].endedAt === undefined && isLive(getChat(sid)))) return 'a child still runs';
+  if (Object.keys(s.children).some((sid) => childStillRuns(s.children[sid], getChat(sid)))) return 'a child still runs';
   if (backgroundBusy(e, now)) return 'a background job still runs';
+  // Its child finished for main's job and the member has not heard it yet: it hears first (D4).
+  if (s.queue.some((q) => (q.kind === 'done' || q.kind === 'stuck' || q.kind === 'gone') && q.state === 'pending' && isMainWork(s.children[q.sessionId]?.workOrigin))) return "a child's result is still on its way";
   // An open question of its own is its own row: asked (of the owner or of main), it is no stall.
   if (s.queue.some((q) => q.kind === 'ask' && q.state !== 'done')) return 'it asked';
   // Its own waits: a refused member is never nudged before its refusal item exists.
@@ -3608,6 +3625,16 @@ export function notStalledReason(s: SuperState, e: ChatEntry | null, now = Date.
   if (s.queue.some((q) => q.kind === 'schedule' && q.state !== 'done')) return 'a schedule of its own is pending';
   if (!isMainWork(memberTurnOrigin(s.session))) return 'a reply to the owner';
   return null;
+}
+
+/** A child that still RUNS for the K6 gate (super-sessiz-kalmaz D4): not ended, and its row
+ *  works or asks, or reads `stuck stale` while its registry entry still works (a long tool past
+ *  the stale bar). A done, gone or error-stuck child with its chat merely open holds nothing
+ *  (Lina, 01:18: a finished child held the nudge until its chat went gone, 10 minutes). */
+function childStillRuns(ch: SuperChild, e: ChatEntry | null): boolean {
+  if (ch.endedAt !== undefined) return false;
+  if (ch.row === 'working' || ch.row === 'asking') return true;
+  return ch.row === 'stuck' && ch.stuckReason === 'stale' && !!e && e.status === 'working';
 }
 
 /** A member Super's turn ended: nudge it once, then hand the stall to the owner (K6). */
@@ -3975,6 +4002,13 @@ async function pumpOnce(key: string): Promise<void> {
         if (waiting.length) state = { ...state, queue: state.queue.filter((q) => !(q.kind === 'request' && q.state === 'pending')) };
       }
     }
+    // A pending progress item is re-decided job by job before its text is built (C3): a job that
+    // finished, or that the Super told him about while it waited, leaves it; an empty one closes.
+    if (state.queue.some((q) => progressItem(q) && q.state === 'pending')) {
+      const teams = progressTeamStatuses(key, state);
+      const at = Date.now();
+      if (pruneProgressDraft(structuredClone(state), at, teams)) state = await writeSuper(key, (s) => { pruneProgressDraft(s, at, teams); });
+    }
     let { items, drop } = nextBatch(state, key);
     if (drop.length) {
       state = await writeSuper(key, (s) => { for (const q of s.queue) if (drop.includes(q.id) && q.state === 'pending') q.state = 'done'; });
@@ -4005,7 +4039,9 @@ async function pumpOnce(key: string): Promise<void> {
     const asBatch = !solo || items[0].kind === 'request' || items[0].kind === 'reply' || items[0].kind === 'owed' || items[0].kind === 'nudge';
     const event: SuperEventFrame = !asBatch
       ? { kind: items[0].kind as SuperEventKind, child: items[0].sessionId, batch }
-      : { kind: 'batch', child: items[0]?.sessionId ?? session, batch, items: items.map((q) => ({ item: q.id, child: q.sessionId, kind: q.kind })) };
+      // A progress item is about the Super's own jobs, never one child: the window draws no child
+      // chip for it (its session is the Super's own), so the frame does not name it.
+      : { kind: 'batch', child: items[0]?.sessionId ?? session, batch, items: items.filter((q) => !progressItem(q)).map((q) => ({ item: q.id, child: q.sessionId, kind: q.kind })) };
     // Whose work this turn is (plan-r10 1): a request's or reply's `main:<item>`, a batch's one origin.
     const turnOrigin = turnOriginOf(state, items);
     let ok = false;
@@ -4035,7 +4071,7 @@ async function pumpOnce(key: string): Promise<void> {
     // A member Super's question about main's own request (`from=member-super`) is main's to answer
     // (`super team answer`), never the owner's: it never makes the turn his (review 2026-11-02).
     const tells = !!owedTurn || (!solo && (!!held || items.some((q) => !isRequestQuestion(state, q)
-      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || q.kind === 'owner' || q.kind === 'member' || (q.kind === 'member-note' && (!!q.ownerAsked || !!q.origin)) || q.kind === 'routine' || q.kind === 'automation' || q.kind === 'schedule' || (!!q.team && q.kind === 'question')))));
+      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || progressItem(q) || q.kind === 'owner' || q.kind === 'member' || (q.kind === 'member-note' && (!!q.ownerAsked || !!q.origin)) || q.kind === 'routine' || q.kind === 'automation' || q.kind === 'schedule' || (!!q.team && q.kind === 'question')))));
     const nudged = new Set(owedNow.map((d) => d.id));
     const fresh = solo && items[0].kind === 'fresh';
     // Every turn that carried the agenda lines marks them told: a batch, a recap, a handover.
@@ -4050,6 +4086,8 @@ async function pumpOnce(key: string): Promise<void> {
         const ch = s.children[it.sessionId];
         if (ch?.firstRead === true && ch.firstReadAnnounced === undefined) ch.firstReadAnnounced = it.id;
       }
+      // A written progress delivery restarts the clock of each job its delivered text named (C3).
+      stampProgressDelivered(s, items, Date.now());
       // A delivered nudge's 2-minute clock is over: its turn's end decides now (K6).
       for (const it of items) if (it.kind === 'nudge') { const t = nudgeTimers.get(it.id); if (t) { clearTimeout(t); nudgeTimers.delete(it.id); } }
       // Each debt an owed turn named was nudged once more (OWED_NUDGES, then his agenda shows it).
@@ -4719,6 +4757,230 @@ export function expectChild(contextRoot: string, sid: string, ms = CHILD_ARRIVE_
   armGone(keyOf(contextRoot), sid, ms, regraceTimers);
 }
 
+// ─── Progress: he waits, the Super says where it stands (super-sessiz-kalmaz D2, C3, C4) ───
+
+/** How long a job he waits on may run with nothing told about it before a `progress` event. */
+export const PROGRESS_DUE_MS = 15 * 60_000;
+/** He is present while his newest message to the Super is at most this old. */
+export const OWNER_PRESENT_MS = 60 * 60_000;
+
+/** The two clocks; the verify run shortens them (`DREAMCONTEXT_SUPER_PROGRESS_MS`,
+ *  `DREAMCONTEXT_SUPER_OWNER_PRESENT_MS`), the shape of `backgroundQuietMs`. */
+function progressDueMs(): number {
+  const n = Number(process.env.DREAMCONTEXT_SUPER_PROGRESS_MS);
+  return Number.isFinite(n) && n > 0 ? n : PROGRESS_DUE_MS;
+}
+function ownerPresentMs(): number {
+  const n = Number(process.env.DREAMCONTEXT_SUPER_OWNER_PRESENT_MS);
+  return Number.isFinite(n) && n > 0 ? n : OWNER_PRESENT_MS;
+}
+
+/** Team job statuses the progress rule reads, taken from disk OUTSIDE any write draft (C7). */
+export type ProgressTeamStatus = ReadonlyMap<string, TeamJobStatus>;
+
+/** The status of every awaited, open team job of MAIN's record (nothing for a member record). */
+export function progressTeamStatuses(root: string, s: Pick<SuperState, 'member' | 'team'>): Map<string, TeamJobStatus> {
+  const out = new Map<string, TeamJobStatus>();
+  if (s.member) return out;
+  for (const j of s.team) {
+    if (!j.awaited || !j.open) continue;
+    const st = teamJobStatusNow(rootOf(root), j);
+    if (st) out.set(j.id, st);
+  }
+  return out;
+}
+
+/** He is here: his newest message (a `msg` debt, open or closed) is within OWNER_PRESENT_MS. */
+export function ownerPresent(s: Pick<SuperState, 'owed'>, now = Date.now()): boolean {
+  let newest = Number.NEGATIVE_INFINITY;
+  for (const d of s.owed ?? []) if (d.kind === 'msg' && d.at > newest) newest = d.at;
+  return now - newest <= ownerPresentMs();
+}
+
+/** A child he waits on that is at work right now (C4). */
+function progressChildLive(ch: SuperChild | undefined): ch is SuperChild {
+  return !!ch && ch.awaited === true && ch.endedAt === undefined && ch.row === 'working';
+}
+
+/** A job of the progress rule, by its record entry: its clock's start, told and progress stamps. */
+function progressClock(s: SuperState, job: Pick<ProgressJob, 'child' | 'team'>, teams: ProgressTeamStatus): number | null {
+  if (job.child) {
+    const ch = s.children[job.child];
+    if (!progressChildLive(ch)) return null;
+    return Math.max(ch.workingSince ?? ch.startedAt, ch.toldAt ?? 0, ch.progressAt ?? 0);
+  }
+  const j = job.team ? s.team.find((x) => x.id === job.team) : undefined;
+  if (!j || !j.awaited || !j.open || teams.get(j.id) !== 'running' || j.liveSince === undefined) return null;
+  return Math.max(j.liveSince, j.toldAt ?? 0, j.progressAt ?? 0);
+}
+
+/**
+ * THE progress rule (C4), for the sweep's create path and delivery's prune alike: main's record,
+ * he is present, the job is live and awaited, and its clock (the later of its start, the last time
+ * the Super told him about it, the last progress delivered for it) has run PROGRESS_DUE_MS.
+ */
+export function progressDue(s: SuperState, job: Pick<ProgressJob, 'child' | 'team'>, now: number, teams: ProgressTeamStatus): boolean {
+  if (!s.enabled || s.member || !s.session || !ownerPresent(s, now)) return false;
+  const since = progressClock(s, job, teams);
+  return since !== null && now - since >= progressDueMs();
+}
+
+const progressKey = (j: Pick<ProgressJob, 'child' | 'team'>): string => (j.child ? j.child : `team:${j.team}`);
+
+/** A `progress` item (main record only): it speaks, shows in full and owes nothing (C5). */
+export function progressItem(q: Pick<SuperQueueItem, 'kind'>): boolean {
+  return q.kind === 'progress';
+}
+
+/**
+ * The sweep's progress pass, in a write draft (C2, C3, C7): stamps the clocks' starts it observes
+ * (an awaited working child with none, after an upgrade; a team job first read running, cleared
+ * once it reads queued, done or failed) and adds every newly due job to the ONE pending item.
+ * `teams` was read before the draft. Mutates `s`.
+ */
+export function progressDraft(s: SuperState, now: number, teams: ProgressTeamStatus): { changed: boolean; added: boolean } {
+  let changed = false;
+  if (!s.enabled || s.member || !s.session) return { changed, added: false };
+  for (const ch of Object.values(s.children)) {
+    if (progressChildLive(ch) && ch.workingSince === undefined) { ch.workingSince = now; changed = true; }
+  }
+  for (const j of s.team) {
+    if (!j.awaited || !j.open) continue;
+    const st = teams.get(j.id);
+    if (st === 'running' && j.liveSince === undefined) { j.liveSince = now; changed = true; }
+    else if ((st === 'queued' || st === 'done' || st === 'failed') && j.liveSince !== undefined) { delete j.liveSince; changed = true; }
+  }
+  let item = s.queue.find((q) => progressItem(q) && q.state === 'pending');
+  const have = new Set((item?.progress?.jobs ?? []).map(progressKey));
+  const due: Array<Pick<ProgressJob, 'child' | 'team'>> = [];
+  for (const sid of Object.keys(s.children)) if (!have.has(sid) && progressDue(s, { child: sid }, now, teams)) due.push({ child: sid });
+  for (const j of s.team) if (!have.has(`team:${j.id}`) && progressDue(s, { team: j.id }, now, teams)) due.push({ team: j.id });
+  if (!due.length) return { changed, added: false };
+  if (!item) {
+    item = { id: newQueueId(), sessionId: s.session, kind: 'progress', state: 'pending', createdAt: now, progress: { jobs: [] } };
+    s.queue.push(item);
+  }
+  const jobs = item.progress?.jobs ?? [];
+  const before = jobs.length;
+  for (const d of due) {
+    if (jobs.length >= MAX_PROGRESS_JOBS) break;
+    const origin = d.child ? s.children[d.child]?.origin : s.team.find((j) => j.id === d.team)?.origin;
+    jobs.push({ ...d, ref: origin ?? owedRef(item.id) });
+  }
+  if (jobs.length === before) return { changed, added: false };
+  item.progress = { jobs };
+  return { changed: true, added: true };
+}
+
+/** Delivery's prune (C3): every pending progress item keeps only the jobs still due; one left
+ *  empty is closed, never delivered. Mutates `s`; true when anything moved. */
+export function pruneProgressDraft(s: SuperState, now: number, teams: ProgressTeamStatus): boolean {
+  let changed = false;
+  for (const q of s.queue) {
+    if (!progressItem(q) || q.state !== 'pending') continue;
+    const jobs = (q.progress?.jobs ?? []).filter((j) => progressDue(s, j, now, teams));
+    if (jobs.length === (q.progress?.jobs.length ?? 0) && jobs.length) continue;
+    changed = true;
+    if (jobs.length) q.progress = { jobs }; else { q.state = 'done'; delete q.progress; }
+  }
+  return changed;
+}
+
+/**
+ * A progress turn that died with no result (a process exit), in a write draft. The first time the
+ * line never reached him: the clocks its delivery stamped go back and the item is pending again,
+ * delivered once more. The second time it closes and its jobs wait a FULL window (`progressAt` =
+ * now): a Super that dies on every such turn must not breed a new item each sweep (review r2,
+ * retry-cap: done, no pending item, the old clock still due, a fresh item a minute later).
+ */
+export function progressExitDraft(s: SuperState, it: SuperQueueItem, now: number): void {
+  const exits = (it.exits ?? 0) + 1;
+  it.exits = exits;
+  const last = exits >= 2;
+  for (const j of it.progress?.jobs ?? []) {
+    const job = j.child ? s.children[j.child] : s.team.find((x) => x.id === j.team);
+    if (!job) continue;
+    if (last) job.progressAt = now; else delete job.progressAt;
+  }
+  if (last) { it.state = 'done'; return; }
+  it.state = 'pending';
+  delete it.batch;
+}
+
+/** A written progress delivery (C3): each job the DELIVERED snapshot named gets `progressAt`. */
+function stampProgressDelivered(s: SuperState, items: readonly SuperQueueItem[], now: number): void {
+  for (const it of items) {
+    if (!progressItem(it)) continue;
+    for (const j of it.progress?.jobs ?? []) {
+      if (j.child) { const ch = s.children[j.child]; if (ch) ch.progressAt = now; }
+      else { const t = s.team.find((x) => x.id === j.team); if (t) t.progressAt = now; }
+    }
+  }
+}
+
+/**
+ * The Super told him about a job (C4 restarts i, ii), in a write draft: a section under a job's
+ * origin (or under the ref a progress item gave it) stamps that job's `toldAt`; a section answering
+ * one of HIS messages still OPEN when it lands (a new message of his, or a part of one) stamps every
+ * awaited job that has not finished. A CLOSED message's ref is a job's origin by now (review r1,
+ * told-stamp-scope: A's result under its old origin restarted B's clock): it stamps only the jobs
+ * whose origin it is. Runs before `closeByMarks`. Mutates `s`; true when it stamped.
+ */
+export function stampToldDraft(s: SuperState, refs: readonly string[], now: number): boolean {
+  if (!refs.length || s.member) return false;
+  const marked = new Set(refs);
+  const his = (s.owed ?? []).some((d) => d.kind === 'msg' && d.closed === undefined && (marked.has(d.ref) || (d.parts ?? []).some((p) => marked.has(p))));
+  const viaItem = new Set<string>();
+  for (const q of s.queue) {
+    if (!progressItem(q) || q.state === 'done') continue;
+    for (const j of q.progress?.jobs ?? []) if (marked.has(j.ref)) viaItem.add(progressKey(j));
+  }
+  let stamped = false;
+  for (const ch of Object.values(s.children)) {
+    if (!ch.awaited || ch.endedAt !== undefined || ch.row === 'done' || ch.row === 'gone') continue;
+    if (his || (ch.origin && marked.has(ch.origin)) || viaItem.has(ch.sessionId)) { ch.toldAt = now; stamped = true; }
+  }
+  for (const j of s.team) {
+    if (!j.awaited || !j.open) continue;
+    if (his || (j.origin && marked.has(j.origin)) || viaItem.has(`team:${j.id}`)) { j.toldAt = now; stamped = true; }
+  }
+  return stamped;
+}
+
+/** The lines a `progress` item carries (build note: one per job, its brief fenced). */
+function progressItemLines(root: string, vault: string, s: SuperState, item: SuperQueueItem, now: number): string[] {
+  const lines: string[] = [];
+  for (const j of item.progress?.jobs ?? []) {
+    if (j.child) {
+      const ch = s.children[j.child];
+      const e = getChat(j.child);
+      const start = ch ? ch.workingSince ?? ch.startedAt : now;
+      const lastAt = e ? Date.parse(e.lastFrameAt) : Number.NaN;
+      let head = `- item=${item.id} event=progress job=${j.child} ref=${j.ref} elapsed=${Math.max(0, Math.round((now - start) / 60_000))}m`;
+      if (Number.isFinite(lastAt)) head += ` last=${owedClock(lastAt)}`;
+      if (e && activityOf(e, now) === 'idle' && backgroundBusy(e, now)) {
+        const ended = e.lastTurn ? Date.parse(e.lastTurn.endedAt) : Number.NaN;
+        head += ` background=${e.backgroundTasks ?? 0}${Number.isFinite(ended) ? ` since=${owedClock(ended)}` : ''}`;
+      }
+      lines.push(head);
+      const brief = ch?.brief || (e ? chatTopic(e) : '');
+      if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
+      continue;
+    }
+    const t = s.team.find((x) => x.id === j.team);
+    const facts = t ? teamJobProgress(rootOf(root), t, now) : null;
+    let head = `- item=${item.id} event=progress job=${j.team} ref=${j.ref} elapsed=${t?.liveSince !== undefined ? Math.max(0, Math.round((now - t.liveSince) / 60_000)) : 0}m`;
+    if (facts?.lastAt !== undefined) head += ` last=${owedClock(facts.lastAt)}`;
+    lines.push(head);
+    if (t) lines.push(wrapUntrusted(vault, `Brief: ${t.member}: ${t.brief}`));
+  }
+  return lines;
+}
+
+/** Added to a batch that carries a `progress` item (C5). A time left only from a real measurement
+ *  (owner 2026-11-21: no measurement, no time). */
+export const PROGRESS_LINE = `An item whose own server line says event=progress is a job the owner is waiting on and has heard nothing about for a while: there is no result yet, so it overrides "tell him its result". This is an exception to the no-text rule: one line each, in its own section opening \`<!-- re:<ref> -->\` (its line's ref=): the step it is on, a time left only when a real measurement gives it (its elapsed= against its earlier runs, a test count), and what follows (${OWNER_VOICE}). Reading the child first (\`dreamcontext super read <job>\`) is fine; never nudge a child that is working or waiting on its background work (background= on its line).`;
+
 /** Reconcile one vault's rows against the registry: read, and write only when something moves. */
 export async function reconcileRows(contextRoot: string, now = Date.now()): Promise<void> {
   const key = keyOf(contextRoot);
@@ -4732,11 +4994,18 @@ export async function reconcileRows(contextRoot: string, now = Date.now()): Prom
   // An allowed call whose one-shot was spent: its item closes (K3).
   void track(settleAllowedOnce(key).catch(() => 0));
   const armed = (sid: string) => settleTimers.has(sid);
-  const probe = reconcileDraft(structuredClone(s), now, armed);
+  // The progress pass reads its team statuses here, outside the write draft (C7).
+  const teams = progressTeamStatuses(key, s);
+  const draft = (d: SuperState) => {
+    const rows = reconcileDraft(d, now, armed);
+    const prog = progressDraft(d, now, teams);
+    return { ...rows, changed: rows.changed || prog.changed, added: rows.added || prog.added };
+  };
+  const probe = draft(structuredClone(s));
   if (!probe.changed) { for (const a of probe.arm) armSettle(key, a.sid, a.ms); syncSweep(key, s); return; }
   let result = probe;
   try {
-    await writeSuper(key, (d) => { if (d.enabled) result = reconcileDraft(d, now, armed); });
+    await writeSuper(key, (d) => { if (d.enabled) result = draft(d); });
   } catch { stopSweep(key); return; }
   for (const a of result.arm) armSettle(key, a.sid, a.ms);
   if (result.added) void pumpSuper(key);
@@ -4754,8 +5023,17 @@ function armPermissionGraces(key: string, s: SuperState, now: number): void {
 /** Does this record need the sweep: handed over, and a row works or is stuck as stale. */
 function needsSweep(s: SuperState): boolean {
   return s.enabled && (holdsOpenRequest(s) || Object.values(s.children).some((c) => c.endedAt === undefined && (c.row === 'working' || (c.row === 'stuck' && c.stuckReason === 'stale')))
+    // An awaited team job still open in main's record: the progress rule watches it (C7).
+    || (!s.member && s.team.some((j) => j.awaited === true && j.open === true))
     // A permission its super agent decides first: the sweep re-arms its grace after a restart.
     || s.queue.some((q) => q.kind === 'permission' && q.toSuper === true && q.state !== 'done'));
+}
+
+/** The sweep's tick; the verify run shortens it (`DREAMCONTEXT_SUPER_SWEEP_MS`) beside the
+ *  progress clocks, so a shortened progress bar is seen within its bound. */
+function staleSweepMs(): number {
+  const n = Number(process.env.DREAMCONTEXT_SUPER_SWEEP_MS);
+  return Number.isFinite(n) && n > 0 ? n : STALE_SWEEP_MS;
 }
 
 function syncSweep(key: string, s: SuperState): void {
@@ -4764,7 +5042,7 @@ function syncSweep(key: string, s: SuperState): void {
   const t = setTimeout(() => {
     sweeps.delete(key);
     void track(reconcileRows(key));
-  }, STALE_SWEEP_MS);
+  }, staleSweepMs());
   t.unref?.();
   sweeps.set(key, t);
 }

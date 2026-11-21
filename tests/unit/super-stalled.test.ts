@@ -164,6 +164,18 @@ describe('the nudge, then the owner', () => {
     expect((await rota()).queue.find((q) => q.id === stalled[0].id)?.state).toBe('done');
   });
 
+  it('Lina replay (super-sessiz-kalmaz D4): its main: child is done with its chat still open and its result heard: nudged at this turn end', async () => {
+    const { session, request, h } = await rotaOnTheJob();
+    const kid = 'sess-rota-kid-1';
+    registerChat({ sessionId: kid, conversationId: null, vault: 'acme', mode: 'basic' });
+    await writeSuper(root, 'm:rota', (s) => {
+      s.children[kid] = { sessionId: kid, brief: 'deploy', adopted: false, startedAt: Date.now() - 60_000, row: 'done', rowAt: Date.now(), workOrigin: `main:${request}` };
+      s.queue.push({ id: 'q-kid-done-1', sessionId: kid, kind: 'done', state: 'delivered', createdAt: Date.now() });
+    });
+    await silentTurn(h, session, 'The deploy did not start because of GitHub billing.');
+    expect((await rota()).queue.filter((q) => q.kind === 'nudge')).toHaveLength(1);
+  });
+
   it('a turn that ends with a refusal: the refusal item, and no nudge', async () => {
     const { session, h } = await rotaOnTheJob();
     h.userSent('go on');

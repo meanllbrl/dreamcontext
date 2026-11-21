@@ -16,6 +16,12 @@
  * already knows, so the repeat is dropped and the window starts again. A thing that fails every
  * time is told once while it keeps failing, never every ten minutes (review r2,
  * undelivered-retell-loop).
+ *
+ * A refused text names its section's own refs (`refs=abc,def`, super-sessiz-kalmaz D5) and the
+ * note says to re-send it under the first one: a marked section goes to his bound chat even from
+ * a turn that is not his Telegram turn, an unmarked re-send stays on the Mac (kitup, 21 Nov: "Buradan
+ * yaz bitti mi" 40 s after an unmarked re-send). With the refs on the line, the same section failing
+ * again under the same refs within ten minutes is dropped as a repeat: the first note told it.
  */
 
 export type UndeliveredKind = 'text' | 'voice' | 'picture' | 'card';
@@ -85,7 +91,7 @@ export function undeliveredNote(lines: readonly string[]): string | null {
     'Part of what you sent did NOT reach the owner:',
     // A line can carry the Super's own words (a drawing's title): never a tag of its own.
     ...lines.map((l) => `- ${l.replace(/</g, '‹')}`),
-    'Never say it was sent, is ready or is there. Tell him in one short line what did not arrive, then send it again in a way that reaches him, or say where it is (the Mac). Do not mention this note itself.',
+    'Never say it was sent, is ready or is there. Tell him in one short line what did not arrive, then send it again in a way that reaches him, or say where it is (the Mac). A line with refs=<ref>[,<ref>…]: send that answer again, shorter, in its own section opening `<!-- re:<the first ref> -->` on its first line; only a marked section reaches his phone from this turn. Do not mention this note itself.',
     `</${UNDELIVERED_TAG}>`,
   ].join('\n');
 }

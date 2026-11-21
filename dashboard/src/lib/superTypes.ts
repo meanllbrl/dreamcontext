@@ -381,8 +381,9 @@ export type StuckReason = typeof STUCK_REASONS[number];
  *  asking (never mirrored, never counted). `routine`: something a routine waits on the owner for,
  *  derived from disk (`routine` its slug, `fact` the fact, drawn by the routine's own title).
  *  An OWN item (`own`) is a question, permission or owner wait of the record's own session
- *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note'] as const;
+ *  (MIRROR of src/lib/super/types.ts, uye-bildirim K1/K6/K7). `progress`: the server's note that
+ *  the owner waits on jobs he has heard nothing about (super-sessiz-kalmaz), the Super's own. */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note', 'progress'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
