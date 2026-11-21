@@ -594,6 +594,8 @@ export interface RuleView {
   supersedes: RuleSupersedes[];
   /** Who wrote the latest status change. */
   status_by: RuleBy;
+  /** When the record last changed (its newest event): "new since this session started" reads it. */
+  changed_at: string;
 }
 
 function isEvent(e: unknown): e is RuleEvent {
@@ -640,6 +642,7 @@ export function deriveRule(rec: RuleRecord, now: Date = new Date()): RuleView {
     moved_to: null,
     supersedes: [],
     status_by: first?.by ?? rec.created.by,
+    changed_at: events.at(-1)?.at ?? rec.created.at,
   };
   const apply = (e: RuleEvent): void => {
     if (e.headline !== undefined) v.headline = e.headline;

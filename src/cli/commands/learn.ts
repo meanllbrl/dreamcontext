@@ -74,6 +74,7 @@ import {
   memberStoreRefs,
   visibleStores,
   withStore,
+  MEMBER_EDIT_REFUSAL,
   type Actor,
   type MemberGate,
   type MemberStoreRef,
@@ -657,23 +658,25 @@ function storeFailure(e: unknown): LearnOutcome {
 // ─── Finding a rule by id ───────────────────────────────────────────────────
 
 function refsOf(ctx: LearnContext): StoreRef[] {
-  const refs: StoreRef[] = [];
-  if (ctx.contextRoot) refs.push(projectStoreRef(ctx.contextRoot, ctx.home));
-  refs.push(personalStoreRef(ctx.home));
-  return refs;
+  return locator(ctx).refs();
 }
 
+/** The store holding `id`, through the one locator (C1): this project, his store, every member store. */
 export function locateRule(ctx: LearnContext, id: string): { ref: StoreRef; view: RuleView } | null {
-  for (const ref of refsOf(ctx)) {
-    const store = readStore(ref);
-    const rec = findRecord(store, id);
-    if (rec) {
-      const view = deriveRule(rec, ctx.now);
-      if (view.moved_to) continue;
-      return { ref, view };
-    }
-  }
-  return null;
+  const found = locateIn(locator(ctx), id, ctx.now);
+  return found ? { ref: found.ref, view: found.view } : null;
+}
+
+/** Which store, in words, for a receipt read from a session that may not be the rule's own. */
+function storeName(ref: StoreRef): string {
+  if (ref.scope === 'me') return 'his preferences';
+  if (ref.scope === 'member') return `${ref.member?.slug ?? 'a member'}'s rules`;
+  return 'this project\'s rules';
+}
+
+/** A member store is written only by that member's own process or a session with no member (D2). */
+function memberWriteRefusal(ctx: LearnContext, ref: StoreRef): string | null {
+  return ref.scope === 'member' && ref.member ? ownMemberRefusal(ctx, ref.member.slug) : null;
 }
 
 // ─── undo / keep / drop / edit ──────────────────────────────────────────────
@@ -690,9 +693,13 @@ export function learnUndo(id: string, ctx: LearnContext): LearnOutcome {
   try {
     const found = locateRule(ctx, id);
     if (!found) return refuse(`no rule ${id}`);
-    const r = undoRule(found.ref, id, actorOf(ctx));
+    const own = memberWriteRefusal(ctx, found.ref);
+    if (own) return refuse(own);
+    const r = undoRule(found.ref, id, actorOf(ctx), { locate: locator(ctx) });
     if (!r.ok) return refuse(r.reason);
     const lines = [`UNDONE ${id} ${found.ref.scope}`, `Geri alındı: "${r.rule.headline}"${restoredLine(r.restored)}`];
+    // From a session that is not the rule's own (the main Super undoing a member's rule): say which store.
+    if (found.ref.scope === 'member' && sessionMemberSlug(ctx.env) !== found.ref.member?.slug) lines.push(`It was one of ${storeName(found.ref)}.`);
     if (r.notice) lines.push(r.notice);
     return { code: 0, lines, id, status: r.rule.status, scope: found.ref.scope };
   } catch (e) { return storeFailure(e); }
@@ -737,11 +744,13 @@ export function learnKeep(id: string, ctx: LearnContext, quote?: string): LearnO
   try {
     const found = locateRule(ctx, id);
     if (!found) return refuse(`no rule ${id}`);
-    if (isAgentSession(ctx.env)) {
+    const own = memberWriteRefusal(ctx, found.ref);
+    if (own) return refuse(own);
+    if (!ownerProcess(ctx.env)) {
       const why = hisWordAbout(found.view, quote, KEEP_WORD, ctx);
       if (why) return refuse(why);
     }
-    const r = keepRule(found.ref, id, actorOf(ctx));
+    const r = keepRule(found.ref, id, actorOf(ctx), { locate: locator(ctx), gate: gateOf(ctx, quote ? [quote] : [], true) });
     if (!r.ok) return refuse(r.reason);
     return receipt(ctx, r.rule, { notice: r.notice });
   } catch (e) { return storeFailure(e); }
@@ -752,19 +761,21 @@ export function learnDrop(id: string, ctx: LearnContext, quote?: string): LearnO
   try {
     const found = locateRule(ctx, id);
     if (!found) return refuse(`no rule ${id}`);
-    if (isAgentSession(ctx.env)) {
+    const own = memberWriteRefusal(ctx, found.ref);
+    if (own) return refuse(own);
+    if (!ownerProcess(ctx.env)) {
       const why = hisWordAbout(found.view, quote, DROP_WORD, ctx);
       if (why) return refuse(why);
     }
-    const r = dropRule(found.ref, id, actorOf(ctx));
+    const r = dropRule(found.ref, id, actorOf(ctx), { locate: locator(ctx) });
     if (!r.ok) return refuse(r.reason);
-    const lines = [`DROPPED ${id} ${found.ref.scope}`, `Atıldı: "${r.rule.headline}"`];
+    const lines = [`DROPPED ${id} ${found.ref.scope}`, `Atıldı: "${r.rule.headline}"${restoredLine(r.restored)}`];
     if (r.notice) lines.push(r.notice);
     return { code: 0, lines, id, status: r.rule.status, scope: found.ref.scope };
   } catch (e) { return storeFailure(e); }
 }
 
-export interface EditFlags { headline?: string; text?: string; says?: string; at?: string; doc?: string; when?: string; scope?: string }
+export interface EditFlags { headline?: string; text?: string; says?: string; at?: string; doc?: string; when?: string; scope?: string; member?: string }
 
 export function learnEdit(id: string, flags: EditFlags, ctx: LearnContext): LearnOutcome {
   try {
@@ -781,14 +792,29 @@ export function learnEdit(id: string, flags: EditFlags, ctx: LearnContext): Lear
     };
     if (flags.doc !== undefined && !ctx.contextRoot) return refuse('--doc names a file in a vault: run inside one');
     const actor = actorOf(ctx);
+    // Daralt (D2): an agent never edits or moves a member's rule; his shell (or his `run` card) does.
+    const touchesMember = found.ref.scope === 'member' || flags.scope === 'member';
+    if (touchesMember && !actor.owner) return refuse(MEMBER_EDIT_REFUSAL);
+    if (flags.member !== undefined && flags.scope !== 'member') return refuse('--member goes with --scope member');
     let r: StatusChange;
     if (flags.scope !== undefined && flags.scope !== found.ref.scope) {
-      if (flags.scope !== 'me' && flags.scope !== 'project') return refuse('--scope must be me or project');
-      if (flags.scope === 'me') {
-        const email = ctx.gitEmail !== undefined ? ctx.gitEmail : readGitIdentity(ctx.contextRoot ? dirname(ctx.contextRoot) : process.cwd()).email;
-        if (!ensureMeFile(ctx.home, email)) return refuse('there is no personal store: no ~/.dreamcontext/me/me.json and no git user.email');
+      if (flags.scope !== 'me' && flags.scope !== 'project' && flags.scope !== 'member') return refuse('--scope must be me, project or member');
+      let target: StoreRef;
+      if (flags.scope === 'member') {
+        const m = resolveMember(ctx, flags.member);
+        if (typeof m === 'string') return refuse(m);
+        if (m.scope === 'project' && ctx.contextRoot) { try { ensureAgentsGitignore(ctx.contextRoot); } catch { /* the write still checks its paths */ } }
+        target = storeRef(ctx, 'member', m);
+      } else {
+        if (flags.scope === 'me') {
+          const email = ctx.gitEmail !== undefined ? ctx.gitEmail : readGitIdentity(ctx.contextRoot ? dirname(ctx.contextRoot) : process.cwd()).email;
+          if (!ensureMeFile(ctx.home, email)) return refuse('~/.dreamcontext/me is a link: the personal store is refused there');
+        }
+        target = storeRef(ctx, flags.scope);
       }
-      r = moveRule(found.ref, storeRef(ctx, flags.scope), id, edit, actor);
+      r = moveRule(found.ref, target, id, edit, actor);
+    } else if (found.ref.scope === 'member' && flags.member !== undefined && flags.member !== found.ref.member?.slug) {
+      return refuse('a rule moves from one member to another only as a new rule on his words (`--replaces <id>`)');
     } else {
       r = editRule(found.ref, id, edit, actor);
     }
@@ -815,9 +841,12 @@ function describe(v: RuleView, contextRoot: string | null): string[] {
   return lines;
 }
 
-export function learnList(ctx: LearnContext, opts: { me?: boolean; project?: boolean; all?: boolean } = {}): { lines: string[]; rules: RuleView[] } {
-  const showMe = opts.me || !opts.project;
-  const showProject = (opts.project || !opts.me) && !!ctx.contextRoot;
+export function learnList(ctx: LearnContext, opts: { me?: boolean; project?: boolean; all?: boolean; member?: string } = {}): { lines: string[]; rules: RuleView[] } {
+  const only = opts.me || opts.project || opts.member !== undefined;
+  const showMe = opts.me || !only;
+  const showProject = (opts.project || !only) && !!ctx.contextRoot;
+  // A member's rules: the one named, else this session's own member (never another member's by default).
+  const memberSlug = opts.member !== undefined ? opts.member.trim() : (!only ? sessionMemberSlug(ctx.env) : '');
   const lines: string[] = [];
   const all: RuleView[] = [];
   const section = (title: string, ref: StoreRef): void => {
@@ -837,6 +866,14 @@ export function learnList(ctx: LearnContext, opts: { me?: boolean; project?: boo
     }
   }
   if (showProject) section('This project\'s rules', projectStoreRef(ctx.contextRoot!, ctx.home));
+  if (memberSlug) {
+    const m = resolveMember(ctx, memberSlug);
+    if (typeof m === 'string') lines.push(`Member rules: ${m}`);
+    else {
+      try { section(`${memberTitleOf(ctx, m.slug)}'s rules, every project it works in`, memberStoreRef(m, ctx.contextRoot, ctx.home)); }
+      catch (e) { lines.push(`${m.slug}'s rules: ${(e as Error).message}`); }
+    }
+  }
   return { lines, rules: all };
 }
 
@@ -920,8 +957,8 @@ export function registerLearnCommand(program: Command): void {
   const learnCmd = program
     .command('learn')
     .argument('[text]', 'The rule, one line, never stricter than his words')
-    .description('Store a rule he stated (his preference, this project\'s rule, or a member\'s lesson) and print the line to repeat to him')
-    .option('--scope <scope>', 'me (how to work with him in general, every project) | project (one product or project) | member')
+    .description('Store a rule he stated (his preference, this project\'s rule, or how one AI Team member works) and print the line to repeat to him')
+    .option('--scope <scope>', 'me (how to work with him in general, every project) | project (one product or project) | member (how this member works, every project it works in)')
     .option('--quote <words>', 'His words the rule comes from, copied verbatim (repeatable)', collect, [])
     .option('--headline <text>', 'The rule itself in at most 60 characters')
     .option('--says <phrases>', 'Other ways he says it, in his languages, split by |')
@@ -932,7 +969,7 @@ export function registerLearnCommand(program: Command): void {
     .option('--new', 'A different rule from the near-twins learn found')
     .option('--supersedes <path>', 'A file whose text says the opposite (path or path::"excerpt"; repeatable)', collect, [])
     .option('--doc <path>', 'A long-form pattern in this vault the rule links to')
-    .option('--member <slug>', 'With --scope member: the member whose lesson this is')
+    .option('--member <slug>', 'With --scope member: the member whose rule this is (default: this session\'s member)')
     .option('--by <who>', 'sleep (a sleep run proposing from his words)')
     .option('--json', 'Machine-readable receipt')
     .action((text: string | undefined, opts: LearnFlags & { json?: boolean }) => {
@@ -945,9 +982,10 @@ export function registerLearnCommand(program: Command): void {
     .description('The rules he taught: his preferences and this project\'s rules, with who wrote each')
     .option('--me', 'Only his preferences')
     .option('--project', 'Only this project\'s rules')
+    .option('--member <slug>', 'Only this member\'s rules (default in a member session: its own, beside his and this project\'s)')
     .option('--all', 'Also replaced and undone rules')
     .option('--json', 'Machine-readable')
-    .action((opts: { me?: boolean; project?: boolean; all?: boolean; json?: boolean }) => {
+    .action((opts: { me?: boolean; project?: boolean; all?: boolean; member?: string; json?: boolean }) => {
       const out = learnList(liveContext(), opts);
       if (opts.json) console.log(JSON.stringify(out.rules, null, 2));
       else for (const l of out.lines) console.log(l);
@@ -988,7 +1026,8 @@ export function registerLearnCommand(program: Command): void {
     .option('--at <tag>', `${AT_TAGS.join('|')}`)
     .option('--when <sentence>', 'New situation sentence')
     .option('--doc <path>', 'New linked pattern')
-    .option('--scope <scope>', 'Move to me or project')
+    .option('--scope <scope>', 'Move to me, project or member (his shell only for a member rule)')
+    .option('--member <slug>', 'With --scope member: the member whose store it moves to')
     .action((id: string, opts: EditFlags) => print(learnEdit(id, opts, liveContext())));
 
   learnCmd

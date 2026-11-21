@@ -16,15 +16,17 @@
  * limit is the host's: a block that would cross it folds its lightest lines into one "more" line,
  * and nothing is cut mid-rule ({@link foldLines}).
  */
-import { readFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { isSafeSessionId } from './transcript-locate.js';
 import { promptOwnerText } from './agents/team-roster.js';
 import { SUPER_EVENT_PREFIXES } from './super/types.js';
 import { foldAscii } from './fold-ascii.js';
 import { loadPatterns, type PatternDoc } from './patterns.js';
 import { HOOK_OUTPUT_MAX_CHARS } from './snapshot-budget.js';
 import {
-  deriveAll, personalRulesVisible, personalStoreRef, projectStoreRef, readStore, RulesStoreError,
+  deriveAll, memberStoreRef, personalRulesVisible, personalStoreRef, projectStoreRef, readStore, RulesStoreError,
   type RuleView,
 } from './rules-store.js';
 
@@ -44,9 +46,14 @@ export interface Delivery {
   considered: number;
 }
 
+/** The member a session belongs to (`sessionMember`): its own rules ride with it (D4). */
+export interface DeliveryMember { slug: string; scope: 'global' | 'project' }
+
 export interface DeliveryOpts {
   home?: string;
   now?: Date;
+  /** This session's member (`sessionMember(process.env, root)`); null or absent: no member store is read. */
+  member?: DeliveryMember | null;
   /** Room for the turn's lines (default {@link TURN_LINES_MAX_CHARS}); the host's limit, never a count. */
   max?: number;
 }
@@ -117,6 +124,12 @@ export function rulesInForce(contextRoot: string | null, opts: DeliveryOpts = {}
   if (shown.visible) views.push(...readViews(() => readStore(personalStoreRef(home)), 'personal', now, notes));
   else if (shown.line) notes.push(shown.line);
   if (contextRoot) views.push(...readViews(() => readStore(projectStoreRef(contextRoot, home)), 'project', now, notes));
+  // THIS member's rules only (SG5: member X's rules reach only X's sessions).
+  if (opts.member) {
+    const m = opts.member;
+    views.push(...readViews(() => readStore(memberStoreRef(m, contextRoot, home)), `${m.slug} member`, now, notes)
+      .filter((v) => v.scope === 'member' && v.member === m.slug));
+  }
   const heaviest = (a: RuleView, b: RuleView): number => weightOrder(a, b);
   return {
     active: views.filter((v) => v.status === 'active').sort(heaviest),
@@ -138,7 +151,7 @@ function weightOrder(a: RuleView, b: RuleView): number {
 
 /** One line per rule: its headline and id; a hot rule (said again lately) also carries its text. */
 export function shortForm(v: RuleView): string {
-  const where = v.scope === 'me' ? '' : ', this project';
+  const where = v.scope === 'me' ? '' : v.scope === 'member' ? ', yours' : ', this project';
   if (v.hot && v.text && v.text !== v.headline) return `- ${v.headline} [${v.id}, said again${where}]: ${v.text}`;
   return `- ${v.headline} [${v.id}${where}]`;
 }
@@ -171,6 +184,26 @@ export function foldLines(lines: readonly string[], max: number, more: (n: numbe
 
 const MORE_LINE = (n: number): string => `- … ${n} more: \`dreamcontext learn list\``;
 
+/** The "more" line when a member's own rules may be among the folded ones. */
+function moreLine(member: DeliveryMember | null | undefined): (n: number) => string {
+  return member ? (n) => `- … ${n} more: \`dreamcontext learn list\` (yours: \`dreamcontext learn list --member ${member.slug}\`)` : MORE_LINE;
+}
+
+/**
+ * A rule that names his language (D4): it rides every non-machine turn on every surface, untagged
+ * or not (how a member answered him in English five times). Whole words, folded.
+ */
+const LANGUAGE_WORDS: readonly string[] = ['turkce', 'turkish', 'ingilizce', 'english', 'dil', 'dilde', 'dilinde', 'language'];
+export function namesLanguage(v: Pick<RuleView, 'headline' | 'text' | 'says'>): boolean {
+  const words = new Set(fold([v.headline, v.text, ...v.says].join(' ')).split(/[^a-z0-9]+/).filter(Boolean));
+  return LANGUAGE_WORDS.some((w) => words.has(w));
+}
+
+/** Whether `v` is the session member's own rule: it rides whole on every turn it acts on (D4). */
+function isOwnMemberRule(v: RuleView, member: DeliveryMember | null | undefined): boolean {
+  return !!member && v.scope === 'member' && v.member === member.slug;
+}
+
 // ─── Session start ──────────────────────────────────────────────────────────
 
 /** Room the session-start block may take: well inside one session-start part (9,800 chars). */
@@ -186,7 +219,10 @@ export function preferencesBlock(contextRoot: string, opts: DeliveryOpts & { max
   const L: string[] = ['### His preferences (learned rules, `dreamcontext learn`)', ''];
   if (r.active.length > 0) {
     L.push('Every rule below is in force. Follow each one; edit one by its id (`learn --same|--replaces <id>`), never add a twin.');
-    L.push(...foldLines(r.active.map(shortForm), opts.max ?? PREFERENCES_BLOCK_MAX_CHARS, MORE_LINE));
+    if (opts.member && r.active.some((v) => isOwnMemberRule(v, opts.member))) {
+      L.push(`The lines marked "yours" are how YOU (${opts.member.slug}) work, in every project: his corrections of your own work.`);
+    }
+    L.push(...foldLines(r.active.map(shortForm), opts.max ?? PREFERENCES_BLOCK_MAX_CHARS, moreLine(opts.member)));
   }
   if (r.proposed.length > 0) {
     const ids = r.proposed.map((v) => v.id).join(', ');
@@ -222,10 +258,14 @@ export function deliverForTurn(root: string, input: DeliverInput, opts: Delivery
   let r: RulesInForce;
   try { r = rulesInForce(root, opts); } catch { return empty(); }
   if (input.surface === 'act') return actDelivery(root, input, r.active);
+  // `always` rides first; then this member's own rules (whole, D4), a rule naming his language, hot
+  // rules, and on his turns and finished work the report/ask ones.
   const always = r.active.filter((v) => v.at_tag === 'always');
   const rest = r.active.filter((v) => v.at_tag !== 'always' && (v.hot
+    || isOwnMemberRule(v, opts.member)
+    || namesLanguage(v)
     || ((input.surface === 'owner' || input.surface === 'finished') && (v.at_tag === 'report' || v.at_tag === 'ask'))));
-  const lines = foldLines([...always, ...rest].map(shortForm), opts.max ?? TURN_LINES_MAX_CHARS, MORE_LINE);
+  const lines = foldLines([...always, ...rest].map(shortForm), opts.max ?? TURN_LINES_MAX_CHARS, moreLine(opts.member));
   return sized({
     always: lines.slice(0, Math.min(always.length, lines.length)),
     moment: lines.slice(Math.min(always.length, lines.length)),
@@ -258,6 +298,71 @@ export function appendToDispatch(prompt: string, d: Delivery): string | null {
   const block = helperLines(d);
   if (!block || prompt.includes(DISPATCH_RULES_OPEN)) return null;
   return `${prompt}\n\n${DISPATCH_RULES_OPEN}\n${block}\n${DISPATCH_RULES_CLOSE}`;
+}
+
+// ─── New since this session started (D5) ────────────────────────────────────
+
+/** Where a session's stamp lives: `~/.dreamcontext/state/session-stamps/<session>.json`. */
+export function sessionStampDir(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'state', 'session-stamps');
+}
+
+const STAMP_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+function stampFile(home: string, session: string): string | null {
+  if (!isSafeSessionId(session)) return null;
+  return join(sessionStampDir(home), `${session}.json`);
+}
+
+/**
+ * Stamp the session's start (the session-start hook: startup, resume, clear and compaction, when
+ * the snapshot delivers every rule again). Old stamps are pruned by age. Never throws.
+ */
+export function stampSession(session: string, opts: { home?: string; now?: Date } = {}): void {
+  const home = opts.home ?? homedir();
+  const now = opts.now ?? new Date();
+  const file = stampFile(home, session);
+  if (!file) return;
+  try {
+    const dir = sessionStampDir(home);
+    for (const p of [join(home, '.dreamcontext'), join(home, '.dreamcontext', 'state'), dir]) {
+      try { if (lstatSync(p).isSymbolicLink()) return; } catch { /* created below */ }
+    }
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify({ rulesSince: now.toISOString() })}\n`, { mode: 0o600 });
+    renameSync(tmp, file);
+    for (const n of readdirSync(dir)) {
+      const p = join(dir, n);
+      try { if (now.getTime() - statSync(p).mtimeMs > STAMP_MAX_AGE_MS) rmSync(p, { force: true }); } catch { /* raced */ }
+    }
+  } catch { /* a stamp is a nicety: never block a session */ }
+}
+
+/** The session's start stamp, or null (no stamp, a bad id, a link). */
+export function readSessionStamp(session: string, home: string = homedir()): string | null {
+  const file = stampFile(home, session);
+  if (!file) return null;
+  try {
+    if (lstatSync(file).isSymbolicLink()) return null;
+    const raw = JSON.parse(readFileSync(file, 'utf-8')) as { rulesSince?: unknown };
+    return typeof raw.rulesSince === 'string' && !Number.isNaN(Date.parse(raw.rulesSince)) ? raw.rulesSince : null;
+  } catch { return null; }
+}
+
+/**
+ * D5: every active rule written after this session's stamp, through the same visibility as
+ * {@link rulesInForce} (his store where shown, this project, THIS member only), so a rule he gave
+ * while the session was open is in front of it on its next turn. Null when none (or no stamp).
+ */
+export function newSinceLines(root: string | null, session: string, opts: DeliveryOpts = {}): string | null {
+  const since = readSessionStamp(session, opts.home);
+  if (!since) return null;
+  let r: RulesInForce;
+  try { r = rulesInForce(root, opts); } catch { return null; }
+  const fresh = r.active.filter((v) => v.changed_at > since);
+  if (fresh.length === 0) return null;
+  return ['New since this session started (in force now):', ...foldLines(fresh.map(shortForm), 2_000, moreLine(opts.member))].join('\n');
 }
 
 // ─── Before something that cannot be taken back (D16d) ──────────────────────

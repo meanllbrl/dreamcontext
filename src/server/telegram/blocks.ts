@@ -124,7 +124,7 @@ export async function onLearnedButton(hub: TelegramHub, ab: ActiveBinding, data:
   try {
     const found = locateRule(root, id, home);
     if (!found) return 'Bu kural bu projede yok.';
-    const change = undoRule(found.ref, id, { by: 'owner', conversation: 'telegram' });
+    const change = undoRule(found.ref, id, { by: 'owner', conversation: 'telegram' }, { locate: found.locate });
     if (!change.ok) return change.reason.slice(0, 180);
     return change.restored ? `↩ Geri alındı · eskisi geri geldi: "${change.restored.headline}"`.slice(0, 190) : '↩ Geri alındı';
   } catch {
