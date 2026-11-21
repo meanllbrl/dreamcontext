@@ -842,7 +842,7 @@ describe('review 2026-11-02: no window, a member\'s question to main, an off mem
     // After: one line, naming why and when it starts.
     checkQuietRequests(memberKey(), await rota(), born.createdAt + REQUEST_UNSTARTED_MS + 1);
     await vi.waitFor(async () => expect(await unstartedLines(job)).toHaveLength(1), W);
-    expect((await unstartedLines(job))[0].text).toBe('Rota has not started this job: no window is open to start its Super; it starts when the app shows the project.');
+    expect((await unstartedLines(job))[0].text).toBe('Rota has not started this job yet: its Super has not come up yet. It stays in its queue.');
     // Once per request, and the request stays pending and open; main's job stays open.
     checkQuietRequests(memberKey(), await rota(), born.createdAt + 3 * REQUEST_UNSTARTED_MS);
     await _superInboxDrained();

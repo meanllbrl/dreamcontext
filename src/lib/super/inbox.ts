@@ -1046,8 +1046,12 @@ export interface SuperInbox {
   id: string;
   /** The super chat's pin id. */
   sessionId: string;
-  /** A socket is bound right now (not detached). */
+  /** The process can take an event turn: alive, whether or not a window's socket holds it. A
+   *  Super the server started, or whose window closed, is reached the same way (owner 2026-11-22). */
   attached(): boolean;
+  /** A window's socket is bound right now (not detached). `inboxOf` prefers such a bridge.
+   *  Absent = the same as `attached()` (older fakes). */
+  bound?(): boolean;
   /** No turn of the bridge's own is in flight. */
   idle(): boolean;
   /** Write one injected turn. Resolves true only when it was written. Once `cancelled()` is true
@@ -1065,6 +1069,7 @@ const inboxes = new Map<string, SuperInbox[]>();
 function inboxOf(sessionId: string): SuperInbox | undefined {
   const list = inboxes.get(sessionId);
   if (!list?.length) return undefined;
+  for (let i = list.length - 1; i >= 0; i -= 1) if ((list[i].bound ?? list[i].attached)()) return list[i];
   for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].attached()) return list[i];
   return list[list.length - 1];
 }
@@ -1175,6 +1180,9 @@ function endTurn(sessionId: string, inboxId: string | null, exited: boolean, sto
   if (!root) return;
   const key = keyOf(root);
   lastTurnEnd.set(key, Date.now());
+  // A real turn end (never a bare exit) proves a woken process is up and took its mail: only
+  // then does the wake count start over (a start that dies at once still counts).
+  if (!exited) wakeTries.delete(key);
   // A member's Super ended a turn: did it stop on its job without closing it or asking (K6)?
   if (idOf(key) !== 'main' && !exited && !stopped) void track(checkStalled(key, sessionId));
   const list = turnsEnded.get(key) ?? [];
@@ -3960,6 +3968,12 @@ async function pumpOnce(key: string): Promise<void> {
     return;
   }
   if (blocker) {
+    // No process holds this Super (owner 2026-11-22: the app's window closed, he works from
+    // Telegram): team mail wakes it headless. Anything else waits for a window, as before.
+    if (blocker === 'no_socket' || blocker === 'no_chat') {
+      const s = lastStates.get(key) ?? await readSuperState(key, superSanitizeOpts()).catch(() => null);
+      if (s) await wakeForMail(key, s, now);
+    }
     // A member chat that is not even running: the fallback still reads its open requests.
     if (idOf(key) !== 'main') {
       const s = lastStates.get(key);
@@ -4235,7 +4249,7 @@ export async function noteRequestToMain(memberKey: string, requestId: string, no
       : note === 'off' ? `${title} is turned off: this job waits in its queue, not delivered, until the owner turns it on.`
         : note === 'unapproved' ? `${title} waits for its one approval card: this job waits in its queue, not delivered.`
           : note === 'question' ? `A child of ${title} asks about this job and ${title}'s Super left it twice: ${text}`
-            : note === 'unstarted' ? `${title} has not started this job: no window is open to start its Super; it starts when the app shows the project.`
+            : note === 'unstarted' ? `${title} has not started this job yet: ${text || 'its Super has not come up'}. It stays in its queue.`
             : `${title} has not closed this job; last line: ${text || '(none)'}`;
   // Told once per job, on the record (a restart never tells it again, Tilki 2026-11-21).
   const once = (TEAM_SAID_NOTES as readonly string[]).includes(note) ? note as TeamSaidNote : null;
@@ -4341,6 +4355,124 @@ export async function noteMemberToMain(contextRoot: string, slug: string, text: 
   return result;
 }
 
+// ─── A stopped Super woken by its team mail (owner 2026-11-22) ─────────────────────
+
+/** What a headless wake did (headless-super.ts `wakeSuperHeadlessDetail`): `gate` = no Super may
+ *  run for this session (off, unapproved, not the recorded one: never a start try); `busy` =
+ *  something holds the session that may give it up (retried on the backoff, never counted). */
+export type SuperWakeOutcome = 'live' | 'started' | 'gate' | 'start_failed' | 'busy';
+export type SuperWakeCause = 'telegram' | 'team';
+export interface SuperWakeCall { root: string; superId: SuperId; sessionId: string; member: string | null; cause: SuperWakeCause }
+let superWaker: ((o: SuperWakeCall) => Promise<SuperWakeOutcome>) | null = null;
+/** The server's waker (headless-super.ts `wireSuperWake`), or a test's. null = no wake (the window starts it). */
+export function setSuperWaker(fn: ((o: SuperWakeCall) => Promise<SuperWakeOutcome>) | null): void { superWaker = fn; }
+let ownerLineSink: ((root: string, line: string) => Promise<void>) | null = null;
+/** Where the one "could not start" line goes (super-schedule.ts `sayToOwner`, or a test's). */
+export function setSuperOwnerLineSink(fn: ((root: string, line: string) => Promise<void>) | null): void { ownerLineSink = fn; }
+
+/** Real start failures before the owner hears it once; the backoff after each. */
+export const MAX_WAKE_TRIES = 3;
+export const WAKE_BACKOFF_MS = [60_000, 120_000, 240_000] as const;
+const wakeTries = new Map<string, { n: number; next: number; told?: true }>();
+const waking = new Set<string>();
+
+/**
+ * Mail that wakes this Super with no window: a request or reply (the member), a team job's done,
+ * stuck or question (the Super that gave the job), and, for a member holding an open request, its
+ * own children's done, stuck or question (the work of that request: a child that outlives the
+ * member's idle reap must still bring its result back). Only what the next batch would deliver
+ * now counts: a question waits behind his own open question (`nextBatch`), so it wakes nothing.
+ */
+function teamMail(s: Pick<SuperState, 'queue' | 'children' | 'member'>, q: SuperQueueItem, questionOpen = ownerQuestionOpen(s)): boolean {
+  if (q.state !== 'pending') return false;
+  if (q.kind === 'question' && questionOpen) return false;
+  if (q.kind === 'request' || q.kind === 'reply') return true;
+  if (q.kind !== 'done' && q.kind !== 'stuck' && q.kind !== 'question') return false;
+  if (q.team) return true;
+  return !!s.member && Object.prototype.hasOwnProperty.call(s.children, q.sessionId)
+    && s.queue.some((r) => r.kind === 'request' && r.state !== 'done');
+}
+
+/** Why this record should wake its Super now, or null: only team mail does. */
+export function wakeCause(s: Pick<SuperState, 'queue' | 'children' | 'member' | 'enabled' | 'session'>): SuperWakeCause | null {
+  if (!s.enabled || !s.session) return null;
+  const questionOpen = ownerQuestionOpen(s);
+  return s.queue.some((q) => teamMail(s, q, questionOpen)) ? 'team' : null;
+}
+
+/** Turkish words for a start failure, for the owner's one line. */
+function failWords(o: SuperWakeOutcome): string {
+  return o === 'gate' ? 'bu oturumu başlatmaya izin yok' : 'süreci açılmadı';
+}
+
+async function wakeForMail(key: string, s: SuperState, now: number): Promise<void> {
+  if (!superWaker || waking.has(key)) return;
+  const cause = wakeCause(s);
+  if (!cause || !s.session) return;
+  let t = wakeTries.get(key);
+  // Out of tries: no more starts until a turn ends, or until new mail (never told) arrives after
+  // the last backoff, which opens a new bounded cycle. The last start came up and is gone again
+  // (this pump found no process): the owner hears it now, once per item.
+  if (t && t.n >= MAX_WAKE_TRIES) {
+    if (!t.told) { t.told = true; await tellWakeFailed(key, 'start_failed'); return; }
+    const questionOpen = ownerQuestionOpen(s);
+    if (now < t.next || !s.queue.some((q) => teamMail(s, q, questionOpen) && !q.wakeTold)) {
+      if (now < t.next) scheduleRetry(key, t.next + 50);
+      return;
+    }
+    wakeTries.delete(key);
+    t = undefined;
+  }
+  if (t && now < t.next) { scheduleRetry(key, t.next + 50); return; }
+  // A member off or unapproved: never woken (its requests wait, and main hears why).
+  if (s.member && memberBlocked(rootOf(key), s.member)) return;
+  waking.add(key);
+  let out: SuperWakeOutcome;
+  try {
+    out = await superWaker({ root: rootOf(key), superId: idOf(key), sessionId: s.session, member: s.member ?? null, cause });
+  } catch { out = 'start_failed'; } finally { waking.delete(key); }
+  // `live`: the process is there and the delivery rule reaches it once idle; never a try.
+  if (out === 'live') { if (!t?.n) wakeTries.delete(key); scheduleRetry(key, Date.now() + WAKE_BACKOFF_MS[0]); return; }
+  // A gate refusal is never retried as a start: it is looked at again only after the backoff.
+  if (out === 'gate' || out === 'busy') { const next = Date.now() + WAKE_BACKOFF_MS[0]; wakeTries.set(key, { n: t?.n ?? 0, next }); scheduleRetry(key, next + 50); return; }
+  const n = (t?.n ?? 0) + 1;
+  // Up (its injector registered): a try all the same, until its first turn ends (`endTurn`). A
+  // process that dies at once is started again only after the backoff, and counts.
+  if (out === 'started') {
+    wakeTries.set(key, { n, next: Date.now() + WAKE_BACKOFF_MS[Math.min(n, MAX_WAKE_TRIES) - 1] });
+    // Its inbox attaching pumps it (superSocketAttached); a look again is only the safety net.
+    scheduleRetry(key, Date.now() + 2_000);
+    return;
+  }
+  if (n < MAX_WAKE_TRIES) {
+    const next = Date.now() + WAKE_BACKOFF_MS[n - 1];
+    wakeTries.set(key, { n, next });
+    scheduleRetry(key, next + 50);
+    return;
+  }
+  wakeTries.set(key, { n, next: Date.now() + WAKE_BACKOFF_MS[MAX_WAKE_TRIES - 1], told: true });
+  await tellWakeFailed(key, out);
+}
+
+/** ONE owner line per team item that could not reach its Super (deduped by `wakeTold` on disk). */
+async function tellWakeFailed(key: string, out: SuperWakeOutcome): Promise<void> {
+  const root = rootOf(key);
+  let marked = 0;
+  let state: SuperState | null = null;
+  try {
+    state = await writeSuper(key, (d) => {
+      const questionOpen = ownerQuestionOpen(d);
+      for (const q of d.queue) if (teamMail(d, q, questionOpen) && !q.wakeTold) { q.wakeTold = true; marked += 1; }
+    });
+  } catch { return; }
+  if (!marked || !state || !ownerLineSink) return;
+  const slug = state.member;
+  const who = slug ? memberTitle(root, slug) : 'Super Agent';
+  const name = `\u201c${who.replace(/[\u0000-\u001f\u007f\u201c\u201d]/g, ' ').slice(0, 80)}\u201d`;
+  const line = `${name} başlatılamadı ya da açılıp kapandı (${failWords(out)}); ona gelen ${marked} iş sırada bekliyor. Uygulamada açınca devam eder.`.slice(0, 300);
+  try { await ownerLineSink(root, line); } catch { /* the items keep their mark: never told twice */ }
+}
+
 /** `super team done` (the member's own verb): main hears the result once. */
 export function noteRequestDone(contextRoot: string, slug: string, requestId: string, result: string): Promise<boolean> {
   // Every rule it learned on his relayed words, named by the server (D7d), never left to its memory.
@@ -4378,7 +4510,7 @@ export function checkQuietRequests(key: string, s: SuperState, now = Date.now())
 
 /**
  * A request nothing has started (review 2026-11-02): still `pending`, never accepted, older than
- * REQUEST_UNSTARTED_MS, and no live chat holds the member's Super (only a desktop window starts it;
+ * REQUEST_UNSTARTED_MS, and no live chat holds the member's Super (a desktop window or, with none, the server's wake starts it;
  * the phone never does). Main hears ONE line per request; nothing is closed or moved. Run inside
  * the pump and sweep passes like the 30-minute fallback, never a timer of its own.
  */
@@ -4393,8 +4525,17 @@ function checkUnstartedRequests(key: string, s: SuperState, now: number): void {
     const mark = `${key}\u0000${q.id}`;
     if (unstartedTold.has(mark)) continue;
     unstartedTold.add(mark);
-    void track(noteRequestToMain(key, q.id, 'unstarted'));
+    void track(noteRequestToMain(key, q.id, 'unstarted', unstartedWhy(key, q)));
   }
+}
+
+/** What really keeps an unstarted request out (the `unstarted` note): the wake's state. */
+function unstartedWhy(key: string, q: Pick<SuperQueueItem, 'wakeTold'>): string {
+  const t = wakeTries.get(key);
+  if (q.wakeTold) return 'its Super could not be started (the owner was told)';
+  if (t && t.n >= MAX_WAKE_TRIES) return 'its Super could not be started; the server tries again when the wait is over';
+  if (t && t.n > 0) return 'its Super did not start yet; the server tries again';
+  return 'its Super has not come up yet';
 }
 
 /** Does a member record hold an open request, started or not (the sweep keeps its fallbacks going)? */
@@ -4417,6 +4558,7 @@ export function retireMemberSuper(contextRoot: string, slug: string, opts: { kee
   // of one of its children is still its crew and main's card still reads its requests.
   const maps = (opts.keepIndex ? [carried, turnsEnded, leases, spokeTurns, lastTurnEnd, blockedSince] : [heads, lastStates, carried, turnsEnded, leases, spokeTurns, lastTurnEnd, blockedSince]) as Array<Map<string, unknown>>;
   for (const m of maps) m.delete(key);
+  wakeTries.delete(key);
   pumping.delete(key);
   again.delete(key);
   const r = retry.get(key);
@@ -5666,6 +5808,10 @@ export function _resetSuperInbox(): void {
   offTold.clear();
   staleTold.clear();
   unstartedTold.clear();
+  wakeTries.clear();
+  waking.clear();
+  superWaker = null;
+  ownerLineSink = null;
   owedEnds.clear();
   asksInFlight.clear();
   ownSendDebt.clear();

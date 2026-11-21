@@ -522,6 +522,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(answers ? { answers } : {}),
       ...(isReply && q.cancels === true ? { cancels: true as const } : {}),
       ...(workOrigin ? { workOrigin } : {}),
+      ...(q.wakeTold === true && (isRequest || isReply || !!team) ? { wakeTold: true as const } : {}),
       ...(owedAt !== undefined && owedAt >= 0 ? { owedAt } : {}),
       ...(owedIds.length ? { owed: owedIds } : {}),
       ...(mirrorOf ? { of: mirrorOf } : {}),

@@ -33,7 +33,8 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-const { wakeSuperHeadless, HeadlessSocket, _resetHeadlessSuperForTests, _setHeadlessStartForTests, _setHeadlessGateForTests } = await import('../../src/server/headless-super.js');
+const { wakeSuperHeadless, wakeSuperHeadlessDetail, wireSuperWake, HeadlessSocket, _resetHeadlessSuperForTests, _setHeadlessStartForTests, _setHeadlessGateForTests } = await import('../../src/server/headless-super.js');
+const inboxMod = await import('../../src/lib/super/inbox.js');
 const { plainOpenOfSuperRefusal } = await import('../../src/server/routes/agent-chat.js');
 const { findLiveChat, registerLiveChat, unregisterLiveChat } = await import('../../src/server/routes/agent-chat-live.js');
 const reg = await import('../../src/lib/assistant/chat-registry.js');
@@ -176,6 +177,165 @@ describe('wakeSuperHeadless', () => {
     expect(await wakeSuperHeadless({ contextRoot: root, sessionId: SID, member: null, waitMs: 2000 })).toBe('started');
     expect(cut).toHaveBeenCalledTimes(1);
     expect(findLiveChat(SID)?.mirror).toBeTypeOf('function');
+  });
+});
+
+// Owner 2026-11-22 (Telegram, the app's window closed): the Super Agent gave an AI Team member a
+// job and nothing started, because only a window spawned a stopped member's Super and an event
+// was only written to a Super a window's socket held. Now team mail wakes it on the server, and
+// a detached Super takes its events.
+describe('the wake for team mail (no window)', () => {
+  afterEach(async () => { vi.restoreAllMocks(); await inboxMod._superInboxDrained(); inboxMod._resetSuperInbox(); _setHeadlessStartForTests(null); _setHeadlessGateForTests(null); });
+  /** The clock past the start grace, then a pump (what the inbox's own scheduled retry does). */
+  async function passGrace(r: string, superId: 'main' | `m:${string}` = 'main'): Promise<void> {
+    const t = Date.now() + 31_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => t);
+    await inboxMod.pumpSuper(r, superId);
+  }
+
+  it('names its outcome: gate for what the window may not open, start_failed for a start that throws', async () => {
+    _setHeadlessGateForTests(() => 409);
+    expect(await wakeSuperHeadlessDetail({ contextRoot: root, sessionId: SID, member: null, waitMs: 200, cause: 'team' })).toBe('gate');
+    _setHeadlessGateForTests(() => null);
+    _setHeadlessStartForTests(() => { throw new Error('spawn ENOENT'); });
+    expect(await wakeSuperHeadlessDetail({ contextRoot: root, sessionId: SID, member: null, waitMs: 200, cause: 'team' })).toBe('start_failed');
+    expect(spawned).toHaveLength(0);
+  });
+
+  it('with no waker wired (no desktop), a stopped Super holding team mail is not started', async () => {
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
+      ...emptySuperState(), session: SID, enabled: true,
+      queue: [{ id: 'q-done-0000000d', sessionId: SID, kind: 'done', state: 'pending', createdAt: Date.now(), team: 'team-j2', text: 'Done.' }],
+    }));
+    resetSuperIndex();
+    await readSuperState(root);
+    inboxMod.wireSuperInbox();
+    wireSuperWake({ wake: false });
+    await inboxMod.pumpSuper(root);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(spawned).toHaveLength(0);
+  });
+
+  it('a stopped Super holding a team done is started by the pump (detached) and the event is written to it', async () => {
+    const { createAgent } = await import('../../src/lib/agents/store.js');
+    createAgent(root, { slug: 'rota', title: 'Rota', prompt: 'Rota works.' }, { approve: { now: new Date() } });
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({
+      ...emptySuperState(), session: SID, enabled: true,
+      team: [{ id: 'team-j1', member: 'rota', runId: new Date(Date.now() - 1000).toISOString(), jobKind: 'run', queued: false, brief: 'routes', startedAt: Date.now() - 1000, request: 'q-req-0000000a', told: 'done' }],
+      queue: [{ id: 'q-done-0000000b', sessionId: SID, kind: 'done', state: 'pending', createdAt: Date.now(), team: 'team-j1', text: 'Three routes.' }],
+    }));
+    resetSuperIndex();
+    await readSuperState(root);
+    inboxMod.wireSuperInbox();
+    wireSuperWake({ wake: true });
+    await inboxMod.pumpSuper(root);
+    await vi.waitFor(() => expect(spawned).toHaveLength(1), { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 10));
+    // Detached: no window's socket holds it.
+    expect(findLiveChat(SID)?.holder?.()).toBeNull();
+    const log = readFileSync(join(logHome, '.dreamcontext', 'logs', 'window-open.log'), 'utf-8');
+    expect(log).toMatch(/"cause":"team"/);
+    // A child given no prompt is `starting` until its grace passes; then the done goes in on stdin.
+    await passGrace(root);
+    await vi.waitFor(() => expect(spawned[0].stdin.write.mock.calls.some(([t]) => String(t).includes('q-done-0000000b'))).toBe(true), { timeout: 5000 });
+  });
+
+  it('a stopped member holding the Super Agent\'s request is started as that member and the request written to it', async () => {
+    const { createAgent } = await import('../../src/lib/agents/store.js');
+    const { MEMBER_SUPER_DIR } = await import('../../src/lib/super/store.js');
+    createAgent(root, { slug: 'rota', title: 'Rota', prompt: 'Rota works.' }, { approve: { now: new Date() } });
+    _setHeadlessGateForTests(() => null);
+    const RS = randomUUID();
+    mkdirSync(join(root, MEMBER_SUPER_DIR), { recursive: true });
+    writeFileSync(join(root, MEMBER_SUPER_DIR, 'rota.json'), JSON.stringify({
+      ...emptySuperState(), session: RS, enabled: true, member: 'rota',
+      queue: [{ id: 'q-mreq-0000000c', sessionId: RS, kind: 'request', state: 'pending', createdAt: Date.now(), text: 'Which cities open first?' }],
+    }));
+    resetSuperIndex();
+    await readSuperState(root, 'm:rota');
+    inboxMod.wireSuperInbox();
+    wireSuperWake({ wake: true });
+    await inboxMod.pumpSuper(root, 'm:rota');
+    await vi.waitFor(() => expect(spawned).toHaveLength(1), { timeout: 5000 });
+    const log = readFileSync(join(logHome, '.dreamcontext', 'logs', 'window-open.log'), 'utf-8');
+    expect(log).toMatch(/"member":"rota"/);
+    await passGrace(root, 'm:rota');
+    await vi.waitFor(() => expect(spawned[0].stdin.write.mock.calls.some(([t]) => String(t).includes('q-mreq-0000000c'))).toBe(true), { timeout: 5000 });
+  });
+});
+
+// The wake's bounds (end review r1): only mail the next batch would deliver wakes; a member
+// holding an open request is woken by its own children's results; three failed starts tell the
+// owner once per item, and new mail after the last backoff opens a new cycle.
+describe('the wake for team mail: what wakes and how often', () => {
+  afterEach(async () => { vi.restoreAllMocks(); await inboxMod._superInboxDrained(); inboxMod._resetSuperInbox(); });
+
+  async function memberRecord(queue: unknown[], children: Record<string, unknown> = {}): Promise<string> {
+    const { createAgent } = await import('../../src/lib/agents/store.js');
+    const { MEMBER_SUPER_DIR } = await import('../../src/lib/super/store.js');
+    createAgent(root, { slug: 'rota', title: 'Rota', prompt: 'Rota works.' }, { approve: { now: new Date() } });
+    const RS = randomUUID();
+    mkdirSync(join(root, MEMBER_SUPER_DIR), { recursive: true });
+    writeFileSync(join(root, MEMBER_SUPER_DIR, 'rota.json'), JSON.stringify({
+      ...emptySuperState(), session: RS, enabled: true, member: 'rota', children,
+      queue: (queue as Array<Record<string, unknown>>).map((q) => ({ sessionId: RS, ...q })),
+    }));
+    resetSuperIndex();
+    await readSuperState(root, 'm:rota');
+    return RS;
+  }
+
+  it('a member holding an open request is woken by its own child\'s done; without an open request it is not', async () => {
+    const CH = randomUUID();
+    const kids = { [CH]: { sessionId: CH, brief: 'routes', startedAt: Date.now() - 1000, row: 'done' } };
+    const calls: string[] = [];
+    inboxMod.setSuperWaker(async (o) => { calls.push(o.superId); return 'live'; });
+    await memberRecord([
+      { id: 'q-req-00000010', kind: 'request', state: 'delivered', createdAt: Date.now() - 5000, acceptedAt: Date.now() - 4000, text: 'Plan the routes.' },
+      { id: 'q-done-00000011', sessionId: CH, kind: 'done', state: 'pending', createdAt: Date.now() },
+    ], kids);
+    await inboxMod.pumpSuper(root, 'm:rota');
+    expect(calls).toEqual(['m:rota']);
+    const state = await readSuperState(root, 'm:rota');
+    expect(inboxMod.wakeCause(state)).toBe('team');
+    expect(inboxMod.wakeCause({ ...state, queue: state.queue.filter((q) => q.kind !== 'request') })).toBeNull();
+  });
+
+  it('a team question waiting behind his own open question wakes nothing', async () => {
+    const s = { ...emptySuperState(), session: SID, enabled: true, queue: [
+      { id: 'q-ask-00000012', sessionId: SID, kind: 'ask', state: 'escalated', createdAt: 1, ownerText: 'Which city?' },
+      { id: 'q-qst-00000013', sessionId: SID, kind: 'question', state: 'pending', createdAt: 2, team: 'team-j9', text: 'North or south?' },
+    ] } as never;
+    expect(inboxMod.wakeCause(s)).toBeNull();
+  });
+
+  it('three failed starts tell the owner once, items marked; new mail after the last backoff opens a new cycle', async () => {
+    let tries = 0;
+    const lines: string[] = [];
+    inboxMod.setSuperWaker(async () => { tries += 1; return 'start_failed'; });
+    inboxMod.setSuperOwnerLineSink(async (_r, line) => { lines.push(line); });
+    await memberRecord([{ id: 'q-req-00000014', kind: 'request', state: 'pending', createdAt: Date.now(), text: 'Plan the routes.' }]);
+    let t = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => t);
+    for (const step of inboxMod.WAKE_BACKOFF_MS) {
+      await inboxMod.pumpSuper(root, 'm:rota');
+      t += step + 100;
+    }
+    await inboxMod._superInboxDrained();
+    expect(tries).toBe(inboxMod.MAX_WAKE_TRIES);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Rota');
+    expect((await readSuperState(root, 'm:rota')).queue.find((q) => q.id === 'q-req-00000014')?.wakeTold).toBe(true);
+    // Nothing new: no more starts and no second line.
+    t += 10 * 60_000;
+    await inboxMod.pumpSuper(root, 'm:rota');
+    expect(tries).toBe(inboxMod.MAX_WAKE_TRIES);
+    expect(lines).toHaveLength(1);
+    // A new request (never told) after the wait: a new bounded cycle starts.
+    const { writeSuper } = await import('../../src/lib/super/inbox.js');
+    await writeSuper(root, 'm:rota', (d) => { d.queue.push({ id: 'q-req-00000015', sessionId: d.session as string, kind: 'request', state: 'pending', createdAt: t, text: 'And the depots?' }); });
+    await inboxMod.pumpSuper(root, 'm:rota');
+    expect(tries).toBe(inboxMod.MAX_WAKE_TRIES + 1);
   });
 });
 

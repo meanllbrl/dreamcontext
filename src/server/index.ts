@@ -18,6 +18,7 @@ import { carriesCloudflareHeaders, isPhoneSocket, macExposedVaults, markPhoneSoc
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { remoteAccessEnabled } from './remote-access.js';
 import { isDesktop } from './desktop.js';
+import { wireSuperWake } from './headless-super.js';
 import { isLoopback } from './routes/agent-spawn-shared.js';
 import { assistantContextRoot, assistantExists, isAssistantVault } from '../lib/assistant/home.js';
 import { declineAllProposals } from '../lib/assistant/proposals.js';
@@ -1799,6 +1800,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // any chat can register (plan-r7 D16): a handed-over child's first question is already
     // kept out of the notch, and children the window restores get their re-adoption grace.
     // A parked child is not coming back on its own: it gets no re-adoption grace.
+    // A stopped Super holding team mail is started by the server with no window (owner
+    // 2026-11-22): the desktop server only, the same server the Telegram wake runs in.
+    // Wired before the inbox boots, so team mail held from before a restart is woken by its first pump.
+    wireSuperWake({ wake: isDesktop() });
     void startSuperInbox(listVaults().map((v) => join(v.path, '_dream_context')), { parked: (sid) => parkedSince(sid) !== null })
       .catch((err) => console.warn(`[super] boot failed: ${(err as Error).message}`))
       // Queued super sends a relaunch must not lose (lib/super/outbox.ts).

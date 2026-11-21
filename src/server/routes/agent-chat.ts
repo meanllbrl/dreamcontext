@@ -3566,6 +3566,10 @@ export function startChatSession(
   /** No socket right now; the reap timers below decide how long that may last. */
   let detached = false;
   let detachedAt = 0;
+  /** Since when a detached child has been busy without a break: the busy cap's start. A detached
+   *  Super takes new event turns (owner 2026-11-22), so the cap counts one busy run, never the
+   *  time since its socket went. */
+  let detachBusyFrom = 0;
   /** The next socket-gone ends the child instead of detaching it: the client said goodbye
    *  (`end`, a closed tab). A respawn's supersede is counted apart (`pendingSupersedes`). */
   let endOnSocketGone = false;
@@ -4404,18 +4408,20 @@ export function startChatSession(
   }
   /** (Re)arm the reaping of a DETACHED child for its current state. A no-op while attached.
    *  Idle: ended after `detachIdleMs()` (15 min) of continuous idleness. Busy: never reaped
-   *  for lack of a socket, up to `detachBusyCapMs()` (4 h) after it lost its socket. */
+   *  for lack of a socket, up to `detachBusyCapMs()` (4 h) of one busy run (from its socket going, or its last idle). */
   function armDetachReap(): void {
     if (!detached || !alive) return;
     if (turnsInFlight > 0) {
       if (detachIdleTimer) { clearTimeout(detachIdleTimer); detachIdleTimer = null; }
       if (!detachCapTimer) {
-        const left = Math.max(0, detachBusyCapMs() - (Date.now() - detachedAt));
+        const left = Math.max(0, detachBusyCapMs() - (Date.now() - Math.max(detachedAt, detachBusyFrom)));
         detachCapTimer = setTimeout(() => { detachCapTimer = null; serverDrain(); }, left);
       }
       return;
     }
     if (detachCapTimer) { clearTimeout(detachCapTimer); detachCapTimer = null; }
+    // Idle now: the next busy run's cap starts from here.
+    detachBusyFrom = Date.now();
     if (!detachIdleTimer) {
       detachIdleTimer = setTimeout(() => { detachIdleTimer = null; serverDrain(); }, detachIdleMs());
     }
@@ -5673,12 +5679,17 @@ export function startChatSession(
     detachInbox = attachSuperInbox({
       id: superInboxId,
       sessionId: chatRegistryId,
-      attached: () => alive && !detached && ws.readyState === ws.OPEN,
+      // An alive Super is reachable whether a window holds it or not (owner 2026-11-22, from
+      // Telegram with the app's window closed): a closed window or a server start leaves it
+      // detached, and its events (a member's request, a member's answer) still go in, written to
+      // stdin by this inbox's own `deliver` (never `onWsMessage`, which reads as his message).
+      attached: () => alive,
+      bound: () => alive && !detached && ws.readyState === ws.OPEN,
       idle: () => turnsInFlight === 0 && !superEventTurnOpen && !stdinEnding() && respawnTo === null,
       deliver: (text, event, cancelled) => new Promise<boolean>((resolve) => {
         // `cancelled`: the inbox gave up waiting (a slow account switch); the items are still
         // pending there, so this turn must never be written late.
-        const blocked = () => !alive || detached || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || respawnTo !== null || handedOff || !!cancelled?.();
+        const blocked = () => !alive || superEventTurnOpen || turnsInFlight > 0 || stdinEnding() || respawnTo !== null || handedOff || !!cancelled?.();
         if (blocked()) return resolve(false);
         switchGate = switchGate.then(() => maybeSwitchAccount(text, { resubmit: false })
           .catch(() => false)

@@ -1066,6 +1066,8 @@ export interface SuperQueueItem {
   cancels?: true;
   /** Whose work this item is about (plan-r10 1, owner `wnfvtj`): absent = the owner's (as today). */
   workOrigin?: SuperWorkOrigin;
+  /** A team item whose Super could not be started was told to the owner once: never again. */
+  wakeTold?: true;
   /** A `permission` of a child the owner runs in Bypass (`permissionGoesToSuper`): the Super
    *  decides it first (`super allow`), so it is no owner head, notch row or phone card while this
    *  holds. Escalated (`super queue ask`) or unanswered past SUPER_PERMISSION_GRACE_MS, it loses

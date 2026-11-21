@@ -1861,7 +1861,7 @@ function workForArg(c: Pick<SuperCaller, 'superId' | 'state'>, b: Record<string,
 }
 
 /**
- * THE switch of `super team ask`. Live since Wave 3 (the window spawns a member's Super when its
+ * THE switch of `super team ask`. Live since Wave 3 (the window, or with no window the server's wake, spawns a member's Super when its
  * record holds `pending` items): `request` = a request in the member's OWN Super (plan-r10 1), shown
  * on its stage as "Super Agent'tan", closed by its `super team done`. `say` = the Wave 1 headless
  * chain, kept only for tests of that machinery: in-flight Wave 1 headless team jobs keep their own
