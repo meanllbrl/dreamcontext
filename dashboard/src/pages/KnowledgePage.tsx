@@ -219,7 +219,7 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
     });
   });
 
-  const { data: detail } = useKnowledge(selected ?? '');
+  const { data: detail, isPending: detailPending, isError: detailError } = useKnowledge(selected ?? '');
   // The open doc, for the window's places (navigation B, C4): the focus target opens it again.
   // Only a doc the list has (an unknown slug opens nothing, so it is never published).
   const selectedEntry = selected ? entries?.find((e) => e.slug === selected) ?? null : null;
@@ -387,7 +387,7 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
     return <pre className="core-viewer-content">{detailDoc.content}</pre>;
   };
 
-  if (isLoading) return <div className="loading">{t('common.loading')}</div>;
+  if (isLoading) return <div className="loading" data-loading="">{t('common.loading')}</div>;
   if (isError) return <div className="error-state">Failed to load knowledge. {error?.message}</div>;
 
   const browse = (
@@ -416,7 +416,7 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
         </div>
       )}
       {selected && !detail && (
-        <div className="core-empty">Loading document…</div>
+        <div className="core-empty" data-loading={detailPending && !detailError ? '' : undefined}>Loading document…</div>
       )}
       {selected && detail && (
         <div className="core-viewer">

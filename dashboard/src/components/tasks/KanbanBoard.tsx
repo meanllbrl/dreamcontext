@@ -265,7 +265,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   // fills the frame instead of sizing from the viewport.
   const newShell = useIsNewShell();
   if (!s.ready || isLoading) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading board…</div>;
+    return <div data-loading="" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading board…</div>;
   }
 
   const activeName = s.activeView?.name ?? 'view';
@@ -548,7 +548,9 @@ function FullTaskDetail({ slug, allTasks, onOpenTask, onClose, onDeleted }: {
   onClose: () => void;
   onDeleted: (next: string | null, deleted: string[]) => void;
 }) {
-  const { data: full } = useTask(slug);
-  if (!full) return null;
+  const { data: full, isPending, isError } = useTask(slug);
+  // Pending: a zero-size marker, so a project prepared out of sight is not shown before its task
+  // is in (tek-kenar C1 delta 2). Cleared on data or on error.
+  if (!full) return isPending && !isError ? <span data-loading="" hidden /> : null;
   return <TaskDetailPanel task={full} allTasks={allTasks} onOpenTask={onOpenTask} onClose={onClose} onDeleted={onDeleted} />;
 }

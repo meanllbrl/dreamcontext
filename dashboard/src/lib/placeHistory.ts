@@ -132,6 +132,9 @@ export interface PlaceHistory {
   stepPending(): boolean;
   peekBack(skip: (p: Place) => boolean): Place | null;
   peekForward(skip: (p: Place) => boolean): Place | null;
+  /** The window LEFT `page` of `vault` with `item` open (tek-kenar delta 1): the only writer of
+   *  the last item. A null item clears it (he had closed it). */
+  leave(vault: string, page: Page, item: { id: string; label: string | null } | null): void;
   /** The last item opened on `page` in `vault` (null for a page that remembers its own). */
   lastItemOn(vault: string, page: Page): { id: string; label: string | null } | null;
   lastHere(vault: string): Place | null;
@@ -148,14 +151,18 @@ export function createPlaceHistory(opts: { now: () => number; storage: PlaceStor
   let step: { previous: number } | null = null;
   let memory: PlaceMemory = mergeMemory(parseMemory(storage?.read() ?? null), { items: {}, visits: {} }, now());
 
-  const remember = (place: Place) => {
-    const at = now();
-    const delta: PlaceMemory = { items: {}, visits: {} };
-    if (place.kind === 'page' && place.id) delta.items[place.vault] = { [place.page]: { id: place.id, label: place.label, at } };
-    delta.visits[placeKey(place)] = { place, at };
+  const write = (delta: PlaceMemory, at: number) => {
     // Read-merge-write: another window may have written since this one last read.
     const stored = storage ? parseMemory(storage.read()) : { items: {}, visits: {} };
     memory = mergeMemory(mergeMemory(memory, stored, at), delta, at);
+  };
+
+  /** A visit only: the last item per page is written on leave, never here (delta 1). */
+  const remember = (place: Place) => {
+    const at = now();
+    const delta: PlaceMemory = { items: {}, visits: {} };
+    delta.visits[placeKey(place)] = { place, at };
+    write(delta, at);
     // A page visit with an id supersedes the same page's id-less visit.
     if (place.kind === 'page' && place.id) delete memory.visits[placeKey({ ...place, id: null })];
     storage?.write(JSON.stringify(memory));
@@ -221,10 +228,18 @@ export function createPlaceHistory(opts: { now: () => number; storage: PlaceStor
     stepPending: () => step !== null,
     peekBack: (skip) => { const i = walk(cursor, -1, skip); return i < 0 ? null : list[i]; },
     peekForward: (skip) => { const i = walk(cursor, 1, skip); return i < 0 ? null : list[i]; },
+    leave(vault, page, item) {
+      if (SELF_REMEMBERING.has(page)) return;
+      const at = now();
+      // A cleared item is a tombstone (`id: ''`), so the merge with what another window stored
+      // cannot bring the old item back.
+      write({ items: { [vault]: { [page]: { id: item?.id ?? '', label: item?.label ?? null, at } } }, visits: {} }, at);
+      storage?.write(JSON.stringify(memory));
+    },
     lastItemOn(vault, page) {
       if (SELF_REMEMBERING.has(page)) return null;
       const r = memory.items[vault]?.[page];
-      return r && now() - r.at <= PLACE_MEMORY_MS ? { id: r.id, label: r.label } : null;
+      return r && r.id && now() - r.at <= PLACE_MEMORY_MS ? { id: r.id, label: r.label } : null;
     },
     lastHere,
     recent(vault) {

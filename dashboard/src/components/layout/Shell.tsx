@@ -10,7 +10,8 @@ import { planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSw
 import { AGENT_SURFACE_EXPANDED_EVENT } from '../../lib/agentSettings';
 import { runChatLadder } from '../../lib/chatLadder';
 import { DRAWER_PAGE_EVENT } from '../../lib/drawerIntents';
-import { useOpenItem } from '../../lib/openItem';
+import { readOpenItem, useOpenItem } from '../../lib/openItem';
+import { regionSettled, type PrepareReport, type PrepareTarget } from '../../lib/revealGate';
 import { CHAT_MOVE_MAX_MS } from './navRecorder';
 import { useChrome } from './WindowChrome';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
@@ -109,9 +110,13 @@ interface ShellProps {
    */
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  /** Tek-kenar C2: this project is being prepared out of sight for a move to `preparing`. Its
+   *  landing runs as an active one's would; it reports to the window's gate, never the recorder. */
+  preparing?: PrepareTarget | null;
+  onPrepared?: (report: PrepareReport) => void;
 }
 
-export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProps) {
+export function Shell({ children, sidebarCollapsed, onToggleSidebar, preparing = null, onPrepared }: ShellProps) {
   const { vault, instanceId, isActive, bus } = useVault();
   const newShell = useIsNewShell();
   const [initial] = useState(() => initialPage(vault, instanceId, newShell));
@@ -129,6 +134,10 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, for the stored value read at mount
   const [origin, setOrigin] = useState<NavOrigin>('other');
+  const activePageRef = useRef(activePage);
+  activePageRef.current = activePage;
+  /** Delta 1's one writer: `places.leave` for the page on screen, while this project is active. */
+  const leaveShownRef = useRef<() => void>(() => {});
   // Navigation B: ← → are the WINDOW's (WindowChrome's place history). This Shell reports what it
   // shows, and whether the owner caused the change, to the window's recorder.
   const chrome = useChrome();
@@ -207,7 +216,11 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
       setSettingsWindow((prev) => ({ focusId: id, nonce: (prev?.nonce ?? 0) + 1 }));
       return;
     }
+    // Delta 1: the window leaves the page on screen; its open item is remembered now, and only
+    // for a page this project showed while active (never from a landing out of sight).
+    leaveShownRef.current();
     setActivePage(page);
+    activePageRef.current = page;
     setOrigin(from);
     ownerRef.current = { byOwner: from !== 'landing', navAt: Date.now() };
     setFocusId(id);
@@ -239,6 +252,8 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   chatOpenRef.current = chatOpen;
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
+  const preparingRef = useRef(preparing !== null);
+  preparingRef.current = preparing !== null;
   // The carried or landed Chat's ladder (lib/chatLadder.ts: a freshly mounted surface is not
   // listening yet) stops the moment it opens, and on any navigation: it never reopens a chat the
   // owner closed or left.
@@ -249,7 +264,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     // Classic keeps its old 2.5 s carry; the new shell asks until the chat move's bound.
     ladderRef.current = runChatLadder(bus, newShell ? CHAT_MOVE_MAX_MS : 2_500, {
       isOpen: () => chatOpenRef.current,
-      stillActive: () => isActiveRef.current,
+      stillActive: () => isActiveRef.current || preparingRef.current,
     });
     if (chatOpenRef.current) stopChatRetries();
   }, [bus, newShell, stopChatRetries]);
@@ -295,6 +310,65 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   // change, only while active. The open item travels only when it belongs to the shown page.
   const openItem = useOpenItem(bus);
   const itemOnPage = openItem && openItem.page === activePage ? openItem : null;
+
+  // Delta 1: what the window remembers of (this project, the page on screen) is written as it
+  // LEAVES it: in navigate(), when this project stops being active, on pagehide and on unmount.
+  const places = chrome.places;
+  leaveShownRef.current = () => {
+    if (!newShell || !vault || !places || !isActiveRef.current) return;
+    const page = activePageRef.current;
+    const item = readOpenItem(bus);
+    places.leave(vault, page, item && item.page === page ? { id: item.id, label: item.label } : null);
+  };
+  const wasShownRef = useRef(false);
+  useEffect(() => {
+    if (isActive) { wasShownRef.current = true; return undefined; }
+    if (!wasShownRef.current) return undefined;
+    wasShownRef.current = false;
+    // Just stopped being active: the page is still mounted, its item still published.
+    if (!newShell || !vault || !places) return undefined;
+    const page = activePageRef.current;
+    const item = readOpenItem(bus);
+    places.leave(vault, page, item && item.page === page ? { id: item.id, label: item.label } : null);
+    return undefined;
+  }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- on the active edge only
+  useEffect(() => {
+    const onHide = () => leaveShownRef.current();
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      // closeTab of the active project unmounts it with no deactivation effect.
+      leaveShownRef.current();
+    };
+  }, []);
+  // The open item on the instance root (`data-item`), for the probe and the shell's tests.
+  useLayoutEffect(() => {
+    const instanceEl = shellRef.current?.closest('.project-instance');
+    if (!(instanceEl instanceof HTMLElement)) return;
+    if (itemOnPage) instanceEl.dataset.item = itemOnPage.id;
+    else delete instanceEl.dataset.item;
+  }, [itemOnPage?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- by value
+
+  // C2: while prepared out of sight, report what this project shows to the window's gate once a
+  // frame. The bound runs on the window's real timers, so a stopped frame clock (an occluded
+  // WebKit window) never holds a prepare past it.
+  const preparedRef = useRef({ page: activePage, chatOpen: false, item: null as string | null });
+  preparedRef.current = { page: activePage, chatOpen, item: itemOnPage?.id ?? null };
+  const onPreparedRef = useRef(onPrepared);
+  onPreparedRef.current = onPrepared;
+  const preparingKey = preparing ? JSON.stringify(preparing) : null;
+  useEffect(() => {
+    if (!preparing) return undefined;
+    let raf = 0;
+    const tick = () => {
+      const root = shellRef.current?.closest('.project-instance');
+      const settled = root ? regionSettled(root, preparing) : false;
+      onPreparedRef.current?.({ ...preparedRef.current, settled });
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [preparingKey]); // eslint-disable-line react-hooks/exhaustive-deps -- by value
   const reportedRef = useRef(false);
   const reportShown = chrome.reportShown;
   useEffect(() => {
@@ -339,7 +413,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
           onOpenSearch={() => setPaletteOpen(true)}
         />
         <div className="shell-body">
-          <main className="shell-main">
+          <main className="shell-main" data-region="page">
             {children(nav)}
           </main>
         </div>

@@ -108,14 +108,50 @@ describe('placeHistory: steps', () => {
 });
 
 describe('placeHistory: memory', () => {
-  it('lastItemOn answers the last item per page (null for Whiteboards, which remembers its own)', () => {
+  it('lastItemOn answers the item open when the window last LEFT that page (null for Whiteboards)', () => {
     const { h } = make();
-    h.record(page('a', 'tasks', 't1', 'One'));
-    h.record(page('a', 'tasks', 't2', 'Two'));
-    h.record(page('a', 'whiteboards', 'x'));
+    h.leave('a', 'tasks' as never, { id: 't1', label: 'One' });
+    h.leave('a', 'tasks' as never, { id: 't2', label: 'Two' });
+    h.leave('a', 'whiteboards' as never, { id: 'x', label: null });
     expect(h.lastItemOn('a', 'tasks' as never)).toEqual({ id: 't2', label: 'Two' });
     expect(h.lastItemOn('a', 'whiteboards' as never)).toBeNull();
     expect(h.lastItemOn('b', 'tasks' as never)).toBeNull();
+  });
+
+  it('delta 1: record never writes the last item; open X then leave -> X; leave with X closed -> null', () => {
+    const now = { t: 1_000 };
+    const { h } = make(now);
+    h.record(page('a', 'tasks', 't1', 'One'));
+    expect(h.lastItemOn('a', 'tasks' as never)).toBeNull();
+    h.leave('a', 'tasks' as never, { id: 't1', label: 'One' });
+    expect(h.lastItemOn('a', 'tasks' as never)).toEqual({ id: 't1', label: 'One' });
+    // Open X, close X, leave within 50 ms: the store says nothing is open, so the memory clears.
+    now.t += 50;
+    h.leave('a', 'tasks' as never, null);
+    expect(h.lastItemOn('a', 'tasks' as never)).toBeNull();
+  });
+
+  it('delta 1: a cold B landing on another page keeps B\'s memory for its stored page', () => {
+    const storage = mem();
+    const now = { t: 1_000 };
+    const one = createPlaceHistory({ now: () => now.t, storage });
+    one.leave('b', 'knowledge' as never, { id: 'k1', label: 'Doc' });
+    // B mounts cold elsewhere and lands on Tasks: no leave of Knowledge is written by the landing.
+    now.t += 10;
+    one.record(page('b', 'tasks'));
+    expect(one.lastItemOn('b', 'knowledge' as never)?.id).toBe('k1');
+  });
+
+  it('a cleared item stays cleared through another window\'s older stored item', () => {
+    const storage = mem();
+    const now = { t: 1_000 };
+    const one = createPlaceHistory({ now: () => now.t, storage });
+    const two = createPlaceHistory({ now: () => now.t, storage });
+    one.leave('a', 'tasks' as never, { id: 't1', label: null });
+    now.t += 5;
+    two.leave('a', 'tasks' as never, null);
+    const three = createPlaceHistory({ now: () => now.t, storage });
+    expect(three.lastItemOn('a', 'tasks' as never)).toBeNull();
   });
 
   it('lastHere and recent: distinct places of the project, newest first, lastHere excluded, 7-day prune', () => {
@@ -130,6 +166,7 @@ describe('placeHistory: memory', () => {
     h.record(chat('a'));
     expect(h.lastHere('a')).toEqual(chat('a'));
     expect(h.recent('a')).toEqual([page('a', 'knowledge', 'k1'), page('a', 'tasks', 't1')]);
+    h.leave('a', 'tasks' as never, { id: 't1', label: null });
     now.t += PLACE_MEMORY_MS + 1;
     expect(h.lastHere('a')).toBeNull();
     expect(h.recent('a')).toEqual([]);
@@ -141,9 +178,9 @@ describe('placeHistory: memory', () => {
     const now = { t: 5_000 };
     const one = createPlaceHistory({ now: () => now.t, storage });
     const two = createPlaceHistory({ now: () => now.t, storage });
-    one.record(page('a', 'tasks', 't1'));
+    one.leave('a', 'tasks' as never, { id: 't1', label: null });
     now.t += 1;
-    two.record(page('b', 'knowledge', 'k1'));
+    two.leave('b', 'knowledge' as never, { id: 'k1', label: null });
     const three = createPlaceHistory({ now: () => now.t, storage });
     expect(three.lastItemOn('a', 'tasks' as never)?.id).toBe('t1');
     expect(three.lastItemOn('b', 'knowledge' as never)?.id).toBe('k1');
@@ -155,10 +192,10 @@ describe('placeHistory: memory', () => {
     const storage = mem();
     storage.raw = '{not json';
     const h = createPlaceHistory({ now: () => 1, storage });
-    h.record(page('a', 'tasks', 't'));
+    h.leave('a', 'tasks' as never, { id: 't', label: null });
     expect(h.lastItemOn('a', 'tasks' as never)?.id).toBe('t');
     const bare = createPlaceHistory({ now: () => 1, storage: null });
-    bare.record(page('a', 'tasks', 't'));
+    bare.leave('a', 'tasks' as never, { id: 't', label: null });
     expect(bare.lastItemOn('a', 'tasks' as never)?.id).toBe('t');
   });
 });

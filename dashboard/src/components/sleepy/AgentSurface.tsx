@@ -610,9 +610,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // safety timeout for reduced-motion, where no animation event fires) then hides it.
   const [closing, setClosing] = useState(false);
   const wasExpanded = useRef(false);
+  // Tek-kenar delta 3: a project prepared out of sight collapses without the zoom-out (nobody
+  // would see it, and the gate would wait for it).
+  const activeForMotionRef = useRef(isActive);
+  activeForMotionRef.current = isActive;
   useEffect(() => {
     if (expanded) { setClosing(false); wasExpanded.current = true; return; }
     if (!wasExpanded.current) return;
+    if (!activeForMotionRef.current) { wasExpanded.current = false; setClosing(false); return; }
     setClosing(true);
     const t = window.setTimeout(() => setClosing(false), 400);
     return () => window.clearTimeout(t);
@@ -6080,6 +6085,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (wasExpandedForArrival.current && !expanded) setArrived(false);
     wasExpandedForArrival.current = expanded;
   }, [expanded]);
+  // Tek-kenar delta 3: an expand while this project is not on screen (a move prepares it out of
+  // sight) is an arrival: no zoom-in, so it is at rest when the window shows it.
+  useLayoutEffect(() => {
+    if (expanded && !isActive) setArrived(true);
+  }, [expanded, isActive]);
   // The intent can be dropped on its way (a stale queue entry): the wait never outlives its bound.
   useEffect(() => {
     if (!arriving) return undefined;
@@ -7550,6 +7560,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
            corner pane's composer can clear its anchor chip (model/effort stay visible). */
         data-dock-floating={caps?.desktop && expanded && minimizedRows.length > 0 ? 'true' : undefined}
         data-arrived={arrived ? 'true' : undefined}
+        /* Tek-kenar C1 delta 2: landing on Chat, the surface is not drawn yet until its roster,
+           settings and Super record are read and the click's wait is over. Never collapsed. */
+        data-loading={expanded && (caps === null || !settingsReady || !rosterKnown || !superKnown || arriving !== null) ? '' : undefined}
         /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}

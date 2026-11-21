@@ -60,7 +60,7 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
     }).then(() => { if (live) setReadFor(prefsKey); });
     return () => { live = false; };
   }, [api, prefsKey, prefsReady]);
-  if (!prefsReady) return <div className="wbp-editor"><div className="wbp-loading">{t('common.loading')}</div></div>;
+  if (!prefsReady) return <div className="wbp-editor"><div className="wbp-loading" data-loading="">{t('common.loading')}</div></div>;
   return <WhiteboardsPageBody key={prefsKey} focus={focus} />;
 }
 
@@ -203,7 +203,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
       </div>
     );
   }
-  return <div className="wbp-editor">{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+  return <div className="wbp-editor">{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading" data-loading="">{t('common.loading')}</div></div>;
   }
 }
 
@@ -220,7 +220,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   explorerToggle?: ReactNode;
 }) {
   const { t, locale } = useI18n();
-  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh } = useWhiteboardEditor(slug);
+  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh, placed } = useWhiteboardEditor(slug);
   const { bus } = useVault();
   // The board writing field (2026-11-11), on every ready board.
   const [selection, setSelection] = useState<SelectionRef | null>(null);
@@ -276,7 +276,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const heading = <h1 className="wbp-sr-only">{name}</h1>;
 
   if (load.kind === 'loading') {
-    return <div className="wbp-editor">{heading}{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+    return <div className="wbp-editor">{heading}{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading" data-loading="">{t('common.loading')}</div></div>;
   }
 
   if (load.kind === 'corrupt' || load.kind === 'missing' || load.kind === 'error') {
@@ -334,8 +334,8 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
       <div className="wbp-body">
         {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
         <PagePopupProvider>
-          <div className="wbp-canvas" ref={setCanvasEl}>
-            <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
+          <div className="wbp-canvas" ref={setCanvasEl} data-loading={placed ? undefined : ''}>
+            <Suspense fallback={<div className="wbp-loading" data-loading="">{t('common.loading')}</div>}>
               <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={controlsAside ? null : controls} onSelection={setSelection} workBox={work?.box ?? null} region={region} onRegion={setRegion} quickBox={quickBox} />
             </Suspense>
             {controlsAside && <div className="wbp-float-right" data-testid="wbp-controls-aside">{controls}</div>}

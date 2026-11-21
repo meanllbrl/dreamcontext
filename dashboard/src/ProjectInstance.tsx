@@ -49,6 +49,7 @@ import type { DrawerFacts } from './components/layout/newshell/drawerModel';
 import { DRAWER_INTENT_EVENT, DRAWER_PAGE_EVENT, landsOnChat, memberIntent, type DrawerIntent, type PendingDrawerIntent } from './lib/drawerIntents';
 import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, readDeviceShell, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
+import type { PrepareReport, PrepareTarget } from './lib/revealGate';
 import './ProjectInstance.css';
 
 /**
@@ -577,14 +578,20 @@ export interface ProjectInstanceProps {
    *  screen (a nonce); the modal opens once this instance is active. */
   pendingManage?: { nonce: number; create?: boolean; global?: boolean } | null;
   onManageConsumed?: (vault: string, nonce: number) => void;
+  /** Tek-kenar C2: prepared out of sight for a move to this target (laid out at full size under
+   *  the project on screen, `inert`, not `hidden`); null otherwise. Never `isActive`. */
+  preparing?: PrepareTarget | null;
+  /** While preparing: what it shows, once a frame, for the window's gate. */
+  onPrepared?: (vault: string, report: PrepareReport) => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
   pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle, onDrawerDismiss,
   drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
-  pendingManage = null, onManageConsumed,
+  pendingManage = null, onManageConsumed, preparing = null, onPrepared,
 }: ProjectInstanceProps) {
+  const handlePrepared = useCallback((r: PrepareReport) => onPrepared?.(vault, r), [onPrepared, vault]);
   const newShell = useIsNewShell();
   /*
    * Both of these are per-instance identities that must survive every re-render: a new
@@ -642,9 +649,11 @@ export function ProjectInstance({
   // The window's registry reaches this client on refocus; the cleanup frees it with the tab.
   useEffect(() => registerInstanceClient(queryClient), [queryClient]);
   // Page-data polling follows visibility. Nothing else does — see this file's header.
+  // A preparing instance loads as the active one does (C2): what it lands on must be there.
+  const loading = isActive || preparing !== null;
   useEffect(() => {
-    setInstanceActive(queryClient, isActive);
-  }, [queryClient, isActive]);
+    setInstanceActive(queryClient, loading);
+  }, [queryClient, loading]);
 
   return (
     /*
@@ -657,14 +666,17 @@ export function ProjectInstance({
       className="project-instance"
       data-instance={instanceId}
       data-shell={newShell ? 'new' : undefined}
-      hidden={!isActive}
+      data-active={isActive ? 'true' : undefined}
+      data-preparing={preparing && !isActive ? 'true' : undefined}
+      hidden={!isActive && !preparing}
       inert={!isActive}
     >
       <QueryClientProvider client={queryClient}>
         <VaultProvider vault={vault} instanceId={instanceId} isActive={isActive} bus={bus}>
           <ProjectProvider>
             <I18nProvider>
-              <Shell sidebarCollapsed={sidebarCollapsed} onToggleSidebar={onToggleSidebar}>
+              <Shell sidebarCollapsed={sidebarCollapsed} onToggleSidebar={onToggleSidebar}
+                preparing={isActive ? null : preparing} onPrepared={handlePrepared}>
                 {(nav) => (
                   <>
                     {newShell ? (

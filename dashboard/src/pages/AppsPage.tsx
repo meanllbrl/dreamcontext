@@ -275,6 +275,8 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
           onAccepted={() => { void refreshShared(); refresh(); }}
         />
       )}
+      {/* One loading marker for the page (tek-kenar C1 delta 2): the list, or the shared list on its tab. */}
+      {(isLoading || (tab === 'shared' && shared.isLoading)) && <span data-loading="" hidden />}
       {pageApp && <AppPage key={pageApp.slug} app={pageApp} vault={vault ?? ''} canLaunch={canLaunch} initialSheet={pageSheet} onClose={() => { setPageSlug(null); setPageSheet(null); }} onChanged={refresh} />}
       {canLaunch && installRef !== null && (
         <InstallSheet

@@ -40,3 +40,9 @@ export function oldestEvictable(open: OpenProject[], keep: readonly string[]): O
 export function chill(open: OpenProject[], vault: string): OpenProject[] {
   return open.map((p) => (p.vault === vault ? { ...p, cold: true, rollup: null } : p));
 }
+
+/** The ceiling's keep set (tek-kenar C2): the project on screen and the one being prepared for a
+ *  move are never torn down to make room, nor is the project the caller is bringing back. */
+export function ceilingKeep(active: string, preparing: string | null | undefined, ...also: string[]): string[] {
+  return [active, ...(preparing ? [preparing] : []), ...also];
+}
