@@ -3,7 +3,7 @@ import { scheduleVerb } from '../super-schedule.js';
 import { appendOpenLog } from '../../lib/window-open-log.js';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
-import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
@@ -11,7 +11,9 @@ import {
 } from '../../lib/window-control.js';
 import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superRecordPath, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
-import type { OwnerWakeOutcome } from '../../lib/super/types.js';
+import { JOB_RISKS, type JobContext, type JobRisk, type OwnerWakeOutcome } from '../../lib/super/types.js';
+import { childPolicy, type PolicyVerdict } from '../../lib/model-facts.js';
+import { ownerPictureOk } from '../../lib/t3-bridge/pictures.js';
 import { batchHasFirstReadDone, closeMemberRequestDraft, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
 import { firstReadLockHeld, mintCrewTicket, mintFirstReadTicket, noteDelegating, releaseFirstReadLock, takeFirstReadLock, vaultDelegating } from '../../lib/super/delegating.js';
 import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
@@ -59,7 +61,7 @@ import { getAgent } from '../../lib/agents/store.js';
 import { fromOwnerPage, ownerRefusalMessage } from './assistant.js';
 import type { OwnerAnswerRequest, OwnerAnswerResult } from '../../lib/super/types.js';
 import { superPushMark, superPushedSince } from '../../lib/super/inbox.js';
-import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteMemberToMain, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgRef, superOwnerMsgWords, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { dropOwed, freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, memberTurnOrigin, noteMemberToMain, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgAt, superOwnerMsgEntry, superOwnerMsgRef, superOwnerMsgWords, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { owedClock, ownerMessageGist } from '../../lib/super/owed.js';
 import { MAX_OUTWARD, RULE_GONE_LINE, RULE_ID_RE, isRuleGrant, messageCovers, outwardLine, ruleCovers, type OutwardGrant } from '../../lib/super/outward.js';
 import { locateRule } from './learned.js';
@@ -101,7 +103,7 @@ import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { IMAGE_EXT_RE, PDF_EXT_RE, VIDEO_EXT_RE, ownerFileTarget } from '../../lib/super/owner-file.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { BOARD_EXT_RE, boardRerouteNote, whiteboardSlugOfBoardRef } from '../../lib/super/board-ref.js';
 import { insightPath } from '../../lib/lab/store.js';
 import { DEFAULT_WHITEBOARD, ensureDefaultWhiteboard, listWhiteboards, resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
@@ -1010,14 +1012,19 @@ const newPoolId = () => `p-${Date.now().toString(36)}-${randomBytes(4).toString(
  * Keep a job in the pool (plan r4 D9): the same prompt is pooled once (the row is reused), a
  * full pool (MAX_POOL rows or MAX_POOL_BYTES) keeps nothing. Returns the row's id, or why not.
  */
-async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant; workOrigin?: SuperWorkOrigin } = {}, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
+async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?: string; outward?: OutwardGrant; workOrigin?: SuperWorkOrigin; context: JobContext | undefined }, id: SuperId = 'main'): Promise<{ id: string; reused: boolean } | { error: 'pool_full' | 'too_large' }> {
   if (Buffer.byteLength(job.prompt, 'utf-8') > MAX_POOL_PROMPT) return { error: 'too_large' };
   const hash = promptHash(job.prompt);
   let out: { id: string; reused: boolean } | { error: 'pool_full' | 'too_large' } = { error: 'pool_full' };
   const state = await writeSuper(root, id, (s) => {
     const have = s.pool.find((p) => p.hash === hash);
     // The same job again: a grant his message made now rides the row it already has.
-    if (have) { if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; if (extra.workOrigin) have.workOrigin = extra.workOrigin; out = { id: have.id, reused: true }; return; }
+    if (have) {
+      if (extra.held) have.held = true; if (extra.outward) have.outward = extra.outward; if (extra.workOrigin) have.workOrigin = extra.workOrigin;
+      // C11: the new acceptance's context replaces the old one's (never a mix of two turns).
+      if (extra.context) have.context = extra.context; else delete have.context;
+      out = { id: have.id, reused: true }; return;
+    }
     if (s.pool.length >= MAX_POOL) { out = { error: 'pool_full' }; return; }
     const row: SuperPoolItem = {
       id: newPoolId(), title: job.title, prompt: job.prompt, hash, createdAt: Date.now(),
@@ -1032,6 +1039,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(extra.held ? { held: true } : {}),
       ...(extra.outward ? { outward: extra.outward } : {}),
       ...(extra.workOrigin ? { workOrigin: extra.workOrigin } : {}),
+      ...(extra.context ? { context: extra.context } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
     s.pool.push(row);
@@ -1109,6 +1117,99 @@ interface DelegateExtra {
   onRecorded?: (sid: string, startError: string | null) => void;
   /** Called once when a late wait ends with no child. */
   onLateEmpty?: () => void;
+  /** C11: what the job was accepted with (origin, pictures, policy). */
+  context?: JobContext;
+}
+
+/** C10: `--risk <kind>`, the closed set; absent = none. */
+function riskArg(b: Record<string, unknown>): { risk?: JobRisk } | { error: string } {
+  if (b.risk === undefined || b.risk === null || b.risk === '') return {};
+  return typeof b.risk === 'string' && (JOB_RISKS as readonly string[]).includes(b.risk) ? { risk: b.risk as JobRisk } : { error: `--risk is one of ${JOB_RISKS.join(' | ')}` };
+}
+/** C10: his words a job's settings may rest on (S1: only what the server recorded). */
+function jobWords(ctx: JobContext | undefined, extra?: { words: string } | null): string[] {
+  return [ctx?.origin?.words, ...(ctx?.policy?.grants ?? []).map((g) => g.words), extra?.words].filter((w): w is string => !!w);
+}
+/** C10: his message of this turn (or the `--origin` one) as a possible grant. */
+function turnGrant(c: SuperCaller, ref: string | undefined): { ref: string; words: string; at: number } | null {
+  if (!ref) return null;
+  const ctx = resolveJobContext(c, ref);
+  return ctx?.origin && ctx.origin.words ? { ref, words: ctx.origin.words, at: ctx.origin.at } : null;
+}
+/** C10, C11: the context with the verdict that allowed its settings written in. */
+function withPolicy(ctx: JobContext | undefined, v: Extract<PolicyVerdict, { ok: true }>, grant: { ref: string; words: string; at: number } | null): JobContext {
+  const base: JobContext = ctx ? { ...ctx } : { pictures: [] };
+  const grants = [...(base.policy?.grants ?? [])];
+  if (v.allowedBy === 'words' && grant && !grants.some((g) => g.ref === grant.ref)) grants.push(grant);
+  base.policy = { model: v.model, effort: v.effort, ...(v.risk ? { risk: v.risk } : {}), allowedBy: v.allowedBy, grants: grants.slice(-4) };
+  return base;
+}
+
+/** C8: his earlier messages' pictures count back this far from the origin. */
+const PICTURE_WINDOW_MS = 10 * 60_000;
+
+/**
+ * C8, C11: the context a job is accepted with, from the message `ref` it answers: this turn's
+ * entry (before its debt lands) or the debt whose ref or part is `ref`; its pictures plus those of
+ * his `msg` debts in [its arrival − 10 min, its arrival). Never a picture he sent after it. No ref,
+ * or one no message of his has: undefined (no pictures).
+ */
+export function resolveJobContext(c: Pick<SuperCaller, 'state'>, ref: string | undefined): JobContext | undefined {
+  if (!ref) return undefined;
+  const sid = c.state.session;
+  const entry = sid ? superOwnerMsgEntry(sid) : null;
+  const msgs = (c.state.owed ?? []).filter((d) => d.kind === 'msg');
+  const debt = msgs.find((d) => d.ref === ref || (d.parts ?? []).includes(ref));
+  let at: number | undefined; let words = ''; let own: string[] = [];
+  if (entry && (entry.ref === ref || entry.parts.includes(ref))) { at = entry.at; words = entry.words; own = entry.pictures; }
+  else if (debt) { at = debt.at; words = debt.gist; own = debt.pictures ?? []; }
+  if (at === undefined) return undefined;
+  const from = at - PICTURE_WINDOW_MS;
+  const before = msgs.filter((d) => d !== debt && d.at >= from && d.at < at!).sort((x, y) => x.at - y.at).flatMap((d) => d.pictures ?? []);
+  const pictures = [...new Set([...own, ...before])].slice(0, 8);
+  return { origin: { ref, at, words: words.slice(0, 300) }, pictures };
+}
+
+/** D8: copy his pictures into `tmp/super-prompts/<name>/ref/` (S3 checked again; never through a link). */
+function copyRefPictures(root: string, name: string, pictures: readonly string[]): { paths: string[]; missing: number } {
+  const out: string[] = [];
+  let missing = 0;
+  const base = join(root, 'tmp', 'super-prompts');
+  const dir = join(base, name, 'ref');
+  try {
+    for (const p of [join(root, 'tmp'), base, join(base, name), dir]) {
+      try { if (lstatSync(p).isSymbolicLink()) return { paths: [], missing: pictures.length }; } catch { /* made below */ }
+    }
+    mkdirSync(dir, { recursive: true });
+  } catch { return { paths: [], missing: pictures.length }; }
+  pictures.forEach((src, i) => {
+    if (!ownerPictureOk(src, root)) { missing++; return; }
+    const ext = extname(src).toLowerCase() === '.jpeg' ? '.jpg' : extname(src).toLowerCase();
+    const dest = join(dir, `ref-${i + 1}${ext}`);
+    try {
+      try { lstatSync(dest); rmSync(dest, { force: true }); } catch { /* none yet */ }
+      copyFileSync(src, dest, fsConstants.COPYFILE_EXCL);
+      out.push(dest);
+    } catch { missing++; }
+  });
+  return { paths: out, missing };
+}
+
+/** D8, D9: the child's lines for its reference pictures (none: empty, the prompt unchanged). */
+export function referenceLines(r: { paths: string[]; missing: number }): string {
+  const gone = r.missing ? ` ${r.missing === 1 ? '1 picture was' : `${r.missing} pictures were`} no longer there.` : '';
+  if (!r.paths.length) return gone ? `${gone.trim()}\n\n` : '';
+  return `${REFERENCE_LINE_HEAD} ${r.paths.join(', ')}.${gone}\n\n${REFERENCE_PAIRS_LINE}\n\n`;
+}
+export const REFERENCE_LINE_HEAD = 'Reference pictures from his messages (match them exactly unless his words say otherwise):';
+export const REFERENCE_PAIRS_LINE = "End with result screenshots at the reference's width, `result-<n>.png` beside `ref/`, and list the pairs in your report.";
+
+/** C3: the delegating Super chat's keys (its pin id and the record's session), plus a `--succeeds`
+ *  predecessor's own `delegatedBy`, deduped, at most 8. */
+function delegatedByKeys(c: SuperCaller, s: SuperState, succeeds?: string): string[] {
+  const keys = [c.who.sessionId, s.session, ...(succeeds ? s.children[succeeds]?.delegatedBy ?? [] : [])]
+    .filter((k): k is string => typeof k === 'string' && k !== '' && k.length <= 200);
+  return [...new Set(keys)].slice(0, 8);
 }
 
 async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string, workOrigin?: SuperWorkOrigin, outwardIn?: OutwardGrant, extra: DelegateExtra = {}): Promise<void> {
@@ -1167,7 +1268,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       return;
     }
     // Capacity keeps the job (D9), bounded: the same prompt once, a full pool keeps nothing.
-    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
+    const kept = await keepInPool(root, job, { held: true, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}), context: extra.context }, c.superId);
     if ('error' in kept) {
       refuse(res, 409, kept.error === 'too_large' ? 'not_kept' : 'pool_full', `${running}; the job did NOT start and was NOT kept (${kept.error === 'too_large' ? 'its prompt is over 16 KB' : 'the pool is full'}): delegate it again when a slot frees, or ask the owner`, notKept);
       return;
@@ -1217,7 +1318,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     // record read when the call came in (the owner may have taken that chat meanwhile).
     const lateMs = succeeds ? 0 : delegateLateMs;
     const deadline = sentAt + delegateAnswerMs + lateMs;
-    firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ruleGone ? `${RULE_GONE_LINE}\n\n` : ''}${DEV_SERVER_LINE}\n\n${childFacts(root, wt?.path, job.laneIntent)}${job.prompt}`;
+    // D8, D9: his reference pictures, copied for this child (S3 checked again at the copy).
+    const refs = extra.context?.pictures.length ? copyRefPictures(root, job.slug && /^[a-z0-9][a-z0-9-]{0,60}$/.test(job.slug) ? job.slug : fromRow?.id ?? sid0, extra.context.pictures) : null;
+    firstPrompt = `${wt ? `${worktreePreamble(wt, outward)}\n\n` : ''}${outward ? `${outwardLine(outward)}\n\n` : ruleGone ? `${RULE_GONE_LINE}\n\n` : ''}${refs ? referenceLines(refs) : ''}${DEV_SERVER_LINE}\n\n${childFacts(root, wt?.path, job.laneIntent)}${job.prompt}`;
     const r = await sendSuperCommand(c.token, 'delegate', {
       prompt: firstPrompt,
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
@@ -1343,6 +1446,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(workOrigin ? { workOrigin } : {}),
         ...(outward ? { outward } : {}),
         ...(extra.firstRead ? { firstRead: true as const } : {}),
+        delegatedBy: delegatedByKeys(c, s, succeeds),
+        ...(extra.context ? { context: extra.context } : {}),
       };
       startError = takeStartError(sid);
       if (startError) startFailedDraft(s, sid, startError, now);
@@ -1434,7 +1539,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
           else if (keptWt) { row.maybeStarted = true; row.startedIn = keptWt.path; row.startedBranch = keptWt.branch; }
         });
       } else {
-        const kept = await keepInPool(root, job, { note: why, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}) }, c.superId);
+        const kept = await keepInPool(root, job, { note: why, ...(outward ? { outward } : {}), ...(workOrigin ? { workOrigin } : {}), context: extra.context }, c.superId);
         // Not kept (a prompt over 16 KB, a full pool): the agent was told to delegate it again.
         if ('error' in kept) appendOpenLog('delegate_late_lost', { superId: c.superId, why: kept.error, error: lr.ok ? 'no_session_id' : lr.error });
       }
@@ -2346,7 +2451,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     try {
       // A member's child does the work of the turn that started it unless `--for` names another.
       const childOrigin = startOrigin(workFor.origin, fromRow, c.superId !== 'main' && c.state.session ? superTurnOrigin(c.state.session) : undefined);
-      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin, outward);
+      // C11: an explicit --origin resolves anew; else the row's or the predecessor's; else this turn's.
+      const explicit = b.origin !== undefined && b.origin !== null && b.origin !== '';
+      let context = explicit ? resolveJobContext(c, origin.ref)
+        : fromRow ? fromRow.context
+        : succeeds !== undefined ? c.state.children[succeeds]?.context
+        : resolveJobContext(c, origin.ref);
+      // C10: the model and effort from the job's facts. A pool row or a predecessor made before
+      // this build (no context) starts as today; a successor naming none takes the old one's.
+      const pred = succeeds !== undefined ? c.state.children[succeeds] : undefined;
+      if (pred && !str(b.model) && pred.model) job.model = pred.model;
+      if (pred && !str(b.effort) && pred.effort) job.effort = pred.effort;
+      const trusted = fromRow ? !explicit : pred ? (!!pred.context?.policy && pred.context.policy.model === job.model && pred.context.policy.effort === (job.effort ?? pred.context.policy.effort)) || (!pred.context && !str(b.model) && !str(b.effort)) : false;
+      if (!trusted && !(fromRow && !fromRow.context && !explicit)) {
+        const rk = riskArg(b);
+        if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+        const v = childPolicy({ tool: job.tool, mode: job.mode, model: job.model, effort: job.effort, risk: rk.risk, full: b.full === true || job.laneIntent === 'full' }, jobWords(context));
+        if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+        if (!v.skipped) { job.model = v.model; job.effort = v.effort; context = withPolicy(context, v, context?.origin ? { ref: context.origin.ref, words: context.origin.words, at: context.origin.at } : null); }
+      }
+      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref, childOrigin, outward, { context });
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.
       if (fromId) { claimed.delete(fromId); if (!claimed.size) claims.delete(claimKey); }
@@ -2967,7 +3091,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
     const named = outwardGrant(c, b, origin.ref);
     if ('error' in named) { refuse(res, 400, named.error, named.message); return; }
-    const kept = await keepInPool(root, job, { note, ...(named.grant ? { outward: named.grant } : {}) }, c.superId);
+    let context = resolveJobContext(c, origin.ref);
+    const rk = riskArg(b);
+    if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+    const v = childPolicy({ tool: job.tool, mode: job.mode, model: job.model, effort: job.effort, risk: rk.risk, full: b.full === true || job.laneIntent === 'full' }, jobWords(context));
+    if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+    if (!v.skipped) { job.model = v.model; job.effort = v.effort; context = withPolicy(context, v, context?.origin ? { ref: context.origin.ref, words: context.origin.words, at: context.origin.at } : null); }
+    const kept = await keepInPool(root, job, { note, ...(named.grant ? { outward: named.grant } : {}), context }, c.superId);
     if ('error' in kept) { refuse(res, 409, 'pool_full', `the pool is full (at most ${MAX_POOL} jobs, ${MAX_POOL_BYTES / 1024} KB); the job was NOT kept`); return; }
     ok(res, { pooled: kept.id, reused: kept.reused });
   },
@@ -3428,8 +3558,19 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!(MODES as readonly string[]).includes(mode)) { refuse(res, 400, 'invalid_args', `mode must be one of ${MODES.join(' | ')}`); return; }
     const model = str(b.model) ?? ch.model;
     if (model && !sanitizeModel(model)) { refuse(res, 400, 'invalid_args', 'model is not a model id'); return; }
-    const effort = str(b.effort) ?? ch.effort;
+    let effort = str(b.effort) ?? ch.effort;
     if (effort && !(EFFORTS as readonly string[]).includes(effort)) { refuse(res, 400, 'invalid_args', `effort must be one of ${EFFORTS.join(' | ')}`); return; }
+    // C10 when the call changes a setting (a child made before this build, resumed as it was, never).
+    let policyCtx: JobContext | undefined;
+    if (!ch.adopted && (str(b.mode) || str(b.model) || str(b.effort))) {
+      const rk = riskArg(b);
+      if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+      const grant = turnGrant(c, originArg.ref);
+      const v = childPolicy({ tool: ch.tool, mode, model, effort, risk: rk.risk ?? ch.context?.policy?.risk }, jobWords(ch.context, grant),
+        { lowerOnModeSwitch: !!str(b.mode) && mode === 'develop' && (ch.mode ?? 'basic') !== 'develop' });
+      if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+      if (!v.skipped) { effort = v.effort; policyCtx = withPolicy(ch.context, v, grant); }
+    }
     // A resumed child is a live child again: the same cap as a delegate.
     const room = delegationAllowed(c.state, Date.now(), (await readVaultLive(c.who.contextRoot).catch(() => 0)) + vaultDelegating(c.who.contextRoot) + vaultStarting(c.who.contextRoot));
     if (!room.ok) {
@@ -3468,6 +3609,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
         if (used.model) x.model = used.model; else if (used.reported) delete x.model;
         if (used.effort) x.effort = used.effort; else if (used.reported) delete x.effort;
+        // C10: the record holds what was actually used.
+        if (policyCtx?.policy) x.context = { ...policyCtx, policy: { ...policyCtx.policy, model: used.model ?? policyCtx.policy.model, effort: used.effort ?? policyCtx.policy.effort } };
         container = ensureChatContainer(s, child, x.brief, true);
       });
       if (startError) void pumpSuper(root, c.superId); else if (!isLiveChat(child)) expectChild(root, child);
@@ -3518,19 +3661,39 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 409, 'adopted', 'that is the owner\'s own chat; change it only when he asks, with --force');
       return;
     }
+    // C10 on the settings the call leaves (his chats are outside the policy). A mode switch into
+    // develop that keeps an effort nothing allows lowers it, as its own step before the respawn.
+    let effortStep = effort;
+    let policyCtx: JobContext | undefined;
+    if (!ch.adopted) {
+      const originArg = jobOrigin(c, b);
+      if (originArg.error) { refuse(res, 400, 'invalid_args', originArg.error); return; }
+      const rk = riskArg(b);
+      if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
+      const grant = turnGrant(c, originArg.ref);
+      const nextMode = mode ?? ch.mode ?? 'basic';
+      const v = childPolicy({ tool: ch.tool, mode: nextMode, model: model ?? ch.model, effort: effort ?? ch.effort, risk: rk.risk ?? ch.context?.policy?.risk },
+        jobWords(ch.context, grant), { lowerOnModeSwitch: !!mode && nextMode === 'develop' && (ch.mode ?? 'basic') !== 'develop' });
+      if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
+      if (!v.skipped) {
+        if (v.effortLowered) effortStep = v.effort;
+        policyCtx = withPolicy(ch.context, v, grant);
+      }
+    }
     // Model and effort first: they apply in place, and a mode change then respawns the chat
     // carrying them (a mode sent first would leave the next verb naming a tab being replaced).
     const steps: Array<{ verb: 'model' | 'effort' | 'mode'; args: Record<string, unknown> }> = [];
     if (model) steps.push({ verb: 'model', args: { tab: child, model } });
-    if (effort) steps.push({ verb: 'effort', args: { tab: child, level: effort } });
+    if (effortStep) steps.push({ verb: 'effort', args: { tab: child, level: effortStep } });
     if (mode) steps.push({ verb: 'mode', args: { tab: child, mode } });
     const applied: Record<string, unknown> = {};
     const record = () => writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const x = s.children[child];
       if (!x) return;
       if ('model' in applied && model) x.model = model;
-      if ('effort' in applied && effort) x.effort = effort;
+      if ('effort' in applied && effortStep) x.effort = effortStep;
       if ('mode' in applied && mode) { if (mode === 'basic') delete x.mode; else x.mode = mode; }
+      if (policyCtx && Object.keys(applied).length === steps.length) x.context = policyCtx;
     });
     for (const step of steps) {
       const r = await sendWindowCommand(c.token, step.verb, step.args);
@@ -3544,7 +3707,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       applied[step.verb] = r.result ?? true;
     }
     await record();
-    ok(res, { child, applied });
+    ok(res, { child, applied, ...(effortStep && effortStep !== effort ? { note: `effort lowered to ${effortStep}: nothing allows a higher one for develop (\`--risk\`, \`--full\` or his words)` } : {}) });
   },
 
   adopt: async (c, b, res) => {

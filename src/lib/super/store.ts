@@ -12,6 +12,7 @@ import {
   OWNER_DELIVERY_STATES, cleanOwnerCardHandle, cleanOwnerResultFact,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, settlePresentQueue, trimTeamJobs, viewWithout,
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
+  JOB_RISKS, type JobContext, type JobRisk,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
 import { sanitizeModel } from '../claude-args.js';
@@ -348,6 +349,12 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (wo) child.workOrigin = wo;
     const outward = sanitizeOutward(c.outward);
     if (outward) child.outward = outward;
+    const cctx = sanitizeJobContext(c.context);
+    if (cctx) child.context = cctx;
+    if (Array.isArray(c.delegatedBy)) {
+      const keys = [...new Set(c.delegatedBy.filter((k: unknown): k is string => typeof k === 'string' && k !== '' && k.length <= 200))].slice(0, 8);
+      if (keys.length) child.delegatedBy = keys;
+    }
     // The agenda's two stamps (epoch ms): a non-finite or negative value is dropped.
     const sentAt = finite(c.sentAt);
     if (sentAt !== undefined && sentAt >= 0) child.sentAt = sentAt;
@@ -891,6 +898,8 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
     };
     const outward = sanitizeOutward(p.outward);
     if (outward) row.outward = outward;
+    const pctx = sanitizeJobContext(p.context);
+    if (pctx) row.context = pctx;
     const workOrigin = parseWorkOrigin(p.workOrigin);
     if (workOrigin) row.workOrigin = workOrigin;
     if (row.maybeStarted && acceptableWorktree(p.startedIn, opts) && typeof p.startedBranch === 'string' && SUPER_BRANCH_RE.test(p.startedBranch)) {
@@ -963,6 +972,10 @@ function sanitizeOwed(raw: unknown): SuperOwed[] {
         return sat === undefined || !head ? [] : [{ at: sat, head }];
       }).slice(-MAX_OWED_SAID);
       if (said.length) out.said = said;
+    }
+    if (d.kind === 'msg' && Array.isArray(d.pictures)) {
+      const pics = [...new Set(d.pictures.filter((x: unknown): x is string => typeof x === 'string' && x.startsWith('/') && x.length <= 1024 && !/[\u0000-\u001f]/.test(x) && x.includes('/tmp/agent-drops/')))].slice(0, 8);
+      if (pics.length) out.pictures = pics;
     }
     if (isRecord(d.closed)) {
       const cat = finite(d.closed.at);
@@ -1765,4 +1778,33 @@ function cleanRelayedOwner(raw: unknown): { owner?: NonNullable<SuperQueueItem['
   const via = o.via === 'composer' || o.via === 'phone' || o.via === 'telegram' ? o.via : null;
   if (!ref || !/^[0-9a-z]{6}$/.test(ref) || !turn || !own || !at || Number.isNaN(Date.parse(at)) || !via) return {};
   return { owner: { ref, turn, via, own, at, vault: s(o.vault, 4096) ?? '', session: s(o.session, 256) ?? '' } };
+}
+
+/** C11: a job's context as the record may keep it; anything off-shape is dropped, never widened. */
+export function sanitizeJobContext(raw: unknown): JobContext | undefined {
+  if (!isRecord(raw)) return undefined;
+  const clean = (t: unknown, max: number): string => typeof t === 'string' ? t.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '';
+  const out: JobContext = { pictures: [] };
+  if (isRecord(raw.origin) && typeof raw.origin.ref === 'string' && MSG_REF_RE.test(raw.origin.ref)) {
+    const at = finite(raw.origin.at);
+    if (at !== undefined) out.origin = { ref: raw.origin.ref, at, words: clean(raw.origin.words, 300) };
+  }
+  if (Array.isArray(raw.pictures)) {
+    out.pictures = [...new Set(raw.pictures.filter((x: unknown): x is string => typeof x === 'string' && x.startsWith('/') && x.length <= 1024 && !/[\u0000-\u001f]/.test(x) && x.includes('/tmp/agent-drops/')))].slice(0, 8);
+  }
+  const pol = raw.policy;
+  if (isRecord(pol) && typeof pol.model === 'string' && typeof pol.effort === 'string'
+    && (pol.allowedBy === 'flags' || pol.allowedBy === 'risk' || pol.allowedBy === 'full' || pol.allowedBy === 'words')) {
+    const grants = Array.isArray(pol.grants) ? pol.grants.flatMap((g) => {
+      if (!isRecord(g) || typeof g.ref !== 'string' || !MSG_REF_RE.test(g.ref)) return [];
+      const at = finite(g.at);
+      const words = clean(g.words, 300);
+      return at === undefined || !words ? [] : [{ ref: g.ref, words, at }];
+    }).slice(-4) : [];
+    out.policy = {
+      model: clean(pol.model, 80), effort: clean(pol.effort, 16), allowedBy: pol.allowedBy, grants,
+      ...((JOB_RISKS as readonly unknown[]).includes(pol.risk) ? { risk: pol.risk as JobRisk } : {}),
+    };
+  }
+  return out.origin || out.pictures.length || out.policy ? out : undefined;
 }

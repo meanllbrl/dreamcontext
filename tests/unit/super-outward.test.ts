@@ -45,7 +45,7 @@ import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/
 import { emptySuperState, msgRef, type SuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox, markSuperEventTurn, noteSuperOwnerMsg } from '../../src/lib/super/inbox.js';
 import { openMessageDebt, openResultDebt, ownerMessageGist } from '../../src/lib/super/owed.js';
-import { outwardLine, sanitizeOutward } from '../../src/lib/super/outward.js';
+import { RULE_GONE_LINE, messageCovers, outwardLine, ruleCovers, sanitizeOutward } from '../../src/lib/super/outward.js';
 import { handleSuperVerb, worktreePreamble } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { promptOwnerText } from '../../src/lib/agents/team-roster.js';
@@ -170,6 +170,11 @@ describe('delegate --outward: his own message named the push, PR or deploy', () 
     const next = await verb('delegate', { prompt: 'Carry on the Orbit release from its handoff file', brief: 'Orbit release 2', mode: 'basic', succeeds: 'child-1' });
     expect(next.status).toBe(200);
     expect(sent.prompts[1]).toContain(`you may run exactly it: «${STEP}».`);
+    // C3: both children carry the delegating Super chat's key, the successor through --succeeds.
+    const kids = (await readSuperState(root)).children;
+    expect(kids['child-1'].delegatedBy).toEqual([SUPER]);
+    const heir = Object.values(kids).find((k) => k.sessionId !== 'child-1');
+    expect(heir?.delegatedBy).toEqual([SUPER]);
   });
 
   it('without --outward the child gets no grant', async () => {
@@ -213,5 +218,69 @@ describe('the lines the child is born with', () => {
     openMessageDebt(s, ASK, Date.now(), msgRef(ASK));
     expect(ownerMessageGist(s, msgRef(ASK))).toBe(ASK);
     expect(ownerMessageGist(s, 'zz9zz9')).toBeNull();
+  });
+});
+
+describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
+  const RULE = 'staging\'e kendin push et ve deploy et';
+  it('a staging push, PR into staging or deploy to the staging host is covered', () => {
+    expect(ruleCovers('git push origin feature/x:staging', RULE, null).ok).toBe(true);
+    expect(ruleCovers('gh pr create --base staging --fill', RULE, null).ok).toBe(true);
+    expect(ruleCovers('firebase hosting:channel:deploy preview --site acme-stg', RULE, 'acme-stg').ok).toBe(true);
+  });
+  it('live, publish, release, merge and force are refused, as is a step that names no staging', () => {
+    for (const step of ['firebase deploy --only hosting', 'npm publish', 'gh release create v1', 'gh pr merge 41 --squash',
+      'git push --force origin staging', 'deploy staging to production', 'canlıya al staging', 'git push origin +staging']) {
+      const v = ruleCovers(step, RULE, null);
+      expect(v.ok, step).toBe(false);
+      if (!v.ok) expect(v.error).toBe('outward_out_of_scope');
+    }
+  });
+  it('a rule whose words name no push, PR, deploy or staging grants nothing', () => {
+    expect(ruleCovers('git push origin x:staging', 'kısa yaz', null).ok).toBe(false);
+  });
+  it('the child line says staging only; the gone line and both strip from his words', () => {
+    const g = { source: 'rule' as const, step: 'git push origin x:staging', rule: 'abc123def0', words: RULE };
+    const line = outwardLine(g);
+    expect(line).toContain('The server checked that rule abc123def0 is his active standing rule; staging only, never production, release, publish or merge.');
+    expect(promptOwnerText(`${line}\n\n${RULE_GONE_LINE}\n\nShip it.`)).toBe('Ship it.');
+    expect(sanitizeOutward(g)).toEqual(g);
+    expect(sanitizeOutward({ ...g, merge: { pr: 1, method: 'squash' } })).toBeUndefined();
+    expect(sanitizeOutward({ ...g, rule: 'NOT A RULE' })).toBeUndefined();
+  });
+});
+
+describe('his PR merge (D13, criterion 12)', () => {
+  const MERGE = "pr'ı birleştir, squash olsun";
+  it('only the one gh pr merge shape, and only when his words name merging', () => {
+    expect(messageCovers('gh pr merge 41 --squash', MERGE)).toEqual({ ok: true, merge: { pr: 41, method: 'squash' } });
+    expect(messageCovers('gh pr merge 41 --rebase --delete-branch', 'mergele')).toEqual({ ok: true, merge: { pr: 41, method: 'rebase', deleteBranch: true } });
+    for (const step of ['gh pr merge 41', 'gh pr merge 41 --squash --admin', 'gh pr merge 41 --auto --squash', 'git merge feature/x', 'merge feature/x into main']) {
+      expect(messageCovers(step, MERGE).ok, step).toBe(false);
+    }
+    expect(messageCovers('gh pr merge 41 --squash', 'push the branch and open a PR').ok).toBe(false);
+    expect(messageCovers('git push --force origin x', 'push it').ok).toBe(false);
+    expect(messageCovers('git push origin HEAD:main', 'push it').ok).toBe(false);
+  });
+  it('a merge grant says the exact command and keeps no "never merge" clause; its preamble too', () => {
+    const g = { step: 'gh pr merge 41 --squash', ref: msgRef(MERGE), words: MERGE, merge: { pr: 41, method: 'squash' as const } };
+    const line = outwardLine(g);
+    expect(line).toContain('you may run exactly `gh pr merge 41 --squash`');
+    expect(line).not.toContain('never merge into the default branch');
+    const pre = worktreePreamble({ path: '/Users/me/.claude-worktrees/orbit', branch: 'super/orbit', repo: '/Users/me/orbit' }, g);
+    expect(pre).toContain('Never merge locally; merge only as the next line says.');
+    expect(promptOwnerText(`${pre}\n\n${line}\n\nMerge it.`)).toBe('Merge it.');
+  });
+  it('in his turn the route grants it; a bare merge is refused', async () => {
+    const s = { ...emptySuperState(), session: SUPER, enabled: true };
+    openMessageDebt(s, MERGE, Date.now(), msgRef(MERGE));
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(s));
+    resetSuperIndex();
+    markSuperEventTurn(SUPER, false); noteSuperOwnerMsg(SUPER, msgRef(MERGE), { words: MERGE });
+    expect((await verb('delegate', { ...job, outward: 'gh pr merge 41' })).json.error).toBe('outward_out_of_scope');
+    const ok = await verb('delegate', { ...job, outward: 'gh pr merge 41 --squash' });
+    expect(ok.status).toBe(200);
+    expect(sent.prompts[0]).toContain('you may run exactly `gh pr merge 41 --squash`');
+    expect((await readSuperState(root)).children['child-1'].outward).toMatchObject({ merge: { pr: 41, method: 'squash' } });
   });
 });

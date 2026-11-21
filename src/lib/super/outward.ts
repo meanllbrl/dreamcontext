@@ -99,7 +99,7 @@ const fold = (s: string): string => s.toLocaleLowerCase('tr').replace(/[ıçşğ
 /** A rule's words name the kind of step (S2 a). */
 const RULE_KIND_RE = /(?<![a-z0-9])(?:staging\w*|gonder\w*|push\w*|pr|deploy\w*|yayinla\w*)(?![a-z0-9])/;
 /** Never on a rule (S2 c): whole words. */
-export const OUT_OF_SCOPE_RE = /(?<![\w-])(?:production|prod|--prod|live|canli|release|publish|npm publish|gh release|merge|gh pr merge|force|--force(?:-with-lease)?|-f|--admin|--auto)(?![\w-])|(?:^|\s)\+[\w./:-]+/;
+export const OUT_OF_SCOPE_RE = /(?<![\w-])(?:production|prod|--prod|live|canli\w*|release|publish|npm publish|gh release|merge|gh pr merge|force|--force(?:-with-lease)?|-f|--admin|--auto)(?![\w-])|(?:^|\s)\+[\w./:-]+/;
 /** Never in any grant: force, --admin, --auto, a local merge, a push onto the default branch. */
 const NEVER_RE = /(?<![\w-])(?:--force(?:-with-lease)?|-f|--admin|--auto|git\s+merge)(?![\w-])|(?:^|\s)\+[\w./:-]+|\bpush\b[^\n]*?(?:\s|:)(?:main|master)\s*$|\bpush\b[^\n]*?:(?:main|master)(?![\w/-])/;
 /** A merge word in a step. */

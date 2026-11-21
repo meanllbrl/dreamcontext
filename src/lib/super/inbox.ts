@@ -1827,7 +1827,7 @@ export function ownerGist(text: string, lang: OwnerLanguage | null = null): stri
  * The owner's message was WRITTEN into a Super session (typed, phone, dock, a card answer; never a
  * slash command): one `msg` debt, closed only by a section under its ref (or a part ref).
  */
-export function superOwnerOwes(sessionId: string, text: string, now = Date.now(), tgRef?: string | null): Promise<void> {
+export function superOwnerOwes(sessionId: string, text: string, now = Date.now(), tgRef?: string | null, pictures: readonly string[] = []): Promise<void> {
   const root = superKeyOfSession(sessionId);
   if (!root || typeof text !== 'string' || !text.trim() || text.startsWith('/')) return Promise.resolve();
   // "Unclear? Ask again" / "Already answered": the Super answers it with a new card or by acting,
@@ -1841,6 +1841,8 @@ export function superOwnerOwes(sessionId: string, text: string, now = Date.now()
     if (openDebts(s).some((d) => d.kind === 'msg' && d.ref === ref && (d.nudges === 0 || d.parked === 'limit'))) return;
     const d = openMessageDebt(s, text, now, ref);
     d.gist = ownerGist(text, languageOfKey(keyOf(root)));
+    // C8: the pictures he sent with it (checked at intake, S3); a resubmit above keeps the first's.
+    if (pictures.length) d.pictures = [...pictures].slice(0, 8);
   }));
 }
 

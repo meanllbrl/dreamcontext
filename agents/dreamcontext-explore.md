@@ -150,6 +150,8 @@ Return results as direct, actionable text:
 3. **Reusable** -- if during your search you encounter components, hooks, utilities, or patterns that are relevant to the caller's task and could be reused instead of building from scratch, flag them here with file path and a one-line description. This is especially important for UI components (modals, forms, filters, layouts), shared hooks, and utility functions. Proactively flag these even if the caller didn't ask.
 4. **Related** -- other files worth reading (absolute paths), only if genuinely useful
 
+When the caller will read the files itself (the usual case), the Answer is locations: `path:line` and a short quote each, never a summary of their content.
+
 No preamble. No emojis. Absolute paths only.
 
 ## Bash Restrictions

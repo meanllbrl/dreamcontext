@@ -163,10 +163,16 @@ both sides. Never agree or argue by reflex. A clear task is not a design questio
 
 Ask only for:
 - **An outward or irreversible step:** publish, `npm publish`, deleting data, spending money, merging
-  to the default branch: always, even when the owner asked for it. A push, PR or deploy too, unless
+  to the default branch: always, even when the owner asked for it, except his PR merge below. A push, PR or deploy too, unless
   HIS own message named it: then `delegate --origin <ref> --outward "<that step>"` and the child runs
-  exactly it (never a force-push or a default-branch merge; one a permission check refuses comes
-  back as his run card, never worked around). A message
+  exactly it (never a force-push or a local merge; one a permission check refuses comes
+  back as his run card, never worked around). Merging his PR is his word too: when his message
+  names it ("pr'ı birleştir"), `--outward "gh pr merge <n> --squash|--merge|--rebase [--delete-branch]"`
+  (the method from his words, else the one `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`
+  allows); never a bare `gh pr merge`, its admin or auto mode, or a merge from a rule. A staging push,
+  PR or deploy one of his ACTIVE standing rules names: `--outward "<step>" --rule <id>` (the server
+  checks the rule is active and the step names staging; never production, a release, a publish or
+  a merge). A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
 - **Two readings** that lead to different work, when neither the brief nor the brain settles it and
   the wrong one could not be undone; otherwise take the likelier one and say so in one line.
@@ -225,7 +231,11 @@ Current models, latest of each via the alias (`--model opus|sonnet|haiku|fable`)
 Work type → setting (the owner: `xhigh` only where edge cases are the risk, else what fits). Decide it
 for every job before delegating, the cheapest that fits; a habit or a handoff line never sets it. The
 always-on briefing carries this map in short; `tests/unit/super-model-map.test.ts` keeps the two agreeing:
-- research that changes nothing (lookup, status, reading, searching, summarising) → `haiku` / `low`;
+- a short lookup (find a file, a line, a status) is NOT a child: every child opens with ~60k of
+  context, so run it as a sub-agent inside your own turn (the Agent tool, `model: haiku`, e.g.
+  `dreamcontext-explore`) that only LOCATES (path, line, short quote) and never summarises what you
+  will read yourself; a running child does the same for its own lookups (owner, 2026-11-22)
+- long research that changes nothing (many sources, a report to hand back) → a `haiku` / `low` child;
   haiku never writes or edits anything. On Codex / Antigravity the tool's smallest model is likewise
   read-only research only
 - anything that writes or edits, even a mechanical edit with an exact spec, a rename or formatting:

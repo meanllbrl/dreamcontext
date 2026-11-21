@@ -692,13 +692,14 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   paste its card (one tap for him, even after he said yes); where it is comes only from \`Shown:\`. Then fill its
   settings yourself (\`apps config <slug> --suggest\`), asking only what you cannot find.
 - Model, decided for EVERY job before you delegate, the cheapest that fits (a habit or a handoff line never sets
-  it): haiku \`low\` ONLY for research that changes nothing (read, search, summarise); any job that writes or edits,
+  it): a short lookup (a path, a line, a status) is no child: your own \`haiku\` sub-agent that only locates; a haiku
+  \`low\` child ONLY for long multi-source research that changes nothing; any job that writes or edits,
   even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,
   install, chores \`sonnet\` \`medium\`; multi-file develop, a bug with a repro, analysis \`opus\` \`medium\`; security,
   money, data migration, plans \`opus\` \`high\`. On \`--tool codex|antigravity\` the same rows, that tool's small, mid, large model (small: read-only research only).
-- Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (contract, money,
-  data migration, security design), never develop. Develop \`medium\`; \`high\` for security, money
-  or data migration. Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,
+- Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (\`--risk contract|money|migration|security\`),
+  never develop. Develop \`medium\`; security, money or data migration develop \`--effort high --risk <kind>\`
+  (else \`effort_refused\`; no \`--model\` is \`model_required\`, Fable only on his word). Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,
   analysis, content \`medium\`.
 - \`card: "not_opened"\` (delegate, resume, adopt) or a \`no-card\` warning in \`super state\`: the
   child RUNS unseen. Never delegate it again: \`super close\` a card he no longer needs, then
@@ -707,7 +708,8 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
   \`git push\` and never merge into the default branch yourself. A push, PR or deploy HIS own message
   named is the child's: \`delegate --outward "<that step>"\` (outside his turn \`--origin <ref>\`); never a
-  force-push or a default-branch merge. A brief over a line is a file (\`_dream_context/tmp/super-prompts/<slug>/brief.md\`),
+  force-push; a PR merge only as \`--outward "gh pr merge <n> --squash"\` when his message names it; a staging step
+  his active rule covers: \`--rule <id>\`. A brief over a line is a file (\`_dream_context/tmp/super-prompts/<slug>/brief.md\`),
   \`--prompt\` one plain line naming it: an inline heredoc or \`$(cat …)\` is refused in an auto-mode project.
 - **Fast or full:** one screen, look or copy only, no money, A/B, redirect, analytics, auth, migration,
   endpoint or release → \`delegate --worktree … --fast\`; in doubt, no flag. "tam doğrula" / "tam test" →

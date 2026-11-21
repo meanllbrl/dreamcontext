@@ -367,7 +367,7 @@ It refuses while a part is missing. Details → [tasks-and-features.md](referenc
 
 ## Sub-Agents
 
-- **`dreamcontext-explore`**: context-accelerated codebase exploration. Use for ALL exploration (default Explore is blocked). It is the **fast, single-pass** searcher, one agent, tight budget, one answer.
+- **`dreamcontext-explore`**: context-accelerated codebase exploration. Use for ALL exploration (default Explore is blocked). It is the **fast, single-pass** searcher, one agent, tight budget, one answer. It runs on **Haiku**: dispatch it with no model override (never `opus`), ask it to LOCATE (path, line, short quote) and read those yourself; never have it summarise what you will read anyway. A short lookup is this sub-agent, never a new chat or Super child (owner, 2026-11-22).
 - **`dreamcontext-deep-research` skill**: the iterative counterpart for **synthesis across a large or multi-project corpus**, returning a cited report. Start with `dreamcontext-explore`; escalate when one pass leaves a cross-corpus question half-answered.
 - **`initializer` skill**: the interactive, sub-agent-driven **brain bootstrap** for a missing or sparse `_dream_context/` (it drives `initializer-scout`, `initializer-ingestor`, `initializer-verifier`, and handles codebase-only repos too).
 - **Sleep specialists** (`sleep-tasks`, `sleep-state`, `sleep-product`, `sleep-migration`, `sleep-learn`), dispatched by the main agent during the sleep flow only.

@@ -845,6 +845,12 @@ export interface SuperChild {
   /** The push, PR or deploy his own message named that this child was told it may run
    *  (`delegate --outward`, outward.ts); a `--succeeds` successor carries it on. */
   outward?: OutwardGrant;
+  /** C3 (plan iyilesme-360 D3): the conversation keys of the Super chat that delegated it (its pin
+   *  id and the record's session), stamped at delegate, copied on `--succeeds`. `learn` in this
+   *  child treats a quote of that chat as "here" (owner-quote.ts delegatingKeys). At most 8. */
+  delegatedBy?: string[];
+  /** C11: what its job was accepted with (origin, pictures, policy); `--succeeds` inherits it. */
+  context?: JobContext;
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -1597,6 +1603,30 @@ export const TEAM_JOB_ID_RE = /^team-[a-z0-9-]{1,35}$/;
  * takes it; `startedIn`/`startedBranch` name the worktree a `delegate --from` that the window did
  * not confirm may have opened (`maybeStarted`).
  */
+/**
+ * C11 (plan iyilesme-360): what a job was accepted with, resolved once at acceptance (`delegate`,
+ * `pool add`, the capacity keep) and carried by its pool row and its child: the owner message it
+ * answers and the pictures that ride with it (C8, D8). `policy` (C10) is written by the model and
+ * effort check. A row or child without it (made before this build) starts as today.
+ */
+export interface JobContext {
+  origin?: { ref: string; at: number; words: string };
+  /** Absolute paths under the project's `tmp/agent-drops/`, at most 8. */
+  pictures: string[];
+  policy?: JobPolicy;
+}
+/** C10: the settings the job is allowed to run with and what allowed them. */
+export interface JobPolicy {
+  model: string;
+  effort: string;
+  risk?: JobRisk;
+  allowedBy: 'flags' | 'risk' | 'full' | 'words';
+  /** His words that allowed a setting (newest last, at most 4). */
+  grants: Array<{ ref: string; words: string; at: number }>;
+}
+export const JOB_RISKS = ['security', 'money', 'migration', 'contract'] as const;
+export type JobRisk = typeof JOB_RISKS[number];
+
 export interface SuperPoolItem {
   id: string;
   title: string;
@@ -1619,6 +1649,8 @@ export interface SuperPoolItem {
   /** The push, PR or deploy his own message named, checked when the job was kept (outward.ts):
    *  it starts with the job, however late, never re-read from the owed ledger. */
   outward?: OutwardGrant;
+  /** C11: what the job was accepted with; a reused row (same prompt) takes the new one's. */
+  context?: JobContext;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A member Super's job kept at its cap: whose work it does (as its child's `workOrigin`), so
@@ -1738,6 +1770,9 @@ export interface SuperOwed {
   parked?: 'stop' | 'limit';
   parkedAt?: number;
   closed?: { at: number; by: 'mark' | 'owner' | 'takeback' };
+  /** C8 (plan iyilesme-360 D8): a `msg` debt's pictures (absolute paths under the project's
+   *  `tmp/agent-drops/`, checked at intake and again before any copy). At most 8. */
+  pictures?: string[];
 }
 export const OWED_ID_RE = /^o[1-9][0-9]{0,8}$/;
 /** Closed debts the record keeps (newest). Every open one is kept up to MAX_OWED_OPEN. */
@@ -2494,7 +2529,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-17, tg-cift-metin): after `super ask`, never re-say the answer already given before it in other words. Rev 54 (2026-11-18, soru-azaltma): a card only when the work is truly blocked, ruled by kind (`lib/ask-rules.ts`); a clear choice is taken and said in one line; no start card for work he asked for or approved, a plan that changes no screen is built without his yes; a child's question is the Super's first; no line that a question waits, the summary in one place, an open card never asked again. Rev 55 (2026-11-20, hafiza-konu-skill): a brief names the project skill that covers the job; in the same field a project skill comes before a user-level one. Rev 56 (2026-11-21, sirket-yavaslik): a one-screen look or copy job with nothing on the never-list is delegated `--fast`; "tam doğrula" opens `--full` or raises a done job with `super update|resume <child> --full`; the Super never waits on CI or runs a browser. Rev 57 (2026-11-21, telegram-sade): the Telegram rule is short (a bold answer line and at most three sentences, the rest in a folded `**Ayrıntı**`); one turn is one message; a job's status is one `dream-status` block edited in place; a voice day keeps answering by voice. Rev 58 (2026-11-21, super-sessiz-kalmaz): while he waits, the step it is on and a time left ONLY from a real measurement (no measurement, no time; a plan or approval summary never); a deploy started by a merge or push is watched until live or failed; `super state` reads `background` for a child whose background work still runs; `event=progress` gets one line each under its ref.
 
  */
-export const SUPER_BRIEF_REV = 58;
+export const SUPER_BRIEF_REV = 59;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

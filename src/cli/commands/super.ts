@@ -233,11 +233,13 @@ export function registerSuperCommand(program: Command): void {
       ? callSuper('state', {}).then((r) => print(briefCallResult(r)))
       : run('state', {})));
 
+  const RISK_HELP = 'What makes a higher effort earn it: security | money | migration | contract (develop `high`, a critical plan `xhigh`); without it, `--full` or his own words, an effort above the mode\'s default is refused (`effort_refused`)';
   const job = (c: Command): Command => c
     .option('--brief <line>', 'The one-line reminder its row and card show')
     .option('--mode <mode>', 'basic | plan | develop', 'basic')
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--risk <kind>', RISK_HELP)
     .option('--worktree <repo>', 'Give it its own worktree of this linked repo, on branch super/<slug>')
     .option('--slug <slug>', 'The worktree and branch name (a-z, 0-9, -)')
     .option('--base <ref>', 'The commit the worktree starts from (default: the repo\'s HEAD)')
@@ -246,14 +248,14 @@ export function registerSuperCommand(program: Command): void {
     .option('--tool <tool>', 'The tool the child runs on: claude (default), codex or antigravity')
     .option('--fast', 'With --worktree: a one-screen look or copy job with nothing on the never-list (price, shown amount, payment, paywall, trial, A/B, redirect, analytics, auth, data, endpoint, store): one short read and one screenshot. The diff still decides; money never takes it')
     .option('--full', 'With --worktree: the owner asked for full verification (tam doğrula); the whole chain whatever the diff');
-  type JobOpts = { prompt?: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string; task?: string; mcp?: string; tool?: string; fast?: boolean; full?: boolean };
+  type JobOpts = { prompt?: string; brief?: string; mode: string; model?: string; effort?: string; risk?: string; worktree?: string; slug?: string; base?: string; task?: string; mcp?: string; tool?: string; fast?: boolean; full?: boolean };
   /** The lane flags, checked here: both together, or either without a worktree, is a usage error. */
   const laneOf = (o: JobOpts): { laneIntent?: 'fast' | 'full' } | { error: string } => {
     if (o.fast && o.full) return { error: '--fast and --full together: pick one' };
     if ((o.fast || o.full) && !o.worktree) return { error: '--fast and --full need --worktree: the lane lives in the worktree' };
     return o.fast ? { laneIntent: 'fast' } : o.full ? { laneIntent: 'full' } : {};
   };
-  const jobBody = (o: JobOpts) => { const lane = laneOf(o); return { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp, tool: o.tool, ...('laneIntent' in lane ? lane : {}) }; };
+  const jobBody = (o: JobOpts) => { const lane = laneOf(o); return { prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, ...(o.risk !== undefined ? { risk: o.risk } : {}), worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp, tool: o.tool, ...('laneIntent' in lane ? lane : {}) }; };
 
   job(s.command('delegate')
     .description(`Start a child chat in THIS project and open its card; returns its session id. At the cap (${MAX_LIVE_CHILDREN} live children, the only limit), the job is kept in the pool (\`held\`). With --worktree/--slug, refused (\`worktree_busy\`, naming the child) while a live child already works in that worktree`)
@@ -273,7 +275,7 @@ export function registerSuperCommand(program: Command): void {
       const origin = o.origin !== undefined ? { origin: o.origin } : {};
       const forWho = o.for !== undefined ? { for: o.for } : {};
       const outward = { ...(o.outward !== undefined ? { outward: o.outward } : {}), ...(o.rule !== undefined ? { rule: o.rule } : {}) };
-      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho });
+      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho, ...(o.risk !== undefined ? { risk: o.risk } : {}) });
       if (!o.prompt) return usage('give --prompt, or --from <pool id>');
       const lane = laneOf(o);
       if ('error' in lane) return usage(lane.error);
@@ -388,23 +390,26 @@ export function registerSuperCommand(program: Command): void {
     .option('--mode <mode>', 'basic | plan | develop')
     .option('--model <id>', 'Model id or alias')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--risk <kind>', RISK_HELP)
     .option('--force', 'ONLY when the owner asked: reopen his own (adopted) chat')
     .option('--origin <ref>', ORIGIN_HELP)
     .option('--full', 'The owner said "tam doğrula" on a finished fast job: its worktree\'s lane becomes full (never back) and it is told to take the same diff through the whole chain')
-    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean; origin?: string; full?: boolean }) =>
-      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true, ...(o.full ? { full: true } : {}), ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; risk?: string; force?: boolean; origin?: string; full?: boolean }) =>
+      run('resume', { child, mode: o.mode, model: o.model, effort: o.effort, ...(o.risk !== undefined ? { risk: o.risk } : {}), force: o.force === true, ...(o.full ? { full: true } : {}), ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
   s.command('update <child>')
     .description('Change a RUNNING child\'s mode, model or effort (the window\'s own switches; a mode change restarts it on the same conversation once its turn ends); recorded for `super resume`')
     .option('--mode <mode>', 'basic | plan | develop')
     .option('--model <id>', 'Model id or alias (from its next turn)')
     .option('--effort <level>', 'low | medium | high | xhigh | max')
+    .option('--risk <kind>', RISK_HELP)
+    .option('--origin <ref>', ORIGIN_HELP)
     .option('--force', 'ONLY when the owner asked: change his own (adopted) chat')
     .option('--full', 'The owner said "tam doğrula" on a running fast job: its worktree\'s lane becomes full (never back) and it is told to take the same diff through the whole chain. On its own')
-    .action((child: string, o: { mode?: string; model?: string; effort?: string; force?: boolean; full?: boolean }) => {
+    .action((child: string, o: { mode?: string; model?: string; effort?: string; risk?: string; origin?: string; force?: boolean; full?: boolean }) => {
       if (o.full) return (o.mode || o.model || o.effort) ? usage('run --full on its own, then --mode, --model or --effort in a second call') : run('update', { child, full: true, force: o.force === true });
       if (!o.mode && !o.model && !o.effort) return usage('name what changes: --mode, --model, --effort or --full');
-      return run('update', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true });
+      return run('update', { child, mode: o.mode, model: o.model, effort: o.effort, force: o.force === true, ...(o.risk !== undefined ? { risk: o.risk } : {}), ...(o.origin !== undefined ? { origin: o.origin } : {}) });
     });
 
   s.command('adopt <chat>')

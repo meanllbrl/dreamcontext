@@ -232,7 +232,8 @@ describe('super-orchestration guide: every command, flag, skill and agent exists
       const c = child(program, g);
       if (c) allOptionFlags(c, known);
     }
-    const named = [...new Set(spans.flatMap((s) => [...s.matchAll(/(--[a-z][a-z-]*)/g)].map((m) => m[1])))];
+    // A `gh …` command's flags are gh's own (D13 names `gh pr merge <n> --squash`), never ours.
+    const named = [...new Set(spans.map((s) => s.replace(/\bgh\s[^"`]*/g, '')).flatMap((s) => [...s.matchAll(/(--[a-z][a-z-]*)/g)].map((m) => m[1])))];
     expect(named.length).toBeGreaterThan(8);
     const unexpected = named.filter((f) => !known.has(f) && !PENDING_FLAGS.includes(f));
     expect(unexpected).toEqual([]);

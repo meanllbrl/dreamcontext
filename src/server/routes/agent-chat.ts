@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { ownerPicturePaths } from '../../lib/t3-bridge/pictures.js';
 import { appRuntimePath } from '../../lib/app-cli-path.js';
 import { bindTake, voiceTakeBlock, type TakeRecord } from '../../lib/voice/voiceLog.js';
 import type { Server } from 'node:http';
@@ -4146,7 +4147,7 @@ export function startChatSession(
     // command is no message of his: it answers none.
     if (isSuper) {
       const own = text.startsWith('/') || serverWritten ? null : tgRef ?? msgRef(text);
-      noteSuperOwnerMsg(chatRegistryId, own, own ? { parts: partRefs(text, tgRef ?? undefined), words: promptOwnerText(text) ?? '' } : {});
+      noteSuperOwnerMsg(chatRegistryId, own, own ? { parts: partRefs(text, tgRef ?? undefined), words: promptOwnerText(text) ?? '', pictures: ownerPicturePaths(text, contextRoot) } : {});
     }
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
@@ -4154,7 +4155,7 @@ export function startChatSession(
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn, ownWords);
     // His message is owed an answer until a section of the Super's says it (never the server's own continue).
     // A continue the server writes after a limit, a sign-in or a reset is never his message.
-    if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef);
+    if (isSuper && wrote && !text.startsWith('/') && !serverContinue && !serverWritten) void superOwnerOwes(chatRegistryId, text, Date.now(), tgRef, ownerPicturePaths(text, contextRoot));
     if (handMarks) {
       if (wrote) void superOwnerMarksCarried(handMarks.carry);
       else superOwnerMarksReturned(handMarks.carry);
