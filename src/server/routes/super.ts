@@ -3,7 +3,7 @@ import { scheduleVerb } from '../super-schedule.js';
 import { appendOpenLog } from '../../lib/window-open-log.js';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
@@ -2794,11 +2794,14 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const request = str(b.request);
     const text = typeof b.text === 'string' ? b.text : '';
     if (!request) { refuse(res, 400, 'invalid_args', 'name the group request (its id is in the turn that brought it)'); return; }
+    // Files the result attaches: absolute paths (the CLI resolves them), read by the runner.
+    const files = b.files === undefined ? [] : b.files;
+    if (!Array.isArray(files) || files.length > 10 || !files.every((f) => typeof f === 'string' && isAbsolute(f))) { refuse(res, 400, 'invalid_args', 'files: up to 10 absolute paths'); return; }
     const rooms = (await import('../telegram/hub.js')).telegramHub()?.rooms;
     if (!rooms) { refuse(res, 503, 'telegram_unavailable', 'Telegram works only in the Mac app'); return; }
-    const r = await rooms.say({ root: resolve(c.who.contextRoot), superId: c.superId }, request, text);
+    const r = await rooms.say({ root: resolve(c.who.contextRoot), superId: c.superId }, request, text, files as string[]);
     if (!r.ok) { refuse(res, r.status, r.error, r.message); return; }
-    ok(res, { group: r.group });
+    ok(res, { group: r.group, ...(r.notSent ? { notSent: r.notSent } : {}) });
   },
   schedule: async (c, b, res) => {
     if (c.superId !== 'main') { refuse(res, 403, 'main_only', 'only the project\'s Super Agent sets the owner\'s scheduled jobs'); return; }
