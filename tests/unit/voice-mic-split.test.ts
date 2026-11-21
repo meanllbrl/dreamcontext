@@ -206,7 +206,7 @@ describe('the shell commands', () => {
   });
 });
 
-describe('take mode: send or paste (owner, 2026-11-22)', () => {
+describe('Auto send (take mode): on sends, off pastes (owner, 2026-11-22)', () => {
   it('the menu lists the take-mode row where it is available, after the steps and before spoken replies and settings', () => {
     const items = micMenuItems({ steps: ['permission'], takeModeAvailable: true, readAloudAvailable: true, readAloudOn: false, settingsAvailable: true });
     expect(items.map((i) => i.kind)).toEqual(['step', 'take-mode', 'read-aloud', 'settings']);
@@ -236,9 +236,20 @@ describe('take mode: send or paste (owner, 2026-11-22)', () => {
 
   it('both languages carry the strings, no em dash', () => {
     const i = read('dashboard/src/context/I18nContext.tsx');
-    for (const k of ['micmenu.paste', 'micmenu.paste.d', 'voice.rec.send', 'voice.rec.paste']) {
+    for (const k of ['micmenu.autosend', 'micmenu.autosend.d', 'voice.rec.send', 'voice.rec.paste']) {
       expect(i.split(`'${k}':`).length - 1, k).toBe(2);
     }
-    expect(/'(micmenu\.paste|voice\.rec\.(send|paste))[^']*': '[^']*\u2014/.test(i)).toBe(false);
+    expect(/'(micmenu\.autosend|voice\.rec\.(send|paste))[^']*': '[^']*\u2014/.test(i)).toBe(false);
+  });
+});
+
+describe('Auto send row: the switch is the inverse of paste, the stored value is unchanged', () => {
+  it('on means send (the default), off means paste; an old stored "paste" reads as Auto send off', () => {
+    const m = read('dashboard/src/components/sleepy/chat/MicSplit.tsx');
+    expect(m).toContain("aria-checked={takeMode === 'send'}");
+    expect(m).toContain("onTakeMode(takeMode === 'send' ? 'paste' : 'send')");
+    const t = read('dashboard/src/lib/voice/takeMode.ts');
+    expect(t).toContain("const KEY = 'dreamcontext-take-mode'");
+    expect(t).toContain("v === 'paste' ? 'paste' : 'send'");
   });
 });
