@@ -373,6 +373,42 @@ describe('the surface briefing of a delegated child', () => {
     expect(lean).toMatch(/Never look for it among peers/);
     expect(briefingOf(spawnChat().child!)).not.toContain('Reaching the Super Agent');
   });
+
+  // Owner 2026-11-22: the Super forgot `--mcp`, the child never learned a server sat set up for
+  // the project, and it worked around it. The briefing now names what it may ask for.
+  it('a lean child is told which set-up servers it may ask for on its mcp card; a normal chat is not', () => {
+    const none = briefingOf(spawnChat({ mode: 'develop', leanMcp: [] }).child!);
+    expect(none).toContain('## MCP servers you may ask for');
+    expect(none).toContain('started with none of the project\'s MCP servers');
+    expect(none).toMatch(/not loaded in this chat, so this chat cannot use them until it asks: apple-mail, fathom, github, whatsapp\./);
+    expect(none).toContain('send ONE `mcp` card');
+    const some = briefingOf(spawnChat({ mode: 'develop', leanMcp: ['whatsapp'] }).child!);
+    expect(some).toContain('This chat has these MCP servers: whatsapp.');
+    expect(some).toMatch(/until it asks: apple-mail, fathom, github\./);
+    const all = briefingOf(spawnChat({ mode: 'develop', leanMcp: ['whatsapp', 'apple-mail', 'fathom', 'github'] }).child!);
+    expect(all).not.toContain('MCP servers you may ask for');
+    expect(briefingOf(spawnChat().child!)).not.toContain('MCP servers you may ask for');
+  });
+});
+
+describe('childMcpOfferLine', () => {
+  it('connectors only for a Claude child, and never one its account is known to lack', async () => {
+    const { childMcpOfferLine } = await import('../../src/lib/super/lean-mcp.js');
+    const local = new Map<string, unknown>([['posthog', {}]]);
+    const connectors = new Map([
+      ['notion', { alias: 'notion', name: 'claude.ai Notion', urls: { me: 'https://n' } }],
+      ['slack', { alias: 'slack', name: 'claude.ai Slack', urls: { other: 'https://s' } }],
+    ]);
+    const claude = childMcpOfferLine({ have: [], local, connectors, bridge: false, accountId: 'me', read: new Set(['me', 'other']) });
+    expect(claude).toMatch(/until it asks: notion, posthog\./);
+    const unread = childMcpOfferLine({ have: [], local, connectors, bridge: false, accountId: 'me', read: new Set(['other']) });
+    expect(unread).toMatch(/until it asks: notion, posthog, slack\./);
+    const codex = childMcpOfferLine({ have: [], local, connectors, bridge: true, accountId: 'me', read: new Set() });
+    expect(codex).toMatch(/until it asks: posthog\./);
+    expect(childMcpOfferLine({ have: ['posthog'], local, connectors: new Map(), bridge: true, accountId: '', read: new Set() })).toBe('');
+    // At the lean cap a card grants nothing, so the line promises nothing.
+    expect(childMcpOfferLine({ have: ['a', 'b', 'c', 'd', 'e', 'f'], local, connectors, bridge: false, accountId: 'me', read: new Set() })).toBe('');
+  });
 });
 
 describe('a set-up server the chat asks for on its card joins it (owner 2026-11-12, memoryos Slack)', () => {

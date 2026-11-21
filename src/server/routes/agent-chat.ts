@@ -156,7 +156,7 @@ import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
 import { seedForConversation } from '../../lib/assistant/chat-seed.js';
 import { ensureComputerMcpConfig } from '../../lib/assistant/computer-mcp.js';
 import {
-  childMcpNeedingSignIn, connectorListSettled, connectorOnAccount, connectorListSettleMs, connectorRulesFor, knownChildMcp, knownMcpServers, leanAllowlist, mcpFileNames, mcpCardServers, mcpDrift, mcpGrantFor, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
+  childMcpNeedingSignIn, childMcpOfferLine, connectorListSettled, connectorOnAccount, connectorListSettleMs, connectorRulesFor, knownChildMcp, knownMcpServers, leanAllowlist, mcpFileNames, mcpCardServers, mcpDrift, mcpGrantFor, parseMcpNames, projectMcpJson, removeLeanMcpConfig, sweepLeanMcpDir, unloadedConnectors, writeLeanMcpConfig,
 } from '../../lib/super/lean-mcp.js';
 import { openRequest } from '../../lib/super/request-answer.js';
 import { deliverHubResult, deliverSuperResult, deliverWindowResult, mintWindowToken, setWindowControlBase } from '../../lib/window-control.js';
@@ -2543,9 +2543,19 @@ export function startChatSession(
    *  allowlist entry needs (lean-mcp.ts `connectorRulesFor`). Never for a Codex or Antigravity child:
    *  connectors are Claude's, and `delegate` refuses them there. */
   let leanConnectorRules: Array<{ alias: string; name: string; url: string }> = [];
+  /** The servers a lean child may still ask for, for its briefing (`childMcpOfferLine`). */
+  let leanMcpOffer = '';
   if (opts.leanMcp && !scopedCard) {
     try {
       const childMcp = knownChildMcp(projectRoot);
+      if (!app) {
+        try {
+          leanMcpOffer = childMcpOfferLine({
+            have: opts.leanMcp, local: childMcp.local, connectors: childMcp.connectors, bridge: !!bridgeTool,
+            accountId: activeAccountId || (listClaudeAccounts().length ? '' : 'default'), read: childMcp.read,
+          });
+        } catch { leanMcpOffer = ''; }
+      }
       const known = childMcp.local;
       leanMcpPath = writeLeanMcpConfig(opts.leanMcp.filter((n) => known.has(n)), known);
       if (!bridgeTool && !app) leanConnectorRules = connectorRulesFor(opts.leanMcp.filter((n) => !known.has(n)), childMcp.connectors, activeAccountId || (listClaudeAccounts().length ? '' : 'default'), childMcp.read);
@@ -2569,7 +2579,9 @@ export function startChatSession(
   // an in-place respawn at the turn's end (lean-mcp.ts `mcpGrantFor`; owner 2026-11-12, a Super
   // child blind to a configured Slack). Ordinary Claude chats and lean children only: a scoped
   // card, an app, the Assistant and the Super keep their own MCP rules, a bridge tool its own config.
-  const mcpGrantable = !scopedCard && !app && !isAssistant && !isSuper && !bridgeTool;
+  // A LEAN Codex or Antigravity child too (owner 2026-11-22: every tool gets the same rule): its
+  // grant is the project's own servers only (connectors are Claude's), on the same in-place respawn.
+  const mcpGrantable = !scopedCard && !app && !isAssistant && !isSuper && (!bridgeTool || !!opts.leanMcp);
   // The Super's process outlives its MCP set (its Fresh session is a `/clear` in the same process),
   // so it FOLLOWS the project's set: a server set up after it started joins it on an in-place
   // respawn at an idle turn end (`followMcpDrift`; owner 2026-11-12, a teammate's Super blind to
@@ -2761,7 +2773,7 @@ export function startChatSession(
     // when their file could not be written), so the model is never told about agents it lacks.
     const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock, superToolsSpawn].filter(Boolean).join('\n\n');
     // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
-    const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}` : opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
+    const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}` : opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}${leanMcpOffer ? `\n${leanMcpOffer}` : ''}` : CHAT_SURFACE_BRIEFING;
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
@@ -5733,7 +5745,7 @@ export function startChatSession(
     try {
       // A lean Claude child may be granted a claude.ai connector too (`notion`); an ordinary chat
       // already carries the account's connectors, so only the project's servers are news to it.
-      const known = opts.leanMcp ? knownChildMcp(projectRoot).all : knownMcpServers(projectRoot);
+      const known = opts.leanMcp && !bridgeTool ? knownChildMcp(projectRoot).all : knownMcpServers(projectRoot);
       grant = mcpGrantFor({ asked, have: [...spawnedMcp, ...mcpGranted], known, lean: !!opts.leanMcp });
     } catch { return; }
     if (!grant.length) return;
