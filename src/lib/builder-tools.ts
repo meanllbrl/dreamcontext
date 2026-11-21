@@ -401,3 +401,32 @@ export function classifyBuilderResult(fileText: string | null, taskId: string): 
   if (UNFINISHED.test(last)) return { verdict: 'unfinished', detail: oneLine(last) };
   return { verdict: 'reported', detail: oneLine(first) };
 }
+
+// ─── machine-wide browser slots (plan sirket-yavaslik D7) ─────────────────────────────────
+
+/**
+ * At most this many browser runs at once on the machine, every repo together. Measured
+ * 2026-11-21 on the company Mac: 663 browser minutes a day, many runs side by side on one machine.
+ */
+export const BROWSER_SLOTS = 2;
+
+export function browserSlotPaths(dir: string): string[] {
+  return Array.from({ length: BROWSER_SLOTS }, (_, i) => join(dir, `browser-slot-${i}.lock`));
+}
+
+/**
+ * Take one of the machine's browser slots, waiting up to `waitMs`. A browser run holds a heavy slot
+ * AND one of these. Returns its release, or null when none came free in time (the caller exits 75
+ * with its place kept, like any heavy wait).
+ */
+export async function acquireBrowserSlot(opts: { slotDir: string; waitMs: number; pollMs?: number; now?: () => number }): Promise<(() => void) | null> {
+  const now = opts.now ?? Date.now;
+  const deadline = now() + Math.max(0, opts.waitMs);
+  for (;;) {
+    for (const slot of browserSlotPaths(opts.slotDir)) {
+      if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) return () => { releaseFileLock(slot); };
+    }
+    if (now() >= deadline) return null;
+    await new Promise((r) => { setTimeout(r, opts.pollMs ?? 500); });
+  }
+}
