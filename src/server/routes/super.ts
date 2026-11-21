@@ -2530,7 +2530,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // running when they finished, 2026-11-21 Doc) is not "running": what those children wrote
       // last is the job's answer so far, ahead of a queued line.
       const kids = j.request ? await requestChildren(root, j) : [];
-      const childLive = kids.some((k) => getChat(k.sid) !== undefined);
+      const childLive = kids.some((k) => !!getChat(k.sid));
       let progress = '';
       try { progress = teamProgressRead(root, j, Date.now(), kids) ?? ''; } catch { progress = ''; }
       if (progress && (!j.request || childLive)) text = progress;

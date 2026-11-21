@@ -276,7 +276,7 @@ const LEARN_TRIGGER_2026_11_15 = 280;
   /** 2026-11-21 sirket-yavaslik: the fast-or-full line (`delegate --fast`, "tam doğrula" → `--full`); CI and browser stay off the Super by the hook, not the brief. */
   const FAST_OR_FULL_2026_11_21 = 285; // measured with hafiza-konu-skill and ajanda-mesaj-bagi: 30,730 total
   const TELEGRAM_SADE_2026_11_21 = 1250; // telegram-sade: short Telegram rule, one message per turn, one `dream-status` block per job edited in place, a voice day, the answer and state lines never fold, a PDF link goes as the file (measured 27,806, +955; +~285)
-  const MERGE_21KAS_B_2026_11_22 = 60; // local cut yerel-21kas-b: telegram-sade, super-sessiz-kalmaz and global-uye-ogrenme together (measured 32,687 with a guide)
+  const MERGE_21KAS_B_2026_11_22 = 80; // local cut yerel-21kas-b: telegram-sade, super-sessiz-kalmaz and global-uye-ogrenme together (measured 32,687 without a guide, 32,702 with one)
   const PRESENT_QUEUE_2026_11_14 = 130; // sunum-sirasi: a present over his presentation answers `queued: {at, of}`; never claimed as shown (measured 23,521)
   const ASK_RULES_2026_11_18 = 3090; // (19 Nov merge with dev: rev 54 and the no re-say words; measured 29,954) (end review r1: a closed card that is still his gets one reworded card; measured 29,784) soru-azaltma (owner "daha az soru kartı"): the `## When you ask him` section (the ask rules by kind, lib/ask-rules.ts), a child's question is the Super's first, no start card for asked work, no line that a question waits (measured 29,169, +2,435)
   const APP_INSTALL_2026_11_13 = 320; // app-kurulum-claude: install asks at once, its one-tap card even after his yes in words, the card place from `Shown:`, Claude fills the settings (measured 23,145)
