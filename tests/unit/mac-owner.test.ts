@@ -214,10 +214,15 @@ describe('every owner input on the Mac passes the one call; nothing released lat
 
   it('must not count: a decision from the phone, the Super answering a child, or any agent never passes a card', () => {
     // The phone's Allow/Deny card posts to the server; the Super's superAllow and the window verbs answer through the session.
-    for (const f of ['dashboard/src/components/sleepy/super/SuperPermissionCard.tsx', 'dashboard/src/components/sleepy/super/superAllow.ts',
+    // Local cut (2026-11-20): super-v3's Mac permission card is the owner's own click in the Mac chat, so it DOES count (below).
+    for (const f of ['dashboard/src/components/sleepy/super/superAllow.ts',
       'src/server/routes/super-phone-questions.ts', 'src/lib/t3-bridge/session.ts']) {
       expect(read(f), f).not.toMatch(/ownerAtMac|noteOwnerWrote|noteMacOwnerInput|noteOwnerAtMac/);
     }
+  });
+
+  it('the Mac permission card (super-v3 D8) counts the owner\'s own click as owner input', () => {
+    expect(read('dashboard/src/components/sleepy/super/SuperPermissionCard.tsx')).toContain('noteOwnerWrote()');
   });
 
   it('server side: the click reaches the one gate; the phone link and a no-Origin client do not count', () => {

@@ -25,6 +25,9 @@ describe('a question bar over a presentation', () => {
 
   it('no bar drawn (no measured height): the row stays in the band as before', () => {
     const p = planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3, queueUp: true });
-    expect(p.presentTabs!.y).toBe(STAGE.MARGIN / 2);
+    // super-v3 (local cut 2026-11-20): the tabs ride in the presentation window, whose place is the layout's own;
+    // what must hold is that an unmeasured bar moves nothing: the same place as with no question up at all.
+    const none = planStage(items, present, { width: 1384, height: 814 }, { layoutChoices: 3 });
+    expect(p.presentTabs!.y).toBe(none.presentTabs!.y);
   });
 });

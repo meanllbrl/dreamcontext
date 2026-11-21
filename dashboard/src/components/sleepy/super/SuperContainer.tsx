@@ -448,7 +448,6 @@ export function SuperContainer(props: SuperContainerProps) {
                 at its foot. Not from the phone, which opens no stage here. */}
             {c.kind === 'team' && props.team && !props.remote && <OpenStageButton member={props.team.job.member} />}
             <AskButton label={t('super.card.askAbout')} onClick={() => props.onAskAbout(c.id)} />
-            {openFull && <IconButton icon="fullscreen" label={t('super.card.fullscreen')} onClick={openFull} testId="super-card-fullscreen-btn" />}
           </>
         )}
       </div>}

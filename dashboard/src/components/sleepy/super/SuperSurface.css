@@ -2273,8 +2273,8 @@
 .super-card-cmd { font-family: var(--font-mono); font-size: var(--font-size-xs); line-height: 17px; color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .super-card-cmd--box { padding: 6px 8px; border-radius: var(--radius-sm); background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
 .super-card-walk { position: relative; flex: none; height: 3px; border-radius: 2px; background: var(--color-border); overflow: hidden; }
-.super-card-walk i { position: absolute; top: 0; bottom: 0; width: 34%; border-radius: 2px; background: var(--color-success); animation: super-card-walk 1.8s ease-in-out infinite; }
-@keyframes super-card-walk { 0% { left: -34%; } 100% { left: 100%; } }
+.super-card-walk i { position: absolute; top: 0; bottom: 0; width: 34%; border-radius: 2px; background: var(--color-success); left: 0; animation: var(--dc-motion-status-name, super-card-walk) 1.8s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
+@keyframes super-card-walk { 0% { transform: translateX(-100%); } 100% { transform: translateX(294%); } }
 .super-card-ask { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .super-card-ask-line { font-size: var(--font-size-sm); line-height: 19px; color: var(--color-text); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
 .super-tile-askline { color: var(--color-text); }

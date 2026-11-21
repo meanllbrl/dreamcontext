@@ -41,14 +41,14 @@
 .sdock-ring { flex: none; }
 .sdock-ring .tr { stroke: var(--color-border-hover); }
 .sdock-ring .fg { stroke: var(--color-success); }
-.sdock-ring[data-tone='working'] { animation: sdock-spin 1.6s linear infinite; }
+.sdock-ring[data-tone='working'] { animation: var(--dc-motion-status-name, sdock-spin) 1.6s linear infinite; animation-play-state: var(--dc-motion-play, running); }
 .sdock-ring[data-tone='asking'] .fg { stroke: var(--mood-waiting); }
 .sdock-ring[data-tone='stuck'] .fg { stroke: var(--color-error); }
 .sdock-ring[data-tone='idle'] .fg { stroke: var(--color-text-tertiary); }
 
 /* The walking light: a working job's mode (never a progress amount: no estimates, D4). */
 .sdock-walk { position: relative; height: 3px; border-radius: 2px; background: var(--color-border); overflow: hidden; margin-top: auto; }
-.sdock-walk i { position: absolute; top: 0; bottom: 0; width: 34%; border-radius: 2px; background: var(--color-success); animation: sdock-walk 1.8s ease-in-out infinite; }
+.sdock-walk i { position: absolute; top: 0; bottom: 0; width: 34%; border-radius: 2px; background: var(--color-success); left: 0; animation: var(--dc-motion-status-name, sdock-walk) 1.8s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 
 .sdock-tile[data-kind='needs'] {
   border-color: color-mix(in srgb, var(--mood-waiting) 70%, var(--color-border));
@@ -83,7 +83,7 @@
 .sdock-cap { white-space: normal; font-size: 10.5px; line-height: 13px; margin-top: 2px; }
 
 @keyframes sdock-spin { to { transform: rotate(360deg); } }
-@keyframes sdock-walk { 0% { left: -34%; } 100% { left: 100%; } }
+@keyframes sdock-walk { 0% { transform: translateX(-100%); } 100% { transform: translateX(294%); } }
 @media (prefers-reduced-motion: reduce) {
   .sdock-ring[data-tone='working'], .sdock-walk i { animation: none; }
   .sdock-walk i { left: 0; width: 100%; opacity: 0.5; }

@@ -58,7 +58,7 @@ describe('the away summary', () => {
 
 describe('the away screen', () => {
   it('is the Mac Super chat\'s empty state, with the ordinary one when there is nothing to tell', () => {
-    expect(pane).toContain("<SuperAwayTiles session={session} fallback={<EmptyState />} />");
+    expect(pane).toContain("<SuperAwayTiles session={session} fallback={<EmptyState hero={emptyHero}");
     expect(tiles).toContain('if (!sum || !awayHasAny(sum)) return <>{fallback}</>;');
   });
   it('no time left: the running tile says when its last step was', () => {

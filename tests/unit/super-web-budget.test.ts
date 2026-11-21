@@ -81,7 +81,7 @@ describe('webBudget', () => {
   it('the surface parks a kept page card off the stage under the same key, never drops it', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     // Off the stage: Others, or behind a narrow sheet's tab.
-    expect(src).toMatch(/const off = !placed \|\| placed\.where === 'others' \|\| placed\.where === 'tab';/);
+    expect(src).toMatch(/const off = !placed \|\| placed\.where === 'others' \|\| placed\.where === 'tab' \|\| placed\.where === 'dock';/);
     expect(src).toMatch(/const parkedAt = !ghost && off && liveWeb\.has\(c\.id\)\n/);
     expect(src).toMatch(/parked=\{parked\}/);
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
