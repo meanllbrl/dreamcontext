@@ -1,4 +1,5 @@
-import type { ModelSource } from '../../lib/agentSettings';
+import { chatModelSourceFor, type ModelSource } from '../../lib/agentSettings';
+export { chatModelSourceFor };
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/speechQueue';
 import { turnTrace } from '../../lib/voice/turnTrace';

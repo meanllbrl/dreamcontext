@@ -1,4 +1,4 @@
-import { resolveSpawnModel } from '../eco-plus.js';
+import { ecoPlusKeepEnv, resolveSpawnModel } from '../eco-plus.js';
 import { appendLowered, ecoPlusDefault } from '../context-watch.js';
 import { assertNotAppChat } from '../apps/chat-store.js';
 import { cliAwarePath } from './cli-path.js';
@@ -2989,6 +2989,9 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     // parser or UI for it): the account is the one `pickAutomationAccount` chose above, and a
     // limit met mid-run moves the run to the next one below. `firstSpawn` keeps the thread's
     // root entry to one per fire however many accounts the run passes through.
+    // Eco Plus's kept-heavy marker (eco-plus.ts): a run kept on Opus (a `team ask --model opus`,
+    // a manifest's own Opus left by a pick) keeps its sub-agents and builders on it too.
+    const keepEnv = onCodex ? ecoPlusKeepEnv(null, false) : ecoPlusKeepEnv(spawnModel(manifest, opts.override).model, ecoPlusDefault());
     let firstSpawn = true;
     const runOn = (acct: AutomationAccount, args: string[], budgetMs: number): Promise<ClaudeExecution> => executeClaudeDetached(args, {
       cwd: taskStep ? taskStep.cwd : projectRoot,
@@ -3008,6 +3011,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         ...scopeVars,
         // A task step's brain root, run id and token (set by the task host, never a caller).
         ...(taskStep ? taskStep.env : {}),
+        ...keepEnv,
       },
       timeoutMs: budgetMs,
       // A light job's envelope names its MCP tools, on a home board too.

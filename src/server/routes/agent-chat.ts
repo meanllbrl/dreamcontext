@@ -29,7 +29,7 @@ import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
 import { writeTabHandoff, readTabHandoff, resolveTabSeed, paneHandoffState, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle, ecoPlusDefault, appendLowered } from '../../lib/context-watch.js';
-import { parseModelSource, resolveSpawnModel, type ModelSource } from '../../lib/eco-plus.js';
+import { ecoPlusKeepEnv, parseModelSource, resolveSpawnModel, type ModelSource } from '../../lib/eco-plus.js';
 import { renderModelsBlock, superModelsState, superModelsTurn, type EcoModelsState } from '../../lib/super/models-block.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
 import { clearFresh, hasFreshLatch, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
@@ -2898,8 +2898,9 @@ export function startChatSession(
   const baseModel = spawnModelFor({ isAssistant, assistantModel: assistantConfig?.model, urlModel: model }) || appDefaults?.model || '';
   // Eco Plus (plan eco-plus D3, K3): lowered by the model's SOURCE, in this argv only. The Super's
   // model is always its saved one; an app chat's own defaults are a saved setting; otherwise the
-  // window's tag (none = a pick). The notch Assistant keeps its own model (D9).
-  const modelSourceNow: ModelSource = isSuper ? 'saved' : !model && appDefaults?.model ? 'saved' : (modelSource ?? 'pick');
+  // window's tag (none = a pick). No model at all is the CLI's own default, whatever the tag says
+  // (review r1: the source is where the VALUE came from). The notch Assistant keeps its own (D9).
+  const modelSourceNow: ModelSource = isSuper ? 'saved' : !model && appDefaults?.model ? 'saved' : !baseModel ? 'default' : (modelSource ?? 'pick');
   const ecoSpawn = isAssistant
     ? { model: baseModel, lowered: false }
     : resolveSpawnModel({ model: baseModel, source: modelSourceNow, tool: bridgeTool ?? 'claude', on: ecoPlusDefault() });
@@ -3110,7 +3111,7 @@ export function startChatSession(
   const ordinaryWork = superCrewEnv === '1' && !bridgeCommand && !app && !scopedCard && !card && !isAssistant
     && spawnModeAt >= 0 && ordinaryWorkMode(argv[spawnModeAt + 1]);
   const ordinaryRoots = ordinaryWork ? linkedWritableRoots(projectRoot) : [];
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, [MEMBER_SUPER_ENV]: memberSuperEnv, [MEMBER_CREW_ENV]: memberCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}) } as Record<string, string | undefined>;
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, [MEMBER_SUPER_ENV]: memberSuperEnv, [MEMBER_CREW_ENV]: memberCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}), ...ecoPlusKeepEnv(bridgeTool && bridgeTool !== 'claude' ? null : spawnModel, ecoPlusDefault()) } as Record<string, string | undefined>;
   // An app chat's hook and listed verbs call `dreamcontext` with no login-shell PATH behind them.
   if (app) childEnv.PATH = cliAwarePath(childEnv.PATH ?? '');
   // On the app's own Node the CLI lives only in its launcher folder: every chat's hooks need it.

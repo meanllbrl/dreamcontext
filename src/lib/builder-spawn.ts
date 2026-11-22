@@ -1,5 +1,5 @@
 import { resolveSpawnModel } from './eco-plus.js';
-import { appendLowered, ecoPlusDefault } from './context-watch.js';
+import { appendLowered, ecoPlusInEffect } from './context-watch.js';
 import { assertNotAppChat } from './apps/chat-store.js';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -39,9 +39,11 @@ export const BUILDER_DEFAULT_MODEL = 'opus';
 /**
  * The model a NEW builder lineage (a base, a fresh lane) starts on: the builder default as a saved
  * setting, lowered once by Eco Plus (plan eco-plus D8). Forks and resumes never call this: they
- * reuse the identity recorded when their lineage began, whatever the setting says now.
+ * reuse the identity recorded when their lineage began, whatever the setting says now. Inside a
+ * kept-heavy tree (an escalated job, ECO_PLUS_KEEP_ENV) it stays the default; the builders inherit
+ * the marker through their env.
  */
-export function builderLineageModel(on: boolean = ecoPlusDefault()): string {
+export function builderLineageModel(on: boolean = ecoPlusInEffect()): string {
   const r = resolveSpawnModel({ model: BUILDER_DEFAULT_MODEL, source: 'saved', tool: 'claude', on });
   if (r.lowered) appendLowered({ site: 'builder', from: BUILDER_DEFAULT_MODEL, to: r.model });
   return r.model;

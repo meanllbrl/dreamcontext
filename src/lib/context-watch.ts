@@ -628,6 +628,15 @@ export function ecoPlusDefault(home: string = homedir()): boolean {
   }
 }
 
+/**
+ * Eco Plus as a process inside a spawned tree sees it: the machine setting, unless this tree was
+ * spawned on a kept heavy model (`ECO_PLUS_KEEP_ENV`, see `eco-plus.ts`). The Agent dispatch
+ * hook, `eco model builder` and the builder lineage read this; spawn sites read the setting.
+ */
+export function ecoPlusInEffect(home: string = homedir(), env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.DREAMCONTEXT_ECO_PLUS_KEEP !== '1' && ecoPlusDefault(home);
+}
+
 /** `~/.dreamcontext/eco-plus-lowered.jsonl`: one line per spawn or dispatch Eco Plus lowered. */
 export function ecoPlusLoweredPath(home: string = homedir()): string {
   return join(home, '.dreamcontext', 'eco-plus-lowered.jsonl');

@@ -98,12 +98,12 @@ describe('pre-tool-use hook, Eco Plus', () => {
     mkdirSync(worktree, { recursive: true });
     return { home, project, worktree };
   };
-  const hook = (p: ReturnType<typeof setup>, toolInput: Record<string, unknown>, tool = 'Agent') => {
+  const hook = (p: ReturnType<typeof setup>, toolInput: Record<string, unknown>, tool = 'Agent', extraEnv: Record<string, string> = {}) => {
     const r = spawnSync(process.execPath, [cli, 'hook', 'pre-tool-use'], {
       cwd: p.worktree,
       input: JSON.stringify({ tool_name: tool, tool_input: toolInput, cwd: p.worktree, session_id: 'eco-plus-test' }),
       encoding: 'utf-8',
-      env: { ...process.env, HOME: p.home, CLAUDE_PROJECT_DIR: p.project, DREAMCONTEXT_CONTEXT_BY: '' },
+      env: { ...process.env, HOME: p.home, CLAUDE_PROJECT_DIR: p.project, DREAMCONTEXT_CONTEXT_BY: '', DREAMCONTEXT_ECO_PLUS_KEEP: '', ...extraEnv },
     });
     const out = r.stdout.trim();
     return out ? (JSON.parse(out) as { hookSpecificOutput?: { updatedInput?: Record<string, unknown> } }).hookSpecificOutput?.updatedInput ?? null : null;
@@ -119,6 +119,11 @@ describe('pre-tool-use hook, Eco Plus', () => {
     expect(hook(p, { subagent_type: 'goal-implementer', description: 'd', prompt: 'x' }, 'Task')?.model).toBe('sonnet');
     const log = readFileSync(join(p.home, '.dreamcontext', 'eco-plus-lowered.jsonl'), 'utf-8');
     expect(log).toContain('"agentType":"goal-implementer"');
+  });
+
+  it.skipIf(!existsSync(cli))('on, inside a kept-heavy tree (an escalated job): the dispatch keeps its Opus', () => {
+    const p = setup(true);
+    expect(hook(p, { subagent_type: 'goal-implementer', description: 'd', prompt: 'x' }, 'Agent', { DREAMCONTEXT_ECO_PLUS_KEEP: '1' })?.model).toBeUndefined();
   });
 
   it.skipIf(!existsSync(cli))('off: no model key is written and agent definitions never change', () => {

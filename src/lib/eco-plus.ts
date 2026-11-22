@@ -66,5 +66,21 @@ export function resolveSpawnModel({ model, source, tool, on }: SpawnModelInput):
   return { model: next, lowered: next !== m };
 }
 
+/**
+ * The kept-tree marker (review r1 escalation-not-propagated). A Claude spawn that still runs an
+ * Opus/Fable model under Eco Plus kept it on purpose (a pick, an escalation, a resume, a
+ * `--model opus`): its whole tree stays heavy. The spawn sets this env var; everything below it
+ * inherits it (hooks, `dreamcontext builder`, `eco model builder`), and every Eco Plus reader
+ * that is not a spawn site reads `ecoPlusInEffect()`, never the setting alone. A lowered or
+ * light spawn clears it, so a marker never leaks into a tree that was lowered.
+ */
+export const ECO_PLUS_KEEP_ENV = 'DREAMCONTEXT_ECO_PLUS_KEEP';
+
+/** The env a Claude spawn passes on: `'1'` when Eco Plus is on and it runs a named heavy model. */
+export function ecoPlusKeepEnv(model: string | null | undefined, on: boolean): Record<string, string | undefined> {
+  const m = (model ?? '').trim();
+  return { [ECO_PLUS_KEEP_ENV]: on && m !== '' && isHeavyModel(m) ? '1' : undefined };
+}
+
 /** Sub-agent types that stay on their own (Opus) model under Eco Plus: the judges (plan D6). */
 export const ECO_PLUS_KEPT_AGENTS: readonly string[] = ['reviewer', 'review-security', 'goal-plan-reviewer'];

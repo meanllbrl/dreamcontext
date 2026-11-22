@@ -1,4 +1,4 @@
-import { resolveSpawnModel } from './eco-plus.js';
+import { ECO_PLUS_KEEP_ENV, resolveSpawnModel } from './eco-plus.js';
 import { appendLowered, ecoPlusDefault } from './context-watch.js';
 import { toolRunArgs, type HeadlessTool } from './t3-bridge/headless-envelope.js';
 import { toolText } from './tool-text.js';
@@ -175,7 +175,9 @@ export async function runAutoSleep(
         // DREAMCONTEXT_AUTO_SLEEP is the guard that stops this session's own
         // Stop hooks chaining a second background sleep, AND switches the
         // task-filing bar on for everything it runs.
-        env: { DREAMCONTEXT_AUTO_SLEEP: '1' },
+        // A sleep is its project's own work, never part of the session that fired it: an
+        // escalated session's kept-heavy marker (eco-plus.ts) does not reach it.
+        env: { DREAMCONTEXT_AUTO_SLEEP: '1', [ECO_PLUS_KEEP_ENV]: undefined },
         // Written SYNCHRONOUSLY at spawn: a sidecar written after an await can
         // be missed by a dispatcher that dies in between, leaving an orphaned
         // process group with no record — the one failure with no recovery.

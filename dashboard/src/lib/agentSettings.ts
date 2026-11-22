@@ -768,6 +768,16 @@ export function savingModePatch(mode: SavingMode): { ecoMode: boolean; ecoPlus: 
  * Pinned to the server table by tests/unit/eco-plus.test.ts.
  */
 export type ModelSource = 'saved' | 'default' | 'pick' | 'resume';
+/**
+ * The ONE rule for a chat's model-source tag (review r1 model-source-misattributed): the source is
+ * where the model VALUE came from, not how the conversation opened. A model the caller named is the
+ * resumed conversation's own (`resume`) or this chat's pick (`pick`); a model filled in from the
+ * saved default, or none at all, is `saved`, on a resume too, so Eco Plus lowers it.
+ */
+export function chatModelSourceFor(named: boolean, resume: boolean): ModelSource {
+  if (!named) return 'saved';
+  return resume ? 'resume' : 'pick';
+}
 const ECO_PLUS_HEAVY_RE = /^(?:opus|fable)(?:\[1m\])?$|^claude-(?:opus|fable)(?:-[a-z0-9.-]*)?(?:\[1m\])?$/i;
 export function ecoPlusLowerModel(model: string | null | undefined): string {
   const m = (model ?? '').trim();

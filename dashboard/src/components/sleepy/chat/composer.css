@@ -1035,13 +1035,15 @@
   color: var(--color-text-tertiary);
   white-space: nowrap;
 }
-/* Eco Plus (Settings → Chat → Tasarruf modu): a small tag after the model, tinted, never a fill. */
+/* Eco Plus (Settings → Chat → Tasarruf modu): a small tag after the model, tinted, never a fill.
+   Ink, not --color-accent-text: that one is white, for text on a solid accent fill. The text is the
+   secondary ink (about 7:1 on the tint in both themes) at the effort word's size. */
 .chat-cmp-modeltrigger-tag {
-  font-size: 10px;
-  line-height: 14px;
+  font-size: 11.5px;
+  line-height: 15px;
   padding: 0 4px;
   border-radius: 4px;
-  color: var(--color-accent-text);
+  color: var(--color-text-secondary);
   background: var(--color-accent-soft);
   white-space: nowrap;
 }
@@ -2174,6 +2176,8 @@
   .chat-cmp-toolbar { gap: 2px; padding: 6px 6px; }
   .chat-cmp-modeltrigger { padding: 0 5px; gap: 4px; }
   .chat-cmp-right .chat-cmp-modeltrigger-effort { display: none; }
+  /* The Eco Plus tag goes with it: the model menu still says why the model is Sonnet. */
+  .chat-cmp-right .chat-cmp-modeltrigger-tag { display: none; }
   .chat-cmp-modeltrigger-model { max-width: 62px; }
   .chat-cmp-right { gap: 3px; }
 }

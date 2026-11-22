@@ -23,7 +23,7 @@ vi.hoisted(() => {
   process.env.HOME = mkdtempSync(`${tmpdir()}/eco-plus-spawn-home-`);
 });
 
-const spawned: Array<{ child: FakeChild; script: string }> = [];
+const spawned: Array<{ child: FakeChild; script: string; env: Record<string, string | undefined> }> = [];
 
 class FakeChild extends EventEmitter {
   stdin = { write: vi.fn(), end: vi.fn(), on: vi.fn() };
@@ -37,12 +37,12 @@ vi.mock('node:child_process', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:child_process')>();
   return {
     ...real,
-    spawn: vi.fn((_shell: string, args: string[]) => {
+    spawn: vi.fn((_shell: string, args: string[], opts?: { env?: Record<string, string | undefined> }) => {
       const child = new FakeChild();
       const script = process.platform === 'win32' && args?.[0] === '-p'
         ? `exec claude ${args.map((x) => `"${x}"`).join(' ')}`
         : String(args?.[1] ?? '');
-      spawned.push({ child, script });
+      spawned.push({ child, script, env: opts?.env ?? {} });
       return child as unknown as import('node:child_process').ChildProcess;
     }),
   };
@@ -75,6 +75,8 @@ const { builderLineageModel } = await import('../../src/lib/builder-spawn.js');
 const { manifestHash } = await import('../../src/lib/automations/registry.js');
 const { currentAutoSleepFingerprint } = await import('../../src/lib/auto-sleep.js');
 const { SUPER_BRIEF_REV } = await import('../../src/lib/super/types.js');
+const { ECO_PLUS_KEEP_ENV } = await import('../../src/lib/eco-plus.js');
+const { ecoPlusInEffect } = await import('../../src/lib/context-watch.js');
 
 class FakeWs extends EventEmitter {
   OPEN = 1;
@@ -160,6 +162,22 @@ describe('a chat spawn lowers by source (criterion 3)', () => {
     const log = readFileSync(join(homedir(), '.dreamcontext', 'eco-plus-lowered.jsonl'), 'utf-8').trim().split('\n');
     expect(log).toHaveLength(3);
     expect(JSON.parse(log[0]!)).toMatchObject({ site: 'chat', from: 'opus', to: 'sonnet' });
+  });
+
+  it('an untagged spawn with no model at all is the CLI default: lowered', () => {
+    setEco(true);
+    expect(modelOf(start({ model: '' }).script)).toBe('sonnet');
+    expect(modelOf(start({ model: '', modelSource: 'resume' }).script)).toBe('sonnet');
+  });
+
+  it('a spawn kept on Opus marks its tree; a lowered or off spawn clears the marker (review r1)', () => {
+    setEco(true);
+    expect(start({ model: 'opus', modelSource: 'pick' }).env[ECO_PLUS_KEEP_ENV]).toBe('1');
+    expect(start({ model: 'claude-opus-5-5', modelSource: 'resume' }).env[ECO_PLUS_KEEP_ENV]).toBe('1');
+    expect(start({ model: 'opus', modelSource: 'saved' }).env[ECO_PLUS_KEEP_ENV]).toBeUndefined();
+    expect(start({ model: 'sonnet', modelSource: 'pick' }).env[ECO_PLUS_KEEP_ENV]).toBeUndefined();
+    setEco(false);
+    expect(start({ model: 'opus', modelSource: 'pick' }).env[ECO_PLUS_KEEP_ENV]).toBeUndefined();
   });
 
   it('Eco Plus off: every case is today\'s argv', () => {
@@ -277,6 +295,21 @@ describe('server-side spawn sites (criteria 3, 4)', () => {
     expect(spawnModel(manifest('opus'), null, { tool: 'codex' }).model).toBe('opus');
     expect(spawnModel(manifest('opus'), null, { on: false }).model).toBe('opus');
     expect(spawnModel(manifest(null), null, { on: false }).model).toBeNull();
+  });
+
+  it('inside a kept tree: eco in effect is off, so the builder lineage and the hook keep opus', () => {
+    setEco(true);
+    const prev = process.env[ECO_PLUS_KEEP_ENV];
+    try {
+      delete process.env[ECO_PLUS_KEEP_ENV];
+      expect(ecoPlusInEffect()).toBe(true);
+      expect(builderLineageModel()).toBe('sonnet');
+      process.env[ECO_PLUS_KEEP_ENV] = '1';
+      expect(ecoPlusInEffect()).toBe(false);
+      expect(builderLineageModel()).toBe('opus');
+    } finally {
+      if (prev === undefined) delete process.env[ECO_PLUS_KEEP_ENV]; else process.env[ECO_PLUS_KEEP_ENV] = prev;
+    }
   });
 
   it('auto-sleep runs --model sonnet under Eco Plus only; a builder lineage starts sonnet, off opus', () => {

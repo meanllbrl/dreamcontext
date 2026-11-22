@@ -55,9 +55,11 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
   );
 }
 
-const signed = (v: number, f: (n: number) => string): string => `${v < 0 ? '-' : ''}~${f(Math.abs(v))}`;
-
-/** Eco Plus: the measured Opus share before and during, and the estimated saving (never under 7 days). */
+/**
+ * Eco Plus: the measured Opus share before and during, and the estimated saving (never under 7
+ * days). One column like the KPI cards above it (label, big number with its unit, one line), so
+ * no track can starve another at phone width.
+ */
 export function EcoPlusCard({ row }: { row: EcoPlusRow }) {
   const { t } = useI18n();
   const days = row.days < 1 ? '<1' : String(Math.floor(row.days));
@@ -67,17 +69,20 @@ export function EcoPlusCard({ row }: { row: EcoPlusRow }) {
     ...(row.short ? [t('stats.ecoPlus.short')] : []),
     t('stats.ecoPlus.share').replace('{a}', pct(row.before)).replace('{b}', pct(row.during)),
   ];
-  const est = row.short ? null : row.estSavedCost !== null ? signed(row.estSavedCost, fmtCost) : row.estShifted !== null ? signed(row.estShifted, fmtTokens) : null;
+  const cost = row.short ? null : row.estSavedCost;
+  const shifted = row.short ? null : row.estShifted;
+  // A rise in the Opus share is a cost, said as one, never a negative saving.
+  const value = cost !== null ? cost : shifted;
+  const more = value !== null && value < 0;
+  const big = value === null ? null : `~${cost !== null ? fmtCost(Math.abs(value)) : fmtTokens(Math.abs(value))}`;
+  const unit = cost !== null ? (more ? 'stats.ecoPlus.costMore' : 'stats.ecoPlus.saved') : (more ? 'stats.ecoPlus.shiftedMore' : 'stats.ecoPlus.shifted');
   return (
-    <div className="st-card st-ecoplus" data-testid="stats-eco-plus">
-      <div className="st-ecoplus-l">
-        <div className="st-k">{t('stats.ecoPlus')}</div>
-        <div className="st-sub">{bits.join(' · ')}</div>
-      </div>
-      <div className="st-ecoplus-r">
-        <div className="st-big">{est ?? '—'}</div>
-        <div className="st-sub">{est === null ? t('stats.ecoPlus.noEst') : t(row.estSavedCost !== null ? 'stats.ecoPlus.saved' : 'stats.ecoPlus.shifted')}</div>
-      </div>
+    <div className="st-card" data-testid="stats-eco-plus">
+      <div className="st-k">{t('stats.ecoPlus')}</div>
+      {big === null
+        ? <div className="st-big">—<small>{t('stats.ecoPlus.noEst')}</small></div>
+        : <div className="st-big">{big}<small>{t(unit)}</small></div>}
+      <div className="st-sub">{bits.join(' · ')}</div>
       <p className="st-foot">{t('stats.ecoPlus.foot')}</p>
     </div>
   );

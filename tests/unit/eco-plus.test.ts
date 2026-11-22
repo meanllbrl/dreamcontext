@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lowerModel, resolveSpawnModel, parseModelSource, type ModelSource } from '../../src/lib/eco-plus.js';
-import { ecoPlusLowerModel, ecoPlusSpawnModel, savingModeOf, savingModePatch } from '../../dashboard/src/lib/agentSettings.js';
+import { chatModelSourceFor, ecoPlusLowerModel, ecoPlusSpawnModel, savingModeOf, savingModePatch } from '../../dashboard/src/lib/agentSettings.js';
+import { ecoPlusKeepEnv, ECO_PLUS_KEEP_ENV } from '../../src/lib/eco-plus.js';
 import { ecoPlusDefault, appendLowered, ecoPlusLoweredPath, appendEcoPlusHistory, ecoPlusHistoryPath } from '../../src/lib/context-watch.js';
 
 /** Plan eco-plus K1 / criterion 2: ONE table through the server rule and the dashboard mirror. */
@@ -59,6 +60,23 @@ describe('resolveSpawnModel (K1): only on + Claude + saved|default', () => {
     expect(parseModelSource('resume')).toBe('resume');
     expect(parseModelSource(undefined)).toBe('pick');
     expect(parseModelSource('SAVED')).toBe('pick');
+  });
+});
+
+describe('a chat\'s model source is where the VALUE came from (review r1)', () => {
+  it('a named model is a pick or the resumed conversation\'s own; a filled-in default is saved, on a resume too', () => {
+    expect(chatModelSourceFor(true, false)).toBe('pick');
+    expect(chatModelSourceFor(true, true)).toBe('resume');
+    expect(chatModelSourceFor(false, true)).toBe('saved');
+    expect(chatModelSourceFor(false, false)).toBe('saved');
+  });
+  it('the kept-tree marker: only a named heavy model under Eco Plus', () => {
+    expect(ecoPlusKeepEnv('opus', true)[ECO_PLUS_KEEP_ENV]).toBe('1');
+    expect(ecoPlusKeepEnv('claude-fable-5-2', true)[ECO_PLUS_KEEP_ENV]).toBe('1');
+    expect(ecoPlusKeepEnv('', true)[ECO_PLUS_KEEP_ENV]).toBeUndefined();
+    expect(ecoPlusKeepEnv('sonnet', true)[ECO_PLUS_KEEP_ENV]).toBeUndefined();
+    expect(ecoPlusKeepEnv('opus', false)[ECO_PLUS_KEEP_ENV]).toBeUndefined();
+    expect(Object.keys(ecoPlusKeepEnv('sonnet', true))).toEqual([ECO_PLUS_KEEP_ENV]);
   });
 });
 

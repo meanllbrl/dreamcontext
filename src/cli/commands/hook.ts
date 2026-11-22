@@ -114,6 +114,7 @@ import {
   stampHandoffRecord,
   lastMainChainContext,
   ecoPlusDefault,
+  ecoPlusInEffect,
   appendLowered,
 } from '../../lib/context-watch.js';
 import { ecoPlusDispatchModel } from '../../lib/eco-plus-dispatch.js';
@@ -3452,7 +3453,8 @@ export function registerHookCommand(program: Command): void {
         if (hookTool() || agy) return appended;
         let rewrite: ReturnType<typeof ecoPlusDispatchModel> = null;
         try {
-          if (ecoPlusDefault()) {
+          // A kept-heavy tree (an escalated job) keeps its sub-agents too (ECO_PLUS_KEEP_ENV).
+          if (ecoPlusInEffect()) {
             const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
             rewrite = ecoPlusDispatchModel(toolInput, true, {
               projectDir: process.env.CLAUDE_PROJECT_DIR || null,
