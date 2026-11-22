@@ -88,12 +88,13 @@ describe('registry: titles and agentWorkFor references (C1)', () => {
     }
   });
 
-  it('every non-optIn task is settled by 0.41.24 or reported by its own steps; 0.7.2 opt-in is excluded on purpose', () => {
-    // A step reports agentWorkFor = <its own migration's task id> (asserted on
-    // the real steps below for 0.23.0). The settle step covers exactly the two
-    // tasks whose ledgers predate the sighting.
-    const nonOptIn = REGISTRY.filter((m) => m.agentTask && !m.agentTask.optIn).map((m) => m.agentTask!.id);
-    for (const id of nonOptIn) expect(LEGACY_SETTLED_TASKS as readonly string[]).toContain(id);
+  it('every non-optIn task older than 0.41.24 is settled by it; newer ones are reported by their own steps; 0.7.2 opt-in is excluded on purpose', () => {
+    // A ledger written before 0.41.24 has no sightings, so every older task needs the settle.
+    // A task born at 0.41.24 or later is due only through its own steps' agentWorkFor (asserted on
+    // the real 0.23.0 steps below), so it needs no entry in LEGACY_SETTLED_TASKS.
+    const older = (v: string) => v.localeCompare(SETTLE_VERSION, undefined, { numeric: true }) < 0;
+    const legacyTasks = REGISTRY.filter((m) => m.agentTask && !m.agentTask.optIn && older(m.version)).map((m) => m.agentTask!.id);
+    expect([...legacyTasks].sort()).toEqual([...LEGACY_SETTLED_TASKS].sort());
     expect(REGISTRY.find((m) => m.version === '0.7.2')?.agentTask?.optIn).toBe(true);
   });
 });
@@ -193,6 +194,21 @@ describe('0.41.24 settle-agent-work: legacy ledgers decided once from the filesy
     expect(readLedger(root).some((e) => e.executor === 'agent' && e.step === 'split-soul-into-patterns')).toBe(false);
     // The settle saw the fresh sighting and left the task alone.
     expect(readLedger(root).some((e) => e.step === 'split-soul-into-patterns-recheck#work')).toBe(false);
+  });
+
+  it('a refused split (core/1.user.md still there) is never ticked: the split\'s own sighting decides it later', () => {
+    legacy();
+    writeFileSync(join(root, 'core', '1.user.md'), '## Notes\n\nprose the split has not placed yet\n');
+    writeFileSync(join(root, 'core', '0.soul.md'), 'small');
+    const r = settleAgentWork(root);
+    const ledger = readLedger(root);
+    expect(ledger.some((e) => e.step === 'distribute-user-md-residue')).toBe(false);
+    expect(r.summary).toContain('distribute-user-md-residue: undecided');
+    // The soul task, whose step only reads, is still decided.
+    expect(ledger.some((e) => e.step === 'split-soul-into-patterns' && e.executor === 'agent')).toBe(true);
+    // Later, the roster fixed, the split runs and leaves a residue: its sighting makes the task due.
+    appendLedger(root, entry({ step: 'split-user-file#work', agentWorkFor: 'distribute-user-md-residue' }));
+    expect(ids(root, SETTLE_VERSION)).toEqual(['distribute-user-md-residue']);
   });
 
   it('an already recorded task is left alone', () => {

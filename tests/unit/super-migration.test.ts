@@ -112,6 +112,9 @@ describe('checkMigrationDue: one event, never twice', () => {
       expect(parseDueMigrations(bad)).toEqual([]);
     }
     expect(parseDueMigrations(JSON.stringify([RESIDUE]))).toEqual([RESIDUE]);
+    // More due than one child carries is still work: the first eight now, never silence.
+    const many = Array.from({ length: 10 }, (_, i) => ({ version: '0.23.0', id: `task-${i}`, title: `Task ${i}` }));
+    expect(parseDueMigrations(JSON.stringify(many)).map((d) => d.id)).toEqual(many.slice(0, 8).map((d) => d.id));
   });
 
   it('a live migration child, a held pool row or a restart while it runs adds none; after it ends, the next trigger adds one', async () => {

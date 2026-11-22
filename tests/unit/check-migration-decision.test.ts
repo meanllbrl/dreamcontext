@@ -57,6 +57,13 @@ describe('checkMigrationDecision (PR mode core)', () => {
     const filled = template.replace(/^Migration: none - $/m, 'Migration: none - copy change only, no stored data');
     expect(checkMigrationDecision({ ...feature, body: filled }).ok).toBe(true);
   });
+  it('ignores Migration: lines quoted in fenced code', () => {
+    const body = 'Docs change.\n\n```\nMigration: src/migrations/<X.Y.Z>.ts\nMigration: none - <why>\n```\n\n~~~md\nMigration: maybe\n~~~\n\nMigration: none - copy change only, nothing stored';
+    expect(parseDecision(body)).toEqual({ files: [], nones: ['copy change only, nothing stored'], bad: [] });
+    expect(checkMigrationDecision({ ...feature, body }).ok).toBe(true);
+    // An unclosed fence hides what follows: the safe direction (no line found).
+    expect(checkMigrationDecision({ ...feature, body: '```\nMigration: none - copy change only, nothing stored' }).ok).toBe(false);
+  });
   it('exempts same-repo release heads and not a fork\'s', () => {
     for (const headRef of ['beta', 'dev', 'main', 'release/0.41.24-beta']) {
       expect(checkMigrationDecision({ body: '', headRef, headRepo: REPO, repo: REPO }).ok).toBe(true);

@@ -18,8 +18,11 @@ import type { Migration, MigrationStepResult } from './types.js';
  *   - nothing is there: the task's own `agent` entry, so it never comes back.
  *
  * A vault that never ran 0.23.0 is skipped: its own 0.23.0 run (in this pass
- * or a later one) reports work through `agentWorkFor`. A file that cannot be
- * read is never "nothing there": that task is left for the next run.
+ * or a later one) reports work through `agentWorkFor`. A task is never called
+ * "nothing there" while the code step that produces its work has not finished
+ * (`core/1.user.md` still present: the split was refused and retries) or while
+ * a file cannot be read: that task is left undecided, with no entry, and the
+ * producing step's own `agentWorkFor` sighting decides it when work appears.
  *
  * Writes the ledger only.
  */
@@ -33,10 +36,17 @@ function errCode(err: unknown): string | undefined {
   return (err as NodeJS.ErrnoException | undefined)?.code;
 }
 
+/** 'clear' only once its source is gone: `split-user-file` unlinks `core/1.user.md` on success. */
 function residueVerdict(root: string): Verdict {
   try {
     lstatSync(join(root, 'inbox', '1.user-residue.md'));
     return 'due';
+  } catch (err) {
+    if (errCode(err) !== 'ENOENT') return 'unknown';
+  }
+  try {
+    lstatSync(join(root, 'core', '1.user.md'));
+    return 'unknown'; // the split has not finished: its own run sights any residue
   } catch (err) {
     return errCode(err) === 'ENOENT' ? 'clear' : 'unknown';
   }
@@ -99,7 +109,7 @@ export function settleAgentWork(root: string): MigrationStepResult {
       });
       notes.push(`${id}: nothing left`);
     } else {
-      notes.push(`${id}: could not read, left for the next run`);
+      notes.push(`${id}: undecided (not split yet, or unreadable); its own step reports work`);
     }
   }
   return {

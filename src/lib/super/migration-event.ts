@@ -32,7 +32,7 @@ const PENDING_TIMEOUT_MS = 30_000;
 export function parseDueMigrations(stdout: string): DueMigration[] {
   let raw: unknown;
   try { raw = JSON.parse(stdout.trim()); } catch { return []; }
-  if (!Array.isArray(raw) || raw.length > MAX_MIGRATION_IDS) return [];
+  if (!Array.isArray(raw)) return [];
   const out: DueMigration[] = [];
   for (const d of raw) {
     if (!d || typeof d !== 'object') return [];
@@ -44,7 +44,8 @@ export function parseDueMigrations(stdout: string): DueMigration[] {
     if (out.some((x) => x.id === id)) continue;
     out.push({ version, id, title });
   }
-  return out;
+  // More than one child's worth is still work: the first MAX_MIGRATION_IDS go now, the rest next time.
+  return out.slice(0, MAX_MIGRATION_IDS);
 }
 
 export type DueReader = (contextRoot: string) => Promise<DueMigration[]>;

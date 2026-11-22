@@ -35,15 +35,22 @@ const TAG = /^v\d+\.\d+\.\d+$/;
 
 /**
  * The PR body's `Migration:` lines, read; `bad` holds lines that start so but parse as neither.
- * Lines inside HTML comments are ignored.
+ * Lines inside HTML comments and fenced code blocks are ignored.
  */
 export function parseDecision(body) {
   const files = [];
   const nones = [];
   const bad = [];
-  // HTML comments are the template's guidance, never a decision.
+  // HTML comments (the template's guidance) and fenced code (a quoted example) are never a decision.
   const text = String(body ?? '').replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+  let fence = null;
   for (const raw of text.split(/\r?\n/)) {
+    const mark = /^\s*(`{3,}|~{3,})/.exec(raw)?.[1];
+    if (fence) {
+      if (mark && mark[0] === fence[0] && mark.length >= fence.length) fence = null;
+      continue;
+    }
+    if (mark) { fence = mark; continue; }
     const line = raw.trim();
     if (!/^Migration:/i.test(line)) continue;
     const f = FILE_LINE.exec(line);
