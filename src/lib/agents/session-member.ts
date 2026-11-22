@@ -20,6 +20,8 @@ import { memberScope, type MemberScope } from './scope.js';
 import { isSafeAutomationSlug } from './slot.js';
 
 export const RUN_MEMBER_ENV = 'DREAMCONTEXT_RUN_MEMBER';
+/** The app whose run this is (set by the runner on an app's run child, plan uye-gecmis-is G2). */
+export const RUN_APP_ENV = 'DREAMCONTEXT_RUN_APP';
 
 export interface SessionMember { slug: string; scope: MemberScope }
 

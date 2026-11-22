@@ -980,7 +980,7 @@ export async function pastWorkForTurn(
     { port: resolveRecallServerPort(env, home), vault },
   );
   if (!sel || sel.lines.length === 0) return null;
-  const text = renderPastWork(sel.lines, sel.more, member.slug, randomBytes(3).toString('hex'), query);
+  const text = renderPastWork(sel.lines, sel.more, member.slug, randomBytes(3).toString('hex'), query, { all: member.scope === 'global' });
   return text ? { text: `\n${text}`, ids: sel.lines.map((l) => l.id), sessionId: sid } : null;
 }
 

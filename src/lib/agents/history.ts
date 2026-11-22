@@ -12,9 +12,9 @@ import {
 } from '../automations/feed.js';
 import { pendingQuestionOfRun } from '../automations/hitl.js';
 import { ownerQuietReader, superJobReader } from '../automations/super-quiet.js';
-import { privateSources } from '../automations/history.js';
+import { isAppRunSession, privateSources } from '../automations/history.js';
 import { runChatSession } from '../automations/run-chat.js';
-import type { RunEvent, ThreadEntry } from '../automations/types.js';
+import { AGENT_CHAT_ENV, type RunEvent, type ThreadEntry } from '../automations/types.js';
 import {
   listAgentSessions, markSessionHadTurns, pruneAgentSessions, type AgentSessionEntry,
 } from '../local-store.js';
@@ -23,6 +23,7 @@ import { request as httpRequest } from 'node:http';
 import { projectKey } from '../local-store.js';
 import { listTraceFiles, readTraceFile, workRoot, type WorkTrace } from './work-trace.js';
 import { localIndex, WORK_SELECT_PATH, workServerPort } from './work-index.js';
+import { RUN_APP_ENV } from './session-member.js';
 
 /**
  * An agent's HISTORY: every run of its routines and every talk the owner had with it, as one list
@@ -592,6 +593,22 @@ export interface TraceHit { id: string; line: string; at: number; projectKey: st
  * A member's past-work traces matching `query`, best first: through the running app's warm index,
  * else by reading the files here (slower, never wrong). `all`: every project for a global member.
  */
+/**
+ * Who reads a member's past work from this process (G2): an app's chat (`app-<slug>`) or an app's
+ * run (the runner's RUN_APP_ENV on the live child; a finished run's session as a fallback, its app
+ * unknown, so it sees nothing) reads as that app; anyone else is the owner (null). The ONE reading
+ * for `history --search`, `history show` and the `--all` refusal.
+ */
+export function pastWorkViewer(contextRoot: string, env: NodeJS.ProcessEnv = process.env): { app: string | null } | null {
+  const chat = env[AGENT_CHAT_ENV] ?? '';
+  if (chat.startsWith('app-')) return { app: chat.length > 4 ? chat.slice(4) : null };
+  const runApp = (env[RUN_APP_ENV] ?? '').trim();
+  if (runApp) return { app: runApp };
+  const sid = env.CLAUDE_CODE_SESSION_ID ?? env.CLAUDE_SESSION_ID ?? '';
+  try { if (sid && isAppRunSession(contextRoot, sid)) return { app: null }; } catch { /* no cache */ }
+  return null;
+}
+
 export async function searchPastWork(
   contextRoot: string,
   slug: string,

@@ -29,8 +29,7 @@ import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../li
 import { writeActiveHere } from '../../lib/agents/active.js';
 import { scanOutsideAssignments } from '../../lib/agents/outside-assignments.js';
 import { listInboxRows } from '../../lib/owner-inbox.js';
-import { findTrace, listAgentHistory, searchAgentHistory, searchPastWork } from '../../lib/agents/history.js';
-import { isAppRunSession } from '../../lib/automations/history.js';
+import { findTrace, listAgentHistory, pastWorkViewer, searchAgentHistory, searchPastWork } from '../../lib/agents/history.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
 import { effectiveEnvelopeLine } from '../../lib/automations/board-scope.js';
 import { levelChatMode } from '../../lib/agents/permission.js';
@@ -849,16 +848,12 @@ export function registerAgentsCommand(program: Command): void {
 
 /** An app's chat or an app's run: never handed another project's work (G2). */
 function appSession(root: string): boolean {
-  if ((process.env.DREAMCONTEXT_AGENT_CHAT ?? '').startsWith('app-')) return true;
-  const sid = process.env.CLAUDE_CODE_SESSION_ID ?? process.env.CLAUDE_SESSION_ID ?? '';
-  try { return !!sid && isAppRunSession(root, sid); } catch { return false; }
+  return appViewer(root) !== null;
 }
 
-/** An app's session as a past-work viewer: its own runs only (the app is unknown in an app run: none). */
+/** An app's session as a past-work viewer (its own runs only), or null for the owner's. */
 function appViewer(root: string): { app: string | null } | null {
-  if (!appSession(root)) return null;
-  const chat = process.env.DREAMCONTEXT_AGENT_CHAT ?? '';
-  return { app: chat.startsWith('app-') && chat.length > 4 ? chat.slice(4) : null };
+  return pastWorkViewer(root);
 }
 
 /** A message flattened to one line of at most `max` characters. */

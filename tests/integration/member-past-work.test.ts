@@ -13,7 +13,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { handleAgentWorkSelect, sweepMember } from '../../src/server/routes/agent-work.js';
 import { workIndex } from '../../src/lib/agents/work-index.js';
-import { readAllTraces, workRoot, writeRunTrace, type WorkTrace } from '../../src/lib/agents/work-trace.js';
+import { readAllTraces, traceId, workRoot, writeRunTrace, writeTrace, type WorkTrace } from '../../src/lib/agents/work-trace.js';
+import { projectKey } from '../../src/lib/local-store.js';
 import { recordAgentSession } from '../../src/lib/local-store.js';
 import { findTrace, searchPastWork } from '../../src/lib/agents/history.js';
 import { addVault } from '../../src/lib/vaults.js';
@@ -254,5 +255,27 @@ describe('history --search and show: this project unless --all, an app sees only
     expect(findTrace(ctx('kestrel'), `w_${keys.id.slice(0, 8)}`, ['mira'], m.home, { app: 'funnel-desk' })).toBeNull();
     expect(findTrace(ctx('kestrel'), `w_${other.id.slice(0, 8)}`, ['mira'], m.home, { app: 'funnel-desk' })).toBeNull();
     expect(findTrace(ctx('kestrel'), `w_${own.id.slice(0, 8)}`, ['mira'], m.home, { app: 'funnel-desk' })?.id).toBe(own.id);
+  });
+});
+
+describe('the fold line names a search that finds every folded job', () => {
+  it('a global member\'s block folds other projects\' work; the command it names returns all of it', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const key = `l-fold-${i}:a`;
+      ids.push(traceId(key));
+      await writeTrace({ slug: 'mira', projectRoot: m.project('lumen'), home: m.home }, {
+        v: 1, id: traceId(key), key, kind: 'job', at: `2026-11-12T10:${String(i).padStart(2, '0')}:00.000Z`,
+        project: { key: projectKey(m.project('lumen')), name: 'lumen', root: m.project('lumen') },
+        asks: [{ by: 'owner', text: `Translate the lumen glossary chapter ${i} into Portuguese` }],
+        did: `Glossary chapter ${i} translated into Portuguese with the lumen terms kept.`, files: [`/p/lumen/glossary/${i}.md`], status: 'ok', through: 1, transcript: `l-fold-${i}`,
+      });
+    }
+    const pw = await turn('kestrel', 'Translate the glossary chapter into Portuguese like the lumen one');
+    expect(pw?.text).toContain('More of your past work matches');
+    const cmd = /`dreamcontext agents history mira --search "([^"]+)"( --all)?`/.exec(pw!.text)!;
+    expect(cmd).toBeTruthy();
+    const hits = await searchPastWork(ctx('kestrel'), 'mira', cmd[1]!, { all: cmd[2] === ' --all', home: m.home });
+    for (const id of ids) expect(hits.map((h) => h.id)).toContain(id);
   });
 });

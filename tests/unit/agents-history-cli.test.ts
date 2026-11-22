@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgent } from '../../src/lib/agents/store.js';
-import { searchPastWork, findTrace } from '../../src/lib/agents/history.js';
+import { pastWorkViewer, searchPastWork, findTrace } from '../../src/lib/agents/history.js';
 import { traceId, writeTrace, type WorkTrace } from '../../src/lib/agents/work-trace.js';
 import { projectKey } from '../../src/lib/local-store.js';
 import { createProgram } from '../../src/cli/program.js';
@@ -19,7 +19,7 @@ let home: string;
 let realHome: string | undefined;
 let cwd: string;
 const saved: Record<string, string | undefined> = {};
-const ENV = ['DREAMCONTEXT_AGENT_CHAT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'DREAMCONTEXT_DASHBOARD_PORT'];
+const ENV = ['DREAMCONTEXT_AGENT_CHAT', 'DREAMCONTEXT_RUN_APP', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'DREAMCONTEXT_DASHBOARD_PORT'];
 
 beforeEach(() => {
   cwd = process.cwd();
@@ -84,6 +84,24 @@ describe('agents history and past work', () => {
     const r = await runCli(['agents', 'history', 'oren', '--search', 'fjord', '--all']);
     expect(r.code).toBe(1);
     expect(r.out).toContain('not open to an app');
+  });
+
+  it('a LIVE app run reads as its app: --all refused, the owner\'s jobs and show hidden (G2)', async () => {
+    await writeTrace({ slug: 'oren', projectRoot, home }, trace('s3:a', 'fjord funnel drop by step'));
+    process.env.DREAMCONTEXT_RUN_APP = 'funnel-desk';
+    expect(pastWorkViewer(contextRoot)).toEqual({ app: 'funnel-desk' });
+    const all = await runCli(['agents', 'history', 'oren', '--search', 'fjord', '--all']);
+    expect(all.code).toBe(1);
+    expect(all.out).toContain('not open to an app');
+    const json = JSON.parse((await runCli(['agents', 'history', 'oren', '--search', 'fjord funnel drop', '--json'])).out) as { traces: unknown[] };
+    expect(json.traces).toEqual([]);
+    expect((await runCli(['agents', 'history', 'show', `w_${traceId('s3:a').slice(0, 8)}`])).code).toBe(1);
+  });
+
+  it('the viewer: an app chat is its app, anyone else the owner', () => {
+    expect(pastWorkViewer(contextRoot, { DREAMCONTEXT_AGENT_CHAT: 'app-crm' })).toEqual({ app: 'crm' });
+    expect(pastWorkViewer(contextRoot, { DREAMCONTEXT_AGENT_CHAT: 'oren' })).toBeNull();
+    expect(pastWorkViewer(contextRoot, {})).toBeNull();
   });
 
   it('searchPastWork with and without a server finds every match (no cap)', async () => {

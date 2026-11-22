@@ -94,7 +94,8 @@ import {
 import { blockedKind } from './needs.js';
 import { parsePattern } from './store.js';
 import { buildMemberRulesBlock } from '../member-rules-block.js';
-import { RUN_MEMBER_ENV, sessionMember } from '../agents/session-member.js';
+import { memberScope } from '../agents/scope.js';
+import { RUN_APP_ENV, RUN_MEMBER_ENV, sessionMember } from '../agents/session-member.js';
 import {
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
@@ -702,7 +703,6 @@ export async function conditionGate(
   return conditionWakes(result.verdict, m.conditionWake !== false) ? { kind: 'wake', data: result.data } : { kind: 'skip', durationMs };
 }
 
-/** The run-site past-work block (D8): '' on any miss. Never throws, never slows past its timeout. */
 /** Whether the member has a work folder here (no folder: no trace exists, nothing to ask). */
 export function hasPastWork(member: string, projectRoot: string, home?: string): boolean {
   try {
@@ -711,6 +711,7 @@ export function hasPastWork(member: string, projectRoot: string, home?: string):
   } catch { return false; }
 }
 
+/** The run-site past-work block (D8): '' on any miss. Never throws, never slows past its timeout. */
 export async function runPastWork(member: string, projectRoot: string, query: string, app: string | null, home?: string): Promise<string> {
   try {
     if (!query.trim()) return '';
@@ -721,7 +722,10 @@ export async function runPastWork(member: string, projectRoot: string, query: st
       { member, root: projectRoot, query, audience: app ? 'app' : 'owner', ...(app ? { app } : {}) },
       { port: workServerPort(process.env, home ?? homedir()) },
     );
-    return sel ? renderPastWork(sel.lines, sel.more, member, newTurnNonce(), query) : '';
+    // The fold line names the search that finds what was folded: a global member's owner block
+    // spans every project (`--all`); an app's never does.
+    const all = !app && memberScope(join(projectRoot, '_dream_context'), member, home ?? homedir()) === 'global';
+    return sel ? renderPastWork(sel.lines, sel.more, member, newTurnNonce(), query, { all }) : '';
   } catch { return ''; }
 }
 
@@ -3074,6 +3078,8 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         DREAMCONTEXT_AUTOMATION_SLOT: fireSlotEnv(manifest, fireAt),
         // Whose run this is (D3): the member's own rules ride its hooks, its writes stay in its store.
         ...(runMember ? { [RUN_MEMBER_ENV]: runMember } : {}),
+        // An app's run (G2): the CLI inside it reads past work as that app, while the run is live.
+        ...(runAppSlug ? { [RUN_APP_ENV]: runAppSlug } : {}),
         // The run-post stamp key (plan Y3, Z3): Claude and Codex runs alike.
         [RUN_POST_STAMP_ENV]: runPostKey,
         // Built from the manifest and the approval entry, never from a caller; empty for
@@ -3554,7 +3560,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         member: runMember, projectRoot, slug, fireIso, finishedAt,
         ask: { by: runAppSlug ? 'app' : opts.ask ? 'owner' : opts.task ? 'owner' : 'schedule', text: runAskText },
         result: claudeResult?.result ?? null, document: finalOutputPath && !reviewCardId ? claudeResult?.result ?? null : null,
-        status, refused: !!claudeResult?.limit || claudeResult?.isError === true, sessionId: claudeResult?.sessionId ?? null,
+        status, refused: !!claudeResult?.limit, sessionId: claudeResult?.sessionId ?? null,
         tool: runTool === 'codex' ? 'codex' : runTool === 'antigravity' ? 'antigravity' : 'claude',
         app: runAppSlug, ...(opts.home ? { home: opts.home } : {}),
       }).catch(() => false);
