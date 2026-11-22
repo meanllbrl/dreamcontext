@@ -112,7 +112,11 @@ import {
   renderHandoffBanner,
   stampHandoffRecord,
   lastMainChainContext,
+  ecoPlusDefault,
+  appendLowered,
 } from '../../lib/context-watch.js';
+import { ecoPlusDispatchModel } from '../../lib/eco-plus-dispatch.js';
+import { listAgentTargets } from '../../lib/agents/store.js';
 import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-state-lock.js';
 import {
   checkEditedFile, checkAtStop, takeTscResults, tscStopReason, tscWorkFor, defaultTscRunner, filterTscErrors, TSC_TIMEOUT_MS,
@@ -3439,7 +3443,33 @@ export function registerHookCommand(program: Command): void {
           return prompt ? { ...toolInput, prompt } : null;
         } catch { return null; }
       };
-      if (toolName === 'Task') allow(dispatchInput());
+      // Eco Plus (plan eco-plus D6, K4): an Opus/Fable dispatch runs on `sonnet`, the judges kept.
+      // Computed apart from the prompt append and merged into the one `updatedInput`; sent even
+      // when nothing is appended. Claude format only; any error leaves the dispatch as it is.
+      const dispatchUpdate = (): Record<string, unknown> | null => {
+        const appended = dispatchInput();
+        if (hookTool() || agy) return appended;
+        let rewrite: ReturnType<typeof ecoPlusDispatchModel> = null;
+        try {
+          if (ecoPlusDefault()) {
+            const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
+            rewrite = ecoPlusDispatchModel(toolInput, true, {
+              projectDir: process.env.CLAUDE_PROJECT_DIR || null,
+              memberSlugs: () => { try { return dRoot ? listAgentTargets(dRoot).map((m) => m.slug) : []; } catch { return []; } },
+            });
+          }
+        } catch { rewrite = null; }
+        if (!rewrite) return appended;
+        appendLowered({
+          site: 'agent',
+          agentType: typeof toolInput.subagent_type === 'string' ? toolInput.subagent_type : '',
+          session: typeof input.session_id === 'string' ? input.session_id : undefined,
+          from: rewrite.from,
+          to: rewrite.model,
+        });
+        return { ...(appended ?? toolInput), model: rewrite.model };
+      };
+      if (toolName === 'Task') allow(dispatchUpdate());
 
       // Gate 2: redirect default Explore agent to dreamcontext-explore.
       if (toolName !== 'Agent') allow();
@@ -3450,11 +3480,11 @@ export function registerHookCommand(program: Command): void {
       // Only gate the default Explore agent. Case/whitespace-tolerant so a casing
       // variant ("explore") still hits the gate, while never matching our own
       // redirect target ("dreamcontext-explore", which !== "explore").
-      if (subagentType.trim().toLowerCase() !== 'explore') allow(dispatchInput());
+      if (subagentType.trim().toLowerCase() !== 'explore') allow(dispatchUpdate());
 
       // Only gate when _dream_context/ exists (context-managed projects)
       const root = resolveContextRoot();
-      if (!root) allow(dispatchInput()); // no context directory, default Explorer is fine
+      if (!root) allow(dispatchUpdate()); // no context directory, default Explorer is fine
 
       // Block default Explorer and redirect to context-aware version
       console.log(JSON.stringify({
