@@ -102,8 +102,29 @@ export const VOICE_SUMMARY_LINES = {
   too_long: 'Sesli özet çok uzun oldu. Yazıyla:',
 } as const;
 
-/** The caption under a voice bubble: one line, the title escaped. */
-export function voiceCaptionHtml(title: string): string {
-  const t = clip(redactSecrets(title || ''), 64);
-  return `🔊 ${escapeHtml(t || 'Sesli özet')}`;
+/** Telegram caps a caption at 1024 characters (counted after the markup is parsed, in UTF-16
+ *  units); a little room is kept under it. */
+export const VOICE_CAPTION_MAX = 1000;
+
+/** `text` cut to at most `max` UTF-16 units at a word boundary, with an ellipsis; never mid-word. */
+function clipAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max - 1);
+  // A word is whole only when the next character is a break: otherwise drop its stub.
+  if (!/\s/.test(text.charAt(max - 1))) {
+    const at = cut.search(/\s\S*$/u);
+    cut = at > 0 ? cut.slice(0, at) : cut;
+  }
+  // Never end on half a surrogate pair.
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
+/** The caption under a voice bubble: the whole spoken text in one expandable quote (two lines
+ *  closed, all of it on tap). Secrets are redacted first, then the text is cut at a word to fit the
+ *  caption limit, then escaped. With no words it falls back to the title, then a plain label. */
+export function voiceCaptionHtml(v: { title?: string; text?: string }): string {
+  const raw = redactSecrets((v.text || v.title || '').trim());
+  const body = clipAtWord(raw, VOICE_CAPTION_MAX - 3);
+  return `<blockquote expandable>🔊 ${escapeHtml(body || 'Sesli özet')}</blockquote>`;
 }
