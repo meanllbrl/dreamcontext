@@ -307,10 +307,12 @@ describe('stars under a run in the member\'s chat', () => {
     sessionKey: key, sessionKind: 'run' as const, title: 't', status: 'ok' as const, source: 'conor', newestId: null, runId: 'r',
     startedAt: iso(0), lastAt: iso(0), durationMs: 1, unread: false,
   });
-  it('an unrated finished run gets grey stars; a rated one its stars, note and lesson with Undo', () => {
+  const open = { eligible: true, endedAt: iso(0) };
+  it('an unrated run whose request is open gets grey stars; a rated one its stars, note and lesson with Undo', () => {
     const d = rated();
-    let html = render(d, createElement(RunFoot, { meta: meta('conor::r2') as never, member: SLUG }));
+    let html = render(d, createElement(RunFoot, { meta: { ...meta('conor::r2'), request: open } as never, member: SLUG }));
     expect(html).toContain('data-testid="run-stars"');
+    expect(html).toContain('data-ask="open"');
     expect(html).toContain('Rate this run');
     html = render(d, createElement(RunStars, { member: SLUG, sessionKey: 'conor::r3' }));
     expect(html).toMatch(/data-value="2"/);
@@ -325,6 +327,66 @@ describe('stars under a run in the member\'s chat', () => {
     expect(render(d, createElement(RunFoot, { meta: meta('conor::r2') as never }))).toBe('');
     expect(render(d, createElement(RunFoot, { meta: { ...meta('talk::x'), sessionKind: 'talk' } as never, member: SLUG }))).toBe('');
     expect(render(d, createElement(RunStars, { member: SLUG, sessionKey: 'conor::nope' }))).toBe('');
+  });
+  it('W3: no row past the window, for a run that asks nothing or with no request facts; a rating stays at any age, "from Telegram" when it came from there', () => {
+    const d = rated();
+    const past = { eligible: true, endedAt: iso(3.1) };
+    // Nothing drawn (the empty foot is hidden by `.run-foot:empty`).
+    const none = (m: object) => expect(render(d, createElement(RunFoot, { meta: m as never, member: SLUG }))).not.toContain('run-stars');
+    none({ ...meta('conor::r2'), request: past });
+    none({ ...meta('conor::r2'), request: { eligible: false, endedAt: iso(0) } });
+    none(meta('conor::r2'));
+    // A run older than the card's run list still draws its rating (read by key from the card).
+    d.card.ratings['conor::old'] = rating(4, { via: 'telegram' }) as never;
+    const html = render(d, createElement(RunStars, { member: SLUG, sessionKey: 'conor::old', request: past }));
+    expect(html).toContain('data-ask="rated"');
+    expect(html).toContain('You rated 4 · from Telegram');
+  });
+  it('W3: a global member\'s card keys its runs with the project prefix', () => {
+    const d = rated();
+    d.prefix = '0123456789abcdef/';
+    d.card.ratings = { '0123456789abcdef/conor::r9': rating(3) as never };
+    const html = render(d, createElement(RunStars, { member: SLUG, sessionKey: 'conor::r9' }));
+    expect(html).toMatch(/data-value="3"/);
+  });
+});
+
+describe('W3 on the card: Not rated, Super\'s job, the Super\'s judged rating, corrections', () => {
+  it('a past-window unrated run reads Not rated and can still be rated; an open one leads', () => {
+    const d = empty([run('conor::a', 'Open run', 0, { ask: 'open' }), run('conor::b', 'Old run', 4, { ask: 'none' })]);
+    const html = card(d, 'full');
+    expect(count(html, 'data-testid="sc-not-rated"')).toBe(1);
+    expect(html).toContain('Not rated');
+    expect(count(html, 'data-testid="sc-star-1"')).toBe(2);
+  });
+  it('the tile counts what the server says asks now', () => {
+    const d = rated();
+    d.toRate = 30;
+    expect(card(d, 'tile')).toContain('30 to rate');
+  });
+  it('a Super\'s job rated from his words; a judged rating in violet with Change; a correction under his own note', () => {
+    const d = empty([
+      run('conor::s', 'Weekly budget plan', 0, { viaSuper: true, rating: rating(3, { by: 'super', via: 'super', viaSuper: true, quote: 'Üç, yeni kitleye fazla para ayırmış.' }) as never }),
+      run('conor::j', 'Budget raise', 1, { rating: rating(2, { by: 'super', via: 'super', judged: true, quote: 'bütçeyi bana sormadan artırmamalıydı' }) as never }),
+      run('conor::c', 'Audience test', 2, {
+        rating: rating(3, { note: 'CTA eksikti', corrections: [{ id: 'co1', note: 'bütçeyi sormadan artırmamalıydı', quoteTurn: 't', at: iso(1), draft: { state: 'failed', attempts: 1 } }] }) as never,
+      }),
+    ]);
+    const html = card(d, 'full');
+    expect(html).toContain('data-testid="sc-run-super"');
+    expect(html).toContain('Super&#x27;s job');
+    expect(html).toContain('From your words: «Üç, yeni kitleye fazla para ayırmış.»');
+    expect(html).toMatch(/data-judged="true"[^>]*data-testid="sc-stars"|data-testid="sc-stars"[^>]*data-judged="true"/);
+    expect(html).toContain('sc-stars--judged');
+    expect(html).toContain('data-testid="sc-judged"');
+    expect(html).toContain('from your words: «bütçeyi bana sormadan artırmamalıydı»');
+    expect(html).toContain('data-testid="sc-judged-change"');
+    expect(html).toContain('data-testid="sc-correction"');
+    expect(html).toContain('Super noted from your words:');
+    expect(html).toContain('«bütçeyi sormadan artırmamalıydı»');
+    expect(html).toContain('your 3★ kept');
+    expect(html).toContain('“CTA eksikti”');
+    expect(html).toContain('data-testid="sc-correction-failed"');
   });
 });
 
