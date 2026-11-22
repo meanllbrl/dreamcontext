@@ -63,13 +63,26 @@ describe('the dream-voice block', () => {
     expect(r.text).toBe('**İkinci**\nİkinci özet.');
   });
 
-  it('the caption redacts the whole title first, then cuts and escapes it', () => {
+  it('the caption is the whole spoken text in an expandable quote, redacted first and escaped', () => {
     const key = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefgh';
-    const title = `${'a'.repeat(50)} ${key} <b>`;
-    const html = voiceCaptionHtml(splitVoiceBlocks(`\`\`\`dream-voice ${title}\nmetin\n\`\`\``).voices[0]!.title);
+    const html = voiceCaptionHtml({ title: 't', text: `Üye hafızası ${key} <b> & şğü` });
     expect(html).not.toContain('ABCDEFGHIJ');
-    expect(voiceCaptionHtml('a <b> & c')).toBe('🔊 a &lt;b&gt; &amp; c');
-    expect(voiceCaptionHtml('')).toBe('🔊 Sesli özet');
+    expect(html.startsWith('<blockquote expandable>🔊 ')).toBe(true);
+    expect(html.endsWith('</blockquote>')).toBe(true);
+    expect(voiceCaptionHtml({ text: 'a <b> & c' })).toBe('<blockquote expandable>🔊 a &lt;b&gt; &amp; c</blockquote>');
+    expect(voiceCaptionHtml({ title: '', text: '' })).toBe('<blockquote expandable>🔊 Sesli özet</blockquote>');
+  });
+
+  it('a long text is cut at a word with an ellipsis, never mid-word, and fits the caption limit', () => {
+    const text = 'Üye hafızası planı henüz bitmedi. Planın dördüncü sürümü yazılıyor. '.repeat(40);
+    const html = voiceCaptionHtml({ text });
+    const visible = html.replace('<blockquote expandable>🔊 ', '').replace('</blockquote>', '');
+    expect(visible.length + 3).toBeLessThanOrEqual(1024);
+    expect(visible.endsWith('…')).toBe(true);
+    const last = visible.slice(0, -1).split(/\s+/).pop()!;
+    expect(['Üye', 'hafızası', 'planı', 'henüz', 'bitmedi.', 'Planın', 'dördüncü', 'sürümü', 'yazılıyor.']).toContain(last);
+    // A short text is whole.
+    expect(voiceCaptionHtml({ text: 'Kısa metin.' })).toContain('Kısa metin.</blockquote>');
   });
 });
 
@@ -89,7 +102,7 @@ describe('Super answers (hub.onAssistantText)', () => {
     expect(texts).not.toContain('Dört boyda');
     const voice = log.find((l) => l.method === 'sendVoice')!;
     expect(voice.chatId).toBe(777);
-    expect(voice.extra).toMatchObject({ caption: '🔊 Ajanda planının özeti', duration: 53, replyTo: 42 });
+    expect(voice.extra).toMatchObject({ caption: '<blockquote expandable>🔊 Dört boyda da iş yapılır. Kart seni bekliyor.</blockquote>', duration: 53, replyTo: 42 });
     expect(log.some((l) => l.method === 'sendChatAction' && l.text === 'record_voice')).toBe(true);
   });
 
