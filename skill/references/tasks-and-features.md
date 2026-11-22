@@ -1022,8 +1022,9 @@ names your worktree and branch, so `cd` there first. The Super reads one line on
 about you: that you handed off, and at what size.
 
 At the other end you will see a `>> HANDOFF:` banner above the snapshot naming the task —
-read that task file first. Desktop chats: every new chat pane, in every project, starts from
-ONE setting for the whole Mac, **Settings → Chat → Eco mode, ON by default**; the composer's
-ECO lamp in the usage popover switches one pane only and changes no default. Terminal and CLI
-sessions follow the vault: `dreamcontext config context-handoff on [--nudge-at N] [--hard-at N]
-[--remind-every N]` (off there unless set). The vault always owns the **thresholds**.
+read that task file first. Eco mode is ONE setting for the whole Mac, **Settings → Chat → Eco
+mode, ON by default**, read live by every session in every project (chat panes, open ones too,
+the terminal, CLI sessions, Super children, members, Codex and Antigravity). The composer's ECO
+lamp, once clicked, switches that one pane only and changes no default. From a shell:
+`dreamcontext config context-handoff on|off [--nudge-at N] [--hard-at N] [--remind-every N]`
+sets the same machine switch; the vault always owns the **thresholds**.

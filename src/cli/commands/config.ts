@@ -28,6 +28,7 @@ import { createGitHubBackend, discoverGitHubRepos } from '../../lib/task-backend
 import { SyncLedger } from '../../lib/task-backend/sync-state.js';
 import { clearProjectGitHubDemotion, resolveGitHubCredential } from '../../lib/git-sync/auth-store.js';
 import { join } from 'node:path';
+import { ecoModeDefault, setEcoModeDefault } from '../../lib/context-watch.js';
 import { confirm, select } from '@inquirer/prompts';
 
 /** Resolve the project root that holds `_dream_context/`, or null. */
@@ -130,13 +131,13 @@ function printConfig(projectRoot: string): void {
       }
     }
   }
-  // Context handoff prints ALWAYS (unlike task backend): it is a billing-relevant
-  // switch that is off by default, and "off" is the answer people come here for.
+  // Context handoff (Eco mode) prints ALWAYS (unlike task backend): it is a billing-relevant
+  // switch. The switch is this Mac's (every project, every session); the ladder is this vault's.
   const handoff = resolveContextHandoff(cfg.contextHandoff);
   console.log(
-    `  Context handoff: ${handoff.enabled
-      ? chalk.green('on') + chalk.dim(` (firm at ${Math.round(handoff.nudgeAt / 1000)}k, severe at ${Math.round(handoff.hardAt / 1000)}k, remind every ${Math.round(handoff.remindEvery / 1000)}k)`)
-      : chalk.yellow('off') + chalk.dim(' (`dreamcontext config context-handoff on`)')}`,
+    `  Eco mode:       ${ecoModeDefault()
+      ? chalk.green('on') + chalk.dim(` (this Mac, every project; firm at ${Math.round(handoff.nudgeAt / 1000)}k, severe at ${Math.round(handoff.hardAt / 1000)}k, remind every ${Math.round(handoff.remindEvery / 1000)}k)`)
+      : chalk.yellow('off') + chalk.dim(' (this Mac, every project: `dreamcontext config context-handoff on`)')}`,
   );
   console.log(`  Setup version:  ${chalk.dim(cfg.setupVersion)}`);
 }
@@ -189,7 +190,7 @@ export function registerConfigCommand(program: Command): void {
 
   config
     .command('context-handoff <state>')
-    .description('Opt in to the context-handoff nudge: on | off (default: off)')
+    .description("Eco mode, this Mac's one switch for every project: on | off (default: on); the flags set this vault's thresholds")
     .option('--nudge-at <tokens>', `Context tokens at which the FIRM nudge starts (min ${CONTEXT_HANDOFF_MIN_NUDGE_AT})`)
     .option('--hard-at <tokens>', `Context tokens at which the nudge turns SEVERE (min ${CONTEXT_HANDOFF_MIN_NUDGE_AT})`)
     .option('--remind-every <tokens>', `Token distance between repeat nudges (min ${CONTEXT_HANDOFF_MIN_REMIND_EVERY})`)
@@ -227,27 +228,34 @@ export function registerConfigCommand(program: Command): void {
       const remindEvery = parse(opts.remindEvery, CONTEXT_HANDOFF_MIN_REMIND_EVERY, '--remind-every');
       if (remindEvery === null) return;
 
-      // Merge, never replace: `context-handoff off` must not silently discard a
-      // tuned ladder, so the next `on` comes back with the same thresholds.
-      const existing = readSetupConfig(projectRoot)?.contextHandoff ?? {};
+      // The switch is this Mac's Eco mode, the same key Settings → Chat → Eco mode writes: one
+      // answer for every project and every session (owner 2026-11-22). Only the thresholds are
+      // the vault's, merged so a tuned ladder is never lost.
       const enabled = ON.includes(s);
+      if (!setEcoModeDefault(enabled)) {
+        error('Could not save Eco mode.', '~/.dreamcontext/agent-ui.json could not be read or written; set it in Settings → Chat → Eco mode.');
+        process.exitCode = 1;
+        return;
+      }
+      const existing = readSetupConfig(projectRoot)?.contextHandoff ?? {};
       const next = {
         ...existing,
-        enabled,
         ...(nudgeAt !== undefined ? { nudgeAt } : {}),
         ...(hardAt !== undefined ? { hardAt } : {}),
         ...(remindEvery !== undefined ? { remindEvery } : {}),
       };
-      updateSetupConfig(projectRoot, { contextHandoff: next });
+      if (nudgeAt !== undefined || hardAt !== undefined || remindEvery !== undefined) {
+        updateSetupConfig(projectRoot, { contextHandoff: next });
+      }
 
       const r = resolveContextHandoff(next);
       if (enabled) {
-        success(`Context handoff on — firm from ${Math.round(r.nudgeAt / 1000)}k, severe from ${Math.round(r.hardAt / 1000)}k, repeating every ${Math.round(r.remindEvery / 1000)}k.`);
+        success(`Eco mode on — firm from ${Math.round(r.nudgeAt / 1000)}k, severe from ${Math.round(r.hardAt / 1000)}k, repeating every ${Math.round(r.remindEvery / 1000)}k.`);
         info(chalk.dim('Still a nudge, not a rule: the agent decides. Past the severe threshold it must tell you if it decides to keep going.'));
       } else {
-        success('Context handoff off — no nudge, and the hooks do no extra work.');
+        success('Eco mode off — no nudge, and the hooks do no extra work.');
       }
-      info(chalk.dim('This is the VAULT default (it rides to teammates) and the only switch for terminal sessions. Desktop Chat panes toggle it per pane.'));
+      info(chalk.dim("This is this Mac's one switch (Settings → Chat → Eco mode), for every project and every session. A chat's own ECO lamp, once clicked, changes only that chat."));
     });
 
   config

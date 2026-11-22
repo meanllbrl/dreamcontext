@@ -1428,7 +1428,7 @@
     },
     {
       "path": "config context-handoff",
-      "desc": "Opt in to the context-handoff nudge: on | off (default: off)",
+      "desc": "Eco mode, this Mac's one switch for every project: on | off (default: on); the flags set this vault's thresholds",
       "args": [
         "<state>"
       ],

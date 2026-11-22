@@ -502,6 +502,13 @@ export interface TabHandoffState {
   hardAt: number;
   remindEvery: number;
   updatedAt: string;
+  /**
+   * True only when a PERSON flipped this pane's own switch (the composer's ECO lamp,
+   * {@link applyPaneHandoffToggle}). A file written at spawn is a seed, not a choice: it follows
+   * this Mac's Eco mode live, so turning Eco on in Settings reaches every open chat in every
+   * project (owner 2026-11-22). Files from before this field read as seeds.
+   */
+  chosen: boolean;
 }
 
 /** Pane ids are the same UUID-ish shape as session ids; reuse the one safe test. */
@@ -523,6 +530,7 @@ export function readTabHandoff(contextRoot: string, tab: string): TabHandoffStat
     hardAt: r.hardAt,
     remindEvery: r.remindEvery,
     updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
+    chosen: parsed.chosen === true,
   };
 }
 
@@ -530,7 +538,7 @@ export function readTabHandoff(contextRoot: string, tab: string): TabHandoffStat
 export function writeTabHandoff(
   contextRoot: string,
   tab: string,
-  cfg: { enabled: boolean; nudgeAt?: number; hardAt?: number; remindEvery?: number },
+  cfg: { enabled: boolean; nudgeAt?: number; hardAt?: number; remindEvery?: number; chosen?: boolean },
 ): TabHandoffState | null {
   const dir = ensureWatchDir(contextRoot);
   const path = tabFilePath(contextRoot, tab);
@@ -542,6 +550,7 @@ export function writeTabHandoff(
     hardAt: r.hardAt,
     remindEvery: r.remindEvery,
     updatedAt: new Date().toISOString(),
+    chosen: cfg.chosen === true,
   };
   try {
     writeJsonAtomic(path, entry);
@@ -555,22 +564,31 @@ export function writeTabHandoff(
  * THE resolution order, in one place — and it is TWO orders, not one, because the
  * switch and the ladder answer to different owners:
  *
- *   enabled  : per-pane tab file > `.config.json` > off
+ *   enabled  : a pane's own CHOSEN switch > this Mac's Eco mode ({@link ecoModeDefault})
  *   ladder   : `.config.json` > shipped defaults        (the tab file is not consulted)
  *
- * A pane that has been toggled owns its own ANSWER — including toggled OFF in a vault
- * whose `.config.json` says on; that is a real per-pane choice someone clicked. The
- * thresholds are not: nothing lets a human set them per pane, so a pane must not be
- * able to pin a stale ladder against the vault (see {@link TabHandoffState}). A
- * terminal/CLI session has no pane and gets the vault answer for both.
+ * The switch is ONE setting for this Mac (owner 2026-11-08, again 2026-11-22: "when I turn Eco
+ * on it must be on in every project"). It decides for every session in every project: a chat
+ * pane, the embedded terminal, a CLI session, a Super child, a member, a bridge tool, a
+ * session whose hook found a brain worktree's own `_dream_context/`. `.config.json`'s
+ * `enabled` no longer decides anything. Only a pane a person toggled keeps its own answer
+ * (`chosen`); a seeded tab file follows the machine live. The thresholds are not a per-pane
+ * choice: nothing lets a human set them per pane (see {@link TabHandoffState}).
  */
-export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab: string | null | undefined): ResolvedContextHandoff {
+export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab: string | null | undefined, home: string = homedir()): ResolvedContextHandoff {
   const vault = resolveContextHandoff(readSetupConfig(projectRoot)?.contextHandoff);
   if (tab) {
     const tabState = readTabHandoff(contextRoot, tab);
-    if (tabState) return { ...vault, enabled: tabState.enabled };
+    if (tabState?.chosen) return { ...vault, enabled: tabState.enabled };
   }
-  return vault;
+  return { ...vault, enabled: ecoModeDefault(home) };
+}
+
+/** A pane's switch as the client draws it: the resolved answer plus whether a person chose it
+ *  for this pane (then a Settings change leaves it alone) or it follows this Mac's Eco mode. */
+export function paneHandoffState(contextRoot: string, projectRoot: string, tab: string): ResolvedContextHandoff & { chosen: boolean } {
+  const r = resolveHandoffFor(contextRoot, projectRoot, tab);
+  return { ...r, chosen: readTabHandoff(contextRoot, tab)?.chosen === true };
 }
 
 /**
@@ -580,8 +598,7 @@ export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab:
  * key or unreadable JSON all read as ON. The coercers in `server/routes/launcher.ts` and the
  * dashboard's `lib/agentSettings.ts` apply the same rule to what they store.
  *
- * The only reader on the spawn path: every new chat pane (Claude, a bridge tool, the Super
- * Agent, a member's chat) seeds its tab file from {@link resolveTabSeed} with this value.
+ * Read LIVE by {@link resolveHandoffFor} on every hook, so a change reaches open chats too.
  * The old per-project `.brain-local.json` `contextHandoffDefault` is no longer read.
  */
 export function ecoModeDefault(home: string = homedir()): boolean {
@@ -594,13 +611,36 @@ export function ecoModeDefault(home: string = homedir()): boolean {
 }
 
 /**
+ * Set this Mac's Eco mode from the CLI (`dreamcontext config context-handoff on|off`): the same
+ * key Settings → Chat → Eco mode writes, every other field of the file kept. False when the file
+ * could not be written. An unreadable file is not overwritten: the other settings in it are the
+ * owner's, and a lost write here is safer than wiping them.
+ */
+export function setEcoModeDefault(enabled: boolean, home: string = homedir()): boolean {
+  const path = join(home, '.dreamcontext', 'agent-ui.json');
+  try {
+    let current: Record<string, unknown> = {};
+    if (existsSync(path)) {
+      const raw = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+      current = raw as Record<string, unknown>;
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    writeJsonAtomic(path, { ...current, ecoMode: enabled });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * What a NEW pane's tab file should be seeded with, at spawn, before the child starts: the
  * switch is this Mac's Eco mode ({@link ecoModeDefault}), the same in every project; the
  * ladder (thresholds) stays the team's `.config.json`, then the shipped defaults.
  *
  * The machine switch decides even where `.config.json` says `enabled: false`: the owner chose
  * one setting for every chat on this Mac (2026-11-08), replacing the earlier per-project
- * default. Terminal and CLI sessions have no pane and still follow `.config.json`.
+ * default. The seed is not `chosen`, so it keeps following that setting after spawn.
  */
 export function resolveTabSeed(
   machineDefault: boolean,
@@ -621,7 +661,7 @@ export function applyPaneHandoffToggle(
   tab: string,
   enabled: boolean,
 ): ResolvedContextHandoff | null {
-  const written = writeTabHandoff(contextRoot, tab, { enabled });
+  const written = writeTabHandoff(contextRoot, tab, { enabled, chosen: true });
   return written ? resolveHandoffFor(contextRoot, projectRoot, tab) : null;
 }
 

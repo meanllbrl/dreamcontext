@@ -28,7 +28,7 @@ import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
-import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle } from '../../lib/context-watch.js';
+import { writeTabHandoff, readTabHandoff, resolveTabSeed, paneHandoffState, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle } from '../../lib/context-watch.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
 import { clearFresh, hasFreshLatch, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
@@ -3046,7 +3046,8 @@ export function startChatSession(
   //
   // The switch is this Mac's Eco mode (one setting for every project, ON unless turned off
   // in Settings); the thresholds are the team's `.config.json`. An EXISTING tab file is left
-  // alone: a pane that has been toggled owns its own answer across resumes.
+  // alone. A seed is not a choice: it follows Settings live (`resolveHandoffFor`); only a pane a
+  // person toggled owns its own answer across resumes.
   try {
     if (pinId && pinned && !readTabHandoff(contextRoot, pinId)) {
       const seed = resolveTabSeed(ecoModeDefault(), readSetupConfig(projectRoot)?.contextHandoff);
@@ -4273,8 +4274,8 @@ export function startChatSession(
   // init. A resumed pane must show what is on disk, not what was clicked last time.
   try {
     if (pinId) {
-      const state = resolveHandoffFor(contextRoot, projectRoot, pinId);
-      sendMeta({ subtype: 'context_handoff', state: { enabled: state.enabled, nudgeAt: state.nudgeAt, hardAt: state.hardAt, remindEvery: state.remindEvery } });
+      const state = paneHandoffState(contextRoot, projectRoot, pinId);
+      sendMeta({ subtype: 'context_handoff', state: { enabled: state.enabled, nudgeAt: state.nudgeAt, hardAt: state.hardAt, remindEvery: state.remindEvery, chosen: state.chosen } });
     }
   } catch { /* the switch falls back to its default rendering */ }
 
@@ -6159,7 +6160,7 @@ export function startChatSession(
       try {
         const echo = applyPaneHandoffToggle(contextRoot, projectRoot, pinId, msg.enabled);
         if (echo) {
-          sendMeta({ subtype: 'context_handoff', state: { enabled: echo.enabled, nudgeAt: echo.nudgeAt, hardAt: echo.hardAt, remindEvery: echo.remindEvery } });
+          sendMeta({ subtype: 'context_handoff', state: { enabled: echo.enabled, nudgeAt: echo.nudgeAt, hardAt: echo.hardAt, remindEvery: echo.remindEvery, chosen: true } });
         }
       } catch { /* a failed toggle simply does not echo — the client keeps server truth */ }
       return;
