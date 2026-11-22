@@ -329,7 +329,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
 
     if (!manifest.enabled) {
       // A one-off or few-times schedule that retired a day ago leaves `list` (schedule-limit.ts).
-      try { if (removeIfLongRetired(contextRoot, manifest, now)) { logFn(`[automations] ${manifest.slug} retired a day ago — removed`); verdicts.push({ slug: manifest.slug, verdict: 'disabled' }); continue; } } catch (err) { logFn(`[automations] ${manifest.slug}: could not remove a retired schedule: ${(err as Error).message}`); }
+      try { if (removeIfLongRetired(contextRoot, manifest, now, opts.home)) { logFn(`[automations] ${manifest.slug} retired a day ago — removed`); verdicts.push({ slug: manifest.slug, verdict: 'disabled' }); continue; } } catch (err) { logFn(`[automations] ${manifest.slug}: could not remove a retired schedule: ${(err as Error).message}`); }
       if (manifest.target === 'super') notePaused(contextRoot, manifest.slug, now, logFn);
       verdicts.push({ slug: manifest.slug, verdict: 'disabled' });
       continue;
@@ -387,7 +387,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     });
     ran.push(outcome);
     countLimitedRun(contextRoot, manifest, outcome, due.fireAt ?? now, now, logFn);
-    const waited =outcome.status === 'deferred' && accountWaitHolds(opts.home, now.getTime()) !== null;
+    const waited = outcome.status === 'deferred' && accountWaitHolds(opts.home, now.getTime()) !== null;
     verdicts.push({ slug: manifest.slug, verdict: waited ? 'waiting-for-account' : verdictFor(outcome.status) });
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
   }

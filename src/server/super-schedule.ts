@@ -52,6 +52,7 @@ export const SCHEDULE_LINES = {
   off: (at: string) => `⏰ ${at} işi bekliyor: bu projede Super kapalı. Super'i açınca yapılır.`,
   noBot: (at: string) => `⏰ ${at} işi Telegram'a gitmedi: Super botu bağlı değil. Mac'te yapılıyor.`,
   failed: (at: string) => `⏰ ${at} işi Super'e iletilemedi. Bir sonraki saatinde yeniden denenecek.`,
+  failedLast: (at: string) => `⏰ ${at} işi Super'e iletilemedi; bu son çalışmasıydı, yeniden denenmeyecek.`,
 } as const;
 
 export interface ScheduleDeps {
@@ -170,7 +171,9 @@ export async function sweepProject(contextRoot: string, deps: ScheduleDeps = {})
       // Claimed but not handed over: never silent (Decision 10), never retried into a double.
       log(`[super-schedule] ${item.slug}@${item.fireIso} could not be handed over: ${(err as Error).message}`);
       removeScheduleItem(scope, item, home);
-      await tellScheduleOwner(contextRoot, item, 'failed', SCHEDULE_LINES.failed(at), deps);
+      // A one-off (or a last run) has no next time to retry at.
+      const last = runsLeft(readRunLimit(job.manifest), readAutomationCache(contextRoot, item.slug)) === 0;
+      await tellScheduleOwner(contextRoot, item, 'failed', last ? SCHEDULE_LINES.failedLast(at) : SCHEDULE_LINES.failed(at), deps);
     }
   }
 }
@@ -382,7 +385,7 @@ function timingPatch(contextRoot: string, m: AutomationManifest, b: Record<strin
   if (b.times !== undefined) {
     const n = parseTimes(b.times, true);
     if (n === null) return '--times is a whole number of runs (0 = no limit)';
-    if (n > 0 && retired) patch.enabled = true;
+    if (retired) patch.enabled = true;
     front = { ...(front ?? {}), max_runs: n > 0 ? n : null };
   }
   return front ? { front } : {};
