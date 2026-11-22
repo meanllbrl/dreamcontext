@@ -74,7 +74,7 @@ describe('childPolicy (pure)', () => {
     for (const w of ['high priority bir iş', 'max 3 dosya değişsin']) {
       expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'high' }, [w]), w).toMatchObject({ ok: false, error: 'effort_refused' });
     }
-    for (const w of ['high effort ile yap', 'efor max olsun', 'xhigh düşün']) {
+    for (const w of ['high effort ile yap', 'efor max olsun', 'xhigh düşün', 'bunu max eforla yap', 'high efortla çalışsın', "effort'u high yap", 'yüksek efor ver', 'efor: high']) {
       expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'high' }, [w]), w).toMatchObject({ ok: true, allowedBy: 'words' });
     }
   });

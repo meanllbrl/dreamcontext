@@ -136,9 +136,10 @@ const foldTr = (s: string): string => s.toLocaleLowerCase('tr').replace(/[ıçş
 /** His words name Fable. */
 export const FABLE_WORD_RE = /(?<![a-z0-9])fable(?![a-z0-9])/;
 /** His words ask for a higher effort. */
-/** His words ask for a higher effort: "derin düşün", "en yüksek", `xhigh`, or high/max said of the effort
- *  ("high effort", "effort max", "max efor"), never "high priority" or "max 3 dosya". */
-export const EFFORT_WORD_RE = /(?<![a-z0-9])(?:derin dusun\w*|en yuksek|xhigh|(?:high|max)\s+(?:effort|efor)|(?:effort|efor)\w*\s+(?:high|max))(?![a-z0-9])/;
+/** His words ask for a higher effort: "derin düşün", "en yüksek", `xhigh`, or high/max/yüksek said of the
+ *  effort with any Turkish suffix or punctuation between ("max eforla", "effort'u high", "efor: high",
+ *  "yüksek efor ver"), never "high priority" or "max 3 dosya". Folded text. */
+export const EFFORT_WORD_RE = /(?<![a-z0-9])(?:derin dusun\w*|en yuksek|xhigh|(?:high|max|yuksek)[\s:=]+(?:effort|efor)\w*|(?:effort|efor)[\w'’]*[\s:=]+(?:high|max|yuksek))(?![a-z0-9])/;
 export const MODEL_REQUIRED_LINE = 'name the model from the table: `--model sonnet` for a small fix, merge, build or chore; `--model opus` for multi-file develop, a bug, analysis, security, money, migration or plans';
 
 export type PolicyAllowedBy = 'flags' | 'risk' | 'full' | 'words';

@@ -249,6 +249,28 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
     expect(ruleCovers('git push -u origin feature/x:staging && gh pr create --base staging --fill', RULE, null).ok).toBe(true);
     expect(ruleCovers('npm run build && firebase deploy --only hosting --project acme-staging', RULE, null).ok).toBe(true);
   });
+  // r2 security-1: git's own options first, any spelling of main, an unknown command, a deploy whose target is not staging.
+  it('a step the allowlist cannot read as a staging push, PR or deploy is refused, whatever git options come first', () => {
+    for (const step of ['git -C ../wt push origin staging:refs/heads/main', 'git -C ../staging-wt push origin feature:refs/heads/main',
+      'git --git-dir=.git push origin x:refs/heads/main staging', 'git -C ../staging-wt push origin hotfix',
+      'git push origin staging && gh api -X POST repos/o/r/merges --raw-field base=main --raw-field head=staging',
+      'firebase deploy --project acme-app --message staging', 'curl -X POST https://staging.acme.test/deploy', 'push to staging',
+      'gh pr create --base staging --base main', 'git -C ../wt merge staging']) {
+      expect(ruleCovers(step, RULE, null).ok, step).toBe(false);
+    }
+    for (const step of ['git -C ../wt push -u origin super/x:staging', 'gh pr create --base staging --title "live chat fix" --fill',
+      'npx firebase deploy --only hosting -P acme-staging', 'cd ../wt && git push origin HEAD:refs/heads/staging']) {
+      expect(ruleCovers(step, RULE, null).ok, step).toBe(true);
+    }
+    expect(messageCovers('git -C ../wt push origin HEAD:refs/heads/main', 'push it').ok).toBe(false);
+    expect(messageCovers('git -C ../wt merge feature', 'push it').ok).toBe(false);
+  });
+  // r2 edge-cases-2: a rule that states its own limit still allows what it allows.
+  it('a rule that allows staging and forbids something else still grants the staging step', () => {
+    for (const words of ["staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", 'staging serbest, canlıya dokunma']) {
+      expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(true);
+    }
+  });
   it('a rule that forbids grants nothing', () => {
     expect(ruleCovers('git push origin x:staging', "staging'e asla push etme", null).ok).toBe(false);
     expect(ruleCovers('git push origin x:staging', 'never push to staging', null).ok).toBe(false);

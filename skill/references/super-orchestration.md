@@ -171,8 +171,8 @@ Ask only for:
   (the method from his words, else the one `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`
   allows); never a bare `gh pr merge`, its admin or auto mode, or a merge from a rule. A staging push,
   PR or deploy one of his ACTIVE standing rules names: `--outward "<step>" --rule <id>` (the server
-  checks the rule is active and the step is one staging shape: `git push <remote> <branch>:staging`,
-  a PR `--base staging`, a deploy to the ops card's staging; never production, a release or a merge). A message
+  checks the rule is active and every command is a staging shape: `git push <remote> <branch>:staging`,
+  a PR `--base staging`, a deploy whose target flag names staging, a build; nothing else). A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
 - **Two readings** that lead to different work, when neither the brief nor the brain settles it and
   the wrong one could not be undone; otherwise take the likelier one and say so in one line.
