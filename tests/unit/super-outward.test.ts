@@ -239,6 +239,20 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
   it('a rule whose words name no push, PR, deploy or staging grants nothing', () => {
     expect(ruleCovers('git push origin x:staging', 'kısa yaz', null).ok).toBe(false);
   });
+  // r1 security-1 / edge-cases-1: the step's own targets decide, never the word staging somewhere in it.
+  it('a push onto main, a delete, a mirror, a second refspec or a -prod target is refused even when it says staging', () => {
+    for (const step of ['git push origin main staging', 'git push origin HEAD:refs/heads/main staging', 'git push origin --delete main staging',
+      'git push --mirror staging', 'git push --all origin staging', 'git push origin :staging', 'git push origin x:staging y:other',
+      'firebase deploy --project acme-prod staging', 'vercel deploy --prod staging', 'deploy acme-live staging']) {
+      expect(ruleCovers(step, RULE, null).ok, step).toBe(false);
+    }
+    expect(ruleCovers('git push -u origin feature/x:staging && gh pr create --base staging --fill', RULE, null).ok).toBe(true);
+    expect(ruleCovers('npm run build && firebase deploy --only hosting --project acme-staging', RULE, null).ok).toBe(true);
+  });
+  it('a rule that forbids grants nothing', () => {
+    expect(ruleCovers('git push origin x:staging', "staging'e asla push etme", null).ok).toBe(false);
+    expect(ruleCovers('git push origin x:staging', 'never push to staging', null).ok).toBe(false);
+  });
   it('the child line says staging only; the gone line and both strip from his words', () => {
     const g = { source: 'rule' as const, step: 'git push origin x:staging', rule: 'abc123def0', words: RULE };
     const line = outwardLine(g);
@@ -261,6 +275,25 @@ describe('his PR merge (D13, criterion 12)', () => {
     expect(messageCovers('gh pr merge 41 --squash', 'push the branch and open a PR').ok).toBe(false);
     expect(messageCovers('git push --force origin x', 'push it').ok).toBe(false);
     expect(messageCovers('git push origin HEAD:main', 'push it').ok).toBe(false);
+  });
+  // r1 edge-cases-1: a PR's base is no push target; the push's own refspecs decide.
+  it('a push of the branch plus a PR into main is granted; a push onto main anywhere in its args is not', () => {
+    for (const step of ['git push -u origin super/x && gh pr create --base main', 'push super/x to origin and open a PR to main',
+      'git push origin super/x, then gh pr create --base master', 'git push -u origin super/x && gh pr create --base main --fill']) {
+      expect(messageCovers(step, 'push et, main\'e PR aç').ok, step).toBe(true);
+    }
+    for (const step of ['git push origin main feature', 'git push origin main', 'git push origin x:main && gh pr create --base main',
+      'git push --mirror origin', 'git push origin --delete main', 'push to main']) {
+      expect(messageCovers(step, 'push it').ok, step).toBe(false);
+    }
+  });
+  // r1 security minor / edge-cases minor: a merge said not to happen is no merge.
+  it('his "do not merge" grants no merge; a step saying not to merge is a plain push', () => {
+    for (const words of ["41'i birleştirme, önce ben bakacağım", "don't merge yet", 'merge etme']) {
+      expect(messageCovers('gh pr merge 41 --squash', words).ok, words).toBe(false);
+    }
+    expect(messageCovers('gh pr merge 41 --squash', 'birleştirmeni istiyorum, squash').ok).toBe(true);
+    expect(messageCovers('push and open a PR, do not merge', 'push et').ok).toBe(true);
   });
   it('a merge grant says the exact command and keeps no "never merge" clause; its preamble too', () => {
     const g = { step: 'gh pr merge 41 --squash', ref: msgRef(MERGE), words: MERGE, merge: { pr: 41, method: 'squash' as const } };

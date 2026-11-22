@@ -60,6 +60,24 @@ describe('childPolicy (pure)', () => {
     expect(childPolicy({ mode: 'plan', model: 'opus', effort: 'high' }, [])).toMatchObject({ ok: true, allowedBy: 'flags' });
     expect(childPolicy({ mode: 'plan', model: 'opus', effort: 'xhigh' }, [])).toMatchObject({ ok: false, error: 'effort_refused' });
   });
+  // r1 edge-cases-3: what allowed the effort a child runs still allows it at a later change that does not raise it.
+  it('the effort a child already runs in the same mode is kept; a raise or another mode is checked again', () => {
+    const prior = { mode: 'develop', effort: 'high', allowedBy: 'full' as const };
+    expect(childPolicy({ mode: 'develop', model: 'sonnet', effort: 'high', prior }, [])).toMatchObject({ ok: true, effort: 'high', allowedBy: 'full' });
+    expect(childPolicy({ mode: 'develop', model: 'sonnet', effort: 'medium', prior }, [])).toMatchObject({ ok: true, effort: 'medium', allowedBy: 'flags' });
+    expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'xhigh', prior }, [])).toMatchObject({ ok: false, error: 'effort_refused' });
+    expect(childPolicy({ mode: 'basic', model: 'opus', effort: 'high', prior }, [])).toMatchObject({ ok: false, error: 'effort_refused' });
+    // A child made before this build: its running effort, no recorded allowance.
+    expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'high', prior: { mode: 'develop', effort: 'high' } }, [], { modelKept: true })).toMatchObject({ ok: true, allowedBy: 'flags' });
+  });
+  it('high or max count as his words only when said of the effort', () => {
+    for (const w of ['high priority bir iş', 'max 3 dosya değişsin']) {
+      expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'high' }, [w]), w).toMatchObject({ ok: false, error: 'effort_refused' });
+    }
+    for (const w of ['high effort ile yap', 'efor max olsun', 'xhigh düşün']) {
+      expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'high' }, [w]), w).toMatchObject({ ok: true, allowedBy: 'words' });
+    }
+  });
   it('a mode switch lowers an effort the new mode does not allow, and says so', () => {
     expect(childPolicy({ mode: 'develop', model: 'opus', effort: 'high' }, [], { lowerOnModeSwitch: true })).toMatchObject({ ok: true, effort: 'medium', effortLowered: true });
   });
@@ -126,6 +144,18 @@ describe('the verbs apply it (criterion 14)', () => {
     markSuperEventTurn(SUPER, true);
     expect((await verb('delegate', { prompt: 'Carry on Orbit from its handoff', brief: 'Orbit 2', mode: 'develop', succeeds: 'child-1' })).status).toBe(200);
     expect(sent.frames[1]).toMatchObject({ model: 'opus', effort: 'high' });
+  });
+
+  // r1 edge-cases-3: a successor naming another model keeps the effort its predecessor's --risk allowed.
+  it('a successor on another model keeps the effort the predecessor was allowed', async () => {
+    markSuperEventTurn(SUPER, false);
+    noteSuperOwnerMsg(SUPER, msgRef('orbit ödeme'), { words: 'orbit ödeme' });
+    expect((await verb('delegate', { ...job, model: 'opus', effort: 'high', risk: 'money' })).status).toBe(200);
+    markSuperEventTurn(SUPER, true);
+    const next = await verb('delegate', { prompt: 'Carry on Orbit from its handoff', brief: 'Orbit 2', mode: 'develop', succeeds: 'child-1', model: 'sonnet' });
+    expect(next.status, JSON.stringify(next.json)).toBe(200);
+    expect(sent.frames[1]).toMatchObject({ model: 'sonnet', effort: 'high' });
+    expect((await readSuperState(root)).children['child-2'].context?.policy).toMatchObject({ model: 'sonnet', effort: 'high', risk: 'money' });
   });
 
   it('a pool row made before this build (no context) starts as today', async () => {

@@ -100,32 +100,110 @@ const fold = (s: string): string => s.toLocaleLowerCase('tr').replace(/[ıçşğ
 const RULE_KIND_RE = /(?<![a-z0-9])(?:staging\w*|gonder\w*|push\w*|pr|deploy\w*|yayinla\w*)(?![a-z0-9])/;
 /** Never on a rule (S2 c): whole words. */
 export const OUT_OF_SCOPE_RE = /(?<![\w-])(?:production|prod|--prod|live|canli\w*|release|publish|npm publish|gh release|merge|gh pr merge|force|--force(?:-with-lease)?|-f|--admin|--auto)(?![\w-])|(?:^|\s)\+[\w./:-]+/;
-/** Never in any grant: force, --admin, --auto, a local merge, a push onto the default branch. */
-const NEVER_RE = /(?<![\w-])(?:--force(?:-with-lease)?|-f|--admin|--auto|git\s+merge)(?![\w-])|(?:^|\s)\+[\w./:-]+|\bpush\b[^\n]*?(?:\s|:)(?:main|master)\s*$|\bpush\b[^\n]*?:(?:main|master)(?![\w/-])/;
+/** Never in any grant: force, --admin, --auto, a local merge (a push onto the default branch: `pushesDefault`). */
+const NEVER_RE = /(?<![\w-])(?:--force(?:-with-lease)?|-f|--admin|--auto|git\s+merge)(?![\w-])|(?:^|\s)\+[\w./:-]+/;
 /** A merge word in a step. */
 const MERGE_WORD_RE = /(?<![\w-])merge(?![\w-])/;
 /** His words name merging (D13, folded). */
 const MERGE_VERB_RE = /(?<![a-z0-9])(?:birlestir\w*|merge\w*|mergele\w*)(?![a-z0-9])/;
+/** A merge said NOT to happen (folded): "do not merge", "merge etme", "birleştirme", "mergeleme". */
+const MERGE_NEG_RE = /(?<![a-z0-9])(?:(?:do not|don't|dont|never|no)\s+merge\w*|merge\s+(?:etme|yapma)\w*|mergeleme\w*|birlestirme(?:yin|yiniz)?)(?![a-z0-9])/g;
+/** A rule that forbids (folded): never grants. */
+const RULE_NEG_RE = /(?<![a-z0-9])(?:asla|hicbir zaman|never|don't|dont|do not|etme|etmeyin|yapma|atma|gonderme)(?![a-z0-9])/;
+/** Production or live as a token, a hyphenated name too (`acme-prod`, `--prod`), folded. */
+const PROD_TOKEN_RE = /(?<![a-z0-9])(?:production|prod|live|canli\w*)(?![a-z0-9])/;
+const DEFAULT_BRANCH_RE = /^(?:refs\/heads\/)?(?:main|master)$/i;
+/** One step's clauses: commands joined by `&&`, `||`, `;`, `|`, a line, or prose by ", ", and, then. */
+const CLAUSE_SPLIT_RE = /&&|\|\||[;|\n]|,\s|\s(?:and|then|ve|sonra|ardindan)\s/;
+/** `git push` options that take a value. */
+const PUSH_VALUE_FLAGS = new Set(['-o', '--push-option', '--repo', '--exec', '--receive-pack']);
+
+const clauses = (step: string): string[] => fold(step).split(CLAUSE_SPLIT_RE).map((c) => c.trim()).filter(Boolean);
+const tokens = (s: string): string[] => s.split(/\s+/).map((t) => t.replace(/^["'`]+|["'`]+$/g, '')).filter(Boolean);
+
+interface GitPush { flags: string[]; remote?: string; refspecs: string[] }
+
+/** The `git push` of one clause, parsed, or null when it has none. */
+function gitPush(clause: string): GitPush | null {
+  const m = /(?:^|\s)git\s+push(?:\s+|$)(.*)$/.exec(clause);
+  if (!m) return null;
+  const flags: string[] = [];
+  const pos: string[] = [];
+  const t = tokens(m[1]);
+  for (let i = 0; i < t.length; i++) {
+    const x = t[i];
+    if (x.startsWith('-')) { flags.push(x); if (PUSH_VALUE_FLAGS.has(x)) i++; continue; }
+    pos.push(x);
+  }
+  return { flags, remote: pos[0], refspecs: pos.slice(1) };
+}
+
+/** Where a refspec lands: the part after `:` (empty source = a delete), else the name itself. */
+const refDest = (r: string): string => { const x = r.replace(/^\+/, ''); const i = x.indexOf(':'); return i >= 0 ? x.slice(i + 1) : x; };
 
 /**
- * S2 (b): the step names staging, the ops card's staging host, or a PR into staging.
+ * S2: does the step push onto (or delete, mirror, push all onto) the default branch? The push's own
+ * refspecs decide, never another command in the line (`gh pr create --base main` is no push). A
+ * clause that says "push" in prose without a `git push` counts when it names main or master.
  */
-function namesStaging(step: string, stagingHost: string | null): boolean {
-  const s = step.toLowerCase();
-  if (/(?<![\w-])staging(?![\w-])/.test(s)) return true;
-  if (stagingHost && s.includes(stagingHost.toLowerCase())) return true;
-  return /gh pr create\b[^\n]*--base[ =]staging(?![\w-])/.test(s);
+export function pushesDefault(step: string): boolean {
+  for (const c of clauses(step)) {
+    const p = gitPush(c);
+    if (p) {
+      if (p.flags.some((f) => f === '--mirror' || f === '--all')) return true;
+      if (p.refspecs.some((r) => DEFAULT_BRANCH_RE.test(refDest(r)))) return true;
+      continue;
+    }
+    if (/(?<![\w-])push\w*/.test(c) && !/\bgh\s+pr\b/.test(c) && /(?<![\w/-])(?:origin\/)?(?:main|master)(?![\w/-])/.test(c)) return true;
+  }
+  return false;
 }
+
+/**
+ * S2 (b) for a rule grant: every outward clause is a known staging shape and at least one is. A
+ * `git push` with only `-u`/`--set-upstream`, a remote and ONE refspec landing on `staging`; a
+ * `gh pr create` whose base is staging; a deploy naming the ops card's staging host or a
+ * `staging` token (`--project acme-staging`). A clause that pushes, opens a PR or deploys any
+ * other way refuses the step.
+ */
+function stagingShape(step: string, stagingHost: string | null): boolean {
+  let hit = false;
+  const host = stagingHost ? stagingHost.toLowerCase() : null;
+  for (const c of clauses(step)) {
+    const p = gitPush(c);
+    if (p) {
+      if (p.flags.some((f) => f !== '-u' && f !== '--set-upstream') || !p.remote || p.refspecs.length !== 1) return false;
+      if (refDest(p.refspecs[0]).replace(/^refs\/heads\//, '') !== 'staging' || p.refspecs[0].startsWith(':')) return false;
+      hit = true;
+      continue;
+    }
+    if (/\bgh\s+pr\b/.test(c)) {
+      if (!/\bgh\s+pr\s+create\b/.test(c) || !/(?:--base[ =]|-b\s+)staging(?![\w-])/.test(c)) return false;
+      hit = true;
+      continue;
+    }
+    if (/(?<![\w-])(?:push|deploy)\w*/.test(c)) {
+      if (!(host && c.includes(host)) && !/(?<![a-z0-9])staging(?![a-z0-9])/.test(c)) return false;
+      hit = true;
+    }
+  }
+  return hit;
+}
+
+/** His words with every merge said not to happen taken out. */
+const withoutNegatedMerge = (s: string): string => s.replace(MERGE_NEG_RE, ' ');
 
 export type GrantVerdict = { ok: true; merge?: OutwardMerge } | { ok: false; error: 'outward_out_of_scope'; message: string };
 
 /** May a standing rule with these words grant this step (S2 for `rule`)? Pure. */
 export function ruleCovers(step: string, ruleWords: string, stagingHost: string | null): GrantVerdict {
   const out = (why: string): GrantVerdict => ({ ok: false, error: 'outward_out_of_scope', message: `a standing rule allows only a staging push, PR or deploy: ${why}; anything else is his word in a message, or \`super ask\` him` });
-  if (!RULE_KIND_RE.test(fold(ruleWords))) return out('this rule\'s words name no push, PR, deploy or staging');
+  const rw = fold(ruleWords);
+  if (!RULE_KIND_RE.test(rw)) return out('this rule\'s words name no push, PR, deploy or staging');
+  if (RULE_NEG_RE.test(rw)) return out('this rule\'s words forbid, they do not allow');
   const f = fold(step);
-  if (OUT_OF_SCOPE_RE.test(f) || NEVER_RE.test(f)) return out('the step names production, live, a release, a publish, a merge or a force');
-  if (!namesStaging(step, stagingHost)) return out('the step does not name staging (or the ops card\'s staging host, or a PR into staging)');
+  if (OUT_OF_SCOPE_RE.test(f) || PROD_TOKEN_RE.test(f) || NEVER_RE.test(f) || pushesDefault(step)) return out('the step names production, live, a release, a publish, a merge, a force or the default branch');
+  if (!stagingShape(step, stagingHost)) return out('the step is not one staging push (`git push <remote> <branch>:staging`), a PR into staging or a deploy to the ops card\'s staging');
   return { ok: true };
 }
 
@@ -133,12 +211,12 @@ export function ruleCovers(step: string, ruleWords: string, stagingHost: string 
 export function messageCovers(step: string, words: string | null): GrantVerdict {
   const out = (why: string): GrantVerdict => ({ ok: false, error: 'outward_out_of_scope', message: `${why}; the child never merges locally, never force-pushes and never pushes onto the default branch` });
   const f = fold(step);
-  if (!MERGE_WORD_RE.test(f)) {
-    if (NEVER_RE.test(f)) return out('the step forces, uses --admin or --auto, merges locally or pushes onto the default branch');
+  if (!MERGE_WORD_RE.test(withoutNegatedMerge(f))) {
+    if (NEVER_RE.test(f) || pushesDefault(step)) return out('the step forces, uses --admin or --auto, merges locally or pushes onto the default branch');
     return { ok: true };
   }
   const shape = MERGE_STEP_RE.exec(step.trim());
   if (!shape) return out('a merge is granted only as `gh pr merge <n> --squash|--merge|--rebase [--delete-branch]`');
-  if (!words || !MERGE_VERB_RE.test(fold(words))) return out('his message does not name merging');
+  if (!words || !MERGE_VERB_RE.test(withoutNegatedMerge(fold(words)))) return out('his message does not name merging');
   return { ok: true, merge: { pr: Number(shape[1]), method: shape[2] as OutwardMerge['method'], ...(shape[3] ? { deleteBranch: true } : {}) } };
 }

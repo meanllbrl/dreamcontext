@@ -143,4 +143,15 @@ describe('D7: text the shell ate is refused', () => {
     expect(shellAteField(q('0.50 TL'))).toBeNull();
     expect(shellAteField(q('fiyat ,99 olsun'))).toBe('questions[0].options[0].label');
   });
+
+  // r1 edge-cases-2: the paywall forms after the eaten price (a slash, a bracket, a hyphen suffix).
+  it('an eaten price before /hafta, /ay, /mo, a closing bracket or a -lik suffix is caught', () => {
+    const q = (label: string) => ({ questions: [{ question: 'x', options: [{ label }] }] });
+    for (const label of ['Haftalık ,99/hafta mı?', 'aylık ,99/ay', 'price .99/mo', 'Fiyat (,99) olsun mu', 'Plan ,99-lik', '[,99] paket']) {
+      expect(shellAteField(q(label)), label).toBe('questions[0].options[0].label');
+    }
+    for (const label of ['$6,99/hafta', '(6,99 TL)', '6.99-luk plan', 'v1.25b', 'oran ,5 değil']) {
+      expect(shellAteField(q(label)), label).toBeNull();
+    }
+  });
 });

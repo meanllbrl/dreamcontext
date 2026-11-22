@@ -12,7 +12,7 @@ import {
 import { PhoneHeldError, SuperStoreRefused, isReservedId, keyOfRef, memberOfSuperId, memberTeamCardId, okMember, parseSuperId, parseSuperKey, phoneHeld, readSuperState, superIdOfMember, superKey, superRecordPath, superOfChild, superOfEnded, superOfSession, superWorktreeRoot } from '../../lib/super/store.js';
 import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receipts.js';
 import { JOB_RISKS, type JobContext, type JobRisk, type OwnerWakeOutcome } from '../../lib/super/types.js';
-import { childPolicy, type PolicyVerdict } from '../../lib/model-facts.js';
+import { childPolicy, type PolicyAllowedBy, type PolicyVerdict } from '../../lib/model-facts.js';
 import { ownerPictureOk } from '../../lib/t3-bridge/pictures.js';
 import { batchHasFirstReadDone, closeMemberRequestDraft, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
 import { firstReadLockHeld, mintCrewTicket, mintFirstReadTicket, noteDelegating, releaseFirstReadLock, takeFirstReadLock, vaultDelegating } from '../../lib/super/delegating.js';
@@ -45,7 +45,7 @@ import { findRelayedTurn } from '../../lib/super/owner-relay.js';
 import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval, registerProject } from '../../lib/automations/registry.js';
-import { raiseLaneIntentToFull, writeLaneIntent } from '../../lib/lane-intent.js';
+import { laneIntentAt, raiseLaneIntentToFull, writeLaneIntent } from '../../lib/lane-intent.js';
 import { boardFactLine, opsBlock, readOpsCard } from '../../lib/ops-card.js';
 import { cardKey, REPEATED_NOTE, shellAteField, shellAteMessage } from '../../lib/super/ask-card.js';
 import { startChildHeadless } from '../headless-child.js';
@@ -1203,6 +1203,16 @@ export function referenceLines(r: { paths: string[]; missing: number }): string 
 }
 export const REFERENCE_LINE_HEAD = 'Reference pictures from his messages (match them exactly unless his words say otherwise):';
 export const REFERENCE_PAIRS_LINE = "End with result screenshots at the reference's width, `result-<n>.png` beside `ref/`, and list the pairs in your report.";
+
+/** The child's worktree runs the full lane (a `--full` delegate, `resume|update --full`, or a broken intent file, read as full). */
+function childLaneFull(ch: SuperChild): boolean {
+  return !!ch.worktree && laneIntentAt(ch.worktree)?.intent === 'full';
+}
+
+/** C10: the mode and effort a child already runs and what allowed it, for a later change that does not raise it. */
+function childPrior(ch: SuperChild): { mode: string; effort?: string; allowedBy?: PolicyAllowedBy } {
+  return { mode: ch.mode ?? 'basic', ...(ch.effort ? { effort: ch.effort } : {}), ...(ch.context?.policy?.allowedBy ? { allowedBy: ch.context.policy.allowedBy } : {}) };
+}
 
 /** C3: the delegating Super chat's keys (its pin id and the record's session), plus a `--succeeds`
  *  predecessor's own `delegatedBy`, deduped, at most 8. */
@@ -2462,11 +2472,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const pred = succeeds !== undefined ? c.state.children[succeeds] : undefined;
       if (pred && !str(b.model) && pred.model) job.model = pred.model;
       if (pred && !str(b.effort) && pred.effort) job.effort = pred.effort;
+      // A wrong --risk is refused on every path, the trusted ones too.
+      const rk = riskArg(b);
+      if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
       const trusted = fromRow ? !explicit : pred ? (!!pred.context?.policy && pred.context.policy.model === job.model && pred.context.policy.effort === (job.effort ?? pred.context.policy.effort)) || (!pred.context && !str(b.model) && !str(b.effort)) : false;
       if (!trusted && !(fromRow && !fromRow.context && !explicit)) {
-        const rk = riskArg(b);
-        if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
-        const v = childPolicy({ tool: job.tool, mode: job.mode, model: job.model, effort: job.effort, risk: rk.risk, full: b.full === true || job.laneIntent === 'full' }, jobWords(context));
+        const v = childPolicy({ tool: job.tool, mode: job.mode, model: job.model, effort: job.effort, risk: rk.risk ?? pred?.context?.policy?.risk, full: b.full === true || job.laneIntent === 'full' || (!!pred && childLaneFull(pred)), ...(pred ? { prior: childPrior(pred) } : {}) }, jobWords(context));
         if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
         if (!v.skipped) { job.model = v.model; job.effort = v.effort; context = withPolicy(context, v, context?.origin ? { ref: context.origin.ref, words: context.origin.words, at: context.origin.at } : null); }
       }
@@ -3566,7 +3577,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const rk = riskArg(b);
       if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
       const grant = turnGrant(c, originArg.ref);
-      const v = childPolicy({ tool: ch.tool, mode, model, effort, risk: rk.risk ?? ch.context?.policy?.risk }, jobWords(ch.context, grant),
+      const v = childPolicy({ tool: ch.tool, mode, model, effort, risk: rk.risk ?? ch.context?.policy?.risk, full: childLaneFull(ch), prior: childPrior(ch) }, jobWords(ch.context, grant),
         { lowerOnModeSwitch: !!str(b.mode) && !str(b.effort) && mode !== (ch.mode ?? 'basic'), modelKept: true });
       if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
       if (!v.skipped) { effort = v.effort; policyCtx = withPolicy(ch.context, v, grant); }
@@ -3672,7 +3683,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if ('error' in rk) { refuse(res, 400, 'invalid_args', rk.error); return; }
       const grant = turnGrant(c, originArg.ref);
       const nextMode = mode ?? ch.mode ?? 'basic';
-      const v = childPolicy({ tool: ch.tool, mode: nextMode, model: model ?? ch.model, effort: effort ?? ch.effort, risk: rk.risk ?? ch.context?.policy?.risk },
+      const v = childPolicy({ tool: ch.tool, mode: nextMode, model: model ?? ch.model, effort: effort ?? ch.effort, risk: rk.risk ?? ch.context?.policy?.risk, full: b.full === true || childLaneFull(ch), prior: childPrior(ch) },
         jobWords(ch.context, grant), { lowerOnModeSwitch: !!mode && !effort && nextMode !== (ch.mode ?? 'basic'), modelKept: true });
       if (!v.ok) { refuse(res, 400, v.error, v.message); return; }
       if (!v.skipped) {

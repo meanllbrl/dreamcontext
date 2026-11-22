@@ -26,9 +26,10 @@ export const REPEATED_NOTE = 'attachments of the open card kept';
 
 /**
  * D7: a price the shell ate (`$6,99` sent inside double quotes arrives as `,99`): a comma or dot
- * and two digits, standing alone after a space, a bracket or the start.
+ * and two digits, standing alone after a space, a bracket or the start, followed by anything but a
+ * letter or a digit (`,99/hafta`, `(,99)`, `,99-lik`, `.99/mo`).
  */
-const SHELL_ATE_RE = /(^|[\s(])[,.]\d{2}(?=\s|$|[.,!?;:'’])/u;
+const SHELL_ATE_RE = /(^|[\s(\[])[,.]\d{2}(?![\p{L}\p{N}])/u;
 
 /** The first card text field that reads like text the shell ate, as its path, or null. */
 export function shellAteField(spec: SuperAskSpec): string | null {
