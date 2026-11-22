@@ -159,6 +159,31 @@ describe('agent-chat detach / reattach', () => {
     expect(ws3.frames().some((f) => f.type === 'control_request')).toBe(false);
   });
 
+  it('tells the window which requests stay open whenever one leaves, whoever settled it (split "asking", 2026-11-22)', () => {
+    const { ws, child, id } = startPinned({ prompt: 'job' });
+    const question = (rid: string, tu: string) => ({
+      type: 'control_request', request_id: rid,
+      request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', tool_use_id: tu, input: { questions: [{ question: 'Go?', options: [{ label: 'Yes' }, { label: 'No' }] }] } },
+    });
+    const open = (w: FakeWs) => w.frames().filter((f) => f.type === '_meta' && f.subtype === 'open_requests').map((f) => f.requestIds);
+    child.print(question('q-1', 'tu-1'));
+    child.print(question('q-2', 'tu-2'));
+    // Answered on another surface: the answer frame reaches the process, this window hears it.
+    ws.emit('message', JSON.stringify({ type: 'answer', requestId: 'q-1', behavior: 'allow', updatedInput: {} }));
+    expect(open(ws).at(-1)).toEqual(['q-2']);
+    // The CLI closed the other one itself (its tool_result): gone too.
+    child.print({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-2', content: 'x' }] } });
+    expect(open(ws).at(-1)).toEqual([]);
+    // A turn end says "nothing open" even when nothing was held, and a new socket hears it after the replay.
+    child.print(question('q-3', 'tu-3'));
+    child.print({ type: 'result', subtype: 'success', is_error: false, result: 'ok' });
+    expect(open(ws).at(-1)).toEqual([]);
+    ws.drop();
+    const ws2 = new FakeWs();
+    findLiveChat(id)!.adopt(asWs(ws2));
+    expect(open(ws2)).toEqual([[]]);
+  });
+
   it('adopting while the old socket still looks open (half-open) terminates the old one', () => {
     const { ws, id } = startPinned();
     const ws2 = new FakeWs();
