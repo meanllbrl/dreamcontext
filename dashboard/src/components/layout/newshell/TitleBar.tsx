@@ -7,6 +7,7 @@ import { PhoneChip } from '../../handsfree/phone/PhoneChip';
 import { VaultLogo } from '../VaultLogo';
 import { ProjectPicker, type PickerRow } from './ProjectPicker';
 import { ZoomMenu } from './ZoomMenu';
+import { useBarSqueeze } from './useBarSqueeze';
 
 interface TitleBarProps {
   activeVault: string;
@@ -59,8 +60,12 @@ export function TitleBar({
   // opens the ⌘P picker, then the page tabs; the logo lives in the sidebar. A device shell keeps
   // dev's bar.
   const local = !device;
+  // The menu tabs come first at every width: the sleep tracker and the secondary icons give way.
+  const barRef = useRef<HTMLDivElement>(null);
+  useBarSqueeze(barRef, local, [zoom, activeVault, touch]);
   return (
     <div
+      ref={barRef}
       className="ns-titlebar"
       data-testid="ns-titlebar"
       onMouseDown={startTitleBarDrag}
