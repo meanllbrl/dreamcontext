@@ -84,6 +84,37 @@ export interface Rating {
   status: string;
   project: ProjectRef;
   draft?: ModelState & { noteFold: string };
+  /** Where his rating came from (W3 E5); only Telegram is shown. */
+  via?: 'mac' | 'telegram' | 'super';
+  /** The stars are the Super's reading of his words (E12), never his own number. */
+  judged?: true;
+  /** A job the main Super handed the member (E9): resolved from this snapshot at any age. */
+  viaSuper?: true;
+  /** His words an agent recorded on a run that already had his note (E13): kept beside it. */
+  corrections?: Correction[];
+}
+
+/** E13: his verbatim words, added by an agent beside his own note, with their own lesson slot. */
+export interface Correction {
+  id: string;
+  note: string;
+  noteFold: string;
+  quoteTurn: string;
+  at: string;
+  draft?: ModelState & { noteFold: string };
+}
+
+/** W3 C10: the one Telegram message that carries a run's stars. */
+export interface TgAsk {
+  askId: string;
+  botId: string;
+  chatId: string;
+  endedAt: string;
+  messageId?: number;
+  notePromptIds: number[];
+  at: string;
+  closedAt?: string;
+  sweepTries?: number;
 }
 
 export interface Verdict {
@@ -112,6 +143,8 @@ export interface Lesson {
   status: LessonStatus;
   flags?: string[];
   undoneAt?: string;
+  /** Absent: the rating's note; `c:<id>`: a correction's (W3 C17). */
+  slot?: string;
 }
 
 export interface Goal {
@@ -129,6 +162,8 @@ export interface MemberCard {
   lessons: Lesson[];
   goal: Goal | null;
   usedQuoteTurns: string[];
+  /** W3 C10: run key -> its Telegram request. */
+  telegramAsks: Record<string, TgAsk>;
 }
 
 interface ScorecardFile {
@@ -148,7 +183,7 @@ export class ScorecardRefused extends AutomationError {
 }
 
 export function emptyCard(): MemberCard {
-  return { criteria: [], ratings: {}, checks: {}, lessons: [], goal: null, usedQuoteTurns: [] };
+  return { criteria: [], ratings: {}, checks: {}, lessons: [], goal: null, usedQuoteTurns: [], telegramAsks: {} };
 }
 
 // ─── Scope ─────────────────────────────────────────────────────────────────────
@@ -285,14 +320,48 @@ function readFileOf(scope: ScorecardScope, now: Date = new Date()): Parsed {
 export function normalizeCard(raw: unknown): MemberCard {
   const c = raw && typeof raw === 'object' ? raw as Partial<MemberCard> : {};
   const obj = <T>(v: unknown): Record<string, T> => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, T> : {});
-  return {
+  const card: MemberCard = {
     criteria: Array.isArray(c.criteria) ? c.criteria.filter((x) => x && typeof x.id === 'string' && typeof x.text === 'string') : [],
     ratings: obj<Rating>(c.ratings),
     checks: obj<Check>(c.checks),
     lessons: Array.isArray(c.lessons) ? c.lessons.filter((x) => x && typeof x.id === 'string' && typeof x.text === 'string') : [],
     goal: c.goal && typeof c.goal === 'object' ? c.goal : null,
     usedQuoteTurns: Array.isArray(c.usedQuoteTurns) ? c.usedQuoteTurns.filter((x) => typeof x === 'string') : [],
+    telegramAsks: cleanAsks(obj<unknown>(c.telegramAsks)),
   };
+  for (const r of Object.values(card.ratings)) cleanRating(r);
+  return card;
+}
+
+const isStr = (v: unknown): v is string => typeof v === 'string';
+
+/** Each W3 field shape-checked, so a hand edit can never put a wrong type in front of a reader. */
+function cleanRating(r: Rating): void {
+  if (!r || typeof r !== 'object') return;
+  if (r.via !== undefined && r.via !== 'mac' && r.via !== 'telegram' && r.via !== 'super') delete r.via;
+  if (r.judged !== undefined && r.judged !== true) delete r.judged;
+  if (r.viaSuper !== undefined && r.viaSuper !== true) delete r.viaSuper;
+  if (r.corrections !== undefined) {
+    const list = Array.isArray(r.corrections) ? r.corrections.filter((x) => x && isStr(x.id) && isStr(x.note) && isStr(x.noteFold) && isStr(x.quoteTurn) && isStr(x.at)) : [];
+    for (const x of list) x.note = x.note.slice(0, SCORECARD_LIMITS.noteChars);
+    if (list.length) r.corrections = list; else delete r.corrections;
+  }
+}
+
+function cleanAsks(raw: Record<string, unknown>): Record<string, TgAsk> {
+  const out: Record<string, TgAsk> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const a = v as Partial<TgAsk> | null;
+    if (!a || typeof a !== 'object' || !isStr(a.askId) || !/^[0-9a-f]{16}$/.test(a.askId) || !isStr(a.botId) || !isStr(a.chatId) || !isStr(a.endedAt) || !isStr(a.at)) continue;
+    out[k] = {
+      askId: a.askId, botId: a.botId, chatId: a.chatId, endedAt: a.endedAt, at: a.at,
+      notePromptIds: Array.isArray(a.notePromptIds) ? a.notePromptIds.filter((x): x is number => Number.isInteger(x)) : [],
+      ...(Number.isInteger(a.messageId) ? { messageId: a.messageId } : {}),
+      ...(isStr(a.closedAt) ? { closedAt: a.closedAt } : {}),
+      ...(Number.isInteger(a.sweepTries) ? { sweepTries: a.sweepTries } : {}),
+    };
+  }
+  return out;
 }
 
 export interface CardRead {
@@ -463,6 +532,7 @@ function rekeyCard(card: MemberCard, from: string, to: string): boolean {
   };
   card.ratings = remap(card.ratings);
   card.checks = remap(card.checks);
+  card.telegramAsks = remap(card.telegramAsks);
   for (const l of card.lessons) {
     const nk = rekey(l.run, from, to);
     if (nk !== l.run) { l.run = nk; changed = true; }
@@ -478,6 +548,7 @@ function mergeCards(into: MemberCard, from: MemberCard): MemberCard {
     lessons: [...into.lessons, ...from.lessons.filter((l) => !into.lessons.some((x) => x.id === l.id))],
     goal: into.goal ?? from.goal,
     usedQuoteTurns: [...new Set([...into.usedQuoteTurns, ...from.usedQuoteTurns])],
+    telegramAsks: { ...from.telegramAsks, ...into.telegramAsks },
   };
 }
 
@@ -625,3 +696,30 @@ export function effectiveState<S extends { state: string; lastError?: string; pi
 }
 
 export const TERMINAL_RUN_STATUSES = new Set(['ok', 'failed', 'stopped', 'skipped']);
+
+// ─── Rating requests (W3 E2) ──────────────────────────────────────────────────────
+
+/** A run asks to be rated for 72 hours from its end (owner 22 Nov: "3 gün içerisinde"). */
+export const RATE_ASK_TTL_MS = 72 * 3_600_000;
+
+export type AskState = 'open' | 'rated' | 'none';
+
+/** THE rule every request surface reads (the chat row, Telegram, "N to rate"); mirrored in
+ *  `dashboard/src/lib/scorecardModel.ts` and held equal by a drift test. */
+export function askState(facts: { eligible: boolean; endedAt: string } | null | undefined, rating: unknown, nowMs: number): AskState {
+  if (rating) return 'rated';
+  if (!facts || !facts.eligible) return 'none';
+  const end = Date.parse(facts.endedAt);
+  return Number.isFinite(end) && nowMs < end + RATE_ASK_TTL_MS ? 'open' : 'none';
+}
+
+/** A read-only look (W3 C15): does this member's card hold a rating for this run? Null when the
+ *  member is gone or the card cannot be read. No write, no lock. */
+export function ratingExists(projectRoot: string, member: string, sessionKey: string, home?: string): boolean | null {
+  try {
+    const { scope } = resolveScorecard(projectRoot, member, home);
+    const read = readScorecardAt(scope);
+    if (read.damaged) return null;
+    return !!read.card.ratings[runKeyFor(scope, sessionKeyOf(sessionKey))];
+  } catch { return null; }
+}
