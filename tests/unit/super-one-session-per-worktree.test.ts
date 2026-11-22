@@ -125,7 +125,7 @@ describe('one live session per worktree', () => {
     makeVault({ children: { c1: child('c1', { worktree: wtPath('cift'), branch: 'super/cift' }) }, containers: [card('c1')] });
     linkRepo();
     live('c1');
-    const r = await verb('delegate', { prompt: 'again', worktree: 'product', slug: 'cift', base: 'dev' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'again', worktree: 'product', slug: 'cift', base: 'dev' });
     expect(r.status).toBe(409);
     expect(r.json).toMatchObject({ error: 'worktree_busy', worktreeBusy: true, child: 'c1', branch: 'super/cift' });
     expect(String(r.json.message)).toMatch(/c1/);
@@ -137,14 +137,14 @@ describe('one live session per worktree', () => {
     makeVault({ children: { c1: child('c1', { worktree: wtPath('cift'), branch: 'super/cift' }) }, containers: [card('c1')] });
     linkRepo();
     live('c1');
-    const r = await verb('delegate', { prompt: 'again', worktree: 'product', slug: 'cift', succeeds: 'c1' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'again', worktree: 'product', slug: 'cift', succeeds: 'c1' });
     expect(r.json.error).not.toBe('worktree_busy');
   });
 
   it('an ended child with no process does not hold its worktree', async () => {
     makeVault({ children: { c1: child('c1', { endedAt: 5, worktree: wtPath('cift'), branch: 'super/cift' }) }, containers: [] });
     linkRepo();
-    const r = await verb('delegate', { prompt: 'again', worktree: 'product', slug: 'cift' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'again', worktree: 'product', slug: 'cift' });
     expect(r.json.error).not.toBe('worktree_busy');
   });
 

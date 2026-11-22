@@ -280,6 +280,35 @@ describe('warnings (AC5)', () => {
   });
 });
 
+describe('the usage-limit text reaches him in his words (D12, iyilesme-360)', () => {
+  const LIMIT = "You've hit your 5-hour limit · resets 12am (Europe/Istanbul)";
+  it('the whole text → the Turkish line with 00:00, once; a second limit text with the same reset → nothing', async () => {
+    await start();
+    const { h } = await hisMessage();
+    const n = tg.texts().length;
+    assistant(h, LIMIT);
+    await vi.waitFor(() => expect(tg.texts().slice(n).some((t) => t.includes('Kullanım sınırına geldik'))).toBe(true), { timeout: 5000 });
+    const line = tg.texts().slice(n).find((t) => t.includes('Kullanım sınırına geldik'))!;
+    expect(line).toContain('00:00');
+    expect(line).not.toContain('kaldığı yerden');
+    const second = await hisMessage('devam et');
+    assistant(second.h, LIMIT);
+    await quiet();
+    expect(tg.texts().slice(n).filter((t) => t.includes('Kullanım sınırına geldik'))).toHaveLength(1);
+    expect(tg.texts().slice(n).some((t) => t.includes("You've hit"))).toBe(false);
+  });
+
+  it('a Super report quoting the limit line inside other words goes as written', async () => {
+    await start();
+    const { h, ref } = await hisMessage();
+    const n = tg.texts().length;
+    assistant(h, `<!-- re:${ref} -->\nÇocuk şunu yazdı: "${LIMIT}". Saat 00:00'da sürdüreceğim.`);
+    result(h);
+    await vi.waitFor(() => expect(answers(n).some((t) => t.includes('sürdüreceğim'))).toBe(true), { timeout: 5000 });
+    expect(tg.texts().slice(n).some((t) => t.includes('Kullanım sınırına geldik'))).toBe(false);
+  });
+});
+
 describe('the night (AC7)', () => {
   it("03:00, he is not writing: a job's result waits; at 08:00 it comes in ONE morning message", async () => {
     clock = at(23, 0, 20);

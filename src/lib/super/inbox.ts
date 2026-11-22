@@ -1349,7 +1349,7 @@ async function settleCarried(key: string): Promise<boolean> {
 /** Turns the inbox opened, until the owner's next message: the notch never announces them. */
 const eventTurns = new Set<string>();
 export function markSuperEventTurn(sessionId: string, open: boolean): void {
-  if (open) { eventTurns.add(sessionId); ownerMsgRefs.delete(sessionId); } else eventTurns.delete(sessionId);
+  if (open) { eventTurns.add(sessionId); ownerMsgRefs.delete(sessionId); ownerMsgEntries.delete(sessionId); } else eventTurns.delete(sessionId);
 }
 export function isSuperEventTurn(sessionId: string): boolean {
   return eventTurns.has(sessionId);
@@ -1395,9 +1395,35 @@ const ownerMsgRefs = new Map<string, string>();
 /** When that message ARRIVED (ms): an agenda line links his message by ref + arrival
  *  (ajanda-filtre C1, `SuperPadItem.refs`), so two turns with the same words stay two. */
 const ownerMsgAts = new Map<string, number>();
-export function noteSuperOwnerMsg(sessionId: string, ref: string | null): void {
-  if (ref) { ownerMsgRefs.set(sessionId, ref); ownerMsgAts.set(sessionId, Date.now()); }
-  else { ownerMsgRefs.delete(sessionId); ownerMsgAts.delete(sessionId); }
+/**
+ * His message of the session's CURRENT turn as the server read it (plan iyilesme-360 C8, C10):
+ * its ref, part refs, arrival, his own words (a gist, at most {@link OWNER_MSG_WORDS_MAX}) and the
+ * pictures it carried. Read by the verbs of THIS turn before the debt write lands; dropped with
+ * `ownerMsgRefs` when an event turn opens. A second message mid-turn overwrites it: the first
+ * message's pictures still reach its debt (`superOwnerOwes` reads the full text).
+ */
+export interface OwnerMsgEntry { ref: string; parts: string[]; at: number; words: string; pictures: string[] }
+export const OWNER_MSG_WORDS_MAX = 300;
+const ownerMsgEntries = new Map<string, OwnerMsgEntry>();
+export function noteSuperOwnerMsg(sessionId: string, ref: string | null, more: { parts?: readonly string[]; words?: string; pictures?: readonly string[] } = {}): void {
+  if (ref) {
+    const at = Date.now();
+    ownerMsgRefs.set(sessionId, ref); ownerMsgAts.set(sessionId, at);
+    ownerMsgEntries.set(sessionId, {
+      ref, parts: [...(more.parts ?? [])].filter((p) => MSG_REF_RE.test(p)).slice(0, 16), at,
+      words: (more.words ?? '').replace(/\s+/g, ' ').trim().slice(0, OWNER_MSG_WORDS_MAX),
+      pictures: [...(more.pictures ?? [])].slice(0, 8),
+    });
+  } else { ownerMsgRefs.delete(sessionId); ownerMsgAts.delete(sessionId); ownerMsgEntries.delete(sessionId); }
+}
+/** This turn's message of his (C8), or null in an event turn or after a slash command. */
+export function superOwnerMsgEntry(sessionId: string): OwnerMsgEntry | null {
+  return ownerMsgEntries.get(sessionId) ?? null;
+}
+/** His words of this turn's message, or null. */
+export function superOwnerMsgWords(sessionId: string): string | null {
+  const e = ownerMsgEntries.get(sessionId);
+  return e && e.words ? e.words : null;
 }
 export function superOwnerMsgRef(sessionId: string): string | undefined {
   return ownerMsgRefs.get(sessionId);
@@ -1809,7 +1835,7 @@ export function ownerGist(text: string, lang: OwnerLanguage | null = null): stri
  * The owner's message was WRITTEN into a Super session (typed, phone, dock, a card answer; never a
  * slash command): one `msg` debt, closed only by a section under its ref (or a part ref).
  */
-export function superOwnerOwes(sessionId: string, text: string, now = Date.now(), tgRef?: string | null): Promise<void> {
+export function superOwnerOwes(sessionId: string, text: string, now = Date.now(), tgRef?: string | null, pictures: readonly string[] = []): Promise<void> {
   const root = superKeyOfSession(sessionId);
   if (!root || typeof text !== 'string' || !text.trim() || text.startsWith('/')) return Promise.resolve();
   // "Unclear? Ask again" / "Already answered": the Super answers it with a new card or by acting,
@@ -1823,6 +1849,8 @@ export function superOwnerOwes(sessionId: string, text: string, now = Date.now()
     if (openDebts(s).some((d) => d.kind === 'msg' && d.ref === ref && (d.nudges === 0 || d.parked === 'limit'))) return;
     const d = openMessageDebt(s, text, now, ref);
     d.gist = ownerGist(text, languageOfKey(keyOf(root)));
+    // C8: the pictures he sent with it (checked at intake, S3); a resubmit above keeps the first's.
+    if (pictures.length) d.pictures = [...pictures].slice(0, 8);
   }));
 }
 

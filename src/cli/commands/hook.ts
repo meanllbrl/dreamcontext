@@ -79,6 +79,7 @@ import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-tit
 import { bm25Search, docKey, loadSkillDocs, namedProjectSkills, queryTermCount, RECALL_STRONG_SCORE, strongRecallHit, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { RECALL_QUERY_MIN_CHARS, promptOwnerText, recallQuery, recallTurn, stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { REMEMBER_INTENT_LINE, detectRememberIntent } from '../../lib/remember-intent.js';
+import { nearLimitLine } from '../../lib/super/usage-line.js';
 import {
   actKind, actRefusal, appendToDispatch, deliverForTurn, helperLines, momentLines, newSinceLines, promptSurface, stampSession,
 } from '../../lib/rules-delivery.js';
@@ -3807,6 +3808,15 @@ export function registerHookCommand(program: Command): void {
       const superChat = teamRouteOf(process.env.DREAMCONTEXT_TEAM_ROUTE) === 'super' && !isNestedClaudeHook();
       if (!superChat) {
         console.log(fullBlock('authorization') ? SUBAGENT_DISPATCH_AUTHORIZATION : SUBAGENT_DISPATCH_REMINDER);
+      }
+      // C5 (iyilesme-360 D11): the main Super near its account's limit; one small read, no state.
+      if (!isNestedClaudeHook()) {
+        const usage = nearLimitLine({
+          contextRoot: root,
+          ids: [onceSid, process.env.CLAUDE_CODE_SESSION_ID ?? '', process.env.DREAMCONTEXT_TAB_SESSION ?? ''],
+          configDir: process.env.CLAUDE_CONFIG_DIR,
+        });
+        if (usage) console.log(usage);
       }
 
       // What the owner wrote, without what a machine wrapped around it (audit MM-1). Null `query`:

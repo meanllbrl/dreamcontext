@@ -8,6 +8,7 @@ import { ANSWER_FOLD_AT, foldAnswer, markdownToTelegramHtml, telegramHtmlToPlain
 import { jobStatusHtml, JOB_STATUS_MAX } from '../../src/lib/telegram/system-lines.js';
 import { TELEGRAM_WRITING_RULE } from '../../src/lib/telegram/writing.js';
 import { SUPER_TELEGRAM_LINE } from '../../src/server/chat-modes.js';
+import { isApiErrorText, limitLine, limitTextReset, resetClock } from '../../src/server/telegram/sade.js';
 
 /** What shows with every folded quote closed. */
 const openText = (html: string): string => telegramHtmlToPlain(html.replace(/<blockquote expandable>[\s\S]*?<\/blockquote>/g, ''));
@@ -177,3 +178,22 @@ describe('what counts as a line between tool calls (AC2)', () => {
     expect(mergeHeld('Evet, bu normal.', 'Kart düştü.', true)).toBe('Evet, bu normal.\n\nKart düştü.');
   });
 });
+
+describe('D12: the limit form, anchored (iyilesme-360)', () => {
+  it('reads the whole limit text and its reset; a quote inside other words is no limit text', () => {
+    expect(limitTextReset("You've hit your 5-hour limit · resets 12am (Europe/Istanbul)")).toEqual({ reset: '12am', zone: 'Europe/Istanbul' });
+    expect(limitTextReset("You've hit your weekly limit · resets 3:30pm")).toMatchObject({ reset: '3:30pm' });
+    expect(limitTextReset("Çocuk şunu yazdı: You've hit your 5-hour limit · resets 12am")).toBeNull();
+    expect(limitTextReset('API Error: 529 overloaded')).toBeNull();
+    expect(isApiErrorText("You've hit your 5-hour limit · resets 12am")).toBe(false);
+  });
+  it('the clock and the line', () => {
+    expect(resetClock('12am')).toBe('00:00');
+    expect(resetClock('12pm')).toBe('12:00');
+    expect(resetClock('3:30pm')).toBe('15:30');
+    expect(resetClock('Monday')).toBeNull();
+    expect(limitLine('00:00', false)).toBe("Kullanım sınırına geldik; iş durdu. Sınır saat 00:00'de açılıyor.");
+    expect(limitLine(null, true)).toBe('Kullanım sınırına geldik; iş durdu. Açılınca kaldığı yerden sürüyor.');
+  });
+});
+

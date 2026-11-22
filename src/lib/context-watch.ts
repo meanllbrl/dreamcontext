@@ -357,6 +357,9 @@ function k(tokens: number): string {
  * message that repeats twice as often reads as broken rather than as urgent, and the
  * severe band already gets an extra nudge at the crossing (see `shouldNudge`).
  */
+/** The first line of a taskless Super child's hand-back reply (D18): the Super reads it as "start a successor". */
+export const TASKLESS_HANDOFF_MARK = 'HANDOFF:';
+
 export function renderNudge(
   contextTokens: number,
   cfg: ResolvedContextHandoff,
@@ -394,6 +397,17 @@ export function renderNudge(
       : 'It writes all of that into the task as one changelog entry and refuses while any part is missing; a fresh session picks the task up from that entry, with the handoff pinned.';
 
   const childLine = opts.child ? superChildNudgeLine(opts.child, jobRecord) : '';
+  // D18 (iyilesme-360): a taskless child at the hard band hands its job back NOW, in a reply the
+  // Super can hand to a fresh session (`super delegate --succeeds`); measured, "finish small work
+  // here" kept 26 of 34 such children going past 300k. The firm band keeps its text.
+  if (tone === 'severe' && jobRecord) {
+    return [
+      `[context handoff — HAND OFF NOW] This session is carrying ~${k(contextTokens)} context tokens: past ${k(cfg.hardAt)}, the last band of the window. Every turn re-reads all of it, so you are paying roughly 2–3× for work a fresh session would do at full speed.`,
+      '',
+      `End this turn now with your whole state in your reply, its first line \`${TASKLESS_HANDOFF_MARK}\`: what is done with its evidence, the exact next step, the decisions made, the files in flight, and the path of the brief file you were given. The Super continues the job in a fresh session from that reply.`,
+      childLine,
+    ].filter((l) => l !== '').join('\n');
+  }
   const lines = tone === 'severe'
     ? [
       `[context handoff — HAND OFF NOW] This session is carrying ~${k(contextTokens)} context tokens: past ${k(cfg.hardAt)}, the last band of the window. Every turn re-reads all of it, so you are paying roughly 2–3× for work a fresh session would do at full speed.`,

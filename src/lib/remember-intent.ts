@@ -28,6 +28,12 @@ const EXPLICIT: RegExp[] = [
   new RegExp(`${START}(hafızana|hafizana|beynine|kurallarına|kurallarina|tercihlerime)\\s+(yaz|kaydet|al|ekle|işle|isle)${END}`, 'u'),
   new RegExp(`${START}bundan (sonra|böyle|boyle)\\s+(hep|her zaman|daima|asla|hiç|hic|hiçbir zaman|hicbir zaman)${END}`, 'u'),
   new RegExp(`${START}(bir daha|bir daha asla)\\s+(bunu\\s+|böyle\\s+|boyle\\s+|şunu\\s+)?([${L}]+\\s+)?(yapma|etme|yazma|kullanma|söyleme|soyleme|sorma|açma|acma)${END}`, 'u'),
+  // Third person, as he says it about an agent or a member (D4): each needs the object pronoun,
+  // "bir daha" or "kendini", so "öğrenci öğrensin diye" and "bir daha bakarız" stay quiet.
+  new RegExp(`${START}(bunu|bunları|bunlari|şunu|sunu|şunları|sunlari)\\s+(da\\s+|de\\s+|iyice\\s+)?(öğrensin|ogrensin|öğrenmeli|ogrenmeli)${END}`, 'u'),
+  new RegExp(`${START}(bunu\\s+)?bir daha\\s+(asla\\s+)?(bunu\\s+|böyle\\s+|boyle\\s+)?(yapmasın|yapmasin|yapmamalı|yapmamali)${END}`, 'u'),
+  new RegExp(`${START}kendini\\s+(eğitsin|egitsin|geliştirsin|gelistirsin|düzeltsin|duzeltsin)${END}`, 'u'),
+  new RegExp(`${START}(aklında|aklinda)\\s+tutsun${END}`, 'u'),
   new RegExp(`${START}(bu|şu|su) (bir )?(kural|tercihim)(dır|dir|dur)?${END}`, 'u'),
   new RegExp(`${START}kalıcı (olarak|bir kural)${END}`, 'u'),
   // English

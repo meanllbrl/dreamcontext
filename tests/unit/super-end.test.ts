@@ -489,7 +489,7 @@ describe('end review round 1 fixes', () => {
       },
       vault: 'acme', contextRoot: root, sessionId: SUPER, mode: 'super',
     }).token;
-    const r = await verb('resume', { child: 'c2', mode: 'develop', effort: 'high' });
+    const r = await verb('resume', { child: 'c2', mode: 'develop', effort: 'high', risk: 'migration' });
     expect(r.status).toBe(200);
     expect(r.json.result).toMatchObject({ mode: 'basic', model: 'opus' });
     expect(String((r.json.result as { note?: string }).note)).toMatch(/mode, effort/);

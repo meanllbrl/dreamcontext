@@ -107,8 +107,8 @@ describe('the new verbs need the vault\'s super token; the hand-over gates ask, 
   it('not handed over: ask, pool-add, delegate are 409 not_handed_over; pool-list still answers', async () => {
     write({ enabled: false });
     expect((await verb('ask', { text: 'which one?' })).json.error).toBe('not_handed_over');
-    expect((await verb('pool-add', { prompt: 'later' })).json.error).toBe('not_handed_over');
-    expect((await verb('delegate', { prompt: 'now' })).json.error).toBe('not_handed_over');
+    expect((await verb('pool-add', { model: 'sonnet', prompt: 'later' })).json.error).toBe('not_handed_over');
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'now' })).json.error).toBe('not_handed_over');
     expect((await verb('pool-list')).status).toBe(200);
     expect(commands()).toHaveLength(0);
   });
@@ -117,11 +117,11 @@ describe('the new verbs need the vault\'s super token; the hand-over gates ask, 
 describe('pool add | remove | list', () => {
   it('adds, lists fenced without the prompt, keeps the same prompt once, removes', async () => {
     write();
-    const a = await verb('pool-add', { prompt: 'Write the users migration.', brief: 'users migration', note: 'after the auth job' });
+    const a = await verb('pool-add', { model: 'sonnet', prompt: 'Write the users migration.', brief: 'users migration', note: 'after the auth job' });
     expect(a.status).toBe(200);
     const id = result(a).pooled as string;
     expect(id).toMatch(/^p-/);
-    expect(result(await verb('pool-add', { prompt: 'Write the users migration.' }))).toEqual({ pooled: id, reused: true });
+    expect(result(await verb('pool-add', { model: 'sonnet', prompt: 'Write the users migration.' }))).toEqual({ pooled: id, reused: true });
     const list = result(await verb('pool-list')).pool as Array<Record<string, unknown>>;
     expect(list).toHaveLength(1);
     expect(list[0].prompt).toBeUndefined();
@@ -142,9 +142,9 @@ describe('pool add | remove | list', () => {
 
   it('a prompt over 16 KB is refused; a full pool keeps nothing and says so', async () => {
     write();
-    expect((await verb('pool-add', { prompt: 'x'.repeat(MAX_POOL_PROMPT + 1) })).json.error).toBe('too_large');
-    for (let i = 0; i < MAX_POOL; i += 1) expect((await verb('pool-add', { prompt: `job ${i}` })).status).toBe(200);
-    const full = await verb('pool-add', { prompt: 'one too many' });
+    expect((await verb('pool-add', { model: 'sonnet', prompt: 'x'.repeat(MAX_POOL_PROMPT + 1) })).json.error).toBe('too_large');
+    for (let i = 0; i < MAX_POOL; i += 1) expect((await verb('pool-add', { model: 'sonnet', prompt: `job ${i}` })).status).toBe(200);
+    const full = await verb('pool-add', { model: 'sonnet', prompt: 'one too many' });
     expect(full.status).toBe(409);
     expect(full.json.error).toBe('pool_full');
     expect(String(full.json.message ?? full.json.hint ?? JSON.stringify(full.json))).toMatch(/NOT kept/);
@@ -155,22 +155,22 @@ describe('pool add | remove | list', () => {
 describe('a capped delegate keeps its job', () => {
   it('held -> pooled (kept: true, held), the same prompt again reuses the row, a full pool keeps nothing', async () => {
     fillCap();
-    const r = await verb('delegate', { prompt: 'one more' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'one more' });
     expect(r.status).toBe(409);
     expect(r.json).toMatchObject({ error: 'held', kept: true, reused: false });
     const pooled = r.json.pooled as string;
     expect((await readSuperState(root)).pool).toEqual([expect.objectContaining({ id: pooled, held: true })]);
-    expect((await verb('delegate', { prompt: 'one more' })).json).toMatchObject({ pooled, reused: true });
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'one more' })).json).toMatchObject({ pooled, reused: true });
     expect((await readSuperState(root)).pool).toHaveLength(1);
-    for (let i = 1; i < MAX_POOL; i += 1) await verb('pool-add', { prompt: `fill ${i}` });
+    for (let i = 1; i < MAX_POOL; i += 1) await verb('pool-add', { model: 'sonnet', prompt: `fill ${i}` });
     // Not kept is never `held` ("it waits its turn"): soru-azaltma open note, 2026-11-19.
-    expect((await verb('delegate', { prompt: 'no room' })).json).toMatchObject({ error: 'pool_full', kept: false, held: false });
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'no room' })).json).toMatchObject({ error: 'pool_full', kept: false, held: false });
     expect(commands()).toHaveLength(0);
   });
 
   it('a job too large for the pool is not_kept, never held (soru-azaltma open note)', async () => {
     fillCap();
-    const r = await verb('delegate', { prompt: 'x'.repeat(MAX_POOL_PROMPT + 1) });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'x'.repeat(MAX_POOL_PROMPT + 1) });
     expect(r.status).toBe(409);
     expect(r.json).toMatchObject({ error: 'not_kept', held: false, kept: false });
     expect(String(r.json.message ?? JSON.stringify(r.json))).toMatch(/did NOT start/);
@@ -181,8 +181,8 @@ describe('a capped delegate keeps its job', () => {
 describe("a member Super's held job keeps whose work it is (owner 2026-11-15, the helpers strip)", () => {
   it('a pool row\'s workOrigin survives the read; a malformed one is dropped', async () => {
     write();
-    const a = result(await verb('pool-add', { prompt: 'for main', brief: 'a' })).pooled as string;
-    const b = result(await verb('pool-add', { prompt: 'bad origin', brief: 'b' })).pooled as string;
+    const a = result(await verb('pool-add', { model: 'sonnet', prompt: 'for main', brief: 'a' })).pooled as string;
+    const b = result(await verb('pool-add', { model: 'sonnet', prompt: 'bad origin', brief: 'b' })).pooled as string;
     const raw = JSON.parse(readFileSync(join(root, SUPER_STATE_REL), 'utf-8'));
     for (const p of raw.pool) p.workOrigin = p.id === a ? 'main:q-mwh256q5-59d58295' : 'somebody else';
     writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(raw));
@@ -202,7 +202,7 @@ describe("a member Super's held job keeps whose work it is (owner 2026-11-15, th
 
 describe('delegate --from', () => {
   async function pooled(prompt = 'Pooled job.'): Promise<string> {
-    return result(await verb('pool-add', { prompt, brief: 'pooled' })).pooled as string;
+    return result(await verb('pool-add', { model: 'sonnet', prompt, brief: 'pooled' })).pooled as string;
   }
 
   it('Havuz -> Calisiyor in ONE write: the child is recorded working and the row is gone', async () => {
@@ -281,14 +281,14 @@ describe('--task', () => {
     symlinkSync(join(dir, 'outside.md'), join(root, 'state', 'linked.md'));
     writeFileSync(join(root, 'state', 'real-task.md'), '---\nname: real\n---\n');
     for (const task of ['missing-task', 'linked', '../escape', 'UPPER']) {
-      expect((await verb('delegate', { prompt: 'x', task })).status, task).toBeGreaterThanOrEqual(400);
-      expect((await verb('pool-add', { prompt: 'x', task })).status, task).toBeGreaterThanOrEqual(400);
+      expect((await verb('delegate', { model: 'sonnet', prompt: 'x', task })).status, task).toBeGreaterThanOrEqual(400);
+      expect((await verb('pool-add', { model: 'sonnet', prompt: 'x', task })).status, task).toBeGreaterThanOrEqual(400);
       expect((await verb('brief', { child: CHILD_SID, line: 'doing x', task })).status, task).toBeGreaterThanOrEqual(400);
     }
     expect(commands()).toHaveLength(0);
     expect((await verb('brief', { child: CHILD_SID, line: 'doing x', task: 'real-task' })).status).toBe(200);
     expect((await readSuperState(root)).children[CHILD_SID].task).toBe('real-task');
-    expect((await verb('delegate', { prompt: 'linked job', task: 'real-task' })).status).toBe(200);
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'linked job', task: 'real-task' })).status).toBe(200);
   });
 });
 

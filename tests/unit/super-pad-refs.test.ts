@@ -141,7 +141,7 @@ describe('delegate --note and send link his message', () => {
   it('delegate in his turn starts the line\'s thread; a later send to that job adds the new message', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: 2_000_000 });
     const at1 = ownerWrites(ASK);
-    expect((await verb('delegate', { prompt: 'Answer the Orbit inbox', brief: 'Orbit inbox', mode: 'basic', note: 'Orbit inbox job' })).status).toBe(200);
+    expect((await verb('delegate', { model: 'sonnet', prompt: 'Answer the Orbit inbox', brief: 'Orbit inbox', mode: 'basic', note: 'Orbit inbox job' })).status).toBe(200);
     expect((await lineByText('Orbit inbox job'))).toMatchObject({ for: CHILD, refs: [{ ref: msgRef(ASK), at: at1 }] });
 
     registerChat({ sessionId: CHILD, conversationId: null, vault: 'acme', mode: 'basic' });

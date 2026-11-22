@@ -28,6 +28,7 @@
  * Super (`superOf`). The manager goes through `manager.ts`.
  */
 import { appendOpenLog } from '../../lib/window-open-log.js';
+import { findLiveChat } from '../routes/agent-chat-live.js';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -71,7 +72,7 @@ import { hasHiddenChars, showHiddenChars } from '../../lib/hidden-chars.js';
 import { escapeHtml, redactSecrets, showsAsWritten, splitReplySections, stripReplyMarks, toTelegramMessages } from '../../lib/telegram/format.js';
 import { SILENT, cardAbout, closedCardHtml, jobStatusHtml, noticeHtml, permissionHtml, voiceEchoHtml, type NoticeKind } from '../../lib/telegram/system-lines.js';
 import {
-  API_DOWN_LINE, HELD_CAP_MS, NOTICE_ONCE_MS, OWNER_ACTIVE_MS, TEXT_GRACE_MS, agendaPinHtml, asksForText, dayOf, isApiErrorText, isNight,
+  API_DOWN_LINE, HELD_CAP_MS, limitLine, limitTextReset, nextOccurrence, resetClock, NOTICE_ONCE_MS, OWNER_ACTIVE_MS, TEXT_GRACE_MS, agendaPinHtml, asksForText, dayOf, isApiErrorText, isNight,
   mergeHeld, nightDigestMarkdown, picturesOnly, statusBlocks, voiceFromText, chatterRemains, isOnlyMarks, type StatusBlock,
 } from './sade.js';
 import { formatAskCardMessages, formatAskQuestionHtml, withDrawingNotes } from '../../lib/telegram/ask-format.js';
@@ -363,6 +364,9 @@ export class TelegramHub implements TelegramHubApi {
   private statusChains = new Map<string, Promise<boolean>>();
   /** Per bot: the agenda pin's look in progress (`refreshPin` runs one at a time). */
   private pinChains = new Map<string, Promise<void>>();
+  /** D12: `${binding}|limit|${reset}` keys whose Turkish limit line went (in memory: a restart
+   *  inside the same reset may say it once more). */
+  private readonly limitSeen = new Set<string>();
   /** `${binding}|${sentence}` → when that notice last went (`noticeOnce`). */
   private noticeSeen = new Map<string, number>();
   /** Per binding: the day he asked for voice there (`dayOf`), until he asks for text. */
@@ -1975,6 +1979,25 @@ export class TelegramHub implements TelegramHubApi {
     const ask = this.askInTurn.get(sessionId);
     const turn = turnOf(sessionId);
     const cards = this.textsSent.cardsOf(sessionId, turn);
+    // D12: the usage-limit text, as the whole text, reaches him as one Turkish line, once per
+    // (binding, reset); no model turn. A report that quotes it inside other words goes as written.
+    const limit = limitTextReset(raw);
+    if (limit) {
+      this.queueSend(sessionId, async () => {
+        const ab = this.bindingOfSession(sessionId);
+        if (!ab || ab.disabled || !(this.onTelegram(ab) || this.telegramTurnOf(sessionId))) return false;
+        const clock = resetClock(limit.reset);
+        const key = `${ab.key}|limit|${clock ? nextOccurrence(clock, this.now()) : limit.reset}|${limit.zone}`;
+        if (this.limitSeen.has(key)) return false;
+        this.limitSeen.add(key);
+        if (this.limitSeen.size > 200) this.limitSeen.delete(this.limitSeen.values().next().value as string);
+        const resumes = findLiveChat(sessionId)?.resumeArmed?.() === true;
+        const landed = await this.send(ab, noticeHtml('warn', limitLine(clock, resumes)), {}).then(() => true, () => false);
+        if (!landed) this.limitSeen.delete(key);
+        return landed;
+      });
+      return;
+    }
     // A raw model or network error is never words for him: one plain sentence, once a day.
     if (isApiErrorText(raw)) {
       this.queueSend(sessionId, async () => {

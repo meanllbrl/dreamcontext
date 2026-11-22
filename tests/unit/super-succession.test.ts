@@ -168,7 +168,7 @@ describe('super delegate --succeeds', () => {
   it('an idle predecessor is ended and its card is the successor\'s', async () => {
     makeVault();
     live('c1');
-    const r = await verb('delegate', { prompt: 'continue the db work', succeeds: 'c1' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'continue the db work', succeeds: 'c1' });
     expect(r.status).toBe(200);
     expect(r.json.result).toMatchObject({ sessionId: 'n1', container: containerIdFor('chat', 'n1'), predecessor: { child: 'c1', ended: true } });
     const s = await readSuperState(root);
@@ -183,7 +183,7 @@ describe('super delegate --succeeds', () => {
   it('a busy predecessor is told to stop at once (steered), and super state warns until it ends', async () => {
     makeVault();
     live('c1', { busy: true });
-    const r = await verb('delegate', { prompt: 'continue the db work', succeeds: 'c1' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'continue the db work', succeeds: 'c1' });
     expect(r.json.result).toMatchObject({ predecessor: { child: 'c1', ended: false, reason: 'busy', told: 'steered' } });
     expect(frames.find((f) => f.verb === 'send')?.args).toEqual({ tab: 'c1', text: SUCCESSOR_STOP_TEXT });
     const st = await verb('state', {});
@@ -199,7 +199,7 @@ describe('super delegate --succeeds', () => {
       id: 'c1', kind: 'chat', projectRoot: dir, exempt: () => null, busy: () => busy, asking: () => false,
       backgroundTasks: () => 0, idleSince: () => 0, focusedAt: () => 0, park: async () => 'parked',
     });
-    await verb('delegate', { prompt: 'continue', succeeds: 'c1' });
+    await verb('delegate', { model: 'sonnet', prompt: 'continue', succeeds: 'c1' });
     expect((await readSuperState(root)).children.c1.endedAt).toBeUndefined();
     busy = false;
     expect(await endSucceededChild(root, 'c1')).toBe(true);
@@ -214,14 +214,14 @@ describe('super delegate --succeeds', () => {
     raw.children.c2.adopted = true;
     writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify(raw));
     resetSuperIndex();
-    const r = await verb('delegate', { prompt: 'x', succeeds: 'c2' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'x', succeeds: 'c2' });
     expect(r.status).toBe(409);
     expect(frames).toHaveLength(0);
   });
 
   it('refuses a --succeeds that names none of its children, before any child starts', async () => {
     makeVault();
-    const r = await verb('delegate', { prompt: 'x', succeeds: 'nope' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'x', succeeds: 'nope' });
     expect(r.status).toBe(404);
     expect(frames).toHaveLength(0);
   });

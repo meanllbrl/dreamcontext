@@ -212,7 +212,7 @@ describe('the Super\'s side', () => {
     mkdirSync(join(dir, 'away2'));
     symlinkSync(join(dir, 'away2'), superAgendaDaysDir(root));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = await verb('delegate', { prompt: 'Build the Acme page.', brief: 'Acme page', note: 'Acme page build' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'Build the Acme page.', brief: 'Acme page', note: 'Acme page build' });
     expect(r.status).toBe(200);
     const out = r.json.result as Record<string, unknown>;
     expect(out.sessionId).toBe(KID);

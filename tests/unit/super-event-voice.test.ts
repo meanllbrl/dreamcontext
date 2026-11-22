@@ -305,7 +305,7 @@ describe('delegate marks a job awaited only in the owner\'s own turn', () => {
     const out = { status: 0 } as ServerResponse & { status: number };
     (out as unknown as { writeHead: (s: number) => void }).writeHead = (s: number) => { out.status = s; };
     (out as unknown as { end: () => void }).end = () => undefined;
-    await handleSuperVerb(req({ prompt: 'Check why the student count is low.', brief: 'student count' }), out, { verb: 'delegate' });
+    await handleSuperVerb(req({ model: 'sonnet', prompt: 'Check why the student count is low.', brief: 'student count' }), out, { verb: 'delegate' });
     return out.status;
   }
 

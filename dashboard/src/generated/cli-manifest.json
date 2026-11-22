@@ -4290,11 +4290,13 @@
         "--note",
         "--origin",
         "--outward",
+        "--rule",
         "--for",
         "--brief",
         "--mode",
         "--model",
         "--effort",
+        "--risk",
         "--worktree",
         "--slug",
         "--base",
@@ -4452,10 +4454,12 @@
         "--note",
         "--origin",
         "--outward",
+        "--rule",
         "--brief",
         "--mode",
         "--model",
         "--effort",
+        "--risk",
         "--worktree",
         "--slug",
         "--base",
@@ -4545,6 +4549,7 @@
         "--mode",
         "--model",
         "--effort",
+        "--risk",
         "--origin"
       ]
     },
@@ -4729,7 +4734,9 @@
       "valueFlags": [
         "--mode",
         "--model",
-        "--effort"
+        "--effort",
+        "--risk",
+        "--origin"
       ]
     },
     {

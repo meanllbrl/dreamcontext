@@ -117,6 +117,14 @@ describe('hostile fields are dropped (D2)', () => {
     expect(kept.children['c-1']).toMatchObject({ worktree: good, branch: 'super/acme-login' });
   });
 
+  it('delegatedBy keeps unique non-empty string keys, at most 8 (C3, iyilesme-360)', () => {
+    const keys = ['pin-super', 'pin-super', '', 7, 'x'.repeat(201), ...Array.from({ length: 10 }, (_, i) => `k${i}`)];
+    const s = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { delegatedBy: keys }) } }), { home });
+    expect(s.children['c-1'].delegatedBy).toEqual(['pin-super', 'k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6']);
+    const none = sanitizeSuperState(raw({ children: { 'c-1': child('c-1', { delegatedBy: 'pin-super' }) } }), { home });
+    expect(none.children['c-1'].delegatedBy).toBeUndefined();
+  });
+
   it('a branch outside super/* is dropped with its worktree', () => {
     const worktree = join(home, '.claude-worktrees', 'acme-login');
     for (const branch of ['main', 'super/', 'super/../main', 'super/Upper', 'super/a b', '-c core.hooksPath=x', `super/${'a'.repeat(61)}`, 'refs/heads/super/x']) {

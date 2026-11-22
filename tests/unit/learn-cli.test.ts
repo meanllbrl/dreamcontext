@@ -168,6 +168,30 @@ describe('learn: idempotency (criterion 1)', () => {
     expect(v.status).toBe('active');
   });
 
+  it('a session that is no child quoting the Super\'s chat: proposed (D3)', () => {
+    const r = run('Run the linter before every push', { scope: 'project', quote: [LINT_QUOTE] }, ctx({ CLAUDE_CODE_SESSION_ID: 'sess-stray' }, [turn(LINT_OWN)]));
+    expect(r.status).toBe('proposed');
+  });
+
+  it('a Super child quoting its Super\'s chat: active (D3), a Codex child found by DREAMCONTEXT_TAB_SESSION', () => {
+    writeFileSync(join(root, 'state', '.super-agent.json'), JSON.stringify({ children: { 'tab-child': { sessionId: 'tab-child', delegatedBy: ['pin-super'] } } }));
+    const codexEnv = { DREAMCONTEXT_AGENT_TOOL: 'codex', DREAMCONTEXT_TAB_SESSION: 'tab-child', CODEX_THREAD_ID: 'thr-1' };
+    expect(run('Run the linter before every push', { scope: 'project', quote: [LINT_QUOTE] }, ctx(codexEnv, [turn(LINT_OWN)])).status).toBe('active');
+  });
+
+  it('a child whose Super rotated still finds the words typed before (D3)', () => {
+    writeFileSync(join(root, 'state', '.super-agent.json'), JSON.stringify({ session: 'pin-super-2', children: { 'sess-child': { delegatedBy: ['pin-super', 'sess-super-1'] } } }));
+    expect(run('Run the linter before every push', { scope: 'project', quote: [LINT_QUOTE] }, ctx(CHILD_ENV, [turn(LINT_OWN)])).status).toBe('active');
+  });
+
+  it('a member Super\'s child quoting its member Super\'s relayed words: active (D3)', () => {
+    mkdirSync(join(root, 'state', '.super', 'members'), { recursive: true });
+    writeFileSync(join(root, 'state', '.super', 'members', 'scout.json'), JSON.stringify({ children: { 'sess-child': { delegatedBy: ['pin-scout'] } } }));
+    const relayed = turn(LINT_OWN, { keys: ['pin-scout'], session: 'pin-scout', relay_of: 'turn-0' });
+    const r = run('Run the linter before every push', { scope: 'project', quote: [LINT_QUOTE] }, ctx(CHILD_ENV, [relayed]));
+    expect(r.status).toBe('active');
+  });
+
   it('a near-twin with no --same, --replaces or --new is refused with the candidates', () => {
     const first = run('Run the linter before every push', { scope: 'project', quote: [LINT_QUOTE] }, ctx(SUPER_ENV, [turn(LINT_OWN)]));
     const later = turn('Run the linter before each push to the repo, I keep saying it.', { session: 'sess-super-2' });

@@ -48,7 +48,9 @@ describe('the briefing carries the jarvis sections and its revision', () => {
       // The owner: xhigh for a truly important plan that must think through edge cases; else what fits.
       expect(t).toContain('`xhigh` only for a critical plan whose risk is edge cases');
       expect(t).toContain('never develop');
-      expect(t).toContain('Develop `medium`; `high` for security, money\n  or data migration');
+      // rev 59 (2026-11-22, iyilesme-360 D19): the high develop row names its --risk.
+      expect(t).toContain('Develop `medium`; security, money or data migration develop `--effort high --risk <kind>`');
+      expect(t).toContain('`--risk contract|money|migration|security`');
       expect(t).toContain('brain chores: `--model sonnet`');
       expect(t).not.toContain('the default is high, medium in basic');
     }

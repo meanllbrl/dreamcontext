@@ -265,7 +265,7 @@ describe('the Super\'s verbs on a live job', () => {
 
   it('delegate on a full stage: the new job floats, the oldest picture goes to Others', async () => {
     write({ containers: Array.from({ length: MAX_FLOAT }, (_, i) => pic(i)) });
-    const r = await verb('delegate', { prompt: 'do the thing', brief: 'thing' });
+    const r = await verb('delegate', { model: 'sonnet', prompt: 'do the thing', brief: 'thing' });
     expect(r.status).toBe(200);
     const s = await readSuperState(root);
     expect(s.containers.find((c) => c.ref === CHILD)?.place).toBe('float');

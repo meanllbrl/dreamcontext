@@ -847,6 +847,12 @@ export interface SuperChild {
   /** The push, PR or deploy his own message named that this child was told it may run
    *  (`delegate --outward`, outward.ts); a `--succeeds` successor carries it on. */
   outward?: OutwardGrant;
+  /** C3 (plan iyilesme-360 D3): the conversation keys of the Super chat that delegated it (its pin
+   *  id and the record's session), stamped at delegate, copied on `--succeeds`. `learn` in this
+   *  child treats a quote of that chat as "here" (owner-quote.ts delegatingKeys). At most 8. */
+  delegatedBy?: string[];
+  /** C11: what its job was accepted with (origin, pictures, policy); `--succeeds` inherits it. */
+  context?: JobContext;
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -1606,6 +1612,30 @@ export const TEAM_JOB_ID_RE = /^team-[a-z0-9-]{1,35}$/;
  * takes it; `startedIn`/`startedBranch` name the worktree a `delegate --from` that the window did
  * not confirm may have opened (`maybeStarted`).
  */
+/**
+ * C11 (plan iyilesme-360): what a job was accepted with, resolved once at acceptance (`delegate`,
+ * `pool add`, the capacity keep) and carried by its pool row and its child: the owner message it
+ * answers and the pictures that ride with it (C8, D8). `policy` (C10) is written by the model and
+ * effort check. A row or child without it (made before this build) starts as today.
+ */
+export interface JobContext {
+  origin?: { ref: string; at: number; words: string };
+  /** Absolute paths under the project's `tmp/agent-drops/`, at most 8. */
+  pictures: string[];
+  policy?: JobPolicy;
+}
+/** C10: the settings the job is allowed to run with and what allowed them. */
+export interface JobPolicy {
+  model: string;
+  effort: string;
+  risk?: JobRisk;
+  allowedBy: 'flags' | 'risk' | 'full' | 'words';
+  /** His words that allowed a setting (newest last, at most 4). */
+  grants: Array<{ ref: string; words: string; at: number }>;
+}
+export const JOB_RISKS = ['security', 'money', 'migration', 'contract'] as const;
+export type JobRisk = typeof JOB_RISKS[number];
+
 export interface SuperPoolItem {
   id: string;
   title: string;
@@ -1628,6 +1658,8 @@ export interface SuperPoolItem {
   /** The push, PR or deploy his own message named, checked when the job was kept (outward.ts):
    *  it starts with the job, however late, never re-read from the owed ledger. */
   outward?: OutwardGrant;
+  /** C11: what the job was accepted with; a reused row (same prompt) takes the new one's. */
+  context?: JobContext;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A member Super's job kept at its cap: whose work it does (as its child's `workOrigin`), so
@@ -1747,6 +1779,9 @@ export interface SuperOwed {
   parked?: 'stop' | 'limit';
   parkedAt?: number;
   closed?: { at: number; by: 'mark' | 'owner' | 'takeback' };
+  /** C8 (plan iyilesme-360 D8): a `msg` debt's pictures (absolute paths under the project's
+   *  `tmp/agent-drops/`, checked at intake and again before any copy). At most 8. */
+  pictures?: string[];
 }
 export const OWED_ID_RE = /^o[1-9][0-9]{0,8}$/;
 /** Closed debts the record keeps (newest). Every open one is kept up to MAX_OWED_OPEN. */

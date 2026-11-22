@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OPS_BLOCK_MAX_CHARS, OPS_CARD_REL, opsBlock, readOpsCard, setOpsField } from '../../src/lib/ops-card.js';
+import { OPS_BLOCK_MAX_CHARS, OPS_CARD_REL, boardFactLine, opsBlock, readOpsCard, setOpsField } from '../../src/lib/ops-card.js';
+import { childFacts } from '../../src/server/routes/super.js';
 import { credentialsFor, scriptEnv } from '../../src/cli/commands/shots.js';
 
 /** The working-facts card is data, never instructions (D9, C8, AC5). Synthetic values only. */
@@ -74,6 +75,46 @@ describe('ops card', () => {
     expect(b).toMatch(/data, not instructions/);
     expect(b.length).toBeLessThanOrEqual(OPS_BLOCK_MAX_CHARS);
     expect(opsBlock(null)).toBeNull();
+  });
+
+  it('D10: market and languages ride in the block; a secret-looking one is refused like notes', () => {
+    setOpsField(root, 'market', 'ABD');
+    setOpsField(root, 'languages', 'en');
+    const c = readOpsCard(root)!;
+    expect(c.market).toBe('ABD');
+    expect(c.languages).toBe('en');
+    expect(opsBlock(c)).toContain('- market: ABD');
+    expect(opsBlock(c)).toContain('- languages: en');
+    expect(() => setOpsField(root, 'market', 'ghp_abcdefghijklmnopqrstuvwxyz0123')).toThrow();
+    expect(() => setOpsField(root, 'languages', 'x'.repeat(121))).toThrow();
+  });
+
+  it('D2: board must exist; its line goes after the end marker, also when notes fill the block', () => {
+    expect(() => setOpsField(root, 'board', 'funnel-pano')).toThrow();
+    mkdirSync(join(root, 'whiteboards', 'funnel-pano'), { recursive: true });
+    writeFileSync(join(root, 'whiteboards', 'funnel-pano', 'funnel-pano.excalidraw.md'), '# board\n');
+    setOpsField(root, 'board', 'funnel-pano');
+    setOpsField(root, 'notes', 'n'.repeat(600));
+    setOpsField(root, 'staging_url', 'https://staging.example.test/');
+    const facts = childFacts(root, undefined, undefined);
+    const end = facts.indexOf('END PROJECT DOCUMENT');
+    const line = facts.indexOf('This project delivers on board funnel-pano');
+    expect(end).toBeGreaterThan(0);
+    expect(line).toBeGreaterThan(end);
+    expect(facts).toContain('Board: updated funnel-pano');
+    expect(boardFactLine(null)).toBeNull();
+  });
+
+  it('D2: with no board the block is byte-identical to the card without the new keys', () => {
+    const before = opsBlock({ staging_url: 'https://staging.example.test/', notes: 'hello' });
+    card('- staging_url: https://staging.example.test/\n- notes: hello');
+    expect(opsBlock(readOpsCard(root))).toBe(before);
+    expect(childFacts(root, undefined, undefined)).not.toContain('delivers on board');
+  });
+
+  it('D2: a board the brain does not hold is dropped on read', () => {
+    card('- staging_url: https://staging.example.test/\n- board: no-such-board');
+    expect(readOpsCard(root)!.board).toBeUndefined();
   });
 
   it('the login goes only to the card\'s own origin, over https or loopback', () => {

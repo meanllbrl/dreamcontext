@@ -963,3 +963,22 @@ describe('shouldRotateForHandoff', () => {
     expect(shouldRotateForHandoff(undefined)).toBe(false);
   });
 });
+
+describe('D18: a taskless Super child at the hard band hands off (iyilesme-360)', () => {
+  const child = {} as NonNullable<NonNullable<Parameters<typeof renderNudge>[4]>['child']>;
+  it('severe: the HANDOFF: step, no "finish small work in this session"', () => {
+    const out = renderNudge(660_000, LADDER, null, 'severe', { child });
+    expect(out).toContain('HANDOFF:');
+    expect(out).toContain('End this turn now');
+    expect(out).not.toContain('finish small work in this session');
+  });
+  it('firm: today\'s text, still naming small work', () => {
+    const out = renderNudge(320_000, LADDER, null, 'firm', { child });
+    expect(out).toContain('finish small work in this session');
+    expect(out).not.toContain('HANDOFF:');
+  });
+  it('a task child and the Super keep their severe text', () => {
+    expect(renderNudge(660_000, LADDER, 'some-task', 'severe', { child })).not.toContain('HANDOFF:');
+    expect(renderNudge(660_000, LADDER, null, 'severe', { superAgent: true })).not.toContain('HANDOFF:');
+  });
+});
