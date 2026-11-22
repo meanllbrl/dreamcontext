@@ -105,6 +105,11 @@ export function briefingOwnerFp(briefing: string): string | null {
  * snapshot, else `none`. A compaction summary and a tool result quoting a tag never count.
  */
 export function ownerBlockState(jsonl: string): string {
+  return ownerHolding(jsonl).held;
+}
+
+/** `ownerBlockState` with its birth-prompt part: what a compaction falls back to. */
+export function ownerHolding(jsonl: string): { inPrompt: string; held: string } {
   let inPrompt: string | null = null;
   let viaMessage: string | null = null;
   for (const line of jsonl.split('\n')) {
@@ -135,7 +140,7 @@ export function ownerBlockState(jsonl: string): string {
       if (m) viaMessage = m[1];
     }
   }
-  return viaMessage ?? inPrompt ?? 'none';
+  return { inPrompt: inPrompt ?? 'none', held: viaMessage ?? inPrompt ?? 'none' };
 }
 
 /** `unknown`: the session's holding cannot be read (no transcript, a tool with no snapshot). */

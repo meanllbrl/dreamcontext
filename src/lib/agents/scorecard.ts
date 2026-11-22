@@ -7,7 +7,7 @@ import { localDir, projectKey } from '../local-store.js';
 import { AutomationError } from '../automations/types.js';
 import { JUDGE_TIMEOUT_MS, UNUSABLE_TRIES } from '../recall-judge.js';
 import { assertOwned } from './owner.js';
-import { globalAgentHome, globalMemoryDir } from './scope.js';
+import { globalAgentHome, globalAgentPath, globalMemoryDir } from './scope.js';
 import { isSafeAutomationSlug } from './slot.js';
 import { getAgent } from './store.js';
 import type { AgentManifest } from './types.js';
@@ -329,9 +329,15 @@ function sleepMs(ms: number): void {
 
 function ensureDirFor(scope: ScorecardScope): void {
   if (scope.kind === 'global') {
-    // The member's home exists only while the member does: never created here.
+    // The member's home is made only while its file exists: a check that ends after the delete
+    // (file and home removed) finds no file and writes nothing.
     const home = globalAgentHome(scope.member, scope.home);
-    if (!exists(home) || isSymlinkOrNotDir(home)) throw new ScorecardRefused('unknown_member', 404, `No member "${scope.member}".`);
+    const file = globalAgentPath(scope.member, scope.home);
+    let alive = false;
+    try { alive = lstatSync(file).isFile(); } catch { alive = false; }
+    if (!alive) throw new ScorecardRefused('unknown_member', 404, `No member "${scope.member}".`);
+    if (!exists(home)) mkdirSync(home, { recursive: true, mode: 0o700 });
+    if (isSymlinkOrNotDir(home)) throw new ScorecardRefused('unknown_member', 404, `No member "${scope.member}".`);
     if (!exists(scope.dir)) mkdirSync(scope.dir, { mode: 0o700 });
   } else {
     mkdirSync(scope.dir, { recursive: true, mode: 0o700 });

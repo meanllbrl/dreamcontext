@@ -308,7 +308,8 @@ export function SuperContainer(props: SuperContainerProps) {
     // do Enter/Space on the focused frame (onKeyDown).
     if (c.kind === 'agenda') return;
     // A member card's body is live from medium up (plan r4 G2): a click in it is its own.
-    if (c.kind === 'member' && !small) return;
+    // The Scorecard's medium tile opens side by side from its background (its stars stop the click).
+    if (c.kind === 'member' && !small && !(c.ref === 'scorecard' && SIZE_UNITS[drawnSize].h === 1)) return;
     props.onSideBySide(c.id);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -641,9 +642,13 @@ function FloatBody(p: BodyProps): ReactNode {
     );
   }
   if (c.kind === 'member') {
-    const full = size !== 'small';
+    // The Scorecard (plan uye-karnesi D1): a medium card is its live tile (stars to tap), the full
+    // card only from large up; a small one is the inert summary like the others.
+    const scoreTile = c.ref === 'scorecard' && SIZE_UNITS[size].h === 1;
+    const full = size !== 'small' && !scoreTile;
+    const live = size !== 'small';
     return (
-      <div className="super-card-body super-card-large" data-inert={full ? undefined : 'true'} data-member-card={c.ref}>
+      <div className="super-card-body super-card-large" data-inert={live ? undefined : 'true'} data-member-card={c.ref}>
         <CardHead kind={c.kind} title={p.title} />
         <div className="super-card-large-body">{p.member?.(c.ref as MemberCardRef, full ? 'full' : 'tile')}</div>
       </div>

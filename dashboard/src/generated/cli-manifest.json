@@ -99,6 +99,19 @@
       "args": []
     },
     {
+      "path": "agents rate",
+      "desc": "Rate one of a member's finished runs, 1-5 stars, with an optional note that becomes a lesson. --last: its newest finished run (with --quote: the newest one that ended before the quoted words were said). From an agent session it needs --quote with the owner's exact words, and one quote rates one run.",
+      "args": [
+        "<member>"
+      ],
+      "valueFlags": [
+        "--run",
+        "--stars",
+        "--note",
+        "--quote"
+      ]
+    },
+    {
       "path": "agents remove",
       "desc": "Delete an agent (refused while an automation runs as it)",
       "args": [
@@ -111,6 +124,115 @@
       "args": [
         "<slug>",
         "<id>"
+      ]
+    },
+    {
+      "path": "agents scorecard",
+      "desc": "A member's scorecard: ratings, the owner's lines, lessons, checks and goal",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard check",
+      "desc": "",
+      "args": [
+        "<member>"
+      ],
+      "valueFlags": [
+        "--run"
+      ]
+    },
+    {
+      "path": "agents scorecard criteria",
+      "desc": "The owner's lines of what good work looks like",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard criteria add",
+      "desc": "Add a line",
+      "args": [
+        "<member>",
+        "<text>"
+      ]
+    },
+    {
+      "path": "agents scorecard criteria remove",
+      "desc": "Remove a line",
+      "args": [
+        "<member>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "agents scorecard draft",
+      "desc": "",
+      "args": [
+        "<member>"
+      ],
+      "valueFlags": [
+        "--run"
+      ]
+    },
+    {
+      "path": "agents scorecard fresh",
+      "desc": "Move an unreadable scorecard file aside and start fresh",
+      "args": [
+        "<member>"
+      ]
+    },
+    {
+      "path": "agents scorecard goal",
+      "desc": "The member's optional goal: one Lab insight",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard goal clear",
+      "desc": "Remove the goal",
+      "args": [
+        "<member>"
+      ]
+    },
+    {
+      "path": "agents scorecard goal set",
+      "desc": "Link a Lab insight as the goal",
+      "args": [
+        "<member>",
+        "<insight>"
+      ],
+      "valueFlags": [
+        "--target",
+        "--baseline"
+      ]
+    },
+    {
+      "path": "agents scorecard lesson",
+      "desc": "The lessons his notes became",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "agents scorecard lesson undo",
+      "desc": "Take a lesson out of every later run and chat",
+      "args": [
+        "<member>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "agents scorecard lesson use",
+      "desc": "Use a lesson that waits for a look",
+      "args": [
+        "<member>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "agents scorecard show",
+      "desc": "Print the scorecard",
+      "args": [
+        "<member>"
       ]
     },
     {

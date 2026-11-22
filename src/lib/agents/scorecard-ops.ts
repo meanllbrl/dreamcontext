@@ -9,7 +9,7 @@ import { listAgentHistory, type HistorySession, type ListHistoryOptions } from '
 import { amendmentRisks } from './amendments.js';
 import {
   NO_WRITE, SCORECARD_LIMITS, ScorecardRefused, TERMINAL_RUN_STATUSES, activeCriteria, foldNote, isLiveRunning, isRunKey,
-  newId, projectKeyOfRun, readScorecard, runKeyFor, sessionKeyOf, splitSessionKey, withScorecard,
+  newId, projectKeyOfRun, readScorecard, resolveScorecard, runKeyFor, sessionKeyOf, splitSessionKey, withScorecard,
   type Check, type Goal, type Lesson, type MemberCard, type ProjectRef, type RatedBy, type Rating, type ScorecardScope,
 } from './scorecard.js';
 import { projectKey } from '../local-store.js';
@@ -126,6 +126,8 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
   const now = input.now ?? new Date();
   const stars = input.stars;
   if (stars !== null && (!Number.isInteger(stars) || stars < 1 || stars > 5)) throw new ScorecardRefused('invalid_args', 400, 'Stars are 1 to 5.');
+  // The member first: an unknown one is `unknown_member`, never "no run".
+  resolveScorecard(projectRoot, member, input.home);
   // An agent's rating carries his words, resolved to one of his turns (D16).
   let quoteTurn: string | undefined;
   let quoteAt: number | null = null;
@@ -278,7 +280,7 @@ export function goalSeries(projectRoot: string, insight: string): { title: strin
   let cache;
   try { cache = readCache(contextRoot, insight); } catch { cache = null; }
   if (!cache || typeof cache.latest !== 'number' || !Number.isFinite(cache.latest)) return null;
-  const series = bindingSeriesOf(Array.isArray(cache.series) ? cache.series : [], (manifest as { binding?: never }).binding ?? null);
+  const series = bindingSeriesOf(Array.isArray(cache.series) ? cache.series : [], manifest.binding ?? null);
   const points = (series?.points ?? []).filter((p) => typeof p.v === 'number' && Number.isFinite(p.v));
   if (points.length === 0) return null;
   return { title: manifest.title, latest: cache.latest, points, unit: cache.unit ?? null };

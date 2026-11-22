@@ -159,6 +159,24 @@ export function parseLesson(text: string): string | null | undefined {
   return line ? line.slice(0, SCORECARD_LIMITS.lessonChars) : null;
 }
 
+/**
+ * Never stricter than his words (D6), checked, not only asked: every number in the lesson is in
+ * his note, and so is every capitalised word that does not open a sentence (a name, a product).
+ */
+export function lessonAddsNothing(note: string, lesson: string): boolean {
+  const lower = note.toLocaleLowerCase('tr');
+  for (const d of lesson.match(/\d+(?:[.,]\d+)?/g) ?? []) if (!note.includes(d)) return false;
+  const words = lesson.split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i].replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+    if (!w || !/^\p{Lu}/u.test(w)) continue;
+    const opens = i === 0 || /[.!?:]["')\]]*$/.test(words[i - 1]);
+    if (opens) continue;
+    if (!lower.includes(w.toLocaleLowerCase('tr'))) return false;
+  }
+  return true;
+}
+
 /** Ask, retrying an answered-but-unusable reply, each try with its own deadline. */
 async function ask<T>(prompt: string, parse: (text: string) => T | undefined, judge: JudgeFn, now: () => number): Promise<{ ok: true; value: T; usd: number } | { ok: false; error: string; usd: number }> {
   let usd = 0;
@@ -281,7 +299,12 @@ export async function draftLesson(projectRoot: string, member: string, sessionKe
   }, { home: opts.home });
   if (!marked) return 'no_note';
   const run = readRunText(projectRoot, sessionKey);
-  const r = await ask(draftPrompt({ note, stars, title, run }), parseLesson, opts.judge ?? defaultJudge, () => now().getTime());
+  // A lesson that adds a number or a name his note lacks is unusable: asked again, never stored.
+  const parseOwn = (t: string): string | null | undefined => {
+    const v = parseLesson(t);
+    return typeof v === 'string' && !lessonAddsNothing(note, v) ? undefined : v;
+  };
+  const r = await ask(draftPrompt({ note, stars, title, run }), parseOwn, opts.judge ?? defaultJudge, () => now().getTime());
   let outcome: DraftOutcome = 'moved';
   try {
     withScorecard(projectRoot, member, (card) => {

@@ -43,6 +43,7 @@ import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
 import { agentChatLevelArgs, agentLevelToFollow, parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { onAgentLevel } from '../../lib/agents/level-follow.js';
+import { briefingOwnerFp, ownerBlockTurn, ownerCard, ownerEverSet, ownerHolding, renderOwnerBlock, type OwnerHeld, type OwnerRef } from '../../lib/agents/owner-block.js';
 import { agentPath } from '../../lib/agents/store.js';
 import { globalAgentPath } from '../../lib/agents/scope.js';
 import { automationsRegistryPath } from '../../lib/automations/registry.js';
@@ -2524,6 +2525,13 @@ export function startChatSession(
    *  agent's. Only `card` decides what a card skips (registry, tab env, branch move). */
   const envelope = card ?? agentChat;
   const scopedCard = !!envelope?.permissionArgs;
+  // Whose owner block this chat carries (plan uye-karnesi D9): a member speaking as itself, in
+  // its stage chat, a card, or as its own Super. What the session holds: its briefing's header at
+  // a fresh spawn, its transcript on a resume (below); `inPrompt` is what a compaction keeps.
+  const ownerRef: OwnerRef | null = card && opts.card ? { projectRoot, member: opts.card.agent } : agentChat && opts.agent ? { projectRoot, member: opts.agent } : null;
+  const ownerHold: { inPrompt: OwnerHeld; held: OwnerHeld } = { inPrompt: 'none', held: 'none' };
+  /** The owner block's fingerprint this spawn's briefing file really carried ('none' without). */
+  let spawnOwnerFp: OwnerHeld = 'none';
   // The project's Playwright MCP, re-declared headless with a loopback CDP port so its browser
   // never takes the screen and the pane can show it live (browser-override.ts). Not for a
   // scoped card (no MCP at all).
@@ -2772,6 +2780,8 @@ export function startChatSession(
     // A resumed session's prompt is its first spawn's: the tools block rides its next message.
     if (superToolsSpawn) spawnToolsFp = toolsBlockFingerprint(superToolsSpawn);
     if (spawnToolsFp && !resumeTarget) superTools.inPrompt = superTools.delivered = spawnToolsFp;
+    if (ownerRef) spawnOwnerFp = briefingOwnerFp(briefing) ?? 'none';
+    if (ownerRef && !resumeTarget) ownerHold.inPrompt = ownerHold.held = spawnOwnerFp;
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
     
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
@@ -2795,6 +2805,15 @@ export function startChatSession(
   // The Super Agent's briefing revision (K9): a new session carries it in its system prompt; a
   // resumed one learns from its transcript whether this revision still has to reach it.
   const superBrief = { inPrompt: true, due: false };
+  // A resumed member chat (card chats too): what its transcript holds of the owner block. No
+  // transcript: `unknown`, so a non-empty block rides once.
+  if (resumeTarget && ownerRef) {
+    try {
+      const transcript = findFirstTranscriptPath([resumeTarget]);
+      if (transcript) Object.assign(ownerHold, ownerHolding(readFileSync(transcript, 'utf-8')));
+      else ownerHold.inPrompt = ownerHold.held = 'unknown';
+    } catch { ownerHold.inPrompt = ownerHold.held = 'unknown'; }
+  }
   if (resumeTarget && !isAssistant && !card) {
     try {
       const transcript = findFirstTranscriptPath([resumeTarget]);
@@ -4053,6 +4072,16 @@ export function startChatSession(
     // The tools on this Mac changed since it last saw them (a sign-in, an install, a resume): once.
     const toolsTurn = isSuper ? superOwnerToolsBlock({ text, block: toolsBlockNow(), delivered: superTools.delivered }) : null;
     if (toolsTurn?.block) content.push({ type: 'text', text: toolsTurn.block });
+    // A member's own chat: his lines and lessons changed since the session last held them (plan
+    // uye-karnesi D9). Once; "none now" included. A failed read costs the block, never his message.
+    let ownerTurn: ReturnType<typeof ownerBlockTurn> | null = null;
+    if (ownerRef) {
+      try {
+        const oc = ownerCard(ownerRef);
+        ownerTurn = ownerBlockTurn({ text, block: renderOwnerBlock(oc, null), held: ownerHold.held, everSet: ownerEverSet(oc) });
+      } catch { ownerTurn = null; }
+    }
+    if (ownerTurn) content.push(...ownerTurn.blocks);
     // A spoken message to the Super Agent (K1): its answer is read aloud. The window reads
     // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
     const voice = isSuper && spokenTexts.delete(text);
@@ -4110,6 +4139,8 @@ export function startChatSession(
     if (brief && wrote) superBrief.due = false;
     if (teamTurn && wrote) superTeam.delivered = teamTurn.delivered;
     if (toolsTurn && wrote) superTools.delivered = toolsTurn.delivered;
+    if (ownerTurn && wrote) ownerHold.held = ownerTurn.held;
+    if (ownerRef && wrote && text.trim() === '/clear') ownerHold.inPrompt = ownerHold.held = spawnOwnerFp;
     // Fresh for the next message: `codex --version` and Claude's model list, off this turn's path.
     if (isSuper) void refreshSuperTools();
     if (isSuper && wrote && text.trim() === '/clear') superTeamCleared();
@@ -4559,6 +4590,8 @@ export function startChatSession(
       // It drops a `<super-team>` a message carried too: what it holds is its system prompt's block.
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTeam.delivered = superTeam.inPrompt;
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTools.delivered = superTools.inPrompt;
+      // A member's own chat keeps only its birth prompt's owner block after a compaction.
+      if (ownerRef && obj.type === 'system' && obj.subtype === 'compact_boundary') ownerHold.held = ownerHold.inPrompt;
       if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
         // An MCP grant waited for the chat's background work (a dev server, a sub-agent) to end.
@@ -4726,6 +4759,7 @@ export function startChatSession(
               // `/clear` starts a fresh conversation on THIS spawn's system prompt: it holds this
               // spawn's team block, whatever an earlier message delivered.
               if (isSuper && text === '/clear' && wroteTurn) superTeamCleared();
+              if (ownerRef && text === '/clear' && wroteTurn) ownerHold.inPrompt = ownerHold.held = spawnOwnerFp;
             },
             // Its own frame, not the branch notice's one-liner: the chat draws the run as it
             // happens (handoff-progress.ts), so "it is happening" is on screen from now on.
