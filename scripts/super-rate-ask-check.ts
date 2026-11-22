@@ -36,6 +36,7 @@ const { appendThreadEntry } = await import('../src/lib/automations/threads.js');
 const { SUPER_STATE_REL } = await import('../src/lib/super/store.js');
 const { emptySuperState } = await import('../src/lib/super/types.js');
 const { superBatchText, heldBlock } = await import('../src/lib/super/inbox.js');
+const { withOwnerLanguage } = await import('../src/lib/super/owner-language.js');
 const { superBriefing, RATE_ASK_QUESTION } = await import('../src/server/chat-modes.js');
 
 if (RATE_ASK_QUESTION !== LINE) throw new Error('the brief\'s question changed: update this check');
@@ -82,22 +83,28 @@ function claude(prompt: string, resume?: string, tries = 0): { text: string; ses
 }
 
 const endsWithLine = (t: string) => t.replace(/[\s`]+$/g, '').endsWith(LINE);
+// A reply that writes a tool call as text, or a `super ask`, is no relay.
+const noTool = (t: string) => !/<invoke|super ask/.test(t);
+// A relay names the result (the fixture's total).
+const relays = (t: string) => t.includes('4.200');
 const voiceOk = (t: string) => {
   const m = /```dream-voice[^\n]*\n([\s\S]*?)```/.exec(t);
   return !m || m[1].trim().endsWith(LINE);
 };
+let voiceSeen = 0;
 const all: Array<{ kind: string; ok: boolean; text: string }> = [];
 // Each reply is printed as it lands, so a run cut short still leaves its evidence.
 const rows = { push: (r: { kind: string; ok: boolean; text: string }) => { console.log(`=== ${r.kind} ${r.ok ? 'PASS' : 'FAIL'} ===\n${r.text}\n`); all.push(r); } };
 
 const rated = state(true, false);
-const batch = superBatchText(root, rated.s, [rated.item], 'b-check');
+// As the pump sends it: every server-written turn ends with the owner-language line.
+const batch = withOwnerLanguage(superBatchText(root, rated.s, [rated.item], 'b-check'), 'Turkish');
 if (!/ rate=ask run=meta::/.test(batch)) throw new Error(`the fixture batch carries no rate=ask:\n${batch}`);
 console.log(`--- batch with rate=ask ---\n${batch}\n`);
 
 for (let i = 0; i < N.mac; i++) {
   const r = claude(batch);
-  rows.push({ kind: 'mac', ok: endsWithLine(r.text) && !/super ask/.test(r.text), text: r.text });
+  rows.push({ kind: 'mac', ok: endsWithLine(r.text) && relays(r.text) && noTool(r.text), text: r.text });
 }
 for (let i = 0; i < N.telegram; i++) {
   // His ask, from Telegram. With no tools the Super can only stall over how to hand it on (measured:
@@ -105,7 +112,8 @@ for (let i = 0; i < N.telegram; i++) {
   // says it was handed already. This turn only sets the channel; the measured turn is the next one.
   const first = claude(`Meta'ya bu haftanın bütçe planını çıkart.\n<owner-msg ref="tg${String(i).padStart(4, '0')}" via="telegram"/>\n[check harness: tools are off here; you already handed this job to Meta with \`dreamcontext super team ask\` and it runs. Reply to him in one short line.]`);
   const r = claude(batch, first.session);
-  rows.push({ kind: 'telegram', ok: endsWithLine(r.text) && voiceOk(r.text) && !/super ask/.test(r.text), text: r.text });
+  rows.push({ kind: 'telegram', ok: endsWithLine(r.text) && relays(r.text) && voiceOk(r.text) && noTool(r.text), text: r.text });
+  if (/```dream-voice/.test(r.text)) voiceSeen += 1;
 }
 const heldState = state(true, true);
 const held = heldBlock(root, heldState.s);
@@ -114,19 +122,19 @@ console.log(`--- held block ---\n${held.text}\n`);
 for (let i = 0; i < N.held; i++) {
   // His answer to an open card asks for an action; with no tools the Super writes a tool call as text
   // (measured: a bare `<invoke>` reply). A harness line, outside his message, says the action ran.
-  const r = claude(`Evet, ikisini de yayınla.\n<owner-msg ref="hd${String(i).padStart(4, '0')}"/>\n[check harness: tools are off here; the two posts he approved are already published. Write your reply to him.]\n${held.text}`);
-  rows.push({ kind: 'held', ok: endsWithLine(r.text) && !/super ask/.test(r.text), text: r.text });
+  const r = claude(`Evet, ikisini de yayınla.\n<owner-msg ref="hd${String(i).padStart(4, '0')}"/>\n[check harness: his message answers the card you opened earlier with `dreamcontext super ask`: "Instagram'daki iki gönderiyi (indirim duyurusu ve yeni ürün) yayınlayayım mı?". The server ran his answer: both posts are published. Tools are off here. Write your reply to him.]\n${held.text}`);
+  rows.push({ kind: 'held', ok: endsWithLine(r.text) && relays(r.text) && noTool(r.text), text: r.text });
 }
 const plain = state(false, false);
-const plainBatch = superBatchText(root, plain.s, [plain.item], 'b-plain');
+const plainBatch = withOwnerLanguage(superBatchText(root, plain.s, [plain.item], 'b-plain'), 'Turkish');
 if (/rate=ask/.test(plainBatch)) throw new Error('the plain batch carries rate=ask');
 for (let i = 0; i < N.plain; i++) {
   const r = claude(plainBatch);
-  rows.push({ kind: 'plain', ok: !r.text.includes('1-5 yıldız'), text: r.text });
+  rows.push({ kind: 'plain', ok: !r.text.includes('1-5 yıldız') && relays(r.text) && noTool(r.text), text: r.text });
 }
 
 const tally = (k: string) => `${all.filter((r) => r.kind === k && r.ok).length}/${all.filter((r) => r.kind === k).length}`;
-console.log(`RESULT mac ${tally('mac')} telegram ${tally('telegram')} held ${tally('held')} plain ${tally('plain')} cost $${cost.toFixed(3)} model ${MODEL}`);
+console.log(`RESULT mac ${tally('mac')} telegram ${tally('telegram')} held ${tally('held')} plain ${tally('plain')} cost $${cost.toFixed(3)} model ${MODEL} telegram-voice-blocks ${voiceSeen}`);
 rmSync(project, { recursive: true, force: true });
 rmSync(home, { recursive: true, force: true });
 rmSync(empty, { recursive: true, force: true });
