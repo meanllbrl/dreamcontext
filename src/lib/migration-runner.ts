@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { migrationsToRun } from '../migrations/index.js';
+import { migrationsToRun, dueAgentTasks, agentTaskById } from '../migrations/index.js';
 import {
   readLedger,
   appendLedger,
@@ -55,7 +55,7 @@ export function runMigrations(
   // repairs run (they exist for exactly that case — see Migration.everyRun).
   const pending = migrationsToRun(fromVersion, toVersion);
   if (pending.length === 0) {
-    return { applied: [], pendingAgentTasks: [], failedSteps: 0 };
+    return { applied: [], pendingAgentTasks: duePending(contextRoot, toVersion), failedSteps: 0 };
   }
 
   const ledger = readLedger(contextRoot);
@@ -90,6 +90,28 @@ export function runMigrations(
       // step that re-fails on a retry must still report its failures upward so
       // update.ts keeps setupVersion pinned until the migration completes cleanly.
       failedTotal += result.failedCount ?? 0;
+
+      // Agent work this step found is its OWN ledger entry (`<step>#work`), gated
+      // by its own id, so an earlier "found nothing" entry of the step never
+      // swallows a later sighting, and an every-run step's sighting is written
+      // even when it touched no files. `dueAgentTasks` reads only these.
+      if (result.agentWorkFor) {
+        const workStep = `${result.step}#work`;
+        if (!isApplied(ledger, migration.version, workStep)) {
+          const sighting: LedgerEntry = {
+            version: migration.version,
+            step: workStep,
+            executor: 'detected',
+            timestamp: new Date().toISOString(),
+            filesTouched: [],
+            summary: `Agent work found for ${result.agentWorkFor}.`,
+            agentWorkFor: result.agentWorkFor,
+          };
+          appendLedger(contextRoot, sighting);
+          ledger.push(sighting);
+          applied.push(sighting);
+        }
+      }
 
       // Check if this step is already recorded in the ledger we read at start.
       // NOTE (ledger staleness): a step first ledgered as a partial failure keeps
@@ -166,26 +188,15 @@ export function runMigrations(
     }
   }
 
-  // Collect pending agent tasks: migrations with agentTask that don't yet
-  // have an executor:'agent' entry in the ledger. Matched by the agentTask's
-  // OWN step id — two migrations can share a version (0.23.0 people-first +
-  // soul-split), and a loose version-only match would let either recorded
-  // task hide the other.
-  const finalLedger = readLedger(contextRoot);
-  const pendingAgentTasks: PendingAgentTask[] = [];
-  for (const migration of pending) {
-    if (!migration.agentTask) continue;
-    const hasAgentEntry = finalLedger.some(
-      (e) => e.version === migration.version && e.executor === 'agent'
-        && e.step === migration.agentTask!.id,
-    );
-    if (!hasAgentEntry) {
-      pendingAgentTasks.push({
-        version: migration.version,
-        agentTask: migration.agentTask,
-      });
-    }
-  }
+  return { applied, pendingAgentTasks: duePending(contextRoot, toVersion), failedSteps: failedTotal };
+}
 
-  return { applied, pendingAgentTasks, failedSteps: failedTotal };
+/** The ledger's due agent work (one rule: `dueAgentTasks`), in the runner's result shape. */
+function duePending(contextRoot: string, toVersion: string): PendingAgentTask[] {
+  const out: PendingAgentTask[] = [];
+  for (const due of dueAgentTasks(contextRoot, toVersion)) {
+    const found = agentTaskById(due.id);
+    if (found) out.push({ version: found.version, agentTask: found.task });
+  }
+  return out;
 }

@@ -267,12 +267,18 @@ export function registerSuperCommand(program: Command): void {
     .option('--origin <ref>', ORIGIN_HELP)
     .option('--outward <step>', OUTWARD_HELP)
     .option('--rule <id>', RULE_HELP)
-    .option('--for <item|owner>', FOR_HELP))
-    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; outward?: string; rule?: string; for?: string }) => {
+    .option('--for <item|owner>', FOR_HELP)
+    .option('--migration', 'The project\'s Super Agent only: start the ONE migration session for the agent migration work an update left (its `migration` event). The server builds its prompt and brief; refused with --prompt, --from, --worktree, --slug, --succeeds, --mcp or --tool'))
+    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; outward?: string; rule?: string; for?: string; migration?: boolean }) => {
       const behind = serverBehindLine(await serverVersion(), dreamcontextVersion());
       if (behind) process.stderr.write(behind);
       const note = o.note !== undefined ? { note: o.note } : {};
       const origin = o.origin !== undefined ? { origin: o.origin } : {};
+      if (o.migration) {
+        const mixed = (['prompt', 'from', 'worktree', 'slug', 'succeeds', 'mcp', 'tool'] as const).filter((k) => o[k] !== undefined);
+        if (mixed.length) return usage(`--migration builds the whole job; drop ${mixed.map((k) => `--${k}`).join(', ')}`);
+        return run('delegate', { migration: true, model: o.model, effort: o.effort, ...note, ...origin });
+      }
       const forWho = o.for !== undefined ? { for: o.for } : {};
       const outward = { ...(o.outward !== undefined ? { outward: o.outward } : {}), ...(o.rule !== undefined ? { rule: o.rule } : {}) };
       if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...outward, ...forWho, ...(o.risk !== undefined ? { risk: o.risk } : {}) });

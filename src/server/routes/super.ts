@@ -80,6 +80,7 @@ import { resolveConfigDir } from '../../lib/claude-accounts.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { codexStartModel } from '../../lib/t3-bridge/registry.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
+import { checkMigrationDue, clearMigrationStarting, isMigrationStarting, migrationChildBrief, migrationChildPrompt, noteMigrationStarting, openMigrationWork, readDueMigrations } from '../../lib/super/migration-event.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
@@ -180,7 +181,7 @@ export function _setDelegateWaitsForTests(w: { answerMs: number; graceMs: number
 }
 
 /** A start the window has not answered yet but may still open (`delegate_pending`). */
-interface StartingJob { prompt: string; fromRow?: string; since: number; until: number }
+interface StartingJob { prompt: string; fromRow?: string; since: number; until: number; migration?: string[] }
 /** Per super (superKey): the starts still pending. In memory: they live as long as the wait does. */
 const startingJobs = new Map<string, StartingJob[]>();
 function startingOf(key: string, prompt: string, fromRow: string | undefined, now = Date.now()): StartingJob | null {
@@ -1040,6 +1041,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(extra.outward ? { outward: extra.outward } : {}),
       ...(extra.workOrigin ? { workOrigin: extra.workOrigin } : {}),
       ...(extra.context ? { context: extra.context } : {}),
+      ...(job.migration?.length ? { migration: job.migration } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
     s.pool.push(row);
@@ -1351,7 +1353,8 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       // Written and not answered in time: the window is slow, not gone. The start is kept (its
       // worktree too) and recorded by itself when the window opens it (`landLate`); the agent is
       // told so in plain words, never asked to delegate it again.
-      pending = { prompt: job.prompt, ...(fromRow ? { fromRow: fromRow.id } : {}), since: sentAt, until: deadline + delegateGraceMs };
+      pending = { prompt: job.prompt, ...(fromRow ? { fromRow: fromRow.id } : {}), since: sentAt, until: deadline + delegateGraceMs, ...(job.migration?.length ? { migration: job.migration } : {}) };
+      if (job.migration?.length) noteMigrationStarting(root, pending.until);
       startingJobs.set(dKey, [...(startingJobs.get(dKey) ?? []), pending]);
       // From here the start counts against the cap as a pending start (startingCount), and no
       // longer as a delegate in flight: that count marks every lean child spawned meanwhile.
@@ -1458,6 +1461,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(extra.firstRead ? { firstRead: true as const } : {}),
         delegatedBy: delegatedByKeys(c, s, succeeds),
         ...(extra.context ? { context: extra.context } : {}),
+        ...(job.migration?.length ? { migration: job.migration } : {}),
       };
       startError = takeStartError(sid);
       if (startError) startFailedDraft(s, sid, startError, now);
@@ -1557,7 +1561,50 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       appendOpenLog('delegate_late_error', { superId: c.superId, error: (err as Error).message });
     } finally {
       if (p) dropStarting(dKey, p);
+      // A migration start has landed (a child, or the pool) or is lost: either way not starting.
+      if (job.migration?.length) clearMigrationStarting(root);
     }
+  }
+}
+
+/** What `delegate --migration` may not be combined with: the server builds the whole job. */
+const MIGRATION_REFUSED_ARGS = ['prompt', 'from', 'worktree', 'slug', 'succeeds', 'mcp', 'tool'] as const;
+
+/**
+ * `super delegate --migration` (task her-ozellik-eski-kullaniciyi-..., C4): main Super only. The
+ * server re-reads due work from the installed CLI, refuses while a migration child is live,
+ * starting or held (`migration_busy`) or when nothing is due (`no_migration_due`), and starts ONE
+ * child in this project (no worktree, Develop) whose prompt it builds from a constant plus the due
+ * ids. Nothing the Super typed reaches the child's prompt.
+ */
+async function delegateMigration(c: SuperCaller, b: Record<string, unknown>, res: ServerResponse, root: string): Promise<void> {
+  if (c.superId !== 'main') { refuse(res, 403, 'main_only', 'only the project\'s Super Agent starts the migration session'); return; }
+  const mixed = MIGRATION_REFUSED_ARGS.filter((k) => b[k] !== undefined && b[k] !== false && b[k] !== '');
+  if (mixed.length) { refuse(res, 400, 'invalid_args', `--migration builds the whole job; drop ${mixed.map((k) => `--${k}`).join(', ')}`); return; }
+  const due = await readDueMigrations(root);
+  if (!due.length) { refuse(res, 409, 'no_migration_due', 'no migration work is waiting in this project (`dreamcontext migrations pending` is empty)'); return; }
+  // Read the record fresh: the call's snapshot may predate a start that just landed.
+  const fresh = await readSuperState(root, superSanitizeOpts());
+  const open = openMigrationWork(fresh);
+  if (open || isMigrationStarting(root)) {
+    const what = open?.child ? `the migration child ${open.child} is still running` : open?.pooled ? `the migration job ${open.pooled} waits in the pool (start it with \`super delegate --from ${open.pooled}\`)` : 'a migration child is starting right now';
+    refuse(res, 409, 'migration_busy', `${what}; one migration session at a time`, { ...(open?.child ? { child: open.child } : {}), ...(open?.pooled ? { pooled: open.pooled } : {}) });
+    return;
+  }
+  const parsed = parseJob({ prompt: migrationChildPrompt(due), brief: migrationChildBrief(due), mode: 'develop', model: b.model, effort: b.effort });
+  if ('error' in parsed) { refuse(res, 400, 'invalid_args', parsed.error); return; }
+  const job: Job = { ...parsed.job, migration: due.map((d) => d.id) };
+  const note = b.note === undefined ? undefined : cleanPadText(b.note);
+  if (note === '') { refuse(res, 400, 'invalid_args', '--note is one line of text'); return; }
+  const origin = jobOrigin(c, b);
+  if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
+  // Marked starting with no await since the busy check: a second call refuses `migration_busy`.
+  noteMigrationStarting(root, Date.now() + delegateAnswerMs + delegateLateMs + 2 * delegateGraceMs);
+  try {
+    await delegateJob(c, res, root, job, undefined, undefined, note, origin.ref, undefined, undefined);
+  } finally {
+    // Still pending in the window (landLate clears it), else the record or the pool covers it now.
+    if (!(startingJobs.get(superKey(root, c.superId)) ?? []).some((j) => j.migration?.length && j.until > Date.now())) clearMigrationStarting(root);
   }
 }
 
@@ -2408,6 +2455,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!requireHandedOver(c, res)) return;
     if (!requireMemberReady(c, res)) return;
     const root = c.who.contextRoot;
+    if (b.migration !== undefined && b.migration !== false) { await delegateMigration(c, b, res, root); return; }
     // `--from <pool id>`: the job the pool kept, exactly as it was kept (plan r4 D9).
     const fromId = str(b.from);
     const fromRow = fromId ? c.state.pool.find((p) => p.id === fromId) : undefined;
@@ -2425,7 +2473,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const parsed = parseJob(fromRow ? { ...fromRow, brief: fromRow.title } : b);
     if ('error' in parsed) { refuse(res, 400, 'invalid_args', parsed.error); return; }
-    const job = parsed.job;
+    // A held migration job keeps its marker onto the child (the server wrote it on the row).
+    const job: Job = fromRow?.migration?.length ? { ...parsed.job, migration: fromRow.migration } : parsed.job;
     if (job.task && !(await taskFileOk(root, job.task))) { refuse(res, 404, 'unknown_task', `no task "${job.task}" in this project (state/<slug>.md)`); return; }
     if (mcpRefused(root, job, res)) return;
     // One job, one owner: the child this one takes the work over from (succession.ts).
@@ -3105,6 +3154,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   'pool-add': async (c, b, res) => {
     if (!requireHandedOver(c, res)) return;
     const root = c.who.contextRoot;
+    // The migration marker is the server's alone (`delegate --migration` at the cap keeps it).
+    if (b.migration !== undefined) { refuse(res, 400, 'invalid_args', 'a migration job is started with `super delegate --migration`, never pooled by hand'); return; }
     const parsed = parseJob(b);
     if ('error' in parsed) { refuse(res, 400, 'invalid_args', parsed.error); return; }
     const job = parsed.job;
@@ -5086,6 +5137,8 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
       queued = true;
     });
     if (queued) void pumpSuper(contextRoot, superId);
+    // The owner's New session is a main Super session entry: due migration work gets its event.
+    if (queued && superId === 'main') void checkMigrationDue(contextRoot);
     sendJson(res, 200, { queued });
   },
 };

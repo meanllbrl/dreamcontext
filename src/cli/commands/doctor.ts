@@ -1168,6 +1168,7 @@ const NEVER_EVICT_SECTIONS: Record<NeverEvictSectionId, true> = {
   person: true,
   'task-override': true,
   'product-and-nudge': true,
+  'migration-waiting': true,
   awareness: true,
   marketing: true,
   'peer-mail': true,

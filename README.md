@@ -276,8 +276,7 @@ your-project/
 │   │   ├── sleep-tasks.md       # RemSleep specialists —
 │   │   ├── sleep-state.md       #   the agent fans out to
 │   │   ├── sleep-product.md     #   these in parallel (tasks + state always, product when signaled)
-│   │   ├── sleep-learn.md       # conditional: when learning is enabled and a thesis is due
-│   │   └── sleep-migration.md   # conditional: when a migration is pending
+│   │   └── sleep-learn.md       # conditional: when learning is enabled and a thesis is due
 │   └── settings.json           # 7 hooks (see CLI Reference → System)
 ```
 

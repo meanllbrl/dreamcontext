@@ -222,12 +222,11 @@ export interface LearningConfig {
   enabled: boolean;
 }
 
-/** The five sleep-cycle specialists whose model/effort are tunable per brain. */
+/** The four sleep-cycle specialists whose model/effort are tunable per brain. */
 export const SLEEP_SPECIALISTS = [
   'sleep-tasks',
   'sleep-state',
   'sleep-product',
-  'sleep-migration',
   'sleep-learn',
 ] as const;
 
@@ -238,7 +237,7 @@ export const SLEEP_SPECIALISTS = [
  * still carrying an override for one) can recognise it. An override for a
  * retired name in `.config.json` is dropped silently by the parser.
  */
-export const RETIRED_SLEEP_SPECIALISTS = ['sleep-federation'] as const;
+export const RETIRED_SLEEP_SPECIALISTS = ['sleep-federation', 'sleep-migration'] as const;
 export type SleepSpecialist = (typeof SLEEP_SPECIALISTS)[number];
 
 export function isSleepSpecialist(v: unknown): v is SleepSpecialist {

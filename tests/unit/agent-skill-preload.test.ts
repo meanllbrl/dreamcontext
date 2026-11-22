@@ -38,7 +38,7 @@ const FULL_SKILL_AGENTS = new Set([
 const AGENT_CORE_AGENTS = new Set([
   // core agents
   'dreamcontext-explore', 'initializer-ingestor', 'curator-worker',
-  'sleep-migration', 'sleep-learn', 'sleep-tasks', 'sleep-product', 'sleep-state',
+  'sleep-learn', 'sleep-tasks', 'sleep-product', 'sleep-state',
   // council, goal-skill and multi-review agents (optional packs until 2026-11-11)
   'council-persona', 'council-synthesizer',
   'goal-implementer', 'goal-plan-reviewer', 'goal-planner', 'goal-validator',
@@ -112,7 +112,7 @@ const AGENTS = loadAgents();
 
 describe('shipped agents preload the right dreamcontext skill', () => {
   it('found the agent directories (sanity)', () => {
-    expect(AGENTS.length).toBeGreaterThanOrEqual(24);
+    expect(AGENTS.length).toBeGreaterThanOrEqual(23);
   });
 
   it('no agent preloads both the full skill and agent-core', () => {

@@ -908,11 +908,12 @@ export function registerSleepCommand(program: Command): void {
           state.pendingMigrationNotices = codeNotices;
         }
 
-        // Surface pending agent task instructions
-        for (const pat of migResult.pendingAgentTasks) {
+        // Due agent work runs in its OWN session (the Super's migration child),
+        // never inside the sleep flow: one pointer line, no specialist dispatched.
+        if (migResult.pendingAgentTasks.length > 0) {
+          const titles = migResult.pendingAgentTasks.map((p) => p.agentTask.title).join('; ');
           say.info(
-            `Migration ${pat.version} has a pending agent task (${pat.agentTask.id}). ` +
-            `Run \`dreamcontext migrations pending\` for instructions.`,
+            `Migration work is waiting: ${titles}. It runs in its own session (dreamcontext migrations pending).`,
           );
         }
 
@@ -1825,7 +1826,7 @@ export function registerSleepCommand(program: Command): void {
       console.log(chalk.dim('  What you just approved: the specialist model/effort map, the per-cycle task cap,'));
       console.log(chalk.dim('  the trigger, and the current contents of the sleep agent files.'));
       console.log(chalk.dim('  If any of those change, auto sleep PAUSES and asks you to re-approve.'));
-      console.log(chalk.dim(`  With defaults this runs at most ~3 cycles on the busiest day; each runs up to five specialists.`));
+      console.log(chalk.dim(`  With defaults this runs at most ~3 cycles on the busiest day; each runs up to four specialists.`));
       console.log(chalk.dim('  This setting is machine-local — it never rides to teammates.'));
     });
 

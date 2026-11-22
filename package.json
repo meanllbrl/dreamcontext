@@ -70,7 +70,7 @@
     "verify:file-preview": "node scripts/verify/chat-file-preview.mjs",
     "verify:claude-auth-switch": "node scripts/verify/claude-auth-switch.mjs",
     "diagrams": "node scripts/diagrams/build-all.mjs",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "node scripts/check-migration-decision.mjs --release && npm run build",
     "prepack": "node scripts/shrinkwrap.mjs write",
     "postpack": "node scripts/shrinkwrap.mjs remove",
     "verify:chat-toolrows": "node scripts/verify/chat-toolrows.mjs",

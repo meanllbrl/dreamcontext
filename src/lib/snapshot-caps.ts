@@ -312,6 +312,10 @@ export type DemotableSectionId =
  * not self-limiting, though (2026-11-02: 36 pending messages, 14 KB): its render is bounded
  * (`PEER_MAIL_FULL_CHARS`), and past the ladder it falls to a pointer naming `peer inbox`
  * (`BudgetSection.lastResort`) rather than pushing the sections after it out of the hooks.
+ *
+ * `migration-waiting` is pinned for a reason close to peer-mail's: it names work that
+ * waits until someone does it (an agent migration after an update), and it repeats every
+ * session until the agent records it. Self-limiting: registry titles only, one line each.
  */
 export type NeverEvictSectionId =
   | 'header'
@@ -320,6 +324,7 @@ export type NeverEvictSectionId =
   | 'person'
   | 'task-override'
   | 'product-and-nudge'
+  | 'migration-waiting'
   | 'awareness'
   | 'marketing'
   | 'peer-mail'

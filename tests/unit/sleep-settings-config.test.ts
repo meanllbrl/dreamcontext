@@ -208,14 +208,14 @@ describe('updateSetupConfig persists the sleep block', () => {
 });
 
 describe('the known-model list and specialist roster', () => {
-  it('covers the five specialists the sleep flow dispatches', () => {
+  it('covers the four specialists the sleep flow dispatches (sleep-migration retired 2026-11-22)', () => {
     expect([...SLEEP_SPECIALISTS]).toEqual([
-      'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-learn',
+      'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-learn',
     ]);
   });
 
-  it('keeps the retired sleep-federation off the tunable roster', () => {
-    expect(RETIRED_SLEEP_SPECIALISTS).toEqual(['sleep-federation']);
+  it('keeps the retired sleep-federation and sleep-migration off the tunable roster', () => {
+    expect(RETIRED_SLEEP_SPECIALISTS).toEqual(['sleep-federation', 'sleep-migration']);
     for (const retired of RETIRED_SLEEP_SPECIALISTS) {
       expect(SLEEP_SPECIALISTS as readonly string[]).not.toContain(retired);
     }

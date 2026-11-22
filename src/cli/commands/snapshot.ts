@@ -35,6 +35,7 @@ import { loadStatuses, loadTaskOverride, renderOverrideBriefing, hasCustomStatus
 import { DEFAULT_STATUSES, isActive, isTerminal, statusKeys, statusKind, type StatusDef } from '../../lib/task-status.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
+import { dueAgentTasks } from '../../migrations/index.js';
 import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js';
 import { readAssetDriftCache, cacheConfidentlyClean } from '../../lib/asset-drift-cache.js';
 import { featuresDir, featureSlug } from '../../lib/features-path.js';
@@ -732,6 +733,27 @@ function getVersionNudge(root: string): string {
     const suppressCliNudge = shouldSuppressCliNudge(cache.latestCli, marker, process.env);
     const nudge = buildNudge(installedCli, cache, { suppressCliNudge });
     return nudge ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** The one instruction line under `## Migration waiting` (pinned by tests). */
+export const MIGRATION_WAITING_INSTRUCTION =
+  "Not this chat's work unless the user asks: in the dreamcontext app the Super opens its own "
+  + 'session for it; elsewhere tell the user in one line, and run `dreamcontext migrations pending` '
+  + 'in a session opened for it.';
+
+/**
+ * `## Migration waiting`: one line per due agentTask (`<version> <title>`) and
+ * one instruction line. Registry constants only (never a ledger summary or any
+ * vault text). '' when nothing is due or on any error. Never writes.
+ */
+export function getMigrationWaiting(root: string): string {
+  try {
+    const due = dueAgentTasks(root, dreamcontextVersion());
+    if (due.length === 0) return '';
+    return ['## Migration waiting', ...due.map((d) => `- ${d.version} ${d.title}`), MIGRATION_WAITING_INSTRUCTION].join('\n');
   } catch {
     return '';
   }
@@ -1734,6 +1756,16 @@ export function measureSnapshot(
       })()
       : undefined,
   );
+
+  // 5.4b Migration waiting (read-only: the ledger's due agent work). Its own
+  // pinned section: the work waits until someone does it, so it must never be
+  // demoted away, and it repeats every session until the agent records it.
+  const migrationWaiting = getMigrationWaiting(root);
+  if (migrationWaiting) {
+    parts.push(migrationWaiting);
+    parts.push('');
+    flushPinned('migration-waiting');
+  }
 
   // 5.5 Read sleep state (used by multiple sections below)
   const sleepState = readSleepState(root);

@@ -49,5 +49,5 @@ cd "$(dirname "$0")/.."
   node scripts/gen-skill-shas.mjs skill-packs/goal-skill/assets --name GOAL_SKILL_OLD_ASSET_SHAS
   echo ""
   echo "/** Retired core agents with no manifest record to prove them ours, by file name: an unedited copy matches one of these. */"
-  node scripts/gen-skill-shas.mjs skill-packs/agents --only review-coordinator.md --name RETIRED_CORE_AGENT_SHAS
+  node scripts/gen-skill-shas.mjs skill-packs/agents --history agents --only review-coordinator.md --only sleep-migration.md --name RETIRED_CORE_AGENT_SHAS
 } > src/lib/retired-packs/stopped.ts

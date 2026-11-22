@@ -12,6 +12,7 @@ import { migration0310 } from './0.31.0.js';
 import { migration0320 } from './0.32.0.js';
 import { migration0345 } from './0.34.5.js';
 import { migration0402 } from './0.40.2.js';
+import { migration04124 } from './0.41.24.js';
 import type { Migration } from './types.js';
 
 /**
@@ -22,9 +23,9 @@ import type { Migration } from './types.js';
  */
 // Two entries share version 0.23.0 on purpose (people-first + soul-split):
 // the runner gates each step by its own id, merges same-version changelog
-// entries, and unfinishedAgentTasks matches each agentTask id separately.
+// entries, and dueAgentTasks matches each agentTask id separately.
 // The user-split entry stays FIRST so its residue task is printed first.
-export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345, migration0402];
+export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345, migration0402, migration04124];
 
 /**
  * The registry as read at CALL time. A migration module sits in an import cycle (0.31.0 → the
@@ -34,7 +35,7 @@ export const REGISTRY: Migration[] = [migration070, migration072, migration080, 
  */
 function registry(): Migration[] {
   return REGISTRY.includes(undefined as unknown as Migration)
-    ? [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345, migration0402]
+    ? [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345, migration0402, migration04124]
     : REGISTRY;
 }
 
@@ -66,31 +67,58 @@ export function migrationsToRun(from: string, to: string): Migration[] {
   return [...inRange, ...everyRun].sort((a, b) => compareVersions(a.version, b.version));
 }
 
+/** One agentTask that has work waiting: what the snapshot, the Super and `migrations pending --json` name. */
+export interface DueTask {
+  version: string;
+  id: string;
+  title: string;
+}
+
 /**
- * Migrations whose CODE steps ran but whose agentTask was never recorded —
- * judged by the LEDGER, never by setupVersion.
+ * Agent tasks with work WAITING — judged by the LEDGER, never by setupVersion,
+ * and by the TASK, never by its version.
  *
- * `update` advances setupVersion as soon as the code steps land, which made a
- * setupVersion-ranged `migrations pending` compute the empty range
- * (cliVersion, cliVersion] and go blind to the very task it exists to print —
- * the 0.23.0 residue file pointed the user here, and "here" said there was
- * nothing to do (found live on the first real 0.23.0 run, 2026-07-30).
+ * A task is due iff some ledger entry reports work for it (`agentWorkFor ===
+ * task.id`: a step's `<step>#work` sighting, or the 0.41.24 settle's re-check)
+ * and no `executor: 'agent'` entry carries `step === task.id` (the agent's tick,
+ * or the owner's recorded "no"). So:
+ *   - a fresh vault (init'ed at the current version, an empty ledger) has none;
+ *   - a detection that found nothing writes no sighting, so it has none either;
+ *   - one migration's sighting never makes a sibling on the same version due
+ *     (0.23.0 carries two tasks).
  *
- * "Started" is required so a FRESH vault (init'ed at the current version, no
- * ledger entries at all) is never told to distribute a residue that does not
- * exist: a migration is unfinished only when its code/detected steps are in
- * the ledger and its agent step is not.
+ * The old rule ("any code/detected entry of the version, no agent entry")
+ * called a 3,000-char soul due because its detection step had run. Legacy
+ * ledgers written under it are settled once by the 0.41.24 migration.
+ *
+ * Pure read. A malformed ledger reads as `[]` (readLedger); never throws.
  */
-export function unfinishedAgentTasks(contextRoot: string, toVersion: string): Migration[] {
-  const ledger = readLedger(contextRoot);
-  return registry().filter((m) => {
-    if (!m.agentTask) return false;
-    // Opt-in tasks are an offer, not an obligation — never "unfinished".
-    if (m.agentTask.optIn) return false;
-    if (compareVersions(m.version, toVersion) > 0) return false;
-    const entries = ledger.filter((e) => e.version === m.version);
-    const started = entries.some((e) => e.executor === 'code' || e.executor === 'detected');
-    const done = entries.some((e) => e.executor === 'agent' && e.step === m.agentTask!.id);
-    return started && !done;
-  }).sort((a, b) => compareVersions(a.version, b.version));
+export function dueAgentTasks(contextRoot: string, toVersion: string): DueTask[] {
+  let ledger: ReturnType<typeof readLedger>;
+  try {
+    ledger = readLedger(contextRoot);
+  } catch {
+    return [];
+  }
+  const entries = ledger.filter((e) => e && typeof e === 'object');
+  const out: DueTask[] = [];
+  for (const m of registry()) {
+    const task = m.agentTask;
+    if (!task || task.optIn) continue;
+    if (compareVersions(m.version, toVersion) > 0) continue;
+    const sighted = entries.some((e) => e.agentWorkFor === task.id);
+    if (!sighted) continue;
+    const done = entries.some((e) => e.executor === 'agent' && e.step === task.id);
+    if (done) continue;
+    out.push({ version: m.version, id: task.id, title: task.title });
+  }
+  return out.sort((a, b) => compareVersions(a.version, b.version));
+}
+
+/** The registered agentTask for an id, with its migration's version. */
+export function agentTaskById(id: string): { version: string; task: NonNullable<Migration['agentTask']> } | null {
+  for (const m of registry()) {
+    if (m.agentTask?.id === id) return { version: m.version, task: m.agentTask };
+  }
+  return null;
 }

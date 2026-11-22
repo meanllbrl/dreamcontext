@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os';
  * `setupVersion` is the lower bound of the migration runner's half-open range
  * `(setupVersion, cliVersion]`. Stamping it early makes the next `update`
  * compute `(cliVersion, cliVersion]` = empty and apply nothing — and
- * `unfinishedAgentTasks` can't rescue it either, because it requires a
- * code/detected ledger entry before reporting an agent task, so a vault
+ * `dueAgentTasks` can't rescue it either, because it requires a step's
+ * work sighting in the ledger before reporting an agent task, so a vault
  * stranded this way reads as FRESH.
  *
  * Reproduced live on a real 0.18.0 vault (2026-07-30): `update` refuses on a
@@ -130,7 +130,7 @@ describe('migrateThenStampSetupVersion', () => {
   it('leaves a ledger entry behind, so the vault can never read as FRESH afterwards', () => {
     const root = track(makeLegacyVault('0.18.0'));
     migrateThenStampSetupVersion(root);
-    // unfinishedAgentTasks gates on a code/detected entry existing. The stranding
+    // dueAgentTasks needs ledger sightings to exist. The stranding
     // bug produced an EMPTY ledger, which is what made it invisible.
     expect(readLedger(join(root, '_dream_context')).length).toBeGreaterThan(0);
   });

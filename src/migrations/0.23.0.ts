@@ -964,11 +964,25 @@ function retireConfigRoster(root: string): MigrationStepResult {
  * `agentTask` distributes the residue: prose judgment about where a paragraph
  * belongs is not deterministic and must not be faked by code (D5).
  */
+/**
+ * `split-user-file` names its agent work by the task's id: whenever the residue
+ * exists after the split (written now, or left by an earlier partial run), the
+ * runner ledgers a `split-user-file#work` sighting and the task is due. A clean
+ * split leaves no residue and no sighting, so nothing waits.
+ */
+function splitUserFileSighted(root: string): MigrationStepResult {
+  const result = splitUserFile(root);
+  return existsSync(join(root, RESIDUE_REL))
+    ? { ...result, agentWorkFor: 'distribute-user-md-residue' }
+    : result;
+}
+
 export const migration0230: Migration = {
   version: '0.23.0',
-  steps: [rescaleLegacySleepDebt, seedPeopleFromConfig, splitUserFile, retireConfigRoster],
+  steps: [rescaleLegacySleepDebt, seedPeopleFromConfig, splitUserFileSighted, retireConfigRoster],
   agentTask: {
     id: 'distribute-user-md-residue',
+    title: 'Place the leftover sections of the old user file (inbox/1.user-residue.md)',
     instruction: `Start by checking the filesystem: if _dream_context/${RESIDUE_REL} does not
 exist, there is nothing to distribute — record this step and stop.
 

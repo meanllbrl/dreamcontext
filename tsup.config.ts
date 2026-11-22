@@ -12,7 +12,7 @@ import { t3EsbuildPlugin } from './scripts/t3-aliases.mjs';
  * the Tauri .app, which ships `Contents/Resources/dist/index.js` with no
  * package.json at ANY candidate path — so every probe missed and the lookup
  * fell through to the '0.0.0' sentinel. '0.0.0' sorts below every migration
- * version, so `pendingMigrations` / `unfinishedAgentTasks` returned nothing and
+ * version, so `pendingMigrations` / `dueAgentTasks` returned nothing and
  * no migration could ever fire through the bundled CLI — which is exactly the
  * first-run-before-npm-install path `resolve_cli` falls back to.
  *

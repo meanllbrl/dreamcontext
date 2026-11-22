@@ -88,6 +88,7 @@ export function outwardLine(o: OutwardGrant): string {
   return `${head}${words} `
     + 'Nothing wider: no other remote, branch, environment or target. If his words plainly contradict the step, do not run it: ask. '
     + mergeClause
+    + 'A pull request you open carries its migration decision in its body, one line: `Migration: src/migrations/<file>.ts` (one per migration file) or `Migration: none - <why an install made before it needs nothing>`; the release refuses a PR without it. '
     + 'If a permission check refuses the command, or it cannot reach the network, never work around it: leave him a `dream-view` run card with that exact command, and say so in your report.';
 }
 

@@ -39,7 +39,6 @@ const HELPER_KEY: Record<SleepSpecialist, string> = {
   'sleep-tasks': 'tasks',
   'sleep-state': 'state',
   'sleep-product': 'product',
-  'sleep-migration': 'migration',
   'sleep-learn': 'learn',
 };
 

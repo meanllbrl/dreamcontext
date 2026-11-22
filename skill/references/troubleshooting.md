@@ -191,8 +191,8 @@ the owner's `people/<slug>.md`, and the `## People` bullets into `people/people.
 belongs is judgment, not a string transform. The remainder is an **agent task**, and it has
 not been run yet.
 
-**Fix — run the pending agent task (the sleep cycle dispatches `sleep-migration` for it, or
-do it in-session):**
+**Fix — run the pending agent task (in the app the Super opens a Taşıma child for it; elsewhere
+do it in a session opened for it):**
 
 ```bash
 dreamcontext migrations pending    # prints the full instruction, id `distribute-user-md-residue`

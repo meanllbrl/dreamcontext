@@ -38,6 +38,9 @@ export interface Job {
    * worktree's git folder. Only with a worktree; the code still checks the diff (run-lane.ts).
    */
   laneIntent?: 'fast' | 'full';
+  /** The due agent migration task ids (`delegate --migration`): set ONLY by the server, never
+   *  parsed from a verb's body, so `pool add` or a plain `delegate` can never carry it. */
+  migration?: string[];
 }
 
 // eslint-disable-next-line no-control-regex

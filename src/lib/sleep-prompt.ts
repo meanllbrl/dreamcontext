@@ -22,10 +22,9 @@ import { isSafeTaskSlug } from './task-backend/local.js';
  * pins every surface to it. Newline-free: a bare `\n` submits early in readline.
  */
 export const SLEEP_ROSTER_CLAUSE =
-  'sleep-tasks + sleep-state always; sleep-product, sleep-migration and sleep-learn only when ' +
+  'sleep-tasks + sleep-state always; sleep-product and sleep-learn only when ' +
   'their signals fire (sleep-product: knowledge/feature/research signals, or `sleep start` ' +
-  'reports automation output or app findings; sleep-migration: `dreamcontext migrations ' +
-  'pending` has output; sleep-learn: learning is enabled and a thesis is due)';
+  'reports automation output or app findings; sleep-learn: learning is enabled and a thesis is due)';
 
 /** The consolidation request itself. Mirrored in dashboard/src/lib/sleepAgent.ts. */
 export const SLEEP_AGENT_PROMPT =

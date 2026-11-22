@@ -40,7 +40,7 @@ describe('sub-agent dispatch authorization', () => {
 
     it('covers every fan-out flow, so no skill is left arguing its own case', () => {
       for (const flow of [
-        'sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration',
+        'sleep-tasks', 'sleep-state', 'sleep-product',
         'sleep-learn',
         'curator', 'initializer', 'goal-skill', 'dreamcontext-deep-research',
         'council', 'multi-review',
