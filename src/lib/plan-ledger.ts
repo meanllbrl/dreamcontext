@@ -83,6 +83,8 @@ export interface LedgerRound {
   tree?: string;
   base?: string;
   paths?: string[];
+  /** Code mode: the round opened after a PASS, for the fix of a red final check. */
+  afterFinalCheck?: boolean;
 }
 
 export type LedgerEventKind = 'continue' | 'narrow' | 'split' | 'accept' | 'add' | 'merge' | 'redesign' | 'abandon';
@@ -697,7 +699,7 @@ function codeNextAction(ledger: Ledger, s: PlanState): string {
       const lines = n.lenses.map((l) => `- ${l}: \`${loopCommand(ledger, 'packet', `--lens ${l}`)}\`${n.redispatch.includes(l) ? ' (re-dispatch: its review did not land)' : ''}, then \`${loopCommand(ledger, 'record', `--lens ${l} --file <its review>`)}\``);
       return [`Next: review ${n.lenses.join(' + ')}${opening ? ` (opens round ${s.round + 1})` : ` (round ${s.round})`}.`, ...lines].join('\n');
     }
-    case 'done': return `Next: done. Every reviewer of round ${s.latestComplete} PASS with nothing open: record review-end, then the final check.`;
+    case 'done': return `Next: done. Every reviewer of round ${s.latestComplete} PASS with nothing open: record review-end, then the final check. A red final check comes back to this loop: fix it, write changes.md, then \`${loopCommand(ledger, 'packet', '--lens reviewer --tree <FIX> --paths <files the fix changed>')}\` opens round ${s.round + 1}.`;
     case 'stop': return `Next: STOP. Ask the owner this card (an owner card; a Super Agent never answers it):\n\n${codeStopCard(ledger, s)}`;
     case 'redesign':
     case 'revise': {

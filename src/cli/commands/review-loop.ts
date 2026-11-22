@@ -196,6 +196,12 @@ export function buildCodePacketText(p: CodePacketInput): string {
       `Which are new (status A, read them whole): git diff --name-status ${ledger.start} ${round.tree} -- ${paths.map(shellQuote).join(' ')}`,
     );
   } else {
+    if (round.afterFinalCheck) {
+      out.push(
+        `Round ${round.n - 1} passed; then the final check went red, and this round reviews the fix of that red check, not a finding. The lead's fix note says what failed. Also read the ticked criteria and their evidence: say for each whether it was OBSERVED or inferred.`,
+        '',
+      );
+    }
     out.push(
       `The fix: it changed the tree you reviewed (${round.base}) into ${round.tree}. Read it, one diff per path:`,
       ...diff(round.base!, round.tree!),
@@ -247,7 +253,12 @@ export async function reviewPacket(deps: ReviewDeps, task: string, loop: string,
     const ledger = s.load();
     let state = computePlanState(ledger);
     if (state.abandoned) throw new PlanRefusal(`Review loop ${loop} of ${task} was abandoned.`);
-    if (state.done) throw new PlanRefusal(`Review loop ${loop} of ${task} is done (every reviewer PASS, nothing open). Next: record review-end, then the final check.`);
+    // A PASS closes the review, not the loop: the develop recipe sends the fix of a red final
+    // check down the same review path, so --tree <FIX> --paths opens the next round right here
+    // (task loops once took a second `--loop final` to get past this). Without them it is the
+    // ordinary done: record review-end, then the final check.
+    const afterFinalCheck = state.done;
+    if (afterFinalCheck && !opts.tree) throw new PlanRefusal(`Review loop ${loop} of ${task} is done (every reviewer PASS, nothing open). Next: record review-end, then the final check. A red final check: fix it, write changes.md, take the FIX snapshot, then \`${loopCommand(ledger, 'packet', `--lens ${lens} --tree <FIX> --paths <files the fix changed>`)}\` opens round ${state.round + 1} in this loop.`);
     const now = deps.now().toISOString();
     let round = latestRound(ledger);
     let opened = false;
@@ -267,7 +278,10 @@ export async function reviewPacket(deps: ReviewDeps, task: string, loop: string,
       if (blocking.length > 0) throw new PlanRefusal(`The next round is refused: a stop stands. Ask the owner (an owner card; a Super Agent never answers it):\n\n${renderStopCard(ledger, state)}`);
       if (!opts.tree) throw new PlanRefusal(`Opening round ${(round?.n ?? 0) + 1} needs --tree <${round ? 'FIX' : 'NOW'}> and --paths <${round ? 'the files the fix changed' : 'every path of the run'}>.`);
       if (paths.length === 0) throw new PlanRefusal(`Opening a round needs --paths: ${round ? 'the files the fix changed' : 'every path of the run'}, by name.`);
-      const lenses = nextRoundLenses(ledger, state);
+      // After the final check no reviewer owns an open id: the fix's ONE fresh reviewer (the
+      // recipe's "the fix's reviewer") is the lens that opens the round, `reviewer` or a lens of the loop.
+      const lenses = afterFinalCheck ? [lens] : nextRoundLenses(ledger, state);
+      if (afterFinalCheck && lens !== 'reviewer' && !ledger.lenses.includes(lens)) throw new PlanRefusal(`A round after the final check is for reviewer or a reviewer of this loop (${ledger.lenses.join(', ')}), not ${lens}.`);
       if (!lenses.includes(lens)) throw new PlanRefusal(`Round ${(round?.n ?? 0) + 1} is for ${lenses.join(', ')} (${round ? 'each reviewer that still owns an open id' : 'the reviewers chosen at open'}); start it with one of them.`);
       if (round && opts.tree === round.tree) throw new PlanRefusal(`Tree ${opts.tree} is the one round ${round.n} reviewed: nothing was fixed. Fix, take the FIX snapshot, then open the round.`);
       leftOut = checkPaths(deps, round?.tree ?? ledger.start ?? '', opts.tree, paths, `Round ${(round?.n ?? 0) + 1}'s --paths`);
@@ -302,7 +316,7 @@ export async function reviewPacket(deps: ReviewDeps, task: string, loop: string,
       const openSeq = nextSeq(ledger);
       const recs: LedgerRound['lenses'] = {};
       for (const l of lenses) recs[l] = { verdict: 'PENDING', dispatchedAt: now, findings: [], seq: openSeq };
-      round = { n, openedAt: now, snapshotSha: sha(changes), openSeq, lenses: recs, tree: opts.tree, base: round?.tree ?? ledger.start, paths };
+      round = { n, openedAt: now, snapshotSha: sha(changes), openSeq, lenses: recs, tree: opts.tree, base: round?.tree ?? ledger.start, paths, ...(afterFinalCheck ? { afterFinalCheck: true } : {}) };
       ledger.rounds.push(round);
       opened = true;
     }

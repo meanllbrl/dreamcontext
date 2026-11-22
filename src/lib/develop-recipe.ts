@@ -386,7 +386,8 @@ or the failure and nothing else, and check the fix with \`builder test "$S" --wa
 <files the fix changed>\`, naming a central file's tests with \`--also\` instead of the file.
 Only what the fix touched runs: no build, no browser and no Validation command here, those wait
 for the one final check. ${END_REVIEW_ROUND} After a red final check, the fix's reviewer also
-reads the ticks and their evidence, then re-run only what was red. Nothing closes on a fix no reviewer has read:
+reads the ticks and their evidence (the same loop: its next packet opens the round after the PASS,
+never a new --loop), then re-run only what was red. Nothing closes on a fix no reviewer has read:
 
   dreamcontext builder mark review-start || true   # and review-end with its verdict
 
