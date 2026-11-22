@@ -407,7 +407,7 @@ export function heavyRefusalLead(command: string, kind: HeavyKind, suggestion: s
     const whole = suggestion.replace(/'\\''/g, "'").includes(command.trim());
     lines.push(whole
       ? 'The heavy form below runs the whole command, every part, so run it once and do not repeat any part yourself.'
-      : `Read the heavy form below: whatever it shows (a leading cd, a --tail, a build before a suite, the suite itself) it runs for you, so never repeat that. Anything in your command that it does NOT show did not run and never will unless you run it yourself, keeping the same order and conditions (&&, ||, ;). Your command was: ${clip(command.trim(), 400)}`);
+      : `Read the heavy form below: whatever it shows (a leading cd, a --tail, a build before a suite, the suite itself) it runs for you, so never repeat that. Anything in your command that it does NOT show did not run and never will unless you run it yourself, keeping the same order and conditions (&&, ||, ;). A cd the form shows applies only inside the form: a part you re-issue must run in that same folder yourself, e.g. (cd <dir> && <part>). Your command was: ${clip(command.trim(), 400)} [end of your command].`);
   }
   return lines.join(' ');
 }

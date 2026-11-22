@@ -85,6 +85,14 @@ describe('the heavy-step gate', () => {
         expect(l).not.toMatch(/runs only the heavy step|the rest never runs/);
       }
     });
+    it('a cd the form shows does not carry over to the parts the agent re-issues', () => {
+      for (const cmd of ['cd a && echo x >> f && npm test', 'cd pkg && echo x >> f && npm run build && npm test']) {
+        const l = lead(cmd);
+        expect(l).toContain('applies only inside the form');
+        expect(l).toContain('(cd <dir> && <part>)');
+        expect(l).toContain(`Your command was: ${cmd} [end of your command].`);
+      }
+    });
     it('names the part of the reported kind', () => {
       expect(lead('npx tsc --noEmit && npm run build')).toContain('`npm run build` (build)');
     });
