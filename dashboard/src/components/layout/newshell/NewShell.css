@@ -551,8 +551,8 @@
   position: absolute;
   inset: 0;
   visibility: hidden;
-  /* A descendant can set `visibility: visible` again (the Super dock's smile does); opacity and
-     pointer-events on the box cannot be undone from inside it. */
+  /* A descendant can set `visibility: visible` again (the Super dock's smile does); opacity on the
+     box cannot be undone from inside it, and `inert` keeps every pointer and key out. */
   opacity: 0;
   pointer-events: none;
 }

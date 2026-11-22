@@ -485,7 +485,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     landFocusRef.current = null;
     if (!land || land.vault !== activeVault) return;
     const at = document.activeElement;
-    if (at && at !== document.body && !at.closest('.project-instance:not([data-active])')) return;
+    // Dead focus: body, inside A, or inside a body-portalled sheet that just went hidden with A.
+    if (at && at !== document.body && !at.closest('.project-instance:not([data-active]), [hidden]')) return;
     const fromChat = !!at?.closest('.agent-surface');
     const inst = [...document.querySelectorAll<HTMLElement>('.project-instance[data-active]')]
       .find((el) => el.dataset.instanceVault === land.vault);
