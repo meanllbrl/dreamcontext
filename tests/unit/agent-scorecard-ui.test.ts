@@ -156,6 +156,9 @@ describe('the scorecard tile', () => {
     expect(html).toContain('Release note, short version');
     expect(html).toContain('Rate it');
     expect(count(html, 'data-testid="sc-star-')).toBe(5);
+    // Empty stars are outlines: on and off differ by shape, never by hue alone.
+    expect(count(html, '>☆<')).toBe(5);
+    expect(count(html, '>★<')).toBe(0);
     expect(html).not.toContain('0.0');
     expect(html).not.toContain('sc-bars');
   });
@@ -311,6 +314,8 @@ describe('stars under a run in the member\'s chat', () => {
     expect(html).toContain('Rate this run');
     html = render(d, createElement(RunStars, { member: SLUG, sessionKey: 'conor::r3' }));
     expect(html).toMatch(/data-value="2"/);
+    expect(html.match(/>★</g)?.length).toBe(2);
+    expect(html.match(/>☆</g)?.length).toBe(3);
     expect(html).toContain('Çok fazla bütçe, test edilmemiş kitleye');
     expect(html).toContain('New audiences start small.');
     expect(html).toContain('Undo');

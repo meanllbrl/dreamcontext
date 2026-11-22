@@ -8,7 +8,8 @@
 .is-good { color: var(--color-success-ink, var(--color-success)); }
 .is-bad { color: var(--color-error-ink, var(--color-error)); }
 
-/* Stars. An empty star is a quiet grey that still reads (3:1 on the card in both themes); each
+/* Stars. A filled star (warning-ink, >= 4.5:1 on the card in both themes) and an outline empty star
+   in a quiet grey that still reads (3:1): shape and luminance carry on/off, not hue. Each
    star's hit area is 24px on a pointer and 44px on touch, the glyph stays small. Adjacent hit
    areas leave no gap, so hovering between two stars never lights all five. */
 .sc-stars { --sc-empty: color-mix(in srgb, var(--color-text-secondary) 75%, var(--color-bg)); display: inline-flex; align-items: center; gap: 0; flex: none; }
@@ -19,8 +20,8 @@
 .sc-glyph { font-size: var(--font-size-base); line-height: 1; }
 button.sc-star { cursor: pointer; }
 button.sc-star:disabled { cursor: progress; }
-.sc-star.is-on { color: var(--color-warning); }
-.sc-stars:hover button.sc-star:not(:disabled) { color: var(--color-warning); }
+.sc-star.is-on { color: var(--color-warning-ink, var(--color-warning)); }
+.sc-stars:hover button.sc-star:not(:disabled) { color: var(--color-warning-ink, var(--color-warning)); }
 .sc-stars button.sc-star:hover ~ button.sc-star { color: var(--sc-empty); }
 button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; border-radius: var(--radius-sm); }
 .sc-stars--big .sc-star { min-width: var(--space-8, 32px); min-height: var(--space-8, 32px); }
@@ -50,7 +51,7 @@ button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); out
 .sc-full--one .sc-run-top { flex-wrap: wrap; }
 .sc-write-error { font-size: var(--font-size-xs); }
 .sc-why { font-size: var(--font-size-xs); width: 100%; }
-.sc-cleared { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); }
+.sc-cleared { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); }
 .sc-run-open { padding: 0; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .sc-run-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 .sc-cols { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(280px, 2fr); gap: var(--space-4); min-height: 0; }
@@ -182,6 +183,6 @@ button.sc-chip { cursor: pointer; }
 
 /* Under a run in the member's chat */
 .sc-runstars { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); font-size: var(--font-size-sm); }
-.sc-runstars-row { display: inline-flex; align-items: center; gap: var(--space-2); }
+.sc-runstars-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .sc-runstars-note { color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .sc-runstars-clear { align-self: flex-start; }

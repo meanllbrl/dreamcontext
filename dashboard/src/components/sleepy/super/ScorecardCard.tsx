@@ -62,6 +62,10 @@ function WriteError({ error }: { error: string | null }) {
   return error ? <p className="sc-failed sc-write-error" role="alert" data-testid="sc-write-error">{error}</p> : null;
 }
 
+/** On and off differ by SHAPE as well as colour (a filled and an outline star), never by hue alone. */
+const FILLED = '★';
+const EMPTY = '☆';
+
 function Stars({ value, big, label, onRate, disabled }: {
   value: number; big?: boolean; label: string; onRate?: (n: number) => void; disabled?: boolean;
 }) {
@@ -72,9 +76,9 @@ function Stars({ value, big, label, onRate, disabled }: {
       {[1, 2, 3, 4, 5].map((n) => (onRate ? (
         <button key={n} type="button" className={`sc-star${n <= value ? ' is-on' : ''}`} role="radio" aria-checked={n === value}
           aria-label={t('scorecard.starN').replace('{n}', String(n))} disabled={disabled} data-testid={`sc-star-${n}`}
-          onClick={() => onRate(n)}><span className="sc-glyph" aria-hidden="true">★</span></button>
+          onClick={() => onRate(n)}><span className="sc-glyph" aria-hidden="true">{n <= value ? FILLED : EMPTY}</span></button>
       ) : (
-        <span key={n} className={`sc-star${n <= value ? ' is-on' : ''}`} aria-hidden="true"><span className="sc-glyph">★</span></span>
+        <span key={n} className={`sc-star${n <= value ? ' is-on' : ''}`} aria-hidden="true"><span className="sc-glyph">{n <= value ? FILLED : EMPTY}</span></span>
       )))}
     </span>
   );
