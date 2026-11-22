@@ -222,7 +222,7 @@ describe('the team item in a [super events] batch', () => {
     const s = state(job({ entryId: ask.id }));
     noteTeamJobEnd(root, s, 'team-abc', null);
     const text = superBatchText(root, s, nextBatch(s).items, 'b-1');
-    expect(text).toMatch(/^- item=\S+ team=team-abc member=doctor event=done status=done$/m);
+    expect(text).toMatch(/^- item=\S+ team=team-abc member=doctor event=done status=done run=doctor::\S+$/m);
     expect(text).not.toContain(AWAITED_LINE);
     expect(text).toContain(TEAM_LINE);
   });
@@ -270,7 +270,7 @@ describe('the team item in a [super events] batch', () => {
     const item = s.queue.find((q) => q.team)!;
     const { items } = nextBatch(s);
     expect(items.map((q) => q.id)).toEqual([item.id]);
-    expect(superBatchText(root, s, items, 'b-2')).toMatch(new RegExp(`- item=${item.id} team=team-abc member=doctor event=done awaited=owner status=\\S+ ref=[0-9a-z]{6}`));
+    expect(superBatchText(root, s, items, 'b-2')).toMatch(new RegExp(`- item=${item.id} team=team-abc member=doctor event=done awaited=owner status=\\S+(?: rate=ask)?(?: run=\\S+)? ref=[0-9a-z]{6}`));
     expect(heldBlock(root, s)).toBeNull();
   });
 

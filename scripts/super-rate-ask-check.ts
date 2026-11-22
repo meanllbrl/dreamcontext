@@ -65,7 +65,9 @@ const brief = superBriefing();
 let cost = 0;
 function claude(prompt: string, resume?: string): { text: string; session: string } {
   if (DRY) return { text: LINE, session: 'dry' };
-  const r = spawnSync('claude', ['-p', '--model', MODEL, '--tools', '', '--output-format', 'json', '--append-system-prompt', brief, '--strict-mcp-config', '--setting-sources', '', ...(resume ? ['--resume', resume] : []), prompt], {
+  const r = spawnSync('claude', ['-p', '--model', MODEL, '--tools', '', '--output-format', 'json', '--append-system-prompt', brief, '--strict-mcp-config', '--setting-sources', '', ...(resume ? ['--resume', resume] : [])], {
+    // On stdin: `--tools` takes several values and would swallow a trailing prompt.
+    input: prompt,
     // The model call signs in as the owner's own CLI (his HOME); the fixtures stay in the temp one.
     cwd: empty, env: realEnv, encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024, timeout: 300_000,
   });
