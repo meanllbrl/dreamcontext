@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../../src/server/chat-surface.js';
+import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING, superChildSurfaceBriefing } from '../../src/server/chat-surface.js';
 import { SUPER_BRIEF_TEXT, memberSlotOf, superBriefing } from '../../src/server/chat-modes.js';
 import { buildTurnLearningDirective } from '../../src/lib/automations/runner.js';
 import { AGENTS_MD_BODY } from '../../src/lib/install-agents-md.js';
@@ -82,6 +82,7 @@ describe('C8: the learn paragraph is in every text an agent reads', () => {
     SUPER_BRIEF_TEXT,
     CHAT_SURFACE_BRIEFING,
     SUPER_CHILD_BRIEFING,
+    'superChildSurfaceBriefing()': superChildSurfaceBriefing('/x/surface-reference.md'),
     buildTurnLearningDirective: member,
     AGENTS_MD_BODY,
   };
