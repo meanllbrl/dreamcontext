@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { StatsProjects } from './StatsProjects';
+import { SuperEffectCard } from './StatsSuperEffect';
 import { ChartLegend, GhostBar, StatsChart, type ChartSeries } from './StatsChart';
 import { fmtCost, fmtDay, fmtPct, fmtTokens, fmtWhen } from './statsFormat';
 import type { LimitWindow, SleepRun, StatsWire } from './statsTypes';
@@ -136,6 +137,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
   return (
     <div className="st-col">
       <LimitAnswerCard data={data} />
+      <SuperEffectCard data={data} />
       <div className="st-kpis">
         <div className="st-card">
           <div className="st-k">{t('stats.sleep')}</div>

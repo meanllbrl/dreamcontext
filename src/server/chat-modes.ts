@@ -695,7 +695,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   it): a short lookup (a path, a line, a status) is no child: your own \`haiku\` sub-agent that only locates; a haiku
   \`low\` child ONLY for long multi-source research that changes nothing; any job that writes or edits,
   even a mechanical edit with an exact spec: small clear fix (1-3 files, UI/CSS/copy), merge, build,
-  install, chores \`sonnet\` \`medium\`; multi-file develop, a bug with a repro, analysis \`opus\` \`medium\`; security,
+  install, chores \`sonnet\` \`medium\`; multi-file develop, a bug with a repro, a diagnosis or recommendation \`opus\` \`medium\`; security,
   money, data migration, plans \`opus\` \`high\`. On \`--tool codex|antigravity\` the same rows, that tool's small, mid, large model (small: read-only research only).
 - Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (\`--risk contract|money|migration|security\`),
   never develop. Develop \`medium\`; security, money or data migration develop \`--effort high --risk <kind>\`

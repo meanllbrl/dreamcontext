@@ -4,7 +4,7 @@ import { requestOpenStats } from '../../../lib/openStats';
 import { useState, type ReactNode } from 'react';
 import {
   CONTEXT_TIGHT_PCT,
-  contextBands,
+  contextBands, bandEdgesOf,
   effortAt, effortIndex, effortLabel, fmtClock, fmtCost, fmtResetIn, fmtTokens, modelNoteFor, splitModels,
   type ModelConfig, type ModelOption, type UsageLimit,
 } from '../../../lib/agentComposer';
@@ -526,9 +526,10 @@ export function UsageMenu({
                 language: the gauge says how many bands are lit, this says where inside them
                 you are — and neither can invent a tone the other doesn't have, because both
                 read `contextBands()`. Each segment is as wide as its share of the window, so
-                the seams ARE the 300k and 650k marks and no separate tick is needed for them. */}
+                the seams ARE the pane's ladder marks (300k and 650k, or a Super child's own rungs
+                via `bandEdgesOf`) and no separate tick is needed for them. */}
             <div className="chat-cmp-bandbar">
-              {(context.detail ? contextBands(context.detail.used, context.detail.limit) : []).map((band) => {
+              {(context.detail ? contextBands(context.detail.used, context.detail.limit, bandEdgesOf(contextHandoff)) : []).map((band) => {
                 const share = (band.to - band.from) / (context.detail!.limit || 1);
                 const tickAt = handoffAt && handoffAt > band.from && handoffAt < band.to
                   ? ((handoffAt - band.from) / (band.to - band.from)) * 100

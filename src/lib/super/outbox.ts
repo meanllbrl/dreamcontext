@@ -238,7 +238,7 @@ async function userTextsSince(path: string | null, at: number): Promise<string[]
 }
 
 /** The user-turn texts among transcript lines, written at or after `at`. */
-function userTextsIn(lines: readonly string[], at: number): string[] {
+export function userTextsIn(lines: readonly string[], at: number): string[] {
   const out: string[] = [];
   for (const line of lines) {
     if (!line.includes('"user"')) continue;

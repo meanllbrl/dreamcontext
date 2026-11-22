@@ -8,6 +8,10 @@ All notable changes to dreamcontext will be documented in this file.
 - **No second session after a restart.** A job that was mid-way when the app restarted gets 10 minutes to come back before it is called gone, so it is no longer handed out a second time. A chat is started without a window only once the window has really been closed for 45 seconds.
 - **Fast design jobs.** A one-screen look or copy change can run in a fast lane: one short code read and one screenshot. Anything that touches money, sign-in, analytics or data always takes the full check, and "tam doğrula" turns any fast job into a full one.
 - **Waiting on CI.** `dreamcontext ci wait` waits on every run of one commit and stops before the shell's time limit, in place of `gh run watch`.
+- **Super children use fewer tokens.** A session the Super started hands off to a fresh one at 250k instead of 300k, and new work sent to a child already past that point asks it to hand off first, so the work does not ride a huge old context. Your own chats keep their limits.
+- **Nothing you send during a handoff is lost.** A message written while a session is handing off waits and arrives once, in the fresh session, after it has read its handoff.
+- **The right model for the job.** The Super's model table has one row per kind of work, and a sub-agent opened without a model under a Fable session runs on Opus instead of Fable.
+- **Does the Super raise token use?** Stats › dreamcontext answers it: the same kind of work with and without the Super, the Super's own share included, cache reads shown apart.
 
 ## [0.41.23] - 2026-11-19
 

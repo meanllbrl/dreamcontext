@@ -34,7 +34,7 @@ import { PHONE_FILE_UPLOAD_TIMEOUT_MS, splitPhonePicks } from '../../../lib/phon
 import { googleAccountLabel, useAgentSessionStats, useClaudeAccounts, useToolAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, effortsForModel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
-  fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
+  fmtTokens, CONTEXT_TIGHT_PCT, contextBands, bandEdgesOf,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
   mentionQueryAt, filterPeerMentions, applyPeerMention, addressedPeer,
   type PeerMention,
@@ -370,17 +370,19 @@ const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disab
 // The ring geometry and drawing live in UsageRings.tsx, shared with a chat card's rate-limit ring.
 /** The context meter, demoted to a ring — see the call site. `nudgeAt`/`hardAt` are the
  *  handoff thresholds when handoff is ON, else null. */
-const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, open, onToggle }: {
+const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, edges, open, onToggle }: {
   ctx: { used: number; limit: number; pct: number } | null;
   nudgeAt: number | null;
   hardAt: number | null;
+  /** The pane's band edges ({@link bandEdgesOf}): a Super child's ring splits at its own ladder. */
+  edges: readonly number[];
   open: boolean;
   onToggle: () => void;
 }) {
   // The gauge, as a ring. `ctx.pct` drives an arc over a 6.5px-radius circle; the full
   // reading stays reachable as the button's title (a hover) and as `aria-valuetext` (a
   // screen reader) — demoted, never deleted.
-  const bands = ctx ? contextBands(ctx.used, ctx.limit) : [];
+  const bands = ctx ? contextBands(ctx.used, ctx.limit, edges) : [];
   const isTight = !!ctx && ctx.pct >= CONTEXT_TIGHT_PCT;
   // The handoff threshold. Same guard as the bar's marker: only when handoff is ON and the
   // threshold actually falls INSIDE the window, so the notch can never land on the seam at
@@ -1542,6 +1544,10 @@ export function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `staleTick` stands in for the clock
     [ctx, usageRes, contextHandoff, staleTick],
   );
+  // The ring's band edges, stable across renders (the memoised ring re-renders only when a rung moves).
+  const bandNudgeAt = contextHandoff?.nudgeAt;
+  const bandHardAt = contextHandoff?.hardAt;
+  const bandEdges = useMemo(() => bandEdgesOf({ nudgeAt: bandNudgeAt, hardAt: bandHardAt }), [bandNudgeAt, bandHardAt]);
 
   const runCompact = () => {
     if (!canCompose) return;
@@ -2806,6 +2812,7 @@ export function Composer({
         {hasUsage && (
           <UsageRingButton
             ctx={ctx}
+            edges={bandEdges}
             nudgeAt={contextHandoff?.enabled ? contextHandoff.nudgeAt : null}
             hardAt={contextHandoff?.enabled ? contextHandoff.hardAt : null}
             open={menu.open === 'usage'}

@@ -31,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from './gitignore.js';
 import { TASK_SLUG_RE } from './task-slug.js';
 import { isSafeSessionId } from './transcript-locate.js';
-import { readSetupConfig, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
+import { readSetupConfig, resolveChildHandoff, resolveContextHandoff, type ResolvedContextHandoff } from './setup-config.js';
 import { HANDOFF_FIELDS } from './handoff-readiness.js';
 import { childPlaceOf, superChildContext, superHandoffCommand, superHandoffContext, superNudgeLine, type SuperChildContext } from './super/handoff-task.js';
 import { SUPER_HANDOFF_TASK, superHandoffFileOf } from './super/handoff-file.js';
@@ -578,13 +578,31 @@ export function writeTabHandoff(
  * able to pin a stale ladder against the vault (see {@link TabHandoffState}). A
  * terminal/CLI session has no pane and gets the vault answer for both.
  */
-export function resolveHandoffFor(contextRoot: string, projectRoot: string, tab: string | null | undefined): ResolvedContextHandoff {
-  const vault = resolveContextHandoff(readSetupConfig(projectRoot)?.contextHandoff);
+export function resolveHandoffFor(
+  contextRoot: string,
+  projectRoot: string,
+  tab: string | null | undefined,
+  opts: { ctx?: number | null; child?: boolean; ids?: ReadonlyArray<string | null | undefined> } = {},
+): ResolvedContextHandoff {
+  const cfg = readSetupConfig(projectRoot)?.contextHandoff;
+  const vault = resolveContextHandoff(cfg);
+  let enabled = vault.enabled;
   if (tab) {
     const tabState = readTabHandoff(contextRoot, tab);
-    if (tabState) return { ...vault, enabled: tabState.enabled };
+    if (tabState) enabled = tabState.enabled;
   }
-  return vault;
+  // A Super child's ladder (250k / 400k / 50k, `contextHandoff.child`): the spawn-time hint, or the
+  // super record naming the pane, and never the Super's own pane. A reading under both first rungs
+  // needs no record lookup: either ladder says "not yet".
+  const child = resolveChildHandoff(cfg);
+  const ctx = opts.ctx;
+  const below = typeof ctx === 'number' && Number.isFinite(ctx) && ctx < Math.min(vault.nudgeAt, child.nudgeAt);
+  let isChild = opts.child === true;
+  if (!isChild && !below) {
+    const ids = opts.ids ?? [tab];
+    if (ids.some((id) => !!id) && !superHandoffContext(contextRoot, ids) && superChildContext(contextRoot, ids)) isChild = true;
+  }
+  return isChild ? { ...child, enabled } : { ...vault, enabled };
 }
 
 /**
@@ -634,9 +652,10 @@ export function applyPaneHandoffToggle(
   projectRoot: string,
   tab: string,
   enabled: boolean,
+  opts: { child?: boolean } = {},
 ): ResolvedContextHandoff | null {
   const written = writeTabHandoff(contextRoot, tab, { enabled });
-  return written ? resolveHandoffFor(contextRoot, projectRoot, tab) : null;
+  return written ? resolveHandoffFor(contextRoot, projectRoot, tab, opts) : null;
 }
 
 // ─── The one entry point the hooks call ───────────────────────────────────────
@@ -663,8 +682,8 @@ export function maybeNudge(
   try {
     const projectRoot = dirname(contextRoot);
     const tab = typeof env.DREAMCONTEXT_TAB_SESSION === 'string' ? env.DREAMCONTEXT_TAB_SESSION : null;
-    const cfg = resolveHandoffFor(contextRoot, projectRoot, tab);
-    if (!cfg.enabled) return null;
+    // `enabled` first, with no record lookup (ctx 0 is under every rung): off = zero transcript reads.
+    if (!resolveHandoffFor(contextRoot, projectRoot, tab, { ctx: 0 }).enabled) return null;
 
     let ctx: number | null;
     if (typeof input.context_tokens === 'number' && Number.isFinite(input.context_tokens)) {
@@ -680,6 +699,8 @@ export function maybeNudge(
 
     const sessionId = typeof input.session_id === 'string' ? input.session_id : '';
     if (!sessionId) return null;
+    // The ladder for THIS pane: a Super child's once the reading is past the lower first rung.
+    const cfg = resolveHandoffFor(contextRoot, projectRoot, tab, { ctx, ids: [tab, sessionId] });
     const state = readNudgeState(contextRoot, sessionId);
     if (!shouldNudge(state, ctx, cfg)) return null;
 

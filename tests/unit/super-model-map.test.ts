@@ -46,6 +46,33 @@ describe('super model map: briefing and §3 agree', () => {
   });
 });
 
+describe('§3 has one row per kind of work (super-cocuk-tasarruf D4)', () => {
+  const brief = modeBriefing('super', { worktreeAllowed: true });
+  const bullets = section3.split(/\n(?=- )/).filter((b) => b.startsWith('- ') && b.includes('→'));
+
+  it('research sits in exactly one row per purpose: gathering is haiku, a judgement is opus', () => {
+    expect(bullets.filter((b) => /research/.test(b) && /`haiku` \/ `low`/.test(b))).toHaveLength(1);
+    expect(bullets.filter((b) => /`opus` \/ `medium`/.test(b) && /\bresearch\b/.test(b))).toHaveLength(0);
+    expect(section3).toContain('research ending in a judgement is `opus`, research that only gathers is `haiku`');
+  });
+
+  it('each model/effort lead appears in one row only', () => {
+    for (const lead of ['`haiku` / `low`', '`sonnet` / `medium`', '`opus` / `medium`', '`fable` / `high`']) {
+      expect(bullets.filter((b) => b.includes(`→ ${lead}`) || b.includes(`→ a ${lead}`))).toHaveLength(1);
+    }
+  });
+
+  it('the briefing agrees: a diagnosis or recommendation is opus medium', () => {
+    expect(brief).toContain('a diagnosis or recommendation `opus` `medium`');
+    expect(brief).not.toMatch(/analysis `opus` `medium`/);
+  });
+
+  it('the guide says when to use --keep and what a HANDOFF: reply means', () => {
+    expect(guide).toContain('`--keep` drops it (its own question, a reply needing the live\nconversation)');
+    expect(guide).toContain('opening `HANDOFF:` = `super delegate --succeeds <child>`');
+  });
+});
+
 describe('read-only lookup helper runs on haiku and only locates (owner, 2026-11-22)', () => {
   const skill = readFileSync('skill/SKILL.md', 'utf8');
   const explore = readFileSync('agents/dreamcontext-explore.md', 'utf8');

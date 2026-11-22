@@ -218,15 +218,15 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe('writeOwnerTurn: every call names its source', () => {
   it('the source is a required argument', () => {
-    expect(AGENT_CHAT).toMatch(/const writeOwnerTurn = \(raw: string, source: OwnerTurnSource\): void =>/);
+    expect(AGENT_CHAT).toMatch(/const writeOwnerTurn = \(raw: string, source: OwnerTurnSource, opts: \{ frame\?: Buffer \| string; fromHold\?: boolean \} = \{\}\): void =>/);
   });
 
   it('its call sites are exactly these three, each with a source', () => {
     const calls = codeLines(AGENT_CHAT).filter((l) => l.includes('writeOwnerTurn(')).map((l) => l.trim());
     expect(calls).toEqual([
       "writeOwnerTurn(RESET_CONTINUE_TEXT, silentOwnerTurn('server-continue'));",
+      'writeOwnerTurn(text, source, { frame: raw, ...(o.fromHold ? { fromHold: true } : {}) });',
       "for (const text of texts) writeOwnerTurn(text, takeHeldOwnerMark(chatRegistryId, text) ?? silentOwnerTurn('held-replay'));",
-      'writeOwnerTurn(text, source);',
     ]);
   });
 
@@ -250,7 +250,7 @@ describe('writeOwnerTurn: every call names its source', () => {
       .flatMap((p) => codeLines(readFileSync(p, 'utf-8')).filter((l) => l.includes('appendOwnerTurn(')).map(() => p.slice(ROOT.length + 1)));
     expect(callers.sort()).toEqual(['src/lib/super/owner-relay.ts', 'src/server/routes/agent-chat.ts']);
     const at = AGENT_CHAT.indexOf('appendOwnerTurn(ownerTurnLine(');
-    const def = AGENT_CHAT.indexOf('const writeOwnerTurn = (raw: string, source: OwnerTurnSource)');
+    const def = AGENT_CHAT.indexOf('const writeOwnerTurn = (raw: string, source: OwnerTurnSource, opts');
     const next = AGENT_CHAT.indexOf('\n  };\n', def);
     expect(def).toBeGreaterThan(0);
     expect(at).toBeGreaterThan(def);

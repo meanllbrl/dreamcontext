@@ -9,6 +9,8 @@ import { withResumeDigest } from '../../lib/super/resume-digest.js';
 import { superOfSession } from '../../lib/super/store.js';
 import { superKnownLanguage } from '../../lib/super/inbox.js';
 import { withOwnerLanguage } from '../../lib/super/owner-language.js';
+import { userTextsSinceSync, withCarriedTexts } from '../../lib/super/send-rotation.js';
+import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 
 /**
  * The context handoff's rotation at a pane's main `result` frame, out of agent-chat.ts so every
@@ -36,6 +38,11 @@ export interface RotationInput {
   writeUserTurn: (text: string) => void;
   startRun: (run: HandoffRun) => void;
   now?: Date;
+  /** When the acting turn began (the pane's own stamp at 0 -> 1 turns). A task record written in
+   *  this turn carries the texts folded into it after the record's `at` (D3); 0 = carry nothing. */
+  turnStartedAt?: number;
+  /** The old conversation's transcript, for that carry; absent = found by its id. Tests inject it. */
+  transcriptPath?: string | null;
 }
 
 export function handleRotationAtResult(input: RotationInput): RotationDecision {
@@ -60,7 +67,19 @@ export function handleRotationAtResult(input: RotationInput): RotationDecision {
   // A fresh Super session has no message of his to copy the language from: the turn names it.
   // The digest (START tree, changed paths, open review, next command) saves the successor the
   // rediscovery that cost a median 28 tool calls before its first edit (audit OR-9).
-  const prompt = withResumeDigest(handoffContinuePrompt(rec, { fallback: decision === 'fallback' }), rec, contextRoot, pane);
+  let prompt = withResumeDigest(handoffContinuePrompt(rec, { fallback: decision === 'fallback' }), rec, contextRoot, pane);
+  // D3 carry: a message folded into the acting turn after `tasks handoff` wrote this record was
+  // seen by the old session only after its entry; the fresh one gets it, once, under one heading.
+  // A record from an earlier turn carries nothing (every mid-turn frame of this turn was held).
+  if (decision === 'record' && rec.kind !== 'super' && input.turnStartedAt) {
+    const at = Date.parse(rec.at);
+    if (Number.isFinite(at) && at >= input.turnStartedAt) {
+      try {
+        const path = input.transcriptPath !== undefined ? input.transcriptPath : liveTranscriptPath(null, input.observedConversation);
+        prompt = withCarriedTexts(prompt, userTextsSinceSync(path, at));
+      } catch { /* an unreadable transcript rotates as today */ }
+    }
+  }
   input.writeUserTurn(input.isSuper ? withOwnerLanguage(prompt, superKnownLanguage(pane)) : prompt);
   input.startRun(startHandoffRun({
     task: rec.task,

@@ -49,8 +49,9 @@ export interface WindowVerbDeps {
   setMode: (sid: string, mode: ChatMode) => 'now' | 'after-turn';
   setModel: (sid: string, model: string) => boolean;
   setEffort: (sid: string, level: string) => boolean;
-  /** Busy: steered into the running turn; asking: queued behind the open card; idle: sent. */
-  send: (sid: string, text: string) => 'steered' | 'queued' | 'sent' | false;
+  /** Busy: steered into the running turn; asking: queued behind the open card; idle: sent. A
+   *  `lead` line (super send, a big idle child) goes ahead of the text only on the idle branch. */
+  send: (sid: string, text: string, lead?: string) => 'steered' | 'queued' | 'sent' | false;
   close: (sid: string) => void;
 }
 
@@ -182,9 +183,11 @@ export async function runWindowVerb(deps: WindowVerbDeps, verb: string, args: Re
     // (`super send`, field 2026-11-13): a window that wakes late must not send them twice.
     if (pastDeadline(args)) return { ok: false, error: 'expired' };
     const text = typeof args.text === 'string' ? args.text : '';
-    const out = deps.send(t.sid, text);
+    const lead = typeof args.lead === 'string' && args.lead.trim() ? args.lead : undefined;
+    const out = deps.send(t.sid, text, lead);
     if (!out) return { ok: false, error: 'that chat is not running' };
-    return { ok: true, result: { tab: t.tab, delivered: out } };
+    // `lead: true` only when it rode: a new turn (`sent`), never a steered or queued text.
+    return { ok: true, result: { tab: t.tab, delivered: out, ...(lead && out === 'sent' ? { lead: true } : {}) } };
   }
   return { ok: false, error: `this window cannot run "${verb}"` };
 }

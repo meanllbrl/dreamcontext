@@ -29,7 +29,7 @@ import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
-import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle } from '../../lib/context-watch.js';
+import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle, readHandoffRecord, shouldRotateForHandoff } from '../../lib/context-watch.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
 import { clearFresh, hasFreshLatch, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
@@ -152,7 +152,7 @@ import {
 } from '../../lib/super/inbox.js';
 import { answerOwnerItem } from '../../lib/super/answer.js';
 import { registerOwnerCardLookup, registerOwnerItemCloser, registerOwnerReceiptDeliverer } from '../owner-receipts.js';
-import { isOwnerCardKind } from '../../lib/super/owner-wait.js';
+import { isOwnerCardKind, noteSuperSend, takeSuperSend } from '../../lib/super/owner-wait.js';
 import type { OwnerReceiptMark } from '../../lib/assistant/chat-registry.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -3199,7 +3199,7 @@ export function startChatSession(
   /** Owner-proven card results on their way in (sahip-karti-yerinde K6), by text: the frame that
    *  carries one is marked `ownerReceipt` for the registry; each entry dies on its frame or its
    *  timeout (every store key needs a death). */
-  const ownerReceiptTurns = new Map<string, { mark: OwnerReceiptMark; resolve: (ok: boolean) => void }>();
+  const ownerReceiptTurns = new Map<string, { mark: OwnerReceiptMark; resolve: (ok: boolean) => void; pause: () => void; rearm: () => void }>();
   // How the server writes ITS OWN turn into any live crew process, window or not (the owner's
   // Allow once, K3): the injector's path, the turn noted as the server's so it is never read as
   // his words (it clears no other wait).
@@ -3217,9 +3217,16 @@ export function startChatSession(
       sendOwnerReceipt: (text, mark) => {
         if (!alive || stdinEnding() || handedOff || !text.trim()) return Promise.resolve(false);
         return new Promise<boolean>((resolve) => {
-          const timer = setTimeout(() => { if (ownerReceiptTurns.get(text)?.resolve === resolve) ownerReceiptTurns.delete(text); resolve(false); }, OWNER_RECEIPT_SEEN_MS);
-          timer.unref?.();
-          ownerReceiptTurns.set(text, { mark, resolve: (ok) => { clearTimeout(timer); resolve(ok); } });
+          // Its proof timer PAUSES while the frame sits in the D3 handoff hold (a held receipt is not
+          // "not seen": the inbox would resend it) and re-arms when the hold releases it.
+          const arm = (): ReturnType<typeof setTimeout> => {
+            const t = setTimeout(() => { if (ownerReceiptTurns.get(text)?.resolve === settle) ownerReceiptTurns.delete(text); resolve(false); }, OWNER_RECEIPT_SEEN_MS);
+            t.unref?.();
+            return t;
+          };
+          let timer = arm();
+          const settle = (ok: boolean): void => { clearTimeout(timer); resolve(ok); };
+          ownerReceiptTurns.set(text, { mark, resolve: settle, pause: () => clearTimeout(timer), rearm: () => { clearTimeout(timer); timer = arm(); } });
           crewSeat.noteServerTurn(text);
           onWsMessage(serverBuiltFrame({ type: 'user', text }, 'owner-receipt'));
         });
@@ -3259,9 +3266,12 @@ export function startChatSession(
   let observedConversation = '';
   // ── The owner-words ledger's view of this chat (C3) ──
   /** The chat kind, or null: the Assistant, a card, an app and a member's own chat keep no ledger. */
+  /** This pane is a Super child, known at spawn (the delegate route writes the child into the
+   *  super record only after the spawn): read by the ledger surface and the Eco ladder hint. */
+  const superChildPane = !isSuper && (!!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id)));
   const ledgerSurface = ownerLedgerSurface({
     mode, isAssistant, card: !!card, app: !!app, member: !!opts.agent, bridgeTool,
-    superChild: !isSuper && (!!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id))),
+    superChild: superChildPane,
   });
   /** The project root whose brain this chat runs in, resolved; '' when it has none. */
   const ledgerVault = ((): string => {
@@ -3329,6 +3339,18 @@ export function startChatSession(
    * idle child emits no `init`, so that rule cannot open a turn that is not running.
    */
   let turnsInFlight = 0;
+  /** When the running turn began (stamped at 0 -> 1): a task handoff record written at or after
+   *  it was written in THIS turn, so its folded messages ride the continue prompt (D3 carry). */
+  let turnStartedAt = 0;
+  /**
+   * D3 (super-cocuk-tasarruf): user frames written mid-turn while this pane's TASK handoff record
+   * is pending. Written now, they would fold into the old conversation, or run as its own turn
+   * after the result, and the `/clear` the rotation writes wipes them. Released ONCE at every turn
+   * end ({@link releaseHandoffHeld}), through the same admission a fresh socket frame takes.
+   */
+  const handoffHeld: Array<{ raw: Buffer | string; text: string; source: OwnerTurnSource; superSent: boolean; fromMirror: boolean }> = [];
+  /** Released frames not yet through the admission: a fresh frame meanwhile queues behind them. */
+  let handoffReleasing = 0;
   /** The Super Agent only: a turn its inbox opened is running. An owner frame that arrives
    *  meanwhile is written AT ONCE and folded into it, like a steer in any chat (plan r4 D4). */
   let superEventTurnOpen = false;
@@ -3672,6 +3694,7 @@ export function startChatSession(
   /** A turn edge — the ONLY place the live entry's activity fields move (see the contract in
    *  agent-chat-live.ts: sockets, pings and replays never touch them). */
   const openTurn = (): void => {
+    if (turnsInFlight === 0) turnStartedAt = Date.now();
     turnsInFlight += 1;
     stopSettledLate = false;
     if (live) markTurnStarted(live);
@@ -3720,6 +3743,9 @@ export function startChatSession(
     else if (isSuper && stopped) setImmediate(() => superTurnEnded(chatRegistryId, { stopped: true, inboxId: superInboxId }));
     stopSettledLate = true;
     sendMeta({ subtype: 'turn_state', busy: false });
+    // D3: a Stop the CLI acked with no result is a turn end too. (A late abort `result` after
+    // this settle can be read as a released frame's: today's race, accepted.)
+    releaseHandoffHeld();
   };
 
   // Auto-submit the (non-deferred) initial prompt as the first stdin frame — see the
@@ -3981,10 +4007,99 @@ export function startChatSession(
     if (!recorded.estimated) armResumeAtReset(recorded.until, accountId, tool);
   };
 
+  /** A turn runs on a pane whose TASK handoff record is pending (no `actedAt`, no `consumedAt`):
+   *  a user frame now would be lost to the rotation (D3). One small sync read, mid-turn only. */
+  const holdsForHandoff = (): boolean => {
+    if (turnsInFlight === 0 || !pinId || isSuper) return false;
+    try {
+      const rec = readHandoffRecord(contextRoot, pinId);
+      return !!rec && rec.kind !== 'super' && shouldRotateForHandoff(rec);
+    } catch { return false; }
+  };
+  /**
+   * The ONE admission an owner frame takes (the socket's user frame, a released held frame): the
+   * account-switch gate, then the successor hold, then the turn. The `switchGate` chain keeps
+   * their order. `fromHold` = released by {@link releaseHandoffHeld}, never held again.
+   */
+  const admitOwnerFrame = (
+    raw: Buffer | string, text: string, source: OwnerTurnSource,
+    o: { fromHold?: boolean; fromMirror?: boolean; superSent?: boolean; settled?: () => void } = {},
+  ): void => {
+    // An owner card receipt's mark lives in THIS session's `ownerReceiptTurns`, so it never
+    // rides a restart as plain text (a resubmit or the successor would deliver it unmarked and
+    // the inbox would resend it marked: twice). It is kept out of the held texts and resolves
+    // "not seen" instead: the inbox delivers it once, marked, to the restarted pane.
+    const receiptKey = parseTelegramPrefix(text).body;
+    const isReceipt = (): boolean => ownerReceiptTurns.has(receiptKey);
+    const refuseReceipt = (): void => {
+      const r = ownerReceiptTurns.get(receiptKey);
+      if (!r) return;
+      ownerReceiptTurns.delete(receiptKey);
+      r.resolve(false);
+    };
+    switchGate = switchGate.then(() => (o.fromMirror && detached ? Promise.resolve(false)
+      // A receipt while a restart is already owed: refused below, never joined to it.
+      : isReceipt() ? (switchPending ? Promise.resolve(true) : maybeSwitchAccount(text, { resubmit: false }))
+        : maybeSwitchAccount(text))
+      // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
+      // never swallowed" would hold for every decision the chooser can make and fail for
+      // the one case nobody planned: an unexpected error on the way to making it.
+      .catch(() => false)
+      .then((held) => {
+        // A frame released from the D3 hold leaves with every mark it came in with, BEFORE any
+        // branch, so it takes the decisions it would have taken unheld: the Super's send note
+        // back in its store, its receipt's proof timer running again.
+        if (o.fromHold) {
+          if (o.superSent && (held || alive)) noteSuperSend(chatRegistryId, receiptKey);
+          ownerReceiptTurns.get(receiptKey)?.rearm();
+        }
+        // Held for an account switch's restart: its source is kept beside its text, so the
+        // resubmit (or a stalled release) writes it once, as it arrived. A receipt is not held.
+        if (held) {
+          if (isReceipt()) { refuseReceipt(); return; }
+          carryHeldOwnerMark(chatRegistryId, text, source);
+          return;
+        }
+        if (!alive) return;
+        // Autonomy changed while this message waited in the gate: it belongs to the successor
+        // (a receipt goes back to the inbox, which delivers it to the successor marked).
+        if (respawnTo !== null || handedOff) {
+          if (isReceipt()) { refuseReceipt(); return; }
+          holdForSuccessor(raw);
+          return;
+        }
+        writeOwnerTurn(text, source, { frame: raw, ...(o.fromHold ? { fromHold: true } : {}), ...(o.fromMirror ? { fromMirror: true } : {}) });
+      })
+      .finally(() => o.settled?.()));
+  };
+  /** Release every frame held for the handoff, once, in order, at a turn's end (the main result,
+   *  after the rotation and the limit dispatch; a Stop settled with no result). */
+  const releaseHandoffHeld = (): void => {
+    if (handoffHeld.length === 0) return;
+    for (const h of handoffHeld.splice(0)) {
+      handoffReleasing += 1;
+      admitOwnerFrame(h.raw, h.text, h.source, { fromHold: true, superSent: h.superSent, fromMirror: h.fromMirror, settled: () => { handoffReleasing -= 1; } });
+    }
+  };
+
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. `source` is REQUIRED (C3): where the turn came from,
    *  decided by `classifyOwnerFrame`; this is the only caller of `appendOwnerTurn`. */
-  const writeOwnerTurn = (raw: string, source: OwnerTurnSource): void => {
+  const writeOwnerTurn = (raw: string, source: OwnerTurnSource, opts: { frame?: Buffer | string; fromHold?: boolean; fromMirror?: boolean } = {}): void => {
+    // D3: held BEFORE any side effect (Telegram refs, ledger, registry, openTurn), so the released
+    // call stamps each once. A frame behind a release in progress takes the admission's tail.
+    if (!opts.fromHold) {
+      const frame = opts.frame ?? JSON.stringify({ type: 'user', text: raw });
+      const fromMirror = !!opts.fromMirror;
+      if (handoffReleasing > 0) { admitOwnerFrame(frame, raw, source, fromMirror ? { fromMirror } : {}); return; }
+      if ((handoffHeld.length > 0 && turnsInFlight > 0) || holdsForHandoff()) {
+        // The Super's send note lives 2 min (owner-wait.ts): taken now, put back at release. A
+        // receipt's proof timer pauses for the hold (the inbox must not resend it as unseen).
+        ownerReceiptTurns.get(parseTelegramPrefix(raw).body)?.pause();
+        handoffHeld.push({ raw: frame, text: raw, source, superSent: takeSuperSend(chatRegistryId, parseTelegramPrefix(raw).body), fromMirror });
+        return;
+      }
+    }
     // A Telegram turn rides as `TG_SENTINEL + ref + TG_SENTINEL + text` through every hold path
     // (D1). Parsed ONCE here: the ref counts only when the hub put it in THIS chat's store; an
     // owner-typed or stale prefix is stripped and the turn is an ordinary Mac turn. Everything
@@ -4237,7 +4352,7 @@ export function startChatSession(
   // init. A resumed pane must show what is on disk, not what was clicked last time.
   try {
     if (pinId) {
-      const state = resolveHandoffFor(contextRoot, projectRoot, pinId);
+      const state = resolveHandoffFor(contextRoot, projectRoot, pinId, superChildPane ? { child: true } : {});
       sendMeta({ subtype: 'context_handoff', state: { enabled: state.enabled, nudgeAt: state.nudgeAt, hardAt: state.hardAt, remindEvery: state.remindEvery } });
     }
   } catch { /* the switch falls back to its default rendering */ }
@@ -4724,6 +4839,8 @@ export function startChatSession(
       // not also advance it, and `turnsInFlight` must be the count before this frame closes one.
       const stageBefore = handoffRun?.stage;
       const turnsBefore = turnsInFlight;
+      /** The acting turn's start, read before `closeTurn` (the rotation's carry). */
+      const turnStartedBefore = turnsInFlight > 0 ? turnStartedAt : 0;
       if (handoffRun) setHandoffRun(advanceHandoffRun(handoffRun, obj, turnsInFlight));
       cardFeedback.noteFrame(obj);
       // The Super's own text: its line-start `<!-- re:<ref> -->` sections close what it owed him.
@@ -4778,6 +4895,7 @@ export function startChatSession(
             isLimit: limitHitThisTurn || !!limit,
             observedConversation,
             lastMainContext,
+            turnStartedAt: turnStartedBefore,
             writeUserTurn: (text) => {
               openTurn();
               const wroteTurn = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -4854,6 +4972,9 @@ export function startChatSession(
       }
       // After this frame's own refusal was dispatched (it may set the latch again): the turn is over.
       if (mainResult) limitHitThisTurn = false;
+      // D3: the frames held during a handoff turn go now, through the admission, after the
+      // rotation (acted, none or thrown) and after `onLimitRejected` (an owed switch takes them).
+      if (mainResult) releaseHandoffHeld();
       // Only AFTER the refusal was read: it can arrive on this very `result` frame. Past the
       // turn's end the text has been answered, so a LATER refusal (a background task's turn,
       // which no user frame of ours opened) must not resubmit it.
@@ -6024,20 +6145,7 @@ export function startChatSession(
       const source = !classified.writes && classified.silent === 'unmarked'
         ? takeHeldOwnerMark(chatRegistryId, text) ?? classified
         : classified;
-      switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
-        // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is
-        // never swallowed" would hold for every decision the chooser can make and fail for
-        // the one case nobody planned: an unexpected error on the way to making it.
-        .catch(() => false)
-        .then((held) => {
-          // Held for an account switch's restart: its source is kept beside its text, so the
-          // resubmit (or a stalled release) writes it once, as it arrived.
-          if (held) { carryHeldOwnerMark(chatRegistryId, text, source); return; }
-          if (!alive) return;
-          // Autonomy changed while this message waited in the gate: it belongs to the successor.
-          if (respawnTo !== null || handedOff) { holdForSuccessor(raw); return; }
-          writeOwnerTurn(text, source);
-        }));
+      admitOwnerFrame(raw, text, source, { fromMirror });
       return;
     }
 
@@ -6112,7 +6220,7 @@ export function startChatSession(
     if (msg.type === 'setContextHandoff' && typeof msg.enabled === 'boolean') {
       if (!pinId) return; // an unpinned pane has no tab file to own a toggle
       try {
-        const echo = applyPaneHandoffToggle(contextRoot, projectRoot, pinId, msg.enabled);
+        const echo = applyPaneHandoffToggle(contextRoot, projectRoot, pinId, msg.enabled, superChildPane ? { child: true } : {});
         if (echo) {
           sendMeta({ subtype: 'context_handoff', state: { enabled: echo.enabled, nudgeAt: echo.nudgeAt, hardAt: echo.hardAt, remindEvery: echo.remindEvery } });
         }

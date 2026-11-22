@@ -116,7 +116,9 @@ import {
   renderHandoffBanner,
   stampHandoffRecord,
   lastMainChainContext,
+  tailRecords,
 } from '../../lib/context-watch.js';
+import { MODEL_PIN_LINE, agentDefinitionModel, parentModelFrom, pinSubagentModel } from '../../lib/agent-model-pin.js';
 import { withSleepStateLock, autoSleepSidecarRunning } from '../../lib/sleep-state-lock.js';
 import {
   checkEditedFile, checkAtStop, takeTscResults, tscStopReason, tscWorkFor, defaultTscRunner, filterTscErrors, TSC_TIMEOUT_MS,
@@ -239,6 +241,23 @@ export function grantGateAllow(
  */
 export function rewritesInput(input: Record<string, unknown> | null | undefined): boolean {
   return input?.permission_mode !== 'auto';
+}
+
+/**
+ * The model a dispatch is pinned to, or null (untouched): only the Fable cases of
+ * {@link pinSubagentModel}. The parent's model is read from this hook's own transcript tail, never
+ * from the Eco nudge (which returns early with Eco off).
+ */
+export function dispatchModelPin(input: Record<string, unknown>, toolInput: Record<string, unknown>, home: string = homedir()): 'opus' | null {
+  const requested = typeof toolInput.model === 'string' ? toolInput.model : null;
+  const type = typeof toolInput.subagent_type === 'string' ? toolInput.subagent_type : '';
+  const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+  if (requested && requested.trim()) return pinSubagentModel({ requested, definition: 'unknown', parentModel: null });
+  const definition = agentDefinitionModel(type, cwd, home);
+  if (definition !== 'none') return null;
+  const path = typeof input.transcript_path === 'string' ? input.transcript_path : '';
+  const parentModel = path ? parentModelFrom(tailRecords(path, 256 * 1024) as unknown as Record<string, unknown>[]) : null;
+  return pinSubagentModel({ requested: null, definition, parentModel });
 }
 
 function readStdin(): Record<string, unknown> | null {
@@ -3545,14 +3564,28 @@ export function registerHookCommand(program: Command): void {
       // is refused as unreviewed ("a hook changed this call's input after auto mode reviewed it"),
       // so a harmless Agent call was lost and its refusal reached the owner as an Allow card. The
       // same rules still reach the sub-agent through the SubagentStart hook (`subagent-start`).
+      // The same one answer also pins the model off Fable (agent-model-pin.ts): an explicit Fable
+      // model, or none under a Fable parent for an agent with no model of its own, becomes opus.
       const dispatchInput = (): Record<string, unknown> | null => {
         if (!rewritesInput(input as Record<string, unknown>)) return null;
+        let prompt: string | null = null;
         try {
           const dRoot = resolveContextRoot(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
-          if (!dRoot || typeof toolInput.prompt !== 'string') return null;
-          const prompt = appendToDispatch(toolInput.prompt, deliverForTurn(dRoot, { ...input, surface: 'dispatch' }, { member: sessionMember(process.env, dRoot) }));
-          return prompt ? { ...toolInput, prompt } : null;
-        } catch { return null; }
+          if (dRoot && typeof toolInput.prompt === 'string') {
+            prompt = appendToDispatch(toolInput.prompt, deliverForTurn(dRoot, { ...input, surface: 'dispatch' }, { member: sessionMember(process.env, dRoot) })) || null;
+          }
+        } catch { prompt = null; }
+        let model: 'opus' | null = null;
+        try { model = dispatchModelPin(input as Record<string, unknown>, toolInput); } catch { model = null; }
+        if (!prompt && !model) return null;
+        const out: Record<string, unknown> = { ...toolInput };
+        if (prompt) out.prompt = prompt;
+        if (model) {
+          out.model = model;
+          const base = typeof out.prompt === 'string' ? out.prompt : '';
+          out.prompt = base ? `${base}\n\n${MODEL_PIN_LINE}` : MODEL_PIN_LINE;
+        }
+        return out;
       };
       if (toolName === 'Task') allow(dispatchInput());
 
