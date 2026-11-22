@@ -32,8 +32,10 @@ button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); out
 .sc-tile { gap: var(--space-1); min-width: 0; }
 .sc-tile-head { font-weight: var(--font-weight-semibold); color: var(--color-text); }
 .sc-tile-run { font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sc-tile-rate { display: inline-flex; align-items: center; gap: var(--space-2); }
-.sc-tile-row { display: flex; align-items: flex-end; gap: var(--space-3); }
+.sc-tile-rate { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--space-2); row-gap: var(--space-1); }
+.sc-tile-rate .sc-accent { white-space: nowrap; }
+.sc-tile-row { display: flex; flex-wrap: wrap; align-items: flex-end; column-gap: var(--space-3); row-gap: var(--space-1); min-width: 0; }
+.sc-tile-row .mcb-big { white-space: nowrap; }
 
 /* Bars */
 .sc-bars { display: inline-flex; align-items: flex-end; gap: var(--space-1); height: 56px; flex: none; }
