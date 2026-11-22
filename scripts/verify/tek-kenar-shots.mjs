@@ -21,7 +21,7 @@ const OUT = process.env.TEK_KENAR_OUT ?? null;
 const PROJECTS = ['proj', 'pocket-ledger', 'northwind', 'orbit', 'lumen', 'harbor', 'quill'];
 const PAGES = [['chat', 'chat'], ['tasks', 'tasks'], ['wb', 'whiteboards']];
 const SIZES = [[1440, 900], [1180, 800]];
-const TABS = ['ns-tab-chat', 'ns-tab-tasks', 'ns-tab-insights', 'ns-tab-whiteboards', 'ns-tab-apps', 'ns-tab-more'];
+const TABS = ['ns-tab-chat', 'ns-tab-tasks', 'ns-tab-lab', 'ns-tab-whiteboards', 'ns-tab-apps', 'ns-tab-more'];
 
 const app = await openApp({ suite: 'tek-kenar-shots' });
 const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k))), HOME: app.home, PATH: `${join(app.home, '.local', 'bin')}:${process.env.PATH}` };
@@ -46,7 +46,7 @@ async function checkShell(page, where, { narrow = false, page: shown = null } = 
     const lit = q('[data-testid^="ns-tab-"][data-on]')?.getAttribute('data-testid') ?? null;
     return {
       sidebar: !!aside && !!box && box.width > 0 && box.right > 0,
-      logo: !!aside?.querySelector('[data-testid="sidebar-brand"] svg'),
+      logo: !!aside?.querySelector('[data-testid="sidebar-brand"] img, [data-testid="sidebar-brand"] svg'),
       settings: !!aside?.querySelector('[data-testid="sidebar-settings"]'),
       rail: !!q('[data-testid^="ns-rail-"]'),
       caret: !!q('.ns-tb-caret'),
@@ -75,9 +75,9 @@ async function checkShell(page, where, { narrow = false, page: shown = null } = 
   if (s.rail) bad.push('a page icon strip is drawn');
   if (s.caret) bad.push('the picker caret is drawn');
   if (s.brand) bad.push('the centred brand is drawn');
-  const want = narrow ? TABS.filter((t) => t !== 'ns-tab-insights' && t !== 'ns-tab-apps') : TABS;
+  const want = narrow ? TABS.filter((t) => t !== 'ns-tab-lab' && t !== 'ns-tab-apps') : TABS;
   for (const t of want) if (!s.tabs.includes(t)) bad.push(`tab ${t} missing`);
-  if (narrow) for (const t of ['ns-tab-insights', 'ns-tab-apps']) if (s.tabs.includes(t)) bad.push(`${t} still in the bar at 800 px`);
+  if (narrow) for (const t of ['ns-tab-lab', 'ns-tab-apps']) if (s.tabs.includes(t)) bad.push(`${t} still in the bar at 800 px`);
   if (shown && s.lit !== `ns-tab-${shown}`) bad.push(`lit tab ${s.lit}, not ns-tab-${shown}`);
   if (!s.drag) bad.push('no drag region in the title bar');
   for (const b of bad) app.findings.push(`${where}: ${b}`);

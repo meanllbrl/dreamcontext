@@ -15,7 +15,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdirSync, copyFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { chromium } from 'playwright';
@@ -31,11 +31,15 @@ const W = 1440;
 const app = await openApp({ suite: 'tek-kenar-compare' });
 const port = await new Promise((done) => { const s = createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => done(p)); }); });
 const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k)));
+// dev's Vite output, for when it does not come up.
+const devLog = openSync(join(app.shots, 'dev-vite.log'), 'w');
 const vite = spawn(join(DEV, 'node_modules', '.bin', 'vite'), ['--port', String(port), '--strictPort', '--host', '127.0.0.1'], {
-  cwd: DEV, env: { ...clean, DC_API_TARGET: app.base }, stdio: 'ignore', detached: true,
+  cwd: DEV, env: { ...clean, DC_API_TARGET: app.base }, stdio: ['ignore', devLog, devLog], detached: true,
 });
 const devBase = `http://127.0.0.1:${port}`;
-for (let i = 0; i < 120; i++) { if (await fetch(devBase).then((r) => r.ok, () => false)) break; await new Promise((r) => setTimeout(r, 500)); }
+let devUp = false;
+for (let i = 0; i < 240 && !devUp; i++) { devUp = await fetch(devBase).then((r) => r.ok, () => false); if (!devUp) await new Promise((r) => setTimeout(r, 500)); }
+if (!devUp) { process.stdout.write(`dev Vite never answered; its log:\n${readFileSync(join(app.shots, 'dev-vite.log'), 'utf-8').slice(-1500)}\n`); }
 
 const browser = await chromium.launch();
 const rows = [];
