@@ -4,7 +4,7 @@ import { readThreadRun } from '../automations/threads.js';
 import { listInsights, readCache } from '../lab/store.js';
 import { bindingSeriesOf } from '../lab/sync.js';
 import type { SeriesPoint } from '../lab/types.js';
-import { conversationKeysFromEnv, findQuoteTurn, OWNER_WORDS_MAX_AGE_DAYS, readOwnerTurns } from '../owner-words.js';
+import { conversationKeysFromEnv, findQuoteTurn, OWNER_WORDS_MAX_AGE_DAYS, quoteCovers, readOwnerTurns } from '../owner-words.js';
 import { listAgentHistory, type HistorySession, type ListHistoryOptions } from './history.js';
 import { amendmentRisks } from './amendments.js';
 import {
@@ -95,6 +95,8 @@ export interface RateInput {
   last?: boolean;
   /** null clears the rating. */
   stars: number | null;
+  /** Absent (undefined or null) keeps the run's stored note; '' clears it; text replaces it. A
+   *  re-rate with stars only never erases his note or retires its lesson. */
   note?: string | null;
   by: RatedBy;
   /** The owner's words (an agent session must give them). */
@@ -131,14 +133,20 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
   // An agent's rating carries his words, resolved to one of his turns (D16).
   let quoteTurn: string | undefined;
   let quoteAt: number | null = null;
+  let quoteOwn = '';
   const quote = input.quote ? input.quote.replace(/\s+/g, ' ').trim().slice(0, 500) : undefined;
   if (input.by !== 'owner') {
     if (!quote) throw new ScorecardRefused('rate_needs_owner_words', 403, 'A rating from an agent needs --quote "<his exact words>".');
     const since = new Date(now.getTime() - OWNER_WORDS_MAX_AGE_DAYS * 86_400_000).toISOString();
     const turns = input.turns ?? readOwnerTurns({ home: input.home, since });
-    const hit = findQuoteTurn(quote, turns.filter((t) => t.at >= since), conversationKeysFromEnv(input.env ?? process.env));
+    const keys = conversationKeysFromEnv(input.env ?? process.env);
+    const hit = findQuoteTurn(quote, turns.filter((t) => t.at >= since), keys);
     if (!hit.turn) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Those words are not one of the owner\'s messages: quote what he said.');
+    // His words in THIS conversation, like `learn`'s active gate: a session never rates on words
+    // he typed to another one (a child, or a member that read them somewhere).
+    if (keys.length === 0 || !hit.here) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Those words were said in another conversation: a rating needs his words to you here.');
     quoteTurn = hit.turn.turn;
+    quoteOwn = hit.turn.own;
     quoteAt = Date.parse(hit.turn.at);
   }
   let sessionKey: string;
@@ -156,11 +164,17 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
     if (!found.rateable) throw new ScorecardRefused('run_not_rateable', 409, 'Only a finished run can be rated.');
     session = found.run;
   }
-  const note = cleanNote(input.note);
+  const given = input.note === undefined || input.note === null ? null : cleanNote(input.note);
+  // A note an agent passes becomes a lesson in the member's prompt "as his words": it must BE his
+  // words, from the turn the quote resolved to.
+  if (input.by !== 'owner' && given && !quoteCovers(given, quoteOwn)) {
+    throw new ScorecardRefused('rate_needs_owner_words', 403, 'The note must be his own words from that message: pass them as he said them, or rate without a note.');
+  }
   const project = projectRefOf(projectRoot, input.home);
   return withScorecard(projectRoot, member, (card, scope) => {
     const runKey = runKeyFor(scope, sessionKey);
     const prev = card.ratings[runKey];
+    const note = given ?? prev?.note ?? '';
     if (quoteTurn && card.usedQuoteTurns.includes(quoteTurn) && prev?.quoteTurn !== quoteTurn) {
       throw new ScorecardRefused('quote_used', 409, 'Those words already rated another run: one quote rates one run. Ask him for this one.');
     }

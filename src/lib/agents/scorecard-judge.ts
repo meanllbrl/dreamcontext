@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { runDocumentPath } from '../automations/feed.js';
 import { readAutomationCache } from '../automations/store.js';
 import { readThreadRun } from '../automations/threads.js';
+import { findTranscriptBySessionId } from '../transcript-locate.js';
 import { JUDGE_MODEL, JUDGE_TIMEOUT_MS, UNUSABLE_TRIES, runJudge, type JudgeCall } from '../recall-judge.js';
 import { commitLesson } from './scorecard-ops.js';
 import {
@@ -53,11 +54,49 @@ export interface RunText {
   final: string;
 }
 
-/** What a check reads of one run (D11): its own posts, its published document, its final message. */
-export function readRunText(projectRoot: string, sessionKey: string, finalText?: string | null): RunText {
+/** How much of a run's transcript the final-message read takes, from its end. */
+const TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
+
+/** The last assistant text of a Claude transcript (its final message), or ''. Reads the file's end only. */
+export function lastAssistantText(path: string): string {
+  try {
+    const st = statSync(path);
+    const len = Math.min(st.size, TRANSCRIPT_TAIL_BYTES);
+    const fd = openSync(path, 'r');
+    let text = '';
+    try {
+      const buf = Buffer.alloc(len);
+      text = buf.toString('utf-8', 0, readSync(fd, buf, 0, len, st.size - len));
+    } finally {
+      closeSync(fd);
+    }
+    const lines = text.split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line.startsWith('{') || !line.includes('"assistant"')) continue;
+      let o: { type?: unknown; message?: { content?: unknown } };
+      try { o = JSON.parse(line) as typeof o; } catch { continue; }
+      if (o.type !== 'assistant' || !Array.isArray(o.message?.content)) continue;
+      const said = (o.message!.content as Array<{ type?: unknown; text?: unknown }>)
+        .filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text as string).join('\n').trim();
+      if (said) return said;
+    }
+  } catch { /* no transcript: no final message */ }
+  return '';
+}
+
+/**
+ * What a check or a draft reads of one run (D11): its own posts, its published document and its
+ * final message, all from what the run left on disk (its thread, its output file, its session
+ * transcript). One source, so a check the run started and one he starts later with "Check" or
+ * "Try again" read the same text. The final message is left out when it IS the document (the
+ * runner saves an ok run's final message as its output), so nothing is read twice.
+ */
+export function readRunText(projectRoot: string, sessionKey: string, opts: { home?: string } = {}): RunText {
   const parts = splitSessionKey(sessionKey);
   const contextRoot = join(projectRoot, '_dream_context');
   if (!parts) return { posts: '', document: '', final: '' };
+  let sessionId: string | null = null;
   let posts = '';
   try {
     posts = readThreadRun(contextRoot, parts.source, parts.runId)
@@ -69,10 +108,17 @@ export function readRunText(projectRoot: string, sessionKey: string, finalText?:
   try {
     const cache = readAutomationCache(contextRoot, parts.source);
     const run = [...(cache?.history ?? [])].reverse().find((r) => r.firedAt === parts.runId) ?? null;
+    sessionId = run?.sessionId ?? null;
     const path = runDocumentPath(contextRoot, run);
     if (path) document = readDocument(path, RUN_DOC_CHARS);
   } catch { document = ''; }
-  return { posts: tail(posts.trim(), RUN_POSTS_CHARS), document: document.trim(), final: tail((finalText ?? '').trim(), RUN_FINAL_CHARS) };
+  let final = '';
+  const transcript = sessionId ? findTranscriptBySessionId([sessionId], opts.home) : null;
+  if (transcript) final = lastAssistantText(transcript);
+  document = document.trim();
+  final = final.trim();
+  if (final && document && (final === document || document.startsWith(final) || final.startsWith(document))) final = '';
+  return { posts: tail(posts.trim(), RUN_POSTS_CHARS), document, final: tail(final, RUN_FINAL_CHARS) };
 }
 
 export function hasText(t: RunText): boolean {
@@ -146,7 +192,9 @@ export function parseVerdicts(text: string, ids: readonly string[]): Map<string,
     if (typeof r.id !== 'string' || !ids.includes(r.id) || typeof r.met !== 'boolean') continue;
     out.set(r.id, { met: r.met, ...(typeof r.why === 'string' && r.why.trim() ? { why: r.why.replace(/\s+/g, ' ').trim().slice(0, 140) } : {}) });
   }
-  return out;
+  // An answer that leaves a line unjudged is unusable (asked again, then failed): a line the model
+  // never judged must never read as "not met".
+  return ids.every((id) => out.has(id)) ? out : null;
 }
 
 /** `undefined`: unusable; null: nothing to learn; else the lesson. */
@@ -205,7 +253,7 @@ export interface ModelWorkOpts {
 export type CheckOutcome = 'done' | 'no_text' | 'failed' | 'no_criteria' | 'moved';
 
 /** Check one run against the member's active criteria. Never throws past a refusal. */
-export async function checkRun(projectRoot: string, member: string, sessionKeyIn: string, finalText?: string | null, opts: ModelWorkOpts = {}): Promise<CheckOutcome> {
+export async function checkRun(projectRoot: string, member: string, sessionKeyIn: string, opts: ModelWorkOpts = {}): Promise<CheckOutcome> {
   const now = opts.now ?? (() => new Date());
   const pid = opts.pid ?? process.pid;
   const pidStart = (opts.startOf ?? processStart)(pid) ?? undefined;
@@ -229,7 +277,7 @@ export async function checkRun(projectRoot: string, member: string, sessionKeyIn
     return true;
   }, { home: opts.home });
   if (!marked) return 'no_criteria';
-  const text = readRunText(projectRoot, sessionKey, finalText);
+  const text = readRunText(projectRoot, sessionKey, { home: opts.home });
   let result: { state: Check['state']; verdicts: Map<string, { met: boolean; why?: string }> | null; usd: number; error?: string };
   if (!hasText(text)) {
     result = { state: 'no_text', verdicts: null, usd: 0 };
@@ -298,7 +346,7 @@ export async function draftLesson(projectRoot: string, member: string, sessionKe
     return true;
   }, { home: opts.home });
   if (!marked) return 'no_note';
-  const run = readRunText(projectRoot, sessionKey);
+  const run = readRunText(projectRoot, sessionKey, { home: opts.home });
   // A lesson that adds a number or a name his note lacks is unusable: asked again, never stored.
   const parseOwn = (t: string): string | null | undefined => {
     const v = parseLesson(t);
@@ -346,22 +394,21 @@ export function resolveCliEntry(env: NodeJS.ProcessEnv = process.env): string | 
   return process.argv[1] ?? null;
 }
 
-export type SpawnScorecardFn = (job: { kind: 'check' | 'draft'; projectRoot: string; member: string; run: string; stdin?: string }) => void;
+export type SpawnScorecardFn = (job: { kind: 'check' | 'draft'; projectRoot: string; member: string; run: string }) => void;
 
 /**
- * Start `agents scorecard check|draft` detached. The spawner always writes, then ends, stdin. A
- * spawn error is logged and never changes the caller's result.
+ * Start `agents scorecard check|draft` detached. It reads the run from disk (`readRunText`), so a
+ * check started by the run and one he starts later read the same text. A spawn error is logged and
+ * never changes the caller's result.
  */
 export const spawnScorecardJob: SpawnScorecardFn = (job) => {
   try {
     const cli = resolveCliEntry();
     if (!cli) return;
-    const child = spawn(process.execPath, [cli, 'agents', 'scorecard', job.kind, job.member, '--run', job.run, ...(job.kind === 'check' ? ['--stdin'] : [])], {
-      detached: true, stdio: ['pipe', 'ignore', 'ignore'], cwd: job.projectRoot, env: { ...process.env },
+    const child = spawn(process.execPath, [cli, 'agents', 'scorecard', job.kind, job.member, '--run', job.run], {
+      detached: true, stdio: ['ignore', 'ignore', 'ignore'], cwd: job.projectRoot, env: { ...process.env },
     });
     child.on('error', (e) => { try { console.error(`[scorecard] ${job.kind} spawn failed: ${e.message}`); } catch { /* quiet */ } });
-    child.stdin?.on('error', () => { /* a child that died early */ });
-    child.stdin?.end(job.stdin ?? '');
     child.unref();
   } catch (e) {
     try { console.error(`[scorecard] ${job.kind} spawn failed: ${(e as Error).message}`); } catch { /* quiet */ }

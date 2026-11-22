@@ -16,6 +16,8 @@
  * query cache (no network).
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import {
@@ -33,7 +35,7 @@ vi.mock('../../dashboard/src/context/VaultContext.js', () => ({
 // stars are what these tests read.
 vi.mock('../../dashboard/src/components/aiteam/RunDocumentTile.js', () => ({ RunDocumentTile: () => null }));
 
-const { ScorecardCard, RunStars, runDay } = await import('../../dashboard/src/components/sleepy/super/ScorecardCard.js');
+const { ScorecardCard, RunStars, runDay, parseAmount } = await import('../../dashboard/src/components/sleepy/super/ScorecardCard.js');
 const { RunFoot } = await import('../../dashboard/src/components/aiteam/RunFoot.js');
 const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
 const { QueryClient, QueryClientProvider } = await import('../../dashboard/node_modules/@tanstack/react-query/build/modern/index.js');
@@ -126,7 +128,7 @@ describe('scorecard model', () => {
     expect(checksMet(null)).toBeNull();
     expect(checksMet({ state: 'done', attempts: 1, at: '', costUsd: 0, verdicts: [
       { id: 'a', text: 'a', met: true, by: 'model' }, { id: 'b', text: 'b', met: false, by: 'model' }, { id: 'c', text: 'c', met: null, by: 'model' },
-    ] })).toEqual({ met: 1, total: 3 });
+    ] })).toEqual({ met: 1, total: 2 });
     expect([nextVerdict(true), nextVerdict(false), nextVerdict(null)]).toEqual([false, null, true]);
   });
 
@@ -139,6 +141,15 @@ describe('scorecard model', () => {
 });
 
 describe('the scorecard tile', () => {
+  it('while the read is on its way: a skeleton, never "No ratings yet" (r1 state-tells-the-truth)', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(I18nProvider, null,
+      createElement(ScorecardCard, { slug: 'nobody-read-yet', variant: 'tile' }))));
+    expect(html).toContain('data-testid="sc-pending"');
+    expect(html).not.toContain('No ratings yet');
+  });
+
+
   it('empty: "No ratings yet", the latest run, grey stars and Rate it; no 0.0 and no bars', () => {
     const html = card(empty(), 'tile');
     expect(html).toContain('No ratings yet');
@@ -164,6 +175,40 @@ describe('the scorecard tile', () => {
 });
 
 describe('the full scorecard', () => {
+  it('a goal amount reads a dot or a Turkish comma', () => {
+    expect(parseAmount('12,5')).toBe(12.5);
+    expect(parseAmount('12.5')).toBe(12.5);
+    expect(parseAmount(' 35 ')).toBe(35);
+    expect(parseAmount('')).toBeNaN();
+    expect(parseAmount('1,2,3')).toBeNaN();
+  });
+
+  it('every write says its failure where he tapped; typed words leave only once saved (r1 write-failure-is-silent)', () => {
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/sleepy/super/ScorecardCard.tsx', import.meta.url)), 'utf-8');
+    // One write helper: no bare mutate anywhere else in the card.
+    expect(src.match(/write\.mutate\(/g)).toHaveLength(1);
+    expect(src).toMatch(/onSuccess: \(\) => onOk\?\.\(\)/);
+    // The goal form closes, the criterion field empties and the note form closes only on success.
+    expect(src).toMatch(/w\.send\(\{ kind: 'goal'[^\n]*\}, onDone\);/);
+    expect(src).toMatch(/w\.send\(\{ kind: 'criteria', op: 'add', text: v \}, \(\) => setText\(''\)\);/);
+    expect(src).toMatch(/note: note\.trim\(\) \}, \(\) => \{ setNoting\(false\); setNote\(''\); \}\)/);
+    // Clearing a rating offers Undo with the stars and note it had (r1 destructive-action-without-undo).
+    expect(src.match(/<ClearedUndo /g)).toHaveLength(2);
+  });
+
+  it('lays out by its own width: one column under the two-column minimum (r1 full-card-fits-its-container)', () => {
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/sleepy/super/ScorecardCard.tsx', import.meta.url)), 'utf-8');
+    expect(src).toMatch(/const oneColumn = phone \|\| \(width !== null && width < TWO_COLUMN_MIN_PX\);/);
+    const css = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/sleepy/super/ScorecardCard.css', import.meta.url)), 'utf-8');
+    expect(css).toMatch(/\.sc-full \{[^}]*container-type: inline-size;/);
+    expect(css).toMatch(/@container \(max-width: 620px\)/);
+    // Stars: a 24px hit area on a pointer, 44px on touch; the empty star and the 3-star bar are not the 1.2:1 border grey.
+    expect(css).toMatch(/@media \(pointer: coarse\) \{ \.sc-star \{ min-width: 44px; min-height: 44px; \} \}/);
+    expect(css).not.toMatch(/\.sc-star \{[^}]*color: var\(--color-border\)/);
+    expect(css).not.toMatch(/\.sc-bar\.is-mid \{ background: var\(--color-bg-tertiary\)/);
+  });
+
+
   it('empty: goal line, criteria add + example, empty lessons line, ten 4px baselines, one lead row', () => {
     const html = card(empty(), 'full');
     expect(html).toContain('data-testid="sc-goal-add"');
@@ -202,7 +247,8 @@ describe('the full scorecard', () => {
 
   it('a held lesson names its flag and offers Use it', () => {
     const html = card(rated(), 'full');
-    expect(html).toMatch(/data-status="held"[\s\S]*Held: secret/);
+    // His words, not the filter's codes (those stay in the row's tooltip).
+    expect(html).toMatch(/data-status="held" title="secret"[\s\S]*Held: it looked risky/);
     expect(html).toContain('data-testid="sc-lesson-use"');
   });
 

@@ -2043,7 +2043,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
 }
 
 /** Spawn the run's scorecard check when its member has at least one criterion. Never throws. */
-export function startScorecardCheck(contextRoot: string, slug: string, outcome: Pick<RunOutcome, 'event' | 'result'>, spawnFn: SpawnScorecardFn): boolean {
+export function startScorecardCheck(contextRoot: string, slug: string, outcome: Pick<RunOutcome, 'event'>, spawnFn: SpawnScorecardFn): boolean {
   try {
     const runId = outcome.event?.firedAt;
     if (!runId) return false;
@@ -2052,7 +2052,7 @@ export function startScorecardCheck(contextRoot: string, slug: string, outcome: 
     try { member = getAutomation(contextRoot, slug)?.agent || slug; } catch { member = slug; }
     const card = ownerCard({ projectRoot, member });
     if (!card || activeCriteria(card).length === 0) return false;
-    spawnFn({ kind: 'check', projectRoot, member, run: `${slug}::${runId}`, stdin: outcome.result ?? '' });
+    spawnFn({ kind: 'check', projectRoot, member, run: `${slug}::${runId}` });
     return true;
   } catch (e) {
     try { console.error(`[scorecard] check not started: ${(e as Error).message}`); } catch { /* quiet */ }

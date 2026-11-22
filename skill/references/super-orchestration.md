@@ -254,8 +254,10 @@ dokunmadan önce sorsun"): `dreamcontext agents rate <member> --last --stars <n>
 then say in one line that it is recorded (his card shows "From your words"). `--last` with `--quote` is the
 newest finished run that ended before he said it. One quote rates ONE run (`quote_used` otherwise): for
 "son ikisine dört ve üç", rate the newest and ask him for the other in words. The note is his, verbatim:
-never add to it. A note becomes one lesson the member follows; he takes it back on the card. Refused
-`rate_needs_owner_words`: the quote is not his recent turn; quote him exactly.
+never add to it, and only when he said what to change (stars only: leave `--note` out, the run keeps
+its note). A note becomes one lesson the member follows; he takes it back on the card. Refused
+`rate_needs_owner_words`: the quote is not his recent turn to you here, or the note is not his words;
+quote him exactly.
 
 - **Runtime proof of a server or UI** → a `goal-validator` child in that worktree (headless browser; `scripts/verify/look.mjs` if the repo has it).
 - **Brain reorganisation** → a child running `/curator`, never beside another child that writes the brain, or sleep.

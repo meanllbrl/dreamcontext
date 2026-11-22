@@ -107,11 +107,12 @@ export function goalMoveForRun(points: readonly ScorePoint[], runAt: string, low
   return { delta, good: lowerBetter ? delta <= 0 : delta >= 0 };
 }
 
-/** "3 of 3 checks met", counted on known verdicts only. */
+/** "3 of 3 checks met", counted on judged lines only: a line left unset (his tap) is in neither number. */
 export function checksMet(c: ScoreCheck | null): { met: number; total: number } | null {
   if (!c || c.state !== 'done') return null;
   const known = c.verdicts.filter((v) => v.met !== null);
-  return { met: known.filter((v) => v.met === true).length, total: c.verdicts.length };
+  if (known.length === 0) return null;
+  return { met: known.filter((v) => v.met === true).length, total: known.length };
 }
 
 /** A tapped verdict chip cycles met, not met, unset (D14). */

@@ -8,19 +8,24 @@
 .is-good { color: var(--color-success-ink, var(--color-success)); }
 .is-bad { color: var(--color-error-ink, var(--color-error)); }
 
-/* Stars */
-.sc-stars { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+/* Stars. An empty star is a quiet grey that still reads (3:1 on the card in both themes); each
+   star's hit area is 24px on a pointer and 44px on touch, the glyph stays small. Adjacent hit
+   areas leave no gap, so hovering between two stars never lights all five. */
+.sc-stars { --sc-empty: color-mix(in srgb, var(--color-text-secondary) 75%, var(--color-bg)); display: inline-flex; align-items: center; gap: 0; flex: none; }
 .sc-star {
-  display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0;
-  border: 0; background: transparent; font-size: 16px; line-height: 1; color: var(--color-border); cursor: default;
+  display: inline-flex; align-items: center; justify-content: center; min-width: var(--space-6, 24px); min-height: var(--space-6, 24px); padding: 0;
+  border: 0; background: transparent; line-height: 1; color: var(--sc-empty); cursor: default;
 }
+.sc-glyph { font-size: var(--font-size-base); line-height: 1; }
 button.sc-star { cursor: pointer; }
 button.sc-star:disabled { cursor: progress; }
 .sc-star.is-on { color: var(--color-warning); }
 .sc-stars:hover button.sc-star:not(:disabled) { color: var(--color-warning); }
-.sc-stars button.sc-star:hover ~ button.sc-star { color: var(--color-border); }
-button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; border-radius: var(--radius-sm); }
-.sc-stars--big .sc-star { width: 28px; height: 28px; font-size: 24px; }
+.sc-stars button.sc-star:hover ~ button.sc-star { color: var(--sc-empty); }
+button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; border-radius: var(--radius-sm); }
+.sc-stars--big .sc-star { min-width: var(--space-8, 32px); min-height: var(--space-8, 32px); }
+.sc-stars--big .sc-glyph { font-size: var(--font-size-2xl, 24px); }
+@media (pointer: coarse) { .sc-star { min-width: 44px; min-height: 44px; } }
 
 /* Tile */
 .sc-tile { gap: var(--space-1); min-width: 0; }
@@ -36,11 +41,18 @@ button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); out
 .sc-bars--small .sc-bar { width: 6px; border-radius: 2px; }
 .sc-bar.is-empty { height: 4px; background: var(--color-border); }
 .sc-bar.is-low { background: var(--color-error); }
-.sc-bar.is-mid { background: var(--color-bg-tertiary); }
+.sc-bar.is-mid { background: color-mix(in srgb, var(--color-text-secondary) 75%, var(--color-bg)); }
 .sc-bar.is-high { background: var(--color-accent); }
 
-/* Full card */
-.sc-full { gap: var(--space-3); }
+/* Full card: laid out by its own width (a large floating card is ~344px): one column below
+   TWO_COLUMN_MIN_PX, the phone's order. */
+.sc-full { gap: var(--space-3); container-type: inline-size; }
+.sc-full--one .sc-run-top { flex-wrap: wrap; }
+.sc-write-error { font-size: var(--font-size-xs); }
+.sc-why { font-size: var(--font-size-xs); width: 100%; }
+.sc-cleared { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); }
+.sc-run-open { padding: 0; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.sc-run-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
 .sc-cols { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(280px, 2fr); gap: var(--space-4); min-height: 0; }
 .sc-col { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
 .sc-col--right { padding-left: var(--space-4); border-left: 1px solid var(--color-border); }
@@ -75,6 +87,10 @@ button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); out
 .sc-goal-dot.is-good { stroke: var(--color-success); }
 .sc-goal-dot.is-bad { stroke: var(--color-error); }
 .sc-goal-src { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: var(--font-size-sm); text-align: right; }
+@container (max-width: 620px) {
+  .sc-goal { grid-template-columns: 1fr; gap: var(--space-2); }
+  .sc-goal-src { align-items: flex-start; text-align: left; }
+}
 .sc-goal-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
 .sc-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .sc-field select, .sc-field input, .sc-crit-add input, .sc-note-form textarea {
@@ -160,11 +176,12 @@ button.sc-chip { cursor: pointer; }
 .sc-run-lesson-act { display: inline-flex; gap: var(--space-2); }
 
 /* Phone: one column, stars a finger wide. */
-.sc-full--phone .sc-star { width: 44px; height: 44px; font-size: 28px; }
-.sc-full--phone .sc-run-top { flex-wrap: wrap; }
+.sc-full--phone .sc-star { min-width: 44px; min-height: 44px; }
+.sc-full--phone .sc-glyph { font-size: var(--font-size-2xl, 24px); }
 .sc-full--phone .sc-run-top .sc-stars { order: 3; width: 100%; }
 
 /* Under a run in the member's chat */
 .sc-runstars { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); font-size: var(--font-size-sm); }
 .sc-runstars-row { display: inline-flex; align-items: center; gap: var(--space-2); }
 .sc-runstars-note { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.sc-runstars-clear { align-self: flex-start; }

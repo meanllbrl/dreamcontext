@@ -11,12 +11,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { createAgent } from '../../src/lib/agents/store.js';
-import { createAutomation } from '../../src/lib/automations/store.js';
+import { createAutomation, recordRun } from '../../src/lib/automations/store.js';
+import type { RunEvent } from '../../src/lib/automations/types.js';
 import { newThreadEntryId, threadSlugDir } from '../../src/lib/automations/threads.js';
 import { THREAD_ENTRY_MARKER, type ThreadEntry } from '../../src/lib/automations/types.js';
 import { readScorecard, withScorecard } from '../../src/lib/agents/scorecard.js';
 import { addCriterion, rateRun, setVerdict } from '../../src/lib/agents/scorecard-ops.js';
-import { checkRun, draftLesson, lessonAddsNothing, type JudgeFn } from '../../src/lib/agents/scorecard-judge.js';
+import { checkRun, draftLesson, lessonAddsNothing, readRunText, type JudgeFn } from '../../src/lib/agents/scorecard-judge.js';
 import { startScorecardCheck } from '../../src/lib/automations/runner.js';
 
 let projectRoot: string;
@@ -60,13 +61,51 @@ function run(firedAt: string, post: string | null): string {
 const answered = (text: string, usd = 0.004): JudgeFn => async () => ({ outcome: 'answered', text, usd, ms: 10 });
 
 describe('checkRun', () => {
+  it('reads the final message from the run\'s own transcript: a check he starts later reads what the runner\'s read (r1 check-input-parity)', async () => {
+    const fired = '2026-11-19T09:00:00.000Z';
+    const key = run(fired, null);
+    // A run that published no document and posted nothing: its words are only in its session.
+    const sid = 'sess-acme-1';
+    const tdir = join(home, '.claude', 'projects', '-acme');
+    mkdirSync(tdir, { recursive: true });
+    writeFileSync(join(tdir, `${sid}.jsonl`), [
+      JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: 'go' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Paused the two tired ads.' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'x', input: {} }] } }),
+    ].join('\n') + '\n');
+    recordRun(contextRoot, 'daily-digest', {
+      firedAt: fired, startedAt: fired, finishedAt: fired, status: 'ok', durationMs: 1, outputPath: null, error: null,
+      exitCode: 0, sessionId: sid, costUsd: null, numTurns: null, permissionDenials: 0,
+    } as RunEvent);
+    expect(readRunText(projectRoot, key, { home }).final).toBe('Paused the two tired ads.');
+    const a = addCriterion(projectRoot, 'herodot', 'Says what changed', home);
+    let seen = '';
+    const judge: JudgeFn = async (p) => { seen = p; return { outcome: 'answered', text: JSON.stringify({ verdicts: [{ id: a, met: true }] }), usd: 0.003, ms: 5 }; };
+    // The runner's spawn and the card's "Check" run the same command with the same inputs.
+    expect(await checkRun(projectRoot, 'herodot', key, { ...opts(), judge })).toBe('done');
+    expect(seen).toContain('Paused the two tired ads.');
+  });
+
+  it('an answer that leaves a line unjudged is unusable and ends failed, never "N of M met" (r1 unjudged-counted-as-not-met)', async () => {
+    const key = run('2026-11-19T09:00:00.000Z', 'Text.');
+    const a = addCriterion(projectRoot, 'herodot', 'Only shipped features are claimed', home);
+    addCriterion(projectRoot, 'herodot', 'Under 200 words', home);
+    let calls = 0;
+    const judge: JudgeFn = async () => { calls++; return { outcome: 'answered', text: JSON.stringify({ verdicts: [{ id: a, met: true }] }), usd: 0.001, ms: 1 }; };
+    expect(await checkRun(projectRoot, 'herodot', key, { ...opts(), judge })).toBe('failed');
+    expect(calls).toBeGreaterThan(1);
+    const c = readScorecard(projectRoot, 'herodot', home).card.checks[key];
+    expect(c.state).toBe('failed');
+    expect(c.lastError).toMatch(/unusable/);
+  });
+
   it('lands one verdict per criterion with its cost, judged on the run\'s posts', async () => {
     const key = run('2026-11-19T09:00:00.000Z', 'Shipped: the export button. Planned: dark mode.');
     const a = addCriterion(projectRoot, 'herodot', 'Only shipped features are claimed', home);
     const b = addCriterion(projectRoot, 'herodot', 'Under 200 words', home);
     let seen = '';
     const judge: JudgeFn = async (p) => { seen = p; return { outcome: 'answered', text: JSON.stringify({ verdicts: [{ id: a, met: true, why: 'only shipped' }, { id: b, met: false }] }), usd: 0.0045, ms: 5 }; };
-    expect(await checkRun(projectRoot, 'herodot', key, null, { ...opts(), judge })).toBe('done');
+    expect(await checkRun(projectRoot, 'herodot', key, { ...opts(), judge })).toBe('done');
     expect(seen).toContain('Shipped: the export button');
     const c = readScorecard(projectRoot, 'herodot', home).card.checks[key];
     expect(c.state).toBe('done');
@@ -78,7 +117,7 @@ describe('checkRun', () => {
     const key = run('2026-11-19T09:00:00.000Z', null);
     addCriterion(projectRoot, 'herodot', 'Only shipped features are claimed', home);
     let called = false;
-    expect(await checkRun(projectRoot, 'herodot', key, '', { ...opts(), judge: async () => { called = true; return { outcome: 'answered', text: '{}', usd: 0, ms: 1 }; } })).toBe('no_text');
+    expect(await checkRun(projectRoot, 'herodot', key, { ...opts(), judge: async () => { called = true; return { outcome: 'answered', text: '{}', usd: 0, ms: 1 }; } })).toBe('no_text');
     expect(called).toBe(false);
     const c = readScorecard(projectRoot, 'herodot', home).card.checks[key];
     expect(c.state).toBe('no_text');
@@ -88,14 +127,14 @@ describe('checkRun', () => {
   it('a timeout or an unusable answer is failed with its reason; his flip is never overwritten', async () => {
     const key = run('2026-11-19T09:00:00.000Z', 'Some text.');
     const a = addCriterion(projectRoot, 'herodot', 'Only shipped features are claimed', home);
-    expect(await checkRun(projectRoot, 'herodot', key, null, { ...opts(), judge: async () => ({ outcome: 'timeout', text: '', usd: 0, ms: 1 }) })).toBe('failed');
+    expect(await checkRun(projectRoot, 'herodot', key, { ...opts(), judge: async () => ({ outcome: 'timeout', text: '', usd: 0, ms: 1 }) })).toBe('failed');
     let c = readScorecard(projectRoot, 'herodot', home).card.checks[key];
     expect(c.state).toBe('failed');
     expect(c.lastError).toMatch(/timed out/);
-    expect(await checkRun(projectRoot, 'herodot', key, null, { ...opts(), judge: answered('no json here') })).toBe('failed');
+    expect(await checkRun(projectRoot, 'herodot', key, { ...opts(), judge: answered('no json here') })).toBe('failed');
     expect(readScorecard(projectRoot, 'herodot', home).card.checks[key].lastError).toMatch(/unusable/);
     setVerdict(projectRoot, 'herodot', key, a, true, home);
-    await checkRun(projectRoot, 'herodot', key, null, { ...opts(), judge: answered(JSON.stringify({ verdicts: [{ id: a, met: false }] })) });
+    await checkRun(projectRoot, 'herodot', key, { ...opts(), judge: answered(JSON.stringify({ verdicts: [{ id: a, met: false }] })) });
     c = readScorecard(projectRoot, 'herodot', home).card.checks[key];
     expect(c.verdicts[0]).toMatchObject({ met: true, by: 'owner' });
     expect(c.attempts).toBe(3);
@@ -107,9 +146,9 @@ describe('checkRun', () => {
     withScorecard(projectRoot, 'herodot', (card) => {
       card.checks[key] = { state: 'running', attempts: 0, pid: process.pid, pidStart: 'live', at: NOW.toISOString(), criteriaHash: '', verdicts: [], costUsd: 0 };
     }, { home });
-    await expect(checkRun(projectRoot, 'herodot', key, null, { ...opts(), startOf: () => 'live', judge: answered('{}') })).rejects.toMatchObject({ code: 'check_running' });
+    await expect(checkRun(projectRoot, 'herodot', key, { ...opts(), startOf: () => 'live', judge: answered('{}') })).rejects.toMatchObject({ code: 'check_running' });
     withScorecard(projectRoot, 'herodot', (card) => { card.checks[key] = { ...card.checks[key], state: 'failed', attempts: 1 }; }, { home });
-    await expect(checkRun(projectRoot, 'herodot', key, null, { ...opts(), firstOnly: true, judge: answered('{}') })).rejects.toBeTruthy();
+    await expect(checkRun(projectRoot, 'herodot', key, { ...opts(), firstOnly: true, judge: answered('{}') })).rejects.toBeTruthy();
   });
 
   it('the runner starts a check only for a member with criteria, and a failed spawn changes nothing', () => {
@@ -118,7 +157,7 @@ describe('checkRun', () => {
     expect(startScorecardCheck(contextRoot, 'daily-digest', outcome, (j) => jobs.push(j))).toBe(false);
     addCriterion(projectRoot, 'herodot', 'Only shipped features are claimed', home);
     expect(startScorecardCheck(contextRoot, 'daily-digest', outcome, (j) => jobs.push(j))).toBe(true);
-    expect(jobs[0]).toMatchObject({ kind: 'check', member: 'herodot', run: 'daily-digest::2026-11-19T09:00:00.000Z', stdin: 'final words' });
+    expect(jobs[0]).toMatchObject({ kind: 'check', member: 'herodot', run: 'daily-digest::2026-11-19T09:00:00.000Z' });
     expect(startScorecardCheck(contextRoot, 'daily-digest', outcome, () => { throw new Error('spawn EACCES'); })).toBe(false);
   });
 });

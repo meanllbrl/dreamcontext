@@ -171,7 +171,8 @@ export const handleScorecardRate = post('rates a member\'s run', (body, { params
   const stars = body.stars === null ? null : typeof body.stars === 'number' ? body.stars : NaN;
   if (!run || (stars !== null && !Number.isInteger(stars))) throw new ScorecardRefused('invalid_args', 400, 'Give {run, stars} (stars null clears).');
   // `rateRun` resolves the run in THIS project's history: a phone rates only the request project's runs.
-  const r = rateRun(projectRoot, params.slug, { run, stars, note: str(body.note) ?? null, by: 'owner' });
+  // An absent note keeps the stored one; '' clears it.
+  const r = rateRun(projectRoot, params.slug, { run, stars, note: str(body.note), by: 'owner' });
   if (r.draft) spawnJob({ kind: 'draft', projectRoot, member: params.slug, run: r.runKey });
   return r;
 });

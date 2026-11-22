@@ -30,17 +30,6 @@ function ownerOnly(what: string): boolean {
   return true;
 }
 
-function readStdin(): Promise<string> {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) { resolve(''); return; }
-    let buf = '';
-    process.stdin.setEncoding('utf-8');
-    process.stdin.on('data', (c: string) => { buf += c; });
-    process.stdin.on('end', () => resolve(buf));
-    process.stdin.on('error', () => resolve(buf));
-  });
-}
-
 function stars(n: number | null): string {
   return n === null ? '' : '★'.repeat(n) + '☆'.repeat(5 - n);
 }
@@ -52,7 +41,7 @@ export function registerScorecardCommands(agents: Command): void {
     .option('--run <key>', 'The run, as `<routine>::<runId>` (from `agents scorecard show`)')
     .option('--last', 'Its newest finished run')
     .requiredOption('--stars <n>', '1 to 5; 0 clears the rating')
-    .option('--note <text>', 'What to keep or change: it becomes one lesson the member follows')
+    .option('--note <text>', 'His words on what to keep or change: they become one lesson the member follows. Left out, the run keeps its note; --note "" clears it')
     .option('--quote <words>', "The owner's exact words (required from an agent session)")
     .option('--json', 'Emit as JSON')
     .action((member: string, opts: { run?: string; last?: boolean; stars: string; note?: string; quote?: string; json?: boolean }) => {
@@ -67,7 +56,7 @@ export function registerScorecardCommands(agents: Command): void {
       const agent = isAgentSession();
       try {
         const r = rateRun(projectRoot, member, {
-          run: opts.run, last: opts.last, stars: n === 0 ? null : n, note: opts.note ?? null,
+          run: opts.run, last: opts.last, stars: n === 0 ? null : n, note: opts.note,
           by: agent ? 'session' : 'owner', ...(opts.quote ? { quote: opts.quote } : {}),
         });
         if (r.draft) spawnScorecardJob({ kind: 'draft', projectRoot, member, run: r.runKey });
@@ -155,11 +144,10 @@ export function registerScorecardCommands(agents: Command): void {
   // The detached model work (hidden): the runner's check and the rating's lesson draft.
   sc.command('check <member>', { hidden: true })
     .requiredOption('--run <key>', 'The run')
-    .option('--stdin', "The run's final message arrives on stdin")
-    .action(async (member: string, opts: { run: string; stdin?: boolean }) => {
-      const finalText = opts.stdin ? await readStdin() : '';
+    .action(async (member: string, opts: { run: string }) => {
       try {
-        const out = await checkRun(dirname(ensureContextRoot()), member, opts.run, finalText, { firstOnly: isAgentSession() });
+        // It reads the run from disk, the same text whoever started it (D11).
+        const out = await checkRun(dirname(ensureContextRoot()), member, opts.run, { firstOnly: isAgentSession() });
         console.log(out);
       } catch (err) { refuse(err); }
     });
