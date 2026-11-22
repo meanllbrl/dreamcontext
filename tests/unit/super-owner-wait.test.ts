@@ -36,7 +36,7 @@ import {
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { DONE_SETTLE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import {
-  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, CUT_LINE, OWNER_WAIT_LINE, noteChildEnding, setCutChildResumer, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
+  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, CUT_LINE, OWNER_WAIT_LINE, noteChatStarted, noteChildEnding, setCutChildResumer, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
   noteChildParking, reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn, refusalWait, refusalWaitId, stalledWait } from '../../src/lib/super/owner-wait.js';
@@ -711,6 +711,39 @@ describe('a background JOB holds the row for as long as the CLI runs it', { time
     expect(gone).toHaveLength(1);
     expect(gone[0].cut).toBe(true);
     expect(delivered.map((d) => d.text).join('\n')).not.toMatch(/child=c1[^\n]*awaited=owner/);
+  });
+
+  it('review r2: an end the window asked of an OLD process (a respawn) does not hide a later real cut', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    noteChildEnding('c1');
+    await noteChatStarted('c1'); // the respawn's new process
+    roster(hs[0], [{ desc: 'Run the load test' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+  });
+
+  it('review r2: a finished child is no plain cut, even reopened within the hour', async () => {
+    setCutChildResumer(async () => true);
+    const { hs } = await boot(['c1']);
+    roster(hs[0], [{ desc: 'Run the benchmark' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    // Back, finished its job (its row done), then its process ended with a stale job entry.
+    const h2 = reg('c1');
+    h2.userSent(BACKGROUND_CUT_TEXT);
+    roster(h2, [{ desc: 'Run the benchmark' }]);
+    h2.observe({ type: 'result' });
+    await writeSuper(root, (s) => { s.children.c1.row = 'done'; delete s.children.c1.resuming; });
+    h2.exited();
+    await advance(60_000);
+    expect((await ofKind('gone', 'c1')).some((q) => q.cut)).toBe(false);
   });
 
   it('a child that exits with nothing running in the background is a plain gone (no resume asked)', async () => {

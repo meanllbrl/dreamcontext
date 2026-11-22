@@ -5410,13 +5410,15 @@ async function addGone(root: string, sid: string, seenExit = false): Promise<voi
       return;
     }
     // It finished and its done is not told yet: the done says it all (its chat closing is no news).
-    const doneWaits = ch.row === 'done' && s.queue.some((q) => q.sessionId === sid && q.kind === 'done' && q.state === 'pending');
+    const wasDone = ch.row === 'done';
+    const doneWaits = wasDone && s.queue.some((q) => q.sessionId === sid && q.kind === 'done' && q.state === 'pending');
     resolveAnswered(s, sid, null);
     closeOwnerItems(s, sid);
     setRow(s.children[sid], 'gone');
     if (doneWaits) return;
     if (s.queue.some((q) => q.sessionId === sid && q.kind === 'gone' && q.state === 'pending')) return;
-    plainCut = cut && !doneWaits && ch.endedAt === undefined;
+    // A finished child is no cut, whatever its roster said (review r2: its job would run twice).
+    plainCut = cut && !wasDone && ch.endedAt === undefined;
     s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'gone', state: 'pending', createdAt: Date.now(), ...(plainCut ? { cut: true as const } : {}) });
     countEvent(s);
     added = true;
@@ -5607,6 +5609,8 @@ export function noteResuming(sessionId: string, on: boolean): void {
 export function noteChatStarted(sessionId: string): Promise<void> {
   // A new process: the park noted for its last one is spent (its next exit is judged afresh).
   parkingNoted.delete(sessionId);
+  // A new process of it: the end the window asked of the OLD one says nothing about this one (review r2).
+  endingNoted.delete(sessionId);
   // A new process of a child whose row says gone: it is not gone any more, so the next relaunch
   // resumes it again (restore.ts) and its next exit is news again (addGone).
   const live = superKeyOfChild(sessionId);
