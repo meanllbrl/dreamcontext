@@ -277,7 +277,7 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
   // r2 edge-cases-2: a rule that states its own limit still allows what it allows.
   it('a rule that allows staging and forbids something else still grants the staging step', () => {
     for (const words of ["staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", "staging'e push serbest, canlıya dokunma",
-      "staging'e push etmeden önce testleri koş"]) {
+      "staging’e push edebilirsin", "staging'e her zaman push yapabilir", "always push to staging yourself"]) {
       expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(true);
     }
   });
@@ -289,6 +289,29 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
     }
     expect(ruleCovers('gh pr create --base staging --fill', "PR açabilirsin ama staging'e push etme", null).ok).toBe(true);
     expect(ruleCovers('npx firebase deploy -P acme-staging', "staging'i yayınlama", null).ok).toBe(false);
+  });
+  // r4 edge-cases (redesign): a grant needs a permitting word; any negative form of the verb refuses, whatever suffix follows.
+  it('a third-person, modal or English ban refuses; a clause with no permitting word grants nothing', () => {
+    for (const words of ["çocuk staging'e push etmesin", "staging'e push yapmasın", "staging'e push etmemelisin", "staging'e push etmeyeceksin",
+      "staging'e push'lama", "staging’e push’lama", "you must not push to staging", "no pushing to staging", "staging'e push etmeden önce testleri koş",
+      "staging'e push yasak", "staging'e push için izin yok", "staging push"]) {
+      expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(false);
+    }
+    for (const words of ["staging'e PR açma", "staging'e PR açmasın", "don't open a PR to staging"]) {
+      expect(ruleCovers('gh pr create --base staging --fill', words, null).ok, words).toBe(false);
+    }
+    for (const words of ["staging'e deploy etmesin", "staging'i yayınlamasın", "staging'e deploy etmemeli"]) {
+      expect(ruleCovers('firebase deploy -P acme-staging', words, null).ok, words).toBe(false);
+    }
+    expect(ruleCovers('git push -u origin super/x:staging', "staging'e push etmeli", null).ok).toBe(true);
+  });
+  // r4 security minors: escapes, braces, a git alias, heads/main and a combined -uf never pass the message path.
+  it('a backslash, a brace, a git alias, heads/main or a combined force flag is refused on the message path', () => {
+    for (const step of ['git push origin ma\\in', 'git push origin HEAD:ma\\in', 'git push origin HEAD:{main,x}', 'git -c alias.x=push x origin HEAD:main',
+      'git push origin HEAD:heads/main', 'git push -uf origin super/x', 'git push -fu origin super/x']) {
+      expect(messageCovers(step, 'pushla').ok, step).toBe(false);
+    }
+    expect(messageCovers('git push -u origin super/x', 'pushla').ok).toBe(true);
   });
   // r3 edge-cases-1: quotes are removed before the message path reads a push, as the shell removes them.
   it('a quoted main, refspec, force or +refspec is refused on the message path; substitution too', () => {

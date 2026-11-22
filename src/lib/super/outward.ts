@@ -111,9 +111,12 @@ const MERGE_NEG_RE = /(?<![a-z0-9])(?:(?:do not|don't|dont|never|no)\s+merge\w*|
 /** Production or live as a token, a hyphenated name too (`acme-prod`, `--prod`), folded. */
 const PROD_TOKEN_RE = /(?<![a-z0-9])(?:production|prod|live|canli\w*)(?![a-z0-9])/;
 /** The default branch in any spelling a push destination takes. */
-const DEFAULT_BRANCH_RE = /^(?:refs\/heads\/|refs\/remotes\/[^/]+\/|origin\/)?(?:main|master)$/i;
-/** Shell substitution, which runs a command inside any argument, even a double-quoted one. */
-const SUBST_RE = /[`$]|<\(|>\(/;
+const DEFAULT_BRANCH_RE = /^(?:refs\/heads\/|heads\/|refs\/remotes\/[^/]+\/|origin\/)?(?:main|master)$/i;
+/** Shell substitution, which runs a command inside any argument, even a double-quoted one; a
+ *  backslash or a brace, which the shell rewrites (`ma\\in`, `{main,x}`). */
+const SUBST_RE = /[`$\\{]|<\(|>\(/;
+/** A git alias set on the line (`git -c alias.x=push x …`), which hides the real subcommand. */
+const GIT_ALIAS_RE = /(?:^|\s)(?:-c\s*|--config-env[=\s]+)alias\./i;
 
 // ─── Reading a step as commands, for the default-branch and local-merge checks ──────────────────
 
@@ -198,11 +201,12 @@ export function pushesDefault(step: string): boolean {
   return false;
 }
 
-/** Never in any grant: shell substitution, a force, --admin, --auto, a +refspec, a local merge, a push onto the default branch. */
+/** Never in any grant: shell substitution or escapes, a git alias, a force (`-f` inside `-uf` too), --admin, --auto, a +refspec, a local merge, a push onto the default branch. */
 function neverStep(step: string): boolean {
   if (SUBST_RE.test(step)) return true;
   if (NEVER_RE.test(fold(step.replace(/["']/g, '')))) return true;
-  if (pieces(step).some((t) => gitSub(t)?.sub === 'merge')) return true;
+  if (GIT_ALIAS_RE.test(step.replace(/["']/g, ''))) return true;
+  if (pieces(step).some((t) => gitSub(t)?.sub === 'merge' || (gitPushOf(t)?.flags ?? []).some((f) => /^-[a-z]*f[a-z]*$/i.test(f)))) return true;
   return pushesDefault(step);
 }
 
@@ -239,23 +243,30 @@ const KIND_WORDS: Record<RuleKind, RegExp> = {
   pr: /(?<![a-z0-9])(?:pr|pull request)(?![a-z0-9])/,
   deploy: /(?<![a-z0-9])(?:deploy\w*|yayinla\w*)/,
 };
-/** A clause that forbids (folded): a "never" word, or a kind verb's negative suffix ("pushlama", "yayınlama", "gönderme"). */
-const RULE_NEG_RE = /(?<![a-z0-9])(?:asla|hicbir zaman|never|don't|dont|do not|etme(?:yin|yiniz|z)?|yapma(?:yin|yiniz|z)?|atma|dokunma)(?![a-z0-9])|(?:push|gonder|yayinla|deploy)\w*?m[ae](?:yin|yiniz|z)?(?![a-z0-9])/;
+/** A clause that forbids (folded): a "no/never/not" word, or a verb stem with its negative suffix
+ *  whatever follows ("etmesin", "etmemelisin", "etmeyeceksin", "yapmasın", "açma", "push'lama",
+ *  "yayınlamasın"). "etmeden" (before), "etmek" (to do) and "etmeli" (must) are no negative. */
+const RULE_NEG_RE = /(?<![a-z0-9])(?:asla|hicbir|never|not|cannot|dont|do not|no|yasak\w*|olmaz|yok|degil\w*|dokunma\w*)(?![a-z0-9])|n't(?![a-z0-9])|(?<![a-z0-9])(?:et|yap|ac|at|ver|gonder|yayinla|push'?la|deploy'?la)m[ae](?!k|d[ae]n|li)/;
+/** A clause that permits (folded): a may/can/free/yourself word, an "-ebilir" or "-meli" verb, or a
+ *  bare imperative ("push et", "PR aç", "yayınla"). The kind's own noun is no permission. */
+const RULE_POS_RE = /(?<![a-z0-9])(?:serbest\w*|izin\w*|kendin\w*|her zaman|always|can|may|allowed|yourself|go ahead|\w+[ae]bilir\w*|\w+m[ae]li\w*|et|at|ac|yap|gonder|yayinla|push'?la|deploy'?la)(?![a-z0-9])/;
 /** Another target a forbidding clause may name instead of staging ("main'e asla push etme"). */
 const OTHER_TARGET_RE = /(?<![a-z0-9])(?:main|master|canli\w*|prod\w*|production|live)/;
 /** A rule's clauses. "ve"/"and" between two nouns ("staging ve main'e asla") is no boundary. */
 const RULE_CLAUSE_SPLIT_RE = /[,.;!\n]|\s(?:ama|but|fakat|ancak|sonra|then|yalniz|sadece|only)\s/;
 
 /**
- * May his rule's words grant this kind? One clause must name the kind and not forbid it; a clause
- * that forbids the kind cancels it unless it names another target and not staging ("main'e asla
- * push etme" leaves "staging'e push edebilirsin" standing).
+ * May his rule's words grant this kind? Fail-safe (r4 redesign): one clause must name the kind, carry
+ * a permitting word and no forbidding one; a clause with neither ("push etmeden önce testleri koş")
+ * grants nothing. A clause that names the kind and forbids it cancels the grant unless it names
+ * another target and not staging ("main'e asla push etme" leaves "staging'e push edebilirsin"
+ * standing). Unsure is a refusal: the Super asks him on a card instead.
  */
 function ruleAllowsKind(words: string, kind: RuleKind): boolean {
-  const cs = words.split(RULE_CLAUSE_SPLIT_RE);
+  const cs = words.replace(/[\u2018\u2019`]/g, "'").split(RULE_CLAUSE_SPLIT_RE);
   const names = (c: string) => KIND_WORDS[kind].test(c);
   const cancels = cs.some((c) => names(c) && RULE_NEG_RE.test(c) && (/staging/.test(c) || !OTHER_TARGET_RE.test(c)));
-  return !cancels && cs.some((c) => names(c) && !RULE_NEG_RE.test(c));
+  return !cancels && cs.some((c) => names(c) && !RULE_NEG_RE.test(c) && RULE_POS_RE.test(c));
 }
 
 /** His words with every merge said not to happen taken out. */
