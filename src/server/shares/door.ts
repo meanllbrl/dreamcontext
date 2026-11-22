@@ -223,8 +223,11 @@ export function sendUnavailable(req: IncomingMessage, res: ServerResponse, statu
 }
 
 function passwordPage(share: Share, error: string | null): string {
-  const what = share.kind === 'app' ? 'bu app\'i' : 'bu panoyu';
-  const who = share.ownerName ? `${escapeHtml(share.ownerName)} ${what} seninle paylaştı.` : `${what.charAt(0).toUpperCase()}${what.slice(1)} seninle paylaşıldı.`;
+  // Active voice takes the object case ("Mehmet bu app'i paylaştı"), the passive the subject
+  // case ("Bu app paylaşıldı").
+  const who = share.ownerName
+    ? `${escapeHtml(share.ownerName)} ${share.kind === 'app' ? 'bu app\'i' : 'bu panoyu'} seninle paylaştı.`
+    : `${share.kind === 'app' ? 'Bu app' : 'Bu pano'} seninle paylaşıldı.`;
   return page(share.name, `<h1>${escapeHtml(share.name)}</h1><p class="sub">${who} Açmak için şifreyi gir.</p>`
     + '<form method="post" action="/__share/login" autocomplete="off">'
     + '<label for="p">Şifre</label><input id="p" name="p" type="password" autocomplete="current-password" autofocus required maxlength="200">'

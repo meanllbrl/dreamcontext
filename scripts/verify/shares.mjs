@@ -158,7 +158,8 @@ try {
   step('K5 + K3: password page, the 6th wrong try, the right one, then the closed rooms');
   const door = await fetch(app.link, { redirect: 'manual' });
   const doorHtml = await door.text();
-  check(/şifre/i.test(doorHtml) && !doorHtml.includes('Funnel Masası</h1>'), 'the link without a password shows more than the password page');
+  // The password page names the app (approved drawing, section 5); the app itself (its record count, its Kaydet button) stays behind it.
+  check(/şifre/i.test(doorHtml) && /type="password"/.test(doorHtml) && !/Kaydet|Kayıt:/.test(doorHtml), 'the link with a password shows more than the password page');
   const ticket = (door.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
   let last = 0;
   for (let i = 1; i <= 6; i++) {
@@ -172,7 +173,9 @@ try {
   for (const w of [{ name: 'phone', width: 390, height: 844 }, { name: 'desktop', width: 1440, height: 900 }]) {
     const ctx = await browser.newContext({ viewport: { width: w.width, height: w.height } });
     const page = await ctx.newPage();
-    page.on('console', (m) => { if (m.type() === 'error') guestErrors.push(`app@${w.name}: ${m.text().slice(0, 160)}`); });
+    // After the owner closes the link the closed page answers 410: that console line is the close, not an error.
+    let closing = false;
+    page.on('console', (m) => { if (m.type() === 'error' && !closing) guestErrors.push(`app@${w.name}: ${m.text().slice(0, 160)}`); });
     page.on('pageerror', (e) => guestErrors.push(`app@${w.name} crash: ${e.message.slice(0, 160)}`));
     await page.goto(app.link, { waitUntil: 'domcontentloaded' });
     await page.screenshot({ path: join(SHOTS, `guest-password-${w.name}.png`) });
@@ -196,11 +199,12 @@ try {
         check(r.status === 403 || r.status === 404, `K3: ${p} answered ${r.status}`);
       }
       step('K6: the owner closes the app link in the middle of the session');
+      closing = true;
       const t0 = Date.now();
       await fetch(`${local}/api/shares/${app.id}/close`, { method: 'POST', headers: plain, body: '{}' });
       let closedSeen = false;
       while (Date.now() - t0 < 1_000 && !closedSeen) {
-        closedSeen = /Bu paylaşım kapandı/.test(await (await fetch(`${app.origin}/anything`, { headers: { cookie } })).text());
+        closedSeen = /Bu paylaşım kapandı/.test(await (await fetch(`${app.origin}/anything`, { headers: { cookie, accept: 'text/html' } })).text());
         if (!closedSeen) await sleep(100);
       }
       check(closedSeen, 'K6: the link did not say "Bu paylaşım kapandı" within 1 s');
@@ -222,6 +226,9 @@ try {
     page.on('pageerror', (e) => errs.push(`crash: ${e.message.slice(0, 160)}`));
     const scene = [];
     page.on('response', async (r) => { if (r.url().includes('/__share/board')) scene.push(await r.text().catch(() => '')); });
+    // The viewer's own assets (fonts above all) must answer 200 from the share: a miss sends Excalidraw to its CDN fallback.
+    page.on('response', (r) => { const u = new URL(r.url()); if (u.origin === brd.origin && u.pathname.startsWith('/excalidraw-assets/') && r.status() !== 200) errs.push(`asset ${r.status()} ${u.pathname}`); });
+    page.on('requestfailed', (r) => { const u = new URL(r.url()); if (u.origin === brd.origin) errs.push(`request failed ${u.pathname}: ${r.failure()?.errorText ?? ''}`); });
     await page.goto(brd.link, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(4_000);
     check(scene.some((s) => s.includes('Paywall testi')) && !scene.some((s) => s.includes('gizli-adres')), `K7 @${w.name}: the scene is missing the card title or leaks its url`);

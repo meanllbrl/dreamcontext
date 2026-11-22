@@ -1,15 +1,15 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import ShareViewer from './ShareViewer';
+import { setExcalidrawAssetPath } from './assetPath';
 
-// Excalidraw's fonts from this share's own origin (the build copies them under
-// excalidraw-assets/), never a CDN: the viewer's CSP allows only 'self'.
-(window as Window & { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = import.meta.env.DEV
-  ? '/node_modules/@excalidraw/excalidraw/dist/prod/'
-  : '/excalidraw-assets/';
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ShareViewer />
-  </StrictMode>,
-);
+// The font path is set first, then the viewer (and Excalidraw with it) is loaded: a static import
+// would be evaluated before this line (the bundler hoists Excalidraw's chunk above the entry's
+// own code), and Excalidraw builds its font list from the path when it is evaluated.
+setExcalidrawAssetPath();
+void import('./ShareViewer').then(({ default: ShareViewer }) => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <ShareViewer />
+    </StrictMode>,
+  );
+});
