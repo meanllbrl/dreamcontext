@@ -383,6 +383,35 @@ export function heavySuggestion(command: string, ctx: { redOpen?: boolean } = {}
   return `dreamcontext builder heavy -- ${shellQuote(command)}`;
 }
 
+/**
+ * The first lines of a heavy-step refusal. The hook refuses the WHOLE command, never a part of
+ * it: a compound `append to file && npm test` writes nothing, and an agent that only reads
+ * "heavy step refused" can believe the first half ran (Eco benchmark pilot). So it says plainly
+ * that nothing ran, names the heavy part, and, when the command had other parts, says they did
+ * not run either and must be run on their own first (the suite form runs the suite alone).
+ */
+export function heavyRefusalLead(command: string, kind: HeavyKind, suggestion: string): string {
+  const segments = shellSegments(command);
+  const named = segments.find((seg) => stepOfSegment(seg, {})?.kind === kind) ?? segments.find((seg) => stepOfSegment(seg, {}) !== null) ?? command.trim();
+  const clip = (t: string, n = 80): string => (t.length > n ? `${t.slice(0, n - 3)}...` : t);
+  const lines = [
+    segments.length > 1
+      ? 'NOT RUN: NO part of this command ran: the whole command was refused, so nothing it writes or changes exists yet.'
+      : 'NOT RUN: nothing ran: the whole command was refused.',
+    `The heavy part is \`${clip(named)}\` (${kind}); heavy steps go through the lock and the repeat limit.`,
+  ];
+  if (segments.length > 1 || /\n/.test(command)) {
+    // Never classify the other parts (before or after, `&&` or `||`, a heredoc body, a `tee`):
+    // each guess was wrong for some real command. Either the form quotes the whole command, or
+    // the agent gets its own command back and re-issues what the form does not run.
+    const whole = suggestion.replace(/'\\''/g, "'").includes(command.trim());
+    lines.push(whole
+      ? 'The heavy form below runs the whole command, every part, so run it once and do not repeat any part yourself.'
+      : `The heavy form below runs only the heavy step, NOT the rest of your command, which therefore never runs unless you run it yourself: re-issue every other part, with the same order and conditions (&&, ||, ;), around the heavy form. Your command was: ${clip(command.trim(), 400)}`);
+  }
+  return lines.join(' ');
+}
+
 /** This repo's package.json scripts; none when it cannot be read. */
 export function packageScripts(cwd: string): Record<string, string> {
   try {
