@@ -113,7 +113,7 @@ plan: "görsel olarak görmek istiyorum, bu tip yazılı işi sevmem"): screen m
 side, short headings; text at the minimum, the 3-6 bullets become labels on the drawing.
 A mockup of a real product screen copies THAT product's look from its source styles (colors,
 type, radii, buttons, sidebar, window frame), inline, light theme; the `dc-` kit is only the
-report around it, grey boxes only for a wireframe he asked for. Steps in order (a user journey)
+report around it, grey boxes only for a wireframe he asked for. The same holds on a whiteboard: a brief for a screen design asks for real-look pictures (the `draw` skill, rule 6), never "draw it with the kit". Steps in order (a user journey)
 are a `dc-graph` with edges, never a row of chips; color a node only when it means something,
 mixed tones with a one-line legend (2026-11-03).
 
