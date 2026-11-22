@@ -3,7 +3,7 @@ import { useI18n } from '../../context/I18nContext';
 import { StatsProjects } from './StatsProjects';
 import { ChartLegend, GhostBar, StatsChart, type ChartSeries } from './StatsChart';
 import { fmtCost, fmtDay, fmtPct, fmtTokens, fmtWhen } from './statsFormat';
-import type { LimitWindow, SleepRun, StatsWire } from './statsTypes';
+import type { EcoPlusRow, LimitWindow, SleepRun, StatsWire } from './statsTypes';
 
 type T = (k: string) => string;
 
@@ -51,6 +51,34 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
         </div>
       )}
       <p className="st-foot">{t('stats.answer.foot')}</p>
+    </div>
+  );
+}
+
+const signed = (v: number, f: (n: number) => string): string => `${v < 0 ? '-' : ''}~${f(Math.abs(v))}`;
+
+/** Eco Plus: the measured Opus share before and during, and the estimated saving (never under 7 days). */
+export function EcoPlusCard({ row }: { row: EcoPlusRow }) {
+  const { t } = useI18n();
+  const days = row.days < 1 ? '<1' : String(Math.floor(row.days));
+  const pct = (v: number | null) => (v === null ? '—' : fmtPct(v * 100));
+  const bits = [
+    t(row.on ? 'stats.ecoPlus.onFor' : 'stats.ecoPlus.wasOn').replace('{n}', days),
+    ...(row.short ? [t('stats.ecoPlus.short')] : []),
+    t('stats.ecoPlus.share').replace('{a}', pct(row.before)).replace('{b}', pct(row.during)),
+  ];
+  const est = row.short ? null : row.estSavedCost !== null ? signed(row.estSavedCost, fmtCost) : row.estShifted !== null ? signed(row.estShifted, fmtTokens) : null;
+  return (
+    <div className="st-card st-ecoplus" data-testid="stats-eco-plus">
+      <div className="st-ecoplus-l">
+        <div className="st-k">{t('stats.ecoPlus')}</div>
+        <div className="st-sub">{bits.join(' · ')}</div>
+      </div>
+      <div className="st-ecoplus-r">
+        <div className="st-big">{est ?? '—'}</div>
+        <div className="st-sub">{est === null ? t('stats.ecoPlus.noEst') : t(row.estSavedCost !== null ? 'stats.ecoPlus.saved' : 'stats.ecoPlus.shifted')}</div>
+      </div>
+      <p className="st-foot">{t('stats.ecoPlus.foot')}</p>
     </div>
   );
 }
@@ -164,6 +192,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
           </div>
         </div>
       </div>
+      {dc.ecoPlus && <EcoPlusCard row={dc.ecoPlus} />}
       <StatsProjects data={data} />
       <div className="st-card">
         <div className="st-ch">

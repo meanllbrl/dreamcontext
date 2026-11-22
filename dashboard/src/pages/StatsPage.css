@@ -130,6 +130,9 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
 .st-answer .st-tbl { margin-top: 10px; }
 .st-wins .st-tr { grid-template-columns: minmax(0, 1fr) 120px 160px; }
 .st-rowhead { display: flex; align-items: center; gap: 8px; }
+.st-ecoplus { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; }
+.st-ecoplus-r { text-align: right; }
+.st-ecoplus .st-foot { grid-column: 1 / -1; }
 .st-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .st-bal { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
 .st-bal div { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 6px; font-size: calc(11.5px * var(--zoom)); color: var(--color-text-secondary); }
