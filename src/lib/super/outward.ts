@@ -237,36 +237,20 @@ function rulePiece(cmd: string, host: string | null): RuleKind | 'neutral' | nul
   return RULE_NEUTRAL_RE.test(cmd) ? 'neutral' : null;
 }
 
-/** The words of each kind in his rule (folded). */
-const KIND_WORDS: Record<RuleKind, RegExp> = {
-  push: /(?<![a-z0-9])(?:push\w*|gonder\w*)/,
-  pr: /(?<![a-z0-9])(?:pr|pull request)(?![a-z0-9])/,
-  deploy: /(?<![a-z0-9])(?:deploy\w*|yayinla\w*)/,
-};
-/** A clause that forbids (folded): a "no/never/not" word, or a verb stem with its negative suffix
- *  whatever follows ("etmesin", "etmemelisin", "etmeyeceksin", "yapmasın", "açma", "push'lama",
- *  "yayınlamasın"). "etmeden" (before), "etmek" (to do) and "etmeli" (must) are no negative. */
-const RULE_NEG_RE = /(?<![a-z0-9])(?:asla|hicbir|never|not|cannot|dont|do not|no|yasak\w*|olmaz|yok|degil\w*|dokunma\w*)(?![a-z0-9])|n't(?![a-z0-9])|(?<![a-z0-9])(?:et|yap|ac|at|ver|gonder|yayinla|push'?la|deploy'?la)m[ae](?!k|d[ae]n|li)/;
-/** A clause that permits (folded): a may/can/free/yourself word, an "-ebilir" or "-meli" verb, or a
- *  bare imperative ("push et", "PR aç", "yayınla"). The kind's own noun is no permission. */
-const RULE_POS_RE = /(?<![a-z0-9])(?:serbest\w*|izin\w*|kendin\w*|her zaman|always|can|may|allowed|yourself|go ahead|\w+[ae]bilir\w*|\w+m[ae]li\w*|et|at|ac|yap|gonder|yayinla|push'?la|deploy'?la)(?![a-z0-9])/;
-/** Another target a forbidding clause may name instead of staging ("main'e asla push etme"). */
-const OTHER_TARGET_RE = /(?<![a-z0-9])(?:main|master|canli\w*|prod\w*|production|live)/;
-/** A rule's clauses. "ve"/"and" between two nouns ("staging ve main'e asla") is no boundary. */
-const RULE_CLAUSE_SPLIT_RE = /[,.;!\n]|\s(?:ama|but|fakat|ancak|sonra|then|yalniz|sadece|only)\s/;
+/** The one sentence a rule grants by (owner, 22 Nov r5: "sabit cümle"), folded: "staging'e kendin
+ *  push et, PR aç ve deploy et" or any of its parts in any order. His prose is never read for
+ *  permission: a ban or a condition in it cannot be mistaken for one. */
+const RULE_PART = String.raw`(push et|pr ac|deploy et)`;
+const RULE_SENTENCE_RE = new RegExp(String.raw`^staging'?e kendin ${RULE_PART}(?:(?:, | ve )${RULE_PART})*\.?$`);
+const RULE_PART_KIND: Record<string, RuleKind> = { 'push et': 'push', 'pr ac': 'pr', 'deploy et': 'deploy' };
+/** The sentence a refusal shows. */
+export const RULE_SENTENCE = "staging'e kendin push et, PR aç ve deploy et";
 
-/**
- * May his rule's words grant this kind? Fail-safe (r4 redesign): one clause must name the kind, carry
- * a permitting word and no forbidding one; a clause with neither ("push etmeden önce testleri koş")
- * grants nothing. A clause that names the kind and forbids it cancels the grant unless it names
- * another target and not staging ("main'e asla push etme" leaves "staging'e push edebilirsin"
- * standing). Unsure is a refusal: the Super asks him on a card instead.
- */
-function ruleAllowsKind(words: string, kind: RuleKind): boolean {
-  const cs = words.replace(/[\u2018\u2019`]/g, "'").split(RULE_CLAUSE_SPLIT_RE);
-  const names = (c: string) => KIND_WORDS[kind].test(c);
-  const cancels = cs.some((c) => names(c) && RULE_NEG_RE.test(c) && (/staging/.test(c) || !OTHER_TARGET_RE.test(c)));
-  return !cancels && cs.some((c) => names(c) && !RULE_NEG_RE.test(c) && RULE_POS_RE.test(c));
+/** The kinds his rule's words grant: only the fixed sentence (or its parts) counts; anything else grants none. */
+function ruleKinds(words: string): Set<RuleKind> {
+  const w = words.replace(/[\u2018\u2019`]/g, "'").replace(/\s+/g, ' ').trim();
+  if (!RULE_SENTENCE_RE.test(w)) return new Set();
+  return new Set([...w.matchAll(/push et|pr ac|deploy et/g)].map((m) => RULE_PART_KIND[m[0]]));
 }
 
 /** His words with every merge said not to happen taken out. */
@@ -285,8 +269,9 @@ export function ruleCovers(step: string, ruleWords: string, stagingHost: string 
   const kinds = step.trim().split(/ && /).map((c) => rulePiece(c.trim(), host));
   const used = kinds.filter((k): k is RuleKind => k !== 'neutral' && k !== null);
   if (kinds.includes(null) || used.length === 0) return out('a rule grants only these exact commands, joined by ` && `: `git push [-u] <remote> <branch>:staging`, `gh pr create --base staging [--fill] [--draft]`, `firebase deploy [--only <x>] -P <staging project>`, a build');
-  const forbidden = [...new Set(used)].find((k) => !ruleAllowsKind(rw, k));
-  if (forbidden) return out(`this rule's words do not allow a ${forbidden === 'pr' ? 'PR' : forbidden} (or forbid it)`);
+  const granted = ruleKinds(rw);
+  const forbidden = [...new Set(used)].find((k) => !granted.has(k));
+  if (forbidden) return out(`a rule grants a ${forbidden === 'pr' ? 'PR' : forbidden} only when its words are exactly "${RULE_SENTENCE}" or a part of it`);
   return { ok: true };
 }
 

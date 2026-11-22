@@ -274,36 +274,40 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
     expect(messageCovers('git -C ../wt push origin HEAD:refs/heads/main', 'push it').ok).toBe(false);
     expect(messageCovers('git -C ../wt merge feature', 'push it').ok).toBe(false);
   });
-  // r2 edge-cases-2: a rule that states its own limit still allows what it allows.
-  it('a rule that allows staging and forbids something else still grants the staging step', () => {
-    for (const words of ["staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", "staging'e push serbest, canlıya dokunma",
-      "staging’e push edebilirsin", "staging'e her zaman push yapabilir", "always push to staging yourself"]) {
-      expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(true);
-    }
+  // r5 (owner: "sabit cümle"): only the fixed sentence or its parts grant; his prose is never read for permission.
+  it('a rule grants only by the fixed sentence or its parts, each kind only when its part is there', () => {
+    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin push et", null).ok).toBe(true);
+    expect(ruleCovers('git push -u origin super/x:staging', "Staging’e kendin push et.", null).ok).toBe(true);
+    expect(ruleCovers('gh pr create --base staging --fill', "staging'e kendin PR aç", null).ok).toBe(true);
+    expect(ruleCovers('firebase deploy -P acme-staging', "staging'e kendin deploy et ve push et", null).ok).toBe(true);
+    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin PR aç", null).ok).toBe(false);
+    expect(ruleCovers('firebase deploy -P acme-staging', "staging'e kendin push et, PR aç", null).ok).toBe(false);
   });
-  // r3 edge-cases-2: the allowing clause names the step's own kind; a clause forbidding that kind for staging refuses it.
-  it('a rule that forbids the step\'s own kind for staging, or never names it, grants no such step', () => {
-    for (const words of ["PR açabilirsin ama staging'e push etme", "staging'e push etme, sadece PR aç", "staging ve main'e asla push etme",
-      "staging'e ve canlıya push etme", "staging'e pushlama", "PR açabilirsin"]) {
+  it('any other wording grants nothing: bans, conditions, permissions in prose, another target', () => {
+    for (const words of [
+      // allowing prose (fail-safe: a card instead)
+      "staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", "staging'e push serbest, canlıya dokunma",
+      "staging'e her zaman push yapabilir", "always push to staging yourself", "staging'e push etmeli", "staging'e kendin push et ama önce bana sor",
+      // r3/r4 bans
+      "PR açabilirsin ama staging'e push etme", "staging'e push etme, sadece PR aç", "staging ve main'e asla push etme", "staging'e pushlama",
+      "çocuk staging'e push etmesin", "staging'e push yapmasın", "staging'e push etmemelisin", "staging'e push etmeyeceksin", "staging'e push'lama",
+      "you must not push to staging", "no pushing to staging", "never push to staging", "staging'e push etmeden önce testleri koş",
+      // r5 conditions, present-tense and passive negatives, another target
+      "staging'e push etmeden önce benden izin al", "staging'e push için önce benden izin iste", "staging'e push etmek için izin almalısın",
+      "staging'e push'a izin vermiyorum", "staging'e push yapılmasına izin vermiyorum", "staging'e push için izin verilmez",
+      "staging'e kendin push etmiyorsun, bana sor", "kendi branch'ine push edebilirsin, staging'e dokunma", "feature dalına push edebilirsin ama staging'e asla",
+      "ben onaylarsam staging'e kendin push et", "staging'e kendin push etme"]) {
       expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(false);
     }
-    expect(ruleCovers('gh pr create --base staging --fill', "PR açabilirsin ama staging'e push etme", null).ok).toBe(true);
-    expect(ruleCovers('npx firebase deploy -P acme-staging', "staging'i yayınlama", null).ok).toBe(false);
-  });
-  // r4 edge-cases (redesign): a grant needs a permitting word; any negative form of the verb refuses, whatever suffix follows.
-  it('a third-person, modal or English ban refuses; a clause with no permitting word grants nothing', () => {
-    for (const words of ["çocuk staging'e push etmesin", "staging'e push yapmasın", "staging'e push etmemelisin", "staging'e push etmeyeceksin",
-      "staging'e push'lama", "staging’e push’lama", "you must not push to staging", "no pushing to staging", "staging'e push etmeden önce testleri koş",
-      "staging'e push yasak", "staging'e push için izin yok", "staging push"]) {
-      expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(false);
-    }
-    for (const words of ["staging'e PR açma", "staging'e PR açmasın", "don't open a PR to staging"]) {
+    for (const words of ["staging'e PR açma", "staging'e PR açmasın", "staging'e PR açmadan önce benden izin al", "PR açabilirsin"]) {
       expect(ruleCovers('gh pr create --base staging --fill', words, null).ok, words).toBe(false);
     }
-    for (const words of ["staging'e deploy etmesin", "staging'i yayınlamasın", "staging'e deploy etmemeli"]) {
+    for (const words of ["staging'e deploy etmesin", "staging'i yayınlamasın", "staging'e deploy'a izin vermiyorum", "staging'e kendin deploy etmiyorsun", "staging'i yayınlama"]) {
       expect(ruleCovers('firebase deploy -P acme-staging', words, null).ok, words).toBe(false);
     }
-    expect(ruleCovers('git push -u origin super/x:staging', "staging'e push etmeli", null).ok).toBe(true);
+    const v = ruleCovers('git push -u origin super/x:staging', "staging'e push serbest", null);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.message).toContain("staging'e kendin push et, PR aç ve deploy et");
   });
   // r4 security minors: escapes, braces, a git alias, heads/main and a combined -uf never pass the message path.
   it('a backslash, a brace, a git alias, heads/main or a combined force flag is refused on the message path', () => {
@@ -320,10 +324,6 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
       expect(messageCovers(step, 'pushla ve PR aç').ok, step).toBe(false);
     }
     expect(messageCovers('git push -u origin super/x && gh pr create --base main --title "push to main fix"', 'pushla ve PR aç').ok).toBe(true);
-  });
-  it('a rule that forbids grants nothing', () => {
-    expect(ruleCovers('git push origin x:staging', "staging'e asla push etme", null).ok).toBe(false);
-    expect(ruleCovers('git push origin x:staging', 'never push to staging', null).ok).toBe(false);
   });
   it('the child line says staging only; the gone line and both strip from his words', () => {
     const g = { source: 'rule' as const, step: 'git push origin x:staging', rule: 'abc123def0', words: RULE };

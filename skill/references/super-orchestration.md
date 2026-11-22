@@ -170,8 +170,8 @@ Ask only for:
   names it ("pr'ı birleştir"), `--outward "gh pr merge <n> --squash|--merge|--rebase [--delete-branch]"`
   (the method from his words, else the one `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`
   allows); never a bare `gh pr merge`, its admin or auto mode, or a merge from a rule. A staging push,
-  PR or deploy one of his ACTIVE standing rules names: `--outward "<step>" --rule <id>` (the server
-  checks the rule is active and names that kind; the step is only exact commands joined by ` && `:
+  PR or deploy his ACTIVE rule grants: `--outward "<step>" --rule <id>` (the rule must
+  read exactly "staging'e kendin push et, PR aç ve deploy et" or a part; the step: exact commands joined by ` && `:
   `git push [-u] <remote> <branch>:staging`, a PR `--base staging`, a firebase deploy to a staging
   project, a build; no quotes or `$( )`). A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
