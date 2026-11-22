@@ -12,13 +12,18 @@ import {
 } from '../automations/feed.js';
 import { pendingQuestionOfRun } from '../automations/hitl.js';
 import { ownerQuietReader, superJobReader } from '../automations/super-quiet.js';
-import { privateSources } from '../automations/history.js';
+import { isAppRunSession, privateSources } from '../automations/history.js';
 import { runChatSession } from '../automations/run-chat.js';
-import type { RunEvent, ThreadEntry } from '../automations/types.js';
+import { AGENT_CHAT_ENV, type RunEvent, type ThreadEntry } from '../automations/types.js';
 import {
   listAgentSessions, markSessionHadTurns, pruneAgentSessions, type AgentSessionEntry,
 } from '../local-store.js';
 import { newTalkLookup, readTalkRawLower, readTalkRows, TALK_MAX_ROWS, transcriptMtime } from './talks.js';
+import { request as httpRequest } from 'node:http';
+import { projectKey } from '../local-store.js';
+import { listTraceFiles, readTraceFile, workRoot, type WorkTrace } from './work-trace.js';
+import { localIndex, WORK_SELECT_PATH, workServerPort } from './work-index.js';
+import { RUN_APP_ENV } from './session-member.js';
 
 /**
  * An agent's HISTORY: every run of its routines and every talk the owner had with it, as one list
@@ -705,4 +710,93 @@ export function searchAgentHistory(
     }
   }
   return { hits, nextBefore: null };
+}
+
+
+// ─── Past work (plan uye-gecmis-is D12) ─────────────────────────────────
+
+export interface TraceHit { id: string; line: string; at: number; projectKey: string }
+
+/**
+ * A member's past-work traces matching `query`, best first: through the running app's warm index,
+ * else by reading the files here (slower, never wrong). `all`: every project for a global member.
+ */
+/**
+ * Who reads a member's past work from this process (G2): an app's chat (`app-<slug>`) or an app's
+ * run (the runner's RUN_APP_ENV on the live child; a finished run's session as a fallback, its app
+ * unknown, so it sees nothing) reads as that app; anyone else is the owner (null). The ONE reading
+ * for `history --search`, `history show` and the `--all` refusal.
+ */
+export function pastWorkViewer(contextRoot: string, env: NodeJS.ProcessEnv = process.env): { app: string | null } | null {
+  const chat = env[AGENT_CHAT_ENV] ?? '';
+  if (chat.startsWith('app-')) return { app: chat.length > 4 ? chat.slice(4) : null };
+  const runApp = (env[RUN_APP_ENV] ?? '').trim();
+  if (runApp) return { app: runApp };
+  const sid = env.CLAUDE_CODE_SESSION_ID ?? env.CLAUDE_SESSION_ID ?? '';
+  try { if (sid && isAppRunSession(contextRoot, sid)) return { app: null }; } catch { /* no cache */ }
+  return null;
+}
+
+export async function searchPastWork(
+  contextRoot: string,
+  slug: string,
+  query: string,
+  /** `viewer`: an app's session (only that app's runs here, never `all`). */
+  opts: { all?: boolean; home?: string; viaServer?: boolean; viewer?: { app: string | null } | null } = {},
+): Promise<TraceHit[]> {
+  const projectRoot = dirname(contextRoot);
+  if (!query.trim()) return [];
+  const viewer = opts.viewer ?? null;
+  const all = opts.all === true && !viewer;
+  if (opts.viaServer !== false) {
+    const remote = await searchViaServer(slug, projectRoot, query, all, viewer, workServerPort(process.env, opts.home ?? homedir()));
+    if (remote) return remote;
+  }
+  const local = localIndex(slug, projectRoot, opts.home ?? homedir());
+  if (!local) return [];
+  return local.idx.allMatches(query, { projectKey: projectKey(projectRoot), scope: local.scope }, all, viewer);
+}
+
+function searchViaServer(member: string, root: string, query: string, all: boolean, viewer: { app: string | null } | null, port: number): Promise<TraceHit[] | null> {
+  const payload = JSON.stringify({ member, root, query, audience: viewer ? 'app' : 'owner', ...(viewer?.app ? { app: viewer.app } : {}), mode: 'search', all });
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v: TraceHit[] | null) => { if (settled) return; settled = true; clearTimeout(timer); resolve(v); };
+    const timer = setTimeout(() => { req.destroy(); done(null); }, 10_000);
+    const req = httpRequest({ host: '127.0.0.1', port, path: WORK_SELECT_PATH, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } }, (res) => {
+      let data = '';
+      res.setEncoding('utf-8');
+      res.on('data', (c: string) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return done(null);
+        try {
+          const p = JSON.parse(data) as { hits?: unknown };
+          done(Array.isArray(p.hits) ? (p.hits as TraceHit[]).filter((h) => typeof h?.id === 'string' && typeof h?.line === 'string') : null);
+        } catch { done(null); }
+      });
+      res.on('error', () => done(null));
+    });
+    req.on('error', () => done(null));
+    req.end(payload);
+  });
+}
+
+/** One whole trace by its id or its `w_<id8>` handle, among this project's members (and global ones). */
+export function findTrace(contextRoot: string, handle: string, members: readonly string[], home?: string, viewer: { app: string | null } | null = null): WorkTrace | null {
+  const want = handle.replace(/^w_/, '').toLowerCase();
+  if (!/^[0-9a-f]{8,32}$/.test(want)) return null;
+  const projectRoot = dirname(contextRoot);
+  // An app sees only its own runs of this project (the same rule as its search).
+  const here = projectKey(projectRoot);
+  const visible = (t: WorkTrace) => !viewer || (t.kind === 'run' && !!viewer.app && t.app === viewer.app && t.project.key === here);
+  for (const slug of members) {
+    const root = workRoot(slug, projectRoot, home ?? homedir());
+    if (!root) continue;
+    for (const f of listTraceFiles(root)) {
+      if (!f.name.startsWith(want)) continue;
+      const t = readTraceFile(root, join(root, f.month, f.name));
+      if (t && visible(t)) return t;
+    }
+  }
+  return null;
 }

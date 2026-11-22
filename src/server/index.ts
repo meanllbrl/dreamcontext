@@ -301,6 +301,7 @@ import { handleFederationInboxGet, handleFederationSyncPost } from './routes/fed
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
 import { handleRecallGet, handleRecallPromptPost, handleRecallHaikuGet } from './routes/recall.js';
+import { handleAgentWorkSelect } from './routes/agent-work.js';
 import { recallCloudRoutes } from './routes/recall-cloud.js';
 import { recallOptionsRoutes } from './routes/recall-options.js';
 import {
@@ -1046,6 +1047,8 @@ export function buildRouter(): Router {
   router.get('/api/agents', handleAgentsList);
   router.post('/api/agents', handleAgentsCreate);
   // Agent sync (B1): literal segments BEFORE `/:slug`, which would otherwise capture them.
+  // A member's past work (uye-gecmis-is C3): its hook asks this server's warm index (loopback only).
+  router.post('/api/agents/work/select', handleAgentWorkSelect);
   router.get('/api/agents/sync', handleAgentSyncState);
   router.post('/api/agents/sync/confirm', handleAgentSyncConfirm);
   router.get('/api/agents/inbox', handleAgentsInbox);

@@ -78,9 +78,10 @@
     },
     {
       "path": "agents history",
-      "desc": "An agent's past runs and conversations, newest first (what the agent itself reads to remember)",
+      "desc": "An agent's past runs and conversations, newest first (what the agent itself reads to remember); `history show <w_id>` prints one past-work trace whole",
       "args": [
-        "<slug>"
+        "<slug>",
+        "[trace]"
       ],
       "valueFlags": [
         "--search",

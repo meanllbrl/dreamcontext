@@ -40,6 +40,8 @@ import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js'
 import { CardFeedbackTracker, endedClean, feedbackTurn } from '../card-feedback.js';
 import { onUndelivered, takeUndelivered, undeliveredNote } from '../../lib/super/undelivered.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
+import { noteTranscript } from '../../lib/agents/work-trace.js';
+import { queueDerive } from './agent-work.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
 import { agentChatLevelArgs, agentLevelToFollow, parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
@@ -2556,6 +2558,9 @@ export function startChatSession(
   /** Whose identity and permission envelope this child runs under: a card's or a Chat tab
    *  agent's. Only `card` decides what a card skips (registry, tab env, branch move). */
   const envelope = card ?? agentChat;
+  /** The member whose conversation this is (uye-gecmis-is C4): never a card's, an app's or no agent. */
+  const workMember = agentChat && opts.agent && !opts.card && !app ? opts.agent : null;
+  const workTool: 'claude' | 'codex' | 'antigravity' = bridgeTool === 'codex' ? 'codex' : bridgeTool === 'antigravity' ? 'antigravity' : 'claude';
   const scopedCard = !!envelope?.permissionArgs;
   // Whose owner block this chat carries (plan uye-karnesi D9): a member speaking as itself, in
   // its stage chat, a card, or as its own Super. What the session holds: its briefing's header at
@@ -4764,6 +4769,10 @@ export function startChatSession(
         observedConversation = obj.session_id;
         if (!obj.parent_tool_use_id) holdRotated(obj.session_id);
       }
+      // A member's past work (uye-gecmis-is C4b): every MAIN init names a transcript the pin held.
+      if (workMember && obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && typeof obj.session_id === 'string') {
+        void noteTranscript({ slug: workMember, projectRoot }, obj.session_id, { tool: workTool, ...(pinId ? { pin: pinId } : {}) }).catch(() => undefined);
+      }
       if (obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id && typeof obj.apiKeySource === 'string') {
         const first = chatApiKeySource === '';
         chatApiKeySource = obj.apiKeySource || 'none';
@@ -4814,6 +4823,8 @@ export function startChatSession(
       const limit = readLimitSignal(obj);
       /** The ONE main-result predicate this frame uses (rotation, and the latch reset below). */
       const mainResult = obj.type === 'result' && obj.parent_tool_use_id === undefined;
+      // C4a: the transcript this result belongs to is derived (queued, debounced), before any rotation.
+      if (workMember && mainResult && observedConversation) queueDerive(workMember, projectRoot, observedConversation, workTool);
 
       if (mainResult) {
         // A Stop's own `result`, or a slow abort `result` after the Stop already settled.

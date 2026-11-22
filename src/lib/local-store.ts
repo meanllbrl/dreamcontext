@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { acquireFileLock } from './file-lock.js';
@@ -296,9 +296,25 @@ export function latestStageSession(projectRoot: string, agent: string, home?: st
   return stage.length ? stage[stage.length - 1].id : null;
 }
 
+/**
+ * A project member's past work dies with it (uye-gecmis-is C7, work-trace.ts): its folder goes, a
+ * `drop` line first so a warm index forgets it. A member made again with this name starts empty.
+ * Never throws; a link is never followed.
+ */
+export function dropAgentWork(projectRoot: string, agent: string, home?: string): void {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(agent)) return;
+  const work = join(localDir(projectRoot, home), 'work', agent);
+  try {
+    if (!lstatSync(work).isDirectory()) return;
+    try { appendFileSync(join(work, 'gen.log'), '{"op":"drop"}\n', { mode: 0o600 }); } catch { /* the folder still goes */ }
+    rmSync(work, { recursive: true, force: true });
+  } catch { /* nothing kept for it */ }
+}
+
 /** The death of an agent's machine-local entries: deleted or renamed. Never throws. */
 export function forgetAgentLocal(projectRoot: string, agent: string, home?: string): void {
   moveAmendments(projectRoot, agent, null, home);
+  dropAgentWork(projectRoot, agent, home);
   try {
     if (listAgentSessions(projectRoot, agent, home).length > 0) {
       mutateSessions(projectRoot, agent, home, () => []);
