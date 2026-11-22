@@ -69,15 +69,30 @@ export function versionOf(m: { id: string; label: string }): number {
 }
 
 /**
+ * An Antigravity model's line and version: the first all-number part of its id is the version and
+ * the rest, effort dropped, the line (`gemini-3.8-flash-high` → `gemini-#-flash` 3.8). A size such
+ * as `120b` is not a version, so `gpt-oss-120b-medium` has none. Antigravity serves several vendors.
+ */
+export function antigravityLine(id: string): { line: string; version: number } {
+  const parts = id.toLowerCase().split('-');
+  const at = parts.findIndex((p) => /^\d+(?:\.\d+)?$/.test(p));
+  if (at < 0) return { line: id.toLowerCase(), version: NaN };
+  const line = parts.map((p, i) => (i === at ? '#' : p)).filter((p) => !['low', 'medium', 'high'].includes(p)).join('-');
+  return { line, version: Number(parts[at]) };
+}
+
+/**
  * Codex's list split the way r29 draws it: the newest version family is current, older ones are
- * "Legacy models". A list with one family (or no versions) is all current.
+ * "Legacy models". A list with one family (or no versions) is all current. Antigravity's list is
+ * split per line ({@link antigravityLine}): legacy only where a newer version of the same line exists.
  */
 export function splitByVersion(models: { id: string; label: string }[], tool: PickerTool): { current: PickerModel[]; legacy: PickerModel[] } {
   const rows = models.map((m) => ({ tool, id: m.id, label: m.label }));
-  const versions = models.map(versionOf).filter((v) => Number.isFinite(v));
-  if (versions.length === 0) return { current: rows, legacy: [] };
-  const top = Math.max(...versions);
-  const current = rows.filter((_, i) => !Number.isFinite(versionOf(models[i]!)) || versionOf(models[i]!) === top);
+  const keyed = models.map((m) => (tool === 'antigravity' ? antigravityLine(m.id) : { line: '', version: versionOf(m) }));
+  if (!keyed.some((k) => Number.isFinite(k.version))) return { current: rows, legacy: [] };
+  const top = new Map<string, number>();
+  for (const k of keyed) if (Number.isFinite(k.version)) top.set(k.line, Math.max(top.get(k.line) ?? -Infinity, k.version));
+  const current = rows.filter((_, i) => !Number.isFinite(keyed[i]!.version) || keyed[i]!.version === top.get(keyed[i]!.line));
   const legacy = rows.filter((r) => !current.includes(r));
   return current.length ? { current, legacy } : { current: rows, legacy: [] };
 }
