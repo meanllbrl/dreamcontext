@@ -343,7 +343,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
     <>
       <SaveStatus state={saveState} />
       {/* Live link (tunel-paylasim): the board, live and read-only, for whoever gets the link. */}
-      {vault && !isMacPhoneSurface() && <LiveShareButton kind="board" vault={vault} slug={slug} name={name} className="wbp-agent-toggle" />}
+      {vault && !isMacPhoneSurface() && <LiveShareButton kind="board" vault={vault} slug={slug} name={name} />}
       <BoardSyncButton ref={setToggleEl} flushAndWait={flushAndWait} refresh={refresh} />
     </>
   );

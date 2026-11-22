@@ -2412,7 +2412,7 @@ const translations: Record<string, Record<string, string>> = {
     'micmenu.settings': 'Voice settings…',
     'micmenu.settings.d': 'Dictation, push to talk, reading voice',
     'micmenu.mic.setup': 'Set up the microphone first',
-    'voice.rec.send': 'Recording. Let go to send.',
+    'voice.rec.send': 'Recording. Release to send.',
     'voice.rec.paste': 'Recording. Let go to paste into the box.',
     'voice.note.rest': '{key} to talk',
     'voice.note.listening': 'Listening…',

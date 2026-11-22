@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import { phoneAllows } from '../lib/phoneSurface';
+import { pollMs } from '../lib/windowActivity';
 import type { ScorecardData } from '../lib/scorecardModel';
 
 /**
@@ -30,7 +31,7 @@ export function useScorecard(slug: string | null) {
     queryFn: () => api.get<ScorecardData>(`/agents/${encodeURIComponent(slug ?? '')}/scorecard`),
     enabled,
     retry: 0,
-    refetchInterval: (q) => (anyRunning(q.state.data as ScorecardData | undefined) ? RUNNING_POLL_MS : false),
+    refetchInterval: (q) => (anyRunning(q.state.data as ScorecardData | undefined) ? pollMs(RUNNING_POLL_MS) : false),
   });
 }
 

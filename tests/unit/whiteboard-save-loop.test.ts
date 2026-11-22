@@ -550,7 +550,7 @@ describe('fit on open (A15/A16 gate): once per board open, never on polls or sav
     const src = readFileSync(join(import.meta.dirname, '..', '..', 'dashboard/src/hooks/useWhiteboards.ts'), 'utf-8');
     const save = src.slice(src.indexOf('const saveViewport'), src.indexOf('}, [slug]);'));
     expect(save).toMatch(/!placedRef\.current\) return;/);
-    expect(src).toMatch(/settled: \(\) => \{ placedRef\.current = true; \}/);
+    expect(src).toMatch(/settled: \(\) => \{ placedRef\.current = true; setPlaced\(true\); \}/);
     // A fit cancelled before it settled (StrictMode's simulated unmount) runs on the remount.
     expect(src).toMatch(/if \(!placedRef\.current\) fittedRef\.current = false;/);
   });

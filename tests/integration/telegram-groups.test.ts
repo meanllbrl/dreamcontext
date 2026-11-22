@@ -891,7 +891,7 @@ describe('a result in the group speaks and shows, as in his private chat (owner 
     expect(spoken).toEqual(['Bu hafta iki iş bitti, state/x.md güncellendi.']);
     const voice = groupSends().find((c) => c.method === 'sendVoice');
     expect(voice).toBeTruthy();
-    expect(String(voice!.params.caption)).toContain('Haftanın özeti');
+    expect(String(voice!.params.caption)).toContain('Bu hafta iki iş bitti, state/x.md güncellendi.');
     expect(tg.uploads.find((u) => u.method === 'sendVoice')?.bytes.toString()).toBe('OggS-fake');
     expect(groupTexts()).toContain('Özet hazır.');
     expect(groupTexts().some((t) => t.includes('dream-voice'))).toBe(false);

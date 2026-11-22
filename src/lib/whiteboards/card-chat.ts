@@ -200,7 +200,7 @@ export function parseChatAgent(agent: unknown): string | null {
 }
 
 /** An agent's system-prompt append in a Chat tab. Same order as the card's, for the same reason. */
-export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null, recent: string = '', home: BoardScope | null = null, rules: string = '', owner?: OwnerRef | null): string {
+export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null, recent: string = '', home: BoardScope | null = null, owner?: OwnerRef | null, rules: string = ''): string {
   const soul = buildSoulBlock(m);
   const pattern = buildPatternBlock(m);
   const owned = ownerBriefingSection(buildOwnerBlock(owner, null));
@@ -311,7 +311,7 @@ export function prepareAgentChat(
     contextRoot,
     target,
     (scope): Record<string, string> => (scope ? { [CARD_AGENT_ENV]: slug, [CARD_BOARD_ENV]: scope.board } : {}),
-    (m, scope, homeView) => agentChatBriefing(m, scope, agentRecentBlock(contextRoot, slug, opts.excludeSession ?? null), homeView, buildMemberRulesBlock(contextRoot, slug, home), { projectRoot: dirname(contextRoot), member: slug, home }),
+    (m, scope, homeView) => agentChatBriefing(m, scope, agentRecentBlock(contextRoot, slug, opts.excludeSession ?? null), homeView, { projectRoot: dirname(contextRoot), member: slug, home }, buildMemberRulesBlock(contextRoot, slug, home)),
     home,
   );
   // The level decides the mode, on the server, from the approved manifest: the pane's own

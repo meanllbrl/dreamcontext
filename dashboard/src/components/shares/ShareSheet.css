@@ -25,7 +25,7 @@
 .live-share__err { color: var(--color-error-ink); font-size: var(--font-size-sm); background: color-mix(in srgb, var(--color-error-ink) 8%, var(--color-bg-elevated)); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); margin: var(--space-2) 0 0; }
 .live-share__spin {
   flex: none; width: 12px; height: 12px; margin-right: var(--space-2); border-radius: 50%;
-  border: 2px solid var(--color-border); border-top-color: var(--color-accent); animation: live-share-spin 0.9s linear infinite;
+  border: 2px solid var(--color-border); border-top-color: var(--color-accent); animation: var(--dc-motion-status-name, live-share-spin) 0.9s linear infinite; animation-play-state: var(--dc-motion-play, running);
 }
 @keyframes live-share-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .live-share__spin { animation: none; } }

@@ -18,7 +18,7 @@ const PRIVATE_CHAT = new Set(['ab.binding.chatId', 'o.ab.binding.chatId', 'bindi
 /** The files allowed to call a send method at all. */
 const SENDERS = new Set([
   'src/server/telegram/hub.ts', 'src/server/telegram/runs.ts', 'src/server/telegram/pictures.ts', 'src/server/telegram/voice-reply.ts',
-  'src/server/telegram/manager.ts', 'src/lib/telegram/member-forward.ts', 'src/lib/telegram/away.ts',
+  'src/server/telegram/manager.ts', 'src/lib/telegram/member-forward.ts', 'src/lib/telegram/away.ts', 'src/server/telegram/rate.ts',
 ]);
 
 function sources(): { rel: string; text: string }[] {

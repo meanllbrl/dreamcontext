@@ -32,8 +32,8 @@ Golden coverage of the rice create branch
 ## Changelog
 <!-- LIFO: newest entry at top. Auto-prepended by `dreamcontext tasks log`. Each entry is a session-shaped breadcrumb — what shipped, what was decided, where you stopped. -->
 
-
 ### 2026-06-11 - Completed (by owner)
 - All done, verified.
+
 ### 2026-06-11 - Created
 - Task created.

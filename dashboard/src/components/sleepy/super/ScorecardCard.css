@@ -107,7 +107,7 @@ button.sc-star:focus-visible { outline: 2px solid var(--color-border-focus); out
 .sc-field input { width: 96px; }
 .sc-form-actions { display: inline-flex; align-items: center; gap: var(--space-3); }
 .sc-btn {
-  padding: var(--space-1) var(--space-3); border: 0; border-radius: var(--radius-md); background: var(--color-accent);
+  padding: var(--space-1) var(--space-3); border: 0; border-radius: var(--radius-md); background: var(--color-accent-strong);
   color: var(--color-accent-text); font: inherit; font-size: var(--font-size-sm); cursor: pointer;
 }
 .sc-btn:disabled { opacity: 0.5; cursor: not-allowed; }

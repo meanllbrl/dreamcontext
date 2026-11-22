@@ -187,7 +187,7 @@ describe('super delegate --migration', () => {
   it('super pool add with a marker is refused; a plain pool add never carries one', async () => {
     write();
     expect((await verb('pool-add', { prompt: 'later', migration: ['distribute-user-md-residue'] })).status).toBe(400);
-    expect((await verb('pool-add', { prompt: 'later' })).status).toBe(200);
+    expect((await verb('pool-add', { prompt: 'later', brief: 'later', mode: 'basic', model: 'sonnet', effort: 'medium' })).status).toBe(200);
     expect((await readSuperState(root)).pool[0].migration).toBeUndefined();
   });
 
@@ -213,7 +213,7 @@ describe('super delegate --migration', () => {
 
   it('a plain delegate never carries a marker, even when the body names one', async () => {
     write();
-    expect((await verb('delegate', { prompt: 'Other work.', migration: false })).status).toBe(200);
+    expect((await verb('delegate', { prompt: 'Other work.', brief: 'other', mode: 'basic', model: 'sonnet', effort: 'medium', migration: false })).status).toBe(200);
     expect((await readSuperState(root)).children[CHILD_SID].migration).toBeUndefined();
   });
 
