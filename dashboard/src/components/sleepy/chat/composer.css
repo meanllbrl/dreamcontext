@@ -1035,6 +1035,17 @@
   color: var(--color-text-tertiary);
   white-space: nowrap;
 }
+/* Eco Plus (Settings → Chat → Tasarruf modu): a small tag after the model, tinted, never a fill. */
+.chat-cmp-modeltrigger-tag {
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  white-space: nowrap;
+}
+
 
 /* The MODE trigger: its name and the version of its brief, as plain text (owner 2026-10-30: no
    face on a calm text button). It is the control that decides how the agent works (owner,

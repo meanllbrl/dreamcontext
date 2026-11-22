@@ -1,3 +1,4 @@
+import type { ModelSource } from '../../lib/agentSettings';
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/speechQueue';
 import { turnTrace } from '../../lib/voice/turnTrace';
@@ -1081,6 +1082,25 @@ let chatSessionSeq = 0;
  * the vault also names this session's alarm source, which is what lets a background project's
  * chip raise the user (see `pushAsk` below). Empty string = no project pinned.
  */
+/**
+ * Where a chat's spawn model came from (plan eco-plus D3), read by the server to decide whether
+ * Eco Plus lowers it: `saved` (a saved default), `resume` (a restored conversation's own model),
+ * `pick` (chosen for this chat; also what an absent tag means). Set by the caller just before
+ * {@link createChatSession}, on BOTH URLs, so a reconnect that respawns decides the same way.
+ */
+const chatModelSources = new Map<string, ModelSource>();
+const MAX_MODEL_SOURCES = 400;
+export function setChatModelSource(claudeId: string, source: ModelSource): void {
+  chatModelSources.delete(claudeId);
+  chatModelSources.set(claudeId, source);
+  // Oldest first: a long-lived window never grows this without bound.
+  while (chatModelSources.size > MAX_MODEL_SOURCES) chatModelSources.delete(chatModelSources.keys().next().value as string);
+}
+function chatModelSourceParam(claudeId: string): string {
+  const s = chatModelSources.get(claudeId);
+  return s && s !== 'pick' ? `&modelSource=${s}` : '';
+}
+
 export function createChatSession(
   vault: string,
   bypass: boolean,
@@ -1125,7 +1145,7 @@ export function createChatSession(
   const firstReattach = resume ? reattach : '';
   const idParam = (resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`)
     + (firstReattach ? `&reattach=${firstReattach}` : '');
-  const modelParam = model ? `&model=${encodeURIComponent(model)}` : '';
+  const modelParam = (model ? `&model=${encodeURIComponent(model)}` : '') + chatModelSourceParam(claudeId);
   const effortParam = effort ? `&effort=${encodeURIComponent(effort)}` : '';
   // Omitted for `basic`, not sent as `&mode=basic`: the server's `sanitizeChatMode` already
   // resolves an absent param to the same value, so the default costs no bytes and every

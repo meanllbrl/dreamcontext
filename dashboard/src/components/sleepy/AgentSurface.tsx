@@ -13,7 +13,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, setChatModelSource, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
 import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
@@ -1886,6 +1886,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // The phone's Super conversation is a mirror in an ordinary chat mode: told here, on every
       // spawn of it, that it shows the Super (reply strips, groups, the ↩ chip).
       const mirror = mode !== 'super' && isSuperMirrorId(cid);
+      // Eco Plus decides by this (plan eco-plus D3): a restored conversation keeps its own model,
+      // the saved default is lowered, a model the caller named is a pick. The Super is always
+      // its saved model, decided on the server.
+      setChatModelSource(cid, resume ? 'resume' : model ? 'pick' : 'saved');
       const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean, mirror);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
