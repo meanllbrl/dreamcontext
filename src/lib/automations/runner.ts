@@ -89,6 +89,9 @@ import {
   writeRunSidecar,
 } from './store.js';
 import { blockedKind } from './needs.js';
+import { buildOwnerBlock, ownerCard } from '../agents/owner-block.js';
+import { activeCriteria } from '../agents/scorecard.js';
+import { spawnScorecardJob, type SpawnScorecardFn } from '../agents/scorecard-judge.js';
 import {
   AUTOMATIONS_GITIGNORE_ENTRIES,
   AUTOMATIONS_GITIGNORE_ENTRIES_ROOT,
@@ -723,6 +726,10 @@ export function composePrompt(
     board?.nonce,
   );
   if (pattern) parts.push('', pattern);
+  // The owner's own lines and the lessons his ratings taught (plan uye-karnesi D8), whatever
+  // `learning` says: read at spawn, so a run always holds the current block. '' when empty.
+  const owned = buildOwnerBlock({ projectRoot, member: m.agent || m.slug }, board?.nonce);
+  if (owned) parts.push('', owned);
   // The agent's recent history goes right under its pattern: both are notes, both lose to
   // everything approved above, and the owner's live message still comes after them.
   const historyAt = parts.length;
@@ -1894,6 +1901,8 @@ export function buildApprovalQuestionPrompt(m: AutomationManifest, review: strin
 // ─── RunOptions (host discriminated union — see runAutomation) ─────────────
 
 interface RunOptionsBase extends BoardTurnInput {
+  /** Starts the scorecard's detached check after an `ok` run (tests inject a recorder). */
+  spawnScorecard?: SpawnScorecardFn;
   /** The launchd tick collects the member bot's routine message instead of awaiting each
    *  (plan Z2, AA3): it awaits its batch after its loop. Absent: `runAutomation` awaits it. */
   onDeferredSend?: OnDeferredSend;
@@ -2027,7 +2036,28 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     if (opts.onDeferredSend) opts.onDeferredSend(sink.send);
     else await sink.send().catch(() => { /* logged by the sender; never the run's outcome */ });
   }
+  // The scorecard's check (plan uye-karnesi D10): after the lock is released, an `ok` run of a
+  // member with criteria starts ONE detached check. A failed spawn changes nothing here.
+  if (outcome.status === 'ok') startScorecardCheck(contextRoot, slug, outcome, opts.spawnScorecard ?? spawnScorecardJob);
   return outcome;
+}
+
+/** Spawn the run's scorecard check when its member has at least one criterion. Never throws. */
+export function startScorecardCheck(contextRoot: string, slug: string, outcome: Pick<RunOutcome, 'event' | 'result'>, spawnFn: SpawnScorecardFn): boolean {
+  try {
+    const runId = outcome.event?.firedAt;
+    if (!runId) return false;
+    const projectRoot = dirname(contextRoot);
+    let member = slug;
+    try { member = getAutomation(contextRoot, slug)?.agent || slug; } catch { member = slug; }
+    const card = ownerCard({ projectRoot, member });
+    if (!card || activeCriteria(card).length === 0) return false;
+    spawnFn({ kind: 'check', projectRoot, member, run: `${slug}::${runId}`, stdin: outcome.result ?? '' });
+    return true;
+  } catch (e) {
+    try { console.error(`[scorecard] check not started: ${(e as Error).message}`); } catch { /* quiet */ }
+    return false;
+  }
 }
 
 async function runAutomationInner(contextRoot: string, slug: string, opts: RunOptions, forwardSink: { send: (() => Promise<void>) | null }): Promise<RunOutcome> {

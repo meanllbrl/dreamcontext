@@ -57,6 +57,8 @@ const ASSISTANT = 'laptop-only: the dreamcontext Assistant belongs to this Mac\'
 const INSTALL = 'laptop-only: installs, updates or downloads software on this Mac';
 const SECRET = 'laptop-only: writes or reveals a secret, key or token';
 const SIGN_IN = 'laptop-only: signs an account in or out on this Mac';
+const SCORECARD_SETUP = 'laptop-only: criteria, goal and adopting a held lesson are set at the machine';
+const SCORECARD_RETRY = 'laptop-only: re-running a check or a lesson draft is started at the machine; a note rated from the phone still drafts its lesson';
 const OTHER_PROJECTS = 'laptop-only: lists, opens, registers or changes other projects on this Mac (the phone reaches only the projects chosen at start)';
 const LAUNCHER = 'laptop-only: launcher administration (projects, logos, app updates, its settings)';
 const SETTINGS = 'laptop-only: Settings (the phone shows no Settings page)';
@@ -549,6 +551,16 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agents/:slug/board-scope': allow('the owner answers whether an old board agent stays limited to its board, as on the laptop; a session cannot call it'),
   'POST /api/agents/:slug/place': allow(PROJECT_WRITE),
   'GET /api/agents/:slug/stage': allow('read: an agent\'s stage (its live work, reports, files, routines); side-effect free'),
+  'GET /api/agents/:slug/scorecard': filtered('read: one member\'s scorecard, narrowed to the chosen projects on a phone; side-effect free'),
+  'POST /api/agents/:slug/scorecard/rate': allow('he rates a run, or takes a lesson out of the prompt, from the phone as on the laptop'),
+  'POST /api/agents/:slug/scorecard/lessons/:id/undo': allow('he rates a run, or takes a lesson out of the prompt, from the phone as on the laptop'),
+  'POST /api/agents/:slug/scorecard/criteria': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/goal': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/lessons/:id/use': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/verdict': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/fresh': deny(SCORECARD_SETUP),
+  'POST /api/agents/:slug/scorecard/check': deny(SCORECARD_RETRY),
+  'POST /api/agents/:slug/scorecard/draft': deny(SCORECARD_RETRY),
   'GET /api/agents/:slug/history': allow('read: one page of an agent\'s runs and talks (the stage pane); side-effect free beyond pruning its own machine-local index of glances'),
   'GET /api/agents/:slug/amendments': allow('read: what the Super Agent changed in a member, with the text before and after; side-effect free'),
   'GET /api/agents/:slug/permissions': allow('read: a member\'s autonomy level and the "Always allowed" rules the owner gave it, secrets redacted; side-effect free'),

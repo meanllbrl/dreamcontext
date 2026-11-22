@@ -174,14 +174,20 @@ function aggFor(manifest: InsightManifest): Agg {
 }
 
 /** The bound value: the last point of the binding series (or the default). */
-function computeLatest(series: Series[], binding: Binding | null): number | null {
+/** The series `latest` comes from: the binding's named series, else the first. */
+export function bindingSeriesOf(series: Series[], binding: Binding | null): Series | null {
   if (series.length === 0) return null;
   let target: Series | undefined;
   if (binding && binding.value.startsWith('series:')) {
     const name = binding.value.slice('series:'.length).trim();
     target = series.find((s) => s.name === name);
   }
-  target = target ?? series[0];
+  return target ?? series[0];
+}
+
+function computeLatest(series: Series[], binding: Binding | null): number | null {
+  const target = bindingSeriesOf(series, binding);
+  if (!target) return null;
   const pts = target.points;
   return pts.length > 0 ? pts[pts.length - 1].v : null;
 }

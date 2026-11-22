@@ -58,7 +58,7 @@ import {
 } from './store.js';
 import {
   CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, SUPER_PERMISSION_GRACE_MS,
-  SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS,
+  SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS, missingMemberCards,
   MEMBER_ITEM_OF, type MemberItemOf, type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, MSG_REF_RE, MAX_OWED_MSG_GIST, PAD_ID_RE, aboutHeads, msgRef as msgRefOf, splitPageContext, type SuperHeldEvent, type SuperOwed, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
   ROUTINE_FACT_RE, SAFETY_REWRITE_REASON, isSafetyRefusal, type GrantOffer, type GrantSize, type RefusalFact,
@@ -268,14 +268,13 @@ export function ensureAgendaCard(s: SuperState, opts: { first?: boolean; bring?:
 export function ensureMemberCards(s: SuperState, id: SuperId): string[] {
   if (id === 'main') return [];
   const added: string[] = [];
-  for (const ref of MEMBER_CARD_REFS) {
-    const cid = containerIdFor('member', ref);
-    if (s.containers.some((c) => c.id === cid)) continue;
+  // One rule for the record and the window (plan uye-karnesi C7): the missing ones at their
+  // defaults, a default `float` card in Others once the stage floats MAX_FLOAT items.
+  for (const card of missingMemberCards(s)) {
     if (s.containers.length >= MAX_CONTAINERS) makeRoom(s, 1, added);
     if (s.containers.length >= MAX_CONTAINERS) break;
-    const d = MEMBER_CARD_DEFAULTS[ref];
-    s.containers.push({ id: cid, kind: 'member', ref, shape: 'square', ...(d.size !== 'small' ? { size: d.size } : {}), place: d.place });
-    added.push(cid);
+    s.containers.push(card);
+    added.push(card.id);
   }
   return added;
 }

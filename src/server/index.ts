@@ -178,6 +178,10 @@ import {
   handleAutomationsPhotoUpload,
   handleAutomationsSay,
 } from './routes/automations.js';
+import {
+  handleScorecardCheck, handleScorecardCriteria, handleScorecardDraft, handleScorecardFresh, handleScorecardGet, handleScorecardGoal,
+  handleScorecardLessonUndo, handleScorecardLessonUse, handleScorecardRate, handleScorecardVerdict,
+} from './routes/agent-scorecard.js';
 import { handleLearnedDrop, handleLearnedGet, handleLearnedKeep, handleLearnedUndo } from './routes/learned.js';
 import {
   handleAgentsList,
@@ -1048,6 +1052,17 @@ export function buildRouter(): Router {
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.get('/api/agents/:slug/stage', handleAgentsStage);
   router.get('/api/agents/:slug/history', handleAgentsHistory);
+  // The member scorecard (plan uye-karnesi C5).
+  router.get('/api/agents/:slug/scorecard', handleScorecardGet);
+  router.post('/api/agents/:slug/scorecard/rate', handleScorecardRate);
+  router.post('/api/agents/:slug/scorecard/criteria', handleScorecardCriteria);
+  router.post('/api/agents/:slug/scorecard/verdict', handleScorecardVerdict);
+  router.post('/api/agents/:slug/scorecard/lessons/:id/undo', handleScorecardLessonUndo);
+  router.post('/api/agents/:slug/scorecard/lessons/:id/use', handleScorecardLessonUse);
+  router.post('/api/agents/:slug/scorecard/goal', handleScorecardGoal);
+  router.post('/api/agents/:slug/scorecard/check', handleScorecardCheck);
+  router.post('/api/agents/:slug/scorecard/draft', handleScorecardDraft);
+  router.post('/api/agents/:slug/scorecard/fresh', handleScorecardFresh);
   router.get('/api/agents/:slug/amendments', handleAgentsAmendments);
   router.post('/api/agents/:slug/amendments/:id/revert', handleAgentsAmendmentRevert);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);

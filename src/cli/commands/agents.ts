@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { registerScorecardCommands } from './agents-scorecard.js';
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import chalk from 'chalk';
@@ -793,6 +794,9 @@ export function registerAgentsCommand(program: Command): void {
       }
       if (page.nextBefore) console.log(chalk.dim(`  older: --before '${page.nextBefore}'`));
     });
+
+  // The member scorecard (plan uye-karnesi C4).
+  registerScorecardCommands(agents);
 }
 
 /** A message flattened to one line of at most `max` characters. */

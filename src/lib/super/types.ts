@@ -31,13 +31,15 @@ export type ContainerKind = typeof CONTAINER_KINDS[number];
  * are the owner's: no agent verb opens, moves, resizes or closes one, no sweep closes or retires
  * one, and a missing one comes back at its default place (`ensureMemberCards`).
  */
-export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings'] as const;
+export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings', 'scorecard'] as const;
 export type MemberCardRef = typeof MEMBER_CARD_REFS[number];
 /** First-open defaults (K5, G2): Rutinler large, Talimatlar small, Üye small in Others. */
 export const MEMBER_CARD_DEFAULTS: Readonly<Record<MemberCardRef, { size: ContainerSize; place: ContainerPlace }>> = {
   routines: { size: 'large', place: 'float' },
   instructions: { size: 'small', place: 'float' },
   settings: { size: 'small', place: 'others' },
+  // The owner's scorecard of the member's runs (plan uye-karnesi D1).
+  scorecard: { size: 'medium', place: 'float' },
 };
 export const isMemberCardRef = (r: unknown): r is MemberCardRef => typeof r === 'string' && (MEMBER_CARD_REFS as readonly string[]).includes(r);
 
@@ -2078,6 +2080,35 @@ export function floatCount(state: { containers: readonly SuperContainer[]; group
   const grouped = new Set(state.groups.flatMap((g) => g.cards));
   return state.containers.filter((c) => c.place === 'float' && !c.min && !grouped.has(c.id)).length
     + state.groups.filter((g) => g.place === 'float').length;
+}
+
+/** Each member card's container id: `containerIdFor('member', ref)`, precomputed so the window can
+ *  draw a missing card with the id the server will give it (a test holds them equal). */
+export const MEMBER_CARD_IDS: Readonly<Record<MemberCardRef, string>> = {
+  routines: 'member-82c37c372770',
+  instructions: 'member-31a808660056',
+  settings: 'member-3cc1d5a427a4',
+  scorecard: 'member-aa68f9a3b402',
+};
+
+/**
+ * The member cards a stage lacks, at their defaults (plan uye-karnesi C7): one pure rule for the
+ * record (`ensureMemberCards`, persisted) and the window (drawn, never saved). A default `float`
+ * card goes to Others once the stage already floats {@link MAX_FLOAT} items. Present cards are never
+ * touched: the owner's layout stands.
+ */
+export function missingMemberCards(state: { containers: readonly SuperContainer[]; groups?: readonly SuperGroup[] }): SuperContainer[] {
+  const out: SuperContainer[] = [];
+  const have = new Set(state.containers.filter((c) => c.kind === 'member').map((c) => c.ref));
+  let floating = floatCount({ containers: state.containers, groups: state.groups ?? [] });
+  for (const ref of MEMBER_CARD_REFS) {
+    if (have.has(ref)) continue;
+    const d = MEMBER_CARD_DEFAULTS[ref];
+    const place: ContainerPlace = d.place === 'float' && floating >= MAX_FLOAT ? 'others' : d.place;
+    if (place === 'float') floating++;
+    out.push({ id: MEMBER_CARD_IDS[ref], kind: 'member', ref, shape: 'square', ...(d.size !== 'small' ? { size: d.size } : {}), place });
+  }
+  return out;
 }
 
 // ─── Identifiers ────────────────────────────────────────────────────────────────
