@@ -975,24 +975,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   projectOrderRef.current = projectOrder;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const pickerRows = useMemo<PickerRow[]>(() => {
-    if (!newShell) return [];
-    const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
-    return projectOrder.map((name) => {
-      const held = open.find((p) => p.vault === name);
-      const v = byName.get(name);
-      return {
-        name,
-        logo: !!v?.logo,
-        logoStamp: v?.logoStamp ?? null,
-        active: name === activeVault,
-        asleep: !!held?.cold,
-        otherWindow: !held && !!findWindowForVault(name),
-      };
-    });
-    // `pickerOpen` re-reads the other windows' registry each time the picker opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newShell, launcherStatus, projectOrder, open, activeVault, pickerOpen]);
 
   // The drawer button and ⌘B: one route (D12). The window bumps a nonce on the ACTIVE instance;
   // its `PageDrawerToggleBridge` decides what it means on that page.
@@ -1194,6 +1176,26 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   );
   const drawerHiddenRef = useRef(drawerHidden);
   drawerHiddenRef.current = drawerHidden;
+
+  const pickerRows = useMemo<PickerRow[]>(() => {
+    if (!newShell) return [];
+    const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
+    return projectOrder.map((name) => {
+      const held = open.find((p) => p.vault === name);
+      const v = byName.get(name);
+      return {
+        name,
+        logo: !!v?.logo,
+        logoStamp: v?.logoStamp ?? null,
+        active: name === activeVault,
+        asleep: !!held?.cold,
+        otherWindow: !held && !!findWindowForVault(name),
+        hidden: drawerHidden.includes(name),
+      };
+    });
+    // `pickerOpen` re-reads the other windows' registry each time the picker opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newShell, launcherStatus, projectOrder, open, activeVault, pickerOpen, drawerHidden]);
 
   const mountedNames = useMemo(() => open.filter((p) => !p.cold).map((p) => p.vault), [open]);
   const drawerFolded = useMemo(() => projectOrder.filter((name) => !drawerExpanded.includes(name)), [projectOrder, drawerExpanded]);

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
+import { shortcutFor, visiblePickerRows } from '../../../lib/pickerRows';
 
 export interface PickerRow {
   name: string;
@@ -12,6 +13,8 @@ export interface PickerRow {
   asleep: boolean;
   /** Held by another OS window: a pick brings that window forward. */
   otherWindow: boolean;
+  /** In the drawer's Hidden group: not listed, no ⌘ number; a typed name still finds it. */
+  hidden?: boolean;
 }
 
 interface ProjectPickerProps {
@@ -28,10 +31,11 @@ interface ProjectPickerProps {
  * "All projects" row. A pick switches the project in THIS window, or brings forward the OS
  * window that already holds it. Arrow keys move, Enter picks, Esc closes.
  */
-export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: ProjectPickerProps) {
+export function ProjectPicker({ anchor, rows: allRows, onPick, onClose, onNewProject }: ProjectPickerProps) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const rows = visiblePickerRows(allRows, '');
   const [focused, setFocused] = useState(() => Math.max(0, rows.findIndex((r) => r.active)));
 
   useLayoutEffect(() => {
@@ -91,6 +95,7 @@ export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: P
             aria-selected={r.active}
             className="ns-menu-row"
             data-on={r.active ? 'true' : undefined}
+            data-hidden-project={r.hidden ? 'true' : undefined}
             data-focus={i === focused ? 'true' : undefined}
             data-testid={`ns-picker-${r.name}`}
             onMouseEnter={() => setFocused(i)}
@@ -100,7 +105,7 @@ export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: P
             <span className="ns-menu-label">{r.name}</span>
             {r.otherWindow && <span className="ns-menu-note">{t('shell.picker.otherWindow')}</span>}
             {!r.otherWindow && r.asleep && <span className="ns-menu-note">{t('shell.picker.asleep')}</span>}
-            {i < 9 && <kbd className="ns-menu-kbd">⌘{i + 1}</kbd>}
+            {shortcutFor(allRows, r.name) !== null && <kbd className="ns-menu-kbd">⌘{shortcutFor(allRows, r.name)}</kbd>}
           </button>
         ))}
       </div>
