@@ -12,8 +12,9 @@ const MODE_NAME = { off: 'Kapalı (Opus)', plus: 'Eco Plus' };
 const TASKS = [
   ['t1-fix', 'Küçük düzeltme'], ['t2-feature', 'Küçük özellik'], ['t3-debug', 'Hata ayıklama'], ['t4-develop', 'Çok dosyalı develop'],
   ['t5-plan', 'Plan'], ['t6-super', 'Super delegasyonu'], ['t7-memory', 'Hafızayla cevap'], ['t8-long', 'Uzun oturum (7 istek)'],
+  ['t9-validate', 'Veri doğrulama'], ['t10-labels', 'Tarih etiketleri'], ['t11-review', 'Kod inceleme + düzeltme'], ['t12-report-json', 'JSON rapor + bayraklar'],
 ];
-const CODE_TASKS = new Set(['t1-fix', 't2-feature', 't3-debug', 't4-develop', 't6-super', 't8-long']);
+const CODE_TASKS = new Set(['t1-fix', 't2-feature', 't3-debug', 't4-develop', 't6-super', 't8-long', 't9-validate', 't10-labels', 't11-review', 't12-report-json']);
 
 const results = readdirSync(join(BENCH, 'results')).filter((f) => f.endsWith('.json'))
   .map((f) => JSON.parse(readFileSync(join(BENCH, 'results', f), 'utf-8')))
@@ -201,16 +202,16 @@ const charts = {
     items: [{ label: MODE_NAME.off, mode: 'off', value: 100, text: '100' },
       { label: MODE_NAME.plus, mode: 'plus', value: S.usage.point * 100, lo: S.usage.lo * 100, hi: S.usage.hi * 100, text: fmt(S.usage.point * 100) }],
     foot: [nLine, `Eco Plus aralığı ${fmt(S.usage.lo * 100)}-${fmt(S.usage.hi * 100)}. Abonelik limiti modele göre ağırlıklı; burada liste fiyatı oranıyla temsil edildi.`] }),
-  tokens: (theme) => bars({ theme, title: 'Aynı 8 işte toplam token', sub: 'Girdi + önbellek + çıktı, milyon token, sette bir tam tur', max: Math.ceil(Math.max(S.tokSum.off.hi, S.tokSum.plus.hi) / 1e6 * 1.15),
+  tokens: (theme) => bars({ theme, title: `Aynı ${TASKS.length} işte toplam token`, sub: 'Girdi + önbellek + çıktı, milyon token, sette bir tam tur', max: Math.ceil(Math.max(S.tokSum.off.hi, S.tokSum.plus.hi) / 1e6 * 1.15),
     items: MODES.map((m) => ({ label: MODE_NAME[m], mode: m, value: S.tokSum[m].point / 1e6, lo: S.tokSum[m].lo / 1e6, hi: S.tokSum[m].hi / 1e6, text: `${fmt(S.tokSum[m].point / 1e6, 1)} M` })),
     foot: [nLine, `Token oranı Eco Plus / Kapalı: ${pctTxt(S.tokens)} (aralık %${fmt(S.tokens.lo * 100)}-%${fmt(S.tokens.hi * 100)}). Token sayısı fiyatı söylemez: Sonnet tokeni Opus'un yarı fiyatı.`] }),
-  time: (theme) => bars({ theme, title: 'Aynı 8 işte süre', sub: 'Duvar saati, dakika, sette bir tam tur', max: Math.ceil(Math.max(S.wallSum.off.hi, S.wallSum.plus.hi) * 1.15),
+  time: (theme) => bars({ theme, title: `Aynı ${TASKS.length} işte süre`, sub: 'Duvar saati, dakika, sette bir tam tur', max: Math.ceil(Math.max(S.wallSum.off.hi, S.wallSum.plus.hi) * 1.15),
     items: MODES.map((m) => ({ label: MODE_NAME[m], mode: m, value: S.wallSum[m].point, lo: S.wallSum[m].lo, hi: S.wallSum[m].hi, text: `${fmt(S.wallSum[m].point)} dk` })),
     foot: [nLine, 'Süre makinenin o anki yüküyle oynar; koşular aynı saatlerde karışık sırayla koştu.'] }),
-  success: (theme) => bars({ theme, title: 'Görev başarısı', sub: 'Gizli kabul testlerinin hepsi geçti + tip denetimi temiz, kod yazan 6 iş', max: 100, unit: '',
+  success: (theme) => bars({ theme, title: 'Görev başarısı', sub: `Gizli kabul testlerinin hepsi geçti + tip denetimi temiz, kod yazan ${CODE_TASKS.size} iş`, max: 100, unit: '',
     items: MODES.map((m) => ({ label: MODE_NAME[m], mode: m, value: S.success[m].point * 100, lo: S.success[m].lo * 100, hi: S.success[m].hi * 100, text: `%${fmt(S.success[m].point * 100)}` })),
     foot: [`${S.success.off.k}/${S.success.off.n} ve ${S.success.plus.k}/${S.success.plus.n} koşu başarılı · aralık: Wilson %95 · gizli testler ajanın görmediği dosyalar, referans çözüm 25/25 geçiyor`, nLine] }),
-  quality: (theme) => bars({ theme, title: 'Kalite puanı', sub: 'Kör Opus hakem, 0-10 (mod ve model adı gizli), 8 işin ortalaması', max: 10,
+  quality: (theme) => bars({ theme, title: 'Kalite puanı', sub: `Kör Opus hakem, 0-10 (mod ve model adı gizli), ${TASKS.length} işin ortalaması`, max: 10,
     items: MODES.map((m) => ({ label: MODE_NAME[m], mode: m, value: S.judge[m].point, lo: S.judge[m].lo, hi: S.judge[m].hi, text: fmt(S.judge[m].point, 1) })),
     foot: [nLine, `Fark (Eco Plus - Kapalı): ${fmt(S.judgeDiff.point, 1)} puan, aralık ${fmt(S.judgeDiff.lo, 1)} / ${fmt(S.judgeDiff.hi, 1)}.`] }),
   byTaskUsage: (theme) => grouped({ theme, title: 'İş türüne göre kullanım', sub: 'Liste fiyatı, dolar, koşu başına ortalama', max: Math.max(...perTask.map((p) => Math.max(p.usd.off.mean || 0, p.usd.plus.mean || 0))) * 1.25,
@@ -239,12 +240,29 @@ if (pngDir) {
 // ---------- HTML ----------
 const inline = (name) => charts[name] ? charts[name](null) : '';
 const fig = (name, cap) => `<figure class="dc-card">${inline(name)}<figcaption class="dc-figcaption">${cap} PNG: <code class="dc-code">eco-benchmark/${name}.png</code> · koyu: <code class="dc-code">${name}-dark.png</code></figcaption></figure>`;
+// The improvement study: probe variants of Eco Plus on the CSV task, beside its Off and Eco Plus runs.
+const allResults = readdirSync(join(BENCH, 'results')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(BENCH, 'results', f), 'utf-8')));
+const PROBES = [
+  ['off', 'Kapalı (Opus)'], ['plus', 'Eco Plus (bugünkü)'], ['plush', 'Eco Plus + yüksek efor'],
+  ['plusa', 'Eco Plus + Opus danışman (açık)'], ['plusn', 'Eco Plus + Opus danışman + çağır uyarısı'],
+];
+const probeRows = PROBES.map(([m, name]) => {
+  const rs = allResults.filter((r) => r.task === 't2-feature' && (r.mode === m || (m === 'plusa' && r.mode === 'plusb')));
+  const g = rs.filter((r) => r.grade && r.grade.success !== null && r.grade.success !== undefined);
+  return { name, n: rs.length, ok: g.filter((r) => r.grade.success).length, graded: g.length, usd: mean(rs.map((r) => r.usage.usd)) };
+}).filter((p) => p.n);
+const probeHtml = probeRows.length > 2 ? `<h2 class="dc-h2">Eco Plus iyileştirilebilir mi?</h2>
+<p class="dc-p">İlk turun 3 başarısızlığı aynı işteydi (CSV dışa aktarma): Sonnet ada göre sıralamayı fonksiyonun içinde yapmayıp çağırana bıraktı; Opus her seferinde içeride sıraladı. Bu bir yönlendirme ya da araç hatası değil, modelin şartnameyi okuyuşu. Aynı işte üç kaldıraç denendi:</p>
+<div class="dc-table-wrap"><table class="dc-table"><thead><tr><th>Deneme</th><th>Koşu</th><th>Başarılı</th><th>Koşu başına $</th></tr></thead><tbody>
+${probeRows.map((p) => `<tr><td>${p.name}</td><td>${p.n}</td><td>${p.graded ? `${p.ok}/${p.graded}` : '–'}</td><td>${fmt(p.usd, 2)}</td></tr>`).join('\n')}
+</tbody></table></div>
+<p class="dc-p">Sonuç: Opus danışmanı hatayı yakalıyor ama her çağrısı tüm konuşmayı önbelleksiz Opus'a okuttuğu için bu işte Opus'un kendisinden pahalıya geliyor; yüksek efor hatayı düzeltmiyor. Kullanım limitini dert eden kullanıcı için ikisi de iyileştirme değil, bu yüzden Eco Plus'ın kuralı değişmedi.</p>` : '';
 const failRows = results.filter((r) => r.grade && r.grade.success === false).sort((a, b) => a.key.localeCompare(b.key));
 const causes = existsSync(join(BENCH, 'failure-causes.json')) ? JSON.parse(readFileSync(join(BENCH, 'failure-causes.json'), 'utf-8')) : {};
 const usagePct = Math.round((1 - S.usage.point) * 100);
 const html = `<div class="dc-doc">
 <h1 class="dc-h1">Eco ve Eco Plus: aynı işte ne kadar kullanım, ne kadar kalite</h1>
-<p class="dc-lede">Aynı 8 işi kurgu bir projede (Pinewood Pantry) Tasarruf modu Kapalı (Opus) ve Eco Plus ile ${minReps === REPS ? REPS : `${minReps}-${REPS}`}'er kez koşturduk; her koşunun tokenini, liste fiyatını, süresini, gizli testlerini ve kör bir Opus hakemin puanını ölçtük. Eco'yu koşmadık: sahibin isteğiyle Eco'nun etkisini bu Mac'in son ${eco?.days ?? 30} gündeki gerçek devirlerinden ölçtük.</p>
+<p class="dc-lede">Aynı ${TASKS.length} işi kurgu bir projede (Pinewood Pantry) Tasarruf modu Kapalı (Opus) ve Eco Plus ile ${minReps === REPS ? REPS : `${minReps}-${REPS}`}'er kez koşturduk; her koşunun tokenini, liste fiyatını, süresini, gizli testlerini ve kör bir Opus hakemin puanını ölçtük. Eco'yu koşmadık: sahibin isteğiyle Eco'nun etkisini bu Mac'in son ${eco?.days ?? 30} gündeki gerçek devirlerinden ölçtük.</p>
 <div class="dc-grid">
   <div class="dc-stat"><div class="dc-stat-label">Eco Plus kullanımı</div><div class="dc-value">${fmt(S.usage.point * 100)}</div><div class="dc-stat-note">Kapalı = 100 · aralık ${fmt(S.usage.lo * 100)}-${fmt(S.usage.hi * 100)}</div></div>
   <div class="dc-stat"><div class="dc-stat-label">Görev başarısı</div><div class="dc-value">%${fmt(S.success.plus.point * 100)} / %${fmt(S.success.off.point * 100)}</div><div class="dc-stat-note">Eco Plus / Kapalı · ${S.success.plus.k}/${S.success.plus.n} ve ${S.success.off.k}/${S.success.off.n}</div></div>
@@ -265,6 +283,7 @@ ${fig('byTaskQuality', 'Her iş türünde hakem puanı ve başarı; kalitenin d�
 ${perTask.map((p) => `<tr><td>${p.name}</td><td>${p.n.off} / ${p.n.plus}</td><td>${fmt(p.usd.off.mean, 2)} ±${fmt(p.usd.off.sd, 2)}</td><td>${fmt(p.usd.plus.mean, 2)} ±${fmt(p.usd.plus.sd, 2)}</td><td>${p.ratio ? `${fmt(p.ratio.point * 100)} (${fmt(p.ratio.lo * 100)}-${fmt(p.ratio.hi * 100)})` : '–'}</td><td>%${fmt(p.sonnetShare * 100)}</td><td>${Number.isFinite(p.hidden.off) ? `%${fmt(p.hidden.off * 100)} / %${fmt(p.hidden.plus * 100)}` : '–'}</td><td>${p.success.off.length ? `${p.success.off.filter((x) => x === 1).length}/${p.success.off.length} / ${p.success.plus.filter((x) => x === 1).length}/${p.success.plus.length}` : '–'}</td><td>${fmt(p.judge.off.mean, 1)} ±${fmt(p.judge.off.sd, 1)} / ${fmt(p.judge.plus.mean, 1)} ±${fmt(p.judge.plus.sd, 1)}</td><td>${fmt(p.wall.off, 1)} / ${fmt(p.wall.plus, 1)}</td></tr>`).join('\n')}
 </tbody></table></div>
 <p class="dc-p dc-muted">±ss: tekrarlar arası standart sapma. "Sonnet payı": Eco Plus koşularının dolarının Sonnet'e giden kısmı; kalanı Opus'ta kalan hakemler (reviewer, goal-plan-reviewer) ve Haiku.</p>
+${probeHtml}
 <h2 class="dc-h2">Başarısız koşular ve nedenleri</h2>
 ${failRows.length ? `<div class="dc-table-wrap"><table class="dc-table"><thead><tr><th>Koşu</th><th>Gizli test</th><th>Tip hatası</th><th>Neden (transkriptten)</th></tr></thead><tbody>
 ${failRows.map((r) => `<tr><td><code class="dc-code">${r.key}</code></td><td>${r.grade.hiddenPassed}/${r.grade.hiddenTotal}</td><td>${r.grade.tscErrors}</td><td>${esc(causes[r.key] ?? 'okunmadı')}</td></tr>`).join('\n')}

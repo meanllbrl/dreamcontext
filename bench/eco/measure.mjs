@@ -50,6 +50,15 @@ export function measureRun(runDir, sids) {
       const cw5m = (u.cache_creation_input_tokens ?? 0) - cw1h;
       const b = (byModel[m.model] ||= { in: 0, out: 0, cw5m: 0, cw1h: 0, cr: 0, calls: 0 });
       b.in += u.input_tokens ?? 0; b.out += u.output_tokens ?? 0; b.cw5m += cw5m; b.cw1h += cw1h; b.cr += u.cache_read_input_tokens ?? 0; b.calls++;
+      // The advisor tool's own model call rides as an `advisor_message` iteration and is NOT in the
+      // top-level usage: bill it to its own model.
+      for (const it of u.iterations || []) {
+        if (it.type !== 'advisor_message') continue;
+        const a = (byModel[it.model || 'claude-opus'] ||= { in: 0, out: 0, cw5m: 0, cw1h: 0, cr: 0, calls: 0 });
+        const a1h = it.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+        a.in += it.input_tokens ?? 0; a.out += it.output_tokens ?? 0; a.cw5m += (it.cache_creation_input_tokens ?? 0) - a1h; a.cw1h += a1h; a.cr += it.cache_read_input_tokens ?? 0; a.calls++;
+        subModels.add(it.model || 'claude-opus');
+      }
       if (kind === 'main') peakContext = Math.max(peakContext, (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0));
       subModels.add(m.model);
     }

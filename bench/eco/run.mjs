@@ -21,11 +21,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const WT = resolve(HERE, '../..');
 const BENCH = process.env.ECO_BENCH_DIR || '/tmp/eco-benchmark';
 const JOURNAL = join(BENCH, 'journal.jsonl');
-const MODEL = { off: 'opus', eco: 'opus', plus: 'sonnet' };
+const MODEL = { off: 'opus', eco: 'opus', plus: 'sonnet', plusa: 'sonnet', plusb: 'sonnet', plusn: 'sonnet', plush: 'sonnet' };
+// plusa = Eco Plus with the Opus advisor turned on for the lowered session (the improvement under test).
+const EXTRA = { plusa: ['--advisor', 'opus'], plusn: ['--advisor', 'opus'], plush: ['--effort', 'high'] };
+// plusn = advisor on + the one line dreamcontext's prompt hook would add for a lowered session.
+const NUDGE = { plusn: 'Eco Plus: you run on Sonnet with an Opus advisor. Call the advisor once before you commit to an approach and once before you declare the work done.' };
+const HOME_OF = { plusa: 'plus', plusb: 'plus', plusn: 'plus', plush: 'plus' };
+// plusb = the advisor named in the checkout's settings (advisorModel) instead of the flag.
+const SETTINGS_OF = { plusb: { advisorModel: 'opus' } };
 
 const [task, mode, rep] = process.argv.slice(2);
 if (!task || !MODEL[mode] || !rep) {
-  console.error('usage: run.mjs <task> <off|eco|plus> <rep>');
+  console.error('usage: run.mjs <task> <off|eco|plus|plusa> <rep>');
   process.exit(2);
 }
 const key = `${task}/${mode}/${rep}`;
@@ -41,7 +48,7 @@ if (journal().some((r) => r.key === key && r.status === 'done')) {
 
 const TASK = join(HERE, 'tasks', task);
 const DIR = join(BENCH, 'runs', task, mode, rep);
-const HOME = join(BENCH, `home-${mode}`);
+const HOME = join(BENCH, `home-${HOME_OF[mode] || mode}`);
 const sh = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { encoding: 'utf-8', maxBuffer: 1 << 28, ...opts });
   if (r.status !== 0 && !opts.allowFail) throw new Error(`${cmd} ${args.join(' ')}: ${r.stderr || r.stdout}`);
@@ -55,6 +62,7 @@ sh('git', ['clone', '-q', join(BENCH, 'template'), DIR]);
 sh('git', ['remote', 'remove', 'origin'], { cwd: DIR });
 symlinkSync(join(BENCH, 'shared', 'node_modules'), join(DIR, 'node_modules'));
 if (existsSync(join(TASK, 'setup'))) cpSync(join(TASK, 'setup'), DIR, { recursive: true });
+if (SETTINGS_OF[mode]) { const sp = join(DIR, '.claude', 'settings.local.json'); mkdirSync(dirname(sp), { recursive: true }); const cur = existsSync(sp) ? JSON.parse(readFileSync(sp, 'utf-8')) : {}; writeFileSync(sp, JSON.stringify({ ...cur, ...SETTINGS_OF[mode] }, null, 2)); }
 const git = (args) => sh('git', ['-c', 'user.name=bench', '-c', 'user.email=bench@example.invalid', ...args], { cwd: DIR });
 git(['add', '-A']);
 git(['commit', '-qm', 'task setup', '--allow-empty']);
@@ -95,7 +103,7 @@ let sid = null;
 const t0 = Date.now();
 function claude(prompt, resume) {
   const args = ['-p', prompt, '--model', MODEL[mode], '--permission-mode', 'bypassPermissions', '--output-format', 'json',
-    '--setting-sources', 'project,local', '--strict-mcp-config'];
+    '--setting-sources', 'project,local', '--strict-mcp-config', ...(EXTRA[mode] || [])];
   if (resume) args.push('--resume', sid);
   else { sid = randomUUID(); args.push('--session-id', sid); }
   const s0 = Date.now();
@@ -107,7 +115,8 @@ function claude(prompt, resume) {
 }
 
 for (let i = 0; i < turns.length; i++) {
-  const prompt = i === 0 ? `${turns[i]}\n\n${OWNER}` : turns[i];
+  const nudge = NUDGE[mode] ? `\n\n${NUDGE[mode]}` : '';
+  const prompt = (i === 0 ? `${turns[i]}\n\n${OWNER}` : turns[i]) + nudge;
   claude(prompt, i > 0);
   // Eco: the app rotates a pane whose session wrote a handoff record: a fresh session opens on the
   // continue prompt, and the owner's next message lands there.
