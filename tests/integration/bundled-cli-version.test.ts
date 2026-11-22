@@ -5,7 +5,7 @@
  * ships NO package.json at any path `readDreamcontextVersionFromDisk()` probes.
  * Every probe missed and the lookup fell through to the '0.0.0' sentinel, which
  * sorts below every migration version — so `pendingMigrations` /
- * `unfinishedAgentTasks` returned nothing and NO migration could ever fire
+ * `dueAgentTasks` returned nothing and NO migration could ever fire
  * through the bundled CLI. That is the exact path `resolve_cli` takes on
  * first run, before a global npm CLI exists (desktop/src-tauri/src/lib.rs).
  *
@@ -72,18 +72,19 @@ describe('app-bundled CLI version', () => {
     const cli = stageAppBundle();
     const project = mkdtempSync(join(tmpdir(), 'dc-proj-'));
     mkdirSync(join(project, '_dream_context', 'state'), { recursive: true });
-    // Code steps ran, the agent step never did → an unfinished agentTask, which
+    // A step found agent work, the agent step never ran → a due agentTask, which
     // `migrations pending` exists to print. Under the '0.0.0' sentinel every
     // migration compared as NEWER than the CLI and this printed nothing.
     writeFileSync(
       join(project, '_dream_context', 'state', '.migrations.json'),
       JSON.stringify([{
         version: '0.23.0',
-        step: 'people-first',
-        executor: 'code',
+        step: 'split-user-file#work',
+        executor: 'detected',
         timestamp: '2026-07-30T00:00:00.000Z',
         filesTouched: [],
-        summary: 'code steps ran',
+        summary: 'residue written',
+        agentWorkFor: 'distribute-user-md-residue',
       }]),
     );
 

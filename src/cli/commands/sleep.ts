@@ -908,11 +908,12 @@ export function registerSleepCommand(program: Command): void {
           state.pendingMigrationNotices = codeNotices;
         }
 
-        // Surface pending agent task instructions
-        for (const pat of migResult.pendingAgentTasks) {
+        // Due agent work runs in its OWN session (the Super's migration child),
+        // never inside the sleep flow: one pointer line, no specialist dispatched.
+        if (migResult.pendingAgentTasks.length > 0) {
+          const titles = migResult.pendingAgentTasks.map((p) => p.agentTask.title).join('; ');
           say.info(
-            `Migration ${pat.version} has a pending agent task (${pat.agentTask.id}). ` +
-            `Run \`dreamcontext migrations pending\` for instructions.`,
+            `Migration work is waiting: ${titles}. It runs in its own session (dreamcontext migrations pending).`,
           );
         }
 

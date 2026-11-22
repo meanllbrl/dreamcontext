@@ -132,6 +132,8 @@ export async function enableSuper(
   // What a member asked him while nobody was handed over (no mirror is made then) reaches him now.
   await syncAllMemberMirrors(contextRoot).catch(() => undefined);
   void pumpSuper(contextRoot);
+  // A new Super session: agent migration work waiting after an update gets its one event.
+  void import('./migration-event.js').then((m) => m.checkMigrationDue(contextRoot)).catch(() => undefined);
   return { session: state.session as string, state, skipped };
 }
 

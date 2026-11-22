@@ -43,11 +43,14 @@ export const migration0230SoulSplit: Migration = {
           : `core/0.soul.md is ${chars.toLocaleString('en-US')} chars — within the `
             + `${CORE_FILE_CHAR_CEILING.toLocaleString('en-US')}-char ceiling; nothing to split.`,
         detected: true,
+        // Work is named by the task, so only an oversized soul makes it due.
+        ...(over ? { agentWorkFor: 'split-soul-into-patterns' } : {}),
       };
     },
   ],
   agentTask: {
     id: 'split-soul-into-patterns',
+    title: 'Split an oversized soul into patterns (core/0.soul.md over 4,000 chars)',
     instruction:
       'Start by checking the filesystem: if _dream_context/core/0.soul.md is at or under '
       + '4,000 chars, there is nothing to split — record this step and stop.\n\n'

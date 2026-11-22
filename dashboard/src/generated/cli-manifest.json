@@ -3278,7 +3278,7 @@
     },
     {
       "path": "migrations pending",
-      "desc": "Print pending agent task instructions for any unfinished migrations",
+      "desc": "Print the agent migration tasks that have work waiting, with their instructions",
       "args": []
     },
     {

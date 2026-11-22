@@ -39,6 +39,7 @@ export const migration072: Migration = {
   ],
   agentTask: {
     id: 'diagrams-folder-convention',
+    title: 'Organize diagram boards into per-title folders (optional)',
     // An OFFER, not an obligation: surfaced only through `migrations
     // apply-diagrams`, never by `migrations pending` (see MigrationAgentTask.optIn).
     optIn: true,

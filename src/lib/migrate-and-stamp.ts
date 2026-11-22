@@ -15,8 +15,8 @@ import { readSetupConfig, updateSetupConfig, type SetupConfig } from './setup-co
  * runner's half-open range `(setupVersion, cliVersion]`. Any command that
  * writes it WITHOUT migrating first silently destroys every pending migration:
  * the next `update` computes `(cliVersion, cliVersion]` = empty and applies
- * nothing, and `migrations pending` can't rescue it either — `unfinishedAgentTasks`
- * requires a code/detected ledger entry to exist before it will report an agent
+ * nothing, and `migrations pending` can't rescue it either — `dueAgentTasks`
+ * requires a step's work sighting in the ledger before it will report an agent
  * task, so a vault stranded this way reads as FRESH. There is no CLI affordance
  * to recover; the user has to hand-edit `state/.config.json`.
  *

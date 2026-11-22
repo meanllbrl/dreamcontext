@@ -33,6 +33,9 @@ export interface Job {
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
   tool?: SuperChildTool;
+  /** The due agent migration task ids (`delegate --migration`): set ONLY by the server, never
+   *  parsed from a verb's body, so `pool add` or a plain `delegate` can never carry it. */
+  migration?: string[];
 }
 
 // eslint-disable-next-line no-control-regex

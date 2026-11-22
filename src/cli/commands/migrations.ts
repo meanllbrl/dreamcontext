@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { unfinishedAgentTasks } from '../../migrations/index.js';
+import { dueAgentTasks, agentTaskById } from '../../migrations/index.js';
 import { appendLedger } from '../../lib/migration-ledger.js';
 import { migrateDiagramsToFolders } from '../../lib/diagrams-migration.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -20,28 +20,39 @@ export function registerMigrationsCommand(program: Command): void {
   // --- pending ---
   migrations
     .command('pending')
-    .description('Print pending agent task instructions for any unfinished migrations')
-    .action(() => {
+    .description('Print the agent migration tasks that have work waiting, with their instructions')
+    .option('--json', 'Print the due tasks as JSON (version, id, title only), for the app server')
+    .action((opts: { json?: boolean }) => {
       const root = ensureContextRoot();
 
       // LEDGER-judged, deliberately NOT setupVersion-ranged: `update` advances
       // setupVersion as soon as the code steps land, which used to make this
       // command compute the empty range (cliVersion, cliVersion] and go blind
-      // to the unfinished agentTask it exists to print. See
-      // unfinishedAgentTasks for the full story.
-      const tasks = unfinishedAgentTasks(root, dreamcontextVersion());
+      // to the agentTask it exists to print. See dueAgentTasks for the rule.
+      const due = dueAgentTasks(root, dreamcontextVersion());
 
-      if (tasks.length === 0) {
+      if (opts.json) {
+        // Ids, versions and titles only: registry constants, never instruction or vault text.
+        console.log(JSON.stringify(due.map((d) => ({ version: d.version, id: d.id, title: d.title }))));
+        return;
+      }
+
+      if (due.length === 0) {
         info('No pending agent migration tasks.');
         return;
       }
 
-      for (const m of tasks) {
-        console.log(`\n## Migration ${m.version} — ${m.agentTask!.id}\n`);
-        console.log(m.agentTask!.instruction);
+      for (const d of due) {
+        const found = agentTaskById(d.id);
+        if (!found) continue;
+        console.log(`\n## Migration ${d.version} — ${d.id}: ${d.title}\n`);
+        console.log(found.task.instruction);
         console.log();
         console.log(
-          `Record completion with: dreamcontext migrations record --version ${m.version} --step ${m.agentTask!.id} --executor agent --summary "<what you did>"`,
+          `Record completion with: dreamcontext migrations record --version ${d.version} --step ${d.id} --executor agent --summary "<what you did>"`,
+        );
+        console.log(
+          `If the owner says no, record it: dreamcontext migrations record --version ${d.version} --step ${d.id} --executor agent --summary "owner declined: <his words>"`,
         );
       }
     });

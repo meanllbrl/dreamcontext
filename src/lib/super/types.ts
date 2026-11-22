@@ -812,6 +812,9 @@ export interface SuperChild {
   /** The push, PR or deploy his own message named that this child was told it may run
    *  (`delegate --outward`, outward.ts); a `--succeeds` successor carries it on. */
   outward?: OutwardGrant;
+  /** The agent migration task ids this child runs (`super delegate --migration`): written ONLY by
+   *  the server, never by a verb's argument. One such child per project at a time. */
+  migration?: string[];
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -923,8 +926,14 @@ review, a blocked or orphaned run, a light run's denials, an unanswered owner ca
 queue, never a `member` mirror: `routine` names it, `fact` the fact on disk it stands for (its id
 is derived from both), `member` the routine's member only when it has one, `ownerText` its line,
 `shown` once it has rung (a coalesced fact never rings twice).
+`migration` (task her-ozellik-eski-kullaniciyi-..., C4): agent migration work is waiting after an
+update (the installed CLI's `migrations pending --json`). In MAIN's queue only, written by the
+server (`checkMigrationDue`, super/migration-event.ts), never the Super's words; its `sessionId` is
+the Super's own and `migration` names the due task ids. One event line asks the Super to start ONE
+child with `super delegate --migration`; at most one is open, and none while a migration child is
+live, starting or held in the pool.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply', 'owed', 'restarted', 'schedule', 'member', 'nudge', 'routine', 'parked', 'owner-result', 'member-note', 'migration'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -1074,6 +1083,8 @@ export interface SuperQueueItem {
   /** A `member-note` about a request of main's (`--for <item>`) whose team job answers an owner
    *  message: that message's ref, so the Super's text about it stands under it. Server-written. */
   origin?: string;
+  /** A `migration` item's due agentTask ids (the installed CLI's list). Server-written. */
+  migration?: string[];
 }
 
 // ─── Owner cards a child leaves, done where the owner is (sahip-karti-yerinde K1-K7; MIRRORED in
@@ -1542,6 +1553,9 @@ export interface SuperPoolItem {
   /** A member Super's job kept at its cap: whose work it does (as its child's `workOrigin`), so
    *  the card of the request it serves shows it waiting. */
   workOrigin?: SuperWorkOrigin;
+  /** A migration child's job kept at the cap (`delegate --migration`): its due task ids, carried
+   *  onto the child by `delegate --from`. Server-written; `super pool add` never sets it. */
+  migration?: string[];
   /** A `delegate --from` went unconfirmed: the child may be running. */
   maybeStarted?: boolean;
   startedIn?: string;

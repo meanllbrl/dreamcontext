@@ -45,6 +45,8 @@ import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fres
 import { readHandoffRecord, type HandoffRecord } from '../context-watch.js';
 import { memberCallState, ownerWords } from '../agents/team-roster.js';
 import { noteReply } from './read-marks.js';
+import { agentTaskById } from '../../migrations/index.js';
+import { migrationEventLine } from './migration-ids.js';
 import { ASK_HIS_KINDS } from '../ask-rules.js';
 import { detectOwnerLanguage, withOwnerLanguage, type OwnerLanguage } from './owner-language.js';
 import { isServerTurnText } from '../usage-readers.js';
@@ -2095,7 +2097,7 @@ function itemDebt(s: Pick<SuperState, 'owed'>, itemId: string): SuperOwed | unde
 
 /** What a child sent out that this item must tell: its open debt's (a re-delivery), else the child's own. */
 function itemSent(s: SuperState, item: SuperQueueItem): string[] {
-  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation' || item.kind === 'restarted' || item.kind === 'schedule' || item.kind === 'parked' || item.kind === 'owner-result' || item.kind === 'member-note') return [];
+  if (item.team || item.kind === 'request' || item.kind === 'reply' || item.kind === 'automation' || item.kind === 'migration' || item.kind === 'restarted' || item.kind === 'schedule' || item.kind === 'parked' || item.kind === 'owner-result' || item.kind === 'member-note') return [];
   const debt = itemDebt(s, item.id);
   if (debt?.sent?.length) return debt.sent;
   return s.children[item.sessionId]?.sent ?? [];
@@ -2218,6 +2220,12 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
     return lines;
   }
   if (item.kind === 'automation') return automationItemLines(root, item);
+  if (item.kind === 'migration') {
+    // Registry titles only (the server's registry; an id it does not know is named as is).
+    const ids = item.migration ?? [];
+    const titles = ids.map((id) => agentTaskById(id)?.task.title ?? id);
+    return [`- item=${item.id} event=migration tasks=${ids.join(',')}`, migrationEventLine(titles)];
+  }
   if (item.kind === 'schedule') return scheduleItemLines(root, item);
   if (item.kind === 'request' || item.kind === 'reply') return requestItemLines(vault, item);
   if (item.kind === 'member') return memberItemLines(rootOf(root), vault, item);
@@ -2448,7 +2456,7 @@ const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, owed: 
 // A `routine` (K7) waits on the owner; the Super hears it in a batch like any item of his.
 // `parked` and `owner-result` (sahip-karti-yerinde K2, K6): a child paused while a card waits on
 // the owner, and the owner's own result on a child's card; each one an event line in a batch.
-const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted', 'schedule', 'member', 'routine', 'parked', 'owner-result', 'member-note']);
+const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation', 'permission', 'restarted', 'schedule', 'member', 'routine', 'parked', 'owner-result', 'member-note', 'migration']);
 /** Every kind the pump writes as a turn into the Super's session (a solo turn or a batch): each
  *  one ends with the owner-language line (`withOwnerLanguage`). Exported for the kind-walk test. */
 export const SUPER_TURN_KINDS: readonly QueueKind[] = [...Object.keys(SOLO) as QueueKind[], ...BATCHED];
@@ -2468,6 +2476,8 @@ function staleItem(state: SuperState, q: SuperQueueItem, root?: string): boolean
   if (q.kind === 'owner-result') return false;
   // A member's note is news until told (no child, no row to move on).
   if (q.kind === 'member-note') return false;
+  // A migration event is news until told; `delegate --migration` re-reads what is due.
+  if (q.kind === 'migration') return false;
   if (q.kind === 'parked') return isLive(getChat(q.sessionId));
   // A nudge is moot once its request closed or its member already asks or waits on him.
   if (q.kind === 'nudge') {
@@ -4000,7 +4010,7 @@ async function pumpOnce(key: string): Promise<void> {
     // A member Super's question about main's own request (`from=member-super`) is main's to answer
     // (`super team answer`), never the owner's: it never makes the turn his (review 2026-11-02).
     const tells = !!owedTurn || (!solo && (!!held || items.some((q) => !isRequestQuestion(state, q)
-      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || q.kind === 'owner' || q.kind === 'member' || (q.kind === 'member-note' && (!!q.ownerAsked || !!q.origin)) || q.kind === 'routine' || q.kind === 'automation' || q.kind === 'schedule' || (!!q.team && q.kind === 'question')))));
+      && (awaitedItem(state, q) || itemSent(state, q).length > 0 || q.kind === 'owner' || q.kind === 'member' || (q.kind === 'member-note' && (!!q.ownerAsked || !!q.origin)) || q.kind === 'routine' || q.kind === 'automation' || q.kind === 'migration' || q.kind === 'schedule' || (!!q.team && q.kind === 'question')))));
     const nudged = new Set(owedNow.map((d) => d.id));
     const fresh = solo && items[0].kind === 'fresh';
     // Every turn that carried the agenda lines marks them told: a batch, a recap, a handover.
@@ -5128,6 +5138,8 @@ export async function startSuperInbox(contextRoots: readonly string[], opts: { p
     await reconcileRows(root);
     // What its routines wait on him for, from disk (K7).
     try { await syncRoutineNeeds(root); } catch { /* the next sweep reads them again */ }
+    // Agent migration work waiting after an update: one event, one child (migration-event.ts).
+    void import('./migration-event.js').then((m) => m.checkMigrationDue(root)).catch(() => undefined);
   };
   await Promise.all(contextRoots.map(async (root) => {
     await bootMain(root);

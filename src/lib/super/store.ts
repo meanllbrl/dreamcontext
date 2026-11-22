@@ -14,6 +14,7 @@ import {
   type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
+import { cleanMigrationIds } from './migration-ids.js';
 import { sanitizeModel } from '../claude-args.js';
 import { capAskShows } from './ask-show.js';
 import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
@@ -358,6 +359,9 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (child.seenAt === undefined) delete child.seenMarkedAt;
     const sent = cleanSent(c.sent);
     if (sent.length) child.sent = sent;
+    // A migration child (`delegate --migration`) keeps its marker: one such child per project.
+    const migration = cleanMigrationIds(c.migration);
+    if (migration.length) child.migration = migration;
     out[key] = child;
   }
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
@@ -408,6 +412,9 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const automation = q.kind === 'automation' && !member && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
     const decision = q.kind === 'automation' && (q.decision === 'approved' || q.decision === 'rejected') ? q.decision : undefined;
     if (q.kind === 'automation' && ((!automation && !member) || !decision)) continue;
+    // A migration event names the due task ids it was queued for; one naming none is dropped.
+    const migration = q.kind === 'migration' ? cleanMigrationIds(q.migration) : [];
+    if (q.kind === 'migration' && (!migration.length || q.sessionId !== session)) continue;
     // A scheduled job names its Super automation and the fire it answers for (super-rutin C3).
     const scheduled = q.kind === 'schedule' && typeof q.automation === 'string' && okMember(q.automation)
       && typeof q.fire === 'string' && Number.isFinite(Date.parse(q.fire))
@@ -525,6 +532,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(remindAt !== undefined && remindAt >= 0 ? { remindAt } : {}),
       ...(delivery ? { delivery } : {}),
       ...(ownerResult ? { ownerResult } : {}),
+      ...(migration.length ? { migration } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
@@ -847,6 +855,9 @@ function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
     if (outward) row.outward = outward;
     const workOrigin = parseWorkOrigin(p.workOrigin);
     if (workOrigin) row.workOrigin = workOrigin;
+    // A migration job kept at the cap keeps its marker (the server wrote it; no verb sets it).
+    const migration = cleanMigrationIds(p.migration);
+    if (migration.length) row.migration = migration;
     if (row.maybeStarted && acceptableWorktree(p.startedIn, opts) && typeof p.startedBranch === 'string' && SUPER_BRANCH_RE.test(p.startedBranch)) {
       row.startedIn = p.startedIn;
       row.startedBranch = p.startedBranch;
