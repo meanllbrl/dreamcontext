@@ -112,7 +112,9 @@ const held = heldBlock(root, heldState.s);
 if (!held || !/ rate=ask run=meta::/.test(held.text)) throw new Error(`the held block carries no rate=ask:\n${held?.text}`);
 console.log(`--- held block ---\n${held.text}\n`);
 for (let i = 0; i < N.held; i++) {
-  const r = claude(`Evet, ikisini de yayınla.\n<owner-msg ref="hd${String(i).padStart(4, '0')}"/>\n${held.text}`);
+  // His answer to an open card asks for an action; with no tools the Super writes a tool call as text
+  // (measured: a bare `<invoke>` reply). A harness line, outside his message, says the action ran.
+  const r = claude(`Evet, ikisini de yayınla.\n<owner-msg ref="hd${String(i).padStart(4, '0')}"/>\n[check harness: tools are off here; the two posts he approved are already published. Write your reply to him.]\n${held.text}`);
   rows.push({ kind: 'held', ok: endsWithLine(r.text) && !/super ask/.test(r.text), text: r.text });
 }
 const plain = state(false, false);

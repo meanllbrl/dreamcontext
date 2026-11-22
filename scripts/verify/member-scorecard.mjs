@@ -207,6 +207,70 @@ async function desk(browser, base) {
   return context;
 }
 
+/**
+ * W3 (criterion 26): his chat row open and rated from Telegram (note, Learned, Undo), a run past its
+ * window (no row; "Not rated" on the card), a Super's job rated from his words, the Super's judged
+ * rating (violet stars, "Super's rating from your words", Change) and a correction row.
+ */
+async function w3(context, base) {
+  const fx = spawnSync('npx', ['vite-node', join(REPO, 'scripts', 'verify', 'lib', 'scorecard-w3-fixtures.ts'), PROJ, SLUG, RUN], { cwd: REPO, env: { ...process.env, HOME }, encoding: 'utf-8', timeout: 180000 });
+  ok('W3 setup: fixtures written', fx.status === 0, (fx.stderr || fx.stdout).slice(-800));
+  if (fx.status !== 0) return;
+  const keys = JSON.parse(fx.stdout.trim().split('\n').at(-1));
+  const page = await context.newPage();
+  const watch = watchPage(page, 'w3', { expected: [/status of 409/, /^409 POST \/api\/super\/member\b/] });
+  await page.goto(`${base}/?vault=${VAULT}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2500);
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
+  await applyTheme(page, 'light');
+  await openMember(page, SLUG);
+  const st = stage(page, `m:${SLUG}`);
+  await until(page, async () => (await st.locator('[data-kind="member"]').count()) >= 2, 20000);
+  for (let i = 0; i < 2; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
+
+  // The member's chat: rows by run key.
+  const row = (k) => page.locator(`[data-testid="run-stars"][data-run="${k}"]`);
+  const anyRow = page.locator('[data-testid="run-stars"]');
+  const seen = await until(page, async () => (await anyRow.count()) > 0, 15000);
+  if (!seen) { await shot(page, '10-debug-w3-no-chat-rows'); console.log('   w3 page text:', (await page.locator('body').innerText()).slice(0, 800).replace(/\n/g, ' | ')); }
+  ok('W3 (26) the member chat draws run rows', seen);
+  const tgRow = row(keys.tg);
+  await tgRow.scrollIntoViewIfNeeded().catch(() => {});
+  await page.mouse.move(5, 5); await page.waitForTimeout(800);
+  const tgText = (await tgRow.innerText().catch(() => '')).replace(/\s+/g, ' ');
+  ok('W3 (26) chat row rated: four stars, "from Telegram", his note, Learned with Undo', /You rated 4 · from Telegram/.test(tgText) && tgText.includes(keys.note) && /Learned/.test(tgText) && /Undo/.test(tgText), tgText.slice(0, 300));
+  await shot(page, '11-w3-chat-rated-telegram-1440');
+  await tgRow.screenshot({ path: join(OUT, '11b-w3-chat-row-rated.png') }).catch(() => {});
+  const openRow = page.locator('[data-testid="run-stars"][data-ask="open"]').first();
+  ok('W3 (26) an open unrated run asks: "Rate this run" with grey stars', (await openRow.count()) === 1 && /Rate this run/.test(await openRow.innerText()), (await openRow.innerText().catch(() => '')).slice(0, 200));
+  if (await openRow.count()) { await openRow.scrollIntoViewIfNeeded(); await page.mouse.move(5, 5); await page.waitForTimeout(500); await openRow.screenshot({ path: join(OUT, '12-w3-chat-row-open.png') }).catch(() => {}); }
+  ok('W3 (26) the run past its window has no row in the chat', (await row(keys.old).count()) === 0);
+  const jRow = row(keys.judged);
+  const jText = (await jRow.innerText().catch(() => '')).replace(/\s+/g, ' ');
+  ok('W3 (26) the judged run in the chat reads as the Super\'s, never "You rated"', /Super's rating 2, from your words/.test(jText) && !/You rated/.test(jText), jText.slice(0, 300));
+
+  // The full card.
+  const frame = st.locator('[data-testid="super-container"]').filter({ has: page.locator('[data-member-card="scorecard"]') }).first();
+  await frame.click({ position: { x: 60, y: 18 } }).catch(() => {});
+  const full = st.locator('[data-testid="sc-full"]:visible').first();
+  ok('W3 (26) the full card opens', await until(page, async () => (await full.count()) === 1, 10000));
+  await page.mouse.move(5, 5); await page.waitForTimeout(1200);
+  await shot(page, '13-w3-full-1440');
+  await full.screenshot({ path: join(OUT, '13b-w3-full-card-1440.png') }).catch(() => {});
+  const ftext = (await full.innerText()).replace(/\s+/g, ' ');
+  ok('W3 (26) card: the past-window run reads "Not rated"', (await full.getByTestId('sc-not-rated').count()) >= 1, ftext.slice(0, 300));
+  ok('W3 (26) card: a "Super\'s job" row rated from his words', (await full.getByTestId('sc-run-super').count()) >= 1 && /From your words: «Üç, yeni kitleye fazla para ayırmış\.»/.test(ftext), ftext.slice(0, 500));
+  const judgedStars = await full.locator('.sc-stars--judged').first().evaluate((el) => [...el.querySelectorAll('.sc-star')].map((b) => getComputedStyle(b).color)).catch(() => []);
+  ok('W3 (26) card: judged stars in violet (on and off), "Super\'s rating from your words", Change', judgedStars.length === 5 && (await full.getByTestId('sc-judged').count()) >= 1 && /Super's rating from your words: «Hayır, bütçeyi bana sormadan artırmamalıydı\.»/.test(ftext) && (await full.getByTestId('sc-judged-change').count()) >= 1, JSON.stringify(judgedStars));
+  ok('W3 (26) card: a correction row "Super noted from your words" keeping the Super\'s stars', /Super noted from your words: «kuryeyi de bana sormalıydı»/.test(ftext) && /Super's 2★ kept/.test(ftext), ftext.slice(0, 600));
+  ok('W3 (26) card: no sideways overflow', !(await look(full)).overflow);
+  const judgedRow = full.locator('[data-testid="sc-run"]').filter({ has: page.getByTestId('sc-judged') }).first();
+  if (await judgedRow.count()) { await judgedRow.scrollIntoViewIfNeeded(); await page.mouse.move(5, 5); await page.waitForTimeout(400); await judgedRow.screenshot({ path: join(OUT, '14-w3-judged-row.png') }).catch(() => {}); }
+  ok('W3: no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
+  ok('W3: no failed requests', watch.failed.length === 0, watch.failed.slice(0, 8).join('\n'));
+  await page.close();
+}
+
 async function phone(browser, base, pw) {
   const head = { 'X-Dreamcontext-Vault': VAULT, 'Content-Type': 'application/json' };
   const setup = await fetch(`${base}/api/handsfree/mac/setup`, { method: 'POST', headers: head, body: '{}' });
@@ -277,7 +341,8 @@ async function main() {
     const pw = await import('playwright');
     const browser = await pw.chromium.launch();
     try {
-      await desk(browser, base);
+      const deskCtx = await desk(browser, base);
+      await w3(deskCtx, base);
       await phone(browser, base, pw);
     } finally { await browser.close(); }
   } catch (e) {
