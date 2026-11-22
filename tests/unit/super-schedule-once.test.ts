@@ -163,6 +163,21 @@ describe('a missed one-off', () => {
     expect(ranSlugs).toEqual([]);
   });
 
+  it('the app closed for days: the retired job waits for its notice, never removed before it is told', async () => {
+    const id = await add({ at: '21:00', once: true, headless: true, reply: 'mac' }, at(22, 20));
+    await tick(at(23, 1));
+    // Ticks (launchd) a day and more later, with no server sweep in between: still there.
+    await tick(at(24, 2));
+    await tick(at(25, 2));
+    expect(getAutomation(contextRoot, id, home)).not.toBeNull();
+    const said: string[] = [];
+    await sweepProject(contextRoot, { home, now: () => at(25, 3).getTime(), banner: (_t, b) => { said.push(b); }, hub: () => null });
+    expect(said).toEqual([SCHEDULE_LINES.missedOnce('21:00', 'Bana ilacımı hatırlat')]);
+    // Told: the next tick past its day removes it.
+    await tick(at(25, 4));
+    expect(getAutomation(contextRoot, id, home)).toBeNull();
+  });
+
   it('a headless one-off past its window is told as missed too', async () => {
     const id = await add({ at: '21:00', once: true, headless: true, reply: 'mac' }, at(22, 20));
     expect((await tick(at(23, 1))).ran).toHaveLength(0);

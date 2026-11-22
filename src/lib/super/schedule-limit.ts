@@ -16,6 +16,8 @@ import { readFileSync } from 'node:fs';
 import matter from 'gray-matter';
 import { readAutomationCache, removeAutomation, updateAutomation, writeAutomationCache } from '../automations/store.js';
 import type { AutomationCache, AutomationManifest, ScheduleSlot } from '../automations/types.js';
+import { listScheduleItems } from './schedule-queue.js';
+import { scopeOfContextRoot } from '../telegram/config.js';
 
 /** Every schedule the verb makes is named with this prefix; the verb touches no other automation. */
 export const SCHEDULE_SLUG_PREFIX = 'super-is-';
@@ -112,7 +114,9 @@ export function runsLeft(limit: RunLimit, cache: Pick<AutomationCache, 'runsDone
 function retire(contextRoot: string, slug: string, now: Date, cache: AutomationCache | null): void {
   updateAutomation(contextRoot, slug, { enabled: false });
   const c = cache ?? readAutomationCache(contextRoot, slug);
-  if (c) writeAutomationCache(contextRoot, slug, { ...c, retiredAt: now.toISOString() });
+  const base: AutomationCache = c ?? { slug, lastRunAt: null, lastFireAt: null, status: null, durationMs: null, outputPath: null, error: null, exitCode: null, history: [] };
+  // A job that never ran has no cache yet: the retire mark makes one (list's done, the day-later removal).
+  writeAutomationCache(contextRoot, slug, { ...base, retiredAt: now.toISOString() });
 }
 
 /**
@@ -150,11 +154,14 @@ export function retireMissedOnce(contextRoot: string, manifest: Pick<AutomationM
   return true;
 }
 
-/** A retired job past its day in `list`: removed. True when it was removed. */
-export function removeIfLongRetired(contextRoot: string, manifest: Pick<AutomationManifest, 'slug' | 'enabled'>, now: Date): boolean {
+/** A retired job past its day in `list`: removed, but never while one of its fires (a hand-over
+ *  or a missed notice) still waits for the desktop server, which reads the job to deliver or
+ *  tell it: the app may be closed for days. True when it was removed. */
+export function removeIfLongRetired(contextRoot: string, manifest: Pick<AutomationManifest, 'slug' | 'enabled'>, now: Date, home?: string): boolean {
   if (manifest.enabled || !manifest.slug.startsWith(SCHEDULE_SLUG_PREFIX)) return false;
   const at = Date.parse(readAutomationCache(contextRoot, manifest.slug)?.retiredAt ?? '');
   if (!Number.isFinite(at) || now.getTime() - at < RETIRED_KEEP_MS) return false;
+  if (listScheduleItems(scopeOfContextRoot(contextRoot), home).some((i) => i.slug === manifest.slug)) return false;
   removeAutomation(contextRoot, manifest.slug);
   return true;
 }
