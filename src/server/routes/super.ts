@@ -14,6 +14,7 @@ import { registerOwnerCardWaker, type OwnerReceiptTarget } from '../owner-receip
 import { JOB_RISKS, type JobContext, type JobRisk, type OwnerWakeOutcome } from '../../lib/super/types.js';
 import { childPolicy, type PolicyAllowedBy, type PolicyVerdict } from '../../lib/model-facts.js';
 import { ownerPictureOk } from '../../lib/t3-bridge/pictures.js';
+import { setCutChildResumer } from '../../lib/super/inbox.js';
 import { batchHasFirstReadDone, closeMemberRequestDraft, isCardItem, moveCardReceipts, ownerCardItemsLeft } from '../../lib/super/inbox.js';
 import { firstReadLockHeld, mintCrewTicket, mintFirstReadTicket, noteDelegating, releaseFirstReadLock, takeFirstReadLock, vaultDelegating } from '../../lib/super/delegating.js';
 import { crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
@@ -5439,3 +5440,43 @@ export async function startFirstRead(contextRoot: string): Promise<FirstReadStar
   if (error === 'no_window' || error === 'delegate_unconfirmed') return refusal('no_window');
   return refusal('failed');
 }
+
+/**
+ * The server's own resume of a child whose process ended while its own background work ran
+ * (owner 2026-11-23: three children ended mid-job overnight, their work died with them, and the
+ * owner heard each as `gone`). The same checks as `super resume` (a live process, its transcript,
+ * the worktree's one live session, the live-children cap), the same start (the window, or the
+ * server itself when no window is there). False = not reopened: the Super hears a `gone` that
+ * says the work was cut (inbox CUT_LINE), never a result.
+ */
+export async function resumeCutChild(key: string, child: string): Promise<boolean> {
+  if (isLiveChat(child)) return true;
+  const { root, superId } = parseSuperKey(key);
+  const state = await readSuperState(root, superId, superSanitizeOpts()).catch(() => null);
+  const ch = state?.children[child];
+  if (!state || !state.enabled || !ch || ch.endedAt !== undefined || ch.adopted) return false;
+  if (phoneHeld(child) || !liveTranscriptPath(root, child)) return false;
+  if ((ch.worktree || ch.branch) && liveChildInWorktree(state, { path: ch.worktree, branch: ch.branch }, child)) return false;
+  const live = (await readVaultLive(root).catch(() => 0)) + vaultDelegating(root) + vaultStarting(root);
+  if (!delegationAllowed(state, Date.now(), live).ok) return false;
+  const token = state.session ? superTokenOfSession(state.session) : null;
+  const mode = ch.mode ?? 'basic';
+  noteResuming(child, true);
+  try {
+    let r: WindowResult = token
+      ? await sendSuperCommand(token, 'resume', { child, mode, model: ch.model ?? '', effort: ch.effort ?? '', title: ch.brief })
+      : { ok: false, error: 'no_window', sent: false } as WindowResult;
+    if (!r.ok && r.error === 'no_window' && r.sent === false && (!token || windowGone(token))) {
+      const h = await startChildHeadless({ contextRoot: root, resumeId: child, mode, model: ch.model, effort: ch.effort, mcp: ch.mcp ?? [], tool: ch.tool, member: memberOfSuperId(superId) });
+      if (h.ok) r = { ok: true, result: undefined } as WindowResult;
+    }
+    if (!r.ok) return false;
+    if (!isLiveChat(child)) expectChild(root, child);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    noteResuming(child, false);
+  }
+}
+setCutChildResumer(resumeCutChild);

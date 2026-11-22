@@ -540,6 +540,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(workOrigin ? { workOrigin } : {}),
       ...(q.wakeTold === true && (isRequest || isReply || !!team) ? { wakeTold: true as const } : {}),
       ...(owedAt !== undefined && owedAt >= 0 ? { owedAt } : {}),
+      ...(q.kind === 'gone' && q.cut === true ? { cut: true as const } : {}),
       ...(owedIds.length ? { owed: owedIds } : {}),
       ...(mirrorOf ? { of: mirrorOf } : {}),
       // An own item (K1) is a question, a permission or an owner wait of the record's own session.

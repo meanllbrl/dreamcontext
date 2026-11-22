@@ -36,13 +36,14 @@ import {
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { DONE_SETTLE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import {
-  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, OWNER_WAIT_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
+  BACKGROUND_JOB_MAX_MS, BACKGROUND_QUIET_MS, BACKGROUND_WAKE_MS, CUT_LINE, OWNER_WAIT_LINE, setCutChildResumer, _resetSuperInbox, _superInboxDrained, attachSuperInbox,
   noteChildParking, reconcileRows, startSuperInbox, superQueueHead, superTurnEnded, syncOwnerDraft, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { _resetSuperSends, answeredBy, noteSuperSend, ownerCardsIn, refusalWait, refusalWaitId, stalledWait } from '../../src/lib/super/owner-wait.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import { superBriefing } from '../../src/server/chat-modes.js';
 import { ToWire } from '../../src/lib/t3-bridge/to-wire.js';
+import { BACKGROUND_CUT_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
 import { buildRunReport } from '../../dashboard/src/components/sleepy/chat/runReport.js';
 import { buildSubmitMarkdown } from '../../dashboard/src/lib/checklistMarkdown.js';
 import { secretReceipt } from '../../src/lib/env-secrets.js';
@@ -609,6 +610,66 @@ describe('a background JOB holds the row for as long as the CLI runs it', { time
     feed({ type: 'turn.terminal', status: 'completed', failure: null });
     await advance(DONE_SETTLE_MS + STALE_SWEEP_MS + 5_000, 5_000);
     expect(await ofKind('done', 'c1')).toHaveLength(1);
+  });
+
+  // Owner 2026-11-23: children ended while their background job ran; the job died with them and
+  // each reached him as `gone`. Now: a silent `restarted`, a turn that says the work stopped, and
+  // the server reopens it itself.
+  it('a child whose process ends over running background work is reopened, never told as gone', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_key, sid) => { asked.push(sid); return true; });
+    const { hs, delivered } = await boot(['c1']);
+    await writeSuper(root, (s) => { s.children.c1.awaited = true; });
+    roster(hs[0], [{ type: 'monitor', desc: 'browser check run 4' }]);
+    say(hs[0], 'Bekliyorum.');
+    hs[0].observe({ type: 'result' });
+    await advance(60_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual(['c1']);
+    expect(await ofKind('gone', 'c1')).toHaveLength(0);
+    expect(await ofKind('restarted', 'c1')).toHaveLength(1);
+    const st = await state();
+    expect(st.children.c1.row).toBe('working');
+    expect(st.children.c1.resuming).toBeDefined();
+    const outbox = await readOutbox(root);
+    expect(outbox.some((i) => i.child === 'c1' && i.text === BACKGROUND_CUT_TEXT)).toBe(true);
+    const told = delivered.map((d) => d.text).join('\n');
+    expect(told).toMatch(/child=c1 event=restarted/);
+    expect(told).not.toMatch(/child=c1 event=(?:gone|done)|child=c1[^\n]*awaited=owner/);
+  });
+
+  it('a cut child the server cannot reopen is `gone background=cut`: no result, the Super resumes it', async () => {
+    setCutChildResumer(async () => false);
+    const { hs, delivered } = await boot(['c1']);
+    await writeSuper(root, (s) => { s.children.c1.awaited = true; });
+    roster(hs[0], [{ desc: 'Run the benchmark judge' }]);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    const gone = await ofKind('gone', 'c1');
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBe(true);
+    expect((await ofKind('restarted', 'c1')).filter((q) => q.state !== 'done')).toHaveLength(0);
+    const text = delivered.map((d) => d.text).join('\n');
+    expect(text).toMatch(/child=c1 event=gone background=cut/);
+    expect(text).not.toMatch(/child=c1[^\n]*awaited=owner/);
+    expect(text).toContain(CUT_LINE);
+  });
+
+  it('a child that exits with nothing running in the background is a plain gone (no resume asked)', async () => {
+    const asked: string[] = [];
+    setCutChildResumer(async (_k, sid) => { asked.push(sid); return true; });
+    const { hs } = await boot(['c1']);
+    hs[0].observe({ type: 'result' });
+    await advance(30_000);
+    hs[0].exited();
+    await advance(60_000);
+    expect(asked).toEqual([]);
+    const gone = await ofKind('gone', 'c1');
+    expect(gone).toHaveLength(1);
+    expect(gone[0].cut).toBeUndefined();
   });
 
   it('a dev server does not hold the row past the quiet bar, whatever the reply says (review round 1)', async () => {

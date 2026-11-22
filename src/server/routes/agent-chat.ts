@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { appendOpenLog } from '../../lib/window-open-log.js';
 import { ownerPicturePaths } from '../../lib/t3-bridge/pictures.js';
 import { appRuntimePath } from '../../lib/app-cli-path.js';
 import { bindTake, voiceTakeBlock, type TakeRecord } from '../../lib/voice/voiceLog.js';
@@ -3651,7 +3652,7 @@ export function startChatSession(
     // never `gone`, while a card waits on the owner. An end is no park.
     if (detached || ws.readyState !== ws.OPEN) {
       if (!opts.end && registry) noteChildParking(chatRegistryId);
-      unregisterPark(); drain(); return Promise.resolve('drained');
+      unregisterPark(); drain(opts.end ? 'end' : `park:${reason}`); return Promise.resolve('drained');
     }
     parkEnding = opts.end === true;
     const id = randomUUID();
@@ -3673,7 +3674,7 @@ export function startChatSession(
       if (!parkEnding && registry) noteChildParking(chatRegistryId);
       endOnSocketGone = true;
       unregisterPark();
-      const t = setTimeout(() => { if (alive && !detached) drain(); }, 5_000);
+      const t = setTimeout(() => { if (alive && !detached) drain('parked'); }, 5_000);
       t.unref?.();
       parkAsk.settle('parked');
       return;
@@ -4436,8 +4437,11 @@ export function startChatSession(
    *  immediately so a re-opened tab can `--resume` without waiting out the drain (the
    *  drain-vs-resume write race this leaves open is the same documented beta limitation the
    *  terminal/chat double-attach already has). */
-  function drain(): void {
+  function drain(why = 'eof'): void {
     if (!alive || lingerTimer || lingerKillTimer) return;
+    // Why the server ended it, with what still ran (field 2026-11-22: three Super children ended
+    // over running background work and no line said by which path).
+    if (registry) appendOpenLog('chat_end', { session: chatRegistryId.slice(0, 8), why, turns: turnsInFlight, background: backgroundTasks, detached });
     // The phone's mirrors leave with the stdin: their reconnect lands on the successor.
     mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super ended');
     clearDetachTimers();
@@ -4471,20 +4475,26 @@ export function startChatSession(
   /** The SERVER ends this child (a detached child's idle or busy reap, the drain on an autonomy
    *  change): nobody chose to end the job, so it is a park (K2), never a real exit. A card it
    *  holds for the owner stays open (kart-alta-yapisma-2: only a real exit withdraws one). */
-  function serverDrain(): void {
+  function serverDrain(why: string): void {
     if (registry) noteChildParking(chatRegistryId);
-    drain();
+    drain(why);
   }
+  /** Nothing of the child's own still runs: no turn, and no background work the CLI reports (a
+   *  shell, a Monitor, a background agent). Every path that ends a child for being idle asks
+   *  this, never the turn count alone (owner 2026-11-23: a child waiting on its background job
+   *  was ended, the job died with it, and it came back saying it was still waiting). */
+  function quiet(): boolean { return turnsInFlight === 0 && backgroundTasks === 0; }
   /** (Re)arm the reaping of a DETACHED child for its current state. A no-op while attached.
    *  Idle: ended after `detachIdleMs()` (15 min) of continuous idleness. Busy: never reaped
    *  for lack of a socket, up to `detachBusyCapMs()` (4 h) of one busy run (from its socket going, or its last idle). */
   function armDetachReap(): void {
     if (!detached || !alive) return;
-    if (turnsInFlight > 0) {
+    // Its background work runs on after the turn: busy, bounded by the same 4 h cap.
+    if (!quiet()) {
       if (detachIdleTimer) { clearTimeout(detachIdleTimer); detachIdleTimer = null; }
       if (!detachCapTimer) {
         const left = Math.max(0, detachBusyCapMs() - (Date.now() - Math.max(detachedAt, detachBusyFrom)));
-        detachCapTimer = setTimeout(() => { detachCapTimer = null; serverDrain(); }, left);
+        detachCapTimer = setTimeout(() => { detachCapTimer = null; serverDrain('detached-busy-cap'); }, left);
       }
       return;
     }
@@ -4492,7 +4502,7 @@ export function startChatSession(
     // Idle now: the next busy run's cap starts from here.
     detachBusyFrom = Date.now();
     if (!detachIdleTimer) {
-      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; serverDrain(); }, detachIdleMs());
+      detachIdleTimer = setTimeout(() => { detachIdleTimer = null; if (quiet()) serverDrain('detached-idle'); else armDetachReap(); }, detachIdleMs());
     }
   }
 
@@ -4606,7 +4616,7 @@ export function startChatSession(
       settled = true;
       fn(accepted);
     };
-    if (detached && turnsInFlight === 0) { serverDrain(); return () => { /* already given up */ }; }
+    if (detached && quiet()) { serverDrain('superseded'); return () => { /* already given up */ }; }
     if (detached) {
       // Every hold it has, the rotated conversation's too: the respawn resumes THAT one.
       const lent = ownHolds();
@@ -4615,7 +4625,7 @@ export function startChatSession(
       return settleOnce((accepted) => {
         // Accepted: the new process holds the conversation now; `holdLent` keeps the drain
         // from releasing its hold.
-        if (accepted) { serverDrain(); return; }
+        if (accepted) { serverDrain('superseded'); return; }
         if (!holdLent || !alive) return;
         // Refused: take the holds back — unless someone else took a conversation meanwhile,
         // in which case the child stays lent and never releases them.
@@ -4706,6 +4716,8 @@ export function startChatSession(
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
         // An MCP grant waited for the chat's background work (a dev server, a sub-agent) to end.
         if (backgroundTasks === 0) armMcpGrant();
+        // A detached child's reap follows its background work: held while it runs, idle after.
+        armDetachReap();
       }
 
       // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
@@ -5012,7 +5024,10 @@ export function startChatSession(
     try { ws.close(); } catch { /* already closed */ }
   });
 
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
+    // How it ended, with what still ran: a signal nobody here sent (macOS under memory pressure)
+    // reads apart from the server's own end (`chat_end`).
+    if (registry) appendOpenLog('chat_exit', { session: chatRegistryId.slice(0, 8), code, signal: signal ?? null, turns: turnsInFlight, background: backgroundTasks });
     mcpStop();
     mcpControl.close();
     teardown();
@@ -5991,7 +6006,7 @@ export function startChatSession(
       // Detached (pane closed, phone locked): a reattach respawns it (adoptSocket). An idle one
       // with nothing held is ended now instead, so no process keeps running at the old level
       // in the meantime; the conversation stays on disk and its next open resumes it.
-      if (detached && turnsInFlight === 0 && heldForSuccessor.length === 0 && !mcpGrantReceipt) serverDrain();
+      if (detached && quiet() && heldForSuccessor.length === 0 && !mcpGrantReceipt) serverDrain('autonomy-change');
       return;
     }
     handedOff = true;

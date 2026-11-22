@@ -32,7 +32,7 @@ import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
-import { REASK_TEXT, addToOutbox, firstPromptsLost, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
+import { BACKGROUND_CUT_TEXT, REASK_TEXT, addToOutbox, firstPromptsLost, keepQuestionsAcrossRelaunch, keepWorkAcrossRelaunch } from './outbox.js';
 import { liveTranscriptPath } from '../transcript-locate.js';
 import { settleAskShows } from './ask-show.js';
 import {
@@ -2091,7 +2091,7 @@ export const AUTOMATION_LINE = `An item whose own server line says event=automat
 
 /** What a `restarted` item means (field 2026-11-08: after a relaunch every child read done and the
  *  Super wrote "continue" to eight of them by hand). */
-export const RESTARTED_LINE = 'An item whose own server line says event=restarted is a child the app restart cut off mid-job: the server already resumes it (a continue turn that says what was stopped, or, for one that was asking, its question asked again), and its row stays working until it really finishes (then you get its done). Nothing to send and nothing to tell the owner; do not write "continue" to it.';
+export const RESTARTED_LINE = 'An item whose own server line says event=restarted is a child the app restart (or its own process ending while its background work ran) cut off mid-job: the server already resumes it (a continue turn that says what was stopped, or, for one that was asking, its question asked again), and its row stays working until it really finishes (then you get its done). Nothing to send and nothing to tell the owner; do not write "continue" to it.';
 
 /** One `automation` item, its live state read at delivery (never what the queue stored). */
 function automationItemLines(root: string, item: SuperQueueItem): string[] {
@@ -2135,6 +2135,8 @@ function awaitedItem(s: SuperState, item: SuperQueueItem): boolean {
   if (progressItem(item)) return false;
   if (item.team) return awaitedTeamItem(s, item);
   if (firstReadDoneItem(s, item)) return true;
+  // A child cut off mid-background-work: no result (owner 2026-11-23), it is resumed.
+  if (item.cut) return false;
   return (item.kind === 'done' || item.kind === 'stuck' || item.kind === 'gone') && s.children[item.sessionId]?.awaited === true;
 }
 
@@ -2320,6 +2322,7 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   let head = `- item=${item.id} child=${sid} event=${item.kind}`;
   if (item.kind === 'stuck' && ch?.stuckReason) head += ` reason=${ch.stuckReason}`;
   if (item.kind === 'owner' && item.wait) head += ` wait=${item.wait.kind}`;
+  if (item.kind === 'gone' && item.cut) head += ' background=cut';
   if (awaitedItem(s, item)) head += ` awaited=owner${ch?.origin ? ` origin=${ch.origin}` : ''}`;
   if (firstReadDoneItem(s, item)) head += ' first-read';
   head += ` status=${status}`;
@@ -2389,6 +2392,7 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
     ...(items.some((it) => it.kind === 'automation') ? [AUTOMATION_LINE] : []),
     ...(items.some((it) => it.kind === 'schedule') ? [SCHEDULE_LINE] : []),
     ...(items.some((it) => it.kind === 'restarted') ? [RESTARTED_LINE] : []),
+    ...(items.some((it) => it.kind === 'gone' && it.cut) ? [CUT_LINE] : []),
     BATCH_LAST_LINE,
     // The agenda lines the server moved, or that went stale (pad.ts): keep or close each.
     ...padNotice(state, now).lines,
@@ -5313,9 +5317,24 @@ async function onMoved(root: string, sid: string, status: 'working' | 'starting'
 
 /** Queue one gone event for a child (one open item per child); its row is `gone` in the same
  *  write, so the row never says gone before the debounce believed it. */
+/** Children whose process ended while their own background work ran (the registry's roster at
+ *  the exit, or a roster that had just shrunk with no turn after it): the work died with them. */
+const cutAtGone = new Set<string>();
+
+/** The server's own resume of a child its exit cut off mid-background-work (routes/super.ts
+ *  registers it: the same checks and start as `super resume`). True = it is coming back. */
+export type CutChildResumer = (key: string, sid: string) => Promise<boolean>;
+let cutResumer: CutChildResumer | null = null;
+export function setCutChildResumer(fn: CutChildResumer | null): void { cutResumer = fn; }
+
+/** The line a `gone` with `cut` carries: no result, the Super brings it back. */
+export const CUT_LINE = 'An item whose own server line says event=gone background=cut is a child whose process ended while its own background work still ran: that work stopped with it, and the server could not reopen it. It is no result and nothing to tell the owner: resume it (`dreamcontext super resume <child>`); it is told on its own that its background work stopped and must be started again.';
+
 async function addGone(root: string, sid: string, seenExit = false): Promise<void> {
   let added = false;
   const parked = wasParked(sid);
+  const cut = cutAtGone.delete(sid) && !parked;
+  let reopen = false;
   let dropped: Array<{ kind: OwnerWaitKind; id: string; postingSession?: string }> = [];
   await writeSuper(root, (s) => {
     dropped = [];
@@ -5356,6 +5375,22 @@ async function addGone(root: string, sid: string, seenExit = false): Promise<voi
     // Already reported gone (and not started since): nothing new to say (field 2026-10-21).
     // A child that never started has said why; `gone` would only erase that.
     if (ch.row === 'gone') return;
+    // Its process ended while its own background work ran (owner 2026-11-23): the job is not over
+    // and nothing of it is a result. The server reopens it as a relaunch does (`restarted`, said
+    // without a word to the owner), with a turn that says the work stopped. Once: a child cut again
+    // before a turn of its own ended since takes the plain path below.
+    if (cut && cutResumer && ch.endedAt === undefined && ch.resuming === undefined && ch.row !== 'done') {
+      const now = Date.now();
+      ch.resuming = now;
+      setRow(ch, 'working', undefined, now);
+      delete ch.settling;
+      reopen = true;
+      if (s.queue.some((q) => q.sessionId === sid && q.kind === 'restarted' && q.state === 'pending')) return;
+      s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'restarted', state: 'pending', createdAt: now });
+      countEvent(s);
+      added = true;
+      return;
+    }
     // It finished and its done is not told yet: the done says it all (its chat closing is no news).
     const doneWaits = ch.row === 'done' && s.queue.some((q) => q.sessionId === sid && q.kind === 'done' && q.state === 'pending');
     resolveAnswered(s, sid, null);
@@ -5363,12 +5398,34 @@ async function addGone(root: string, sid: string, seenExit = false): Promise<voi
     setRow(s.children[sid], 'gone');
     if (doneWaits) return;
     if (s.queue.some((q) => q.sessionId === sid && q.kind === 'gone' && q.state === 'pending')) return;
-    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'gone', state: 'pending', createdAt: Date.now() });
+    s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'gone', state: 'pending', createdAt: Date.now(), ...(cut ? { cut: true as const } : {}) });
     countEvent(s);
     added = true;
   });
   // After the write (never inside the mutator): the records close, the registry forgets the waits.
   for (const d of dropped) dropOwnerWait(sid, d.kind, d.id, d.postingSession ? { postingSession: d.postingSession } : {});
+  if (reopen) {
+    let back = false;
+    try {
+      await keepWorkAcrossRelaunch(root, [sid], Date.now(), BACKGROUND_CUT_TEXT);
+      back = await cutResumer!(root, sid);
+    } catch { back = false; }
+    if (!back) {
+      // It could not be reopened here: the Super hears a `gone` that says why (no result).
+      added = false;
+      await writeSuper(root, (s) => {
+        const ch = s.children[sid];
+        if (!ch || ch.endedAt !== undefined || isLive(getChat(sid))) return;
+        delete ch.resuming;
+        for (const q of s.queue) if (q.sessionId === sid && q.kind === 'restarted' && q.state === 'pending') q.state = 'done';
+        setRow(ch, 'gone');
+        if (s.queue.some((q) => q.sessionId === sid && q.kind === 'gone' && q.state === 'pending')) return;
+        s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'gone', state: 'pending', createdAt: Date.now(), cut: true });
+        countEvent(s);
+        added = true;
+      });
+    }
+  }
   if (added) void pumpSuper(root);
 }
 
@@ -5579,7 +5636,7 @@ function onChange({ entry, from }: ChatChange): void {
   // The super that OWNS the child (main's or a member's): its row and items go to that record.
   const root = superKeyOfChild(sid);
   if (!root) return;
-  if (entry.status !== 'gone') { clearTimer(goneTimers, sid); clearTimer(regraceTimers, sid); }
+  if (entry.status !== 'gone') { clearTimer(goneTimers, sid); clearTimer(regraceTimers, sid); cutAtGone.delete(sid); }
   if (entry.status !== 'idle') { clearTimer(settleTimers, sid); clearTimer(browserTimers, sid); }
   if (!superEntry(root).enabled) return;
   // Failures are swallowed by `track` (a write that could not land: the next change retries).
@@ -5603,6 +5660,9 @@ function onChange({ entry, from }: ChatChange): void {
     case 'gone':
       // An old child's teardown after its replacement already registered under this id.
       if (isLive(getChat(sid))) return;
+      // Its own background work still ran at the exit (or had just ended with no turn after it):
+      // that work died with the process (owner 2026-11-23).
+      if ((entry.backgroundTasks ?? 0) > 0 || entry.wakeOwedAt !== undefined) cutAtGone.add(sid); else cutAtGone.delete(sid);
       armGone(root, sid, GONE_DEBOUNCE_MS, goneTimers, true);
       // A process of this project ended or was parked: a seat is free for a result held at the
       // live-children cap (K6 `held:cap`).
@@ -5832,6 +5892,8 @@ export function _resetSuperInbox(): void {
   retry.clear();
   inboxes.clear();
   resuming.clear();
+  cutAtGone.clear();
+  cutResumer = null;
   carried.clear();
   turnsEnded.clear();
   openBatch.clear();

@@ -172,7 +172,10 @@ export const RESUME_TEXT = '[dreamcontext] The app was restarted while you were 
 
 /** The words the server sends after a relaunch: any turn that reached the child since makes one
  *  moot (its own text, the owner, or the Super answered or restarted it meanwhile). */
-const RELAUNCH_TEXTS = new Set([REASK_TEXT, RESUME_TEXT]);
+/** A child whose process ended while its own background work ran (owner 2026-11-23: three
+ *  children came back saying they still waited on work that had died with their session). */
+export const BACKGROUND_CUT_TEXT = '[dreamcontext] Your session ended while your background work was still running (a shell, a Monitor or a background agent), and that work was stopped with it: it is NOT running now and no notification will come for it. Do not wait for it. Check what it had produced (its output files, your worktree, your task log), start again only what did not finish, then carry on with your job and report as your brief says.';
+const RELAUNCH_TEXTS = new Set([REASK_TEXT, RESUME_TEXT, BACKGROUND_CUT_TEXT]);
 
 /**
  * A relaunch: each of `children` was mid-job when the app went down (the caller decides which:
@@ -183,7 +186,7 @@ const RELAUNCH_TEXTS = new Set([REASK_TEXT, RESUME_TEXT]);
  * before) gets none: an asking child is never told to go on without its answer.
  */
 export async function keepWorkAcrossRelaunch(contextRoot: string, children: readonly string[], now = Date.now(), text: string = RESUME_TEXT): Promise<number> {
-  if (!RELAUNCH_TEXTS.has(text)) throw new Error('a relaunch message is RESUME_TEXT or REASK_TEXT');
+  if (!RELAUNCH_TEXTS.has(text)) throw new Error('a relaunch message is RESUME_TEXT, REASK_TEXT or BACKGROUND_CUT_TEXT');
   if (!children.length) return 0;
   let added = 0;
   await updateOutbox(contextRoot, (items) => {
