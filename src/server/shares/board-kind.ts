@@ -124,7 +124,8 @@ function boardMissing(share: Share, res: ServerResponse, head: boolean): void {
   const now = shareDeps().now();
   const first = typeof share.data.missAt === 'number' ? share.data.missAt : null;
   if (first === null) share.data.missAt = now;
-  else if (now - first >= BOARD_GONE_AFTER_MS) void closeShare(share.id, 'board_gone');
+  // The answer reaches the guest first: closing tears its socket down.
+  else if (now - first >= BOARD_GONE_AFTER_MS) res.once('close', () => { void closeShare(share.id, 'board_gone'); });
   sendJson(res, 404, { error: 'board_gone' }, head);
 }
 
