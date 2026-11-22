@@ -4009,7 +4009,8 @@ async function pumpOnce(key: string): Promise<void> {
   }
   if (blocker) {
     // No process holds this Super (owner 2026-11-22: the app's window closed, he works from
-    // Telegram): team mail wakes it headless. Anything else waits for a window, as before.
+    // Telegram; a member, which no window keeps alive): team mail and its own child's events
+    // (`wakeMail`) wake it headless. Anything else waits for a window, as before.
     if (blocker === 'no_socket' || blocker === 'no_chat') {
       const s = lastStates.get(key) ?? await readSuperState(key, superSanitizeOpts()).catch(() => null);
       if (s) await wakeForMail(key, s, now);
@@ -4401,7 +4402,7 @@ export async function noteMemberToMain(contextRoot: string, slug: string, text: 
  *  run for this session (off, unapproved, not the recorded one: never a start try); `busy` =
  *  something holds the session that may give it up (retried on the backoff, never counted). */
 export type SuperWakeOutcome = 'live' | 'started' | 'gate' | 'start_failed' | 'busy';
-export type SuperWakeCause = 'telegram' | 'team';
+export type SuperWakeCause = 'telegram' | 'team' | 'child';
 export interface SuperWakeCall { root: string; superId: SuperId; sessionId: string; member: string | null; cause: SuperWakeCause }
 let superWaker: ((o: SuperWakeCall) => Promise<SuperWakeOutcome>) | null = null;
 /** The server's waker (headless-super.ts `wireSuperWake`), or a test's. null = no wake (the window starts it). */
@@ -4416,28 +4417,68 @@ export const WAKE_BACKOFF_MS = [60_000, 120_000, 240_000] as const;
 const wakeTries = new Map<string, { n: number; next: number; told?: true }>();
 const waking = new Set<string>();
 
+/** How long a child's event waits for a window before the server wakes its Super itself: a
+ *  window coming up (the app's relaunch) gets its Super first, and adopts nothing. */
+export const CHILD_WAKE_GRACE_MS = 30_000;
+
 /**
  * Mail that wakes this Super with no window: a request or reply (the member), a team job's done,
- * stuck or question (the Super that gave the job), and, for a member holding an open request, its
- * own children's done, stuck or question (the work of that request: a child that outlives the
- * member's idle reap must still bring its result back). Only what the next batch would deliver
- * now counts: a question waits behind his own open question (`nextBatch`), so it wakes nothing.
+ * stuck or question (the Super that gave the job), and its OWN child's event that needs its turn
+ * ({@link childMail}). Only what the next batch would deliver now counts: a question waits behind
+ * his own open question (`nextBatch`), so it wakes nothing.
  */
-function teamMail(s: Pick<SuperState, 'queue' | 'children' | 'member'>, q: SuperQueueItem, questionOpen = ownerQuestionOpen(s)): boolean {
+function wakeMail(s: SuperState, q: SuperQueueItem, questionOpen = ownerQuestionOpen(s)): boolean {
   if (q.state !== 'pending') return false;
   if (q.kind === 'question' && questionOpen) return false;
   if (q.kind === 'request' || q.kind === 'reply') return true;
-  if (q.kind !== 'done' && q.kind !== 'stuck' && q.kind !== 'question') return false;
-  if (q.team) return true;
-  return !!s.member && Object.prototype.hasOwnProperty.call(s.children, q.sessionId)
-    && s.queue.some((r) => r.kind === 'request' && r.state !== 'done');
+  if (q.team) return q.kind === 'done' || q.kind === 'stuck' || q.kind === 'question';
+  return childMail(s, q);
 }
 
-/** Why this record should wake its Super now, or null: only team mail does. */
-export function wakeCause(s: Pick<SuperState, 'queue' | 'children' | 'member' | 'enabled' | 'session'>): SuperWakeCause | null {
+/**
+ * Its own child's event that a turn of this Super must take (owner 2026-11-22: "Telegram'dan
+ * yazdığım zaman uyanıyor her şey ... ama AI team üyeleri açılmıyor"). One rule for main's Super
+ * and every member's: a member has no window that keeps it alive, so after its idle reap or the
+ * app's relaunch only this wake brings it back. Before, only team mail woke a stopped Super: Ege's
+ * child cut by a relaunch (17:42) waited, `restarted`, 33 minutes until he wrote "bana hiç
+ * yazmıyorsun". A relaunch's cut child, a child's question or stuck (its work waits on the Super),
+ * and a done or gone he waits on or that sent something out (its result is owed to him); for a
+ * member holding an open request, every done of its children too (that request's work).
+ */
+function childMail(s: SuperState, q: SuperQueueItem): boolean {
+  if (!Object.prototype.hasOwnProperty.call(s.children, q.sessionId)) return false;
+  // One that is no longer true (its child moved on, came back, stopped asking) wakes nothing.
+  if (staleItem(s, q)) return false;
+  if (q.kind === 'restarted' || q.kind === 'question' || q.kind === 'stuck') return true;
+  if (q.kind !== 'done' && q.kind !== 'gone') return false;
+  if (awaitedItem(s, q) || itemSent(s, q).length > 0) return true;
+  return q.kind === 'done' && !!s.member && s.queue.some((r) => r.kind === 'request' && r.state !== 'done');
+}
+
+/** Team mail (a request, a reply, a team job's event): wakes at once, never waits a grace. */
+const isTeamMail = (q: SuperQueueItem): boolean => !!q.team || q.kind === 'request' || q.kind === 'reply';
+
+/** Why this record should wake its Super now, or null: `team` for team mail (at once), `child`
+ *  for its own child's event once older than {@link CHILD_WAKE_GRACE_MS} (`now` omitted: at once). */
+export function wakeCause(s: SuperState, now = Number.POSITIVE_INFINITY): SuperWakeCause | null {
   if (!s.enabled || !s.session) return null;
   const questionOpen = ownerQuestionOpen(s);
-  return s.queue.some((q) => teamMail(s, q, questionOpen)) ? 'team' : null;
+  const due = s.queue.filter((q) => wakeMail(s, q, questionOpen));
+  if (due.some(isTeamMail)) return 'team';
+  return due.some((q) => now - q.createdAt >= CHILD_WAKE_GRACE_MS) ? 'child' : null;
+}
+
+/** When the first child event still inside its grace may wake this Super, or null. */
+function childGraceEnds(s: SuperState, now: number): number | null {
+  if (!s.enabled || !s.session) return null;
+  const questionOpen = ownerQuestionOpen(s);
+  let at: number | null = null;
+  for (const q of s.queue) {
+    if (isTeamMail(q) || !wakeMail(s, q, questionOpen)) continue;
+    const end = q.createdAt + CHILD_WAKE_GRACE_MS;
+    if (end > now && (at === null || end < at)) at = end;
+  }
+  return at;
 }
 
 /** Turkish words for a start failure, for the owner's one line. */
@@ -4447,8 +4488,13 @@ function failWords(o: SuperWakeOutcome): string {
 
 async function wakeForMail(key: string, s: SuperState, now: number): Promise<void> {
   if (!superWaker || waking.has(key)) return;
-  const cause = wakeCause(s);
-  if (!cause || !s.session) return;
+  const cause = wakeCause(s, now);
+  if (!cause || !s.session) {
+    // A child's event still inside its grace: looked at again when it ends.
+    const at = childGraceEnds(s, now);
+    if (at !== null) scheduleRetry(key, at + 50);
+    return;
+  }
   let t = wakeTries.get(key);
   // Out of tries: no more starts until a turn ends, or until new mail (never told) arrives after
   // the last backoff, which opens a new bounded cycle. The last start came up and is gone again
@@ -4456,7 +4502,7 @@ async function wakeForMail(key: string, s: SuperState, now: number): Promise<voi
   if (t && t.n >= MAX_WAKE_TRIES) {
     if (!t.told) { t.told = true; await tellWakeFailed(key, 'start_failed'); return; }
     const questionOpen = ownerQuestionOpen(s);
-    if (now < t.next || !s.queue.some((q) => teamMail(s, q, questionOpen) && !q.wakeTold)) {
+    if (now < t.next || !s.queue.some((q) => wakeMail(s, q, questionOpen) && !q.wakeTold)) {
       if (now < t.next) scheduleRetry(key, t.next + 50);
       return;
     }
@@ -4502,7 +4548,7 @@ async function tellWakeFailed(key: string, out: SuperWakeOutcome): Promise<void>
   try {
     state = await writeSuper(key, (d) => {
       const questionOpen = ownerQuestionOpen(d);
-      for (const q of d.queue) if (teamMail(d, q, questionOpen) && !q.wakeTold) { q.wakeTold = true; marked += 1; }
+      for (const q of d.queue) if (wakeMail(d, q, questionOpen) && !q.wakeTold) { q.wakeTold = true; marked += 1; }
     });
   } catch { return; }
   if (!marked || !state || !ownerLineSink) return;
