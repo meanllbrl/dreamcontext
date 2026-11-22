@@ -37,14 +37,15 @@ function stars(n: number | null): string {
 export function registerScorecardCommands(agents: Command): void {
   agents
     .command('rate <member>')
-    .description("Rate one of a member's finished runs, 1-5 stars, with an optional note that becomes a lesson. --last: its newest finished run (with --quote: the newest one that ended before the quoted words were said). From an agent session it needs --quote with the owner's exact words, and one quote rates one run.")
+    .description("Rate one of a member's finished runs, 1-5 stars, with an optional note that becomes a lesson. --last: its newest finished run (with --quote: the newest one that ended before the quoted words were said). From an agent session it needs --quote with the owner's exact words, and one quote rates one run. After the Super asked him about a job (its event line said rate=ask run=<key>), --run <key> takes his answer from this conversation since that ask, so a one-word answer (\"Dört.\") is his words. --judged (agent session, with --quote and --run): the stars are your reading of his correction; on a run he rated himself his stars stay (kept_owner_stars). A note from an agent on a run that already has his note is kept beside it as a correction, never in its place.")
     .option('--run <key>', 'The run, as `<routine>::<runId>` (from `agents scorecard show`)')
     .option('--last', 'Its newest finished run')
     .requiredOption('--stars <n>', '1 to 5; 0 clears the rating')
     .option('--note <text>', 'His words on what to keep or change: they become one lesson the member follows. Left out, the run keeps its note; --note "" clears it')
     .option('--quote <words>', "The owner's exact words (required from an agent session)")
+    .option('--judged', "The stars are the Super's reading of his correction, not his number (agent session, with --quote and --run)")
     .option('--json', 'Emit as JSON')
-    .action((member: string, opts: { run?: string; last?: boolean; stars: string; note?: string; quote?: string; json?: boolean }) => {
+    .action((member: string, opts: { run?: string; last?: boolean; stars: string; note?: string; quote?: string; judged?: boolean; json?: boolean }) => {
       const root = ensureContextRoot();
       const projectRoot = dirname(root);
       const n = Number.parseInt(opts.stars, 10);
@@ -58,10 +59,13 @@ export function registerScorecardCommands(agents: Command): void {
         const r = rateRun(projectRoot, member, {
           run: opts.run, last: opts.last, stars: n === 0 ? null : n, note: opts.note,
           by: agent ? 'session' : 'owner', ...(opts.quote ? { quote: opts.quote } : {}),
+          ...(opts.judged ? { judged: true } : {}),
         });
-        if (r.draft) spawnScorecardJob({ kind: 'draft', projectRoot, member, run: r.runKey });
+        if (r.draft) spawnScorecardJob({ kind: 'draft', projectRoot, member, run: r.runKey, ...(r.slot ? { slot: r.slot } : {}) });
         if (opts.json) { console.log(JSON.stringify(r, null, 2)); return; }
-        success(r.rating ? `Rated ${r.rating.title} ${stars(r.rating.stars)}${r.draft ? ' · its note is becoming a lesson' : ''}.` : 'Rating cleared.');
+        const kept = r.keptOwnerStars ? ' · his own stars stay (kept_owner_stars)' : '';
+        const lesson = r.draft ? (r.slot ? ' · his words are kept beside his note and becoming a lesson' : ' · its note is becoming a lesson') : '';
+        success(r.rating ? `Rated ${r.rating.title} ${stars(r.rating.stars)}${kept}${lesson}.` : 'Rating cleared.');
       } catch (err) {
         refuse(err);
       }
@@ -153,9 +157,10 @@ export function registerScorecardCommands(agents: Command): void {
     });
   sc.command('draft <member>', { hidden: true })
     .requiredOption('--run <key>', 'The run')
-    .action(async (member: string, opts: { run: string }) => {
+    .option('--slot <slot>', "A correction's lesson slot (c:<id>); absent: the note's")
+    .action(async (member: string, opts: { run: string; slot?: string }) => {
       try {
-        const out = await draftLesson(dirname(ensureContextRoot()), member, opts.run, { firstOnly: isAgentSession() });
+        const out = await draftLesson(dirname(ensureContextRoot()), member, opts.run, { firstOnly: isAgentSession(), ...(opts.slot ? { slot: opts.slot } : {}) });
         console.log(out);
       } catch (err) { refuse(err); }
     });

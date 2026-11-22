@@ -79,7 +79,9 @@ export interface JournalEntry {
   /** The Telegram ref the update was injected under, once known. */
   ref?: string;
   chatRegistryId?: string;
-  kind: 'text' | 'media' | 'callback' | 'command';
+  kind: 'text' | 'media' | 'callback' | 'command' | 'rate-note';
+  /** A `rate-note`: the Telegram request its reply answers (W3 E7). */
+  askId?: string;
   /** The turn reached a live child (`takeTelegramRef` honoured it). */
   written: boolean;
   /** Epoch ms of acceptance. */
@@ -477,6 +479,26 @@ export interface ApprovalReviewMessage {
 
 /** `a:<random 64-bit hex id>:<idx>`. */
 export const CALLBACK_DATA_RE = /^a:([0-9a-f]{16}):(\d{1,2})$/;
+
+// ─── Rating stars (plan uye-karnesi W3 C11) ─────────────────────────────────
+
+/** `s:<askId>:<1-5>` a star, `s:<askId>:n` "Not ekle". Disjoint from `CALLBACK_DATA_RE`. */
+export const RATE_CALLBACK_RE = /^s:([0-9a-f]{16}):([1-5]|n)$/;
+
+/** The line the result's body ends with when it carries the stars. */
+export const RATE_PROMPT_LINE = '_Bu işi puanla:_';
+
+export type InlineButton = { text: string; callback_data: string };
+
+/** The stars under a result: five grey buttons while unrated; once rated, the chosen count filled
+ *  (still tappable to change it) and a "Not ekle" row. */
+export function rateKeyboard(askId: string, stars: number | null): InlineButton[][] {
+  if (stars === null) return [[1, 2, 3, 4, 5].map((n) => ({ text: `${n} ★`, callback_data: `s:${askId}:${n}` }))];
+  return [
+    [1, 2, 3, 4, 5].map((n) => ({ text: n <= stars ? '★' : '☆', callback_data: `s:${askId}:${n}` })),
+    [{ text: '📝 Not ekle', callback_data: `s:${askId}:n` }],
+  ];
+}
 /** The hub's in-memory record behind one button set: a tap is accepted only when every field
  *  still matches. Dies with the server (a tap after a restart: "Bu soru artık geçerli değil"). */
 export interface ButtonRecord {

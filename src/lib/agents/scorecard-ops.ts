@@ -1,16 +1,18 @@
+import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { vaultNameForContextRoot } from '../app-link.js';
 import { readThreadRun } from '../automations/threads.js';
 import { listInsights, readCache } from '../lab/store.js';
 import { bindingSeriesOf } from '../lab/sync.js';
 import type { SeriesPoint } from '../lab/types.js';
-import { conversationKeysFromEnv, findQuoteTurn, OWNER_WORDS_MAX_AGE_DAYS, quoteCovers, readOwnerTurns } from '../owner-words.js';
-import { listAgentHistory, type HistorySession, type ListHistoryOptions } from './history.js';
+import { conversationKeysFromEnv, findQuoteTurn, OWNER_WORDS_MAX_AGE_DAYS, quoteCovers, readOwnerTurns, sameConversation } from '../owner-words.js';
+import { rateAskAnchor } from '../automations/super-quiet.js';
+import { isDeliveryNoteEntries, listAgentHistory, recentRunFacts, requestFacts, superJobSession, type HistorySession, type ListHistoryOptions } from './history.js';
 import { amendmentRisks } from './amendments.js';
 import {
-  NO_WRITE, SCORECARD_LIMITS, ScorecardRefused, TERMINAL_RUN_STATUSES, activeCriteria, foldNote, isLiveRunning, isRunKey,
+  NO_WRITE, SCORECARD_LIMITS, ScorecardRefused, TERMINAL_RUN_STATUSES, activeCriteria, askState, foldNote, isLiveRunning, isRunKey,
   newId, projectKeyOfRun, readScorecard, resolveScorecard, runKeyFor, sessionKeyOf, splitSessionKey, withScorecard,
-  type Check, type Goal, type Lesson, type MemberCard, type ProjectRef, type RatedBy, type Rating, type ScorecardScope,
+  type Check, type Correction, type Goal, type Lesson, type MemberCard, type ProjectRef, type RatedBy, type Rating, type ScorecardScope,
 } from './scorecard.js';
 import { projectKey } from '../local-store.js';
 
@@ -31,12 +33,14 @@ export function isDeliveryNote(contextRoot: string, s: Pick<HistorySession, 'sou
   if (!parts) return true;
   let entries;
   try { entries = readThreadRun(contextRoot, s.source, parts.runId); } catch { return false; }
-  if (entries.length === 0) return false;
-  return entries.every((e) => e.kind === 'system') && !entries.some((e) => e.event === 'started');
+  return isDeliveryNoteEntries(entries);
 }
 
+/** D2 restated by W3 C9: a run whose live status is terminal, or that has a first terminal entry in
+ *  its thread (`request`: a reply turn in flight, an agent review pending), never a delivery note. */
 export function isRateableSession(contextRoot: string, s: HistorySession): boolean {
-  return s.kind === 'run' && !!s.status && TERMINAL_RUN_STATUSES.has(s.status) && !isDeliveryNote(contextRoot, s);
+  const ended = (!!s.status && TERMINAL_RUN_STATUSES.has(s.status)) || !!s.request;
+  return s.kind === 'run' && ended && !isDeliveryNote(contextRoot, s);
 }
 
 export interface RunsPage {
@@ -56,17 +60,29 @@ export function rateableRuns(projectRoot: string, member: string, opts: { before
   return { runs: page.sessions.filter((s) => isRateableSession(contextRoot, s)), nextBefore: page.nextBefore };
 }
 
-/** The run of this member whose history key is `sessionKey`, or null (paged, newest first). */
-export function findRun(projectRoot: string, member: string, sessionKey: string, home?: string): { run: HistorySession | null; rateable: boolean } {
+/** The run of this member whose history key is `sessionKey`, or null (paged, newest first). Past
+ *  D2's history, a job the main Super handed it (W3 E9), read from that one run's thread. */
+export function findRun(projectRoot: string, member: string, sessionKey: string, home?: string): { run: HistorySession | null; rateable: boolean; viaSuper?: true } {
   const contextRoot = contextRootOf(projectRoot);
   let before: string | null = null;
   for (;;) {
     const page = listAgentHistory(contextRoot, member, { audience: 'owner', runsOnly: true, before, maxSessions: 50, maxRows: Number.MAX_SAFE_INTEGER, home });
     const hit = page.sessions.find((s) => s.key === sessionKey);
     if (hit) return { run: hit, rateable: isRateableSession(contextRoot, hit) };
-    if (!page.nextBefore) return { run: null, rateable: false };
+    if (!page.nextBefore) break;
     before = page.nextBefore;
   }
+  const job = superJobSession(contextRoot, member, sessionKey, home);
+  if (job) return { run: job, rateable: !!job.request, viaSuper: true };
+  return { run: null, rateable: false };
+}
+
+/** W3 C9: how many of this member's runs ask to be rated right now ("N to rate"): every run whose
+ *  run id falls in the last 4 days, judged by `askState` against the card. No count cap. */
+export function openRequestCount(projectRoot: string, member: string, nowMs: number = Date.now(), home?: string): number {
+  const { card, scope } = readScorecard(projectRoot, member, home);
+  return recentRunFacts(contextRootOf(projectRoot), member, nowMs, 4, home)
+    .filter((r) => askState(r.facts, card.ratings[runKeyFor(scope, r.key)], nowMs) === 'open').length;
 }
 
 /** The newest rateable run that ended at or before `atMs` (no bound: now). */
@@ -95,12 +111,16 @@ export interface RateInput {
   last?: boolean;
   /** null clears the rating. */
   stars: number | null;
-  /** Absent (undefined or null) keeps the run's stored note; '' clears it; text replaces it. A
-   *  re-rate with stars only never erases his note or retires its lesson. */
+  /** Absent (undefined or null) keeps the run's stored note; '' clears it (his own edit only); text
+   *  replaces it. A re-rate with stars only never erases his note or retires its lesson. */
   note?: string | null;
   by: RatedBy;
   /** The owner's words (an agent session must give them). */
   quote?: string;
+  /** W3 E12: the stars are the Super's reading of his words. Agent session, `--quote` and `--run` only. */
+  judged?: boolean;
+  /** Where his rating came from (W3 E5). */
+  via?: 'mac' | 'telegram' | 'super';
   home?: string;
   now?: Date;
   env?: NodeJS.ProcessEnv;
@@ -113,111 +133,226 @@ export interface RateResult {
   rating: Rating | null;
   /** A lesson draft is due for this run (the caller spawns it). */
   draft: boolean;
+  /** The lesson slot the draft is for: absent = the note's, `c:<id>` = a correction's (W3 C17). */
+  slot?: string;
+  /** W3 E12: `--judged` on a run he rated himself kept his stars. */
+  keptOwnerStars?: true;
 }
 
 function cleanNote(note: string | null | undefined): string {
   return typeof note === 'string' ? note.replace(/\r\n/g, '\n').trim().slice(0, SCORECARD_LIMITS.noteChars) : '';
 }
 
-/** Retire the run's live lesson (active or held): a cleared rating or note, or a newer lesson. */
-function retireRunLessons(card: MemberCard, runKey: string): void {
-  for (const l of card.lessons) if (l.run === runKey && (l.status === 'active' || l.status === 'held')) l.status = 'replaced';
+/** Every lesson slot of a run (a cleared rating). */
+export const ALL_SLOTS = null;
+
+/** Retire the run's live lesson (active or held) in one slot (absent: the note's; `c:<id>`: a
+ *  correction's), or in every slot with {@link ALL_SLOTS}: a cleared rating or note, or a newer lesson. */
+export function retireRunLessons(card: MemberCard, runKey: string, slot: string | undefined | typeof ALL_SLOTS): void {
+  for (const l of card.lessons) {
+    if (l.run !== runKey || (slot !== ALL_SLOTS && l.slot !== slot)) continue;
+    if (l.status === 'active' || l.status === 'held') l.status = 'replaced';
+  }
+}
+
+/**
+ * The answer fold (W3 C16): what "he said exactly that" means for a short answer. Lower case, the
+ * hub's voice marker removed, every punctuation mark removed, spaces collapsed. Not `foldNote`,
+ * which keeps punctuation.
+ */
+export function answerFold(text: string): string {
+  return text.normalize('NFKC').toLocaleLowerCase('tr').replace(/🎙️?/gu, ' ').replace(/\p{P}/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+type OwnerTurns = ReturnType<typeof readOwnerTurns>;
+
+/**
+ * The asked window (W3 C16): after the Super asked him about this run, his answer is the first
+ * turn of THIS conversation at or after the ask that covers the quote or says exactly it (the
+ * answer fold), skipping turns that already rated another run. Undefined: no ask is on record
+ * (D16 applies). Null: an ask is on record and no turn of his answers it.
+ */
+function askedWindowTurn(
+  contextRoot: string, sessionKey: string, quote: string, turns: OwnerTurns, keys: readonly string[],
+  used: ReadonlySet<string>,
+): OwnerTurns[number] | null | undefined {
+  const parts = splitSessionKey(sessionKey);
+  if (!parts) return undefined;
+  const anchor = rateAskAnchor(contextRoot, parts.source, parts.runId);
+  if (anchor === null) return undefined;
+  if (keys.length === 0) return null;
+  const want = answerFold(quote);
+  const inWindow = turns
+    .filter((t) => Date.parse(t.at) >= anchor && sameConversation(keys, t.keys) && !used.has(t.turn))
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return inWindow.find((t) => quoteCovers(quote, t.own) || (want !== '' && answerFold(t.own) === want)) ?? null;
 }
 
 export function rateRun(projectRoot: string, member: string, input: RateInput): RateResult {
   const now = input.now ?? new Date();
   const stars = input.stars;
+  const contextRoot = contextRootOf(projectRoot);
   if (stars !== null && (!Number.isInteger(stars) || stars < 1 || stars > 5)) throw new ScorecardRefused('invalid_args', 400, 'Stars are 1 to 5.');
   // The member first: an unknown one is `unknown_member`, never "no run".
   resolveScorecard(projectRoot, member, input.home);
+  const quote = input.quote ? input.quote.replace(/\s+/g, ' ').trim().slice(0, 500) : undefined;
+  if (input.judged) {
+    if (input.by === 'owner') throw new ScorecardRefused('invalid_args', 400, '--judged is the Super\'s reading of his words: only from an agent session.');
+    if (!quote) throw new ScorecardRefused('rate_needs_owner_words', 403, '--judged needs --quote "<his exact words>".');
+    if (input.last || !input.run) throw new ScorecardRefused('invalid_args', 400, '--judged needs the run it grades (--run <key>), never --last.');
+  }
+  let sessionKey = '';
+  if (!input.last) {
+    sessionKey = sessionKeyOf(input.run ?? '');
+    if (!isRunKey(sessionKey)) throw new ScorecardRefused('invalid_args', 400, 'Name the run (--run <source>::<runId>) or use --last.');
+  }
+  // The stored rating, read before the lock: a Super job's snapshot resolves it at any age, and the
+  // asked window skips the turns this card already used. The lock re-checks what it writes.
+  const peek = readScorecard(projectRoot, member, input.home);
+  const peekPrev = sessionKey ? peek.card.ratings[runKeyFor(peek.scope, sessionKey)] : undefined;
   // An agent's rating carries his words, resolved to one of his turns (D16).
   let quoteTurn: string | undefined;
   let quoteAt: number | null = null;
   let quoteOwn = '';
-  const quote = input.quote ? input.quote.replace(/\s+/g, ' ').trim().slice(0, 500) : undefined;
+  let windowed = false;
   if (input.by !== 'owner') {
     if (!quote) throw new ScorecardRefused('rate_needs_owner_words', 403, 'A rating from an agent needs --quote "<his exact words>".');
     const since = new Date(now.getTime() - OWNER_WORDS_MAX_AGE_DAYS * 86_400_000).toISOString();
-    const turns = input.turns ?? readOwnerTurns({ home: input.home, since });
+    const turns = (input.turns ?? readOwnerTurns({ home: input.home, since })).filter((t) => t.at >= since);
     const keys = conversationKeysFromEnv(input.env ?? process.env);
-    const hit = findQuoteTurn(quote, turns.filter((t) => t.at >= since), keys);
-    if (!hit.turn) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Those words are not one of the owner\'s messages: quote what he said.');
-    // His words in THIS conversation, like `learn`'s active gate: a session never rates on words
-    // he typed to another one (a child, or a member that read them somewhere).
-    if (keys.length === 0 || !hit.here) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Those words were said in another conversation: a rating needs his words to you here.');
-    quoteTurn = hit.turn.turn;
-    quoteOwn = hit.turn.own;
-    quoteAt = Date.parse(hit.turn.at);
+    const own = new Set([peekPrev?.quoteTurn, ...(peekPrev?.corrections ?? []).map((c) => c.quoteTurn)].filter((x): x is string => !!x));
+    const used = new Set(peek.card.usedQuoteTurns.filter((t) => !own.has(t)));
+    const asked = sessionKey ? askedWindowTurn(contextRoot, sessionKey, quote, turns, keys, used) : undefined;
+    if (asked === null) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Those words are not his answer to you after you asked about this job: quote what he said.');
+    if (asked) {
+      windowed = true;
+      quoteTurn = asked.turn;
+      quoteOwn = asked.own;
+      quoteAt = Date.parse(asked.at);
+    } else {
+      const hit = findQuoteTurn(quote, turns, keys);
+      if (!hit.turn) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Those words are not one of the owner\'s messages: quote what he said.');
+      // His words in THIS conversation, like `learn`'s active gate: a session never rates on words
+      // he typed to another one (a child, or a member that read them somewhere).
+      if (keys.length === 0 || !hit.here) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Those words were said in another conversation: a rating needs his words to you here.');
+      quoteTurn = hit.turn.turn;
+      quoteOwn = hit.turn.own;
+      quoteAt = Date.parse(hit.turn.at);
+    }
   }
-  let sessionKey: string;
-  let session: HistorySession | null;
+  let session: { title: string; startedAt: string; status: string };
+  let viaSuper = false;
   if (input.last) {
     // With his words, the run he meant ended before he spoke (a run that ends in between is not his).
-    session = lastRateableRun(projectRoot, member, quoteAt, input.home);
-    if (!session) throw new ScorecardRefused('unknown_run', 404, 'This member has no finished run to rate.');
-    sessionKey = session.key;
+    const last = lastRateableRun(projectRoot, member, quoteAt, input.home);
+    if (!last) throw new ScorecardRefused('unknown_run', 404, 'This member has no finished run to rate.');
+    sessionKey = last.key;
+    session = { title: last.title, startedAt: last.startedAt, status: snapshotStatus(last) };
+  } else if (peekPrev?.viaSuper) {
+    // A rated Super job: its snapshot, whatever the record or the thread still holds (E9).
+    session = { title: peekPrev.title, startedAt: peekPrev.runAt, status: peekPrev.status };
+    viaSuper = true;
   } else {
-    sessionKey = sessionKeyOf(input.run ?? '');
-    if (!isRunKey(sessionKey)) throw new ScorecardRefused('invalid_args', 400, 'Name the run (--run <source>::<runId>) or use --last.');
     const found = findRun(projectRoot, member, sessionKey, input.home);
     if (!found.run) throw new ScorecardRefused('unknown_run', 404, `No run ${sessionKey} of this member here.`);
     if (!found.rateable) throw new ScorecardRefused('run_not_rateable', 409, 'Only a finished run can be rated.');
-    session = found.run;
+    session = { title: found.run.title, startedAt: found.run.startedAt, status: snapshotStatus(found.run) };
+    viaSuper = !!found.viaSuper;
   }
-  const given = input.note === undefined || input.note === null ? null : cleanNote(input.note);
+  let given = input.note === undefined || input.note === null ? null : cleanNote(input.note);
+  // An agent never erases his words (E13): an empty note from it keeps the stored one.
+  if (input.by !== 'owner' && given === '') given = null;
   // A note an agent passes becomes a lesson in the member's prompt "as his words": it must BE his
   // words, from the turn the quote resolved to.
-  if (input.by !== 'owner' && given && !quoteCovers(given, quoteOwn)) {
-    throw new ScorecardRefused('rate_needs_owner_words', 403, 'The note must be his own words from that message: pass them as he said them, or rate without a note.');
+  if (input.by !== 'owner' && given) {
+    const covered = windowed ? answerFold(quoteOwn).includes(answerFold(given)) && answerFold(given) !== '' : quoteCovers(given, quoteOwn);
+    if (!covered) throw new ScorecardRefused('rate_needs_owner_words', 403, 'The note must be his own words from that message: pass them as he said them, or rate without a note.');
   }
   const project = projectRefOf(projectRoot, input.home);
   return withScorecard(projectRoot, member, (card, scope) => {
     const runKey = runKeyFor(scope, sessionKey);
     const prev = card.ratings[runKey];
-    const note = given ?? prev?.note ?? '';
-    if (quoteTurn && card.usedQuoteTurns.includes(quoteTurn) && prev?.quoteTurn !== quoteTurn) {
+    const sameCorrection = quoteTurn ? prev?.corrections?.find((c) => c.quoteTurn === quoteTurn) : undefined;
+    if (quoteTurn && card.usedQuoteTurns.includes(quoteTurn) && prev?.quoteTurn !== quoteTurn && !sameCorrection) {
       throw new ScorecardRefused('quote_used', 409, 'Those words already rated another run: one quote rates one run. Ask him for this one.');
     }
     if (quoteTurn && !card.usedQuoteTurns.includes(quoteTurn)) card.usedQuoteTurns.push(quoteTurn);
     if (stars === null) {
       delete card.ratings[runKey];
-      retireRunLessons(card, runKey);
+      retireRunLessons(card, runKey, ALL_SLOTS);
       return { runKey, rating: null, draft: false };
     }
-    const fold = note ? foldNote(note) : '';
     const at = now.toISOString();
-    const rating: Rating = {
+    // E13: an agent's words on a run that already holds his note become a correction beside it.
+    const correcting = input.by !== 'owner' && !!given && !!prev?.note && prev.quoteTurn !== quoteTurn && foldNote(given) !== prev.noteFold;
+    let correction: Correction | undefined;
+    if (correcting && !sameCorrection) {
+      const fold = foldNote(given!);
+      if (!prev!.corrections?.some((c) => c.noteFold === fold)) {
+        correction = { id: newId('co'), note: given!, noteFold: fold, quoteTurn: quoteTurn!, at };
+      }
+    }
+    const note = correcting ? prev!.note! : given ?? prev?.note ?? '';
+    const fold = note ? foldNote(note) : '';
+    // E12: a judged rating never replaces his own stars.
+    const keepOwner = !!input.judged && !!prev && !prev.judged;
+    const corrections = [...(prev?.corrections ?? []), ...(correction ? [correction] : [])];
+    const keepQuote = given === null && !quote;
+    const rating: Rating = keepOwner ? { ...prev! } : {
       stars,
-      ...(note ? { note, noteFold: fold } : {}),
       firstAt: prev?.firstAt ?? at,
       at,
-      by: input.by,
-      ...(quote ? { quote } : {}),
-      ...(quoteTurn ? { quoteTurn } : {}),
-      title: session!.title,
-      runAt: session!.startedAt,
-      status: session!.status ?? 'ok',
+      by: input.judged ? 'super' : input.by,
+      ...(quote ? { quote } : keepQuote && prev?.quote ? { quote: prev.quote } : {}),
+      ...(quoteTurn ? { quoteTurn } : keepQuote && prev?.quoteTurn ? { quoteTurn: prev.quoteTurn } : {}),
+      title: session.title,
+      runAt: session.startedAt,
+      status: session.status,
       project,
+      via: input.via ?? (input.by === 'owner' ? 'mac' : 'super'),
+      ...(input.judged ? { judged: true as const } : {}),
+      ...(viaSuper || prev?.viaSuper ? { viaSuper: true as const } : {}),
     };
+    delete rating.note; delete rating.noteFold; delete rating.corrections;
+    if (!keepOwner) delete rating.draft;
+    if (note) { rating.note = note; rating.noteFold = fold; }
+    if (corrections.length) rating.corrections = corrections;
     let draft = false;
-    if (!note) {
-      retireRunLessons(card, runKey);
-    } else if (prev?.noteFold === fold && prev.draft) {
-      // The same note: its draft (done, running or failed) carries over.
-      rating.draft = prev.draft;
-    } else {
-      // A new note: the old lesson stays until the new one commits (D5). An undone lesson of the
-      // same words is never drafted again.
-      const undone = card.lessons.some((l) => l.run === runKey && l.noteFold === fold && l.status === 'undone');
+    let slot: string | undefined;
+    if (correction) {
+      // A correction's own lesson; the note's stays as it is. Words he undid are never drafted again.
+      const undone = card.lessons.some((l) => l.run === runKey && l.noteFold === correction!.noteFold && l.status === 'undone');
       if (!undone) {
-        // `running` with no pid yet: "starting" for a few seconds, until the drafter marks itself.
-        rating.draft = { state: 'running', attempts: 0, at, noteFold: fold };
+        correction.draft = { state: 'running', attempts: 0, at, noteFold: correction.noteFold };
         draft = true;
+        slot = `c:${correction.id}`;
+      }
+    } else if (!correcting) {
+      if (!note) {
+        retireRunLessons(card, runKey, undefined);
+      } else if (prev?.noteFold === fold && prev.draft) {
+        // The same note: its draft (done, running or failed) carries over.
+        rating.draft = prev.draft;
+      } else {
+        // A new note: the old lesson stays until the new one commits (D5). An undone lesson of the
+        // same words is never drafted again.
+        const undone = card.lessons.some((l) => l.run === runKey && l.slot === undefined && l.noteFold === fold && l.status === 'undone');
+        if (!undone) {
+          // `running` with no pid yet: "starting" for a few seconds, until the drafter marks itself.
+          rating.draft = { state: 'running', attempts: 0, at, noteFold: fold };
+          draft = true;
+        }
       }
     }
     card.ratings[runKey] = rating;
-    return { runKey, rating, draft };
+    return { runKey, rating, draft, ...(slot ? { slot } : {}), ...(keepOwner ? { keptOwnerStars: true as const } : {}) };
   }, { home: input.home })!;
+}
+
+/** A rating's status snapshot: the run's first terminal entry, never a live `waiting` or `running`. */
+function snapshotStatus(s: HistorySession): string {
+  if (s.request) return s.request.status;
+  return s.status && TERMINAL_RUN_STATUSES.has(s.status) ? s.status : 'ok';
 }
 
 // ─── Criteria, verdicts, lessons, goal ────────────────────────────────────────────
@@ -376,14 +511,59 @@ export function ownerBlockChars(card: MemberCard): number {
 // ─── The lesson commit (shared by the drafter) ────────────────────────────────────
 
 /** D5 + D7 in one: the run's previous lesson replaced, the new one active or held. */
-export function commitLesson(card: MemberCard, runKey: string, text: string, noteFold: string, now: Date): Lesson {
-  retireRunLessons(card, runKey);
+export function commitLesson(card: MemberCard, runKey: string, text: string, noteFold: string, now: Date, slot?: string): Lesson {
+  retireRunLessons(card, runKey, slot);
   const flags = amendmentRisks('', text);
   const lesson: Lesson = {
     id: newId('le'), text, run: runKey, noteFold, at: now.toISOString(),
-    status: flags.length ? 'held' : 'active', ...(flags.length ? { flags } : {}),
+    status: flags.length ? 'held' : 'active', ...(flags.length ? { flags } : {}), ...(slot ? { slot } : {}),
   };
   card.lessons.push(lesson);
   return lesson;
 }
 
+
+// ─── The Telegram request (W3 C10) ─────────────────────────────────────────────
+
+/**
+ * Give this run's result message its stars: one `TgAsk` per run, with the run's own `endedAt`, so
+ * every Telegram path reads the Mac's clock. Null (the message goes without stars, as before) when
+ * the run asks nothing (E1), already has a request or a rating, its member is gone or not this
+ * Mac's, or the card cannot be written. Never throws.
+ */
+export function attachTelegramAsk(
+  projectRoot: string, member: string, sessionKey: string, to: { botId: number; chatId: number },
+  opts: { home?: string; now?: Date } = {},
+): { askId: string; runKey: string; endedAt: string } | null {
+  try {
+    const parts = splitSessionKey(sessionKey);
+    if (!parts) return null;
+    const facts = requestFacts(contextRootOf(projectRoot), parts.source, parts.runId, opts.home);
+    if (!facts || !facts.eligible) return null;
+    const at = (opts.now ?? new Date()).toISOString();
+    return withScorecard(projectRoot, member, (card, scope) => {
+      const runKey = runKeyFor(scope, sessionKey);
+      if (card.telegramAsks[runKey] || card.ratings[runKey]) return NO_WRITE;
+      const askId = randomBytes(8).toString('hex');
+      card.telegramAsks[runKey] = { askId, botId: String(to.botId), chatId: String(to.chatId), endedAt: facts.endedAt, notePromptIds: [], at };
+      return { askId, runKey, endedAt: facts.endedAt };
+    }, { home: opts.home }) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The sent message's id on its request; returns the run's stars when he rated it meanwhile (the
+ *  sender redraws them), else null. Never throws. */
+export function setTelegramMessage(projectRoot: string, member: string, runKey: string, messageId: number, home?: string): number | null {
+  try {
+    return withScorecard(projectRoot, member, (card) => {
+      const ask = card.telegramAsks[runKey];
+      if (!ask) return NO_WRITE;
+      ask.messageId = messageId;
+      return card.ratings[runKey]?.stars ?? null;
+    }, { home }) ?? null;
+  } catch {
+    return null;
+  }
+}

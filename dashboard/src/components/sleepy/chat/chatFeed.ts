@@ -50,6 +50,8 @@ export interface FeedMeta {
   resumable?: boolean;
   /** The run started on another machine. */
   elsewhere?: boolean;
+  /** W3 C14: the run's rating request facts, for the row under it (`askState`). */
+  request?: { eligible: boolean; endedAt: string };
   readOnly: true;
 }
 

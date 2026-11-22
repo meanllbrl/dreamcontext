@@ -289,7 +289,7 @@ function journalMsgOk(v: unknown): boolean {
 
 function journalOf(v: unknown): JournalEntry[] {
   if (!Array.isArray(v)) return [];
-  const kinds = new Set(['text', 'media', 'callback', 'command']);
+  const kinds = new Set(['text', 'media', 'callback', 'command', 'rate-note']);
   const out: JournalEntry[] = [];
   for (const e of v) {
     if (!e || typeof e !== 'object') continue;
@@ -303,6 +303,7 @@ function journalOf(v: unknown): JournalEntry[] {
       ...(typeof j.ref === 'string' && /^[0-9a-z]{6}$/.test(j.ref) ? { ref: j.ref } : {}),
       ...(typeof j.chatRegistryId === 'string' && j.chatRegistryId.length <= 200 ? { chatRegistryId: j.chatRegistryId } : {}),
       ...(journalMsgOk(j.msg) ? { msg: j.msg as Record<string, unknown> } : {}),
+      ...(j.kind === 'rate-note' && typeof j.askId === 'string' && /^[0-9a-f]{16}$/.test(j.askId) ? { askId: j.askId } : {}),
     });
   }
   return out.slice(-POLL_RING_SIZE);

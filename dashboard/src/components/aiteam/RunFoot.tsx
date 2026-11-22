@@ -26,7 +26,7 @@ export function RunFoot({ meta, onOpenFile, member }: {
   return (
     <div className="run-foot" data-run-foot={meta.sessionKey}>
       {doc && onOpenFile && <RunDocumentTile doc={doc} onOpenFile={onOpenFile} />}
-      {stars && member && <RunStars member={member} sessionKey={meta.sessionKey} />}
+      {stars && member && <RunStars member={member} sessionKey={meta.sessionKey} request={meta.request} />}
     </div>
   );
 }

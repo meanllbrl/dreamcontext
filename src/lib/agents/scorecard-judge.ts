@@ -11,7 +11,7 @@ import { JUDGE_MODEL, JUDGE_TIMEOUT_MS, UNUSABLE_TRIES, runJudge, type JudgeCall
 import { commitLesson } from './scorecard-ops.js';
 import {
   NO_WRITE, SCORECARD_LIMITS, ScorecardRefused, activeCriteria, criteriaHash, isLiveRunning, processStart, runKeyFor,
-  sessionKeyOf, splitSessionKey, withScorecard, type Check, type Verdict,
+  sessionKeyOf, splitSessionKey, withScorecard, type Check, type Rating, type Verdict,
 } from './scorecard.js';
 
 /**
@@ -248,6 +248,20 @@ export interface ModelWorkOpts {
   /** The pid that marks the work (tests). */
   pid?: number;
   startOf?: (pid: number) => string | null;
+  /** The lesson slot a draft is for: absent = the rating's note, `c:<id>` = a correction (W3 C17). */
+  slot?: string;
+}
+
+/** The note a slot names on a rating (its own text, fold and draft state), or null. */
+function slotNote(r: Rating | undefined, slot: string | undefined): { note: string; noteFold: string; draft?: Rating['draft']; set: (d: NonNullable<Rating['draft']>) => void } | null {
+  if (!r) return null;
+  if (slot === undefined) {
+    if (!r.note || !r.noteFold) return null;
+    return { note: r.note, noteFold: r.noteFold, draft: r.draft, set: (d) => { r.draft = d; } };
+  }
+  const c = slot.startsWith('c:') ? r.corrections?.find((x) => x.id === slot.slice(2)) : undefined;
+  if (!c) return null;
+  return { note: c.note, noteFold: c.noteFold, draft: c.draft, set: (d) => { c.draft = d; } };
 }
 
 export type CheckOutcome = 'done' | 'no_text' | 'failed' | 'no_criteria' | 'moved';
@@ -318,7 +332,8 @@ export async function checkRun(projectRoot: string, member: string, sessionKeyIn
 
 export type DraftOutcome = 'lesson' | 'nothing' | 'failed' | 'moved' | 'no_note';
 
-/** Draft the lesson of one rated run's note. Commits only while the rating still has that note. */
+/** Draft the lesson of one rated run's note (or of one correction, `opts.slot`). Commits only while
+ *  the rating still has that note in that slot. */
 export async function draftLesson(projectRoot: string, member: string, sessionKeyIn: string, opts: ModelWorkOpts = {}): Promise<DraftOutcome> {
   const now = opts.now ?? (() => new Date());
   const pid = opts.pid ?? process.pid;
@@ -329,20 +344,22 @@ export async function draftLesson(projectRoot: string, member: string, sessionKe
   let note = '';
   let stars = 0;
   let title = '';
+  const slot = opts.slot;
   const marked = withScorecard(projectRoot, member, (card, scope) => {
     runKey = runKeyFor(scope, sessionKey);
     const r = card.ratings[runKey];
-    if (!r?.note || !r.noteFold) return NO_WRITE;
-    const d = r.draft;
+    const sn = slotNote(r, slot);
+    if (!r || !sn) return NO_WRITE;
+    const d = sn.draft;
     // A pid-less `running` is the rating's own "starting" mark: this process is the one it waits for.
     if (d && typeof d.pid === 'number' && isLiveRunning(d, now().getTime(), opts.startOf)) throw new ScorecardRefused('check_running', 409, 'This note\'s lesson is being written.');
     if (opts.firstOnly && d && d.attempts > 0) throw new ScorecardRefused('rate_needs_owner_words', 403, 'Writing the lesson again is started from the scorecard on the Mac.');
-    if (card.lessons.some((l) => l.run === runKey && l.noteFold === r.noteFold && l.status === 'undone')) return NO_WRITE;
-    fold = r.noteFold;
-    note = r.note;
+    if (card.lessons.some((l) => l.run === runKey && l.slot === slot && l.noteFold === sn.noteFold && l.status === 'undone')) return NO_WRITE;
+    fold = sn.noteFold;
+    note = sn.note;
     stars = r.stars;
     title = r.title;
-    r.draft = { state: 'running', attempts: d?.noteFold === fold ? d.attempts : 0, pid, ...(pidStart ? { pidStart } : {}), at: now().toISOString(), noteFold: fold };
+    sn.set({ state: 'running', attempts: d?.noteFold === fold ? d.attempts : 0, pid, ...(pidStart ? { pidStart } : {}), at: now().toISOString(), noteFold: fold });
     return true;
   }, { home: opts.home });
   if (!marked) return 'no_note';
@@ -356,18 +373,18 @@ export async function draftLesson(projectRoot: string, member: string, sessionKe
   let outcome: DraftOutcome = 'moved';
   try {
     withScorecard(projectRoot, member, (card) => {
-      const rating = card.ratings[runKey];
-      // His note changed (or the rating went) meanwhile: this draft writes nothing at all.
-      if (!rating || rating.noteFold !== fold) return NO_WRITE;
-      const attempts = (rating.draft?.noteFold === fold ? rating.draft.attempts : 0) + 1;
+      const sn = slotNote(card.ratings[runKey], slot);
+      // His note changed (or the rating, or the correction, went) meanwhile: this draft writes nothing.
+      if (!sn || sn.noteFold !== fold) return NO_WRITE;
+      const attempts = (sn.draft?.noteFold === fold ? sn.draft.attempts : 0) + 1;
       if (!r.ok) {
-        rating.draft = { state: 'failed', attempts, at: now().toISOString(), noteFold: fold, lastError: r.error };
+        sn.set({ state: 'failed', attempts, at: now().toISOString(), noteFold: fold, lastError: r.error });
         outcome = 'failed';
         return true;
       }
-      rating.draft = { state: 'done', attempts, at: now().toISOString(), noteFold: fold };
+      sn.set({ state: 'done', attempts, at: now().toISOString(), noteFold: fold });
       if (r.value) {
-        commitLesson(card, runKey, r.value, fold, now());
+        commitLesson(card, runKey, r.value, fold, now(), slot);
         outcome = 'lesson';
       } else {
         outcome = 'nothing';
@@ -394,7 +411,7 @@ export function resolveCliEntry(env: NodeJS.ProcessEnv = process.env): string | 
   return process.argv[1] ?? null;
 }
 
-export type SpawnScorecardFn = (job: { kind: 'check' | 'draft'; projectRoot: string; member: string; run: string }) => void;
+export type SpawnScorecardFn = (job: { kind: 'check' | 'draft'; projectRoot: string; member: string; run: string; slot?: string }) => void;
 
 /**
  * Start `agents scorecard check|draft` detached. It reads the run from disk (`readRunText`), so a
@@ -405,7 +422,8 @@ export const spawnScorecardJob: SpawnScorecardFn = (job) => {
   try {
     const cli = resolveCliEntry();
     if (!cli) return;
-    const child = spawn(process.execPath, [cli, 'agents', 'scorecard', job.kind, job.member, '--run', job.run], {
+    const args = [cli, 'agents', 'scorecard', job.kind, job.member, '--run', job.run, ...(job.kind === 'draft' && job.slot ? ['--slot', job.slot] : [])];
+    const child = spawn(process.execPath, args, {
       detached: true, stdio: ['ignore', 'ignore', 'ignore'], cwd: job.projectRoot, env: { ...process.env },
     });
     child.on('error', (e) => { try { console.error(`[scorecard] ${job.kind} spawn failed: ${e.message}`); } catch { /* quiet */ } });

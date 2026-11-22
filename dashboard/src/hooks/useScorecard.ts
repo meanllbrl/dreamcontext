@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useApi } from '../context/VaultContext';
 import { phoneAllows } from '../lib/phoneSurface';
 import type { ScorecardData } from '../lib/scorecardModel';
@@ -13,7 +13,13 @@ const key = (slug: string) => ['scorecard', slug] as const;
 const RUNNING_POLL_MS = 4000;
 
 function anyRunning(d: ScorecardData | undefined): boolean {
-  return !!d?.runs.some((r) => r.check?.state === 'running' || r.rating?.draft?.state === 'running');
+  return !!d?.runs.some((r) => r.check?.state === 'running' || r.rating?.draft?.state === 'running' || !!r.rating?.corrections?.some((c) => c.draft?.state === 'running'));
+}
+
+/** Read the card again (the member's chat feed polled or moved): a Telegram tap shows on the Mac
+ *  row without a reload, and a row past its window drops on that poll, never on a timer. */
+export function refreshScorecard(qc: QueryClient, slug: string): void {
+  void qc.invalidateQueries({ queryKey: key(slug) });
 }
 
 export function useScorecard(slug: string | null) {
@@ -38,7 +44,7 @@ export type ScorecardWrite =
   | { kind: 'goal'; insight: string; target: number; baseline?: number | null }
   | { kind: 'goalClear' }
   | { kind: 'check'; run: string }
-  | { kind: 'draft'; run: string }
+  | { kind: 'draft'; run: string; slot?: string }
   | { kind: 'fresh' };
 
 export function useScorecardWrite(slug: string) {
@@ -56,7 +62,7 @@ export function useScorecardWrite(slug: string) {
         case 'goal': return api.post(`${base}/goal`, { insight: w.insight, target: w.target, ...(w.baseline !== undefined && w.baseline !== null ? { baseline: w.baseline } : {}) });
         case 'goalClear': return api.post(`${base}/goal`, { clear: true });
         case 'check': return api.post(`${base}/check`, { run: w.run });
-        case 'draft': return api.post(`${base}/draft`, { run: w.run });
+        case 'draft': return api.post(`${base}/draft`, { run: w.run, ...(w.slot ? { slot: w.slot } : {}) });
         case 'fresh': return api.post(`${base}/fresh`, {});
       }
     },

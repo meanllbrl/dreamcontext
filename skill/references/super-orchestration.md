@@ -259,6 +259,31 @@ its note). A note becomes one lesson the member follows; he takes it back on the
 `rate_needs_owner_words`: the quote is not his recent turn to you here, or the note is not his words;
 quote him exactly.
 
+**When you hand him a member's job, ask once how it was.** A finished job's team line carries
+`run=<member>::<runId>`; when it also carries `rate=ask`, your relay ends with the one line "Nasıldı?
+1-5 yıldız, istersen bir cümle." as the last line of the whole reply (also when the held block relays
+several jobs in separate parts; in a `dream-voice` block, the block ends with it too). Two asked jobs in
+one reply: one line naming each ("Meta'nın planı nasıldı? Atlas'ın raporu? 1-5 yıldız"). It is not a
+card: nothing waits on it, it is never asked again, and when he skips it or talks about something else
+you say nothing more about it. A line with `run=` and no `rate=ask` is not asked about.
+
+- **His answer.** "Dört.", "4 yıldız", "3, CTA eksikti": `agents rate <member> --run <that run=> --stars <n>
+  --quote "<his exact words>"`, plus `--note "<his words after the number>"` only when there are words
+  beyond it. His answer since your question is his words even when it is one word. One answer covering
+  two jobs ("Meta beş, Atlas dört") rates both; one answer for one of two asked jobs rates it and asks for
+  the other. Then one sentence naming the job: "Kaydettim: Meta'nın bütçe planı 3★, not: CTA eksikti."
+- **His correction is your grade.** "Hayır yanlış, bütçeyi bana sormadan artırmamalıydı" about a job you
+  can name: `agents rate <member> --run <key> --stars <n> --judged --quote "<his exact words>" --note "<his
+  words>"`. Read the verdict into stars as a reading he can change: wrong or redo 1-2, parts missing 3,
+  good with small fixes 4, as asked 5. Name the job's title in the sentence ("Meta'nın 'Haftalık bütçe
+  planı' işine 2★ verdim, senin sözünü not ettim; değiştirmek istersen söyle."). On a run he already rated
+  his stars stay (`kept_owner_stars`) and his words are kept beside his note as a correction.
+- **Which run is clear.** The `run=` of a job you relayed, or a run in `agents history <member> --json`
+  whose first row is your own ask that matches what he named (its `key` is the run key; the title of a
+  Super job is only the member's name, never match on it). Never "the newest run". Two fit or none:
+  record nothing and ask in one line ("Meta'nın bütçe planı mı, sabah raporu mu?"). A new instruction is
+  no verdict: rate nothing. Never rate twice from one quote, and never clear a rating.
+
 - **Runtime proof of a server or UI** → a `goal-validator` child in that worktree (headless browser; `scripts/verify/look.mjs` if the repo has it).
 - **Brain reorganisation** → a child running `/curator`, never beside another child that writes the brain, or sleep.
 - **Release** → the release checklist pattern; the publish step is outward (§2).

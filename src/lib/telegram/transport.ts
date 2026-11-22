@@ -219,6 +219,10 @@ export class TelegramTransport {
   sendChatAction(chatId: number, action: 'typing' | 'upload_photo' | 'upload_document' | 'record_voice' = 'typing'): Promise<unknown> {
     return this.call('sendChatAction', { chat_id: chatId, action });
   }
+  /** A message's buttons replaced; `null` removes them. */
+  editMessageReplyMarkup(chatId: number, messageId: number, keyboard: unknown[][] | null): Promise<unknown> {
+    return this.call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}) });
+  }
   answerCallbackQuery(id: string, text?: string): Promise<unknown> {
     return this.call('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) });
   }

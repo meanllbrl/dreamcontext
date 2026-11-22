@@ -125,6 +125,7 @@ function metaOf(s: FeedSession): FeedMeta {
     ...(s.claudeId ? { claudeId: s.claudeId } : {}),
     ...(s.resumable ? { resumable: true } : {}),
     ...(s.elsewhere ? { elsewhere: true } : {}),
+    ...(s.request ? { request: { eligible: s.request.eligible, endedAt: s.request.endedAt } } : {}),
     ...(s.missing ? { missing: true } : {}),
     ...(s.truncated ? { truncated: true } : {}),
     readOnly: true,

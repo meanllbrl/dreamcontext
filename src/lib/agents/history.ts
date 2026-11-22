@@ -96,6 +96,8 @@ export interface RequestFacts {
   eligible: boolean;
   /** The first terminal entry's time. */
   endedAt: string;
+  /** The status that first terminal entry maps to (a rating's snapshot, never a live `running`). */
+  status: NonNullable<HistorySession['status']>;
 }
 
 export interface HistoryPage {
@@ -283,7 +285,7 @@ function requestFactsOf(
     && !writtenElsewhere(end, fileOf, home)
     && isMemberSource(contextRoot, source)
     && !isSuperJob(source, run);
-  return { eligible, endedAt: end.at };
+  return { eligible, endedAt: end.at, status: TERMINAL[end.event!] ?? 'ok' };
 }
 
 /** One run's request facts, read from its own thread (from a day before the run id's day). */
@@ -292,6 +294,37 @@ export function requestFacts(contextRoot: string, source: string, runId: string,
   const run = entries.filter((e) => e.runId === runId);
   if (run.length === 0) return null;
   return requestFactsOf(contextRoot, source, run, fileOf, home, superJobReader(contextRoot));
+}
+
+/**
+ * A job the main Super handed this member (W3 E9, C16), read from its own run: the Super's ask
+ * opened it (`superJobReader`) and its first terminal entry is the raw `ok`. Its title is the ask's
+ * first line. Null for anything else (a failed Super job is not one: D2 rates it from history).
+ */
+export function superJobSession(contextRoot: string, member: string, sessionKey: string, home: string = homedir()): HistorySession | null {
+  const at = sessionKey.indexOf('::');
+  if (at <= 0) return null;
+  const source = sessionKey.slice(0, at);
+  const runId = sessionKey.slice(at + 2);
+  if (source !== member) return null;
+  const { entries, fileOf } = readSource(contextRoot, source, runReadFromDay(runId) ?? undefined);
+  const run = entries.filter((e) => e.runId === runId);
+  if (run.length === 0) return null;
+  const isSuperJob = superJobReader(contextRoot);
+  if (!isSuperJob(source, run)) return null;
+  const end = terminalOf(run);
+  // Still going: found, not yet rateable (`run_not_rateable`).
+  if (end && end.event !== 'ok') return null;
+  const ask = run.find((e) => e.kind === 'user');
+  const title = (ask?.text ?? '').split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 200) || source;
+  const request = requestFactsOf(contextRoot, source, run, fileOf, home, isSuperJob);
+  return {
+    key: sessionKey, kind: 'run', source, title,
+    startedAt: run[0].at, lastAt: run[run.length - 1].at, status: end ? 'ok' : 'running',
+    durationMs: threadDuration(run), hasDocument: false, newestId: run[run.length - 1].id, unread: false,
+    ...(request ? { request } : {}),
+    rows: [],
+  };
 }
 
 /** Every run of this member whose run id (its fire time) falls in the last `days`, with its facts:

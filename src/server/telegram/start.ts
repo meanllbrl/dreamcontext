@@ -8,6 +8,7 @@ import { wireTelegramAsks } from './asks.js';
 import { wireTelegramW5 } from './w5.js';
 import { wireRunCards } from './runs.js';
 import { wireManager } from './manager.js';
+import { wireRating } from './rate.js';
 import { handsfreeAdapter } from './handsfree.js';
 import { macSession } from '../routes/handsfree-mac.js';
 import { installDispatcher } from '../../lib/automations/launchd.js';
@@ -45,6 +46,8 @@ export async function startTelegramHub(extra: Partial<HubDeps> = {}): Promise<Te
     streams: (ab) => handsfree.streamsTo(ab.scope, ab.target),
   });
   wireManager(hub);
+  // A run's stars and his note (W3): before start, so the journal's notes replay at activation.
+  wireRating(hub);
   handsfree.wire(hub);
   await hub.start();
   return hub;

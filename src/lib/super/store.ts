@@ -1,3 +1,4 @@
+import { isRunKey } from '../agents/run-key.js';
 import { promises as fsp } from 'node:fs';
 import { isConditionData } from '../automations/condition.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -487,6 +488,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
         ...(typeof q.posts.upto === 'string' && ENTRY_ID_RE.test(q.posts.upto) ? { upto: q.posts.upto } : {}),
       } } : {}),
       ...(team && q.partial === true ? { partial: true as const } : {}),
+      ...(team && q.kind === 'done' && q.partial !== true && isRunKey(q.rateRun) && q.rateRun.length <= 200 ? { rateRun: q.rateRun } : {}),
       ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
       ...(q.kind === 'question' && !team && q.superAsked === true ? { superAsked: true as const } : {}),
       ...((isAsk || isMirror) && q.ownerTalk === true ? { ownerTalk: true as const } : {}),
@@ -654,6 +656,7 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(j.concluded === 'gone' || j.concluded === 'lost' ? { concluded: j.concluded } : {}),
       ...(typeof j.toldPost === 'string' && ENTRY_ID_RE.test(j.toldPost) ? { toldPost: j.toldPost } : {}),
       ...(finite(j.toldEndAt) !== undefined ? { toldEndAt: finite(j.toldEndAt) } : {}),
+      ...(j.rateAsked === true ? { rateAsked: true as const } : {}),
       ...(typeof j.followUpOf === 'string' && TEAM_JOB_ID_RE.test(j.followUpOf) ? { followUpOf: j.followUpOf } : {}),
       ...(j.by === 'super' && typeof j.followUpOf === 'string' ? { by: 'super' as const } : {}),
       ...(typeof j.request === 'string' && QUEUE_ID_RE.test(j.request) ? { request: j.request } : {}),

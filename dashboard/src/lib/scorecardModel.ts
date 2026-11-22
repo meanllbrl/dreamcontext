@@ -11,17 +11,35 @@ export interface ScoreCheck { state: ModelStateName; attempts: number; lastError
 export interface ScoreLesson {
   id: string; text: string; run: string; noteFold: string; at: string;
   status: 'active' | 'held' | 'undone' | 'replaced'; flags?: string[];
+  /** Absent: the rating's note; `c:<id>`: a correction's (W3 C17). */
+  slot?: string;
+}
+/** W3 E13: his words an agent recorded beside his own note. */
+export interface ScoreCorrection {
+  id: string; note: string; quoteTurn: string; at: string;
+  draft?: { state: ModelStateName; attempts: number; lastError?: string } | null;
 }
 export interface ScoreRating {
   stars: number; note?: string; firstAt: string; at: string; by: 'owner' | 'super' | 'session';
   quote?: string; title: string; runAt: string; status: string;
   project: { key: string; vault: string; name: string };
   draft?: { state: ModelStateName; attempts: number; lastError?: string } | null;
+  /** W3 E5: where his rating came from; only Telegram is shown. */
+  via?: 'mac' | 'telegram' | 'super';
+  /** W3 E12: the Super's reading of his words, never his own number. */
+  judged?: true;
+  /** W3 E9: a job the main Super handed the member. */
+  viaSuper?: true;
+  corrections?: ScoreCorrection[];
 }
 export interface ScoreCriterion { id: string; text: string; at: string; removedAt?: string }
 export interface ScoreRun {
   key: string; runKey: string; title: string; startedAt: string; lastAt: string; status: string | null;
   rating: ScoreRating | null; check: ScoreCheck | null; lessons: ScoreLesson[];
+  /** W3 E2: the run's request state now (`open` draws the chat row; past its window `none`). */
+  ask?: AskState;
+  /** W3 E9: a rated job of the main Super, from its snapshot. */
+  viaSuper?: true;
 }
 export interface ScorePoint { t: string; v: number }
 export interface ScoreGoal {
@@ -40,6 +58,30 @@ export interface ScorecardData {
   candidates: Array<{ slug: string; title: string; latest: number; unit: string | null }>;
   phone: boolean;
   damaged?: string;
+  /** W3 C9: runs that ask to be rated right now ("N to rate"), counted on the server. */
+  toRate?: number;
+  /** The card's run-key prefix: '' for a project member, `<projectKey>/` for a global one. */
+  prefix?: string;
+}
+
+// ─── Rating requests (W3 E2): MIRROR of src/lib/agents/scorecard.ts, held equal by a drift test ──
+
+/** A run asks to be rated for 72 hours from its end. */
+export const RATE_ASK_TTL_MS = 72 * 3_600_000;
+
+export type AskState = 'open' | 'rated' | 'none';
+
+/** THE rule every request surface reads (MIRROR of `askState` in src/lib/agents/scorecard.ts). */
+export function askState(facts: { eligible: boolean; endedAt: string } | null | undefined, rating: unknown, nowMs: number): AskState {
+  if (rating) return 'rated';
+  if (!facts || !facts.eligible) return 'none';
+  const end = Date.parse(facts.endedAt);
+  return Number.isFinite(end) && nowMs < end + RATE_ASK_TTL_MS ? 'open' : 'none';
+}
+
+/** The card's key for a chat run (`<source>::<runId>`): a global member's carry its project prefix. */
+export function ratingKeyOf(sessionKey: string, prefix: string | undefined): string {
+  return `${prefix ?? ''}${sessionKey}`;
 }
 
 /** Bars: 2 stars or less low (danger), 3 mid (muted), 4 or more high (accent). */

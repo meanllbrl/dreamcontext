@@ -223,11 +223,7 @@ export function scopeFor(projectRoot: string, member: string, kind: 'project' | 
   return { kind, member, projectRoot, dir, file: join(dir, PROJECT_FILE), prefix: '', home };
 }
 
-const RUN_KEY_RE = /^([0-9a-f]{16}\/)?[a-z0-9-]+::[0-9A-Za-z:.\-]+$/;
-
-export function isRunKey(key: string): boolean {
-  return typeof key === 'string' && key.length <= 300 && RUN_KEY_RE.test(key);
-}
+export { isRunKey } from './run-key.js';
 
 /** The card's key for a history session key (`<source>::<runId>`). */
 export function runKeyFor(scope: Pick<ScorecardScope, 'prefix'>, sessionKey: string): string {
@@ -330,6 +326,7 @@ export function normalizeCard(raw: unknown): MemberCard {
     telegramAsks: cleanAsks(obj<unknown>(c.telegramAsks)),
   };
   for (const r of Object.values(card.ratings)) cleanRating(r);
+  for (const l of card.lessons) if (l.slot !== undefined && !(isStr(l.slot) && /^c:[a-z]{2}_[0-9a-f]{8}$/.test(l.slot))) delete l.slot;
   return card;
 }
 
@@ -380,6 +377,24 @@ export function readScorecard(projectRoot: string, member: string, home?: string
 export function readScorecardAt(scope: ScorecardScope): CardRead {
   const { file, damaged } = readFileOf(scope);
   return { card: normalizeCard(file.members[scope.member]), scope, ...(damaged ? { damaged } : {}) };
+}
+
+/** Every member's card in `scope`'s file (a project's file holds all its members; a global
+ *  member's, its own). No write, no lock. */
+export function readAllCards(scope: ScorecardScope): { members: Record<string, MemberCard>; damaged: string | null } {
+  const { file, damaged } = readFileOf(scope);
+  if (damaged) return { members: {}, damaged };
+  const members: Record<string, MemberCard> = {};
+  for (const [slug, raw] of Object.entries(file.members)) if (isSafeAutomationSlug(slug)) members[slug] = normalizeCard(raw);
+  return { members, damaged: null };
+}
+
+/** The slugs of every global member with a home on this Mac. */
+export function globalMemberSlugs(home?: string): string[] {
+  try {
+    const dir = dirname(globalAgentHome('x', home));
+    return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && isSafeAutomationSlug(d.name)).map((d) => d.name);
+  } catch { return []; }
 }
 
 /** The member's card from its scope's file, or null when it has none (never creates one). */
@@ -610,6 +625,7 @@ export function renameScorecardMember(projectRoot: string, from: string, to: str
           Object.fromEntries(Object.entries(rec).map(([k, v]) => [keep(k) ? rekey(k, from, to) : k, v]));
         card.ratings = remapOwn(card.ratings);
         card.checks = remapOwn(card.checks);
+        card.telegramAsks = remapOwn(card.telegramAsks);
         for (const l of card.lessons) if (keep(l.run)) l.run = rekey(l.run, from, to);
         if (JSON.stringify(card) !== before) { file.members[g] = card; writeFileOf(scope, file); }
       } finally {
@@ -621,7 +637,7 @@ export function renameScorecardMember(projectRoot: string, from: string, to: str
 
 // ─── Helpers the card and the model work share ────────────────────────────────
 
-export function newId(prefix: 'cr' | 'le'): string {
+export function newId(prefix: 'cr' | 'le' | 'co'): string {
   return `${prefix}_${randomBytes(4).toString('hex')}`;
 }
 

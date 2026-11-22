@@ -452,6 +452,8 @@ export interface SuperQueueItem {
   wait?: { kind: OwnerWaitKind; id: string; key?: string; refusal?: RefusalFact };
   /** A team job's ending item: the job's id (its `sessionId` is the super's own). */
   team?: string;
+  /** A team `done` that asks the owner to rate its run (MIRROR of src/lib/super/types.ts `SuperQueueItem.rateRun`). */
+  rateRun?: string;
   /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
    *  own card answers it (MIRROR of src/lib/super/types.ts `SuperQueueItem.direct`). */
   direct?: true;
@@ -698,6 +700,8 @@ export interface SuperTeamJob {
   light?: true;
   /** The owner asked for it through the super: its result goes to him. */
   awaited?: true;
+  /** Its `done` asked the owner to rate its run (MIRROR of src/lib/super/types.ts `SuperTeamJob.rateAsked`). */
+  rateAsked?: true;
   /** The last ending event already queued for the super. */
   told?: 'done' | 'stuck' | 'question';
   /** Which of its run's questions the `question` was. */

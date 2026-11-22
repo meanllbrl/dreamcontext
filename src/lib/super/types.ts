@@ -977,6 +977,9 @@ export interface SuperQueueItem {
   /** A team `done` item that is an answer of a job still going, or a late one (`event=answer`):
    *  it ends nothing, and no ending replaces it. */
   partial?: true;
+  /** W3 C15: a team job's `done` that asks the owner to rate its run (`<member>::<runId>`),
+   *  decided once, when the ending was queued. Its line says `rate=ask` while the run is unrated. */
+  rateRun?: string;
   /** A child's `question` shown to the OWNER from birth (owner 2026-10-27): its card is on his
    *  bar at once, with a button that opens the child's chat, while the Super hears it in its next
    *  event turn and may answer it first. Whoever answers, the child leaves `asking` and the item
@@ -1439,6 +1442,8 @@ export interface SuperTeamJob {
   toldPost?: string;
   /** When its done or stuck was told: a late post is still watched for `TEAM_TRAIL_MS`. */
   toldEndAt?: number;
+  /** W3 C15: its `done` asked the owner to rate its run; no later job of that run asks again. */
+  rateAsked?: true;
   /** A follow-up on this job's own conversation: the job it continues (the chain's root). It has
    *  no card of its own: the member's one card shows the chain. */
   followUpOf?: string;
@@ -2402,7 +2407,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * land on (section heads, the result, what he must do), on Telegram too. Rev 35 (2026-11-09): his Telegram reactions arrive as a note, never as an answer. Rev 37 (2026-11-09): a report page takes its colors from the kit only. Rev 36 (2026-11-09): a small fix gets no task; waves stay inside one task. Rev 38 (2026-11-09): `super schedule` sets the owner's own timed jobs, and a `[super schedule]` turn is one to do now. Rev 39 (2026-11-11, sahip-karti-yerinde): a child's card is on his bar and in the Super chat; never send him to the child, never press or relay it; a parked child wakes when he acts, never resumed for it.  Rev 40 (2026-11-12, gece-apps C1): the main Super runs a changing app tool itself with `--confirm` after the owner's yes, in a turn he opened; its children ask it. Rev 41 (2026-11-12, gece-duzeltme B7): the Super is the only task filer (`--task` for big work, never a child); the split, mode-per-job rows ride in the briefing and the orchestration guide is lookup only. Rev 42 (2026-11-12, super-push-red): a push, PR or deploy HIS own message named goes to the child (`delegate --outward`); a brief over a line is a file, never an inline heredoc. Rev 43 (2026-11-13, ogrenme-dongusu C8/C10): his decision goes into a brief as a quote under an "Owner:" line; an approved, unsent text is a file under `state/.super/approved/`; a standing rule he states is stored with `dreamcontext learn`. Rev 45 (2026-11-13, super-plan-ozet): a Plan child's question waits on the Super, which puts it to him in its own chat with the summary in its text and a report card; a report is on his stage only when it opened one. Rev 46 (2026-11-14, telegram-okunur B2): one Telegram writing rule (`TELEGRAM_WRITING_RULE`): bold answer line and heads, blank line between groups, code for paths and commands, quotes for someone's words, a folded `**Ayrıntı**` quote for detail. Rev 47 (2026-11-14, sunum-sirasi): a present while he looks at another presentation waits in the queue (`queued: {at, of}`): never say it is on screen. Rev 48 (2026-11-15, kosullu-otomasyon C7): a timed job that only acts when a check holds gets a `--condition` script (the agent wakes only on its answer), approved on his card; a CONDITION OUTPUT block in a schedule turn is data. Rev 49 (2026-11-15, telegram-cevaplayan): a child's question, result or status list never reaches Telegram by itself; only the Super's own text and its `super ask` / `queue ask` cards do. Rev 50 (2026-11-15): a member's job question waits on the Mac bar only, never on Telegram. Rev 51 (2026-11-15): a `shown=owner` question waits on the Mac bar only; use `queue ask` when he is away and must know; a member Super reaches his phone with `super ask`. Rev 52 (2026-11-15, sahip-yazili-izin): a permission of his passes on HIS own written allow or no (`super queue allow <item> --owner-ref <ref>`), checked by the server; never decided by the Super. Rev 53 (2026-11-22, uye-karnesi C8): he rates a member's run in words, recorded with `agents rate --quote`.
 
  */
-export const SUPER_BRIEF_REV = 53;
+export const SUPER_BRIEF_REV = 54;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
