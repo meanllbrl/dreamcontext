@@ -344,3 +344,30 @@
 @media (prefers-reduced-motion: reduce) {
   .cmdk-spin, .cmdk-skel i { animation: none !important; }
 }
+
+/* ⌘K across projects (navigation B): another project's group, its badge on each row, and the
+   projects whose search failed. New shell only (classic never renders them). */
+.cmdk-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.cmdk-vault-badge {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+  align-self: center;
+}
+.cmdk-preview-snippet { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
+.cmdk-foot-failed { color: var(--color-text-secondary); }

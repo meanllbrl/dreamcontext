@@ -1,8 +1,12 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { TOGGLE_PAGE_DRAWER_EVENT } from '../lib/uxMode';
+import { createPortal } from 'react-dom';
+import { TOGGLE_PAGE_DRAWER_EVENT, readDeviceShell, useIsNewShell } from '../lib/uxMode';
+import { useChromeSlots } from '../components/layout/chromeSlots';
+import { useChrome } from '../components/layout/WindowChrome';
 import { useI18n } from '../context/I18nContext';
 import { useApi, useInstanceEvent, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
+import { usePublishOpenItem } from '../lib/openItem';
 import { useDefaultWhiteboard, useWhiteboardEditor, useWhiteboardList } from '../hooks/useWhiteboards';
 import type { SaveState } from '../hooks/whiteboardSaveLoop';
 import type { ExportNote } from '../lib/exportDownload';
@@ -17,7 +21,7 @@ import { useExplorerPrefs } from './whiteboards/useExplorerPrefs';
 import { touchRecent } from './whiteboards/explorerLogic';
 import { DEFAULT_BOARD_SLUG, goneBoardTarget } from './whiteboards/boardSwitcherLogic';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
+import { clearBoardHash, forgetLoadBoardHash, formatBoardHash, loadBoardHash } from './whiteboards/boardHash';
 import { publishPageDetail } from '../lib/pageContext';
 import { BoardSuperField, type FieldWork } from '../components/whiteboard/BoardSuperField';
 import type { Region } from '../components/whiteboard/quickEditLogic';
@@ -59,17 +63,22 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
     }).then(() => { if (live) setReadFor(prefsKey); });
     return () => { live = false; };
   }, [api, prefsKey, prefsReady]);
-  if (!prefsReady) return <div className="wbp-editor"><div className="wbp-loading">{t('common.loading')}</div></div>;
+  if (!prefsReady) return <div className="wbp-editor"><div className="wbp-loading" data-loading="">{t('common.loading')}</div></div>;
   return <WhiteboardsPageBody key={prefsKey} focus={focus} />;
 }
 
 function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   const { t } = useI18n();
-  const { instanceId, vault, bus } = useVault();
+  const { instanceId, vault, bus, isActive } = useVault();
+  // The local new shell (tek-kenar C4): the explorer lives in the window's sidebar, under this
+  // project's row; the page draws no left panel. Device shells and the classic shell keep it here.
+  const inSidebar = useIsNewShell() && !readDeviceShell();
+  const slots = useChromeSlots();
+  const chrome = useChrome();
   // The board open before a reload: the URL hash (see boardHash). There is one URL per window,
   // so only the window's first project reads it back, like Shell's `/lab/` deep link.
   const [openSlug, setOpenSlug] = useState<string | null>(
-    () => focus?.id ?? (instanceId === 'inst-1' ? parseBoardHash(window.location.hash) : null),
+    () => focus?.id ?? (instanceId === 'inst-1' ? loadBoardHash() : null),
   );
   useFocusTarget(focus, setOpenSlug);
   // Agent cards keep their composer buckets across remounts and board switches; they die with
@@ -86,6 +95,11 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   // once the list says it still exists; else the default board.
   const [remembered] = useState(() => (vault ? readLastBoard(vault) : null));
   const boards = useWhiteboardList();
+  // This project's board list, for its flat list in the sidebar the moment it stops being active.
+  const seedBoards = chrome.seedBoards;
+  useEffect(() => {
+    if (inSidebar && vault && boards.data) seedBoards(vault, boards.data);
+  }, [inSidebar, vault, boards.data, seedBoards]);
   // A board that was deleted while open (or opened after it was): the page moved on to the most
   // recent other board; this says so on the board it moved to, until the owner moves again.
   const [goneNote, setGoneNote] = useState<{ board: string; text: string } | null>(null);
@@ -105,6 +119,9 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   useEffect(() => {
     if (openSlug && vault) writeLastBoard(vault, openSlug);
   }, [openSlug, vault]);
+  // The open board, for the window's places (navigation B, C4): `navigate('whiteboards', slug)`
+  // opens it again (the focus target above).
+  usePublishOpenItem(bus, 'whiteboards', openSlug, boards.data?.find((b) => b.slug === openSlug)?.name ?? null);
   // The open board, for the Super dock's page chip (lib/pageContext.ts).
   useEffect(() => {
     if (!openSlug) return undefined;
@@ -119,7 +136,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   // The phone never reads or writes the saved `open`: its drawer starts closed, in memory only.
   const [drawer, setDrawer] = useState(false);
   const [wide] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1100);
-  const explorerOpen = phone ? drawer : (prefs.open ?? wide);
+  const explorerOpen = !inSidebar && (phone ? drawer : (prefs.open ?? wide));
   // Who asked for the last show/hide: focus follows the owner's own click (to the explorer's
   // search when shown, back to the show toggle when hidden), never a page load.
   const [shownByOwner, setShownByOwner] = useState(false);
@@ -149,6 +166,21 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
 
   return (
     <div className="wbp-shell" data-phone={phone ? '' : undefined}>
+      {inSidebar && isActive && slots.boards && createPortal(
+        <BoardExplorer
+          variant="embedded"
+          vault={vault}
+          query={chrome.sidebarQuery}
+          footSlot={slots.boardsFoot ?? null}
+          openSlug={openSlug}
+          onOpen={setOpenSlug}
+          prefs={prefs}
+          change={changePrefs}
+          onHide={() => {}}
+          phone={false}
+        />,
+        slots.boards,
+      )}
       {explorerOpen && (
         <>
           {phone && <button type="button" className="wbp-shell-scrim" aria-label={t('whiteboard.explorer.hide')} onClick={() => setExplorerOpen(false)} />}
@@ -199,7 +231,7 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
       </div>
     );
   }
-  return <div className="wbp-editor">{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+  return <div className="wbp-editor">{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading" data-loading="">{t('common.loading')}</div></div>;
   }
 }
 
@@ -216,7 +248,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   explorerToggle?: ReactNode;
 }) {
   const { t, locale } = useI18n();
-  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh } = useWhiteboardEditor(slug);
+  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh, placed } = useWhiteboardEditor(slug);
   const { bus } = useVault();
   // The board writing field (2026-11-11), on every ready board.
   const [selection, setSelection] = useState<SelectionRef | null>(null);
@@ -272,7 +304,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const heading = <h1 className="wbp-sr-only">{name}</h1>;
 
   if (load.kind === 'loading') {
-    return <div className="wbp-editor">{heading}{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+    return <div className="wbp-editor">{heading}{explorerToggle && <div className="wbp-state-top">{explorerToggle}</div>}<div className="wbp-loading" data-loading="">{t('common.loading')}</div></div>;
   }
 
   if (load.kind === 'corrupt' || load.kind === 'missing' || load.kind === 'error') {
@@ -330,8 +362,8 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
       <div className="wbp-body">
         {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
         <PagePopupProvider>
-          <div className="wbp-canvas" ref={setCanvasEl}>
-            <Suspense fallback={<div className="wbp-loading">{t('common.loading')}</div>}>
+          <div className="wbp-canvas" ref={setCanvasEl} data-loading={placed ? undefined : ''}>
+            <Suspense fallback={<div className="wbp-loading" data-loading="">{t('common.loading')}</div>}>
               <LazyWhiteboardCanvas boardSlug={slug} initialScene={load.scene} onApi={onCanvasApi} pictures={pictures} onSceneChange={onSceneChange} topRight={controlsAside ? null : controls} onSelection={setSelection} workBox={work?.box ?? null} region={region} onRegion={setRegion} quickBox={quickBox} />
             </Suspense>
             {controlsAside && <div className="wbp-float-right" data-testid="wbp-controls-aside">{controls}</div>}
@@ -375,6 +407,7 @@ function useBoardHash(slug: string): void {
   const { isActive } = useVault();
   useEffect(() => {
     if (!isActive) return;
+    forgetLoadBoardHash();
     writeHash(formatBoardHash(slug, window.location.hash));
   }, [isActive, slug]);
   const activeRef = useRef(isActive);

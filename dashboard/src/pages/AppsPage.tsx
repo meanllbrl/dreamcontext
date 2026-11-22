@@ -7,6 +7,7 @@ import { useIsNewShell } from '../lib/uxMode';
 import { PageBar } from '../components/layout/PageBar';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
+import { APP_SLUG_FOCUS_RE, appFocusAction, usePublishOpenItem } from '../lib/openItem';
 import { APP_REPO_RE } from '../components/sleepy/chat/chatActions';
 import { AppPage, AppTile, SetupLine, appIconSrc, type AppRow, type ShareOpen } from '../components/apps/AppCard';
 import { InstallSheet, SharedApps, TrashList, type SharedList } from '../components/apps/ShareSheets';
@@ -64,6 +65,7 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   const [pageSlug, setPageSlug] = useState<string | null>(null);
   const [pageSheet, setPageSheet] = useState<ShareOpen>(null);
   const openPage = (slug: string, sheet: ShareOpen = null) => { setPageSheet(sheet); setPageSlug(slug); };
+  const pageApp = pageSlug ? apps.find((a) => a.slug === pageSlug) ?? null : null;
   const refresh = () => void qc.invalidateQueries({ queryKey: key });
   const appsKey = apps.map((a) => `${a.slug}:${a.origin ?? ''}:${a.source ? 'f' : ''}`).join(',');
 
@@ -73,7 +75,19 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
   // `installFailed`: an install he started ended without the app (K8), with its plain reason.
   const [note, setNote] = useState<{ kind: 'notShared' | 'invited' | 'signIn' | 'macOnly' | 'installed' | 'failed' | 'installFailed'; repo: string; why?: string; retry?: string } | null>(null);
   const asked = useRef('');
+  // A plain app slug (navigation B, C4: the window's places, an app link): that app's page opens
+  // once the list has it; a slug the list does not have leaves the list on screen.
+  const [wantSlug, setWantSlug] = useState<string | null>(null);
+  useEffect(() => {
+    if (!wantSlug || !data) return;
+    const action = appFocusAction(wantSlug, apps.map((a) => a.slug));
+    setWantSlug(null);
+    if (action === 'open') openPage(wantSlug);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantSlug, data]);
+  usePublishOpenItem(bus, 'apps', pageApp ? pageApp.slug : null, pageApp?.name ?? null);
   useFocusTarget(focus, (id) => {
+    if (!id.startsWith('install:')) { if (APP_SLUG_FOCUS_RE.test(id)) setWantSlug(id); return; }
     const repo = id.startsWith('install:') ? id.slice('install:'.length) : '';
     if (!APP_REPO_RE.test(repo)) return;
     asked.current = repo;
@@ -159,7 +173,6 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
     refetchInterval: (q) => (q.state.data?.installs.some((i) => !i.done) ? 1500 : false),
   });
   const runningInstall = (fullName: string) => !!status.data?.installs.some((i) => !i.done && i.fullName.toLowerCase() === fullName.toLowerCase());
-  const pageApp = pageSlug ? apps.find((a) => a.slug === pageSlug) ?? null : null;
   const installedLook = (slug: string) => {
     const a = apps.find((x) => x.slug === slug);
     return a ? { slug: a.slug, name: a.name, icon: appIconSrc(a, vault ?? '', canLaunch), update: !!a.source?.available } : null;
@@ -262,6 +275,8 @@ export function AppsPage({ focus }: { focus?: FocusTarget } = {}) {
           onAccepted={() => { void refreshShared(); refresh(); }}
         />
       )}
+      {/* One loading marker for the page (tek-kenar C1 delta 2): the list, or the shared list on its tab. */}
+      {(isLoading || (tab === 'shared' && shared.isLoading)) && <span data-loading="" hidden />}
       {pageApp && <AppPage key={pageApp.slug} app={pageApp} vault={vault ?? ''} canLaunch={canLaunch} initialSheet={pageSheet} onClose={() => { setPageSlug(null); setPageSheet(null); }} onChanged={refresh} />}
       {canLaunch && installRef !== null && (
         <InstallSheet

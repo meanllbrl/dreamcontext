@@ -142,7 +142,7 @@ describe('a device shell\'s drawer is chats only', () => {
 
   it('a device shell reads no project roster or team: the fan-out gets no project', () => {
     const src = read('dashboard/src/components/layout/WindowChrome.tsx');
-    expect(src).toMatch(/useDrawerProjects\(newShell && !deviceShell \? drawerExpanded : \[\]/);
+    expect(src).toMatch(/useDrawerProjects\(\s*newShell && !deviceShell && !navMode \? drawerExpanded : \[\]/);
   });
 });
 
@@ -304,7 +304,8 @@ describe('the phone layout in the new shell (part 2)', () => {
     expect(chrome).toMatch(/if \(isMobile && !prev\.onChat && activeOnChat && prev\.vault === activeVault\) return;/);
     // A link landing closes it; so does a project pick.
     expect(chrome).toMatch(/if \(Object\.keys\(pendingLinks\)\.length > 0\) setFloatingOpen\(false\);/);
-    expect(chrome).toMatch(/onPick=\{\(name\) => \{ closeOverlay\(\); markProjectSwitch\(name\); void addTab\(name\); \}\}/);
+    // The pick is the owner's switch (navigation B's one wrapper of markProjectSwitch + addTab).
+    expect(chrome).toMatch(/onPick=\{\(name\) => \{ closeOverlay\(\); switchTo\(name\); \}\}/);
   });
 
   it('every rail and bottom-bar tap dismisses the drawer', () => {

@@ -349,6 +349,8 @@
   padding: var(--space-4);
   animation: share-fade 200ms ease-out;
 }
+/* Its project is not the one on screen (Sheet.tsx): `display: flex` above would undo `hidden`. */
+.share-sheet__backdrop[hidden] { display: none; }
 
 @keyframes share-fade { from { opacity: 0; } to { opacity: 1; } }
 

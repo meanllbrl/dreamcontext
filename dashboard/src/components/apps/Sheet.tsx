@@ -1,6 +1,8 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
+import { useVault } from '../../context/VaultContext';
+import { keyboardOwner, type OpenSheet } from '../../lib/sheetStack';
 
 /**
  * Shared apps on the Apps page (paylasilan-app-ler plan r3): Share, Install, Settings, Update,
@@ -27,28 +29,36 @@ export function useShareN(): (key: string, n: number) => string {
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-/** The open sheets, oldest first: the last one is on top and owns the keyboard. */
-const OPEN_SHEETS: object[] = [];
+/** The open sheets, oldest first (lib/sheetStack.ts picks the keyboard owner). */
+const OPEN_SHEETS: OpenSheet[] = [];
 
 export function Sheet({ title, onClose, children, foot, page }: { title: string; onClose: () => void; children: ReactNode; foot?: ReactNode; page?: boolean }) {
   const t = useShareT();
   const ref = useRef<HTMLDivElement | null>(null);
   const close = useRef(onClose);
   close.current = onClose;
-  // Focus moves in on open and back to the opener on close (the ObjectionDialog pattern).
+  // A sheet is drawn on body, outside its project's hidden box: while its project is not the one
+  // on screen (prepared out of sight, or left), it is not drawn, takes no focus and answers no
+  // key. It stays mounted, so what was typed in it is there when the project comes back.
+  const { isActive } = useVault();
+  const activeRef = useRef(isActive);
+  activeRef.current = isActive;
+  // Focus moves in on open (or on the project's arrival) and back to the opener on close (the
+  // ObjectionDialog pattern).
   useEffect(() => {
+    if (!isActive) return undefined;
     const opener = document.activeElement as HTMLElement | null;
     const first = ref.current?.querySelector<HTMLElement>('.share-sheet__body ' + FOCUSABLE.split(', ').join(', .share-sheet__body ')) ?? ref.current?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
     return () => { opener?.focus?.(); };
-  }, []);
+  }, [isActive]);
   // Esc and Tab belong to the sheet: capture phase, so a drawer's own Esc does not fire too. A
-  // sheet opened from an app's page sits on top of it: only the topmost one answers the keys.
+  // sheet opened from an app's page sits on top of it: only the keyboard owner answers the keys.
   useEffect(() => {
-    const token = {};
+    const token: OpenSheet = { onScreen: () => activeRef.current };
     OPEN_SHEETS.push(token);
     const onKey = (e: KeyboardEvent) => {
-      if (OPEN_SHEETS[OPEN_SHEETS.length - 1] !== token) return;
+      if (keyboardOwner(OPEN_SHEETS) !== token) return;
       if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close.current(); return; }
       if (e.key !== 'Tab' || !ref.current) return;
       const all = Array.from(ref.current.querySelectorAll<HTMLElement>(FOCUSABLE));
@@ -67,7 +77,7 @@ export function Sheet({ title, onClose, children, foot, page }: { title: string;
   }, []);
   // On body: a page frame with a transform would otherwise hold the fixed backdrop inside it.
   return createPortal(
-    <div className="share-sheet__backdrop" onClick={onClose}>
+    <div className="share-sheet__backdrop" onClick={onClose} hidden={!isActive}>
       <div className={`share-sheet${page ? ' share-sheet--page' : ''}`} ref={ref} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <header className="share-sheet__head">
           {/* A store page names the app in its own top block (the dialog keeps its label): the bar only closes. */}

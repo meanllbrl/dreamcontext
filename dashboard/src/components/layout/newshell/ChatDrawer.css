@@ -814,3 +814,104 @@
 .ns-dr-project[data-menu-open="true"] .ns-dr-acts { background: inherit; pointer-events: auto; }
 .ns-dr-project[data-menu-open="true"] .ns-dr-acts .ns-dr-act:not(.ns-dr-add) { opacity: 0.85; }
 .ns-dr-project[data-menu-open="true"] .ns-dr-end { visibility: hidden; }
+
+/* ── The single sidebar (tek-kenar C3): the drawer docked on every page of the local new shell.
+   Logo on top, Settings at the foot; the body follows the page (data-mode). Tokens only. ── */
+
+.ns-sb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 44px;
+  padding: 0 var(--space-4);
+  font-family: var(--font-family-display);
+  font-size: calc(15px * var(--zoom, 1));
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  white-space: nowrap;
+  user-select: none;
+}
+.ns-sb-word span { color: var(--color-accent-ink); }
+
+.ns-drawer[data-sidebar] .ns-dr-scroll { padding-top: var(--space-1); }
+
+.ns-sb-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  margin: 0 var(--space-2) var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
+}
+.ns-sb-search svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+.ns-sb-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+.ns-sb-search:focus-within { border-color: var(--color-border-focus); }
+
+/* The project on screen, and the one a move is landing (`aria-busy`): lit at once. */
+.ns-drawer[data-sidebar] .ns-dr-proj.is-cur { background: var(--color-accent-soft); }
+.ns-drawer[data-sidebar] .ns-dr-proj.is-cur .ns-dr-t { color: var(--color-accent-ink); }
+.ns-drawer[data-sidebar] .ns-dr-proj[aria-busy="true"] { cursor: progress; }
+.ns-drawer[data-mode="projects"] .ns-dr-proj .ns-dr-toggle,
+.ns-drawer[data-mode="boards"] .ns-dr-proj .ns-dr-toggle { padding-right: var(--space-2); }
+.ns-drawer[data-mode="boards"] .ns-dr-proj:is(:hover, :focus-within) .ns-dr-toggle { padding-right: calc(22px + var(--space-2)); }
+.ns-drawer[data-mode="projects"] .ns-dr-proj:is(:hover, :focus-within) .ns-dr-toggle { padding-right: calc(22px + var(--space-2)); }
+
+.ns-sb-chev {
+  opacity: 1;
+  margin-left: calc(-1 * var(--space-1));
+  color: var(--color-text-tertiary);
+}
+
+.ns-sb-count {
+  flex: none;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-tertiary);
+}
+
+.ns-sb-boards { display: flex; flex-direction: column; }
+.ns-sb-board .ns-dr-ico { flex: none; color: var(--color-text-tertiary); }
+.ns-sb-chip {
+  flex: none;
+  margin-left: auto;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full, 999px);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.ns-sb-note {
+  margin-left: 19px;
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.ns-sb-explorer { margin-left: var(--space-2); }
+.ns-sb-explorer:empty { display: none; }
+
+.ns-sb-spacer { flex: none; height: 0; }
+
+.ns-sb-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-2) var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+.ns-sb-boards-foot:empty { display: none; }
+.ns-sb-foot > .ns-dr-entry { margin-top: var(--space-1); }

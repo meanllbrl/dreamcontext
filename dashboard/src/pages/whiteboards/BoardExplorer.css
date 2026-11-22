@@ -544,3 +544,27 @@
 .wbx-trash-restore:hover:not(:disabled) { background: var(--color-accent-soft); }
 .wbx-trash-restore:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
 .wbx-trash-restore:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Embedded in the local new shell's sidebar (tek-kenar C4): the sidebar is the panel, so no
+   width, border, background or scroll of its own; menus are fixed so the column never clips them. */
+.wbx[data-embedded] {
+  flex: none;
+  width: auto;
+  border-right: none;
+  background: transparent;
+}
+.wbx[data-embedded] .wbx-scroll {
+  overflow: visible;
+  padding: 0 0 var(--space-1);
+}
+.wbx[data-embedded] .wbx-sec:first-child { margin-top: var(--space-1); }
+.wbx[data-embedded] .wbx-menu {
+  position: fixed;
+  right: auto;
+  width: 240px;
+  max-height: calc(100vh - var(--space-8));
+}
+.wbx-foot[data-testid="sidebar-boards-foot"] {
+  border-top: none;
+  padding: var(--space-2) var(--space-2) 0;
+}

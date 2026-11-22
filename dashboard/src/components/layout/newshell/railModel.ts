@@ -58,3 +58,36 @@ export const DEVICE_HIDDEN_PAGES: ReadonlySet<Page> = new Set<Page>(['settings',
 export function railPageOf(page: Page): Page {
   return page;
 }
+
+/* ── The local new shell's page tabs (tek-kenar C7): the rail above is the device shells' only. ── */
+
+/** A title-bar tab: Chat, a page, or More ▾. */
+export type TabEntry = 'chat' | Page | 'more';
+
+/** The tabs in the bar, in order, before More. */
+export const TAB_PAGES: readonly ('chat' | Page)[] = ['chat', 'tasks', 'lab', 'whiteboards', 'apps'];
+
+/** More's rows: Roadmap, Hypotheses, Knowledge and Map first (D8c), then the rail's own More. Settings
+ *  is the sidebar's foot, so it is in neither list. */
+export const TAB_MORE: readonly Page[] = ['roadmap', 'hypotheses', 'knowledge', 'brain', ...MORE_PAGES];
+
+/** The tabs that move into More at a narrow window (≤900, a fixed breakpoint). */
+export const TAB_NARROW_TO_MORE: readonly Page[] = ['lab', 'apps'];
+
+/** The bar's tabs and More's rows at this width. Every page is reachable exactly once. */
+export function tabsModel(narrow: boolean): { tabs: ('chat' | Page)[]; more: Page[] } {
+  if (!narrow) return { tabs: [...TAB_PAGES], more: [...TAB_MORE] };
+  const moved = new Set<string>(TAB_NARROW_TO_MORE);
+  return {
+    tabs: TAB_PAGES.filter((p) => !moved.has(p)),
+    more: [...TAB_NARROW_TO_MORE, ...TAB_MORE],
+  };
+}
+
+/** The tab lit for what the project shows: Chat while its chat is open, More when the page sits in
+ *  More, else the page's own tab. */
+export function litTab(page: Page, chatOpen: boolean, narrow: boolean): TabEntry {
+  if (chatOpen) return 'chat';
+  const { tabs } = tabsModel(narrow);
+  return (tabs as string[]).includes(page) ? page : 'more';
+}

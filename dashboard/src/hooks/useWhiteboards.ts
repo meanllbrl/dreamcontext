@@ -338,6 +338,9 @@ export function useWhiteboardEditor(slug: string) {
   /** Set once the open has placed the board (restored, fitted, or nothing to fit): only then is
    *  the view the owner's, worth keeping. A save before it would keep the pre-fit view. */
   const placedRef = useRef(false);
+  /** `placedRef` for rendering: the canvas carries `data-loading` until the open has placed the
+   *  board (tek-kenar C1 delta 2), so a project prepared out of sight never shows it unplaced. */
+  const [placed, setPlaced] = useState(false);
   const cancelFitRef = useRef<(() => void) | null>(null);
   const expectContentRef = useRef(false);
   // Where the owner left this board (boardPlace.ts): kept on every poll tick and on close, put
@@ -487,7 +490,7 @@ export function useWhiteboardEditor(slug: string) {
       fittedRef.current = true;
       const x = canvas.excalidraw;
       cancelFitRef.current = fitWhenReady({
-        settled: () => { placedRef.current = true; },
+        settled: () => { placedRef.current = true; setPlaced(true); },
         viewportReady: () => {
           const { width, height } = x.getAppState();
           return width > 0 && height > 0;
@@ -553,5 +556,5 @@ export function useWhiteboardEditor(slug: string) {
   const flushAndWait = useCallback(async () => { await loopRef.current?.flushAndWait(); }, []);
   /** Read the board from disk now (after a sync brought a teammate's drawing in). */
   const refresh = useCallback(async () => { await loopRef.current?.poll(); }, []);
-  return { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh };
+  return { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh, placed };
 }

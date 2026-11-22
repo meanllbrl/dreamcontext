@@ -5,6 +5,7 @@ import { SelectionBar } from '../sleepy/chat/SelectionBar';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
+import { matchableItem } from '../../lib/openItem';
 import { snapZoom } from '../../lib/zoom';
 import { ZoomMenu } from './newshell/ZoomMenu';
 import { trackPresence } from '../../lib/presence';
@@ -48,13 +49,15 @@ import { confirmRemoveProject, nextProjectAfterRemove } from '../../lib/removePr
 import { TitleBar } from './newshell/TitleBar';
 import type { PickerRow } from './newshell/ProjectPicker';
 import { mergeProjectOrder } from './newshell/projectOrder';
-import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
+import { ceilingKeep, chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
+import { createRevealGate, isBareModifier, isMovePress, type Prepare, type PrepareReport, type PrepareTarget, type RevealGate } from '../../lib/revealGate';
 import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
   buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, effectiveHidden, intentLands, moveAmong, NO_DEVICE_CHATS,
-  type DeviceChats, type DrawerFacts,
+  sidebarMode, type DeviceChats, type DrawerFacts, type SidebarMode,
 } from './newshell/drawerModel';
+import { useBoardsFanout } from './newshell/boardsFanout';
 import { useDrawerProjects } from '../../hooks/useDrawerProjects';
 import { ApiClient } from '../../api/client';
 import { setMemberEnabled } from '../aiteam/teamModel';
@@ -65,6 +68,12 @@ import type { HomeRow } from '../sleepy/phoneHome';
 import { useIsNarrowWindow } from '../../hooks/useIsNarrowWindow';
 import { ChatHistoryPicker } from '../sleepy/ChatHistoryPicker';
 import { landsOnChat, type DrawerIntent, type PendingDrawerIntent } from '../../lib/drawerIntents';
+import { createPlaceHistory, localPlaceStorage, type Place, type PlaceHistory } from '../../lib/placeHistory';
+import { createNavRecorder, targetOf, type MoveTarget, type NavRecorder } from './navRecorder';
+import { readShownSurface } from '../../lib/projectSwitchPage';
+import { PAGE_LABEL_KEY } from '../../lib/pageLabels';
+import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
+import type { Page } from './Sidebar';
 import './newshell/NewShell.css';
 import './ProjectTabs.css';
 import './Header.css';
@@ -113,6 +122,27 @@ export interface OpenProject {
 /** What `addTab` actually did, so the caller can tell "opened" from "already had it". */
 export type AddTabResult = 'added' | 'focused-tab' | 'focused-window' | 'refused-ceiling';
 
+/** What the active project's Shell reports to the window's recorder (navigation B, C3). */
+export interface ShownReport {
+  page: Page;
+  chatOpen: boolean;
+  /** The open item of the shown page (C4), or null. */
+  item: { id: string; label: string | null } | null;
+  /** The owner caused this change (he navigated inside the project), not a landing. */
+  byOwner: boolean;
+}
+
+/** The window's ← → (navigation B, C2): one list of places across every project. */
+export interface ChromeHistory {
+  canBack: boolean;
+  canForward: boolean;
+  back(): void;
+  forward(): void;
+  /** Where ← lands ("acme · Control Panel"), or null. */
+  backLabel: string | null;
+  forwardLabel: string | null;
+}
+
 export interface ChromeApi {
   open: OpenProject[];
   activeVault: string;
@@ -140,6 +170,27 @@ export interface ChromeApi {
    *  queue (what a drawer row's click does): the intent lands once that project is mounted and on
    *  screen, never by a timer. A global member's project chip and the Global ekip list use it. */
   queueDrawerIntent(vault: string, intent: DrawerIntent): void;
+  /** Navigation B (C2): open `place` (a page of a project with its item, or its Chat). */
+  goToPlace(place: Place): void;
+  /** The owner's own switch to `vault` (⌘P, ⌘1-9, ⌥Tab): the page on screen is carried. */
+  switchTo(vault: string): void;
+  /** The active project's Shell says what it shows (C3). */
+  reportShown(vault: string, shown: ShownReport): void;
+  history: ChromeHistory;
+  /** The rail's projects, in order: `projectOrder` minus the hidden ones (badge N is ⌘N). */
+  projects: string[];
+  /** Every registered project, hidden ones too (⌘K searches them all). */
+  registered: string[];
+  /** The window's place memory (last item per page, last here, recent), or null outside a window. */
+  places: PlaceHistory | null;
+  /** "acme · Boards · Launch plan": how a place is named on screen. */
+  placeLabel(place: Place): string;
+  /** Tek-kenar C2: the project being prepared for a move (its sidebar row shows busy), or null. */
+  preparingVault: string | null;
+  /** Tek-kenar C4: the sidebar's "Search boards…", read by the embedded board explorer. */
+  sidebarQuery: string;
+  /** Tek-kenar C4/C6: the active project's board list, so its flat list is ready when it leaves. */
+  seedBoards(vault: string, list: readonly { slug: string; name: string }[]): void;
 }
 
 /**
@@ -167,6 +218,17 @@ const DETACHED_CHROME: ChromeApi = {
   openHistory: () => {},
   dismissDrawer: () => {},
   queueDrawerIntent: () => {},
+  goToPlace: () => {},
+  switchTo: () => {},
+  reportShown: () => {},
+  history: { canBack: false, canForward: false, back: () => {}, forward: () => {}, backLabel: null, forwardLabel: null },
+  projects: [],
+  registered: [],
+  places: null,
+  placeLabel: (place: Place) => place.vault,
+  preparingVault: null,
+  sidebarQuery: '',
+  seedBoards: () => {},
 };
 
 const ChromeContext = createContext<ChromeApi>(DETACHED_CHROME);
@@ -274,6 +336,18 @@ function seedPendingLinks(initialVault: string, initialLink: string | null | und
   return { [initialVault]: { raw: initialLink as string, nonce: 1 } };
 }
 
+/** Where a landed link goes (navigation B): a session lands on that project's Chat, a page or an
+ *  app on that page place, anything else (a project, an automation, an agent) on any page of it. */
+function linkTarget(link: Extract<ReturnType<typeof parseAppLink>, { vault: string }>): MoveTarget {
+  const { vault } = link;
+  if (link.kind === 'session') return targetOf({ vault, kind: 'chat' });
+  if (link.kind === 'app') return targetOf({ vault, kind: 'page', page: 'apps', id: null, label: null });
+  if (link.kind === 'page' && link.page !== 'agents' && link.page !== 'settings') {
+    return targetOf({ vault, kind: 'page', page: link.page, id: link.id, label: null });
+  }
+  return { vault, kind: 'page', place: null };
+}
+
 /** How long the pointer may be off both the drawer button and the drawer before a hover peek closes:
  *  long enough to cross the gap between them. */
 const PEEK_GRACE_MS = 200;
@@ -300,6 +374,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const narrowTouch = useIsMobile();
   const isMobile = newShell && narrowTouch;
   const newShellRef = useRef(newShell);
+  // The new shell's one switch wrapper (navigation B), set once it is built below.
+  const switchToRef = useRef<(vault: string) => void>(() => {});
+  // The landed link's move (navigation B), set once the recorder is built below.
+  const linkMoveRef = useRef<(target: MoveTarget) => { refused(): void; focusedWindow(): void } | null>(() => null);
   // The notices are set from stable callbacks (`addTab`, `activate`); a ref keeps them stable.
   const tRef = useRef(t);
   tRef.current = t;
@@ -316,9 +394,16 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const [leftSlot, setLeftSlot] = useState<HTMLElement | null>(null);
   const [rightSlot, setRightSlot] = useState<HTMLElement | null>(null);
   const [railSlot, setRailSlot] = useState<HTMLElement | null>(null);
+  // The local new shell (tek-kenar C4, C7): the page tabs in the bar, the board explorer and its
+  // foot in the sidebar.
+  const [tabsSlot, setTabsSlot] = useState<HTMLElement | null>(null);
+  const [boardsSlot, setBoardsSlot] = useState<HTMLElement | null>(null);
+  const [boardsFootSlot, setBoardsFootSlot] = useState<HTMLElement | null>(null);
   const chromeSlots = useMemo<ChromeSlots>(
-    () => (newShell ? { left: leftSlot, right: rightSlot, rail: railSlot } : { left: leftSlot, right: rightSlot }),
-    [leftSlot, rightSlot, railSlot, newShell],
+    () => (newShell
+      ? { left: leftSlot, right: rightSlot, rail: railSlot, tabs: tabsSlot, boards: boardsSlot, boardsFoot: boardsFootSlot }
+      : { left: leftSlot, right: rightSlot }),
+    [leftSlot, rightSlot, railSlot, tabsSlot, boardsSlot, boardsFootSlot, newShell],
   );
 
   /*
@@ -356,10 +441,70 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     setOpenState(next);
   }, []);
 
+  /*
+   * Tek-kenar C2, prepare then activate: a move to another project mounts or keeps it out of
+   * sight, lets its landing run there and makes it the project on screen in ONE commit, once it
+   * shows the target with nothing loading or moving, or at the bound (lib/revealGate.ts).
+   */
+  const [preparing, setPreparing] = useState<Prepare | null>(null);
+  /** What ending a prepare does beyond the gate (drop its intent, end its move): set below. */
+  const prepareEndRef = useRef<(p: Prepare, why: 'cancel' | 'replaced') => void>(() => {});
+  const gateRef = useRef<RevealGate | null>(null);
+  /** Set by the gate's activation: where focus lands if A going inert drops it (see below). */
+  const landFocusRef = useRef<{ vault: string; chat: boolean } | null>(null);
+  if (gateRef.current === null) {
+    gateRef.current = createRevealGate({
+      now: Date.now,
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (h) => window.clearTimeout(h as number),
+      // Acts only on a project still open and mounted; one commit with `preparing = null`.
+      onActivate: (p, why) => {
+        const tab = openRef.current.find((o) => o.vault === p.vault);
+        if (!tab || tab.cold) return;
+        // The seamless probe (scripts/verify/tek-kenar-seamless.mjs) sets this list; nothing else does.
+        const log = (window as Window & { __dcReveal?: unknown[] }).__dcReveal;
+        if (Array.isArray(log)) log.push({ vault: p.vault, why, cold: p.cold, ms: Date.now() - p.startedAt, at: performance.now() });
+        landFocusRef.current = { vault: p.vault, chat: p.target.kind === 'chat' };
+        activeRef.current = p.vault;
+        setActiveState(p.vault);
+      },
+      onEnd: (p, why) => prepareEndRef.current(p, why),
+      onChange: (p) => setPreparing(p),
+    });
+  }
+  const gate = gateRef.current;
+  useEffect(() => () => gate.dispose(), [gate]);
+  /*
+   * A key-driven move (⌘N, ⌥Tab) leaves focus inside A, which goes inert at activation, so focus
+   * would fall to body. Before paint it moves to B's twin of where it was: B's composer when it
+   * was in A's chat, else B's sidebar row (never into B's chat: ⌘1-9 skip the chat, so the next
+   * ⌘N would stop working). Focus the owner put somewhere live is never taken.
+   */
+  useLayoutEffect(() => {
+    const land = landFocusRef.current;
+    landFocusRef.current = null;
+    if (!land || land.vault !== activeVault) return;
+    const at = document.activeElement;
+    // Dead focus: body, inside A, or inside a body-portalled sheet that just went hidden with A.
+    if (at && at !== document.body && !at.closest('.project-instance:not([data-active]), [hidden]')) return;
+    const fromChat = !!at?.closest('.agent-surface');
+    const inst = [...document.querySelectorAll<HTMLElement>('.project-instance[data-active]')]
+      .find((el) => el.dataset.instanceVault === land.vault);
+    const surface = land.chat && fromChat ? inst?.querySelector<HTMLElement>('.agent-surface') : null;
+    const row = (sel: string) => document.querySelector<HTMLElement>(`${sel} .ns-dr-toggle`);
+    const to = surface?.querySelector<HTMLElement>('textarea:not([disabled]), [contenteditable="true"]')
+      ?? row(`[data-row-key="${CSS.escape(`project:${land.vault}`)}"]`)
+      ?? row(`[data-drawer-project="${CSS.escape(land.vault)}"]`);
+    to?.focus({ preventScroll: true });
+  }, [activeVault]);
+
+  /** The ONE activation entry. Every path but the gate's own commit cancels a pending prepare
+   *  first: a chat row, a link, a start, New project, closing a tab all land where they say. */
   const setActive = useCallback((vault: string) => {
+    gate.cancel();
     activeRef.current = vault;
     setActiveState(vault);
-  }, []);
+  }, [gate]);
 
   /** A fresh instance id. Never reuses a retired one — stale ids would collide in the DOM. */
   const mintInstanceId = useCallback(() => {
@@ -540,7 +685,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       // Reviving a cold chip rebuilds a real instance, so it has to pass the ceiling too.
       let next = current;
       if (liveInstanceCount(current) >= MAX_LIVE_INSTANCES) {
-        const victim = oldestEvictable(current, [vault, activeRef.current]);
+        const victim = oldestEvictable(current, ceilingKeep(activeRef.current, gate.current()?.vault, vault));
         if (!victim) {
           notify(newShellRef.current ? tRef.current('shell.notice.ceiling') : `Can't reopen ${vault} — every other project has a live session.`);
           return;
@@ -554,7 +699,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     }
 
     setActive(vault);
-  }, [mintInstanceId, notify, setActive, setOpen]);
+  }, [mintInstanceId, notify, setActive, setOpen, gate]);
 
   /**
    * The vault the ⌥Tab picker is currently POINTING AT, or null when the picker is down.
@@ -622,8 +767,11 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     const commit = () => {
       const target = previewRef.current;
       setPreview(null);
-      if (target === null || target === activeRef.current) return;
+      // Committing back to the project on screen is a move to it: a prepare elsewhere ends.
+      if (target === activeRef.current) { gate.cancel(); return; }
+      if (target === null) return;
       if (!openRef.current.some((p) => p.vault === target)) return;
+      if (newShellRef.current) { switchToRef.current(target); return; }
       markProjectSwitch(target);
       activate(target);
     };
@@ -698,7 +846,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', onBlur);
     };
-  }, [activate, setPreview]);
+  }, [activate, setPreview, gate]);
 
   const addTab = useCallback(async (vault: string): Promise<AddTabResult> => {
     // 1. Already a chip in THIS window — the same project must never be open twice.
@@ -732,7 +880,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     // 3. At the ceiling — free a slot, or say why we can't.
     let next = current;
     if (liveInstanceCount(current) >= MAX_LIVE_INSTANCES) {
-      const victim = oldestEvictable(current, [activeRef.current]);
+      const victim = oldestEvictable(current, ceilingKeep(activeRef.current, gate.current()?.vault));
       if (!victim) {
         notify(newShellRef.current ? tRef.current('shell.notice.ceiling') : `${MAX_LIVE_INSTANCES} projects are open and all of them have a live session — close one first.`);
         return 'refused-ceiling';
@@ -747,7 +895,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     setOpen([...next, { vault, instanceId: mintInstanceId(), cold: false, rollup: null }]);
     setActive(vault);
     return 'added';
-  }, [activate, mintInstanceId, notify, setActive, setOpen]);
+  }, [activate, mintInstanceId, notify, setActive, setOpen, gate]);
 
   const closeTab = useCallback((vault: string) => {
     const current = openRef.current;
@@ -757,6 +905,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     }
     const index = current.findIndex((p) => p.vault === vault);
     if (index === -1) return;
+    // Closing (or detaching, or removing) the project being prepared ends its prepare.
+    if (gate.current()?.vault === vault) gate.cancel();
 
     const next = current.filter((p) => p.vault !== vault);
     setOpen(next);
@@ -767,7 +917,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       const searchOrder = [...next.slice(index), ...next.slice(0, index).reverse()];
       setActive((searchOrder.find((p) => !p.cold) ?? searchOrder[0]).vault);
     }
-  }, [notify, setActive, setOpen]);
+  }, [notify, setActive, setOpen, gate]);
 
   const detachToWindow = useCallback(async (vault: string) => {
     if (openRef.current.length <= 1) {
@@ -840,16 +990,20 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     const link = parseAppLink(raw);
     if (!link || !isProjectAppLink(link)) return;
     const { vault } = link;
+    // Navigation B: the link's landing is a move with its target (a session lands on Chat, a page
+    // or app on that page place, anything else on any page of the project).
+    const move = linkMoveRef.current(linkTarget(link));
     if (openRef.current.some((p) => p.vault === vault)) {
       activate(vault);
     } else {
       const result = await addTab(vault);
-      if (result !== 'added' && result !== 'focused-tab') return;
+      if (result === 'focused-window') { move?.focusedWindow(); return; }
+      if (result !== 'added' && result !== 'focused-tab') { move?.refused(); return; }
     }
     // `activate` refuses a cold chip at the ceiling (and says why); a link cannot land in a
     // project that is not mounted.
     const tab = openRef.current.find((p) => p.vault === vault);
-    if (!tab || tab.cold) return;
+    if (!tab || tab.cold) { move?.refused(); return; }
     armFocusDiag(`link ${link.kind}`);
     void focusThisWindow();
     linkSeqRef.current += 1;
@@ -1022,6 +1176,17 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const [arrivingVault, setArrivingVault] = useState<string | null>(initialIntent ? initialVault : null);
   const activeFactsOnChat = !!(activeVault && drawerFacts[activeVault]?.chatOpen);
   const activeOnChat = activeFactsOnChat || (!!activeVault && activeVault === arrivingVault);
+  /** What each project last showed (its Shell's report while active, or while prepared out of
+   *  sight): the sidebar's mode follows the ACTIVE one's, so it changes once, at activation. */
+  const [shownPages, setShownPages] = useState<Record<string, { page: string; chatOpen: boolean }>>({});
+  const noteShownPage = useCallback((vault: string, page: string, chatOpen: boolean) => {
+    setShownPages((prev) => (prev[vault]?.page === page && prev[vault]?.chatOpen === chatOpen ? prev : { ...prev, [vault]: { page, chatOpen } }));
+  }, []);
+  const activeShown = activeVault ? shownPages[activeVault] : undefined;
+  const sidebarModeNow: SidebarMode = sidebarMode({ onChat: activeOnChat || !!activeShown?.chatOpen, page: activeShown?.page });
+  const navMode = newShell && !deviceShell && sidebarModeNow !== 'chat';
+  const boardsMode = newShell && !deviceShell && sidebarModeNow === 'boards';
+  const [boardQuery, setBoardQuery] = useState('');
   useEffect(() => {
     if (!arrivingVault) return undefined;
     if (drawerFacts[arrivingVault]?.chatOpen) { setArrivingVault(null); return undefined; }
@@ -1055,8 +1220,9 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     if (isMobile && !prev.onChat && activeOnChat && prev.vault === activeVault) return;
     closeOverlay();
   }, [activeOnChat, activeVault, isMobile, closeOverlay]);
-  // Docked beside Chat; floating over any other page (the button never leaves the page) and ≤900.
-  const drawerFloats = narrow || !activeOnChat;
+  // The local new shell (tek-kenar C3): ONE sidebar docked on every page, floating only ≤900. A
+  // device shell keeps dev's rule: docked beside Chat, floating over any other page.
+  const drawerFloats = narrow || (deviceShell && !activeOnChat);
   const docked = !drawerFloats && drawerOpen;
   const drawerVisible = newShell && (docked || (drawerFloats && floatingOpen) || peek);
   const drawerFloating = !docked;
@@ -1067,13 +1233,13 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     if (over) {
       // On a page whose side panel the button drives (Whiteboards, Brain) the chat drawer is not
       // what a click would toggle, so it does not peek there.
-      const page = document.querySelector('.project-instance:not([hidden])')?.getAttribute('data-page') ?? '';
-      if (drawerTogglePanel({ chatOpen: activeFactsOnChat, page }) === 'page') return;
+      const page = document.querySelector('.project-instance[data-active]')?.getAttribute('data-page') ?? '';
+      if (drawerTogglePanel({ chatOpen: activeFactsOnChat, page, local: !deviceShell }) === 'page') return;
       if (!docked && !(drawerFloats && floatingOpen)) setPeek(true);
       return;
     }
     peekTimer.current = window.setTimeout(() => { peekTimer.current = null; setPeek(false); }, PEEK_GRACE_MS);
-  }, [newShell, docked, drawerFloats, floatingOpen, activeFactsOnChat, clearPeekTimer]);
+  }, [newShell, docked, drawerFloats, floatingOpen, activeFactsOnChat, clearPeekTimer, deviceShell]);
   const onDrawerToggle = useCallback(() => {
     clearPeekTimer();
     if (peek) {
@@ -1202,7 +1368,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const drawerFolded = useMemo(() => projectOrder.filter((name) => !drawerExpanded.includes(name)), [projectOrder, drawerExpanded]);
   // A device shell reads no project's roster or team (its drawer is chats only), so no fan-out
   // and no vault-less avatar request.
-  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell && !deviceShell ? drawerExpanded : [], mountedNames, drawerVisible, newShell && !deviceShell ? drawerFolded : [], drawerHidden);
+  // The projects and boards modes show every project folded with its mark: no roster is read open.
+  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(
+    newShell && !deviceShell && !navMode ? drawerExpanded : [], mountedNames, drawerVisible,
+    newShell && !deviceShell ? (navMode ? projectOrder : drawerFolded) : [], drawerHidden);
   // The Mac's running chats, for the chat rows of projects this window has not mounted.
   const { live: liveChats, answered: liveAnswered } = useDrawerChats({ activeVault, drawerVisible, enabled: newShell });
   // A device shell's one published fact: memoized on the read and the tabs, a constant elsewhere.
@@ -1240,6 +1409,14 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       ...(deviceShell ? { device: deviceChats } : {}),
     });
   }, [newShell, drawerProjects, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
+  /** The projects and boards modes' rows: every project folded, the active one too (C3). */
+  const navRows = useMemo(() => {
+    if (!navMode) return [];
+    return buildDrawerRows({ projects: drawerProjects, activeVault, expanded: [], facts: drawerFacts, fanout, collapseAll: true });
+  }, [navMode, drawerProjects, activeVault, drawerFacts, fanout]);
+  // C6: the other listed projects' boards, while boards mode is on screen.
+  const boardsVaults = useMemo(() => projectOrder.filter((n) => n !== activeVault), [projectOrder, activeVault]);
+  const { entries: boardEntries, seed: seedBoards } = useBoardsFanout(boardsMode && drawerVisible, boardsVaults, activeVault);
   /** An Ekip list's switch (`POST /api/agents/:slug/enabled`): the server's answer, and the
    *  project's next read shows it. A refusal (a phone and a member of all projects, a teammate's
    *  member) is said once. */
@@ -1324,18 +1501,88 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     () => (initialIntent ? { [initialVault]: { intent: initialIntent, nonce: 1, at: Date.now() } } : {}),
   );
   const drawerSeqRef = useRef(1);
-  /** `intent` null: only bring the project forward, on its chat area (a Super landing, whose
-   *  own start intent shows the stage). */
-  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent | null): Promise<AddTabResult> => {
+  const dropDrawerIntentRef = useRef<(vault: string, nonce: number) => void>(() => {});
+  /** The input event being dispatched while a prepare is pending, and whether a move ran in it. */
+  const currentInputRef = useRef<{ stamped: boolean } | null>(null);
+  /** What each project showed when it was last on screen (its last report): a prepare of a
+   *  project already showing the target is a warm one (C2). */
+  const shownByVaultRef = useRef<Record<string, ShownReport>>({});
+  /**
+   * C2: mount or keep `vault` WITHOUT making it active, for a prepare. A cold tab is revived and a
+   * new project mounted, each past the ceiling (the keep set holds the project on screen and the
+   * one being prepared); another window holding it comes forward instead. `mountedNow`: this move
+   * mounted it (a cold prepare).
+   */
+  const mountForPrepare = useCallback(async (vault: string): Promise<{ result: AddTabResult; mountedNow: boolean }> => {
+    const held = openRef.current.find((p) => p.vault === vault);
+    if (held && !held.cold) return { result: 'focused-tab', mountedNow: false };
+    if (!held) {
+      const otherWindow = findWindowForVault(vault);
+      if (otherWindow && await focusWindow(otherWindow)) return { result: 'focused-window', mountedNow: false };
+    }
+    const current = openRef.current;
+    const again = current.find((p) => p.vault === vault);
+    if (again && !again.cold) return { result: 'focused-tab', mountedNow: false };
+    let next = current;
+    if (liveInstanceCount(current) >= MAX_LIVE_INSTANCES) {
+      const victim = oldestEvictable(current, ceilingKeep(activeRef.current, vault));
+      if (!victim) {
+        notify(tRef.current('shell.notice.ceiling'));
+        return { result: 'refused-ceiling', mountedNow: false };
+      }
+      next = chill(next, victim.vault);
+      notify(tRef.current('shell.notice.evicted').replace('{name}', victim.vault));
+    }
+    setOpen(again
+      ? next.map((p) => (p.vault === vault ? { ...p, cold: false, rollup: null, instanceId: mintInstanceId() } : p))
+      : [...next, { vault, instanceId: mintInstanceId(), cold: false, rollup: null }]);
+    return { result: again ? 'focused-tab' : 'added', mountedNow: true };
+  }, [mintInstanceId, notify, setOpen]);
+
+  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent | null, onQueued?: (nonce: number) => void,
+    opts?: { prepare?: boolean; moveId?: number | null }): Promise<AddTabResult> => {
+    // C2: a window move to ANOTHER project prepares it out of sight; inside the project on screen,
+    // and on every device shell, a move lands as before.
+    if (opts?.prepare && newShellRef.current && !deviceShell && vault !== activeRef.current) {
+      const target: PrepareTarget = !intent ? { kind: 'any' }
+        : intent.kind === 'page'
+          ? (intent.page === 'chat' ? { kind: 'chat' } : { kind: 'page', page: intent.page, id: matchableItem(intent.page, intent.id) })
+          : landsOnChat(intent) ? { kind: 'chat' } : { kind: 'any' };
+      let nonce: number | null = null;
+      if (intent) {
+        drawerSeqRef.current += 1;
+        nonce = drawerSeqRef.current;
+        const queued = nonce;
+        setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce: queued, at: Date.now() } }));
+        onQueued?.(queued);
+        if (target.kind === 'chat') setArrivingVault(vault);
+      }
+      const { result, mountedNow } = await mountForPrepare(vault);
+      const tab = openRef.current.find((p) => p.vault === vault);
+      if (!intentLands(result, !!tab && !tab.cold)) {
+        setArrivingVault((v) => (v === vault ? null : v));
+        if (nonce !== null) dropDrawerIntentRef.current(vault, nonce);
+        return result;
+      }
+      // Warm: B is mounted and already shows the target (its last report on screen).
+      const shown = shownByVaultRef.current[vault];
+      const showsTarget = !!shown && (target.kind === 'any' ? !shown.chatOpen
+        : target.kind === 'chat' ? shown.chatOpen
+          : !shown.chatOpen && shown.page === target.page && (!target.id || shown.item?.id === target.id));
+      gate.start(vault, target, { cold: mountedNow || !showsTarget, nonce, moveId: opts.moveId ?? null });
+      return result;
+    }
     // Queued BEFORE the project comes forward, in the same commit: it is what the project's first
     // render lands on. Queued after, the project would first open on its own page.
     drawerSeqRef.current += 1;
     const nonce = drawerSeqRef.current;
     if (intent) setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
+    if (intent) onQueued?.(nonce);
     // A drag or a chat row's close moves a row, never the owner: the caller sends either only to
     // a mounted project.
     if (intent && (intent.kind === 'move-window' || intent.kind === 'close-chat')) return 'focused-tab';
-    if (!intent || landsOnChat(intent)) setArrivingVault(vault);
+    // A window move landing on Chat counts as on Chat from the click too (the drawer does not flip).
+    if (!intent || landsOnChat(intent) || (intent.kind === 'page' && intent.page === 'chat')) setArrivingVault(vault);
     let result: AddTabResult;
     if (openRef.current.some((p) => p.vault === vault)) {
       activate(vault);
@@ -1354,11 +1601,165 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       return next;
     });
     return result;
-  }, [activate, addTab]);
-  queueDrawerIntentRef.current = queueDrawerIntent;
+  }, [activate, addTab, deviceShell, gate, mountForPrepare]);
+
+  /* ── Navigation B (C1-C3): the window owns back/forward, recent places and last items ── */
+
+  const [navRev, setNavRev] = useState(0);
+  const placesRef = useRef<PlaceHistory | null>(null);
+  if (placesRef.current === null) {
+    placesRef.current = createPlaceHistory({ now: Date.now, storage: deviceShell ? null : localPlaceStorage() });
+  }
+  const places = placesRef.current;
+  const recorderRef = useRef<NavRecorder | null>(null);
+  if (recorderRef.current === null) {
+    recorderRef.current = createNavRecorder({
+      history: places,
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (h) => window.clearTimeout(h as number),
+      onChange: () => setNavRev((n) => n + 1),
+    });
+  }
+  const recorder = recorderRef.current;
+  useEffect(() => () => recorder.dispose(), [recorder]);
+  /** One predicate for ← → and their tooltips, decided before any side effect: a project no
+   *  longer registered, or one another window holds and this one does not. */
+  const skipPlace = useCallback((p: Place) => (
+    !projectOrderRef.current.includes(p.vault)
+    || (!openRef.current.some((o) => o.vault === p.vault) && !!findWindowForVault(p.vault))
+  ), []);
+  /** Drop a still-unconsumed intent (a step replaced before it landed). */
+  const dropDrawerIntent = useCallback((vault: string, nonce: number) => {
+    setPendingDrawerIntents((prev) => {
+      if (prev[vault]?.nonce !== nonce) return prev;
+      const next = { ...prev };
+      delete next[vault];
+      return next;
+    });
+  }, []);
+  dropDrawerIntentRef.current = dropDrawerIntent;
+  /** A prepare that ends without activation: its unconsumed intent goes, B's busy row and chat
+   *  arrival clear, and a cancel by input (no newer move) ends the recorder's move for it. A
+   *  newer move ends that move itself (`recorder.move` records what had settled). */
+  prepareEndRef.current = (p, why) => {
+    if (p.nonce !== null && !p.consumed) dropDrawerIntent(p.vault, p.nonce);
+    setArrivingVault((v) => (v === p.vault ? null : v));
+    if (why === 'cancel' && p.moveId !== null) recorder.refused(p.moveId);
+  };
+  /** A move started inside an input event stamps it, so the input-cancel below lets it be. */
+  const stampInput = useCallback(() => { if (currentInputRef.current) currentInputRef.current.stamped = true; }, []);
+  /** How a move's answer ends it: the ceiling refused (a cold tab that stays cold counts), or
+   *  another window holds the project and came forward. */
+  const settleMove = useCallback((id: number, vault: string, result: AddTabResult) => {
+    if (result === 'focused-window') { recorder.focusedWindow(id); return; }
+    const tab = openRef.current.find((p) => p.vault === vault);
+    if (result === 'refused-ceiling' || !tab || tab.cold) recorder.refused(id);
+  }, [recorder]);
+  /** A place's landing intent: a page with its item, or the project's Chat as it stands. */
+  const placeIntent = (place: Place): DrawerIntent => (
+    place.kind === 'chat' ? { kind: 'page', page: 'chat' } : { kind: 'page', page: place.page, ...(place.id ? { id: place.id } : {}) }
+  );
+  const goToPlace = useCallback((place: Place) => {
+    stampInput();
+    const id = recorder.move(targetOf(place));
+    void queueDrawerIntent(place.vault, placeIntent(place), undefined, { prepare: true, moveId: id }).then((r) => settleMove(id, place.vault, r));
+  }, [recorder, queueDrawerIntent, settleMove, stampInput]);
+  const stepTo = useCallback((direction: -1 | 1) => {
+    stampInput();
+    let queued: { vault: string; nonce: number } | null = null;
+    // The step first (it ends the previous move and walks on from it), the prepare after: a fast
+    // <- <- walks two places back.
+    const begun = recorder.step(direction, skipPlace, () => { if (queued) dropDrawerIntent(queued.vault, queued.nonce); });
+    if (!begun) return;
+    const { target } = begun;
+    if (target.vault === activeRef.current) gate.cancel();
+    void queueDrawerIntent(target.vault, placeIntent(target), (nonce) => { queued = { vault: target.vault, nonce }; }, { prepare: true, moveId: begun.id })
+      .then((r) => settleMove(begun.id, target.vault, r));
+  }, [recorder, skipPlace, dropDrawerIntent, queueDrawerIntent, settleMove, stampInput, gate]);
+  /** The owner's own switch: the page on screen is carried (lib/projectSwitchPage.ts); the move's
+   *  target is that project's Chat when Chat is carried, else the carried page when it can show
+   *  it, else any page of it. */
+  const switchTo = useCallback((vault: string) => {
+    if (!vault) return;
+    // A move to the project on screen: nothing to land, a prepare elsewhere ends.
+    if (vault === activeRef.current) { gate.cancel(); return; }
+    stampInput();
+    const carried = readShownSurface();
+    const canShow = (p: Page) => p !== 'settings' && !(deviceShell && DEVICE_HIDDEN_PAGES.has(p));
+    if (deviceShell) {
+      // Device shells keep dev's switch: the carry of lib/projectSwitchPage.ts.
+      const target: MoveTarget = carried?.chat
+        ? { vault, kind: 'chat', place: { vault, kind: 'chat' } }
+        : carried && canShow(carried.page)
+          ? { vault, kind: 'page', place: { vault, kind: 'page', page: carried.page, id: null, label: null } }
+          : { vault, kind: 'page', place: null };
+      const id = recorder.move(target);
+      markProjectSwitch(vault);
+      void addTab(vault).then((r) => settleMove(id, vault, r));
+      return;
+    }
+    // C5: the same place in B. Chat on Chat; page P at the item open there when he last left it.
+    let intent: DrawerIntent | null = null;
+    let target: MoveTarget = { vault, kind: 'page', place: null };
+    if (carried?.chat) {
+      intent = { kind: 'page', page: 'chat' };
+      target = targetOf({ vault, kind: 'chat' });
+    } else if (carried && canShow(carried.page)) {
+      const last = places.lastItemOn(vault, carried.page);
+      intent = { kind: 'page', page: carried.page, ...(last ? { id: last.id } : {}) };
+      target = targetOf({ vault, kind: 'page', page: carried.page, id: last?.id ?? null, label: last?.label ?? null });
+    }
+    const id = recorder.move(target);
+    void queueDrawerIntent(vault, intent, undefined, { prepare: true, moveId: id }).then((r) => settleMove(id, vault, r));
+  }, [recorder, deviceShell, addTab, settleMove, places, queueDrawerIntent, stampInput, gate]);
+  switchToRef.current = switchTo;
+  linkMoveRef.current = (target: MoveTarget) => {
+    if (!newShellRef.current) return null;
+    const id = recorder.move(target);
+    return { refused: () => recorder.refused(id), focusedWindow: () => recorder.focusedWindow(id) };
+  };
+  /** A drawer row (and every other caller of the queue): a chat intent is a move to that
+   *  project's Chat, a page intent a move to that page; a rename, close or drag is none. */
+  const trackedIntent = useCallback((vault: string, intent: DrawerIntent): Promise<AddTabResult> => {
+    const target: MoveTarget | null = intent.kind === 'page'
+      ? (intent.page === 'chat' ? targetOf({ vault, kind: 'chat' }) : targetOf({ vault, kind: 'page', page: intent.page, id: intent.id ?? null, label: null }))
+      : landsOnChat(intent) ? targetOf({ vault, kind: 'chat' }) : null;
+    if (!target) return queueDrawerIntent(vault, intent);
+    const id = recorder.move(target);
+    return queueDrawerIntent(vault, intent).then((r) => { settleMove(id, vault, r); return r; });
+  }, [recorder, queueDrawerIntent, settleMove]);
+  queueDrawerIntentRef.current = trackedIntent;
+  const reportShown = useCallback((vault: string, shown: ShownReport) => {
+    if (vault !== activeRef.current) return;
+    shownByVaultRef.current[vault] = shown;
+    noteShownPage(vault, shown.page, shown.chatOpen);
+    const place: Place = shown.chatOpen
+      ? { vault, kind: 'chat' }
+      : { vault, kind: 'page', page: shown.page, id: shown.item?.id ?? null, label: shown.item?.label ?? null };
+    recorder.shown(place, shown.byOwner);
+  }, [recorder, noteShownPage]);
+  const placeLabel = useCallback((place: Place) => {
+    const page = place.kind === 'chat' ? t('nav.chat') : t(PAGE_LABEL_KEY[place.page]);
+    return [place.vault, page, place.kind === 'page' ? place.label : null].filter(Boolean).join(' · ');
+  }, [t]);
+  const backPlace = places.peekBack(skipPlace);
+  const forwardPlace = places.peekForward(skipPlace);
+  const backLabel = backPlace ? placeLabel(backPlace) : null;
+  const forwardLabel = forwardPlace ? placeLabel(forwardPlace) : null;
+  const history = useMemo<ChromeHistory>(() => ({
+    canBack: backLabel !== null,
+    canForward: forwardLabel !== null,
+    back: () => stepTo(-1),
+    forward: () => stepTo(1),
+    backLabel,
+    forwardLabel,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [backLabel, forwardLabel, stepTo, navRev]);
+  const railProjects = useMemo(() => projectOrder.filter((n) => !drawerHidden.includes(n)), [projectOrder, drawerHidden]);
+
   const openChatRow = useCallback((vault: string, row: HomeRow) => {
-    void queueDrawerIntent(vault, { kind: 'open-chat', row });
-  }, [queueDrawerIntent]);
+    void trackedIntent(vault, { kind: 'open-chat', row });
+  }, [trackedIntent]);
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const openHistory = useCallback(() => {
@@ -1399,18 +1800,58 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const chrome = useMemo<ChromeApi>(
     () => ({
       open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoom: setZoomLevel, openChatRow, deviceChats, openHistory, dismissDrawer: dismissFloating,
-      queueDrawerIntent: (vault: string, intent: DrawerIntent) => { void queueDrawerIntent(vault, intent); },
+      queueDrawerIntent: (vault: string, intent: DrawerIntent) => { void trackedIntent(vault, intent); },
+      goToPlace, switchTo, reportShown, history, projects: railProjects, registered: projectOrder, places, placeLabel,
+      preparingVault: preparing?.vault ?? null,
+      sidebarQuery: boardQuery,
+      seedBoards,
     }),
-    [open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoomLevel, openChatRow, deviceChats, openHistory, dismissFloating, queueDrawerIntent],
+    [open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoomLevel, openChatRow, deviceChats, openHistory, dismissFloating, trackedIntent,
+      goToPlace, switchTo, reportShown, history, railProjects, projectOrder, places, placeLabel, preparing?.vault, boardQuery, seedBoards],
   );
   const consumeDrawerIntent = useCallback((vault: string, nonce: number) => {
+    gate.consumed(vault, nonce);
     setPendingDrawerIntents((prev) => {
       if (prev[vault]?.nonce !== nonce) return prev;
       const next = { ...prev };
       delete next[vault];
       return next;
     });
-  }, []);
+  }, [gate]);
+  const handlePrepared = useCallback((vault: string, report: PrepareReport) => {
+    noteShownPage(vault, report.page, report.chatOpen);
+    gate.report(vault, report);
+  }, [gate, noteShownPage]);
+
+  /*
+   * C2: the owner's input belongs to the project on screen. While a prepare is pending, every
+   * press and key that is not a move cancels it and then reaches A as normal. Decided once per
+   * event, after it has been dispatched: a move handler that ran in it stamped it (a second Cmd-2
+   * to the B already preparing keeps that prepare). Captured, so input A stops on the way up (a
+   * board card, the terminal) still counts. A bare modifier, a key repeat, a primary press on a
+   * move control (`data-move`) or on the sidebar's frame is not input. A drag-reorder on a
+   * project row starts on a `data-move` row: a move, not input.
+   */
+  const preparingId = preparing?.id ?? null;
+  useEffect(() => {
+    if (preparingId === null) return undefined;
+    const onInput = (e: Event) => {
+      if (e instanceof KeyboardEvent && (isBareModifier(e.key) || e.repeat)) return;
+      if (e instanceof PointerEvent && isMovePress(e.target, e.button)) return;
+      const rec = { stamped: false };
+      currentInputRef.current = rec;
+      window.setTimeout(() => {
+        if (currentInputRef.current === rec) currentInputRef.current = null;
+        if (!rec.stamped && gate.current()?.id === preparingId) gate.cancel();
+      }, 0);
+    };
+    window.addEventListener('pointerdown', onInput, true);
+    window.addEventListener('keydown', onInput, true);
+    return () => {
+      window.removeEventListener('pointerdown', onInput, true);
+      window.removeEventListener('keydown', onInput, true);
+    };
+  }, [preparingId, gate]);
 
   // History tags a chat that is open (a tab here, or running on the Mac) as open.
   const historyOpenIds = useMemo(() => {
@@ -1457,8 +1898,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
         const target = projectOrderRef.current.filter((n) => !drawerHiddenRef.current.includes(n))[Number(e.key) - 1];
         if (!target) return;
         e.preventDefault();
-        markProjectSwitch(target);
-        void addTab(target);
+        switchToRef.current(target);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -1531,7 +1971,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             pickerOpen={pickerOpen}
             onNewProject={() => { setPickerOpen(false); setNewProjectOpen(true); }}
             onPickerOpen={setPickerOpen}
-            onPick={(name) => { closeOverlay(); markProjectSwitch(name); void addTab(name); }}
+            onPick={(name) => { closeOverlay(); switchTo(name); }}
             notice={notice}
             onToggleDrawer={() => setDrawerToggleNonce((n) => n + 1)}
             waiting={drawerWaiting}
@@ -1544,13 +1984,15 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             dark={resolved === 'dark'}
             setLeftSlot={setLeftSlot}
             setRightSlot={setRightSlot}
+            setTabsSlot={setTabsSlot}
             {...(deviceShell ? { device: { tunnel, remote } } : {})}
           />
           {newProjectOpen && <NewProjectFlow onClose={() => setNewProjectOpen(false)} onLand={landNewProject} />}
           {/* [rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
           <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
-            <div className="ns-rail-slot" ref={setRailSlot} />
+            {/* The local new shell has no rail: its pages are the title bar's tabs (tek-kenar C7). */}
+            {deviceShell && <div className="ns-rail-slot" ref={setRailSlot} />}
             {drawerVisible && drawerFloating && !peekOnly && (
               <div className="ns-drawer-scrim" onClick={closeOverlay} aria-hidden="true" />
             )}
@@ -1565,9 +2007,9 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onClose={closeOverlay}
                 onResize={resizeDrawer}
                 onToggleExpanded={toggleExpanded}
-                onIntent={(vault, intent) => void queueDrawerIntent(vault, intent)}
+                onIntent={(vault, intent) => void trackedIntent(vault, intent)}
                 onHistory={openHistory}
-                onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); closeOverlay(); }}
+                onRelations={() => { if (activeVault) void trackedIntent(activeVault, { kind: 'page', page: 'relations' }); closeOverlay(); }}
                 onMove={(name, delta) => reorder(moveAmong(projectOrder, drawerHidden, name, delta))}
                 onDrop={(name, before) => reorder(dropInOrder(projectOrder, name, before))}
                 onMoveWindow={(vault, windowId, before) => {
@@ -1595,6 +2037,22 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onManage={manageMembers}
                 {...(deviceShell ? { device: true } : {})}
                 {...(tunnel ? { foot: <PhoneDrawerFoot /> } : {})}
+                {...(deviceShell ? {} : {
+                  sidebar: {
+                    mode: sidebarModeNow,
+                    navRows,
+                    boardsOpen: drawerExpanded,
+                    boards: boardEntries,
+                    preparingVault: preparing?.vault ?? null,
+                    boardQuery,
+                    onBoardQuery: setBoardQuery,
+                    onSwitch: (name: string) => switchTo(name),
+                    onOpenBoard: (vault: string, slug: string) => goToPlace({ vault, kind: 'page', page: 'whiteboards', id: slug, label: null }),
+                    onSettings: () => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'settings' }); },
+                    setBoardsSlot,
+                    setBoardsFootSlot,
+                  },
+                })}
               />
             )}
             <div className="window-chrome-body">
@@ -1620,6 +2078,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   onDrawerIntentConsumed={consumeDrawerIntent}
                   pendingManage={pendingManage[p.vault] ?? null}
                   onManageConsumed={consumeManage}
+                  preparing={preparing && preparing.vault === p.vault && p.vault !== activeVault ? preparing.target : null}
+                  onPrepared={handlePrepared}
                 />
               ))}
             </div>
@@ -1635,7 +2095,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             {...(deviceShell ? { hiddenIds: deviceChats.hiddenIds, noSuper: true } : {})}
             onPickIn={(vault, s) => {
               setHistoryOpen(false);
-              void queueDrawerIntent(vault, { kind: 'open-session', sessionId: s.id });
+              void trackedIntent(vault, { kind: 'open-session', sessionId: s.id });
             }}
           />
         </div>
