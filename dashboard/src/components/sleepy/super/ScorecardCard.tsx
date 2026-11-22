@@ -4,7 +4,8 @@ import { phoneAllows } from '../../../lib/phoneSurface';
 import { useScorecard, useScorecardWrite, type ScorecardWrite } from '../../../hooks/useScorecard';
 import {
   barTone, checksMet, formatValue, goalChange, goalMoveForRun, latestRateable, localDay, lowerIsBetter,
-  nextVerdict, trendWord, unratedCount, type ScoreGoal, type ScoreLesson, type ScoreRun, type ScorecardData,
+  askState, nextVerdict, ratingKeyOf, trendWord, unratedCount, type ScoreCorrection, type ScoreGoal, type ScoreLesson,
+  type ScoreRating, type ScoreRun, type ScorecardData,
 } from '../../../lib/scorecardModel';
 import './ScorecardCard.css';
 
@@ -19,8 +20,10 @@ import './ScorecardCard.css';
  * Every write says its failure where he tapped, and words he typed are cleared only once saved.
  * A cleared rating offers Undo (stars and note back).
  *
- * W3 hook point (the rating request after every run, owner 22 Nov, drawings awaiting his yes):
- * `unratedCount` / `latestRateable` in scorecardModel and the `scorecard.request.*` i18n slot.
+ * W3 (the rating request after every run, owner-approved drawings her-is-puan-*): the chat row
+ * under a run asks while `askState` is open; the card reads "Not rated" past the window, marks a
+ * rating from Telegram, a job the Super handed the member, the Super's own judged rating (outlined
+ * violet stars, "Change") and the corrections the Super noted beside his own note.
  */
 
 export interface ScorecardCardProps {
@@ -66,13 +69,15 @@ function WriteError({ error }: { error: string | null }) {
 const FILLED = '★';
 const EMPTY = '☆';
 
-function Stars({ value, big, label, onRate, disabled }: {
+function Stars({ value, big, label, onRate, disabled, judged }: {
   value: number; big?: boolean; label: string; onRate?: (n: number) => void; disabled?: boolean;
+  /** The Super's reading of his words (W3 E12): violet, filled for on and outline for off. */
+  judged?: boolean;
 }) {
   const { t } = useI18n();
   return (
-    <span className={`sc-stars${big ? ' sc-stars--big' : ''}`} role={onRate ? 'radiogroup' : 'img'} aria-label={label}
-      data-testid="sc-stars" data-value={value} onPointerDown={stop} onClick={stop}>
+    <span className={`sc-stars${big ? ' sc-stars--big' : ''}${judged ? ' sc-stars--judged' : ''}`} role={onRate ? 'radiogroup' : 'img'} aria-label={label}
+      data-testid="sc-stars" data-value={value} data-judged={judged ? 'true' : undefined} onPointerDown={stop} onClick={stop}>
       {[1, 2, 3, 4, 5].map((n) => (onRate ? (
         <button key={n} type="button" className={`sc-star${n <= value ? ' is-on' : ''}`} role="radio" aria-checked={n === value}
           aria-label={t('scorecard.starN').replace('{n}', String(n))} disabled={disabled} data-testid={`sc-star-${n}`}
@@ -123,7 +128,7 @@ function ScoreTile({ slug, data }: { slug: string; data: ScorecardData }) {
   const { t, locale } = useI18n();
   const w = useSend(slug);
   const avg = data.trend.average;
-  const toRate = unratedCount(data.runs);
+  const toRate = data.toRate ?? unratedCount(data.runs);
   if (avg === null) {
     const latest = latestRateable(data.runs);
     return (
@@ -527,7 +532,7 @@ function Trend({ ctx }: { ctx: Ctx }) {
 function Runs({ ctx }: { ctx: Ctx }) {
   const { t } = useI18n();
   const runs = ctx.data.runs.filter((r) => r.status !== 'running' && r.status !== 'waiting');
-  const firstUnrated = runs.find((r) => !r.rating)?.key ?? null;
+  const firstUnrated = runs.find((r) => !r.rating && (r.ask === undefined || r.ask === 'open'))?.key ?? null;
   return (
     <section className="sc-section" data-testid="sc-runs">
       <h4 className="sc-label">{t('scorecard.recentRuns')}</h4>
@@ -553,28 +558,34 @@ function RunRow({ ctx, run, lead }: { ctx: Ctx; run: ScoreRun; lead: boolean }) 
     ? goalMoveForRun(goal.points, run.lastAt, lowerIsBetter(goal)) : null;
   const met = checksMet(run.check);
   const lessons = run.lessons.filter((l) => l.status === 'active' || l.status === 'held');
+  const viaSuper = !!run.viaSuper || !!r?.viaSuper;
   const rate = (n: number) => { setCleared(null); w.send({ kind: 'rate', run: run.key, stars: n }); };
   const clear = () => { const was = r ? { stars: r.stars, ...(r.note ? { note: r.note } : {}) } : null; w.send({ kind: 'rate', run: run.key, stars: null }, () => setCleared(was)); };
   const undoClear = () => { if (cleared) w.send({ kind: 'rate', run: run.key, stars: cleared.stars, ...(cleared.note ? { note: cleared.note } : {}) }, () => setCleared(null)); };
+  // Past its window an unrated run stops asking but can still be rated here (W3 E2).
+  const notRated = !r && !cleared && run.ask !== undefined && run.ask !== 'open';
   return (
     <div className={`sc-run${lead ? ' is-lead' : ''}${low ? ' is-low' : ''}`} data-testid="sc-run" data-run={run.key}
-      data-rated={r ? 'true' : 'false'}>
+      data-rated={r ? 'true' : 'false'} data-via-super={viaSuper ? 'true' : undefined} data-judged={r?.judged ? 'true' : undefined}>
       <div className="sc-run-top">
         {expanded ? (
           <span className="sc-run-title">
             <span className="sc-strong">{run.title}</span>
-            <RunSub met={met} move={move} unit={goal?.unit} />
+            {viaSuper && <span className="sc-run-chip" data-testid="sc-run-super">{t('scorecard.superJob')}</span>}
+            <RunSub met={met} move={move} unit={goal?.unit} via={r?.via} />
           </span>
         ) : (
           <button type="button" className="sc-run-title sc-run-open" aria-expanded={false} data-testid="sc-run-open" onClick={() => setOpen(true)}>
             <span className="sc-strong">{run.title}</span>
+            {viaSuper && <span className="sc-run-chip" data-testid="sc-run-super">{t('scorecard.superJob')}</span>}
             <RunSub met={met} move={move} unit={goal?.unit} />
           </button>
         )}
-        {expanded && <Stars value={stars} big={lead && !r} label={t('scorecard.rateRun')} disabled={w.busy} onRate={rate} />}
+        {expanded && <Stars value={stars} big={lead && !r} judged={!!r?.judged} label={r?.judged ? t('scorecard.superRating') : t('scorecard.rateRun')} disabled={w.busy} onRate={rate} />}
         <span className="mcb-muted sc-run-day">{runDay(run.lastAt, locale, t)}</span>
       </div>
       {lead && !r && !cleared && <span className="sc-accent sc-run-cta">{t('scorecard.rateRun')} · {t('scorecard.addNote')}</span>}
+      {notRated && !lead && <span className="mcb-muted sc-run-notrated" data-testid="sc-not-rated">{t('scorecard.notRated')}</span>}
       {cleared && !r && <ClearedUndo onUndo={undoClear} busy={w.busy} />}
       {r && <RatedDetail ctx={ctx} run={run} w={w} onClear={clear} />}
       <CheckLine ctx={ctx} run={run} w={w} />
@@ -590,11 +601,14 @@ function RunRow({ ctx, run, lead }: { ctx: Ctx; run: ScoreRun; lead: boolean }) 
   );
 }
 
-function RunSub({ met, move, unit }: { met: { met: number; total: number } | null; move: { delta: number; good: boolean } | null; unit?: string | null }) {
+function RunSub({ met, move, unit, via }: { met: { met: number; total: number } | null; move: { delta: number; good: boolean } | null; unit?: string | null; via?: ScoreRating['via'] }) {
   const { t } = useI18n();
-  if (!met && !move) return null;
+  const tg = via === 'telegram';
+  if (!met && !move && !tg) return null;
   return (
     <span className="mcb-muted sc-run-sub">
+      {tg && <span data-testid="sc-from-telegram">{t('scorecard.ratedFromTelegram')}</span>}
+      {tg && (met || move) && ' · '}
       {met && t('scorecard.checksMet').replace('{n}', String(met.met)).replace('{total}', String(met.total))}
       {met && move && ' · '}
       {move && (
@@ -637,7 +651,19 @@ function RatedDetail({ ctx, run, w, onClear }: { ctx: Ctx; run: ScoreRun; w: Sen
       ) : (
         <button type="button" className="mcb-link sc-add-note" data-testid="sc-add-note" onClick={edit}>{t('scorecard.addNote')}</button>
       )}
-      {r.quote && <p className="mcb-muted sc-quote" data-testid="sc-quote">{t('scorecard.fromWords')} «{r.quote}»</p>}
+      {r.quote && r.judged && (
+        <p className="sc-judged-row" data-testid="sc-judged">
+          <span><span className="sc-strong">{t('scorecard.superRating')}</span> {t('scorecard.fromYourWords')} «{r.quote}»</span>
+          {' · '}
+          {/* His tap on the stars above replaces the Super's reading (judged cleared, his words kept). */}
+          <button type="button" className="mcb-link" data-testid="sc-judged-change"
+            onClick={(e) => (e.currentTarget.closest('.sc-run')?.querySelector<HTMLButtonElement>('button.sc-star[aria-checked="true"]'))?.focus()}>
+            {t('scorecard.change')}
+          </button>
+        </p>
+      )}
+      {r.quote && !r.judged && <p className="mcb-muted sc-quote" data-testid="sc-quote">{t('scorecard.fromWords')} «{r.quote}»</p>}
+      {(r.corrections ?? []).map((c) => <CorrectionRow key={c.id} ctx={ctx} run={run} c={c} stars={r.stars} w={w} />)}
       {draft?.state === 'running' && <p className="mcb-muted" data-testid="sc-draft-running">{t('scorecard.drafting')}</p>}
       {draft?.state === 'failed' && (
         <p className="sc-failed" data-testid="sc-draft-failed">
@@ -648,6 +674,25 @@ function RatedDetail({ ctx, run, w, onClear }: { ctx: Ctx; run: ScoreRun; w: Sen
       <button type="button" className="sc-clear mcb-link" data-testid="sc-clear" disabled={w.busy} onClick={onClear}>
         {t('scorecard.clear')}
       </button>
+    </div>
+  );
+}
+
+/** W3 E13: his words the Super noted beside his own note; his stars and note stay as he left them. */
+function CorrectionRow({ ctx, run, c, stars, w }: { ctx: Ctx; run: ScoreRun; c: ScoreCorrection; stars: number; w: Send }) {
+  const { t } = useI18n();
+  const d = c.draft;
+  return (
+    <div className="sc-correction" data-testid="sc-correction" data-id={c.id}>
+      <span><span className="sc-strong">{t('scorecard.superNoted')}</span> «{c.note}»</span>
+      <span className="mcb-muted"> · {t('scorecard.keptYours').replace('{n}', String(stars))}</span>
+      {d?.state === 'running' && <span className="mcb-muted" data-testid="sc-correction-running"> · {t('scorecard.drafting')}</span>}
+      {d?.state === 'failed' && (
+        <span className="sc-failed" data-testid="sc-correction-failed">
+          {' · '}{t('scorecard.draftFailed')}
+          {ctx.can('draft') && <> · <button type="button" className="mcb-link" disabled={w.busy} onClick={() => w.send({ kind: 'draft', run: run.runKey, slot: `c:${c.id}` })}>{t('scorecard.tryAgain')}</button></>}
+        </span>
+      )}
     </div>
   );
 }
@@ -694,34 +739,46 @@ function CheckLine({ ctx, run, w }: { ctx: Ctx; run: ScoreRun; w: Send }) {
 
 // ─── Stars under a run in the member's chat (RunFoot) ────────────────────────────
 
-/** Stars and a note under a finished run in the member's chat; reads the card's shared cache. */
-export function RunStars({ member, sessionKey }: { member: string; sessionKey: string }) {
+/**
+ * Stars and a note under a finished run in the member's chat (W3 C14); reads the card's shared
+ * cache by the run's key, so a run older than the card's run list still draws. An unrated run asks
+ * while its request is open (`askState`), and past the window shows nothing; a rating stays.
+ */
+export function RunStars({ member, sessionKey, request }: {
+  member: string; sessionKey: string;
+  /** The run's request facts from the history read (absent: an older server, no request row). */
+  request?: { eligible: boolean; endedAt: string };
+}) {
   const { t } = useI18n();
   const q = useScorecard(member);
   const w = useSend(member);
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState('');
   const [cleared, setCleared] = useState<{ stars: number; note?: string } | null>(null);
-  const run = q.data?.runs.find((r) => r.key === sessionKey);
-  if (!run || !run.status || run.status === 'running' || run.status === 'waiting') return null;
-  const r = run.rating;
-  const lessons = run.lessons.filter((l) => l.status === 'active' || l.status === 'held');
+  const data = q.data;
+  if (!data) return null;
+  const key = ratingKeyOf(sessionKey, data.prefix);
+  const r: ScoreRating | null = data.card.ratings[key] ?? null;
+  const state = askState(request, r, Date.now());
+  if (state === 'none' && !cleared) return null;
+  const lessons = data.card.lessons.filter((l) => l.run === key && (l.status === 'active' || l.status === 'held'));
   const canUndo = (id: string) => phoneAllows('POST', `/api/agents/${encodeURIComponent(member)}/scorecard/lessons/${encodeURIComponent(id)}/undo`);
   // Stars only: the server keeps the stored note (an absent note never erases it).
-  const rate = (n: number) => { setCleared(null); w.send({ kind: 'rate', run: run.key, stars: n }); };
-  const clear = () => { const was = r ? { stars: r.stars, ...(r.note ? { note: r.note } : {}) } : null; w.send({ kind: 'rate', run: run.key, stars: null }, () => setCleared(was)); };
-  const undoClear = () => { if (cleared) w.send({ kind: 'rate', run: run.key, stars: cleared.stars, ...(cleared.note ? { note: cleared.note } : {}) }, () => setCleared(null)); };
+  const rate = (n: number) => { setCleared(null); w.send({ kind: 'rate', run: sessionKey, stars: n }); };
+  const clear = () => { const was = r ? { stars: r.stars, ...(r.note ? { note: r.note } : {}) } : null; w.send({ kind: 'rate', run: sessionKey, stars: null }, () => setCleared(was)); };
+  const undoClear = () => { if (cleared) w.send({ kind: 'rate', run: sessionKey, stars: cleared.stars, ...(cleared.note ? { note: cleared.note } : {}) }, () => setCleared(null)); };
   return (
-    <div className="sc-runstars" data-testid="run-stars" data-run={run.key}>
+    <div className="sc-runstars" data-testid="run-stars" data-run={sessionKey} data-ask={state}>
       <span className="sc-runstars-row">
-        <Stars value={r?.stars ?? 0} label={t('scorecard.rateRun')} disabled={w.busy} onRate={rate} />
+        <Stars value={r?.stars ?? 0} judged={!!r?.judged} label={t('scorecard.rateRun')} disabled={w.busy} onRate={rate} />
         {!r && !cleared && <span className="mcb-muted">{t('scorecard.rateRun')}</span>}
         {!r && cleared && <ClearedUndo onUndo={undoClear} busy={w.busy} />}
-        {r && !r.note && !noting && <button type="button" className="mcb-link" data-testid="run-stars-note" onClick={() => setNoting(true)}>{t('scorecard.addNote')}</button>}
+        {r && <span className="mcb-muted" data-testid="run-stars-rated">{t('scorecard.youRated').replace('{n}', String(r.stars))}{r.via === 'telegram' ? ` · ${t('scorecard.fromTelegram')}` : ''}</span>}
+        {!r?.note && !noting && <button type="button" className="mcb-link" data-testid="run-stars-note" disabled={!r} title={r ? undefined : t('scorecard.starsFirst')} onClick={() => setNoting(true)}>{t('scorecard.addNote')}</button>}
       </span>
       {r?.note && <span className="sc-runstars-note">“{r.note}”</span>}
       {noting && r && (
-        <form className="sc-note-form" onSubmit={(e) => { e.preventDefault(); w.send({ kind: 'rate', run: run.key, stars: r.stars, note: note.trim() }, () => { setNoting(false); setNote(''); }); }}>
+        <form className="sc-note-form" onSubmit={(e) => { e.preventDefault(); w.send({ kind: 'rate', run: sessionKey, stars: r.stars, note: note.trim() }, () => { setNoting(false); setNote(''); }); }}>
           <textarea maxLength={2000} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('scorecard.notePlaceholder')} data-testid="run-stars-note-input" />
           <span className="sc-form-actions">
             <button type="button" className="mcb-link" onClick={() => setNoting(false)}>{t('superStage.member.cards.cancel')}</button>
