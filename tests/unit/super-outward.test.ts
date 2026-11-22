@@ -221,96 +221,60 @@ describe('the lines the child is born with', () => {
   });
 });
 
-describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
+describe('a standing rule grants one plain staging push only (D5, criterion 5)', () => {
   const RULE = 'staging\'e kendin push et, PR aç ve deploy et';
-  it('a staging push, PR into staging or deploy to the staging host is covered', () => {
-    expect(ruleCovers('git push origin feature/x:staging', RULE, null).ok).toBe(true);
-    expect(ruleCovers('gh pr create --base staging --fill', RULE, null).ok).toBe(true);
-    expect(ruleCovers('firebase hosting:channel:deploy preview --site acme-stg', RULE, 'acme-stg').ok).toBe(true);
+  const PUSH = 'git push origin super/x:staging';
+  // Super for the owner, 22 Nov r7: only one plain `git push <remote> <ref>:staging`; anything else is a card.
+  it('one plain push onto staging is covered', () => {
+    expect(ruleCovers(PUSH, RULE, null).ok).toBe(true);
+    expect(ruleCovers('git push main HEAD:staging', RULE, null).ok).toBe(true);
+    expect(ruleCovers(`  ${PUSH}  `, RULE, null).ok).toBe(true);
   });
-  it('live, publish, release, merge and force are refused, as is a step that names no staging', () => {
-    for (const step of ['firebase deploy --only hosting', 'npm publish', 'gh release create v1', 'gh pr merge 41 --squash',
-      'git push --force origin staging', 'deploy staging to production', 'canlıya al staging', 'git push origin +staging']) {
+  it('a joined, redirected, flagged, quoted or substituted step, a PR or a deploy is refused', () => {
+    for (const step of [
+      'git push -u origin super/x:staging', 'git push --set-upstream origin super/x:staging', 'git push origin super/x:refs/heads/staging',
+      `${PUSH} && gh pr create --base staging --fill`, `npm run build && ${PUSH}`, `cd ../wt && ${PUSH}`, `${PUSH}; git push origin HEAD:main`,
+      `${PUSH} | tee log`, `${PUSH} > out.txt`, `${PUSH} 2>&1`, `(${PUSH})`, `${PUSH} &`, `git push origin $(echo x):staging`,
+      'git push origin `echo x`:staging', 'git push origin "super/x":staging', `${PUSH}\ngit push origin HEAD:main`,
+      'gh pr create --base staging --fill', 'npx firebase deploy --only hosting -P acme-staging', 'firebase hosting:channel:deploy preview --site acme-stg',
+      'git -C ../wt push origin super/x:staging', 'git push https://example.invalid/r.git super/x:staging', 'git push origin :staging',
+      'git push origin x:staging y:other', 'git push origin main staging', 'git push --force origin x:staging', 'git push origin +x:staging',
+      'git push origin x:staging-prod', 'git push origin HEAD:main:staging', 'git push  origin x:staging']) {
       const v = ruleCovers(step, RULE, null);
       expect(v.ok, step).toBe(false);
       if (!v.ok) expect(v.error).toBe('outward_out_of_scope');
     }
   });
-  it('a rule whose words name no push, PR, deploy or staging grants nothing', () => {
-    expect(ruleCovers('git push origin x:staging', 'kısa yaz', null).ok).toBe(false);
+  it('a rule whose words name no push or staging grants nothing', () => {
+    expect(ruleCovers(PUSH, 'kısa yaz', null).ok).toBe(false);
   });
-  // r1 security-1 / edge-cases-1: the step's own targets decide, never the word staging somewhere in it.
-  it('a push onto main, a delete, a mirror, a second refspec or a -prod target is refused even when it says staging', () => {
-    for (const step of ['git push origin main staging', 'git push origin HEAD:refs/heads/main staging', 'git push origin --delete main staging',
-      'git push --mirror staging', 'git push --all origin staging', 'git push origin :staging', 'git push origin x:staging y:other',
-      'firebase deploy --project acme-prod staging', 'vercel deploy --prod staging', 'deploy acme-live staging']) {
-      expect(ruleCovers(step, RULE, null).ok, step).toBe(false);
-    }
-    expect(ruleCovers('git push -u origin feature/x:staging && gh pr create --base staging --fill', RULE, null).ok).toBe(true);
-    expect(ruleCovers('npm run build && firebase deploy --only hosting --project acme-staging', RULE, null).ok).toBe(true);
+  // r5 (owner: "sabit cümle"): only the fixed sentence or its push part grants; his prose is never read for permission.
+  it('a rule grants only by the fixed sentence with its push part', () => {
+    expect(ruleCovers(PUSH, "staging'e kendin push et", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "Staging’e kendin push et.", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "staging'e kendin deploy et ve push et", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "staging'e kendin PR aç", null).ok).toBe(false);
+    expect(ruleCovers(PUSH, "staging'e kendin deploy et", null).ok).toBe(false);
   });
-  // r2 security-1: git's own options first, any spelling of main, an unknown command, a deploy whose target is not staging.
-  it('a step the allowlist cannot read as a staging push, PR or deploy is refused, whatever git options come first', () => {
-    for (const step of ['git -C ../wt push origin staging:refs/heads/main', 'git -C ../staging-wt push origin feature:refs/heads/main',
-      'git --git-dir=.git push origin x:refs/heads/main staging', 'git -C ../staging-wt push origin hotfix',
-      'git push origin staging && gh api -X POST repos/o/r/merges --raw-field base=main --raw-field head=staging',
-      'firebase deploy --project acme-app --message staging', 'curl -X POST https://staging.acme.test/deploy', 'push to staging',
-      'gh pr create --base staging --base main', 'git -C ../wt merge staging']) {
-      expect(ruleCovers(step, RULE, null).ok, step).toBe(false);
-    }
-    for (const step of ['npx firebase deploy --only hosting -P acme-staging', 'cd ../wt && git push origin HEAD:refs/heads/staging',
-      'git push -u main super/x:staging', 'gh pr create --base staging --draft --fill']) {
-      expect(ruleCovers(step, RULE, null).ok, step).toBe(true);
-    }
-    // r3 (owner: exact shapes only): git options, quotes, a title, substitution, a shell or any program "deploy" never pass.
-    for (const step of ['git -C ../wt push -u origin super/x:staging', 'gh pr create --base staging --title "live chat fix" --fill',
-      'sh -c "git push origin HEAD:main" deploy -P staging', 'bash -c "gh pr merge 41 --admin --squash" deploy --project acme-staging',
-      'cd "$(gh pr merge 41 --squash --admin)" && git push -u origin super/x:staging', 'cd `git push origin HEAD:main` && git push -u origin super/x:staging',
-      'gh pr create --base staging --title "$(gh pr merge 41 --squash)" --fill', 'firebase deploy -P acme-staging --only "$(git push origin HEAD:main)"',
-      'npm run deploy -- --env staging', 'rm -rf build deploy -P staging', 'git -c core.hooksPath=/tmp/h push origin super/x:staging',
-      'git push https://example.invalid/r.git super/x:staging', 'git add -A && git push origin x:staging']) {
-      expect(ruleCovers(step, RULE, null).ok, step).toBe(false);
-    }
-    expect(messageCovers('git -C ../wt push origin HEAD:refs/heads/main', 'push it').ok).toBe(false);
-    expect(messageCovers('git -C ../wt merge feature', 'push it').ok).toBe(false);
-  });
-  // r5 (owner: "sabit cümle"): only the fixed sentence or its parts grant; his prose is never read for permission.
-  it('a rule grants only by the fixed sentence or its parts, each kind only when its part is there', () => {
-    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin push et", null).ok).toBe(true);
-    expect(ruleCovers('git push -u origin super/x:staging', "Staging’e kendin push et.", null).ok).toBe(true);
-    expect(ruleCovers('gh pr create --base staging --fill', "staging'e kendin PR aç", null).ok).toBe(true);
-    expect(ruleCovers('firebase deploy -P acme-staging', "staging'e kendin deploy et ve push et", null).ok).toBe(true);
-    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin PR aç", null).ok).toBe(false);
-    expect(ruleCovers('firebase deploy -P acme-staging', "staging'e kendin push et, PR aç", null).ok).toBe(false);
-  });
-  it('a rule he said again grants only what every saying grants', () => {
-    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin push et / Staging'e kendin push et.", null).ok).toBe(true);
-    expect(ruleCovers('gh pr create --base staging --fill', "staging'e kendin push et, PR aç / staging'e kendin push et", null).ok).toBe(false);
-    expect(ruleCovers('git push -u origin super/x:staging', "staging'e kendin push et / ama önce bana sor", null).ok).toBe(false);
+  it('a rule he said again grants only when every saying grants the push', () => {
+    expect(ruleCovers(PUSH, "staging'e kendin push et / Staging'e kendin push et.", null).ok).toBe(true);
+    expect(ruleCovers(PUSH, "staging'e kendin push et, PR aç / staging'e kendin PR aç", null).ok).toBe(false);
+    expect(ruleCovers(PUSH, "staging'e kendin push et / ama önce bana sor", null).ok).toBe(false);
   });
   it('any other wording grants nothing: bans, conditions, permissions in prose, another target', () => {
     for (const words of [
-      // allowing prose (fail-safe: a card instead)
       "staging'e push edebilirsin, main'e asla push etme", "staging'e push et ama canlıya asla", "staging'e push serbest, canlıya dokunma",
       "staging'e her zaman push yapabilir", "always push to staging yourself", "staging'e push etmeli", "staging'e kendin push et ama önce bana sor",
-      // r3/r4 bans
       "PR açabilirsin ama staging'e push etme", "staging'e push etme, sadece PR aç", "staging ve main'e asla push etme", "staging'e pushlama",
       "çocuk staging'e push etmesin", "staging'e push yapmasın", "staging'e push etmemelisin", "staging'e push etmeyeceksin", "staging'e push'lama",
       "you must not push to staging", "no pushing to staging", "never push to staging", "staging'e push etmeden önce testleri koş",
-      // r5 conditions, present-tense and passive negatives, another target
       "staging'e push etmeden önce benden izin al", "staging'e push için önce benden izin iste", "staging'e push etmek için izin almalısın",
       "staging'e push'a izin vermiyorum", "staging'e push yapılmasına izin vermiyorum", "staging'e push için izin verilmez",
       "staging'e kendin push etmiyorsun, bana sor", "kendi branch'ine push edebilirsin, staging'e dokunma", "feature dalına push edebilirsin ama staging'e asla",
-      "ben onaylarsam staging'e kendin push et", "staging'e kendin push etme"]) {
-      expect(ruleCovers('git push -u origin super/x:staging', words, null).ok, words).toBe(false);
+      "ben onaylarsam staging'e kendin push et", "staging'e kendin push etme", "PR açabilirsin"]) {
+      expect(ruleCovers(PUSH, words, null).ok, words).toBe(false);
     }
-    for (const words of ["staging'e PR açma", "staging'e PR açmasın", "staging'e PR açmadan önce benden izin al", "PR açabilirsin"]) {
-      expect(ruleCovers('gh pr create --base staging --fill', words, null).ok, words).toBe(false);
-    }
-    for (const words of ["staging'e deploy etmesin", "staging'i yayınlamasın", "staging'e deploy'a izin vermiyorum", "staging'e kendin deploy etmiyorsun", "staging'i yayınlama"]) {
-      expect(ruleCovers('firebase deploy -P acme-staging', words, null).ok, words).toBe(false);
-    }
-    const v = ruleCovers('git push -u origin super/x:staging', "staging'e push serbest", null);
+    const v = ruleCovers(PUSH, "staging'e push serbest", null);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.message).toContain("staging'e kendin push et, PR aç ve deploy et");
   });
@@ -321,6 +285,8 @@ describe('a standing rule grants a staging step only (D5, criterion 5)', () => {
       expect(messageCovers(step, 'pushla').ok, step).toBe(false);
     }
     expect(messageCovers('git push -u origin super/x', 'pushla').ok).toBe(true);
+    expect(messageCovers('git -C ../wt push origin HEAD:refs/heads/main', 'push it').ok).toBe(false);
+    expect(messageCovers('git -C ../wt merge feature', 'push it').ok).toBe(false);
   });
   // r3 edge-cases-1: quotes are removed before the message path reads a push, as the shell removes them.
   it('a quoted main, refspec, force or +refspec is refused on the message path; substitution too', () => {

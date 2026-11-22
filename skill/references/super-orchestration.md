@@ -169,11 +169,10 @@ Ask only for:
   back as his run card, never worked around). Merging his PR is his word too: when his message
   names it ("pr'ı birleştir"), `--outward "gh pr merge <n> --squash|--merge|--rebase [--delete-branch]"`
   (the method from his words, else the one `gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`
-  allows); never a bare `gh pr merge`, its admin or auto mode, or a merge from a rule. A staging push,
-  PR or deploy his ACTIVE rule grants: `--outward "<step>" --rule <id>` (the rule must
-  read exactly "staging'e kendin push et, PR aç ve deploy et" or a part; the step: exact commands joined by ` && `:
-  `git push [-u] <remote> <branch>:staging`, a PR `--base staging`, a firebase deploy to a staging
-  project, a build; no quotes or `$( )`). A message
+  allows); never a bare `gh pr merge`, its admin or auto mode, or a merge from a rule. A staging push
+  his ACTIVE rule grants: `--outward "git push <remote> <ref>:staging" --rule <id>`, that one plain
+  command only (no flag, `&&`, `;`, `|`, redirection, quotes or `$( )`), and only when the rule reads
+  exactly "staging'e kendin push et" (or the sentence holding it); a PR or deploy is his message or a card. A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
 - **Two readings** that lead to different work, when neither the brief nor the brain settles it and
   the wrong one could not be undone; otherwise take the likelier one and say so in one line.

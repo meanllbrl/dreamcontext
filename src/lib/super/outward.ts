@@ -214,28 +214,12 @@ function neverStep(step: string): boolean {
 
 /** A name a shape may hold: letters, digits, `.`, `_`, `/`, `-`, never starting with `-`. */
 const NAME = String.raw`[A-Za-z0-9._][A-Za-z0-9._/-]*`;
-/** The commands a standing rule may grant, whole (plan iyilesme-360 D5, r3 owner pick): a staging
- *  push, a PR into staging, a deploy to a staging project or the ops card's staging site, and a
- *  build before it. No quotes, no substitution, no other flag: anything else is his message. */
-const RULE_PUSH_RE = new RegExp(String.raw`^git push (?:-u |--set-upstream )?([A-Za-z][A-Za-z0-9_-]*) (${NAME}):(?:refs/heads/)?staging$`);
-const RULE_PR_RE = new RegExp(String.raw`^gh pr create --base staging(?: --fill| --draft| --head ${NAME})*$`);
-const RULE_DEPLOY_RE = /^(?:npx )?firebase deploy(?: --only [A-Za-z0-9,:_-]+)? (?:-P|--project) ([A-Za-z0-9-]+)(?: --only [A-Za-z0-9,:_-]+)?$/;
-const RULE_CHANNEL_RE = /^(?:npx )?firebase hosting:channel:deploy [A-Za-z0-9_-]+ (?:--site|-s) ([A-Za-z0-9-]+)$/;
-const RULE_NEUTRAL_RE = new RegExp(String.raw`^(?:(?:npm|pnpm|yarn) (?:ci|install|run (?:build|test|lint|typecheck)(?::[A-Za-z0-9_-]+)?)|cd ${NAME})$`);
+/** The one command a standing rule may grant, whole (Super for the owner, 22 Nov r7: "yalnız düz,
+ *  tek bir git push <remote> <ref>:staging"): no flag, no quotes, nothing joined to it (`&&`, `;`,
+ *  `|`), no redirection, substitution or subshell. A PR, a deploy or anything else is his message or a card. */
+const RULE_PUSH_RE = new RegExp(String.raw`^git push [A-Za-z][A-Za-z0-9_-]* ${NAME}:staging$`);
 
 type RuleKind = 'push' | 'pr' | 'deploy';
-
-/** One command of a rule step: its kind, 'neutral', or null (not an allowed shape). */
-function rulePiece(cmd: string, host: string | null): RuleKind | 'neutral' | null {
-  if (RULE_PUSH_RE.test(cmd)) return 'push';
-  if (RULE_PR_RE.test(cmd)) return 'pr';
-  const d = RULE_DEPLOY_RE.exec(cmd) ?? RULE_CHANNEL_RE.exec(cmd);
-  if (d) {
-    const target = d[1].toLowerCase();
-    return (host && target === host) || target.split('-').includes('staging') ? 'deploy' : null;
-  }
-  return RULE_NEUTRAL_RE.test(cmd) ? 'neutral' : null;
-}
 
 /** The one sentence a rule grants by (owner, 22 Nov r5: "sabit cümle"), folded: "staging'e kendin
  *  push et, PR aç ve deploy et" or any of its parts in any order. His prose is never read for
@@ -266,19 +250,14 @@ const withoutNegatedMerge = (s: string): string => s.replace(MERGE_NEG_RE, ' ');
 export type GrantVerdict = { ok: true; merge?: OutwardMerge } | { ok: false; error: 'outward_out_of_scope'; message: string };
 
 /** May a standing rule with these words grant this step (S2 for `rule`)? Pure. */
-export function ruleCovers(step: string, ruleWords: string, stagingHost: string | null): GrantVerdict {
-  const out = (why: string): GrantVerdict => ({ ok: false, error: 'outward_out_of_scope', message: `a standing rule allows only a staging push, PR or deploy: ${why}; anything else is his word in a message, or \`super ask\` him` });
+export function ruleCovers(step: string, ruleWords: string, _stagingHost: string | null): GrantVerdict {
+  const out = (why: string): GrantVerdict => ({ ok: false, error: 'outward_out_of_scope', message: `a standing rule allows only a staging push: ${why}; anything else is his word in a message, or \`super ask\` him` });
   const rw = fold(ruleWords);
   if (!RULE_KIND_RE.test(rw)) return out('this rule\'s words name no push, PR, deploy or staging');
   const f = fold(step);
   if (OUT_OF_SCOPE_RE.test(f) || PROD_TOKEN_RE.test(f) || neverStep(step)) return out('the step names production, live, a release, a publish, a merge, a force, the default branch or a shell substitution');
-  const host = stagingHost ? stagingHost.toLowerCase() : null;
-  const kinds = step.trim().split(/ && /).map((c) => rulePiece(c.trim(), host));
-  const used = kinds.filter((k): k is RuleKind => k !== 'neutral' && k !== null);
-  if (kinds.includes(null) || used.length === 0) return out('a rule grants only these exact commands, joined by ` && `: `git push [-u] <remote> <branch>:staging`, `gh pr create --base staging [--fill] [--draft]`, `firebase deploy [--only <x>] -P <staging project>`, a build');
-  const granted = ruleKinds(rw);
-  const forbidden = [...new Set(used)].find((k) => !granted.has(k));
-  if (forbidden) return out(`a rule grants a ${forbidden === 'pr' ? 'PR' : forbidden} only when its words are exactly "${RULE_SENTENCE}" or a part of it`);
+  if (!RULE_PUSH_RE.test(step.trim())) return out('a rule grants only one plain `git push <remote> <ref>:staging`, nothing joined to it (no `&&`, `;`, `|`, redirection or subshell), no flag; a PR, a deploy or anything else is his word in a message or a card');
+  if (!ruleKinds(rw).has('push')) return out(`a rule grants the push only when its words are exactly "${RULE_SENTENCE}" or its push part`);
   return { ok: true };
 }
 

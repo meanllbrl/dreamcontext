@@ -216,7 +216,7 @@ const ORIGIN_HELP = 'The owner message this job answers (its <owner-msg ref>); o
 
 /** `--outward` on `delegate`: the one outward step his own message named (owner, 2026-11-12). */
 /** `--rule <id>` (iyilesme-360 D5): his ACTIVE standing rule as his word for a staging step. */
-const RULE_HELP = 'With --outward: the id of his ACTIVE standing rule that covers this staging push, PR or deploy (instead of --origin). Staging only: production, live, release, publish, merge and force are refused (outward_out_of_scope)';
+const RULE_HELP = 'With --outward: the id of his ACTIVE standing rule that reads "staging\'e kendin push et" (instead of --origin); it covers only one plain `git push <remote> <ref>:staging`: no flag, no `&&`/`;`/`|`, redirection, quotes or substitution; a PR, a deploy or anything else is refused (outward_out_of_scope)';
 const OUTWARD_HELP = 'The push, PR or deploy the owner\'s OWN message named, in one line (e.g. "push release/x to origin, open a PR to development"); the child may run exactly that, never a force-push or a default-branch merge. Needs his message: his turn, or --origin <ref>. Kept with the job: its pool row and a --succeeds successor carry it';
 
 const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda';
