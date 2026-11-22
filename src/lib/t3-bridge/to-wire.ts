@@ -42,6 +42,24 @@ export interface ToWireOptions {
 }
 
 /** One sub-agent the tool started, drawn as Claude draws its Agent call (plan: TABLO row 41). */
+/** One entry of the background roster, in the CLI's own shape. */
+interface BackgroundEntry { task_id: string; task_type: string; description: string; persistent?: true }
+
+/** A main-thread tool call as a roster entry: a command is a shell, a sub-agent an agent. */
+function backgroundEntry(item: TurnItem, call: { name: string; input: Record<string, unknown> }, taskId: string): BackgroundEntry {
+  const input = call.input;
+  const description = typeof input.description === 'string' && input.description.trim()
+    ? input.description
+    : typeof input.command === 'string' ? input.command : call.name;
+  return {
+    task_id: taskId,
+    task_type: item.type === 'subagent' ? 'local_agent' : item.type === 'command_execution' ? 'local_bash' : 'local_tool',
+    description: description.slice(0, 300),
+    // Codex's own flag for a watch with no end (CodexAdapterV2 isPersistentCodexDynamicTool).
+    ...(input.persistent === true ? { persistent: true as const } : {}),
+  };
+}
+
 interface SubRun {
   readonly itemId: string;
   readonly toolUseId: string;
@@ -244,6 +262,13 @@ export class ToWire {
   /** The tool call a native item started (native item id → call): an approval names it. */
   private readonly toolByNative = new Map<string, ToolCall>();
   private readonly closedItems = new Set<string>();
+  /** The chat's own tool calls (never a sub-agent's steps) still open, by turn item id. */
+  private readonly mainOpen = new Map<string, BackgroundEntry>();
+  /** Work a finished turn left running (a Codex background terminal, a sub-agent Antigravity runs
+   *  on): sent as Claude's `system:background_tasks_changed` roster, so the server holds the chat
+   *  as working until it ends, exactly as it does for Claude (owner 2026-11-23: a child whose turn
+   *  ended on "waiting" was reported done while its job still ran). */
+  private readonly background = new Map<string, BackgroundEntry>();
   /** Approval / question cards open on the client, by T3 runtime request id. */
   private readonly openAsks = new Set<string>();
   /**
@@ -379,6 +404,8 @@ export class ToWire {
     if (this.turnOpen) return [];
     this.turnOpen = true;
     this.turnStartedAt = now;
+    // Calls a turn left open that never reached the roster (it was stopped or failed) are not this turn's.
+    this.mainOpen.clear();
     this.nextIndex = 0;
     this.blockIndex.clear();
     this.lastAssistantText = '';
@@ -549,6 +576,7 @@ export class ToWire {
       };
       this.subRuns.set(item.id, run);
       this.nodeByTask.set(run.taskId, String(item.subagentId));
+      this.mainOpen.set(item.id, { task_id: run.taskId, task_type: 'local_agent', description: run.description });
       out.push(...this.announce(run));
       const call = this.toolCalls.get(item.id);
       if (call && item.nativeItemRef?.nativeId) this.toolByNative.set(item.nativeItemRef.nativeId, call);
@@ -596,6 +624,7 @@ export class ToWire {
         parent_tool_use_id: null,
         session_id: this.sessionId,
       });
+      out.push(...this.closedMain(item.id));
     }
     return out;
   }
@@ -682,6 +711,7 @@ export class ToWire {
       open = { toolUseId: `toolu_${item.id}`, ...call };
       this.toolCalls.set(item.id, open);
       if (item.nativeItemRef?.nativeId) this.toolByNative.set(item.nativeItemRef.nativeId, open);
+      if (!TERMINAL_ITEM.has(item.status)) this.mainOpen.set(item.id, backgroundEntry(item, call, open.toolUseId));
       out.push({
         type: 'assistant',
         message: { id: `msg_${item.id}`, role: 'assistant', model: this.opts.model, content: [{ type: 'tool_use', id: open.toolUseId, name: open.name, input: open.input }] },
@@ -698,8 +728,33 @@ export class ToWire {
         parent_tool_use_id: null,
         session_id: this.sessionId,
       });
+      out.push(...this.closedMain(item.id, isError ? 'failed' : 'completed'));
     }
     return out;
+  }
+
+  /** A main-thread call ended: off the open list, and off the roster when a past turn left it
+   *  running (the roster shrinks: the server owes the turn its notification opens). */
+  private closedMain(itemId: string, status?: 'completed' | 'failed'): WireFrame[] {
+    this.mainOpen.delete(itemId);
+    const entry = this.background.get(itemId);
+    if (!entry) return [];
+    this.background.delete(itemId);
+    // A shell's end, as the CLI reports one (a sub-agent's card already sent its own).
+    const note: WireFrame[] = status && entry.task_type !== 'local_agent'
+      ? [{ type: 'system', subtype: 'task_notification', task_id: entry.task_id, status, summary: entry.description.split('\n')[0]!.slice(0, 200), session_id: this.sessionId }]
+      : [];
+    return [...note, this.rosterFrame()];
+  }
+
+  /** The roster as Claude's CLI sends it (`system:background_tasks_changed`); empty is a value. */
+  private rosterFrame(): WireFrame {
+    return { type: 'system', subtype: 'background_tasks_changed', tasks: [...this.background.values()], session_id: this.sessionId };
+  }
+
+  /** What still runs in the background (the roster), for tests and the bridge. */
+  get backgroundCount(): number {
+    return this.background.size;
   }
 
   private streamingText(item: Extract<TurnItem, { type: 'assistant_message' | 'reasoning' }>): WireFrame[] {
@@ -887,6 +942,14 @@ export class ToWire {
       return out;
     }
     this.heldResult = null;
+    // A finished turn's calls still open run on past it (a Codex background terminal ends later
+    // and its end opens a new turn; Antigravity runs a sub-agent on): that is the roster, sent
+    // before the result as Claude's CLI does. A stopped or failed turn's calls are cut with it.
+    if (ok && this.mainOpen.size) {
+      for (const [id, entry] of this.mainOpen) this.background.set(id, entry);
+      out.push(this.rosterFrame());
+    }
+    this.mainOpen.clear();
     out.push(result);
     this.turnOpen = false;
     return out;

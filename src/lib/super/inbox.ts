@@ -4654,8 +4654,9 @@ function clearTimer(map: Map<string, ReturnType<typeof setTimeout>>, sid: string
   map.delete(sid);
 }
 
-/** Background work with no turn and no roster change for this long is a server or a watch
- *  left running (a dev server, a persistent Monitor), not a job still under way. */
+/** Background work with no turn and no roster change for this long no longer holds the row unless
+ *  the roster lists a JOB (`persistentBackground`: a script, a test run, an agent, a Monitor); a
+ *  server or a follow left running (a dev server, a `tail -f`) does not. */
 export const BACKGROUND_QUIET_MS = 10 * 60_000;
 /** The outer bar for a background JOB the roster still lists with no turn and no roster change:
  *  past this it is left running, not awaited (a script that hangs must not hold a row forever). */

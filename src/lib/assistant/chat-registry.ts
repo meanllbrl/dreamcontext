@@ -354,15 +354,28 @@ function pruneOrigins(e: ChatEntry): void {
 export interface OwnerReceiptMark { kind: OwnerCardKind; id: string }
 
 /**
- * A background roster entry that reads as a server or a watch left running (a dev server, a
- * Monitor, a tail, a tunnel): it has no end the child waits for, so it does not hold the row
- * past the quiet bar. Everything else (a script, a test run, a background agent) is a job.
+ * What STARTS a server or a follow that never ends by itself: a dev server, `npm run dev`, a
+ * `tail -f`, a `--watch`, a tunnel. Read against the whole entry text, which is the bare command
+ * when the call had no description, so a word in a flag or a path never counts (field 2026-11-22:
+ * `builder heavy --tail 80 -- node scripts/verify/…` read as a `tail`, the row went done 10 min
+ * into a running browser check, and the owner was told a result that did not exist).
  */
-export function persistentBackground(t: { task_type?: unknown; description?: unknown }): boolean {
+const SERVER_START = /(?:\bdev[- ]?server\b|\b(?:start|run|launch|boot)s?\s+(?:the\s+|a\s+|an\s+)?(?:[\w-]+\s+)?server\b(?!\s+(?:tests?|checks?|build|specs?)\b)|\bserver\.(?:m?js|ts|py)\b|\bhttp[-.]server\b|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|preview)\b|\bvite\s+(?:dev|preview|--port)\b|\bnext\s+(?:dev|start)\b|\btail\s+-[fF]\b|--watch\b|\bwatch\s+mode\b|\bdaemon\b|\btunnel\b|\bngrok\b|\bkeep[- ]alive\b)/i;
+
+/**
+ * A background roster entry that reads as a server or a follow left running: it has no end the
+ * child waits for, so it does not hold the row past the quiet bar. Everything else is a job the
+ * child waits on: a script, a test run, a background agent, and a Monitor (it ends when its
+ * source does or at its expiry, and a child that arms one ends its turn to wait for its events:
+ * owner 2026-11-23, a child that said "bekliyorum" over a Monitor was reported done). A job holds
+ * the row up to BACKGROUND_JOB_MAX_MS.
+ */
+export function persistentBackground(t: { task_type?: unknown; description?: unknown; persistent?: unknown }): boolean {
+  if (t.persistent === true) return true;
   const type = typeof t.task_type === 'string' ? t.task_type : '';
+  if (/agent/i.test(type)) return false;
   const desc = typeof t.description === 'string' ? t.description : '';
-  if (/monitor|watch/i.test(type)) return true;
-  return /\b(?:dev[- ]?server|server|serve|serving|watch(?:er|ing)?|monitor(?:ing)?|tail|preview|listen(?:er|ing)?|daemon|tunnel|localhost|port \d+|npm (?:run )?(?:dev|start)|vite|next dev|keep[- ]alive)\b/i.test(desc);
+  return SERVER_START.test(desc);
 }
 
 /** Be told of every {@link ChatChange}. Returns the unsubscribe. A listener that throws is

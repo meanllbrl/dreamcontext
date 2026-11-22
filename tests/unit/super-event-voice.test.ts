@@ -159,7 +159,7 @@ describe('background work keeps a child working (field: 6 done events in 18 minu
   });
 });
 
-describe('background work that never ends (a dev server, a persistent Monitor)', { timeout: 60_000 }, () => {
+describe('background work that never ends (a dev server, a follow)', { timeout: 60_000 }, () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'], now: Date.now() });
     dir = mkdtempSync(join(tmpdir(), 'super-event-voice-'));
