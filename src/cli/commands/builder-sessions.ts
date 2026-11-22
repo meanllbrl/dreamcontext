@@ -8,7 +8,7 @@ import {
   BASE_ID,
   BASE_TOKEN_CAP,
   BUILDER_DEFAULT_EFFORT,
-  BUILDER_DEFAULT_MODEL,
+  builderLineageModel,
   BUILDER_EFFORTS,
   BuilderInputError,
   NEEDS_ATTENTION,
@@ -468,10 +468,11 @@ export async function builderBase(
   const cfg = rawConfigDir(deps.env);
   await withRegistry(root, slug, (reg) => {
     const offset = fileSize(log);
-    const argv = builderArgv(`${BASE_FRAMING(slug)}\n\n${prompt}`, { kind: 'new', sessionId: sid }, { model: BUILDER_DEFAULT_MODEL, effort });
+    const model = builderLineageModel();
+    const argv = builderArgv(`${BASE_FRAMING(slug)}\n\n${prompt}`, { kind: 'new', sessionId: sid }, { model, effort });
     const pid = deps.launch(argv, { cwd: root, env: builderEnv(deps.env, cfg), logFile: log });
     reg.base = {
-      sid, pid, cfg, model: BUILDER_DEFAULT_MODEL, effort, round: 1, logOffset: offset,
+      sid, pid, cfg, model, effort, round: 1, logOffset: offset,
       startedAt: new Date(deps.now()).toISOString(), state: 'minting', absorbedWave: 0, tokens: null,
     };
   });
@@ -531,7 +532,7 @@ export async function builderLane(deps: SessionDeps, slug: string, lane: string,
       parent = b.sid;
     } else {
       mode = { kind: 'new', sessionId: deps.uuid() };
-      identity = { model: BUILDER_DEFAULT_MODEL, effort };
+      identity = { model: builderLineageModel(), effort };
       cfg = rawConfigDir(deps.env);
     }
     const offset = fileSize(log);

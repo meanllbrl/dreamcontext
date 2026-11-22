@@ -1,3 +1,5 @@
+import { resolveSpawnModel } from '../eco-plus.js';
+import { appendLowered, ecoPlusDefault } from '../context-watch.js';
 import { assertNotAppChat } from '../apps/chat-store.js';
 import { cliAwarePath } from './cli-path.js';
 import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
@@ -1356,8 +1358,19 @@ export function buildContinueArgs(
 export function spawnModel(
   m: Pick<AutomationManifest, 'model' | 'effort'>,
   override?: SpawnModelOverride | null,
-): { model: string | null; effort: EffortLevel | null } {
-  return { model: override?.model || m.model, effort: override?.effort || m.effort };
+  eco: { tool?: string | null; on?: boolean } = {},
+): { model: string | null; effort: EffortLevel | null; lowered?: { from: string; to: string } } {
+  const model = override?.model || m.model;
+  const effort = override?.effort || m.effort;
+  // Eco Plus (plan eco-plus K3): the manifest's model is a saved setting, none is `default`, a
+  // `team ask --model` is this job's pick. Only the argv changes; the manifest (and its approval
+  // hash) never does. A Codex or Antigravity run passes its tool and is never touched.
+  const r = resolveSpawnModel({
+    model, source: override?.model ? 'pick' : m.model ? 'saved' : 'default',
+    tool: eco.tool ?? 'claude', on: eco.on ?? ecoPlusDefault(),
+  });
+  if (!r.lowered) return { model, effort };
+  return { model: r.model, effort, lowered: { from: model ?? '', to: r.model } };
 }
 
 /** `scopeArgs` (from `boardScopeArgs`) replace `--permission-mode bypassPermissions` for a
@@ -1371,7 +1384,8 @@ export function buildClaudeArgs(
   // A light job's envelope beats every other: read-only sits under any level and any home board.
   const permission = override?.light ? lightRunArgs(m) : scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
   const args = ['-p', prompt, ...permission, '--output-format', 'json'];
-  const { model, effort } = spawnModel(m, override);
+  const { model, effort, lowered } = spawnModel(m, override);
+  if (lowered) appendLowered({ site: 'automation', session: m.slug, from: lowered.from, to: lowered.to });
   if (model) args.push('--model', model);
   // `effort` is hashed alongside `model` (both execution-envelope levers on an
   // already-approved prompt) and, like `model`, is OMITTED ENTIRELY when
@@ -2958,7 +2972,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
       : homeArgs);
     const runSurface = opts.override?.light ? 'light' : opts.target === 'agent' ? 'agent' : 'automation';
     const codexArgs = (accountId: string, resume: string | null, text: string): string[] => {
-      const { model, effort } = spawnModel(manifest, opts.override);
+      const { model, effort } = spawnModel(manifest, opts.override, { tool: runTool });
       return codexRunArgs({
         surface: runSurface, prompt: text, ...(runTool === 'antigravity' ? { tool: 'antigravity' as const } : {}),
         model: codexModelOf(model), effort, account: toolRunAccountArg(runTool!, accountId), resume,

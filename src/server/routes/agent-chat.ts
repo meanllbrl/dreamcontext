@@ -28,7 +28,9 @@ import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
 import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
-import { writeTabHandoff, readTabHandoff, resolveTabSeed, paneHandoffState, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle } from '../../lib/context-watch.js';
+import { writeTabHandoff, readTabHandoff, resolveTabSeed, paneHandoffState, contextTokensFromUsage, ecoModeDefault, applyPaneHandoffToggle, ecoPlusDefault, appendLowered } from '../../lib/context-watch.js';
+import { parseModelSource, resolveSpawnModel, type ModelSource } from '../../lib/eco-plus.js';
+import { renderModelsBlock, superModelsState, superModelsTurn, type EcoModelsState } from '../../lib/super/models-block.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
 import { clearFresh, hasFreshLatch, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
@@ -1685,6 +1687,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
     const model = sanitizeModel(url.searchParams.get('model'));
+    const modelSource = parseModelSource(url.searchParams.get('modelSource'));
     const effort = sanitizeEffort(url.searchParams.get('effort'));
     // Selects a system-prompt append, not an argv element — an unknown value degrades to
     // plain Claude Code rather than to a half-applied mode. See sanitizeChatMode.
@@ -1941,7 +1944,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
             if (outcome !== 'unadoptable') { releaseOpening(); return; }
             const child = childNow();
             if (child) { toWatch(ws, child); return; }
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, modelSource, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
             releaseOpening();
           });
           return;
@@ -1952,7 +1955,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, modelSource, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
           releaseOpening();
           return;
         }
@@ -1972,7 +1975,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           if (!stageAgent) return;
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, modelSource, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
         appUpgrade?.hold?.();
         settleSupersede(accepted);
         releaseOpening();
@@ -2061,6 +2064,10 @@ interface ChatSpawnOpts {
   sessionId: string;
   resumeId: string;
   model: string;
+  /** Where `model` came from (plan eco-plus D3): `saved` and `default` are lowered by Eco Plus,
+   *  `pick` and `resume` are kept. Absent = `pick` (today's behaviour). The Super is always
+   *  `saved`. Carried unchanged into a respawn, so a successor re-resolves from its source. */
+  modelSource?: ModelSource;
   effort: string;
   /** Which way of WORKING this session was opened in — selects the mode brief appended to
    *  the surface briefing. Always a sanitized value; `basic` adds nothing. */
@@ -2338,7 +2345,7 @@ export function startChatSession(
   /** The device whose socket drives this child — per SOCKET: set by whichever phone socket
    *  binds it, cleared when a desktop socket adopts it, kept across a detach. */
   let ownerDevice: DeviceTag | null = socketDevice.get(initialWs) ?? null;
-  const { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt } = opts;
+  const { bypass, sessionId, resumeId, model, modelSource, effort, mode, account, initialPrompt, deferPrompt } = opts;
 
   const contextRoot = join(projectRoot, '_dream_context');
   const isAssistant = mode === 'assistant';
@@ -2711,11 +2718,21 @@ export function startChatSession(
   const superTeam: { inPrompt: string | null; delivered: string | null } = { inPrompt: null, delivered: null };
   /** The block's fingerprint once this spawn's briefing file really carried it. */
   let spawnTeamFp: string | null = null;
+  // The model table the Super session holds (plan eco-plus D5, K6): this spawn's prompt carries
+  // `<super-models eco=plus>` under Eco Plus; a resume reads its transcript (below); unknown (a
+  // member Super's resume, a missing transcript) is null, so the current block rides once.
+  const ecoModelsNow = (): EcoModelsState => (ecoPlusDefault() ? 'plus' : 'off');
+  const spawnEcoState: EcoModelsState | null = isSuper ? ecoModelsNow() : null;
+  const superModelsSpawn = spawnEcoState === 'plus' ? renderModelsBlock('plus') : '';
+  const superModels: { inPrompt: EcoModelsState | null; delivered: EcoModelsState | null } = { inPrompt: null, delivered: null };
+  /** The state this spawn's briefing file really carried. */
+  let spawnModelsState: EcoModelsState | null = null;
   /** A `/clear` (the owner's, or a rotation's) began a new conversation on this spawn's prompt. */
   const superTeamCleared = (): void => {
     superTeam.inPrompt = spawnTeamFp;
     superTeam.delivered = spawnTeamFp;
     superTools.inPrompt = superTools.delivered = spawnToolsFp;
+    superModels.inPrompt = superModels.delivered = spawnModelsState;
   };
   let agentsArg: string[] = [];
   let cleanupAgents = () => { /* nothing written */ };
@@ -2759,7 +2776,7 @@ export function startChatSession(
     const ownBrief = app ? app.briefing : card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
-    const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock, superToolsSpawn].filter(Boolean).join('\n\n');
+    const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock, superToolsSpawn, superModelsSpawn].filter(Boolean).join('\n\n');
     // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
     const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}` : opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
@@ -2772,6 +2789,9 @@ export function startChatSession(
     // A resumed session's prompt is its first spawn's: the tools block rides its next message.
     if (superToolsSpawn) spawnToolsFp = toolsBlockFingerprint(superToolsSpawn);
     if (spawnToolsFp && !resumeTarget) superTools.inPrompt = superTools.delivered = spawnToolsFp;
+    // Born with the table it holds: `plus` with the block, `off` without (the briefing's rows).
+    if (spawnEcoState) spawnModelsState = spawnEcoState;
+    if (spawnModelsState && !resumeTarget) superModels.inPrompt = superModels.delivered = spawnModelsState;
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
     
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
@@ -2805,6 +2825,8 @@ export function startChatSession(
       // The team it holds: the header in its birth prompt, or the last `<super-team>` a message
       // carried since its last compaction. No transcript: nothing proves a team arrived.
       if (isSuper && !opts.agent && transcript) Object.assign(superTeam, superTeamState(jsonl));
+      // The model table it holds (eco-plus K6): its birth prompt, then the last block delivered.
+      if (isSuper && !opts.agent && transcript) Object.assign(superModels, superModelsState(jsonl));
       const state = transcript ? heldModeFromTranscript(jsonl) : null;
       const sources = modeNoteSources(state, mode);
       if (state && sources.length) {
@@ -2873,7 +2895,21 @@ export function startChatSession(
   const spawnEffort = spawnEffortFor({
     isAssistant, assistantEffort: assistantConfig?.effort, delegated, mode, urlEffort: effort,
   }) || appDefaults?.effort || '';
-  const spawnModel = spawnModelFor({ isAssistant, assistantModel: assistantConfig?.model, urlModel: model }) || appDefaults?.model || '';
+  const baseModel = spawnModelFor({ isAssistant, assistantModel: assistantConfig?.model, urlModel: model }) || appDefaults?.model || '';
+  // Eco Plus (plan eco-plus D3, K3): lowered by the model's SOURCE, in this argv only. The Super's
+  // model is always its saved one; an app chat's own defaults are a saved setting; otherwise the
+  // window's tag (none = a pick). The notch Assistant keeps its own model (D9).
+  const modelSourceNow: ModelSource = isSuper ? 'saved' : !model && appDefaults?.model ? 'saved' : (modelSource ?? 'pick');
+  const ecoSpawn = isAssistant
+    ? { model: baseModel, lowered: false }
+    : resolveSpawnModel({ model: baseModel, source: modelSourceNow, tool: bridgeTool ?? 'claude', on: ecoPlusDefault() });
+  const spawnModel = ecoSpawn.model;
+  if (ecoSpawn.lowered) {
+    appendLowered({
+      site: isSuper ? (opts.agent ? 'member-super' : 'super') : opts.agent ? 'member' : opts.leanMcp ? 'child' : app ? 'app' : 'chat',
+      session: resumeTarget || opts.sessionId || undefined, from: baseModel, to: spawnModel,
+    });
+  }
   let recallEnv: Record<string, string> = {};
   if (isAssistant || delegated) {
     try {
@@ -3932,6 +3968,37 @@ export function startChatSession(
     if (!recorded.estimated) armResumeAtReset(recorded.until, accountId, tool);
   };
 
+  /**
+   * The `<super-models>` block a Super turn carries (eco-plus K6), and the commit that records it
+   * delivered once the write landed. Every turn into a Super passes here: his messages, the inbox
+   * event turn, a card's feedback and a rotation's turn. Not a Super: nothing.
+   */
+  const superModelsBlockFor = (text: string): { block: string | null; commit: () => void } => {
+    if (!isSuper) return { block: null, commit: () => { /* not a Super */ } };
+    const now = ecoModelsNow();
+    const block = superModelsTurn({ text, now, delivered: superModels.delivered });
+    return { block, commit: () => { if (block) superModels.delivered = now; } };
+  };
+
+  /** The model this Super's argv resolved from its saved source, then what a switch set. */
+  let superRunModel = spawnModel;
+  /**
+   * Eco Plus turned on or off while this Super runs (plan eco-plus D4, K5): before a turn, when
+   * nothing is in flight, the saved model is resolved again and a changed result is sent as a
+   * live `set_model` (no respawn, attached or detached: the turn runs on the new model at once).
+   * Compared with what the argv resolved, never the live model: an owner's live pick in the pane
+   * is a `set_model` of his and is not undone. Mid-turn or with background work: the turn runs on
+   * the current model and the next idle turn switches.
+   */
+  const syncSuperModel = (): void => {
+    if (!isSuper || bridgeTool || turnsInFlight > 0 || backgroundTasks > 0) return;
+    const want = resolveSpawnModel({ model: baseModel, source: 'saved', tool: 'claude', on: ecoPlusDefault() });
+    if (!want.model || want.model === superRunModel) return;
+    if (!writeStdin({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'set_model', model: want.model } })) return;
+    superRunModel = want.model;
+    if (want.lowered) appendLowered({ site: opts.agent ? 'member-super' : 'super', session: chatRegistryId, from: baseModel, to: want.model });
+  };
+
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. `source` is REQUIRED (C3): where the turn came from,
    *  decided by `classifyOwnerFrame`; this is the only caller of `appendOwnerTurn`. */
@@ -3952,6 +4019,7 @@ export function startChatSession(
     // A turn already in flight when his frame goes in (read BEFORE his own turn is counted): the
     // Super's lease must then outlive that turn's end (inbox.ts superOwnerSpoke).
     const midTurn = turnsInFlight > 0;
+    syncSuperModel();
     openTurn();
     lastSentText = tgRef ? raw : text;
     turnProgressed = false;
@@ -4054,6 +4122,11 @@ export function startChatSession(
     // The tools on this Mac changed since it last saw them (a sign-in, an install, a resume): once.
     const toolsTurn = isSuper ? superOwnerToolsBlock({ text, block: toolsBlockNow(), delivered: superTools.delivered }) : null;
     if (toolsTurn?.block) content.push({ type: 'text', text: toolsTurn.block });
+    // The model table (eco-plus D5): when the briefing rides, its Model rows are the default ones
+    // again, so the current block rides the SAME turn, after it.
+    if (isSuper && brief) superModels.delivered = null;
+    const modelsTurn = superModelsBlockFor(text);
+    if (modelsTurn.block) content.push({ type: 'text', text: modelsTurn.block });
     // A spoken message to the Super Agent (K1): its answer is read aloud. The window reads
     // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
     const voice = isSuper && spokenTexts.delete(text);
@@ -4111,6 +4184,7 @@ export function startChatSession(
     if (brief && wrote) superBrief.due = false;
     if (teamTurn && wrote) superTeam.delivered = teamTurn.delivered;
     if (toolsTurn && wrote) superTools.delivered = toolsTurn.delivered;
+    if (wrote) modelsTurn.commit();
     // Fresh for the next message: `codex --version` and Claude's model list, off this turn's path.
     if (isSuper) void refreshSuperTools();
     if (isSuper && wrote && text.trim() === '/clear') superTeamCleared();
@@ -4560,6 +4634,7 @@ export function startChatSession(
       // It drops a `<super-team>` a message carried too: what it holds is its system prompt's block.
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTeam.delivered = superTeam.inPrompt;
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTools.delivered = superTools.inPrompt;
+      if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superModels.delivered = superModels.inPrompt;
       if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
         // An MCP grant waited for the chat's background work (a dev server, a sub-agent) to end.
@@ -4648,7 +4723,7 @@ export function startChatSession(
         && typeof obj.model === 'string' && obj.model && obj.model !== notedChildModel) {
         const m = obj.model;
         // Remembered once written: a failed write is tried again on the next init.
-        void noteChildModel(chatRegistryId, m).then(() => { notedChildModel = m; }, () => { /* the record keeps what it had */ });
+        void noteChildModel(chatRegistryId, m, ecoSpawn.lowered).then(() => { notedChildModel = m; }, () => { /* the record keeps what it had */ });
       }
       // An app conversation that rotated (`/clear`, a compaction, a handoff): its successor gets
       // its record from the stream itself, so the envelope holds with hooks off too.
@@ -4722,8 +4797,11 @@ export function startChatSession(
             observedConversation,
             lastMainContext,
             writeUserTurn: (text) => {
+              syncSuperModel();
               openTurn();
-              const wroteTurn = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+              const models = superModelsBlockFor(text);
+              const wroteTurn = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }, ...(models.block ? [{ type: 'text' as const, text: models.block }] : [])] } });
+              if (wroteTurn) models.commit();
               // `/clear` starts a fresh conversation on THIS spawn's system prompt: it holds this
               // spawn's team block, whatever an earlier message delivered.
               if (isSuper && text === '/clear' && wroteTurn) superTeamCleared();
@@ -4760,8 +4838,11 @@ export function startChatSession(
           // A server-written turn into the Super ends with his language like every other one
           // (owner-language.ts): this note tells it to speak to him, and it is English.
           const told = isSuper ? withOwnerLanguage(feedback, superKnownLanguage(chatRegistryId)) : feedback;
+          syncSuperModel();
           openTurn();
-          if (!writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: told }] } })) closeTurn();
+          const models = superModelsBlockFor(told);
+          if (!writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: told }, ...(models.block ? [{ type: 'text' as const, text: models.block }] : [])] } })) closeTurn();
+          else models.commit();
         }
       }
 
@@ -5623,13 +5704,16 @@ export function startChatSession(
             // An owner message that went first in the chain wins: this event waits for idle.
             if (held || blocked()) return resolve(false);
             sendMeta({ subtype: SUPER_FRAME_EVENT, ...event });
+            syncSuperModel();
             openTurn();
             lastSentText = null;
             superEventTurnOpen = true;
             registry?.userSent('');
             // His Telegram reactions ride an event turn too (reactions.ts): a note, never an item.
             const reactions = takeSuperReactionBlock(chatRegistryId);
-            const wrote = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }, ...(reactions ? [{ type: 'text' as const, text: reactions }] : [])] } });
+            const models = superModelsBlockFor(text);
+            const wrote = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }, ...(reactions ? [{ type: 'text' as const, text: reactions }] : []), ...(models.block ? [{ type: 'text' as const, text: models.block }] : [])] } });
+            if (wrote) models.commit();
             if (!wrote) superEventTurnOpen = false;
             // The owner's "New session" turn is out: its result rotates the pane even when the
             // super writes no handoff (handoff-rotation.ts). Only after a write that landed.

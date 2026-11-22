@@ -1,3 +1,5 @@
+import { resolveSpawnModel } from './eco-plus.js';
+import { appendLowered, ecoPlusDefault } from './context-watch.js';
 import { assertNotAppChat } from './apps/chat-store.js';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -33,6 +35,17 @@ export const BUILDER_ALLOWED_TOOLS = 'Read Glob Grep Write Edit MultiEdit Bash';
 export const BUILDER_PERMISSION_MODE = 'acceptEdits';
 /** Resolved to a concrete model id on the first call; forks and resumes reuse that id. */
 export const BUILDER_DEFAULT_MODEL = 'opus';
+
+/**
+ * The model a NEW builder lineage (a base, a fresh lane) starts on: the builder default as a saved
+ * setting, lowered once by Eco Plus (plan eco-plus D8). Forks and resumes never call this: they
+ * reuse the identity recorded when their lineage began, whatever the setting says now.
+ */
+export function builderLineageModel(on: boolean = ecoPlusDefault()): string {
+  const r = resolveSpawnModel({ model: BUILDER_DEFAULT_MODEL, source: 'saved', tool: 'claude', on });
+  if (r.lowered) appendLowered({ site: 'builder', from: BUILDER_DEFAULT_MODEL, to: r.model });
+  return r.model;
+}
 export const BUILDER_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type BuilderEffort = typeof BUILDER_EFFORTS[number];
 export const BUILDER_DEFAULT_EFFORT: BuilderEffort = 'medium';

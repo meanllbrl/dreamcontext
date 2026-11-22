@@ -1,3 +1,5 @@
+import { resolveSpawnModel } from './eco-plus.js';
+import { appendLowered, ecoPlusDefault } from './context-watch.js';
 import { toolRunArgs, type HeadlessTool } from './t3-bridge/headless-envelope.js';
 import { toolText } from './tool-text.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
@@ -164,6 +166,7 @@ export async function runAutoSleep(
           '--permission-mode', 'bypassPermissions',
           '--output-format', 'json',
           '--disallowedTools', AUTO_SLEEP_DISALLOWED_TOOLS,
+          ...autoSleepModelArgs(),
         ],
       {
         ...(codexNode ? { command: { file: codexNode, prefix: [codexCli] } } : {}),
@@ -374,4 +377,16 @@ export function recordAutoSleepChangelog(
   } catch {
     return false;
   }
+}
+
+/**
+ * Eco Plus (plan eco-plus K3): an auto-sleep run names no model (`default`, the CLI's own, often
+ * Opus), so under Eco Plus it runs `--model sonnet`; off, the argv is today's. The consent
+ * fingerprint never reads this. Exported for the spawn-site test.
+ */
+export function autoSleepModelArgs(on: boolean = ecoPlusDefault()): string[] {
+  const r = resolveSpawnModel({ model: '', source: 'default', tool: 'claude', on });
+  if (!r.lowered) return [];
+  appendLowered({ site: 'auto-sleep', from: '', to: r.model });
+  return ['--model', r.model];
 }

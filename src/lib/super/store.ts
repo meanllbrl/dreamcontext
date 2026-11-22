@@ -316,6 +316,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (c.mode === 'basic' || c.mode === 'plan' || c.mode === 'develop') child.mode = c.mode;
     if (typeof c.model === 'string' && /^[A-Za-z0-9._[\]-]{1,60}$/.test(c.model)) child.model = c.model;
     if (typeof c.effort === 'string' && /^(low|medium|high|xhigh|max)$/.test(c.effort)) child.effort = c.effort;
+    if (c.lowered === true) child.lowered = true;
     // The tool it runs on: kept, or every write turned a Codex or Antigravity child into Claude
     // (`super state`, its card and `super resume` all read it from here).
     if (c.tool === 'codex' || c.tool === 'antigravity') child.tool = c.tool;
