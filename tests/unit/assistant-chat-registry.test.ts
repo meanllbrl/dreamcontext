@@ -103,6 +103,21 @@ describe('chat registry — status derived at the agent-chat.ts parse point', ()
     }
   });
 
+  it('a message sent while a request waits is no answer: the chat stays asking on it (split "asking", 2026-11-22)', async () => {
+    const { ws, child } = start();
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'plan the change' }));
+    await vi.waitFor(() => expect(registry.getChat(SID)?.status).toBe('working'), { timeout: 4000 });
+    line(child, { type: 'control_request', request_id: 'req-q', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Go on?', options: [{ label: 'Yes' }, { label: 'No' }] }] } } });
+    expect(registry.getChat(SID)?.status).toBe('asking');
+    // The Super's send the server wrote while no window answered (`sendServerTurn`).
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'Devam: read the handoff note' }));
+    await vi.waitFor(() => expect(child.stdin.write.mock.calls.some(([l]) => String(l).includes('Devam: read the handoff note'))).toBe(true), { timeout: 4000 });
+    expect(registry.getChat(SID)?.status).toBe('asking');
+    expect(registry.getChat(SID)?.pendingQuestion?.requestId).toBe('req-q');
+    ws.emit('message', JSON.stringify({ type: 'answer', requestId: 'req-q', behavior: 'allow', updatedInput: {} }));
+    expect(registry.getChat(SID)?.status).toBe('working');
+  });
+
   it('a tool-permission prompt is marked as a PERMISSION, not a question', () => {
     const { child } = start();
     line(child, { type: 'control_request', request_id: 'req-2', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'rm -rf build' } } });

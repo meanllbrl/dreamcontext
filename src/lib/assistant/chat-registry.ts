@@ -994,7 +994,11 @@ export function registerChat(init: {
         // record, and his run report may be the very first frame (adoptOwnerWait reads these).
         else if (text.trim() && opts?.server !== true) unheard.set(e.sessionId, [...(unheard.get(e.sessionId) ?? []), { text: text.slice(0, UNHEARD_CHARS), at: Date.now() }].slice(-UNHEARD_MAX));
       }
-      setStatus(e, 'working');
+      // A message is no answer: while the process still waits on a request (a Super's send the
+      // server wrote for a background window, field 2026-11-22) the chat stays `asking`, so every
+      // reader of "is it asking" (super state, super answer, super end, the queue) keeps agreeing
+      // with the process. It leaves on the request's own answer, cancel, tool_result or turn end.
+      if (!pendingRequestIds(e).length) setStatus(e, 'working');
     },
     interrupted() {
       if (dead) return;

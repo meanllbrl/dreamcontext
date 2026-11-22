@@ -2051,6 +2051,15 @@ export function createChatSession(
         session.asking = conv.pending.length > 0;
         return;
       }
+      case 'open-requests': {
+        // The server's truth: a card for a request settled anywhere but here (the server's own
+        // answer while this window slept, another socket, a turn end) is dead.
+        const pending = conv.pending.filter((p) => ev.requestIds.includes(p.requestId));
+        if (pending.length === conv.pending.length) return;
+        conv = { ...conv, pending };
+        session.asking = conv.pending.length > 0;
+        return;
+      }
       case 'tool-uses-settled': {
         dropSettledPermissions(ev.toolUseIds);
         return;
@@ -2630,7 +2639,8 @@ export function createChatSession(
     if (ev.kind === 'question') recordPhoneEvent('ask', claudeId, { requestId: ev.requestId });
     // A `result` after an answer means the answer was taken: a lost one is re-sent by the
     // server on reattach BEFORE any `result`. So the picks of a question no longer open go.
-    if (ev.kind === 'result') dropSettledSurveyDrafts(claudeId, conv.pending.map((p) => p.requestId));
+    // So do the picks of a card the server or the CLI closed (settled elsewhere, cancelled).
+    if (ev.kind === 'result' || ev.kind === 'open-requests' || ev.kind === 'request-cancelled') dropSettledSurveyDrafts(claudeId, conv.pending.map((p) => p.requestId));
     // Outside the reducer on purpose: draining the queue SENDS a frame and appends an item,
     // which is a second mutation with its own notify — not something a reducer arm may do
     // mid-event. Cheap on every frame (four flag reads and an array length).

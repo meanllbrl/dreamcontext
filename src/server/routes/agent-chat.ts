@@ -3585,6 +3585,22 @@ export function startChatSession(
    *  its answer, a `control_cancel_request`, or a tool_result for its `tool_use_id` (the CLI
    *  rejected it itself, e.g. on a closed stream): a replayed dead card is a ghost "asking". */
   const outstandingAsks = new Map<string, { line: string; toolUseId?: string; tool: string }>();
+  /** The ONE truth of what this chat asks, told to the window every time a request leaves it,
+   *  whoever settled it (the server's own answer for a background window, another socket, the
+   *  CLI's tool_result or cancel, a turn end or a Stop). A window only ever drops a card on its
+   *  own answer or a cancel otherwise, so a request settled anywhere else stayed drawn: the tab
+   *  read "asking", held the Super's sends "until the first opening" and refused `super end`
+   *  (owner 2026-11-22, four children). Assigned once `sendMeta` exists. */
+  let tellOpenRequests = (): void => { /* no socket yet */ };
+  const dropAsk = (requestId: string): void => {
+    if (outstandingAsks.delete(requestId)) tellOpenRequests();
+  };
+  /** A turn end or a Stop: nothing is open any more. Told even when nothing was held here, so
+   *  a card the window kept from an earlier miss goes at the next turn end. */
+  const dropAllAsks = (): void => {
+    outstandingAsks.clear();
+    tellOpenRequests();
+  };
 
   // ── Parking under load (chat-park.ts) ───────────────────────────────────────────────
   // A pinned project chat (not the Assistant, not a whiteboard card) can be parked by the
@@ -3694,7 +3710,7 @@ export function startChatSession(
    *  included (see `turnsInFlight`). */
   const closeTurn = (stopped = false): void => {
     turnsInFlight = 0;
-    outstandingAsks.clear();
+    dropAllAsks();
     // Every frame written before this result is answered by it (the CLI folds them in one turn).
     if (voiceArmed) { voiceArmed = false; sendMeta({ subtype: 'voice_turn_end' }); }
     if (live) markTurnEnded(live);
@@ -3728,6 +3744,9 @@ export function startChatSession(
       if (handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed') setHandoffRun(failHandoffRun(handoffRun, 'stopped'));
       stopRotating(chatRegistryId);
     }
+    // The registry dropped every request on this Stop (stopSettled): so does the replay set, or
+    // `super end` reads a request nobody can see or answer any more.
+    if (turnsInFlight === 0) dropAllAsks();
     if (turnsInFlight > 0) closeTurn(stopped);
     // No turn in flight: still one end, marked stopped (a Stop is one end, never two).
     else if (isSuper && stopped) setImmediate(() => superTurnEnded(chatRegistryId, { stopped: true, inboxId: superInboxId }));
@@ -4191,6 +4210,13 @@ export function startChatSession(
       try { ws.send(JSON.stringify({ type: '_meta', ...frame })); } catch { /* closing */ }
     }
   };
+  // Its mirrors hear it too: harmless where no card was drawn, and a mirror that ever draws one
+  // never keeps a dead card.
+  tellOpenRequests = () => {
+    const frame = { subtype: 'open_requests', requestIds: [...outstandingAsks.keys()] };
+    sendMeta(frame);
+    mirrors?.frame(JSON.stringify({ type: '_meta', ...frame }));
+  };
 
   // The chat's run/secret card records (plan I1): the socket that holds the chat and the phone
   // mirrors are told on every change (the client matches its cards and sends back the server's
@@ -4510,6 +4536,8 @@ export function startChatSession(
     for (const { line } of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }
+    // A card the window still draws for a request settled while it was away goes now.
+    tellOpenRequests();
     if (handoffRun) sendMeta(handoffProgressFrame(handoffRun));
     if (mcpLast) sendMeta({ subtype: 'mcp_status', servers: mcpLast, at: mcpLastAt });
     browserMirror?.replay();
@@ -4644,7 +4672,7 @@ export function startChatSession(
             tool: typeof req.tool_name === 'string' ? req.tool_name : 'tool',
             ...(typeof req.tool_use_id === 'string' && req.tool_use_id ? { toolUseId: req.tool_use_id } : {}),
           });
-        } else if (obj.type === 'control_cancel_request') outstandingAsks.delete(obj.request_id);
+        } else if (obj.type === 'control_cancel_request') dropAsk(obj.request_id);
       }
       // A tool_result (top level or a sub-agent's) for a prompt's tool call: the CLI is done with
       // it, so the prompt is dead. Never replayed again (the registry settles it on the same frame).
@@ -4652,7 +4680,7 @@ export function startChatSession(
         for (const id of toolResultIds(obj)) {
           for (const [requestId, ask] of outstandingAsks) {
             if (ask.toolUseId !== id) continue;
-            outstandingAsks.delete(requestId);
+            dropAsk(requestId);
             console.warn(`[agent-chat] ${chatRegistryId.slice(0, 8)}: a ${ask.tool} permission request closed by its tool_result (no answer reached the CLI)`);
           }
         }
@@ -6183,7 +6211,7 @@ export function startChatSession(
         type: 'control_response',
         response: { subtype: 'success', request_id: msg.requestId, response },
       });
-      outstandingAsks.delete(msg.requestId);
+      dropAsk(msg.requestId);
       registry?.answered(msg.requestId, msg.behavior === 'allow' ? (msg.updatedInput as { answers?: unknown } | undefined)?.answers : undefined);
       return;
     }

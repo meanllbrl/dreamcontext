@@ -2147,7 +2147,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',
         ...(last.length > 600 ? { lastLineCut: `cut at 600 of ${last.length} characters; the whole reply: dreamcontext super read ${sid}` } : {}),
         ...(limit ? { limit: wrapUntrusted(vault, limit) } : {}),
-        asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
+        // What it asks right now, from its own process (the registry), so the Super can settle
+        // it with `super answer <child> <requestId> <option>` whatever the queue says.
+        asking: askingRow(e, vault),
         // Today's checks in its worktree: minutes waiting in line and running, and full runs past a red on purpose.
         ...(ch.worktree ? { testsToday: testsOf(ch.worktree, ch.branch) } : {}),
       };
@@ -4007,6 +4009,19 @@ function serverDelivers(r: WindowResult, deliver: () => boolean): boolean {
 function answerByServer(child: string, requestId: string, respond: (req: OpenRequest) => RequestResponse | null): boolean {
   if (!pendingRequest(getChat(child), requestId)) return false;
   return crewHandle(child)?.answerRequest?.(requestId, respond) === true;
+}
+
+/** A child's open request as `super state` shows it: the newest one its process waits on, with
+ *  a question's words and option labels (fenced: a child's strings, D10). */
+function askingRow(e: ReturnType<typeof getChat>, vault: string): Record<string, unknown> | null {
+  const pq = e?.status === 'asking' ? e.pendingQuestion : null;
+  if (!pq) return null;
+  // The ones raised before it wait too (a batch of parallel calls): their ids, so none is hidden.
+  const earlier = (e?.earlierPending ?? []).map((p) => ({ requestId: p.requestId, kind: p.isPermission ? 'permission' : 'question' }));
+  const more = earlier.length ? { alsoWaiting: earlier } : {};
+  if (pq.isPermission) return { requestId: pq.requestId, kind: 'permission', ...more };
+  const words = [pq.text, ...pq.options.map((o, i) => `${i + 1}. ${o}`)].filter(Boolean).join('\n');
+  return { requestId: pq.requestId, kind: 'question', ...(words ? { question: wrapUntrusted(vault, words) } : {}), ...more };
 }
 
 function isLiveChat(sid: string): boolean {
