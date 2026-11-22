@@ -49,6 +49,7 @@
  */
 
 import { noteMissedSuperFire } from '../super/schedule-queue.js';
+import { noteScheduledRun, removeIfLongRetired, retireMissedOnce } from '../super/schedule-limit.js';
 import { existsSync } from 'node:fs';
 import { tickApps } from '../apps/schedule.js';
 import { join } from 'node:path';
@@ -305,6 +306,7 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       scheduledFire: true,
     });
     ran.push(outcome);
+    countLimitedRun(contextRoot, manifest, outcome, new Date(firedAtMs), now, logFn);
     verdicts.push({ slug: fire.slug, verdict: verdictFor(outcome.status) });
     drainedAndRan.add(fire.slug);
     logFn(`[automations] ${fire.slug} finished (drained): ${outcome.status}`);
@@ -326,6 +328,8 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     }
 
     if (!manifest.enabled) {
+      // A one-off or few-times schedule that retired a day ago leaves `list` (schedule-limit.ts).
+      try { if (removeIfLongRetired(contextRoot, manifest, now)) { logFn(`[automations] ${manifest.slug} retired a day ago — removed`); verdicts.push({ slug: manifest.slug, verdict: 'disabled' }); continue; } } catch (err) { logFn(`[automations] ${manifest.slug}: could not remove a retired schedule: ${(err as Error).message}`); }
       if (manifest.target === 'super') notePaused(contextRoot, manifest.slug, now, logFn);
       verdicts.push({ slug: manifest.slug, verdict: 'disabled' });
       continue;
@@ -343,9 +347,14 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
     if (!due.due) {
       // A Super automation's fire past catch-up is never silent (super-rutin Decision 10): one
       // `missed` item the server tells once. Headless automations keep today's behaviour.
-      if (due.reason === 'outside-catchup' && manifest.target === 'super' && due.fireAt) {
+      // A one-off (`once_on`) whose own fire went by is retired and told the same way, headless
+      // or not: never left to fire on that day next year, never dropped silently.
+      if (due.reason === 'outside-catchup' && due.fireAt) {
         try {
-          if (noteMissedSuperFire(contextRoot, manifest.slug, due.fireAt, opts.home)) logFn(`[automations] ${manifest.slug} missed its ${due.fireAt.toISOString()} fire — the Super tells the owner`);
+          const once = retireMissedOnce(contextRoot, manifest, due.fireAt, now);
+          if ((manifest.target === 'super' || once) && noteMissedSuperFire(contextRoot, manifest.slug, due.fireAt, opts.home)) {
+            logFn(`[automations] ${manifest.slug} missed its ${due.fireAt.toISOString()} fire — the Super tells the owner`);
+          }
         } catch (err) {
           logFn(`[automations] ${manifest.slug}: could not record a missed fire: ${(err as Error).message}`);
         }
@@ -377,13 +386,21 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
       scheduledFire: true,
     });
     ran.push(outcome);
-    const waited = outcome.status === 'deferred' && accountWaitHolds(opts.home, now.getTime()) !== null;
+    countLimitedRun(contextRoot, manifest, outcome, due.fireAt ?? now, now, logFn);
+    const waited =outcome.status === 'deferred' && accountWaitHolds(opts.home, now.getTime()) !== null;
     verdicts.push({ slug: manifest.slug, verdict: waited ? 'waiting-for-account' : verdictFor(outcome.status) });
     logFn(`[automations] ${manifest.slug} finished: ${outcome.status}`);
   }
 
   for (const send of deferred) await send().catch((err) => logFn(`[telegram] a routine message failed: ${(err as Error)?.message ?? err}`));
   return { projectRoot, contextRoot, considered: manifests.length, ran, verdicts };
+}
+
+/** A one-off or few-times schedule counts this fire and retires when its limit is spent. */
+function countLimitedRun(contextRoot: string, manifest: AutomationManifest, outcome: RunOutcome, fireAt: Date, now: Date, log: (l: string) => void): void {
+  try {
+    if (noteScheduledRun(contextRoot, manifest, outcome, fireAt, now)) log(`[automations] ${manifest.slug} ran its last time — retired`);
+  } catch (err) { log(`[automations] ${manifest.slug}: could not count its run: ${(err as Error).message}`); }
 }
 
 // ─── A Super automation owes only fires from while it was live ───────────────
