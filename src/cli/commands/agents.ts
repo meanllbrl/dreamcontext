@@ -791,7 +791,7 @@ export function registerAgentsCommand(program: Command): void {
       const root = ensureContextRoot();
       if (slug === 'show' && trace) {
         const members = [...new Set([...listAgents(root).map((a) => a.slug), ...(process.env.DREAMCONTEXT_AGENT_CHAT ? [process.env.DREAMCONTEXT_AGENT_CHAT] : [])])];
-        const t = findTrace(root, trace, members);
+        const t = findTrace(root, trace, members, undefined, appViewer(root));
         if (!t) { error(`No past-work trace "${trace}" here.`); process.exitCode = 1; return; }
         if (opts.json) { console.log(JSON.stringify(t, null, 2)); return; }
         console.log(header(`${t.kind === 'run' ? 'Run' : 'Job'} · ${t.at.slice(0, 16).replace('T', ' ')} · ${t.project.name} · ${t.status}`));
@@ -818,7 +818,7 @@ export function registerAgentsCommand(program: Command): void {
       if (opts.search !== undefined) {
         const found = searchAgentHistory(root, slug, opts.search, { audience: 'agent', before: opts.before ?? null, limit });
         // Its past-work traces after the run/talk hits (D12): through the app's index, else the files.
-        const traces = await searchPastWork(root, slug, opts.search, { all: opts.all === true });
+        const traces = await searchPastWork(root, slug, opts.search, { all: opts.all === true, viewer: appViewer(root) });
         if (opts.json) { console.log(JSON.stringify({ ...found, traces }, null, 2)); return; }
         if (found.hits.length === 0 && traces.length === 0) { console.log(chalk.dim('Nothing found.')); return; }
         for (const h of found.hits) {
@@ -852,6 +852,13 @@ function appSession(root: string): boolean {
   if ((process.env.DREAMCONTEXT_AGENT_CHAT ?? '').startsWith('app-')) return true;
   const sid = process.env.CLAUDE_CODE_SESSION_ID ?? process.env.CLAUDE_SESSION_ID ?? '';
   try { return !!sid && isAppRunSession(root, sid); } catch { return false; }
+}
+
+/** An app's session as a past-work viewer: its own runs only (the app is unknown in an app run: none). */
+function appViewer(root: string): { app: string | null } | null {
+  if (!appSession(root)) return null;
+  const chat = process.env.DREAMCONTEXT_AGENT_CHAT ?? '';
+  return { app: chat.startsWith('app-') && chat.length > 4 ? chat.slice(4) : null };
 }
 
 /** A message flattened to one line of at most `max` characters. */

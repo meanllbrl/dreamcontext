@@ -511,6 +511,17 @@ describe('a run\'s trace (C4 runner)', () => {
     expect(all[0]).toMatchObject({ kind: 'run', key: 'run:kestrel-digest:2026-11-20T09:00:00.000Z', runKey: 'run:kestrel-digest:2026-11-20T09:00:00.000Z', files: ['/p/digest.md'], status: 'ok', did: 'Digest sent.' });
   });
 
+  it('a refused run (a usage limit, an API error) stores no did: with no file written it leaves none', () => {
+    const base = {
+      member: 'mira', projectRoot: m.project('kestrel'), slug: 's', fireIso: '2026-11-20T09:00:00.000Z', finishedAt: new Date(),
+      ask: { by: 'schedule' as const, text: 'weekly price watch' }, document: 'You have hit your usage limit', status: 'failed', sessionId: null, tool: 'claude' as const, home: m.home,
+    };
+    expect(buildRunTrace({ ...base, result: 'You have hit your usage limit. It resets at 3pm.', refused: true })).toBeNull();
+    expect(buildRunTrace({ ...base, result: 'API Error: 529 overloaded' })).toBeNull();
+    // A failure with a real reason is still work.
+    expect(buildRunTrace({ ...base, result: 'The pricing page moved; I could not read vexa this week.', document: null })?.did).toContain('pricing page moved');
+  });
+
   it('a run with no result and no written file leaves none', () => {
     expect(buildRunTrace({
       member: 'mira', projectRoot: m.project('kestrel'), slug: 's', fireIso: '2026-11-20T09:00:00.000Z', finishedAt: new Date(),

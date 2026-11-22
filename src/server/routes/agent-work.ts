@@ -72,7 +72,8 @@ export async function handleAgentWorkSelect(req: IncomingMessage, res: ServerRes
       // `agents history --search`: every match, no room (D12); the index waits for its build.
       const hit = await workIndex.whenBuilt(member, projectRoot);
       if (!hit) { sendJson(res, 200, { hits: [] }); return; }
-      const hits = hit.idx.allMatches(query, { projectKey: projectKey(projectRoot), scope: hit.scope }, body.all === true);
+      const viewer = audience === 'app' ? { app } : null;
+      const hits = hit.idx.allMatches(query, { projectKey: projectKey(projectRoot), scope: hit.scope }, body.all === true && !viewer, viewer);
       sendJson(res, 200, { hits });
       return;
     }

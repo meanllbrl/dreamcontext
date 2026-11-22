@@ -231,6 +231,17 @@ export interface PromptBlock {
   text: string;
   /** A cheaper complete render of this block (patterns: pointers instead of pasted bodies). */
   compact?: string;
+  /** Called once the turn's output is fitted, only when this block reached it whole (a "shown
+   *  once" marker must never be written for a block the fit dropped). */
+  onShown?: () => void;
+}
+
+/** Run each block's `onShown` whose text is in the fitted output (the one place a block counts as delivered). */
+export function markShownBlocks(input: readonly PromptBlock[], fit: FittedPrompt): void {
+  for (const b of input) {
+    if (!b.onShown || !b.text) continue;
+    if (fit.text.includes(b.text)) { try { b.onShown(); } catch { /* the next turn may deliver it again */ } }
+  }
 }
 
 export interface FittedPrompt {

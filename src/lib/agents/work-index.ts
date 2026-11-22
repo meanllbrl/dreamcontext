@@ -232,8 +232,9 @@ export class MemberWorkIndex {
       if (v.s < WORK_GATE_SCORE || v.terms < minTerms || (queryIdf > 0 && v.idf / queryIdf < WORK_GATE_COVERAGE)) continue;
       // A project member's work never leaves its project (G2); a global member's spans them all.
       if (here.scope === 'project' && d.projectKey !== here.projectKey) continue;
-      // An app's run sees only that app's runs (G2).
-      if (q.audience === 'app' && (d.kind !== 'run' || !q.app || d.app !== q.app)) continue;
+      // An app sees only that app's runs, of this project (G2: a non-owner audience never reads
+      // another project's work, whatever the member's scope).
+      if (q.audience === 'app' && (d.kind !== 'run' || !q.app || d.app !== q.app || d.projectKey !== here.projectKey)) continue;
       if (ids.has(d.id)) continue;
       if (conv && d.transcript === conv && since !== null && d.at >= since) continue;
       out.push({ doc: d, score: v.s });
@@ -256,9 +257,16 @@ export class MemberWorkIndex {
     return { lines, more };
   }
 
-  /** Every matching trace id (the CLI's search, no room). */
-  allMatches(query: string, here: { projectKey: string; scope: MemberScope }, all: boolean): Array<{ id: string; line: string; at: number; projectKey: string }> {
-    return this.search({ query, audience: 'owner' }, all ? { ...here, scope: 'global' } : here)
+  /**
+   * Every matching trace id (the CLI's search, no room). This project's work only, unless `all`
+   * (a global member's work in every project); an app `viewer` gets only its own runs here, and
+   * never `all`.
+   */
+  allMatches(
+    query: string, here: { projectKey: string; scope: MemberScope }, all: boolean, viewer: { app: string | null } | null = null,
+  ): Array<{ id: string; line: string; at: number; projectKey: string }> {
+    const q: SelectQuery = viewer ? { query, audience: 'app', app: viewer.app } : { query, audience: 'owner' };
+    return this.search(q, { ...here, scope: all && !viewer ? here.scope : 'project' })
       .map((h) => ({ id: h.doc.id, line: h.doc.line, at: h.doc.at, projectKey: h.doc.projectKey }));
   }
 

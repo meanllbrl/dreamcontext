@@ -25,7 +25,7 @@ import { dirname, resolve, join, extname, basename, relative, sep } from 'node:p
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { detectDrawIntent, drawDirective, excalidrawHandWriteRefusal } from '../../lib/draw-intent.js';
 import {
-  enterHookProject, firstActInSession, firstInSession, fitPromptContext, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
+  enterHookProject, firstActInSession, firstInSession, fitPromptContext, markShownBlocks, hookContextRoot, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
   resetSessionOnce, takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
   markSessionRecall, readPrevOwnerTurn, sessionRecall, writePrevOwnerTurn, markSessionWork, sessionWork,
   SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind, type SessionRecall,
@@ -2578,6 +2578,7 @@ function beginPromptDelivery(sessionId: string): void {
   process.once('exit', () => {
     if (blocks.length === 0) return;
     const fit = fitPromptContext(blocks);
+    markShownBlocks(blocks, fit);
     let text = fit.text;
     if (fit.overflow !== null) {
       try {
@@ -2591,9 +2592,9 @@ function beginPromptDelivery(sessionId: string): void {
 }
 
 /** Print a block the turn can lose before its rules; `console.log` is `must`. */
-function emitPromptBlock(kind: PromptBlockKind, text: string, compact?: string): void {
-  if (promptBlocks) promptBlocks.push({ kind, text, compact });
-  else console.log(text);
+function emitPromptBlock(kind: PromptBlockKind, text: string, compact?: string, onShown?: () => void): void {
+  if (promptBlocks) promptBlocks.push({ kind, text, compact, onShown });
+  else { console.log(text); onShown?.(); }
 }
 
 /**
@@ -3998,8 +3999,8 @@ export function registerHookCommand(program: Command): void {
       try {
         const pw = await pastWork;
         if (pw) {
-          emitPromptBlock('pastwork', pw.text);
-          markSessionWork(pw.sessionId, pw.ids);
+          // Marked shown only if the fitted output kept the block (a dropped block arrives next turn).
+          emitPromptBlock('pastwork', pw.text, undefined, () => markSessionWork(pw.sessionId, pw.ids));
         }
       } catch { /* no block: the member can still search its history */ }
 

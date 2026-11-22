@@ -15,6 +15,7 @@ import { handleAgentWorkSelect, sweepMember } from '../../src/server/routes/agen
 import { workIndex } from '../../src/lib/agents/work-index.js';
 import { readAllTraces, workRoot, writeRunTrace, type WorkTrace } from '../../src/lib/agents/work-trace.js';
 import { recordAgentSession } from '../../src/lib/local-store.js';
+import { findTrace, searchPastWork } from '../../src/lib/agents/history.js';
 import { addVault } from '../../src/lib/vaults.js';
 import { pastWorkForTurn } from '../../src/cli/commands/hook.js';
 import { composePrompt, runPastWork } from '../../src/lib/automations/runner.js';
@@ -111,6 +112,16 @@ beforeAll(async () => {
     result: 'Checked four competitors: vexa raised its monthly plan to 12.99, the others held.', document: null,
     status: 'ok', sessionId: null, tool: 'claude', home: m.home,
   });
+
+  // Two app runs of mira's under the same app slug, one per project (an app sees only its own, here).
+  for (const p of ['kestrel', 'lumen']) {
+    await writeRunTrace({
+      member: 'mira', projectRoot: m.project(p), slug: 'mira', fireIso: `2026-11-17T08:0${p === 'kestrel' ? 0 : 1}:00.000Z`,
+      finishedAt: new Date('2026-11-17T08:05:00.000Z'), ask: { by: 'app', text: `Funnel desk conversion summary for ${p}` },
+      result: `Funnel desk conversion summary for ${p}: step two lost a third of the visitors.`, document: null,
+      status: 'ok', sessionId: null, tool: 'claude', app: 'funnel-desk', home: m.home,
+    });
+  }
 
   workIndex.reset();
   workIndex.hooks = { home: m.home, sweep: (s, r) => sweepMember(s, r, m.home) };
@@ -211,5 +222,37 @@ describe('precision: these get no block', () => {
 
   it('a run\'s own hook (the automation env is set)', async () => {
     expect(await turn('kestrel', 'Add the one tap upsell charged once to the saved card', { DREAMCONTEXT_AUTOMATION_SLUG: 'mira-price-watch' })).toBeNull();
+  });
+});
+
+describe('history --search and show: this project unless --all, an app sees only its own runs here (G2)', () => {
+  const ids = (hits: Array<{ id: string }>) => hits.map((h) => h.id);
+  for (const viaServer of [true, false]) {
+    it(viaServer ? 'through the server' : 'from the files', async () => {
+      const keys = traceOf('mira', 'lumen', 'l-keys');
+      const here = await searchPastWork(ctx('kestrel'), 'mira', 'stripe test keys', { viaServer, home: m.home });
+      expect(ids(here)).not.toContain(keys.id);
+      expect(ids(await searchPastWork(ctx('kestrel'), 'mira', 'stripe test keys', { viaServer, all: true, home: m.home }))).toContain(keys.id);
+      const runs = readAllTraces(workRoot('mira', m.project('kestrel'), m.home)!).filter((t) => t.app === 'funnel-desk');
+      const own = runs.find((t) => t.project.name === 'kestrel')!;
+      const other = runs.find((t) => t.project.name === 'lumen')!;
+      const app = { app: 'funnel-desk' };
+      const seen = ids(await searchPastWork(ctx('kestrel'), 'mira', 'funnel desk conversion summary', { viaServer, all: true, viewer: app, home: m.home }));
+      expect(seen).toEqual([own.id]);
+      expect(ids(await searchPastWork(ctx('kestrel'), 'mira', 'stripe test keys', { viaServer, all: true, viewer: app, home: m.home }))).toEqual([]);
+      expect(ids(await searchPastWork(ctx('kestrel'), 'mira', 'funnel desk conversion summary', { viaServer, viewer: { app: null }, home: m.home }))).toEqual([]);
+      expect(other).toBeTruthy();
+    });
+  }
+
+  it('show: the owner opens any of the member\'s traces; an app only its own run here', () => {
+    const keys = traceOf('mira', 'lumen', 'l-keys');
+    const runs = readAllTraces(workRoot('mira', m.project('kestrel'), m.home)!).filter((t) => t.app === 'funnel-desk');
+    const own = runs.find((t) => t.project.name === 'kestrel')!;
+    const other = runs.find((t) => t.project.name === 'lumen')!;
+    expect(findTrace(ctx('kestrel'), `w_${keys.id.slice(0, 8)}`, ['mira'], m.home)?.id).toBe(keys.id);
+    expect(findTrace(ctx('kestrel'), `w_${keys.id.slice(0, 8)}`, ['mira'], m.home, { app: 'funnel-desk' })).toBeNull();
+    expect(findTrace(ctx('kestrel'), `w_${other.id.slice(0, 8)}`, ['mira'], m.home, { app: 'funnel-desk' })).toBeNull();
+    expect(findTrace(ctx('kestrel'), `w_${own.id.slice(0, 8)}`, ['mira'], m.home, { app: 'funnel-desk' })?.id).toBe(own.id);
   });
 });

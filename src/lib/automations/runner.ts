@@ -3554,7 +3554,7 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
         member: runMember, projectRoot, slug, fireIso, finishedAt,
         ask: { by: runAppSlug ? 'app' : opts.ask ? 'owner' : opts.task ? 'owner' : 'schedule', text: runAskText },
         result: claudeResult?.result ?? null, document: finalOutputPath && !reviewCardId ? claudeResult?.result ?? null : null,
-        status, sessionId: claudeResult?.sessionId ?? null,
+        status, refused: !!claudeResult?.limit || claudeResult?.isError === true, sessionId: claudeResult?.sessionId ?? null,
         tool: runTool === 'codex' ? 'codex' : runTool === 'antigravity' ? 'antigravity' : 'claude',
         app: runAppSlug, ...(opts.home ? { home: opts.home } : {}),
       }).catch(() => false);

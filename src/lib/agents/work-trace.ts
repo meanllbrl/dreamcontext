@@ -286,10 +286,13 @@ interface SegmentWork {
   lastAt: number | null;
 }
 
+/** A reply that is the API refusing (an error, a limit), never work (D1). One test for chats and runs. */
+const REFUSAL_TEXT_RE = /^\s*API Error\b/;
+
 function isRefusal(rec: Rec): boolean {
   if (rec.isApiErrorMessage === true || rec.is_api_error_message === true || rec.error !== undefined) return true;
   const { text } = entryText(contentOf(rec));
-  return /^\s*API Error\b/.test(text);
+  return REFUSAL_TEXT_RE.test(text);
 }
 
 function assistantBlocks(rec: Rec): { text: string; tool: boolean; any: boolean } {
@@ -1012,6 +1015,8 @@ export interface RunTraceInput {
   result: string | null;
   document: string | null;
   status: 'ok' | 'failed' | 'timeout' | string;
+  /** The run's answer was a refusal (a usage limit, an API error envelope): its text is never `did`. */
+  refused?: boolean;
   sessionId: string | null;
   tool: TranscriptTool;
   app?: string | null;
@@ -1028,7 +1033,9 @@ export function buildRunTrace(input: RunTraceInput): WorkTrace | null {
       try { files = toolWrites(parseRecords(readTranscriptText(loc.path)).map((r) => r.rec)); } catch { files = []; }
     }
   }
-  const did = input.result && input.status !== 'failed' ? headTail(input.result, DID_MAX_CHARS) : (input.result ? headTail(input.result, DID_MAX_CHARS) : '');
+  // A refusal is never work (D1): its text is no `did`; with no file written it leaves no trace.
+  const refused = input.refused === true || (input.result !== null && REFUSAL_TEXT_RE.test(input.result));
+  const did = input.result && !refused ? headTail(input.result, DID_MAX_CHARS) : '';
   const boundedFiles = boundFiles(files);
   if (!did && boundedFiles.length === 0) return null;
   const key = `run:${input.slug}:${input.fireIso}`;
@@ -1037,7 +1044,7 @@ export function buildRunTrace(input: RunTraceInput): WorkTrace | null {
     asks: [{ by: input.ask.by, text: capText(input.ask.text, ASK_MAX_CHARS) }], did, files: boundedFiles,
     status: input.status === 'ok' ? 'ok' : input.status === 'timeout' ? 'interrupted' : 'failed',
     through: input.finishedAt.getTime(),
-    ...(input.document ? { document: headTail(input.document, DID_MAX_CHARS) } : {}),
+    ...(input.document && !refused ? { document: headTail(input.document, DID_MAX_CHARS) } : {}),
     runKey: key,
     ...(input.app ? { app: input.app } : {}),
   };

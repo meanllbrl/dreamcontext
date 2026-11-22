@@ -596,21 +596,24 @@ export async function searchPastWork(
   contextRoot: string,
   slug: string,
   query: string,
-  opts: { all?: boolean; home?: string; viaServer?: boolean } = {},
+  /** `viewer`: an app's session (only that app's runs here, never `all`). */
+  opts: { all?: boolean; home?: string; viaServer?: boolean; viewer?: { app: string | null } | null } = {},
 ): Promise<TraceHit[]> {
   const projectRoot = dirname(contextRoot);
   if (!query.trim()) return [];
+  const viewer = opts.viewer ?? null;
+  const all = opts.all === true && !viewer;
   if (opts.viaServer !== false) {
-    const remote = await searchViaServer(slug, projectRoot, query, opts.all === true, workServerPort(process.env, opts.home ?? homedir()));
+    const remote = await searchViaServer(slug, projectRoot, query, all, viewer, workServerPort(process.env, opts.home ?? homedir()));
     if (remote) return remote;
   }
   const local = localIndex(slug, projectRoot, opts.home ?? homedir());
   if (!local) return [];
-  return local.idx.allMatches(query, { projectKey: projectKey(projectRoot), scope: local.scope }, opts.all === true);
+  return local.idx.allMatches(query, { projectKey: projectKey(projectRoot), scope: local.scope }, all, viewer);
 }
 
-function searchViaServer(member: string, root: string, query: string, all: boolean, port: number): Promise<TraceHit[] | null> {
-  const payload = JSON.stringify({ member, root, query, audience: 'owner', mode: 'search', all });
+function searchViaServer(member: string, root: string, query: string, all: boolean, viewer: { app: string | null } | null, port: number): Promise<TraceHit[] | null> {
+  const payload = JSON.stringify({ member, root, query, audience: viewer ? 'app' : 'owner', ...(viewer?.app ? { app: viewer.app } : {}), mode: 'search', all });
   return new Promise((resolve) => {
     let settled = false;
     const done = (v: TraceHit[] | null) => { if (settled) return; settled = true; clearTimeout(timer); resolve(v); };
@@ -634,17 +637,20 @@ function searchViaServer(member: string, root: string, query: string, all: boole
 }
 
 /** One whole trace by its id or its `w_<id8>` handle, among this project's members (and global ones). */
-export function findTrace(contextRoot: string, handle: string, members: readonly string[], home?: string): WorkTrace | null {
+export function findTrace(contextRoot: string, handle: string, members: readonly string[], home?: string, viewer: { app: string | null } | null = null): WorkTrace | null {
   const want = handle.replace(/^w_/, '').toLowerCase();
   if (!/^[0-9a-f]{8,32}$/.test(want)) return null;
   const projectRoot = dirname(contextRoot);
+  // An app sees only its own runs of this project (the same rule as its search).
+  const here = projectKey(projectRoot);
+  const visible = (t: WorkTrace) => !viewer || (t.kind === 'run' && !!viewer.app && t.app === viewer.app && t.project.key === here);
   for (const slug of members) {
     const root = workRoot(slug, projectRoot, home ?? homedir());
     if (!root) continue;
     for (const f of listTraceFiles(root)) {
       if (!f.name.startsWith(want)) continue;
       const t = readTraceFile(root, join(root, f.month, f.name));
-      if (t) return t;
+      if (t && visible(t)) return t;
     }
   }
   return null;

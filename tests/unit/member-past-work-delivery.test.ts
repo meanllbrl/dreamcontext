@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pastWorkForTurn } from '../../src/cli/commands/hook.js';
-import { fitPromptContext, markSessionWork, resetSessionOnce, sessionWork, type PromptBlock } from '../../src/lib/hook-delivery.js';
+import { fitPromptContext, markShownBlocks, markSessionWork, resetSessionOnce, sessionWork, type PromptBlock } from '../../src/lib/hook-delivery.js';
 import { localIndex, type Selection } from '../../src/lib/agents/work-index.js';
 import { traceId, writeTrace, type WorkTrace } from '../../src/lib/agents/work-trace.js';
 import { projectKey } from '../../src/lib/local-store.js';
@@ -126,6 +126,17 @@ describe('the budget share (C5, criterion 7)', () => {
     expect(fitted.text).not.toContain('YOUR PAST WORK');
     const small = fitPromptContext([{ kind: 'must', text: 'rule' }, { kind: 'recall', text: 'hit' }, { kind: 'pastwork', text: 'pw' }]);
     expect(small.text).toBe('rule\nhit\npw');
+  });
+
+  it('a past-work block the fit dropped is never marked shown (it arrives on a later turn)', () => {
+    let shown = 0;
+    const recall: PromptBlock = { kind: 'recall', text: `— Memory recall\n${'r'.repeat(HOOK_OUTPUT_MAX_CHARS - 2_000)}` };
+    const big: PromptBlock[] = [{ kind: 'must', text: 'rule' }, recall, { kind: 'pastwork', text: `--- YOUR PAST WORK\n${'p'.repeat(2_400)}`, onShown: () => { shown++; } }];
+    markShownBlocks(big, fitPromptContext(big));
+    expect(shown).toBe(0);
+    const small: PromptBlock[] = [{ kind: 'must', text: 'rule' }, { kind: 'pastwork', text: '--- YOUR PAST WORK\nline', onShown: () => { shown++; } }];
+    markShownBlocks(small, fitPromptContext(small));
+    expect(shown).toBe(1);
   });
 });
 
