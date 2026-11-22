@@ -285,6 +285,7 @@ Who does the work: `_dream_context/agents/<slug>.md` (title, prompt, model, effo
 | `agents bring-here <slug>` | Run your agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull. Owner only; refused inside an agent run. |
 | `agents inbox [--json]` | What waits for you on this machine: held secrets, tasks assigned outside the app, renamed agents, patterns to adopt. Answer on the AI Team page. |
 | `agents history <slug> [--search <words>] [--before <cursor>] [--limit <n>] [--json]` | An agent's past runs and conversations with the owner, newest first, paged (`--before` takes the cursor a page prints). `--search`: case-insensitive, at most 50 hits. The agent's own view: its private routines, this machine's entries and talks. Read-only. |
+| `agents history <slug> --search <words> [--all]` · `agents history show <w_id>` | After the run and talk hits, `--search` lists every past-work trace that matches (no cap; `--all`: a global member's work in every project, refused in an app's session). `show <w_id>` prints one trace whole (the id a `YOUR PAST WORK` line ends with). Read-only. |
 
 `doctor` adds an **Agents split** check: automation files still in the old format (they work as before; `update` splits them), a conflicting `agents/<slug>.md`, unreadable files, a stray `## Prompt`/`## Pattern` in a split automation (ignored), and skipped symlinks. All advisory. The split itself is migration `0.31.0`, step `split-automation-agents`.
 

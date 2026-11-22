@@ -78,9 +78,10 @@
     },
     {
       "path": "agents history",
-      "desc": "An agent's past runs and conversations, newest first (what the agent itself reads to remember)",
+      "desc": "An agent's past runs and conversations, newest first (what the agent itself reads to remember); `history show <w_id>` prints one past-work trace whole",
       "args": [
-        "<slug>"
+        "<slug>",
+        "[trace]"
       ],
       "valueFlags": [
         "--search",
@@ -107,10 +108,13 @@
     },
     {
       "path": "agents revert",
-      "desc": "Take a Super Agent amendment back (refused inside a Claude session or an agent run)",
+      "desc": "Take a Super Agent amendment back (inside a session: only the member itself, on his words with --quote)",
       "args": [
         "<slug>",
         "<id>"
+      ],
+      "valueFlags": [
+        "--quote"
       ]
     },
     {
@@ -2587,7 +2591,7 @@
     },
     {
       "path": "learn",
-      "desc": "Store a rule he stated (his preference, this project's rule, or a member's lesson) and print the line to repeat to him",
+      "desc": "Store a rule he stated (his preference, this project's rule, or how one AI Team member works) and print the line to repeat to him",
       "args": [
         "[text]"
       ],
@@ -2630,7 +2634,8 @@
         "--at",
         "--when",
         "--doc",
-        "--scope"
+        "--scope",
+        "--member"
       ]
     },
     {
@@ -2658,7 +2663,10 @@
     {
       "path": "learn list",
       "desc": "The rules he taught: his preferences and this project's rules, with who wrote each",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--member"
+      ]
     },
     {
       "path": "learn show",
@@ -4438,7 +4446,7 @@
     },
     {
       "path": "super team amend",
-      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`",
+      "desc": "Correct a member's instructions after a mistake or the owner's feedback: only its prompt, soul or a routine's job. The project's Super Agent corrects any member; a member's own Super corrects itself only (`own_member_only` for another). It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. On his word (--quote with his words typed in this chat, about the lines it changes) no daily ceiling counts it, and the reply's first field is `AMENDED <id>`: repeat it to him. A global member (every project) changes only from its OWN Super, on his word; a project's Super relays to it with `team ask` instead. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global` (a global member, not on its own word from him)",
       "args": [
         "<member>"
       ],

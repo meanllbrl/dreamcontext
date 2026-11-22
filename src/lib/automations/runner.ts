@@ -703,6 +703,14 @@ export async function conditionGate(
 }
 
 /** The run-site past-work block (D8): '' on any miss. Never throws, never slows past its timeout. */
+/** Whether the member has a work folder here (no folder: no trace exists, nothing to ask). */
+export function hasPastWork(member: string, projectRoot: string, home?: string): boolean {
+  try {
+    const root = workRoot(member, projectRoot, home ?? homedir());
+    return !!root && existsSync(root);
+  } catch { return false; }
+}
+
 export async function runPastWork(member: string, projectRoot: string, query: string, app: string | null, home?: string): Promise<string> {
   try {
     if (!query.trim()) return '';
@@ -2996,7 +3004,9 @@ async function runAutomationInner(contextRoot: string, slug: string, opts: RunOp
     // index; no server, a late answer or an error is no block. A resumed task step gets none.
     const runAppSlug = opts.app?.slug ?? manifest.app ?? null;
     const runAskText = (askText ?? '').trim() || [manifest.title, (manifest.prompt ?? '').trim().split('\n')[0] ?? ''].filter(Boolean).join(': ');
-    const pastWork = runMember && !(taskStep && taskStep.resumePrompt)
+    // No work folder: no await at all, so a run with no past work reaches its spawn on the same
+    // synchronous path as before (callers that drive the child right after the call rely on it).
+    const pastWork = runMember && !(taskStep && taskStep.resumePrompt) && hasPastWork(runMember, projectRoot, opts.home)
       ? await runPastWork(runMember, projectRoot, runAskText, runAppSlug, opts.home)
       : '';
     const prompt = composePrompt(
