@@ -45,9 +45,30 @@ future if that ever becomes necessary.
 
 ## Shipping a migration
 
-Every PR that changes the brain STRUCTURE (file paths, frontmatter conventions,
-content format) must ship a versioned migration so existing projects upgrade
-automatically when they run `dreamcontext update` or `dreamcontext sleep start`.
+Every change that leaves an install made before it behind (brain structure,
+stored settings, members, routines, anything a user already has on disk) ships a
+versioned migration, so existing projects follow it on their own when they run
+`dreamcontext update` or `dreamcontext sleep start`. A change that needs nothing
+says why.
+
+### The decision line (every feature PR)
+
+The PR body carries the decision, and the release refuses a feature without one
+(`scripts/check-migration-decision.mjs --release` runs in the cut's gates,
+`desktop-release.yml` and `prepublishOnly`; the `migration-decision` workflow
+gives the same verdict early on the PR). Exactly one of:
+
+```
+Migration: src/migrations/<X.Y.Z>.ts
+Migration: none - <why an existing install needs nothing>
+```
+
+One file line per migration file the PR adds or changes (each must be in the
+diff, and every migration file the diff adds must be named); a `none` reason is
+at least 10 characters and is only valid when the diff adds no migration file.
+Release PRs (head `beta`, `dev`, `main` or `release/*` from this repo) are
+exempt. `gh pr create --body` skips the template, so write the line yourself.
+The fix for a refused release is one edit: `gh pr edit <n> --body-file <file>`.
 
 ### Checklist
 
@@ -70,15 +91,34 @@ automatically when they run `dreamcontext update` or `dreamcontext sleep start`.
    filesystem already in the final state must return `detected: true` with
    `filesTouched: []`.
 
-5. **agentTask** — add one when the migration requires human judgment (e.g.
-   choosing which of two conflicting schemas to keep). Contract rules:
-   - Agent starts by checking the filesystem (no-content assumption).
-   - Agent may move/rename files, normalise frontmatter, wrap fences — but
-     NEVER alters body prose.
+5. **agentTask** — add one when the migration needs judgment (e.g. choosing
+   which of two conflicting schemas to keep, or asking the owner). It runs in a
+   visible session of its own (in the app the Super opens a "Taşıma" child for
+   it; every snapshot shows `## Migration waiting` until it is recorded), so it
+   may change meaning, not only paths. Contract rules:
+   - **Due work is named by task.** A step that finds work for a task returns
+     `agentWorkFor: '<task id>'`; the runner ledgers that sighting once. A task
+     nobody reported is never due, so a fresh install and a vault where
+     detection found nothing stay quiet. A step whose verdict can change later
+     is `everyRun`.
+   - **`title`** is one plain line (at most 80 characters) shown in the
+     snapshot block and the child's card; ids are unique across the registry.
+   - The instruction states its scope, starts by checking the filesystem
+     (idempotent), names what needs the owner's card, and ends with the record
+     line: `dreamcontext migrations record ... --executor agent` on completion,
+     never at the start. The owner saying no is recorded too
+     (`--summary "owner declined: <his words>"`) and silences the task.
+   - **Owner safety.** Anything that deletes, rebinds or re-approves the owner's
+     things is asked first in ONE card listing every item with its proposed
+     outcome; an approval hash that changes (e.g. `automations edit --agent`)
+     goes through the existing approval card, never a stamp; only members
+     `ownedBy` this machine (`src/lib/agents/owner.ts`) are touched; vault text
+     placed in a prompt is slug-validated or wrapped as untrusted
+     (`wrapUntrusted`).
+   - **A fix that must happen is a code step**, never an agentTask alone:
+     anyone with shell access can record a task as done.
    - After moving files, agent updates inbound `[[wikilinks]]` or lists
      broken links.
-   - Agent writes the ledger via `dreamcontext migrations record` on
-     completion (never at the start).
 
 6. **Never guess, and know what counts as guessing.** A step may only do what is
    DETERMINISTIC. Two questions look mechanical and are not:
@@ -111,7 +151,7 @@ automatically when they run `dreamcontext update` or `dreamcontext sleep start`.
 8. **Gotchas for agent tasks**:
    - **Gotcha 2**: wikilink hygiene — always update `[[old-slug]]` → `[[new-slug]]`
      after a file move, or list broken links.
-   - **Gotcha 3**: no prose edits — structure only.
+   - **Gotcha 3**: prose the owner wrote changes only with his yes on the card.
    - **Gotcha 6**: code layer runs first; check the ledger before acting.
 
 ## Trademark

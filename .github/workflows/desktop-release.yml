@@ -109,6 +109,9 @@ jobs:
     # leg later for Intel; the client picks the arch-matching asset by name.
     if: ${{ !inputs.promote }}
     runs-on: macos-15
+    permissions:
+      contents: read
+      pull-requests: read # the migration decision gate lists the PRs merged since the last release
     # The signing secrets live in this environment, which only `v*` TAGS may deploy to:
     # a workflow pushed on any branch cannot read them. Dispatch from a tag ref, not main.
     # Every action is pinned to a commit: a moved tag cannot run code next to the key.
@@ -123,6 +126,8 @@ jobs:
       DRY_RUN: ${{ inputs.dry_run == true }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # the migration decision gate needs the previous release tag
 
       - name: Resolve version + tag
         id: ver
@@ -207,6 +212,13 @@ jobs:
           else
             node scripts/check-migration-channel.mjs --stable "${STABLE_TAG#v}"
           fi
+
+      - name: Every feature carries a migration decision (oto-migration D6)
+        # Both channels. Every PR merged into dev or main since the previous release tag must say
+        # in its body how installs made before it follow (a Migration: line). Read-only.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-migration-decision.mjs --release
 
       - name: Cache cargo build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6

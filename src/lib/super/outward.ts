@@ -46,5 +46,6 @@ export function outwardLine(o: OutwardGrant): string {
   return `The server checked that ref ${o.ref} is the owner's own message; the Super passed on this outward step from it, and you may run exactly it: «${unquote(o.step)}».${words} `
     + 'Nothing wider: no other remote, branch, environment or target. If his words plainly contradict the step, do not run it: ask. '
     + 'Never force-push (--force, --force-with-lease, -f, a +refspec) and never merge into the default branch (locally, by `gh pr merge` or by pushing onto it). '
+    + 'A pull request you open carries its migration decision in its body, one line: `Migration: src/migrations/<file>.ts` (one per migration file) or `Migration: none - <why an install made before it needs nothing>`; the release refuses a PR without it. '
     + 'If a permission check refuses the command, or it cannot reach the network, never work around it: leave him a `dream-view` run card with that exact command, and say so in your report.';
 }
