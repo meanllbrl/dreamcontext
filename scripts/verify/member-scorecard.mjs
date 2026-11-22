@@ -223,6 +223,9 @@ async function w3(context, base) {
   await page.waitForTimeout(2500);
   for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
   await applyTheme(page, 'light');
+  // His chat with the member is drawn only while the member is on.
+  const on = await pageFetch(page, VAULT, 'POST', `/agents/${SLUG}/enabled`, { enabled: true });
+  ok('W3 setup: member on (its chat draws)', on.status === 200, JSON.stringify(on).slice(0, 200));
   await openMember(page, SLUG);
   const st = stage(page, `m:${SLUG}`);
   await until(page, async () => (await st.locator('[data-kind="member"]').count()) >= 2, 20000);
@@ -268,6 +271,7 @@ async function w3(context, base) {
   if (await judgedRow.count()) { await judgedRow.scrollIntoViewIfNeeded(); await page.mouse.move(5, 5); await page.waitForTimeout(400); await judgedRow.screenshot({ path: join(OUT, '14-w3-judged-row.png') }).catch(() => {}); }
   ok('W3: no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
   ok('W3: no failed requests', watch.failed.length === 0, watch.failed.slice(0, 8).join('\n'));
+  await pageFetch(page, VAULT, 'POST', `/agents/${SLUG}/enabled`, { enabled: false });
   await page.close();
 }
 
@@ -321,9 +325,12 @@ async function phone(browser, base, pw) {
     ok('(d) a rating from the phone is stored', await until(p, async () => Object.keys((await (await fetch(`${base}/api/agents/${SLUG}/scorecard`, { headers: { 'X-Dreamcontext-Vault': VAULT } })).json()).card.ratings).length > before, 8000));
   } else ok('(d) an unrated run row is on the phone', false, (await card.innerText()).slice(0, 400));
   const undo = card.locator('[data-testid="sc-learned"] [data-testid="sc-lesson-undo"]').first();
-  ok('(d) the lesson\'s Undo is on the phone', (await undo.count()) === 1);
+  ok('(d) the lesson\'s Undo is on the phone', (await undo.count()) >= 1);
+  // W3 fixtures add a second lesson: Undo retires exactly the one tapped.
+  const activeN = async () => (await (await fetch(`${base}/api/agents/${SLUG}/scorecard`, { headers: { 'X-Dreamcontext-Vault': VAULT } })).json()).card.lessons.filter((l) => l.status === 'active').length;
+  const beforeUndo = await activeN();
   await undo.click().catch(() => {});
-  ok('(d) Undo from the phone retires the lesson', await until(p, async () => !((await (await fetch(`${base}/api/agents/${SLUG}/scorecard`, { headers: { 'X-Dreamcontext-Vault': VAULT } })).json()).card.lessons.some((l) => l.status === 'active')), 8000));
+  ok('(d) Undo from the phone retires the lesson', await until(p, async () => (await activeN()) === beforeUndo - 1, 8000), `before ${beforeUndo}`);
   await p.waitForTimeout(800);
   await shot(p, '06-phone-after-undo-390');
   ok('phone: no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
@@ -348,7 +355,7 @@ async function main() {
   } catch (e) {
     ok('ran to the end', false, e?.stack ?? e);
     try { console.log(readFileSync(join(SCRATCH, 'server.log'), 'utf-8').slice(-2000)); } catch { /* none */ }
-  } finally { srv?.kill(); rmSync(SCRATCH, { recursive: true, force: true }); }
+  } finally { srv?.kill(); try { rmSync(SCRATCH, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* a late writer; tmp is cleaned by the OS */ } }
   console.log(`\nscreenshots: ${OUT}`);
   console.log(summary());
   process.exit(result.fails.length ? 1 : 0);
