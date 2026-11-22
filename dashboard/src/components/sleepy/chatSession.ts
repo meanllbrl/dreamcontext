@@ -1111,6 +1111,14 @@ export function noteChatModelPick(claudeId: string, model: string): void {
   while (m.size > MAX_MODEL_PICKS) m.delete(m.keys().next().value as string);
   try { globalThis.localStorage?.setItem(MODEL_PICKS_KEY, JSON.stringify([...m])); } catch { /* in memory still holds it */ }
 }
+/**
+ * A new conversation that carries another one's model (an agent switch, the Develop hand-off) carries
+ * its pick RECORD with it: an event copied, not inferred. No record on the old one = none on the new.
+ */
+export function carryChatModelPick(from: string, to: string): void {
+  const m = picks().get(from);
+  if (m) noteChatModelPick(to, m);
+}
 export function chatModelPicked(claudeId: string): boolean {
   return picks().has(claudeId);
 }

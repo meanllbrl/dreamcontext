@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { chatModelSourceParam, noteChatModelPick, resetChatModelPicks } from '../../dashboard/src/components/sleepy/chatSession.js';
+import { carryChatModelPick, chatModelSourceParam, noteChatModelPick, resetChatModelPicks } from '../../dashboard/src/components/sleepy/chatSession.js';
 import { parseModelSource, resolveSpawnModel } from '../../src/lib/eco-plus.js';
 
 /**
@@ -10,7 +10,7 @@ import { parseModelSource, resolveSpawnModel } from '../../src/lib/eco-plus.js';
  * window gives a chat a named model; a new spawn that names a model and is not in it fails here,
  * so a fourth "inferred" path cannot slip in unclassified.
  */
-type Kind = 'pick' | 'saved';
+type Kind = 'pick' | 'carry' | 'saved';
 /** Key: `<id argument>|<model argument>` of a `spawn(` call in AgentSurface.tsx. */
 const SPAWN_PATHS: Record<string, { kind: Kind; why: string }> = {
   "m.sessionId|launch.model ?? ''": { kind: 'saved', why: 'roster restore: a pick survives in the stored pick record, nothing else does' },
@@ -18,9 +18,9 @@ const SPAWN_PATHS: Record<string, { kind: Kind; why: string }> = {
   "codexId|onAntigravity ? '' : defaults.codexDefaultModel": { kind: 'saved', why: 'another tool\'s saved default (never lowered: not Claude)' },
   'cs.claudeId|modelForSession(cs)': { kind: 'saved', why: 'respawn of the same conversation (account, permission): its pick record, if any, still holds' },
   'chat.claudeId|modelForSession(chat)': { kind: 'saved', why: 'mode switch respawn: same' },
-  "claudeId|sameTool ? modelForSession(chat) : ''": { kind: 'saved', why: 'agent switch: a NEW conversation, carrying a model is no pick (the r3 finding)' },
+  "claudeId|sameTool ? modelForSession(chat) : ''": { kind: 'carry', why: 'agent switch: a NEW conversation; the old one\'s pick record is copied, none = saved (r3 + r4)' },
   'claudeId|pickedModel': { kind: 'pick', why: 'the model picker\'s cross-tool pick' },
-  'developId|modelForSession(cs)': { kind: 'saved', why: 'Develop hand-off: a new conversation' },
+  'developId|modelForSession(cs)': { kind: 'carry', why: 'Develop hand-off: a new conversation; the plan\'s pick record is copied (r4)' },
   'pickedClaudeId(model)|model': { kind: 'pick', why: 'a board Delegate composer model changed on purpose' },
   'pickedClaudeId(o.model)|o.model': { kind: 'pick', why: '`dreamcontext window new --model`' },
   'session|model': { kind: 'saved', why: 'member Super: the server forces saved' },
@@ -69,7 +69,9 @@ describe('every chat-creation path, one table (review r4)', () => {
       const key = `${c.args[1]}|${c.args[5]}`;
       const row = SPAWN_PATHS[key];
       expect(row, `unclassified spawn naming a model: ${key}; add it to SPAWN_PATHS as a pick event or saved`).toBeDefined();
-      if (row!.kind === 'pick') {
+      if (row!.kind === 'carry') {
+        expect(/carryChatModelPick\([\w.]+, /.test(c.before) && c.before.includes(`, ${c.args[1]});`), `${key} carries a model but not its pick record`).toBe(true);
+      } else if (row!.kind === 'pick') {
         const event = c.args[1].startsWith('pickedClaudeId(') || c.before.includes(`noteChatModelPick(${c.args[1]}, ${c.args[5]})`);
         expect(event, `${key} is a pick but writes no pick event`).toBe(true);
       } else {
@@ -127,6 +129,16 @@ describe('what each kind sends and what the server runs under Eco Plus', () => {
     expect(runs('picked', 'opus')).toBe('opus');
     // A NEW conversation carrying that model is no pick.
     expect(runs('picked-switched', 'opus')).toBe('sonnet');
+  });
+
+  it('a new conversation carrying a model takes the old one\'s pick record, never more (r4)', () => {
+    // Picked Opus, then an agent switch or the Develop hand-off before typing: kept.
+    noteChatModelPick('plan-picked', 'opus');
+    carryChatModelPick('plan-picked', 'develop-of-picked');
+    expect(runs('develop-of-picked', 'opus')).toBe('opus');
+    // Never picked (the saved Opus default, the r3 case), then the same switch: lowered.
+    carryChatModelPick('fresh-tab', 'agent-of-fresh');
+    expect(runs('agent-of-fresh', 'opus')).toBe('sonnet');
   });
 
   it('an empty model or id writes nothing; an unreadable store means no picks', () => {

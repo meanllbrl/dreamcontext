@@ -13,7 +13,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, noteChatModelPick, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, carryChatModelPick, createChatSession, noteChatModelPick, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
 import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
@@ -2515,6 +2515,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }
     // An agent speaks on Claude: from a Codex pane, Codex's model, effort and account stay behind.
     const sameTool = !chat.tool;
+    // The carried model is the owner's only if the old conversation's was (its pick record).
+    if (sameTool) carryChatModelPick(chat.claudeId, claudeId);
     const s = spawn(chat.bypass, claudeId, false, 'chat', '', sameTool ? modelForSession(chat) : '', true, '', false, sameTool ? effortForSession(chat) : '', true, chat.mode, sameTool ? chat.accountId : '') as ChatSession;
     carryDraftInto(s, carried);
     // The box moved to the new conversation; its kept copy under the old id would be orphaned.
@@ -2753,8 +2755,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         return;
       }
       // A Codex plan is built on Codex: its model means nothing to Claude.
-      const developId = cs.tool ? newClaudeId() : undefined;
-      if (developId) bindChatTool(developId, cs.tool);
+      const developId = newClaudeId();
+      if (cs.tool) bindChatTool(developId, cs.tool);
+      // The plan's model is the owner's only if the plan conversation's was (its pick record).
+      carryChatModelPick(cs.claudeId, developId);
       const s = spawn(false, developId, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
       const meta: SessionMeta = {
         // Opens under the task's name read as words, and `titleByAgent` lets the Develop agent
