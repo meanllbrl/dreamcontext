@@ -306,6 +306,21 @@ describe('an agent never takes his words away (E13, review w3 r1)', () => {
     }
   });
 
+  it('his note stays whole beside a correction: its failed lesson draft keeps its Try again (review w3 r2)', () => {
+    const key = run('2026-11-19T09:00:00.000Z');
+    const first = rateRun(projectRoot, 'herodot', { run: key, stars: 3, note: 'CTA eksikti', by: 'owner', home, now: NOW });
+    withScorecard(projectRoot, 'herodot', (c) => { c.ratings[first.runKey].draft = { state: 'failed', attempts: 1, at: NOW.toISOString(), noteFold: first.rating!.noteFold! }; }, { home });
+    const said = 'bütçeyi sormadan artırmamalıydı';
+    const turns = [turn(said, '2026-11-19T12:00:00.000Z', 't-dr')];
+    for (const judged of [false, true]) {
+      for (let i = 0; i < 2; i++) {
+        const r = rateRun(projectRoot, 'herodot', { run: key, stars: 2, by: 'super', ...(judged ? { judged: true } : {}), quote: said, note: said, home, now: NOW, env, turns });
+        expect(r.rating).toMatchObject({ note: 'CTA eksikti', draft: { state: 'failed', attempts: 1 } });
+        expect(r.rating?.corrections).toHaveLength(1);
+      }
+    }
+  });
+
   it('a judged correction on a judged rating keeps the first words too', () => {
     const key = run('2026-11-19T09:00:00.000Z');
     const a = 'Hayır, bütçeyi bana sormadan artırmamalıydı.';

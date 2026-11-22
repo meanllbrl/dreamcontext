@@ -188,6 +188,9 @@ function askedWindowTurn(
   return inWindow.find((t) => quoteCovers(quote, t.own) || (want !== '' && answerFold(t.own) === want)) ?? null;
 }
 
+/** The fields that make up his note: kept together whenever an agent's write leaves it standing (E13). */
+const HIS_NOTE_FIELDS = ['note', 'noteFold', 'quote', 'quoteTurn', 'draft'] as const satisfies readonly (keyof Rating)[];
+
 export function rateRun(projectRoot: string, member: string, input: RateInput): RateResult {
   const now = input.now ?? new Date();
   const stars = input.stars;
@@ -305,14 +308,14 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
     // E12: a judged rating never replaces his own stars.
     const keepOwner = !!input.judged && !!prev && !prev.judged;
     const corrections = [...(prev?.corrections ?? []), ...(correction ? [correction] : [])];
-    const keepQuote = keepsNote || (given === null && !quote);
+    const keepQuote = given === null && !quote;
     const rating: Rating = keepOwner ? { ...prev! } : {
       stars,
       firstAt: prev?.firstAt ?? at,
       at,
       by: input.judged ? 'super' : input.by,
-      ...(keepsNote ? (prev?.quote ? { quote: prev.quote } : {}) : quote ? { quote } : keepQuote && prev?.quote ? { quote: prev.quote } : {}),
-      ...(keepsNote ? (prev?.quoteTurn ? { quoteTurn: prev.quoteTurn } : {}) : quoteTurn ? { quoteTurn } : keepQuote && prev?.quoteTurn ? { quoteTurn: prev.quoteTurn } : {}),
+      ...(quote ? { quote } : keepQuote && prev?.quote ? { quote: prev.quote } : {}),
+      ...(quoteTurn ? { quoteTurn } : keepQuote && prev?.quoteTurn ? { quoteTurn: prev.quoteTurn } : {}),
       title: session.title,
       runAt: session.startedAt,
       status: session.status,
@@ -350,6 +353,15 @@ export function rateRun(projectRoot: string, member: string, input: RateInput): 
           rating.draft = { state: 'running', attempts: 0, at, noteFold: fold };
           draft = true;
         }
+      }
+    }
+    // E13 in one place: when an agent's words leave his note standing, the note is kept WHOLE, as
+    // one unit: its text, its fold, the quote and turn it came from, and its lesson draft (running,
+    // failed or done). Only stars, the correction list and the rating's own fields move.
+    if (keepsNote) {
+      for (const k of HIS_NOTE_FIELDS) {
+        if (prev![k] === undefined) delete rating[k];
+        else (rating as unknown as Record<string, unknown>)[k] = prev![k];
       }
     }
     card.ratings[runKey] = rating;
