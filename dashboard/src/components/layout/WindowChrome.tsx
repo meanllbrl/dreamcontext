@@ -1720,7 +1720,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   };
   /** A drawer row (and every other caller of the queue): a chat intent is a move to that
    *  project's Chat, a page intent a move to that page; a rename, close or drag is none. */
-  const trackedIntent = useCallback((vault: string, intent: DrawerIntent): Promise<AddTabResult> => {
+  const trackedIntent = useCallback((vault: string, intent: DrawerIntent | null): Promise<AddTabResult> => {
+    if (!intent) return queueDrawerIntent(vault, null);
     const target: MoveTarget | null = intent.kind === 'page'
       ? (intent.page === 'chat' ? targetOf({ vault, kind: 'chat' }) : targetOf({ vault, kind: 'page', page: intent.page, id: intent.id ?? null, label: null }))
       : landsOnChat(intent) ? targetOf({ vault, kind: 'chat' }) : null;

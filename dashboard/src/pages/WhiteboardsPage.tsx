@@ -251,7 +251,7 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
 }) {
   const { t, locale } = useI18n();
   const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures, flush, flushAndWait, refresh, placed } = useWhiteboardEditor(slug);
-  const { bus } = useVault();
+  const { bus, vault } = useVault();
   // The board writing field (2026-11-11), on every ready board.
   const [selection, setSelection] = useState<SelectionRef | null>(null);
   const [work, setWork] = useState<FieldWork | null>(null);

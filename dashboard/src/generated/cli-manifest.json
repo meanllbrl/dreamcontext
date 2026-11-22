@@ -3796,21 +3796,6 @@
       ]
     },
     {
-      "path": "shots",
-      "desc": "Screenshot one URL at a phone and a desktop width and list its console errors, through the browser limit and the machine's browser slots (exit 0 = shots and no console error, 1 = the page failed or logged errors, 2 = bad input or no playwright, 77 = past the limit, NOTHING ran, 75 = no slot came free)",
-      "args": [
-        "<url>"
-      ],
-      "valueFlags": [
-        "--width",
-        "--out",
-        "--wait-for",
-        "--script",
-        "--because",
-        "--max-wait"
-      ]
-    },
-    {
       "path": "shares",
       "desc": "Live links (one app or one whiteboard over its own tunnel): list and close them. Opening one is the owner's click in the app",
       "args": [],
@@ -3827,6 +3812,21 @@
       "path": "shares list",
       "desc": "List live links: what is shared, state, people connected, password yes/no (never the link)",
       "args": []
+    },
+    {
+      "path": "shots",
+      "desc": "Screenshot one URL at a phone and a desktop width and list its console errors, through the browser limit and the machine's browser slots (exit 0 = shots and no console error, 1 = the page failed or logged errors, 2 = bad input or no playwright, 77 = past the limit, NOTHING ran, 75 = no slot came free)",
+      "args": [
+        "<url>"
+      ],
+      "valueFlags": [
+        "--width",
+        "--out",
+        "--wait-for",
+        "--script",
+        "--because",
+        "--max-wait"
+      ]
     },
     {
       "path": "sleep",
