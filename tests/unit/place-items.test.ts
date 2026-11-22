@@ -7,7 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { appFocusAction, publishOpenItem, readOpenItem } from '../../dashboard/src/lib/openItem';
+import { ITEM_PAGES, appFocusAction, matchableItem, publishOpenItem, readOpenItem } from '../../dashboard/src/lib/openItem';
+import { execSync } from 'node:child_process';
 
 const src = (p: string) => readFileSync(join(__dirname, '../../dashboard/src', p), 'utf8');
 
@@ -51,5 +52,22 @@ describe('place items: the store', () => {
     expect(readOpenItem(b)).toBeNull();
     publishOpenItem(a, null);
     expect(readOpenItem(a)).toBeNull();
+  });
+});
+
+describe('place items: a landing is matched on an item only where its page publishes one', () => {
+  it('ITEM_PAGES is exactly the pages that call usePublishOpenItem (drift)', () => {
+    const out = execSync("grep -rhoE \"usePublishOpenItem\\(bus, '[a-z]+'\" dashboard/src", { cwd: join(__dirname, '../..'), encoding: 'utf8' });
+    const pages = [...new Set(out.trim().split('\n').map((l) => l.match(/'([a-z]+)'/)![1]))].sort();
+    expect(pages).toEqual([...ITEM_PAGES].sort());
+  });
+
+  it('keeps the id on an item page, drops it elsewhere (a ⌘K objective or insight hit)', () => {
+    expect(matchableItem('tasks', 'fix-login')).toBe('fix-login');
+    expect(matchableItem('whiteboards', 'plan')).toBe('plan');
+    expect(matchableItem('roadmap', 'grow-revenue')).toBeNull();
+    expect(matchableItem('lab', 'weekly-active-users')).toBeNull();
+    expect(matchableItem('tasks', null)).toBeNull();
+    expect(matchableItem('apps', '')).toBeNull();
   });
 });

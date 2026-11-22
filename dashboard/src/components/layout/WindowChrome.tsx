@@ -5,6 +5,7 @@ import { SelectionBar } from '../sleepy/chat/SelectionBar';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
+import { matchableItem } from '../../lib/openItem';
 import { snapZoom } from '../../lib/zoom';
 import { ZoomMenu } from './newshell/ZoomMenu';
 import { trackPresence } from '../../lib/presence';
@@ -1541,7 +1542,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     if (opts?.prepare && newShellRef.current && !deviceShell && vault !== activeRef.current) {
       const target: PrepareTarget = !intent ? { kind: 'any' }
         : intent.kind === 'page'
-          ? (intent.page === 'chat' ? { kind: 'chat' } : { kind: 'page', page: intent.page, id: intent.id ?? null })
+          ? (intent.page === 'chat' ? { kind: 'chat' } : { kind: 'page', page: intent.page, id: matchableItem(intent.page, intent.id) })
           : landsOnChat(intent) ? { kind: 'chat' } : { kind: 'any' };
       let nonce: number | null = null;
       if (intent) {

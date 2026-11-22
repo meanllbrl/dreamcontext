@@ -76,6 +76,8 @@ function probeInit(s) {
         mode: document.querySelector('[data-testid="chat-drawer"]')?.getAttribute('data-mode') ?? null,
         rowY: row ? Math.round(row.getBoundingClientRect().top * 10) / 10 : null,
         bodyFocus: document.activeElement === document.body,
+        // A body-portalled sheet on screen (it sits outside every instance's hidden box).
+        sheet: !!document.querySelector('.share-sheet__backdrop:not([hidden])'),
         inSurface: !!(surface && document.activeElement && surface.contains(document.activeElement)),
         focusAt: (() => { const e = document.activeElement; return e ? `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 40)}@${e.closest('[data-instance-vault]')?.getAttribute('data-instance-vault') ?? '-'}` : null; })(),
         col: (() => {
@@ -152,6 +154,8 @@ async function oneSwitch(page, from, to, kind, label, target = 'tasks') {
   const post = split < 0 ? [] : frames.slice(split);
   const wrongPre = pre.filter((f) => f.vault !== from || !shows(f, target)).length;
   const wrongPost = post.filter((f) => f.vault !== to || !shows(f, target)).length;
+  const sheetPre = pre.filter((f) => f.sheet && !frames[0].sheet).length;
+  if (sheetPre) bad.push(`${sheetPre} frames with a sheet on screen before activation`);
   if (wrongPre) bad.push(`${wrongPre} frames before activation not ${from} › ${target}`);
   if (wrongPost) bad.push(`${wrongPost} frames after activation not ${to} › ${target}`);
   const loadingPost = post.filter((f) => f.loading > 0).length;

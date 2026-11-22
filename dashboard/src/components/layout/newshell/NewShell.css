@@ -551,6 +551,10 @@
   position: absolute;
   inset: 0;
   visibility: hidden;
+  /* A descendant can set `visibility: visible` again (the Super dock's smile does); opacity and
+     pointer-events on the box cannot be undone from inside it. */
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ── The local new shell's page tabs (tek-kenar C7): text tabs after the project label. The bar's

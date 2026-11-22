@@ -43,6 +43,16 @@ export function useOpenItem(bus: EventTarget): OpenItem | null {
   return useSyncExternalStore(subscribe, () => storeOf(bus).item);
 }
 
+/** The pages that publish an open item (the `usePublishOpenItem` callers; a drift test reads
+ *  them). Only on these can a landing be checked against the item it was asked to open. */
+export const ITEM_PAGES: readonly Page[] = ['tasks', 'knowledge', 'whiteboards', 'apps'];
+
+/** The item id a landing on `page` can be matched on: none where the page publishes no item,
+ *  so a move there is judged by the page alone and never waits out its bound. */
+export function matchableItem(page: Page, id: string | null | undefined): string | null {
+  return id && ITEM_PAGES.includes(page) ? id : null;
+}
+
 /** A page's hook: publish `id` (with its label) while it is open, withdraw it when it closes or
  *  the page goes. Only the publisher's own item is withdrawn. */
 export function usePublishOpenItem(bus: EventTarget, page: Page, id: string | null, label: string | null): void {

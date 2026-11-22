@@ -446,7 +446,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
     const boardsOpen = mode === 'boards' && (row.active || sb.boardsOpen.includes(row.name));
     const entry = sb.boards.get(row.name);
     const count = mode === 'boards' && !boardsOpen && entry?.state === 'ok' ? entry.boards.length : null;
-    const go = (el: Element) => { if (row.active) return; remember(el, row.name); sb.onSwitch(row.name); if (p.floating) p.onClose(); };
+    // The project on screen: a press ends a pending prepare (switchTo's own rule), nothing else.
+    const go = (el: Element) => { if (row.active) { sb.onSwitch(row.name); return; } remember(el, row.name); sb.onSwitch(row.name); if (p.floating) p.onClose(); };
     return (
       <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
         data-hidden-project={inGroup ? row.name : undefined}
