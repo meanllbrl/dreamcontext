@@ -1343,6 +1343,8 @@ function recordRunUnlocked(
     history,
     ...(existing?.pausedAt ? { pausedAt: existing.pausedAt } : {}),
     ...(existing?.liveFrom ? { liveFrom: existing.liveFrom } : {}),
+    ...(typeof existing?.runsDone === 'number' ? { runsDone: existing.runsDone } : {}),
+    ...(existing?.retiredAt ? { retiredAt: existing.retiredAt } : {}),
   };
   writeAutomationCache(contextRoot, slug, cache);
   return cache;

@@ -485,6 +485,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('- His timed jobs ("every day at 9, do X"), ONLY on his own message'),
       expect.stringContaining('report asked: `super schedule add --job'),
       expect.stringContaining('`--headless` when it must run while you are off.'),
+      // 2026-11-22 (tek-seferlik-zamanlama): a one-off or n runs ends itself, never a daily job.
+      expect.stringContaining('or `--on <date>`, n runs `--times n`; it ends itself, never a daily job or a member.'),
       expect.stringContaining('He sees each job word for word: no approval card.'),
       // rev 46 (2026-11-15, kosullu-otomasyon): a timed job's condition script, 3 rows.
       expect.stringContaining("`--condition '<sh script>'`"),

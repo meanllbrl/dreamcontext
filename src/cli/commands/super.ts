@@ -542,30 +542,36 @@ export function registerSuperCommand(program: Command): void {
     .option('--file <path>', 'A picture or file to post with it (the files his private chat may get: inside the project, or a picture, clip or PDF from a worktree, a linked repo or the temp folder; repeat --file for more, up to 10)', (v: string, acc: string[] = []) => [...acc, v])
     .action((request: string, text: string | undefined, o: { file?: string[] }) => run('room-say', { request, text: text ?? '', ...(o.file?.length ? { files: o.file.map((f) => resolve(f)) } : {}) }));
 
-  const sc = s.command('schedule').description('The owner\'s timed jobs ("every morning at 9, do X"): only on his own message, never because a child, a page or a report asked. Each add or change shows him the job word for word');
+  const sc = s.command('schedule').description('The owner\'s timed jobs ("every morning at 9, do X", "remind me tonight at 9"): only on his own message, never because a child, a page or a report asked. Each add or change shows him the job word for word');
   sc.command('add')
-    .description('A job that runs on its own: by default a turn of YOUR session at that time (you do it and talk to him); --headless for a job that must run even when you are off')
+    .description('A job that runs on its own: by default a turn of YOUR session at that time (you do it and talk to him); --headless for a job that must run even when you are off. A one-off ("tonight at 9", "tomorrow morning") is --once or --on: it runs once and removes itself, never a daily job, an automation or an AI Team member')
     .requiredOption('--job <text>', 'The job, in the owner\'s own words')
     .requiredOption('--at <HH:MM>', 'Local time, 24 h')
     .option('--days <daily|mon,wed|mon-fri>', 'Which days (default daily)')
+    .option('--once', 'Once, at the next --at (today if still ahead, else tomorrow), then it retires itself')
+    .option('--on <YYYY-MM-DD|today|tomorrow>', 'Once, on that date at --at, then it retires itself (up to a year ahead)')
+    .option('--times <n>', 'With --days: runs n times, then it retires itself ("the next three mornings")')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes: auto = wherever he is (Telegram while he is away, else the Mac; your turns only), telegram, or mac')
     .option('--headless', 'A plain automation that runs without you (its result reaches Telegram with --reply telegram)')
     .option('--condition <script>', `A shell script that runs first at that time, with no model. ${SUPER_CONDITION_HELP}`)
     .option('--wake-when <true|false>', 'With --condition: wake when the script is true (exit 0, default) or when it is NOT true (exit 1)')
-    .action((o: { job: string; at: string; days?: string; reply?: string; headless?: boolean; condition?: string; wakeWhen?: string }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}), ...(o.condition !== undefined ? { condition: o.condition } : {}), ...(o.wakeWhen !== undefined ? { wakeWhen: o.wakeWhen } : {}) }));
+    .action((o: { job: string; at: string; days?: string; once?: boolean; on?: string; times?: string; reply?: string; headless?: boolean; condition?: string; wakeWhen?: string }) => run('schedule', { op: 'add', job: o.job, at: o.at, ...(o.days ? { days: o.days } : {}), ...(o.once ? { once: true } : {}), ...(o.on !== undefined ? { on: o.on } : {}), ...(o.times !== undefined ? { times: o.times } : {}), ...(o.reply ? { reply: o.reply } : {}), ...(o.headless ? { headless: true } : {}), ...(o.condition !== undefined ? { condition: o.condition } : {}), ...(o.wakeWhen !== undefined ? { wakeWhen: o.wakeWhen } : {}) }));
   sc.command('list')
-    .description('Every scheduled job: id, when, where the answer goes, next run, last result')
+    .description('Every scheduled job: id, when, where the answer goes, next run, last result; runsLeft for a one-off or few-times job, done for one that retired (kept a day)')
     .action(() => run('schedule', { op: 'list' }));
   sc.command('change <id>')
     .description('Change a scheduled job (only what you name); refused with changed_elsewhere when it was edited outside you')
     .option('--job <text>', 'The new job, in his words')
     .option('--at <HH:MM>', 'New time')
-    .option('--days <daily|mon,wed|mon-fri>', 'New days')
+    .option('--days <daily|mon,wed|mon-fri>', 'New days (a one-off with --days repeats again)')
+    .option('--once', 'Make it a one-off at the next --at (or its current time)')
+    .option('--on <YYYY-MM-DD|today|tomorrow>', 'Make it a one-off on that date')
+    .option('--times <n>', 'Runs n more times, then retires (0 = no limit)')
     .option('--reply <auto|telegram|mac>', 'Where the answer goes now ("send it to the Mac/Telegram")')
     .option('--condition <script>', 'A new condition script (it pauses the job until the owner approves it on its card)')
     .option('--no-condition', 'Remove the condition')
     .option('--wake-when <true|false>', 'Wake when the condition is true or when it is NOT true')
-    .action((id: string, o: { job?: string; at?: string; days?: string; reply?: string; condition?: string | false; wakeWhen?: string }) => run('schedule', { op: 'change', id, ...o }));
+    .action((id: string, o: { job?: string; at?: string; days?: string; once?: boolean; on?: string; times?: string; reply?: string; condition?: string | false; wakeWhen?: string }) => run('schedule', { op: 'change', id, ...o }));
   sc.command('cancel <id>')
     .description('Remove a scheduled job')
     .action((id: string) => run('schedule', { op: 'cancel', id }));

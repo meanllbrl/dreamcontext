@@ -19,8 +19,8 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { listVaults } from '../lib/vaults.js';
 import {
-  approveMadeHere, createAutomation, getAutomation, listAutomations, readAutomationCache, removeAutomation, updateAutomation,
-  type UpdateAutomationInput,
+  approveMadeHere, createAutomation, getAutomation, listAutomations, patchManifestFrontmatter, readAutomationCache, removeAutomation, updateAutomation,
+  writeAutomationCache, type UpdateAutomationInput,
 } from '../lib/automations/store.js';
 import { checkApproval, registerProject } from '../lib/automations/registry.js';
 import { formatLocalFire, formatSchedule, nextFire, parseSlot } from '../lib/automations/schedule.js';
@@ -36,6 +36,10 @@ import {
 } from '../lib/super/schedule-queue.js';
 import { fireClock, scheduleJob, scheduleTurnText } from '../lib/super/schedule-job.js';
 import { isConditionData } from '../lib/automations/condition.js';
+import {
+  ONCE_CATCHUP_HOURS, SCHEDULE_SLUG_PREFIX, onceSlot, readRunLimit, resolveOnceDate, runsLeft, type RunLimit,
+} from '../lib/super/schedule-limit.js';
+import { DEFAULT_CATCHUP_HOURS } from '../lib/automations/types.js';
 import { openInBackground, telegramHub, type TelegramHub } from './telegram/hub.js';
 import { addPadNote } from './routes/super.js';
 
@@ -44,6 +48,7 @@ export const SCHEDULE_SWEEP_MS = 60_000;
 /** The owner-facing lines (Turkish, plain; no implementation detail). */
 export const SCHEDULE_LINES = {
   missed: (at: string) => `⏰ ${at} işi kaçtı: Mac ya da uygulama kapalıydı.`,
+  missedOnce: (at: string, job: string) => `⏰ ${at} için kurulan tek seferlik iş yapılmadı (Mac ya da uygulama kapalıydı) ve kapandı: «${job.length > 300 ? `${job.slice(0, 299)}…` : job}»`,
   off: (at: string) => `⏰ ${at} işi bekliyor: bu projede Super kapalı. Super'i açınca yapılır.`,
   noBot: (at: string) => `⏰ ${at} işi Telegram'a gitmedi: Super botu bağlı değil. Mac'te yapılıyor.`,
   failed: (at: string) => `⏰ ${at} işi Super'e iletilemedi. Bir sonraki saatinde yeniden denenecek.`,
@@ -104,6 +109,20 @@ export async function sweepProject(contextRoot: string, deps: ScheduleDeps = {})
   for (const item of listScheduleItems(scope, home)) {
     const at = fireClock(item.fireIso);
     const job = scheduleJob(contextRoot, item.slug, home);
+    // A one-off that went by unrun (Super or headless) is told with its words, and lands on the
+    // Super's agenda too, so its next turn knows it never happened (schedule-limit.ts).
+    const once = item.missed && item.slug.startsWith(SCHEDULE_SLUG_PREFIX) ? getAutomation(contextRoot, item.slug, home) : null;
+    if (once && readRunLimit(once).onceOn) {
+      const line = SCHEDULE_LINES.missedOnce(at, once.prompt);
+      // Told through the bot, the agenda line is added here; without one sayToOwner adds it.
+      const hub = (deps.hub ?? telegramHub)();
+      const ab = hub?.superBindingOfVault(superVaultName(contextRoot)) ?? null;
+      if (await tellScheduleOwner(contextRoot, item, 'missed', line, deps) && ab && !ab.disabled) {
+        try { await addPadNote(contextRoot, 'waiting', line); } catch { /* the owner was told */ }
+      }
+      removeScheduleItem(scope, item, home);
+      continue;
+    }
     if (!job.ok) {
       log(`[super-schedule] ${item.slug}@${item.fireIso} dropped: ${job.reason}`);
       removeScheduleItem(scope, item, home);
@@ -217,8 +236,7 @@ export function startSuperSchedule(deps: ScheduleDeps = {}): () => void {
 
 // ─── The verb: `dreamcontext super schedule add|list|change|cancel` (C4) ─────────────────────
 
-/** Every schedule the verb makes is named with this prefix; the verb touches no other automation. */
-export const SCHEDULE_SLUG_PREFIX = 'super-is-';
+export { SCHEDULE_SLUG_PREFIX };
 /** Leaves room for the echo's own words inside one Telegram message (4096). */
 const MAX_JOB = 3500;
 const TR_DAYS: Record<Weekday, string> = { mon: 'Pzt', tue: 'Sal', wed: 'Çar', thu: 'Per', fri: 'Cum', sat: 'Cmt', sun: 'Paz' };
@@ -230,8 +248,29 @@ export type ScheduleVerbResult =
 
 const bad = (error: string, message: string, status = 400): ScheduleVerbResult => ({ ok: false, status, error, message });
 
-/** "her gün 09:00" / "Pzt, Çar 09:00", from the first weekly slot. */
-export function scheduleWhen(m: Pick<AutomationManifest, 'schedule'>): string {
+const TR_MONTHS = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+/** "her gün 09:00" / "Pzt, Çar 09:00" from the first weekly slot; "22 Kas 21:00, bir kez" for a
+ *  dated job; "… · 3 kez" for a few-times one. */
+export function scheduleWhen(m: Pick<AutomationManifest, 'schedule'>, limit: RunLimit = {}): string {
+  if (limit.onceOn) {
+    const [, mo, d] = limit.onceOn.split('-').map(Number);
+    return `${d} ${TR_MONTHS[mo - 1]} ${atOf(m) ?? ''}, bir kez`.replace(' ,', ',');
+  }
+  const base = weeklyWhen(m);
+  return limit.maxRuns ? `${base} · ${limit.maxRuns} kez` : base;
+}
+
+/** HH:MM of a weekly slot or of a dated job's cron (`M H D Mo *`), or null. */
+function atOf(m: Pick<AutomationManifest, 'schedule'>): string | null {
+  const slot = m.schedule?.slots?.[0];
+  if (!slot) return null;
+  if (slot.kind !== 'cron') return 'at' in slot ? slot.at : null;
+  const [mm, hh] = slot.cron.split(' ').map(Number);
+  return Number.isInteger(mm) && Number.isInteger(hh) ? `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` : null;
+}
+
+function weeklyWhen(m: Pick<AutomationManifest, 'schedule'>): string {
   const slot = m.schedule?.slots?.[0];
   if (!slot || slot.kind !== 'weekly') return m.schedule ? formatSchedule(m.schedule) : 'zamanı yok';
   const days = slot.days === 'daily' ? 'her gün' : slot.days.map((d) => TR_DAYS[d]).join(', ');
@@ -248,7 +287,7 @@ export const CONDITION_WAITS_LINE = 'Koşul onayını bekliyor; sen onaylayana k
 /** The verbatim confirmation the owner gets on every add and change (Decision 4). */
 export function scheduleEcho(verb: 'Kuruldu' | 'Değişti', m: AutomationManifest, waits = false): string {
   const condition = m.condition ? ` · önce betik bakar (${m.conditionWake === false ? 'doğru değilse uyanır' : 'doğruysa uyanır'})` : '';
-  return `⏰ ${verb}: ${scheduleWhen(m)} · cevap: ${TR_REPLY[replyOf(m)]}${m.target === 'super' ? '' : ' · Super kapalıyken de çalışır'}${condition} · «${m.prompt}»${waits ? `\n${CONDITION_WAITS_LINE}` : ''}`;
+  return `⏰ ${verb}: ${scheduleWhen(m, readRunLimit(m))} · cevap: ${TR_REPLY[replyOf(m)]}${m.target === 'super' ? '' : ' · Super kapalıyken de çalışır'}${condition} · «${m.prompt}»${waits ? `\n${CONDITION_WAITS_LINE}` : ''}`;
 }
 
 /** `--condition` / `--no-condition` / `--wake-when` from the verb's body, or an error message. */
@@ -275,6 +314,80 @@ function parseReply(v: unknown): AutomationReply | null | undefined {
   return typeof v === 'string' && (AUTOMATION_REPLIES as readonly string[]).includes(v) ? v as AutomationReply : null;
 }
 
+/** `--times`: a whole number of fires (0 = no limit, `change` only). */
+function parseTimes(v: unknown, allowZero: boolean): number | null {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v.trim()) : NaN;
+  return Number.isSafeInteger(n) && (n >= 1 || (allowZero && n === 0)) ? n : null;
+}
+
+/** `add`'s `--once` / `--on` / `--times`, or an error message. */
+function parseTiming(b: Record<string, unknown>, at: string, now: Date): RunLimit | string {
+  const once = b.once === true;
+  if (b.on !== undefined || once) {
+    if (b.times !== undefined) return 'a one-off (--once / --on) runs once: drop --times';
+    const r = resolveOnceDate(b.on, once, at, now);
+    return 'error' in r ? r.error : { onceOn: r.date };
+  }
+  if (b.times !== undefined) {
+    const n = parseTimes(b.times, false);
+    if (n === null) return '--times is a whole number of runs (1 or more)';
+    return { maxRuns: n };
+  }
+  return {};
+}
+
+/**
+ * `change`'s timing: turns the schedule into a one-off (`--once` / `--on`), keeps a one-off's
+ * date when only `--at` moves, makes it repeating again with `--days`, and sets or clears
+ * `--times`. Writes the slot into `patch`; returns the frontmatter keys to write, or an error.
+ */
+function timingPatch(contextRoot: string, m: AutomationManifest, b: Record<string, unknown>, patch: UpdateAutomationInput, now: Date): { front?: Record<string, unknown> } | string {
+  const cur = readRunLimit(m);
+  const at = patch.at ?? atOf(m);
+  const once = b.once === true;
+  const retired = !m.enabled && !!readAutomationCache(contextRoot, m.slug)?.retiredAt;
+  if (b.on !== undefined || once) {
+    if (b.days !== undefined) return 'a one-off (--once / --on) runs on its date: drop --days';
+    if (b.times !== undefined) return 'a one-off runs once: drop --times';
+    if (!at) return 'say the time too: --at HH:MM';
+    const r = resolveOnceDate(b.on, once, at, now);
+    if ('error' in r) return r.error;
+    delete patch.at;
+    patch.slots = [onceSlot(r.date, at)];
+    patch.catchupHours = ONCE_CATCHUP_HOURS;
+    patch.enabled = true;
+    return { front: { once_on: r.date, max_runs: null } };
+  }
+  let front: Record<string, unknown> | undefined;
+  if (cur.onceOn) {
+    if (patch.days !== undefined) {
+      // Repeating again: a weekly slot at its time, the normal catch-up.
+      if (!at) return 'say the time too: --at HH:MM';
+      patch.at = at;
+      patch.catchupHours = DEFAULT_CATCHUP_HOURS;
+      if (retired) patch.enabled = true;
+      front = { once_on: null };
+    } else if (patch.at !== undefined) {
+      if (b.times !== undefined) return 'a one-off runs once: drop --times (or give --days to repeat it)';
+      const r = resolveOnceDate(cur.onceOn, false, patch.at, now);
+      if ('error' in r) return r.error;
+      patch.slots = [onceSlot(r.date, patch.at)];
+      delete patch.at;
+      if (retired) patch.enabled = true;
+      front = { once_on: r.date };
+    } else if (b.times !== undefined) {
+      return 'a one-off runs once: give --days to repeat it --times';
+    }
+  }
+  if (b.times !== undefined) {
+    const n = parseTimes(b.times, true);
+    if (n === null) return '--times is a whole number of runs (0 = no limit)';
+    if (n > 0 && retired) patch.enabled = true;
+    front = { ...(front ?? {}), max_runs: n > 0 ? n : null };
+  }
+  return front ? { front } : {};
+}
+
 function ours(root: string, id: unknown): AutomationManifest | null {
   if (typeof id !== 'string' || !id.startsWith(SCHEDULE_SLUG_PREFIX)) return null;
   const m = getAutomation(root, id);
@@ -283,10 +396,16 @@ function ours(root: string, id: unknown): AutomationManifest | null {
 
 function row(root: string, m: AutomationManifest, now: Date): Record<string, unknown> {
   const cache = readAutomationCache(root, m.slug);
-  const next = m.schedule && m.enabled ? nextFire(m.schedule, now) : null;
+  const limit = readRunLimit(m);
+  const left = runsLeft(limit, cache);
+  const done = !!cache?.retiredAt && !m.enabled;
+  const next = m.schedule && m.enabled && left !== 0 ? nextFire(m.schedule, now) : null;
   return {
-    id: m.slug, when: scheduleWhen(m), reply: replyOf(m), kind: m.target === 'super' ? 'super' : 'headless',
+    id: m.slug, when: scheduleWhen(m, limit), reply: replyOf(m), kind: m.target === 'super' ? 'super' : 'headless',
     enabled: m.enabled, job: m.prompt, next: next ? formatLocalFire(next) : null,
+    ...(limit.onceOn ? { once: limit.onceOn } : {}),
+    ...(left !== null ? { runsLeft: left } : {}),
+    ...(done ? { done: true, retiredAt: cache!.retiredAt } : {}),
     ...(m.condition ? { condition: m.condition, wakeWhen: m.conditionWake === false ? 'false' : 'true' } : {}),
     last: cache?.history?.[0] ? { at: cache.history[0].firedAt, status: cache.history[0].status } : null,
   };
@@ -308,6 +427,9 @@ export async function scheduleVerb(contextRoot: string, b: Record<string, unknow
     if (!days) return bad('invalid_args', '--days is "daily", a comma list of mon,tue,… or a range like mon-fri');
     const at = typeof b.at === 'string' ? b.at.trim() : '';
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) return bad('invalid_args', '--at is HH:MM (24 h, local time)');
+    const timing = parseTiming(b, at, now);
+    if (typeof timing === 'string') return bad('invalid_args', timing);
+    if (timing.onceOn && b.days !== undefined) return bad('invalid_args', 'a one-off (--once / --on) runs on its date: drop --days');
     const headless = b.headless === true;
     const reply = parseReply(b.reply);
     if (reply === null) return bad('invalid_args', `--reply is one of ${AUTOMATION_REPLIES.join(' | ')}`);
@@ -319,12 +441,23 @@ export async function scheduleVerb(contextRoot: string, b: Record<string, unknow
     try {
       registerProject(projectRoot, deps.home);
       m = createAutomation(contextRoot, {
-        slug, title: job.length > 60 ? `${job.slice(0, 59)}…` : job, mode: 'sched', days, at, prompt: job,
+        slug, title: job.length > 60 ? `${job.slice(0, 59)}…` : job, mode: 'sched', prompt: job,
+        ...(timing.onceOn ? { slots: [onceSlot(timing.onceOn, at)], catchupHours: ONCE_CATCHUP_HOURS } : { days, at }),
         enabled: true, shared: false, notify: true,
         ...(headless ? (reply === 'telegram' ? { reply: 'telegram' as const } : {}) : { target: 'super' as const, reply: reply ?? 'auto' }),
         ...(typeof cond.condition === 'string' ? { condition: cond.condition } : {}),
         ...(cond.conditionWake !== undefined ? { conditionWake: cond.conditionWake } : {}),
       });
+      if (timing.onceOn || timing.maxRuns) {
+        try {
+          patchManifestFrontmatter(m.path, { ...(timing.onceOn ? { once_on: timing.onceOn } : {}), ...(timing.maxRuns ? { max_runs: timing.maxRuns } : {}) });
+          m = getAutomation(contextRoot, slug) ?? m;
+        } catch (err) {
+          // Never left behind as a daily job: the owner asked for a one-off.
+          try { removeAutomation(contextRoot, slug); } catch { /* the error says it */ }
+          throw err;
+        }
+      }
     } catch (err) {
       return bad('not_created', (err as Error).message, 409);
     }
@@ -369,11 +502,24 @@ export async function scheduleVerb(contextRoot: string, b: Record<string, unknow
     const cond = conditionPatch(b);
     if (typeof cond === 'string') return bad('invalid_args', cond);
     Object.assign(patch, cond);
-    if (!Object.keys(patch).length) return bad('invalid_args', 'say what changes: --job, --days, --at, --reply, --condition, --no-condition or --wake-when');
+    const timed = timingPatch(contextRoot, m, b, patch, now);
+    if (typeof timed === 'string') return bad('invalid_args', timed);
+    if (!Object.keys(patch).length && !timed.front) return bad('invalid_args', 'say what changes: --job, --days, --at, --once, --on, --times, --reply, --condition, --no-condition or --wake-when');
     let after: AutomationManifest;
     let stamped: boolean;
     try {
-      after = updateAutomation(contextRoot, m.slug, patch);
+      after = Object.keys(patch).length ? updateAutomation(contextRoot, m.slug, patch) : m;
+      if (timed.front) {
+        patchManifestFrontmatter(after.path, timed.front);
+        after = getAutomation(contextRoot, m.slug) ?? after;
+        // A new timing starts its count again. A job it switches back on is live from now (its
+        // re-stamp below), not from the first tick after: the pause mark goes with it.
+        const cache = readAutomationCache(contextRoot, m.slug);
+        if (cache) {
+          const { retiredAt: _r, runsDone: _d, pausedAt, ...rest } = cache;
+          writeAutomationCache(contextRoot, m.slug, patch.enabled === true || !pausedAt ? rest : { ...rest, pausedAt });
+        }
+      }
       stamped = approveMadeHere(contextRoot, after, now, deps.home, 'super-verb');
     } catch (err) {
       return bad('not_changed', (err as Error).message, 409);
