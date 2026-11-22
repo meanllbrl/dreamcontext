@@ -29,9 +29,17 @@ import { isPidAlive } from '../auto-sleep.js';
 
 /** The block's room (chars of its lines); what does not fit is one fold line. */
 export const PAST_WORK_ROOM_CHARS = 2_500;
-/** A hit's raw BM25 score must reach this, and cover enough of the query (exam-tuned, D11). */
+/** A hit's BM25 score must reach this, and cover enough of the query (exam-tuned, D11). */
 export const WORK_GATE_SCORE = 2.0;
 export const WORK_GATE_COVERAGE = 0.4;
+/**
+ * The idf is read as if the member had at least this many traces: a member with three traces (or
+ * sixty that all share the ask's words) would otherwise give every term an idf near zero, and the
+ * gate would keep its whole past out. Ranking inside the index is unchanged by it.
+ */
+export const WORK_IDF_FLOOR_DOCS = 1_000;
+/** A query of two words or more must match at least this many of them (one shared word is chance). */
+export const WORK_GATE_MIN_TERMS = 2;
 
 const K1 = 1.2;
 const B = 0.75;
@@ -195,13 +203,14 @@ export class MemberWorkIndex {
     if (terms.length === 0 || this.aliveCount === 0) return [];
     const N = this.aliveCount;
     const avgdl = this.totalLen / N || 1;
-    const scores = new Map<number, { s: number; idf: number }>();
+    const Nidf = Math.max(N, WORK_IDF_FLOOR_DOCS);
+    const scores = new Map<number, { s: number; idf: number; terms: number }>();
     let queryIdf = 0;
     for (const term of terms) {
       const p = this.terms.get(term);
       let df = 0;
       if (p) for (let i = 0; i < p.n; i++) if (this.docs[p.docs[i]!]!.alive) df++;
-      const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+      const idf = Math.log(1 + (Nidf - df + 0.5) / (df + 0.5));
       queryIdf += idf;
       if (!p) continue;
       for (let i = 0; i < p.n; i++) {
@@ -210,16 +219,17 @@ export class MemberWorkIndex {
         const tf = p.tf[i]!;
         const s = idf * ((tf * (K1 + 1)) / (tf + K1 * (1 - B + B * (d.len / avgdl))));
         const cur = scores.get(p.docs[i]!);
-        if (cur) { cur.s += s; cur.idf += idf; } else scores.set(p.docs[i]!, { s, idf });
+        if (cur) { cur.s += s; cur.idf += idf; cur.terms++; } else scores.set(p.docs[i]!, { s, idf, terms: 1 });
       }
     }
     const ids = new Set(q.exclude?.ids ?? []);
     const conv = q.exclude?.conversation ?? null;
     const since = q.exclude?.since ?? null;
     const out: Array<{ doc: Doc; score: number }> = [];
+    const minTerms = Math.min(WORK_GATE_MIN_TERMS, terms.length);
     for (const [i, v] of scores) {
       const d = this.docs[i]!;
-      if (v.s < WORK_GATE_SCORE || (queryIdf > 0 && v.idf / queryIdf < WORK_GATE_COVERAGE)) continue;
+      if (v.s < WORK_GATE_SCORE || v.terms < minTerms || (queryIdf > 0 && v.idf / queryIdf < WORK_GATE_COVERAGE)) continue;
       // A project member's work never leaves its project (G2); a global member's spans them all.
       if (here.scope === 'project' && d.projectKey !== here.projectKey) continue;
       // An app's run sees only that app's runs (G2).

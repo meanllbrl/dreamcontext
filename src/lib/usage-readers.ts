@@ -189,7 +189,7 @@ export function isServerTurnText(text: string): boolean {
 /**
  * The openings of every text the server or the bridge writes into a member conversation on its
  * own (plan uye-gecmis-is D3): reset, limit and sign-in continues, the app-restart notes, the card
- * overflow note, the card receipts, the bridge's Stop-hook turn and the Super's notes to a running
+ * overflow note, the card feedback note, the card receipts, the bridge's Stop-hook turn and the Super's notes to a running
  * job. Mirrored, not imported (this module is a leaf): `server-frame-drift.test.ts` checks every
  * constant it stands for.
  */
@@ -207,6 +207,8 @@ export const SERVER_CONTINUATION_OPENINGS = [
   '[super recap]',
   '[super handover]',
   '[super fresh]',
+  '<dreamcontext-card-feedback>',
+  '<super-undelivered>',
 ] as const;
 
 /** A text the server wrote by itself into a running conversation: it continues the open job,

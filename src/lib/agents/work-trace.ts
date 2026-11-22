@@ -15,7 +15,7 @@
  * 0600 files, 0700 dirs; every path is checked (G1): safe slug, safe names, no links, contained.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, openSync, closeSync, writeSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, openSync, closeSync, writeSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, isAbsolute, sep } from 'node:path';
@@ -451,6 +451,13 @@ export interface DerivedJobs {
 }
 
 const HANDOFF_PREFIX = 'Handoff: ';
+const MACHINE_STEER_RE = /^\s*<(agent-message|task-notification|system-reminder)\b/;
+
+/** A folded steer someone typed (not a machine's queued message): its words are an ask of the job. */
+function isTypedSteer(text: string): boolean {
+  const t = text.trimStart();
+  return !!askTextOf({ text: t, command: null }) && !MACHINE_STEER_RE.test(t) && !isServerContinuationText(t) && !t.startsWith(EVENTS_HEAD);
+}
 
 function byOf(text: string, first: boolean, owner: ReadonlySet<string> | undefined): AskBy {
   const t = text.trimStart();
@@ -521,7 +528,9 @@ export function deriveJobs(records: readonly TranscriptRecord[], opts: DeriveOpt
     if (firstAt === null && !opts.runSession) firstAt = e.start;
     if (cls === 'continuation') {
       if (!open) continue;
-      if (e.steer) open.asks.push({ by: byOf(e.text, false, opts.ownerTexts), text: capText(askTextOf(e), ASK_MAX_CHARS) });
+      // A folded steer a person typed adds its words to the job; one the machine queued (a
+      // sub-agent's message, a Super note, an event batch) only continues it.
+      if (e.steer && isTypedSteer(e.text)) open.asks.push({ by: byOf(e.text, false, opts.ownerTexts), text: capText(askTextOf(e), ASK_MAX_CHARS) });
       const recap = e.text.trimStart().startsWith('[super recap]');
       addWork(open, recap ? { ...seg, replies: [] } : seg, seg.end);
       if (seg.tail) addWork(open, seg.tail, seg.end);
@@ -601,9 +610,21 @@ function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: false, mode: 0o700 });
 }
 
-/** Make `root` and `leaf` under it, never the parent; every step must not be a link. */
+/**
+ * Make `root` and `leaf` under it; every step must not be a link. The parent (a global member's
+ * home, a project's local dir) is made only for a member that is here NOW (the caller's
+ * `liveScope`): a fresh global member has no home folder until something writes there.
+ */
 function ensureUnder(root: string, scope: MemberScope, leaf: string | null): boolean {
   const parent = rootParent(root, scope);
+  if (!existsSync(parent)) {
+    try {
+      // A global member's home sits in the agents folder its file is in; a project's local dir
+      // is made the way local-store makes it.
+      if (scope === 'global') { if (isLinkOrMissing(dirname(parent))) return false; ensureDir(parent); }
+      else mkdirSync(parent, { recursive: true, mode: 0o700 });
+    } catch { /* raced: checked below */ }
+  }
   if (isLinkOrMissing(parent)) return false;
   if (scope === 'project') {
     const workDir = dirname(root);
@@ -721,13 +742,30 @@ export async function writeTrace(target: WriteTarget, trace: WorkTrace): Promise
     const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     await writeFile(tmp, JSON.stringify(trace), { encoding: 'utf-8', mode: 0o600 });
     live = liveScope(target);
-    if (!live || !containedIn(live.root, dirname(file))) { rmSync(tmp, { force: true }); return false; }
+    if (!live || !containedIn(live.root, dirname(file))) { rmSync(tmp, { force: true }); pruneGone(target, file); return false; }
     const again = readTraceFile(live.root, file);
     if (again && again.through > trace.through) { rmSync(tmp, { force: true }); return false; }
     await rename(tmp, file);
     appendGen(live.root, { m: month, n: trace.id });
     return true;
   } catch (e) { logOnce('write', e); return false; }
+}
+
+/**
+ * A member deleted while this writer ran: the empty folders the write made go again (a late
+ * writer never leaves a work dir behind, C7). Only EMPTY folders, never a link, up to the root.
+ */
+function pruneGone(target: WriteTarget, file: string): void {
+  if (liveScope(target)) return;
+  let dir = dirname(file);
+  for (let i = 0; i < 3; i++) {
+    try {
+      if (isLinkOrMissing(dir) || readdirSync(dir).length > 0) return;
+      rmdirSync(dir);
+    } catch { return; }
+    if (basename(dir) === 'work') return;
+    dir = dirname(dir);
+  }
 }
 
 /** Every trace of a member (reading the files: the slow path, never on the hot path). */

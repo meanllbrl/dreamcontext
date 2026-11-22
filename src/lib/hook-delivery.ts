@@ -489,13 +489,14 @@ export function markSessionWork(sessionId: string, ids: readonly string[], home:
 }
 
 /** Forget what this session was shown (SessionStart: startup, resume, clear, compact), and sweep old markers. */
-export function resetSessionOnce(sessionId: string, home: string = homedir(), resetAt: number = Date.now()): void {
+export function resetSessionOnce(sessionId: string, home: string = homedir(), resetAt: number = Date.now(), opts: { memberChat?: boolean } = {}): void {
   const dir = join(home, '.dreamcontext', 'prompt-seen');
   try { if (sessionId.replace(/[^\w-]/g, '')) rmSync(seenFile(sessionId, home), { force: true }); } catch { /* best effort */ }
-  // This context's reset, for its past work (D10). Written only when the folder already exists:
-  // a machine that never delivered anything keeps no marker.
+  // This context's reset, for its past work (D10): always for a member's chat, else only when the
+  // folder already exists (a machine that never delivered anything keeps no marker).
   try {
-    if (sessionId.replace(/[^\w-]/g, '') && existsSync(dir)) {
+    if (sessionId.replace(/[^\w-]/g, '') && (existsSync(dir) || opts.memberChat === true)) {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
       const file = seenFile(sessionId, home);
       const tmp = `${file}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify({ seen: [WORK_SINCE + resetAt] }), { encoding: 'utf-8', mode: 0o600 });

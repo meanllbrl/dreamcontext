@@ -3007,7 +3007,11 @@ export function registerHookCommand(program: Command): void {
       if (sid) recordTabSessionFromHook(root, sid);
       // The prompt hook's once-per-session blocks print in full again on the next prompt: a fresh,
       // resumed, cleared or compacted session no longer holds the first copy in its context.
-      if (sid) resetSessionOnce(sid);
+      if (sid) {
+        // A member's chat stamps its reset for its past work (D10) on its very first start too.
+        const chat = (process.env.DREAMCONTEXT_AGENT_CHAT ?? '').trim();
+        resetSessionOnce(sid, undefined, undefined, { memberChat: !!chat && !chat.startsWith('app-') });
+      }
       // D5: the snapshot below delivers every rule in force; later ones are "new since" on a turn.
       if (sid) stampSession(sid);
 
