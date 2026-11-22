@@ -1,4 +1,4 @@
-import { resolveSpawnModel } from './eco-plus.js';
+import { ECO_PLUS_KEEP_ENV, isHeavyModel, resolveSpawnModel } from './eco-plus.js';
 import { appendLowered, ecoPlusInEffect } from './context-watch.js';
 import { assertNotAppChat } from './apps/chat-store.js';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
@@ -47,6 +47,19 @@ export function builderLineageModel(on: boolean = ecoPlusInEffect()): string {
   const r = resolveSpawnModel({ model: BUILDER_DEFAULT_MODEL, source: 'saved', tool: 'claude', on });
   if (r.lowered) appendLowered({ site: 'builder', from: BUILDER_DEFAULT_MODEL, to: r.model });
   return r.model;
+}
+
+/**
+ * The ONE place a builder's model is read before it runs again (a fork of the base, a base update,
+ * a lane resume), review r2 escalation-not-propagated: inside a kept-heavy tree (an escalated job,
+ * ECO_PLUS_KEEP_ENV) a lineage recorded on a lowered model runs the builder default instead, so the
+ * attempt after an escalation is not written by the same Sonnet builders. The caller records the
+ * answer as the lineage's model. Outside a kept tree the recorded identity is kept (forks keep the
+ * cache).
+ */
+export function builderRunModel(recorded: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (env[ECO_PLUS_KEEP_ENV] !== '1' || isHeavyModel(recorded)) return recorded;
+  return BUILDER_DEFAULT_MODEL;
 }
 export const BUILDER_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type BuilderEffort = typeof BUILDER_EFFORTS[number];

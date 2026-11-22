@@ -1,6 +1,5 @@
 import { dropThreadBucket } from '../agents/agentsChannelHost';
-import { createChatSession, setChatModelSource, type ChatSession } from '../sleepy/chatSession';
-import { chatModelSourceFor } from '../../lib/agentSettings';
+import { createChatSession, noteChatSpawnModel, type ChatSession } from '../sleepy/chatSession';
 import { DEFAULT_CHAT_MODE } from '../../lib/chatModes';
 
 /**
@@ -200,7 +199,7 @@ export function openCardSession(
   previous?.dispose();
   const notify = () => { for (const fn of e.listeners) fn(); };
   // The card opens on the saved chat default (useBoardAgents), on a resume too: Eco Plus may lower it.
-  setChatModelSource(id, chatModelSourceFor(false, resume));
+  noteChatSpawnModel(id, c.model, false, resume);
   const cs = createChatSession(
     c.vault, false, notify, id, resume, c.model, c.effort, '', '', false, DEFAULT_CHAT_MODE, '', '',
     { agent: c.agent, board: c.board },

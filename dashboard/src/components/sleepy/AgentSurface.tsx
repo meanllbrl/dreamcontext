@@ -13,7 +13,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, chatModelSourceFor, createChatSession, setChatModelSource, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, chatLaunchModel, createChatSession, noteChatSpawnModel, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
 import { publishSuperEventContext, publishSuperQuestions, publishSuperStage, slotCardItems, slotCardKey } from './super/superJobsStore';
 import { bringPatch, reopenBody, type KnownCard } from '../../lib/turnCards';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
@@ -1720,7 +1720,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       const live = sessions.current.get(id);
       if (!live || live.kind !== 'chat') return null;
       const chat = live as ChatSession;
-      return chatLaunch(modelForSession(chat), effortForSession(chat), chat.accountId);
+      return chatLaunch(chatLaunchModel(chat.claudeId, modelForSession(chat)), effortForSession(chat), chat.accountId);
     };
     const handle = setTimeout(() => {
       if (!hydratedRef.current) return; // a re-hydrate started: never send the stale payload
@@ -1886,10 +1886,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // The phone's Super conversation is a mirror in an ordinary chat mode: told here, on every
       // spawn of it, that it shows the Super (reply strips, groups, the ↩ chip).
       const mirror = mode !== 'super' && isSuperMirrorId(cid);
-      // Eco Plus decides by this (plan eco-plus D3): a restored conversation keeps the model it
-      // names, the saved default (on a resume too) is lowered, a model the caller named is a pick.
-      // The Super is always its saved model, decided on the server.
-      setChatModelSource(cid, chatModelSourceFor(!!model, resume));
+      // Eco Plus decides by this (plan eco-plus D3, agentSettings nextModelOrigin): a respawn that
+      // carries the conversation's same model keeps its origin (a saved default stays saved); a
+      // restored conversation keeps the model it names; a model the caller named is a pick. The
+      // Super is always its saved model, decided on the server.
+      noteChatSpawnModel(cid, chatModel, !!model, resume);
       const cs = createChatSession(vault ?? '', effectiveBypass, bumpStatus, cid, resume, chatModel, chatEffort, initialPrompt, promptToken, deferPrompt, mode, accountId, origin, null, reattach, lean, mirror);
       cs.applyZoom(currentZoom());
       sessions.current.set(cs.id, cs);
@@ -2185,7 +2186,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const parked: NonNullable<SessionMeta['parked']> = {
       at: Date.now(),
       transport: chat ? 'chat' : 'agent',
-      ...(chat ? { model: modelForSession(chat), effort: effortForSession(chat), account: chat.accountId } : {}),
+      ...(chat ? { model: chatLaunchModel(chat.claudeId, modelForSession(chat)), effort: effortForSession(chat), account: chat.accountId } : {}),
     };
     try { s.dispose(); } catch { /* best-effort: the server ends the child on its own */ }
     sessions.current.delete(sid);

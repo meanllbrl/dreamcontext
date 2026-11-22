@@ -71,7 +71,7 @@ const { emptySuperState } = await import('../../src/lib/super/types.js');
 const { _resetSuperInbox } = await import('../../src/lib/super/inbox.js');
 const { buildClaudeArgs, spawnModel } = await import('../../src/lib/automations/runner.js');
 const { autoSleepModelArgs } = await import('../../src/lib/auto-sleep-runner.js');
-const { builderLineageModel } = await import('../../src/lib/builder-spawn.js');
+const { builderLineageModel, builderRunModel } = await import('../../src/lib/builder-spawn.js');
 const { manifestHash } = await import('../../src/lib/automations/registry.js');
 const { currentAutoSleepFingerprint } = await import('../../src/lib/auto-sleep.js');
 const { SUPER_BRIEF_REV } = await import('../../src/lib/super/types.js');
@@ -310,6 +310,17 @@ describe('server-side spawn sites (criteria 3, 4)', () => {
     } finally {
       if (prev === undefined) delete process.env[ECO_PLUS_KEEP_ENV]; else process.env[ECO_PLUS_KEEP_ENV] = prev;
     }
+  });
+
+  it('an escalated (kept) tree runs a lowered lineage on the builder default at its next fork, update or resume', () => {
+    expect(builderRunModel('claude-sonnet-5-5', { [ECO_PLUS_KEEP_ENV]: '1' })).toBe('opus');
+    expect(builderRunModel('sonnet', { [ECO_PLUS_KEEP_ENV]: '1' })).toBe('opus');
+    expect(builderRunModel('claude-opus-5-5', { [ECO_PLUS_KEEP_ENV]: '1' })).toBe('claude-opus-5-5');
+    expect(builderRunModel('claude-sonnet-5-5', {})).toBe('claude-sonnet-5-5');
+    // ecoPlusInEffect reads the same env name eco-plus.ts exports.
+    setEco(true);
+    expect(ecoPlusInEffect(homedir(), { [ECO_PLUS_KEEP_ENV]: '1' })).toBe(false);
+    expect(ecoPlusInEffect(homedir(), {})).toBe(true);
   });
 
   it('auto-sleep runs --model sonnet under Eco Plus only; a builder lineage starts sonnet, off opus', () => {

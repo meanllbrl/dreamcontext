@@ -240,7 +240,10 @@ keep their own effort.
 `dreamcontext eco model builder > "$RUN/builder-model"` (prints `opus`, or `sonnet` under Eco Plus).
 Every spawn line below that says `--model opus` passes the value in `$RUN/builder-model` instead, for
 the whole run, whatever the setting says later (one identity per lineage, so forks keep the cache).
-A run with no `builder-model` file reads as `opus`. The plan reviewers keep their own model.
+A run with no `builder-model` file reads as `opus`. The plan reviewers keep their own model. An
+escalated run (its session respawned on Opus: `dreamcontext eco model builder` now prints `opus` while
+the file says `sonnet`) writes `opus` to the file and starts every later builder on it; `dreamcontext
+builder` forks, updates and resumes of a Sonnet lineage switch to Opus by themselves there.
 
 ## Orchestration flow
 

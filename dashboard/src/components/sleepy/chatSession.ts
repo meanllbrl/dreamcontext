@@ -1,5 +1,4 @@
-import { chatModelSourceFor, type ModelSource } from '../../lib/agentSettings';
-export { chatModelSourceFor };
+import { launchModelOf, nextModelOrigin, pickedModelOrigin, type ModelOrigin } from '../../lib/agentSettings';
 import { ApiClient } from '../../api/client';
 import { SpeechQueue, type SpokenChunk, type StopReason } from '../../lib/voice/speechQueue';
 import { turnTrace } from '../../lib/voice/turnTrace';
@@ -1089,16 +1088,24 @@ let chatSessionSeq = 0;
  * `pick` (chosen for this chat; also what an absent tag means). Set by the caller just before
  * {@link createChatSession}, on BOTH URLs, so a reconnect that respawns decides the same way.
  */
-const chatModelSources = new Map<string, ModelSource>();
+const chatModelOrigins = new Map<string, ModelOrigin>();
 const MAX_MODEL_SOURCES = 400;
-export function setChatModelSource(claudeId: string, source: ModelSource): void {
-  chatModelSources.delete(claudeId);
-  chatModelSources.set(claudeId, source);
+function putOrigin(claudeId: string, origin: ModelOrigin): void {
+  chatModelOrigins.delete(claudeId);
+  chatModelOrigins.set(claudeId, origin);
   // Oldest first: a long-lived window never grows this without bound.
-  while (chatModelSources.size > MAX_MODEL_SOURCES) chatModelSources.delete(chatModelSources.keys().next().value as string);
+  while (chatModelOrigins.size > MAX_MODEL_SOURCES) chatModelOrigins.delete(chatModelOrigins.keys().next().value as string);
+}
+/** Every chat spawn, just before {@link createChatSession}: the ONE rule is `nextModelOrigin`. */
+export function noteChatSpawnModel(claudeId: string, model: string, named: boolean, resume: boolean): void {
+  putOrigin(claudeId, nextModelOrigin(chatModelOrigins.get(claudeId), model, named, resume));
+}
+/** What a roster or park record stores for this conversation's model (`launchModelOf`). */
+export function chatLaunchModel(claudeId: string, model: string): string {
+  return launchModelOf(chatModelOrigins.get(claudeId), model);
 }
 function chatModelSourceParam(claudeId: string): string {
-  const s = chatModelSources.get(claudeId);
+  const s = chatModelOrigins.get(claudeId)?.source;
   return s && s !== 'pick' ? `&modelSource=${s}` : '';
 }
 
@@ -3244,6 +3251,8 @@ export function createChatSession(
     const requestId = `sm-${id}-${++ctrlSeq}`;
     // Registered before the send, for the same reason as `setPermissionMode` above.
     pendingModels.set(requestId, model);
+    // A live pick starts a new origin: a later respawn carrying it keeps it (Eco Plus never lowers it).
+    putOrigin(claudeId, pickedModelOrigin(model));
     if (!sendControl({ type: 'setModel', requestId, model })) pendingModels.delete(requestId);
   }
 

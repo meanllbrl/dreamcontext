@@ -634,6 +634,7 @@ export function ecoPlusDefault(home: string = homedir()): boolean {
  * hook, `eco model builder` and the builder lineage read this; spawn sites read the setting.
  */
 export function ecoPlusInEffect(home: string = homedir(), env: NodeJS.ProcessEnv = process.env): boolean {
+  // The name is ECO_PLUS_KEEP_ENV (eco-plus.ts imports this module); a test pins the two.
   return env.DREAMCONTEXT_ECO_PLUS_KEEP !== '1' && ecoPlusDefault(home);
 }
 
