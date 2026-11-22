@@ -252,13 +252,16 @@ const probeRows = PROBES.map(([m, name]) => {
   return { name, n: rs.length, ok: g.filter((r) => r.grade.success).length, graded: g.length, usd: mean(rs.map((r) => r.usage.usd)) };
 }).filter((p) => p.n);
 const probeHtml = probeRows.length > 2 ? `<h2 class="dc-h2">Eco Plus iyileştirilebilir mi?</h2>
-<p class="dc-p">İlk turun 3 başarısızlığı aynı işteydi (CSV dışa aktarma): Sonnet ada göre sıralamayı fonksiyonun içinde yapmayıp çağırana bıraktı; Opus her seferinde içeride sıraladı. Bu bir yönlendirme ya da araç hatası değil, modelin şartnameyi okuyuşu. Aynı işte üç kaldıraç denendi:</p>
+<p class="dc-p">Eco Plus'ın bütün başarısızlıkları aynı işteydi (CSV dışa aktarma): Sonnet ada göre sıralamayı fonksiyonun içinde yapmayıp çağırana bıraktı; Opus her seferinde içeride sıraladı. Bu bir yönlendirme ya da araç hatası değil, modelin şartnameyi okuyuşu. Aynı işte üç kaldıraç denendi:</p>
 <div class="dc-table-wrap"><table class="dc-table"><thead><tr><th>Deneme</th><th>Koşu</th><th>Başarılı</th><th>Koşu başına $</th></tr></thead><tbody>
 ${probeRows.map((p) => `<tr><td>${p.name}</td><td>${p.n}</td><td>${p.graded ? `${p.ok}/${p.graded}` : '–'}</td><td>${fmt(p.usd, 2)}</td></tr>`).join('\n')}
 </tbody></table></div>
 <p class="dc-p">Sonuç: Opus danışmanı hatayı yakalıyor ama her çağrısı tüm konuşmayı önbelleksiz Opus'a okuttuğu için bu işte Opus'un kendisinden pahalıya geliyor; yüksek efor hatayı düzeltmiyor. Kullanım limitini dert eden kullanıcı için ikisi de iyileştirme değil, bu yüzden Eco Plus'ın kuralı değişmedi.</p>` : '';
 const failRows = results.filter((r) => r.grade && r.grade.success === false).sort((a, b) => a.key.localeCompare(b.key));
 const causes = existsSync(join(BENCH, 'failure-causes.json')) ? JSON.parse(readFileSync(join(BENCH, 'failure-causes.json'), 'utf-8')) : {};
+// Runs that passed the tests but the blind judge scored low (<= 5): the cause is read from the
+// transcript like a failure's, since a passing test can hide an undelivered part of the ask.
+const lowRows = results.filter((r) => r.grade && r.grade.success !== false && (r.judge?.score?.overall ?? 10) <= 5).sort((a, b) => a.key.localeCompare(b.key));
 const usagePct = Math.round((1 - S.usage.point) * 100);
 const html = `<div class="dc-doc">
 <h1 class="dc-h1">Eco ve Eco Plus: aynı işte ne kadar kullanım, ne kadar kalite</h1>
@@ -288,6 +291,10 @@ ${probeHtml}
 ${failRows.length ? `<div class="dc-table-wrap"><table class="dc-table"><thead><tr><th>Koşu</th><th>Gizli test</th><th>Tip hatası</th><th>Neden (transkriptten)</th></tr></thead><tbody>
 ${failRows.map((r) => `<tr><td><code class="dc-code">${r.key}</code></td><td>${r.grade.hiddenPassed}/${r.grade.hiddenTotal}</td><td>${r.grade.tscErrors}</td><td>${esc(causes[r.key] ?? 'okunmadı')}</td></tr>`).join('\n')}
 </tbody></table></div>` : '<p class="dc-p">Başarısız koşu yok.</p>'}
+${lowRows.length ? `<h3 class="dc-h3">Testi geçip hakemden düşük puan alanlar</h3>
+<div class="dc-table-wrap"><table class="dc-table"><thead><tr><th>Koşu</th><th>Hakem</th><th>Neden (transkriptten)</th></tr></thead><tbody>
+${lowRows.map((r) => `<tr><td><code class="dc-code">${r.key}</code></td><td>${r.judge.score.overall}</td><td>${esc(causes[r.key] ?? 'okunmadı')}</td></tr>`).join('\n')}
+</tbody></table></div>` : ''}
 ${eco ? `<h2 class="dc-h2">Eco: gerçek oturumlardan</h2>
 ${fig('eco', `Son ${eco.days} günde ${eco.vaults} projede ${eco.handoffs} devir.`)}
 <p class="dc-p">Nasıl ölçüldü: her devirde eski oturumun bağlamı ve devam eden taze oturum kayıtlı. Taze oturumun her API çağrısını, eski oturum hiç kapanmasaydı taşıyacağı fazla bağlamla (devir bağlamı eksi taze oturumun ilk bağlamı, 1M pencereyle sınırlı) yeniden fiyatladık ve geçişin kendi maliyetini (taze oturumun ilk bağlamını önbelleğe yazması) düştük. Bu bir karşı olgu hesabı: eski oturumun aynı çağrıları yapacağını varsayar; zincirleme devirlerin birikimini saymadığı için ihtiyatlı. Medyan devir ${fmt(eco.medianHandoffCtx / 1000)}k tokende oldu, taze oturum ${fmt(eco.medianFreshCtx / 1000)}k ile başladı (çeyrekler arası düşüş %${fmt(eco.p25Drop * 100)}-%${fmt(eco.p75Drop * 100)}). Devirden sonraki işte okunan girdi tokeninin %${fmt(eco.shareOfInputAvoided * 100)} kadarı Eco sayesinde hiç okunmadı. Kısa işlerde (bağlam ${fmt(300)}k'ya varmadan biten) Eco hiçbir şeyi değiştirmez.</p>` : ''}
