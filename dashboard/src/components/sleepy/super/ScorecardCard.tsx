@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject, type SyntheticEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type RefObject, type SyntheticEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { phoneAllows } from '../../../lib/phoneSurface';
 import { useScorecard, useScorecardWrite, type ScorecardWrite } from '../../../hooks/useScorecard';
@@ -587,15 +587,9 @@ function RunRow({ ctx, run, lead }: { ctx: Ctx; run: ScoreRun; lead: boolean }) 
       {lead && !r && !cleared && <span className="sc-accent sc-run-cta">{t('scorecard.rateRun')} · {t('scorecard.addNote')}</span>}
       {notRated && !lead && <span className="mcb-muted sc-run-notrated" data-testid="sc-not-rated">{t('scorecard.notRated')}</span>}
       {cleared && !r && <ClearedUndo onUndo={undoClear} busy={w.busy} />}
-      {r && <RatedDetail ctx={ctx} run={run} w={w} onClear={clear} />}
+      {r && <RatedDetail ctx={ctx} run={run} w={w} onClear={clear} lessons={lessons} />}
       <CheckLine ctx={ctx} run={run} w={w} />
-      {lessons.map((l) => (
-        <div key={l.id} className="sc-run-lesson" data-testid="sc-run-lesson">
-          <span className="sc-accent sc-strong">{l.status === 'held' ? t('scorecard.held') : t('scorecard.learnedShort')}</span>
-          <span className="sc-lesson-text">{l.text}</span>
-          <span className="sc-run-lesson-act"><LessonActions ctx={ctx} l={l} /></span>
-        </div>
-      ))}
+      {!r && lessons.map((l) => <RunLesson key={l.id} ctx={ctx} l={l} />)}
       <WriteError error={w.error} />
     </div>
   );
@@ -620,9 +614,26 @@ function RunSub({ met, move, unit, via }: { met: { met: number; total: number } 
   );
 }
 
-function RatedDetail({ ctx, run, w, onClear }: { ctx: Ctx; run: ScoreRun; w: Send; onClear: () => void }) {
+function RunLesson({ ctx, l }: { ctx: Ctx; l: ScoreLesson }) {
+  const { t } = useI18n();
+  return (
+    <div className="sc-run-lesson" data-testid="sc-run-lesson">
+      <span className="sc-accent sc-strong">{l.status === 'held' ? t('scorecard.held') : t('scorecard.learnedShort')}</span>
+      <span className="sc-lesson-text">{l.text}</span>
+      <span className="sc-run-lesson-act"><LessonActions ctx={ctx} l={l} /></span>
+    </div>
+  );
+}
+
+function RatedDetail({ ctx, run, w, onClear, lessons }: { ctx: Ctx; run: ScoreRun; w: Send; onClear: () => void; lessons: ScoreLesson[] }) {
   const { t } = useI18n();
   const r = run.rating!;
+  // Each lesson sits under the words it came from: his note's (no slot) under his note, a
+  // correction's (slot c:<id>) under that correction; one whose correction is gone stays at the end.
+  const corrections = r.corrections ?? [];
+  const bySlot = (slot: string) => lessons.filter((l) => l.slot === slot);
+  const placed = new Set(corrections.map((c) => `c:${c.id}`));
+  const own = lessons.filter((l) => !l.slot || !placed.has(l.slot));
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState('');
   const draft = r.draft;
@@ -663,7 +674,13 @@ function RatedDetail({ ctx, run, w, onClear }: { ctx: Ctx; run: ScoreRun; w: Sen
         </p>
       )}
       {r.quote && !r.judged && <p className="mcb-muted sc-quote" data-testid="sc-quote">{t('scorecard.fromWords')} «{r.quote}»</p>}
-      {(r.corrections ?? []).map((c) => <CorrectionRow key={c.id} ctx={ctx} run={run} c={c} rating={r} w={w} />)}
+      {own.map((l) => <RunLesson key={l.id} ctx={ctx} l={l} />)}
+      {corrections.map((c) => (
+        <Fragment key={c.id}>
+          <CorrectionRow ctx={ctx} run={run} c={c} rating={r} w={w} />
+          {bySlot(`c:${c.id}`).map((l) => <RunLesson key={l.id} ctx={ctx} l={l} />)}
+        </Fragment>
+      ))}
       {draft?.state === 'running' && <p className="mcb-muted" data-testid="sc-draft-running">{t('scorecard.drafting')}</p>}
       {draft?.state === 'failed' && (
         <p className="sc-failed" data-testid="sc-draft-failed">

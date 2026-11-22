@@ -122,7 +122,7 @@ console.log(`--- held block ---\n${held.text}\n`);
 for (let i = 0; i < N.held; i++) {
   // His answer to an open card asks for an action; with no tools the Super writes a tool call as text
   // (measured: a bare `<invoke>` reply). A harness line, outside his message, says the action ran.
-  const r = claude(`Evet, ikisini de yayınla.\n<owner-msg ref="hd${String(i).padStart(4, '0')}"/>\n[check harness: his message answers the card you opened earlier with `dreamcontext super ask`: "Instagram'daki iki gönderiyi (indirim duyurusu ve yeni ürün) yayınlayayım mı?". The server ran his answer: both posts are published. Tools are off here. Write your reply to him.]\n${held.text}`);
+  const r = claude(`Evet, ikisini de yayınla.\n<owner-msg ref="hd${String(i).padStart(4, '0')}"/>\n[check harness: his message answers the card you opened earlier with \`dreamcontext super ask\`: "Instagram'daki iki gönderiyi (indirim duyurusu ve yeni ürün) yayınlayayım mı?". The server ran his answer: both posts are published. Tools are off here. Write your reply to him.]\n${held.text}`);
   rows.push({ kind: 'held', ok: endsWithLine(r.text) && relays(r.text) && noTool(r.text), text: r.text });
 }
 const plain = state(false, false);

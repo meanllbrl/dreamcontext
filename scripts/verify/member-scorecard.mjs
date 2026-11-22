@@ -265,7 +265,20 @@ async function w3(context, base) {
   ok('W3 (26) card: a "Super\'s job" row rated from his words', (await full.getByTestId('sc-run-super').count()) >= 1 && /From your words: «Üç, yeni kitleye fazla para ayırmış\.»/.test(ftext), ftext.slice(0, 500));
   const judgedStars = await full.locator('.sc-stars--judged').first().evaluate((el) => [...el.querySelectorAll('.sc-star')].map((b) => getComputedStyle(b).color)).catch(() => []);
   ok('W3 (26) card: judged stars in violet (on and off), "Super\'s rating from your words", Change', judgedStars.length === 5 && (await full.getByTestId('sc-judged').count()) >= 1 && /Super's rating from your words: «Hayır, bütçeyi bana sormadan artırmamalıydı\.»/.test(ftext) && (await full.getByTestId('sc-judged-change').count()) >= 1, JSON.stringify(judgedStars));
-  ok('W3 (26) card: a correction row "Super noted from your words" keeping the Super\'s stars', /Super noted from your words: «kuryeyi de bana sormalıydı»/.test(ftext) && /Super's 2★ kept/.test(ftext), ftext.slice(0, 600));
+  // The correction sits under a run HE rated (his 4 stars, his note), as the approved drawing shows:
+  // note, its lesson, then "Super noted ... your 4★ kept", then the correction's own lesson.
+  const tgCard = full.locator('[data-testid="sc-run"]').filter({ has: page.getByTestId('sc-correction') }).first();
+  const tgOrder = await tgCard.evaluate((el) => [...el.querySelectorAll('[data-testid="sc-note"],[data-testid="sc-run-lesson"],[data-testid="sc-correction"]')]
+    .map((n) => `${n.getAttribute('data-testid')}:${n.textContent.replace(/\s+/g, ' ').trim()}`)).catch(() => []);
+  ok('W3 (26) card: the correction row under HIS rating keeps his stars, each lesson under its own words',
+    tgOrder.length === 4 && /^sc-note:.*Kargo notunu kısa tut/.test(tgOrder[0]) && /^sc-run-lesson:.*parcel note short/.test(tgOrder[1])
+      && /^sc-correction:Super noted from your words: «kuryeyi de bana sormalıydı» · your 4★ kept/.test(tgOrder[2]) && /^sc-run-lesson:.*choosing a courier/.test(tgOrder[3]),
+    JSON.stringify(tgOrder));
+  ok('W3 (26) card: the judged run carries no correction', (await full.locator('[data-testid="sc-run"]').filter({ has: page.getByTestId('sc-judged') }).getByTestId('sc-correction').count()) === 0);
+  const rowShot = async (loc, name) => { if (await loc.count()) { await loc.scrollIntoViewIfNeeded(); await page.mouse.move(5, 5); await page.waitForTimeout(400); await loc.screenshot({ path: join(OUT, `${name}.png`) }).catch(() => {}); } };
+  await rowShot(tgCard, '15-w3-correction-under-his-rating');
+  await rowShot(full.locator('[data-testid="sc-run"]').filter({ has: page.getByTestId('sc-not-rated') }).first(), '16-w3-not-rated-row');
+  await rowShot(full.getByTestId('sc-run-super').first().locator('xpath=ancestor-or-self::*[@data-testid="sc-run"][1]'), '17-w3-super-job-row');
   ok('W3 (26) card: no sideways overflow', !(await look(full)).overflow);
   const judgedRow = full.locator('[data-testid="sc-run"]').filter({ has: page.getByTestId('sc-judged') }).first();
   if (await judgedRow.count()) { await judgedRow.scrollIntoViewIfNeeded(); await page.mouse.move(5, 5); await page.waitForTimeout(400); await judgedRow.screenshot({ path: join(OUT, '14-w3-judged-row.png') }).catch(() => {}); }

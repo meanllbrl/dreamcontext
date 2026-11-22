@@ -3,8 +3,9 @@
  * scratch HOME in the env: `npx vite-node scripts/verify/lib/scorecard-w3-fixtures.ts <project> <member> <routine>`.
  * Writes, through the real modules, into the scratch project only:
  *   - one run of the routine that ended 4 days ago (past the 72 h window, unrated: "Not rated");
- *   - one fresh run, rated 4 from Telegram with a Turkish note and an active lesson;
- *   - one fresh run, the Super's judged 2 from his words, with a correction under it;
+ *   - one fresh run, rated 4 from Telegram with a Turkish note and an active lesson, and the Super's
+ *     correction under it with its own lesson (slot c:<id>);
+ *   - one fresh run, the Super's judged 2 from his words;
  *   - one Super job of the member, rated 3 from his words (its snapshot only).
  * Prints the run keys as JSON. Fictional names only.
  */
@@ -39,13 +40,18 @@ withScorecard(project, member, (card, scope) => {
   const k = runKeyFor(scope, tg);
   commitLesson(card, k, 'Keep the parcel note short.', card.ratings[k].noteFold!, new Date());
   delete card.ratings[k].draft;
+  // His own rated run: the Super's correction sits under HIS 4 stars and note, with its own lesson
+  // (slot c:<id>), as the approved drawing her-is-puan-super-karne.png shows.
+  const coId = newId('co');
+  const coNote = 'kuryeyi de bana sormalıydı';
+  (card.ratings[k] as { corrections?: unknown[] }).corrections = [{ id: coId, note: coNote, noteFold: foldNote(coNote), quoteTurn: 'fixture-turn-2', at: new Date().toISOString() }];
+  commitLesson(card, k, 'Ask the owner before choosing a courier.', foldNote(coNote), new Date(), `c:${coId}`);
   const jk = runKeyFor(scope, judged);
   const at = new Date().toISOString();
   card.ratings[jk] = {
     stars: 2, firstAt: at, at, by: 'super', judged: true, via: 'super',
     quote: 'Hayır, bütçeyi bana sormadan artırmamalıydı.', title: 'Front desk news', runAt: judged.split('::')[1], status: 'ok', project: r.rating!.project,
     note: 'bütçeyi bana sormadan artırmamalıydı', noteFold: foldNote('bütçeyi bana sormadan artırmamalıydı'),
-    corrections: [{ id: newId('co'), note: 'kuryeyi de bana sormalıydı', noteFold: foldNote('kuryeyi de bana sormalıydı'), quoteTurn: 'fixture-turn-2', at }],
   } as never;
   const superRun = new Date(now - 30 * 60_000).toISOString();
   const sk = runKeyFor(scope, `${member}::${superRun}`);
