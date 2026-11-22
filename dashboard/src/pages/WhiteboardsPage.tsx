@@ -28,6 +28,8 @@ import { useCanvasBox } from './whiteboards/useCanvasBox';
 import { useTopRowFit } from './whiteboards/useTopRowFit';
 import type { SelectionRef } from '../components/whiteboard/agentDrop';
 import type { WhiteboardCanvasApi } from '../components/whiteboard/LazyWhiteboardCanvas';
+import { LiveShareButton } from '../components/shares/ShareSheet';
+import { isMacPhoneSurface } from '../lib/phoneSurface';
 import './WhiteboardsPage.css';
 
 interface WhiteboardsPageProps {
@@ -320,6 +322,8 @@ function WhiteboardEditor({ slug, onOpen, goneNote, onGone, recent, explorerTogg
   const controls = (
     <>
       <SaveStatus state={saveState} />
+      {/* Live link (tunel-paylasim): the board, live and read-only, for whoever gets the link. */}
+      {vault && !isMacPhoneSurface() && <LiveShareButton kind="board" vault={vault} slug={slug} name={name} className="wbp-agent-toggle" />}
       <button
         ref={setToggleEl}
         type="button"

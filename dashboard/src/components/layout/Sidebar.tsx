@@ -15,6 +15,7 @@ import { openAgentSurface } from '../../lib/agentSettings';
 import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
+import { LiveSharesPill } from '../shares/LiveSharesPill';
 
 export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'whiteboards' | 'stats' | 'apps';
 
@@ -296,6 +297,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
           teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
         {/* "Projelerden bağımsız": the Global ekip row (plan-r10 1f, r8-12). */}
+        {/* Open live links, always in sight while one exists (tunel-paylasim). */}
+        {!tunnel && <LiveSharesPill variant="sidebar" />}
         {!tunnel && <SidebarTeam kind="global" />}
 
         {tunnel ? null : signedIn && hasRemote ? (

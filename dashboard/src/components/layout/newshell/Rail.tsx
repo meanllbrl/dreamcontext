@@ -14,6 +14,7 @@ import { MoreMenu } from './MoreMenu';
 import { BOTTOM_BAR, DEVICE_HIDDEN_PAGES, MORE_PAGES, RAIL_ENTRIES, RAIL_FOOT, morePagesNarrow, railPageOf } from './railModel';
 import { readDeviceShell } from '../../../lib/uxMode';
 import { useChrome } from '../WindowChrome';
+import { LiveSharesPill } from '../../shares/LiveSharesPill';
 
 /** The new rail draws the prototype's glyph where it differs from the classic sidebar's. */
 function RailIcon({ page }: { page: Page }) {
@@ -140,6 +141,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
                     : pageRow(e.page)
             ))}
             <div className="ns-rail-grow" />
+            {!device && <LiveSharesPill variant="rail" />}
             {!(device && DEVICE_HIDDEN_PAGES.has(RAIL_FOOT)) && pageRow(RAIL_FOOT)}
           </>
         )}
