@@ -440,7 +440,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  `git push` and never merge into the default branch yourself. A push, PR or deploy HIS own message",
       "  named is the child's: `delegate --outward \"<that step>\"` (outside his turn `--origin <ref>`); never a",
       // 2026-11-22 (iyilesme-360 D5, D13): a PR merge his message names, a staging step his active rule covers.
-      "  force-push; a PR merge only as `--outward \"gh pr merge <n> --squash\"` when his message names it; a staging step",
+      "  force-push; a PR merge only as `--outward \"gh pr merge <n> --squash\"` when his message names it; a staging push",
       "  his active rule covers: `--rule <id>`. A brief over a line is a file (`_dream_context/tmp/super-prompts/<slug>/brief.md`),",
       "  `--prompt` one plain line naming it: an inline heredoc or `$(cat …)` is refused in an auto-mode project.",
       // rev 53 (2026-11-21, sirket-yavaslik): fast or full, by what the job touches.

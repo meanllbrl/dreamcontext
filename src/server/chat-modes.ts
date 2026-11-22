@@ -708,7 +708,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   Combine finished branches with \`dreamcontext super merge <child…> --into <topic>\`. Never
   \`git push\` and never merge into the default branch yourself. A push, PR or deploy HIS own message
   named is the child's: \`delegate --outward "<that step>"\` (outside his turn \`--origin <ref>\`); never a
-  force-push; a PR merge only as \`--outward "gh pr merge <n> --squash"\` when his message names it; a staging step
+  force-push; a PR merge only as \`--outward "gh pr merge <n> --squash"\` when his message names it; a staging push
   his active rule covers: \`--rule <id>\`. A brief over a line is a file (\`_dream_context/tmp/super-prompts/<slug>/brief.md\`),
   \`--prompt\` one plain line naming it: an inline heredoc or \`$(cat …)\` is refused in an auto-mode project.
 - **Fast or full:** one screen, look or copy only, no money, A/B, redirect, analytics, auth, migration,
