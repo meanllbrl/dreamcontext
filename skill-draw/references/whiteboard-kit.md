@@ -19,7 +19,8 @@ script and no `node`. `dreamcontext whiteboard kit` prints this page. Full guide
 
 | On the board | Use |
 |---|---|
-| an explanation, a process, a design, a comparison | a kit drawing: `flow`, `panel`, `timeline`, a comparison (`draw --spec`) |
+| an explanation, a process, a comparison | a kit drawing: `flow`, `panel`, `timeline`, a comparison (`draw --spec`) |
+| a product screen design (how a screen will look) | a real-look picture: HTML in the product's own styles, 2x Playwright PNG, `add <board> image --file`; grey boxes only for a wireframe asked for |
 | a number (MRR, signups, a trend, a split) | an `insight` widget (`add <board> insight --ref <slug>`); no insight yet: create it first |
 | a card of a Lab board | a `lab-card` widget (`--ref <board>/<card-id>`) |
 | a page | a `knowledge` card, or a `wiki` card for a list of pages |
