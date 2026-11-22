@@ -158,7 +158,7 @@ describe('the scorecard tile', () => {
   it('rated: the average, ten bar slots, N to rate', () => {
     const html = card(rated(), 'tile');
     expect(html).toContain('4.3 ★');
-    expect(count(html, 'class="sc-bar')).toBe(10);
+    expect(count(html, 'class="sc-bar ')).toBe(10);
     expect(html).toContain('2 to rate');
   });
 });
